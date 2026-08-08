@@ -21,10 +21,13 @@ import {
   claimExpiry,
   claimHintDue,
   claimIsStale,
+  CLAIM_EXPIRY_EVIDENCE,
   type Config,
+  countEvidence,
   createIssue,
   type Ctx,
   doctor,
+  ESCALATION_EVIDENCE,
   encodeClaim,
   type ExecResult,
   fetchIssue,
@@ -38,6 +41,7 @@ import {
   parentCheck,
   parseArgs,
   parseClaim,
+  parseSmellThresholds,
   parseStateArg,
   parseTtlMin,
   type QueueItem,
@@ -45,9 +49,11 @@ import {
   readiness,
   reconcile,
   RefusalError,
+  reviewStall,
   run,
   scopeMatches,
   setup,
+  SMELL_DEFAULTS,
   STATES,
   transition,
   UsageError,
@@ -289,7 +295,8 @@ interface FakeIssue {
   labelsTruncated?: boolean;
   body?: string;
   closedAt?: string | null;
-  prs?: Array<{ number: number; merged: boolean }>;
+  prs?: Array<{ number: number; merged: boolean; updatedAt?: string }>;
+  stateUpdatedAt?: string | null; // when the board last wrote Workflow State
 }
 
 /** Minimal in-memory board: answers the exact queries board.ts issues and
@@ -382,9 +389,51 @@ class FakeGh {
     };
   }
 
+  /** doctor's batched history query (GH-1715): N issues behind `aK:` aliases in
+   *  one round trip. Must be matched BEFORE the single-issue `comments(last`
+   *  branch below, which its selection set also contains. */
+  private historyPayload(fi: FakeIssue) {
+    return {
+      comments: { nodes: (fi.comments ?? []).map((body) => ({ body })) },
+      closedByPullRequestsReferences: {
+        nodes: (fi.prs ?? []).map((p) => ({ updatedAt: p.updatedAt ?? null })),
+      },
+      projectItems: {
+        nodes:
+          fi.onBoard === false
+            ? []
+            : [
+                {
+                  project: { id: PROJECT_ID },
+                  fieldValues: {
+                    nodes: fi.state
+                      ? [
+                          {
+                            updatedAt: fi.stateUpdatedAt ?? null,
+                            field: { name: "Workflow State" },
+                          },
+                        ]
+                      : [],
+                  },
+                },
+              ],
+      },
+    };
+  }
+
   private graphql(payload: { query: string; variables: any }): ExecResult {
     const { query, variables } = payload;
 
+    if (query.includes("a0: issue(number")) {
+      const repo: Record<string, unknown> = {};
+      for (const [key, num] of Object.entries(variables)) {
+        const m = /^n(\d+)$/.exec(key);
+        if (!m) continue;
+        const fi = this.issues.get(num as number);
+        repo[`a${m[1]}`] = fi ? this.historyPayload(fi) : null;
+      }
+      return data({ repository: repo });
+    }
     if (query.includes("projectV2(number")) {
       const defaults = [
         {
@@ -596,6 +645,7 @@ function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo"): Ctx {
     lockTtlMin: 120,
     holder,
     apply: { enabled: false, label: APPLY_LABEL_DEFAULT, infraPaths: [] },
+    smells: { ...SMELL_DEFAULTS },
   };
   return {
     // Delegate per-call so tests may overlay gh.exec after ctx construction.
@@ -1829,6 +1879,215 @@ describe("doctor — apply sweep", () => {
       ],
     });
     expect(detail(doctor(applyCtx(gh), { strict: true }), "apply-closed-unevidenced").level).toBe("ok");
+  });
+});
+
+describe("doctor — state smells (GH-1715)", () => {
+  const smell = (r: ReturnType<typeof doctor>, name: string) => r.checks.find((c) => c.name === name)!;
+  const evicted = (holder = "gone@host") =>
+    `\`board\`: stale claim by \`${holder}\` (since 2026-07-30T00:00:00Z) ` +
+    `evicted by \`me@test\` after TTL 120 min.`;
+  const released = (holder = "gone@host") =>
+    `\`board doctor --fix\`: stale claim by \`${holder}\` released; returned to Backlog.`;
+  const escalated = (why: string) => `**Decision needed** (\`board\` by \`me@test\`):\n\n${why}`;
+
+  // The whole design rests on counting comments the machine itself writes. If
+  // those writers change their wording, these patterns go silently blind — so
+  // the fixtures above are pinned against text the REAL writers produce here,
+  // not against hand-copied strings.
+  it("the evidence patterns match what transition() and doctor --fix actually post", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("gone@host", new Date(NOW.getTime() - 999 * 60_000)),
+    });
+    transition(ctx, fetchIssue(ctx, 1), "In Progress", { steal: true });
+    const eviction = gh.comments.at(-1)!.body;
+    expect(CLAIM_EXPIRY_EVIDENCE.test(eviction), eviction).toBe(true);
+
+    const gh2 = new FakeGh();
+    gh2.issues.set(2, {
+      number: 2, state: "In Progress",
+      claim: encodeClaim("gone@host", new Date(NOW.getTime() - 999 * 60_000)),
+    });
+    doctor(makeCtx(gh2), { fix: true });
+    const release = gh2.comments.at(-1)!.body;
+    expect(CLAIM_EXPIRY_EVIDENCE.test(release), release).toBe(true);
+
+    const gh3 = new FakeGh();
+    const ctx3 = makeCtx(gh3);
+    gh3.issues.set(3, { number: 3, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    transition(ctx3, fetchIssue(ctx3, 3), "Human Needed", { why: "which API?" });
+    const escalation = gh3.comments.at(-1)!.body;
+    expect(ESCALATION_EVIDENCE.test(escalation), escalation).toBe(true);
+    // …and does NOT match the other --why headers, which are not escalations.
+    expect(ESCALATION_EVIDENCE.test("**Parked** (`board` by `me@test`):\n\nlater")).toBe(false);
+    expect(ESCALATION_EVIDENCE.test("**Canceled** (`board` by `me@test`):\n\nno")).toBe(false);
+  });
+
+  it("counts repeated claim expiry, and holds fire below the threshold", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog", comments: [evicted(), released()] }); // 2
+    gh.issues.set(2, { number: 2, state: "Backlog", comments: [evicted()] }); // 1 — one bad tick happens
+    gh.issues.set(3, { number: 3, state: "Backlog", comments: [] });
+    const c = smell(doctor(makeCtx(gh)), "repeated-claim-expiry");
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("#1(2 expired claims)");
+    expect(c.detail).toContain("board create --parent N");
+    expect(c.detail).not.toContain("#2(");
+    expect(c.detail).not.toContain("#3(");
+  });
+
+  it("counts Human Needed ping-pong, and holds fire below the threshold", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, {
+      number: 1, state: "Human Needed",
+      comments: [escalated("a?"), escalated("b?"), escalated("c?")],
+    });
+    gh.issues.set(2, { number: 2, state: "Human Needed", comments: [escalated("a?"), escalated("b?")] });
+    const c = smell(doctor(makeCtx(gh)), "escalation-ping-pong");
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("#1(escalated 3×)");
+    expect(c.detail).toContain("not converging");
+    expect(c.detail).not.toContain("#2(");
+  });
+
+  it("flags a long-quiet In Review, but not a fresh one, a moving PR, or another state", () => {
+    const gh = new FakeGh();
+    const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
+    gh.issues.set(1, { number: 1, state: "In Review", stateUpdatedAt: daysAgo(9), prs: [{ number: 90, merged: false, updatedAt: daysAgo(10) }] });
+    gh.issues.set(2, { number: 2, state: "In Review", stateUpdatedAt: daysAgo(3), prs: [{ number: 91, merged: false, updatedAt: daysAgo(3) }] });
+    gh.issues.set(3, { number: 3, state: "In Review", stateUpdatedAt: daysAgo(9), prs: [{ number: 92, merged: false, updatedAt: daysAgo(1) }] });
+    gh.issues.set(4, { number: 4, state: "Backlog", stateUpdatedAt: daysAgo(90) }); // age alone is not a smell
+    gh.issues.set(5, { number: 5, state: "In Review", stateUpdatedAt: daysAgo(20) }); // never got a PR at all
+    const c = smell(doctor(makeCtx(gh)), "review-stalled");
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("#1(9d, PR quiet)");
+    expect(c.detail).toContain("#5(20d, no linked PR)");
+    for (const n of ["#2(", "#3(", "#4("]) expect(c.detail).not.toContain(n);
+  });
+
+  it("says nothing at all on a board with no observed failures", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const r = doctor(makeCtx(gh));
+    for (const n of ["repeated-claim-expiry", "escalation-ping-pong", "review-stalled"]) {
+      expect(smell(r, n).level, n).toBe("ok");
+      expect(smell(r, n).detail, n).toBe("none");
+    }
+  });
+
+  it("is advisory by construction: the verdict is identical with and without the smells", () => {
+    const smelly = new FakeGh();
+    smelly.issues.set(1, {
+      number: 1, state: "Human Needed",
+      comments: [evicted(), evicted(), escalated("a?"), escalated("b?"), escalated("c?")],
+    });
+    const clean = new FakeGh();
+    clean.issues.set(1, { number: 1, state: "Human Needed", comments: [] });
+    for (const strict of [false, true]) {
+      const r = doctor(makeCtx(smelly), { strict });
+      expect(smell(r, "repeated-claim-expiry").level).toBe("info");
+      expect(smell(r, "escalation-ping-pong").level).toBe("info");
+      expect(r.checks.filter((c) => c.level === "fail").map((c) => c.name)).toEqual(
+        doctor(makeCtx(clean), { strict }).checks.filter((c) => c.level === "fail").map((c) => c.name),
+      );
+    }
+    // …and --fix writes nothing on their account
+    const gh2 = new FakeGh();
+    gh2.issues.set(1, { number: 1, state: "Human Needed", comments: [evicted(), evicted()] });
+    doctor(makeCtx(gh2), { fix: true });
+    expect(gh2.mutations).toEqual([]);
+  });
+
+  it("a history read that fails degrades to info — it must never change the exit code", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const ctx = makeCtx(gh);
+    const baseline = doctor(makeCtx(gh)).ok;
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) =>
+      stdin?.includes("a0: issue(number")
+        ? { code: 1, stdout: "", stderr: "simulated history failure" }
+        : inner(argv, stdin);
+    const r = doctor(ctx);
+    for (const n of ["repeated-claim-expiry", "escalation-ping-pong", "review-stalled"]) {
+      expect(smell(r, n).level, n).toBe("info");
+      expect(smell(r, n).detail, n).toContain("not evaluated");
+    }
+    expect(r.ok).toBe(baseline);
+    // the sweep itself survived — a history failure is not an item-sweep failure
+    expect(r.checks.find((c) => c.name === "item-sweep")).toBeUndefined();
+    expect(r.checks.find((c) => c.name === "stale-claims")).toBeDefined();
+  });
+
+  it("batches history across round trips — the 25th item is read like the 1st", () => {
+    const gh = new FakeGh();
+    for (let n = 1; n <= 25; n++) gh.issues.set(n, { number: n, state: "Backlog" });
+    gh.issues.get(25)!.comments = [evicted(), released()];
+    const ctx = makeCtx(gh);
+    let historyQueries = 0;
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) => {
+      if (stdin?.includes("a0: issue(number")) historyQueries++;
+      return inner(argv, stdin);
+    };
+    const c = smell(doctor(ctx), "repeated-claim-expiry");
+    expect(c.detail).toContain("#25(2 expired claims)");
+    expect(historyQueries).toBe(2); // 25 items, chunk of 20 — not 25 round trips
+  });
+});
+
+describe("state-smell thresholds", () => {
+  it("defaults are conservative and every one is env-tunable", () => {
+    expect(parseSmellThresholds({})).toEqual({ claimExpiries: 2, escalations: 3, reviewDays: 7 });
+    expect(
+      parseSmellThresholds({
+        RALPH_SMELL_CLAIM_EXPIRIES: "4",
+        RALPH_SMELL_ESCALATIONS: "5",
+        RALPH_SMELL_REVIEW_DAYS: "14",
+      }),
+    ).toEqual({ claimExpiries: 4, escalations: 5, reviewDays: 14 });
+  });
+
+  it("a bad value warns and falls back — an advisory threshold never fails the sweep", () => {
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(parseSmellThresholds({ RALPH_SMELL_REVIEW_DAYS: "one week" })).toEqual(SMELL_DEFAULTS);
+    expect(parseSmellThresholds({ RALPH_SMELL_ESCALATIONS: "0" }).escalations).toBe(3);
+    expect(warn.mock.calls.map((c) => String(c[0])).join("")).toContain("RALPH_SMELL_REVIEW_DAYS");
+    warn.mockRestore();
+  });
+
+  it("a raised threshold silences a board that would otherwise be flagged", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, {
+      number: 1, state: "Backlog",
+      comments: ["`board`: stale claim by `a` evicted", "`board`: stale claim by `b` evicted"],
+    });
+    const ctx = makeCtx(gh);
+    ctx.cfg.smells = { ...SMELL_DEFAULTS, claimExpiries: 3 };
+    const c = doctor(ctx).checks.find((x) => x.name === "repeated-claim-expiry")!;
+    expect(c.level).toBe("ok");
+  });
+});
+
+describe("countEvidence / reviewStall", () => {
+  it("counts comments, not occurrences — one noisy comment is one event", () => {
+    expect(countEvidence(["x stale claim by y stale claim by z"], CLAIM_EXPIRY_EVIDENCE)).toBe(1);
+    expect(countEvidence([], CLAIM_EXPIRY_EVIDENCE)).toBe(0);
+    expect(countEvidence(["nothing here"], ESCALATION_EVIDENCE)).toBe(0);
+  });
+
+  it("stays silent when it cannot measure rather than guessing from another clock", () => {
+    expect(reviewStall({ stateUpdatedAt: null, prActivityAt: [] }, NOW, 7)).toBeNull();
+    expect(reviewStall({ stateUpdatedAt: "not-a-date", prActivityAt: [] }, NOW, 7)).toBeNull();
+    // exactly at the threshold counts (>=, like claim staleness)
+    const at = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
+    expect(reviewStall({ stateUpdatedAt: at(7), prActivityAt: [] }, NOW, 7)).toEqual({ days: 7, prs: 0 });
+    expect(reviewStall({ stateUpdatedAt: at(6.9), prActivityAt: [] }, NOW, 7)).toBeNull();
+    // an unparseable PR timestamp is not "activity" — it is nothing
+    expect(reviewStall({ stateUpdatedAt: at(9), prActivityAt: ["garbage"] }, NOW, 7)).toEqual({ days: 9, prs: 1 });
   });
 });
 

@@ -52,7 +52,7 @@ An issue carrying the configured apply label (`apply.label`, default `ralph:appl
 
 Honestly labelled limits: GitHub has no pre-close hook, so a UI close is *corrected within one reconcile pass*, not prevented; a label added after a PR's status was computed doesn't recompute it (merge time is the backstop); and non-run evidence proves a command exited 0, not that the operator's claim is true. Plan: `thoughts/shared/plans/2026-08-01-infra-apply-isolation.md`.
 
-`board doctor [--fix] [--strict]` is the invariant sweep; `board readiness` is the advisory agent-readiness report (3 levels: interactive / unattended / autonomous loop — recommendations, never gates); `board help` lists everything.
+`board doctor [--fix] [--strict]` is the invariant sweep — plus three `i`-level **state smells** (GH-1715: `repeated-claim-expiry`, `escalation-ping-pong`, `review-stalled`) read from the comment trail the machine already wrote. Info lines are advisory by construction: `--strict` never escalates them, `--fix` never acts on them, and a history read that throws degrades to `not evaluated` rather than touching the exit code. `board readiness` is the advisory agent-readiness report (3 levels: interactive / unattended / autonomous loop — recommendations, never gates); `board help` lists everything.
 
 ### Enforcement layers (honestly labeled)
 
@@ -98,7 +98,7 @@ Model tiers (stated once in work/SKILL.md): sonnet default, haiku for mechanical
 
 ## Configuration
 
-Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` (+ optional `RALPH_GH_HOST` for GHE). A repo-root `.ralph.json` (`{owner, repo, projectNumber, host?}`) takes precedence when present. Auth is gh-keychain (`gh auth login -s repo,project`). Machine-local: `RALPH_LOCK_TTL_MIN`, `RALPH_CLAIM_HOLDER`, `RALPH_TICK_RUNNER`, `RALPH_TICK_TIMEOUT_MIN`, `RALPH_ALLOW_API_BILLING`, `~/.ralph/config` (`autopilot=true`).
+Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` (+ optional `RALPH_GH_HOST` for GHE). A repo-root `.ralph.json` (`{owner, repo, projectNumber, host?}`) takes precedence when present. Auth is gh-keychain (`gh auth login -s repo,project`). Machine-local: `RALPH_LOCK_TTL_MIN`, `RALPH_CLAIM_HOLDER`, `RALPH_TICK_RUNNER`, `RALPH_TICK_TIMEOUT_MIN`, `RALPH_ALLOW_API_BILLING`, `RALPH_SMELL_CLAIM_EXPIRIES` / `RALPH_SMELL_ESCALATIONS` / `RALPH_SMELL_REVIEW_DAYS` (doctor's state-smell thresholds, 2/3/7), `~/.ralph/config` (`autopilot=true`).
 
 ## Gotchas
 

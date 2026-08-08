@@ -282,6 +282,7 @@ export interface Config {
   lockTtlMin: number;
   holder: string;
   apply: ApplyConfig; // GH-1693: apply-kind opt-in, read from the merge policy
+  smells: SmellThresholds; // GH-1715: doctor's advisory state-smell tripwires
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +515,43 @@ export function loadConfig(repoRoot: string): Config {
       process.env.RALPH_CLAIM_HOLDER ??
       `${userInfo().username}@${hostname()}`,
     apply: loadApplyConfig(repoRoot),
+    smells: parseSmellThresholds(),
+  };
+}
+
+/** Doctor's state-smell tripwires (GH-1715): how much observed failure a
+ *  single issue must have accumulated before doctor says anything about it.
+ *  Defaults are deliberately conservative — a check that fires on a healthy
+ *  board every week is miscalibrated, and these lines are advisory, so nobody
+ *  can act on a flood of them. Unlike RALPH_LOCK_TTL_MIN these gate no
+ *  mutation, so a bad value degrades to the default with a warning. */
+export interface SmellThresholds {
+  claimExpiries: number; // repeated claim loss on ONE issue = empirically too big
+  escalations: number; // Human Needed re-entries = the question is not converging
+  reviewDays: number; // days In Review with a quiet PR
+}
+
+export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
+  claimExpiries: 2,
+  escalations: 3,
+  reviewDays: 7,
+});
+
+export function parseSmellThresholds(
+  env: Record<string, string | undefined> = process.env,
+): SmellThresholds {
+  const positive = (name: string, def: number): number => {
+    const raw = env[name];
+    if (raw === undefined) return def;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+    process.stderr.write(`warn: ${name}="${raw}" is not a positive number — using ${def}\n`);
+    return def;
+  };
+  return {
+    claimExpiries: positive("RALPH_SMELL_CLAIM_EXPIRIES", SMELL_DEFAULTS.claimExpiries),
+    escalations: positive("RALPH_SMELL_ESCALATIONS", SMELL_DEFAULTS.escalations),
+    reviewDays: positive("RALPH_SMELL_REVIEW_DAYS", SMELL_DEFAULTS.reviewDays),
   };
 }
 
@@ -877,6 +915,90 @@ export function fetchApplyMeta(ctx: Ctx, number: number): { body: string; commen
     body: issue?.body ?? "",
     comments: (issue?.comments?.nodes ?? []).map((c: any) => c?.body ?? ""),
   };
+}
+
+/** What doctor's state-smell checks (GH-1715) read: the comment trail the
+ *  machine itself wrote, when the board last wrote this item's Workflow State
+ *  (= when it entered its current state), and whether a linked PR has moved. */
+export interface IssueHistory {
+  /** Comment bodies, OLDEST-truncated: only the last HISTORY_COMMENTS are read,
+   *  so every count derived from this is a LOWER bound. Deliberate — a smell
+   *  check that under-fires stays quiet, one that over-fires invents a smell. */
+  comments: string[];
+  /** ISO instant the board's Workflow State value was last written. Null when
+   *  the issue is not on this board (or the value was never set). */
+  stateUpdatedAt: string | null;
+  /** updatedAt of every PR that would close this issue — "is the PR moving?" */
+  prActivityAt: string[];
+}
+
+const HISTORY_COMMENTS = 60;
+const HISTORY_CHUNK = 20; // issues per round trip
+
+const HISTORY_SELECTION = `
+  comments(last: ${HISTORY_COMMENTS}) { nodes { body } }
+  closedByPullRequestsReferences(first: 10) { nodes { updatedAt } }
+  projectItems(first: 10) {
+    nodes {
+      project { id }
+      fieldValues(first: 20) {
+        nodes {
+          ... on ProjectV2ItemFieldSingleSelectValue {
+            updatedAt field { ... on ProjectV2FieldCommon { name } }
+          }
+        }
+      }
+    }
+  }`;
+
+/** History for MANY issues, batched behind GraphQL aliases. A query per open
+ *  item would multiply doctor's cost by the size of the board (and the
+ *  reconciler cron runs every 15 min), so `HISTORY_CHUNK` issues share one
+ *  round trip. Bodies are never requested — only comments, which is where the
+ *  machine's audit trail lives. Issues that came back null are simply absent
+ *  from the map; every caller must treat "no history" as "no smell". */
+export function fetchHistories(ctx: Ctx, numbers: number[]): Map<number, IssueHistory> {
+  const out = new Map<number, IssueHistory>();
+  if (numbers.length === 0) return out;
+  return withCache(ctx, (cache) => {
+    for (let start = 0; start < numbers.length; start += HISTORY_CHUNK) {
+      const chunk = numbers.slice(start, start + HISTORY_CHUNK);
+      const decls = chunk.map((_, k) => `$n${k}: Int!`).join(", ");
+      const aliases = chunk
+        .map((_, k) => `a${k}: issue(number: $n${k}) { ${HISTORY_SELECTION} }`)
+        .join("\n");
+      const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
+      chunk.forEach((n, k) => (vars[`n${k}`] = n));
+      const data = ghGraphQL(
+        ctx,
+        `query($owner: String!, $repo: String!, ${decls}) {
+          repository(owner: $owner, name: $repo) {
+            ${aliases}
+          }
+        }`,
+        vars,
+      );
+      const repo: any = data.repository ?? {};
+      chunk.forEach((n, k) => {
+        const issue = repo[`a${k}`];
+        if (!issue) return;
+        const item = (issue.projectItems?.nodes ?? []).find(
+          (x: any) => x?.project?.id === cache.projectId,
+        );
+        const stateValue = (item?.fieldValues?.nodes ?? []).find(
+          (v: any) => v?.field?.name === STATE_FIELD,
+        );
+        out.set(n, {
+          comments: (issue.comments?.nodes ?? []).map((c: any) => c?.body ?? ""),
+          stateUpdatedAt: stateValue?.updatedAt ?? null,
+          prActivityAt: (issue.closedByPullRequestsReferences?.nodes ?? [])
+            .map((p: any) => p?.updatedAt)
+            .filter((t: unknown): t is string => typeof t === "string"),
+        });
+      });
+    }
+    return out;
+  });
 }
 
 /** The one question the close gate and doctor both ask: is this apply issue
@@ -1588,14 +1710,73 @@ export function setDependency(ctx: Ctx, blockedNumber: number, blockingNumber: n
 // Doctor
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// State smells (GH-1715) — evidence-based, never predictive.
+//
+// Every signal here is a failure the machine ALREADY WATCHED HAPPEN and wrote
+// down, so no new tracking state exists to drift out of sync with reality: the
+// comment trail IS the audit trail. The patterns below must therefore track
+// their writers — `transition()` posts the --steal eviction comment and the
+// "**Decision needed**" escalation; doctor --fix posts the stale-claim release.
+// Both claim-loss writers say "stale claim by `holder`", which is the anchor.
+// ---------------------------------------------------------------------------
+
+/** Written by transition()'s --steal eviction AND doctor --fix's stale-claim
+ *  release — the two ways a claim is lost rather than handed back. */
+export const CLAIM_EXPIRY_EVIDENCE = /stale claim by/;
+/** Written by transition() whenever --why accompanies a move to Human Needed,
+ *  which the machine REQUIRES for that target — so every escalation leaves one. */
+export const ESCALATION_EVIDENCE = /^\*\*Decision needed\*\*/m;
+
+/** Count of comments matching an evidence pattern. A lower bound: only the
+ *  last HISTORY_COMMENTS comments are read, so a very noisy issue under-counts
+ *  and the check stays quiet — the safe direction for an advisory line. */
+export function countEvidence(comments: string[], pattern: RegExp): number {
+  return comments.filter((c) => pattern.test(c)).length;
+}
+
+/** In Review for >= `days` with nothing moving on a linked PR since it got
+ *  there. Null means "not stalled" OR "not measurable" — with no state
+ *  timestamp the machine has observed nothing, and an evidence-based check
+ *  must stay silent rather than guess from the issue's own updatedAt. */
+export function reviewStall(
+  h: Pick<IssueHistory, "stateUpdatedAt" | "prActivityAt">,
+  now: Date,
+  days: number,
+): { days: number; prs: number } | null {
+  if (!h.stateUpdatedAt) return null;
+  const since = new Date(h.stateUpdatedAt);
+  if (Number.isNaN(since.getTime())) return null;
+  const elapsedDays = (now.getTime() - since.getTime()) / 86_400_000;
+  if (elapsedDays < days) return null;
+  // "Since entering" is the whole point: a PR touched before the item reached
+  // In Review is not review activity, it is the work that produced the PR.
+  const moved = h.prActivityAt.some((t) => {
+    const at = new Date(t);
+    return !Number.isNaN(at.getTime()) && at.getTime() > since.getTime();
+  });
+  if (moved) return null;
+  return { days: Math.floor(elapsedDays), prs: h.prActivityAt.length };
+}
+
+/** Named once so the failure path can mark every smell check "not evaluated"
+ *  rather than leaving a reader to wonder which ones ran. */
+export const SMELL_CHECKS = ["repeated-claim-expiry", "escalation-ping-pong", "review-stalled"] as const;
+
+/** "info" is advisory-only by construction (GH-1715): it is not an invariant
+ *  breach, `--strict` never escalates it, `--fix` never touches it, and the
+ *  exit code below keys on "fail" alone. Anything that should change an exit
+ *  code is a warn or a fail — never an info. */
+export type DoctorLevel = "ok" | "info" | "warn" | "fail";
+
 export interface DoctorReport {
   ok: boolean;
-  checks: Array<{ name: string; level: "ok" | "warn" | "fail"; detail: string }>;
+  checks: Array<{ name: string; level: DoctorLevel; detail: string }>;
 }
 
 export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {}): DoctorReport {
   const checks: DoctorReport["checks"] = [];
-  const add = (name: string, level: "ok" | "warn" | "fail", detail: string) =>
+  const add = (name: string, level: DoctorLevel, detail: string) =>
     checks.push({ name, level, detail });
 
   // auth
@@ -1785,6 +1966,57 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
             }
           }
         }
+      }
+
+      // State smells (GH-1715). INFO level, always: these read history the
+      // machine already wrote and suggest a next move — they are not
+      // invariants, so --strict never escalates them and --fix never acts on
+      // them. Their own try/catch is load-bearing: the enclosing catch would
+      // add `item-sweep: fail` and change doctor's EXIT CODE, and no advisory
+      // hint is worth that.
+      try {
+        const histories = fetchHistories(ctx, items.map((i) => i.number));
+        const expiries: string[] = [];
+        const pingPong: string[] = [];
+        const stalled: string[] = [];
+        for (const i of items) {
+          const h = histories.get(i.number);
+          if (!h) continue; // no history read = nothing observed = nothing to say
+          const lost = countEvidence(h.comments, CLAIM_EXPIRY_EVIDENCE);
+          if (lost >= ctx.cfg.smells.claimExpiries) expiries.push(`#${i.number}(${lost} expired claims)`);
+          const escalations = countEvidence(h.comments, ESCALATION_EVIDENCE);
+          if (escalations >= ctx.cfg.smells.escalations) pingPong.push(`#${i.number}(escalated ${escalations}×)`);
+          if (i.state === "In Review") {
+            const s = reviewStall(h, ctx.now(), ctx.cfg.smells.reviewDays);
+            if (s) stalled.push(`#${i.number}(${s.days}d, ${s.prs === 0 ? "no linked PR" : "PR quiet"})`);
+          }
+        }
+        add(
+          "repeated-claim-expiry",
+          expiries.length === 0 ? "ok" : "info",
+          expiries.length === 0
+            ? "none"
+            : `claims lost repeatedly — empirically too large for one tick; ` +
+              `split via \`board create --parent N\`: ${expiries.join(" ")}`,
+        );
+        add(
+          "escalation-ping-pong",
+          pingPong.length === 0 ? "ok" : "info",
+          pingPong.length === 0
+            ? "none"
+            : `re-escalated to Human Needed — the question is not converging; ` +
+              `decompose or cancel: ${pingPong.join(" ")}`,
+        );
+        add(
+          "review-stalled",
+          stalled.length === 0 ? "ok" : "info",
+          stalled.length === 0
+            ? "none"
+            : `In Review ≥${ctx.cfg.smells.reviewDays}d with no linked-PR activity since — ` +
+              `merge gate or reviewer stuck? ${stalled.join(" ")}`,
+        );
+      } catch (e) {
+        for (const n of SMELL_CHECKS) add(n, "info", `not evaluated: ${(e as Error).message}`);
       }
 
       // Fix loops are per-item fault-isolated: one unwritable item logs its
@@ -2296,7 +2528,12 @@ maintenance
   reconcile NNN               sync board state to issue reality (closed→Done/Canceled,
                               reopened→Backlog); the state-guard event lane
   parent-check NNN            advance parent if all children closed
-  doctor [--fix] [--strict]   invariant sweep; --fix clears/releases bad claims
+  doctor [--fix] [--strict]   invariant sweep; --fix clears/releases bad claims.
+                              "i" lines are advisory state smells read from the
+                              machine's own comment trail — never gates, never
+                              fixed; thresholds via RALPH_SMELL_CLAIM_EXPIRIES
+                              (2), RALPH_SMELL_ESCALATIONS (3),
+                              RALPH_SMELL_REVIEW_DAYS (7)
   setup                       create Workflow State / Claim / Estimate / Priority
                               fields (idempotent; never edits existing fields)
   readiness [--json]          agent-readiness report — 3 levels (interactive,
@@ -2564,7 +2801,11 @@ export function run(argv: string[], ctx: Ctx): number {
       const report = doctor(ctx, { fix: !!flags.fix, strict: !!flags.strict });
       if (flags.json) json(report);
       else {
-        for (const c of report.checks) out(`${c.level === "ok" ? "✓" : c.level === "warn" ? "⚠" : "✗"} ${c.name}: ${c.detail}`);
+        for (const c of report.checks)
+          out(
+            `${c.level === "ok" ? "✓" : c.level === "info" ? "i" : c.level === "warn" ? "⚠" : "✗"} ` +
+              `${c.name}: ${c.detail}`,
+          );
         out(report.ok ? "doctor: OK" : "doctor: FAIL");
       }
       return report.ok ? 0 : 1;
