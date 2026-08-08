@@ -1177,6 +1177,18 @@ describe("next: tiered queue-empty diagnosis", () => {
     );
   });
 
+  it("tier 4 keys on repo-qualified identity — our Done #9 never resolves a foreign #9", () => {
+    const gh = new FakeGh();
+    gh.issues.set(3, {
+      number: 3, state: "Backlog",
+      blockedBy: [{ number: 9, state: "OPEN", repo: "other/repo" }],
+    });
+    gh.issues.set(9, { number: 9, state: "Done" }); // same number, our repo — not the blocker
+
+    run(["next"], makeCtx(gh));
+    expect(said()).toBe("queue empty (1 blocked: #3)");
+  });
+
   it("tier 4 fails closed — a truncated blocker list is never called stale", () => {
     const gh = new FakeGh();
     gh.issues.set(3, {

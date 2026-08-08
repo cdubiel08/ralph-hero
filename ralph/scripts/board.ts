@@ -223,13 +223,18 @@ export function diagnoseEmptyQueue(
   blocked: QueueItem[],
 ): EmptyQueueReport {
   const humanNeededCount = items.filter((i) => i.state === "Human Needed").length;
-  const boardState = new Map(items.map((i) => [i.number, i.state]));
+  // Match on openBlockerLabels, not bare numbers: issue numbers repeat across
+  // repos, and `items` is own-repo only, so a foreign owner/repo#9 must never
+  // resolve against our own #9. Own-repo labels are exactly "#N".
+  const terminalHere = new Set(
+    items.filter((i) => TERMINAL_BOARD_STATES.has(i.state)).map((i) => `#${i.number}`),
+  );
   const staleBlockedEdges = blocked
     .filter(
       (i) =>
         !i.blockersTruncated &&
-        i.openBlockers.length > 0 &&
-        i.openBlockers.every((n) => TERMINAL_BOARD_STATES.has(boardState.get(n) ?? "")),
+        i.openBlockerLabels.length > 0 &&
+        i.openBlockerLabels.every((l) => terminalHere.has(l)),
     )
     .map((i) => ({ number: i.number, blockers: i.openBlockers }));
   const diagnosis =
