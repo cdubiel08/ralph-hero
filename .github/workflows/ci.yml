@@ -22,7 +22,9 @@ jobs:
       - name: Typecheck board.ts
         run: npx tsc --noEmit
       - name: board.ts test suite
-        run: npx vitest run ralph/scripts/board.test.ts
+        # Directory, not filename: a new *.test.ts beside board.ts (e.g. the
+        # metrics registry) must not be silently skipped by CI.
+        run: npx vitest run ralph/scripts/
 
   build-and-test-demo:
     runs-on: ubuntu-latest

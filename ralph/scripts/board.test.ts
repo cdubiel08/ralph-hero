@@ -32,7 +32,9 @@ import {
   type ExecResult,
   fetchIssue,
   formatLocalHm,
+  ghGraphQL,
   legalTransition,
+  loadConfig,
   LEGACY_STATES,
   listItems,
   MACHINE,
@@ -47,11 +49,13 @@ import {
   type QueueItem,
   rankNext,
   readiness,
+  realExec,
   reconcile,
   RefusalError,
   reviewStall,
   run,
   scopeMatches,
+  setDependency,
   setup,
   SMELL_DEFAULTS,
   STATES,
@@ -159,9 +163,11 @@ describe("rankNext", () => {
     state: "Backlog",
     priority: null,
     hasParent: false,
+    parentNumber: null,
     openBlockers: [],
     openBlockerLabels: [],
     blockersTruncated: false,
+    fieldValuesTruncated: false,
     claim: null,
     claimRaw: null,
     labels: [],
@@ -189,6 +195,158 @@ describe("rankNext", () => {
   it("priority sort is numeric, not lexicographic — P10 ranks after P2", () => {
     const items = [item(1, { priority: "P10" }), item(2, { priority: "P2" }), item(3, { priority: "P0" })];
     expect(rankNext(items).eligible.map((i) => i.number)).toEqual([3, 2, 1]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Epic directionality: root→leaf resolution from board-resident parent edges
+  // -------------------------------------------------------------------------
+
+  const child = (n: number, parent: number, over: Partial<QueueItem> = {}) =>
+    item(n, { hasParent: true, parentNumber: parent, ...over });
+
+  it("an epic root yields to its best open leaf — the leaf inherits the root's priority and carries via", () => {
+    // P0 epic 1 with plain children 5,6; a P1 flat item 2 competes.
+    const items = [item(1, { priority: "P0" }), item(2, { priority: "P1" }), child(5, 1), child(6, 1)];
+    const { eligible, inFlightEpics } = rankNext(items);
+    // Children inherit P0 and beat the P1 item; the root never surfaces.
+    expect(eligible.map((i) => i.number)).toEqual([5, 6, 2]);
+    expect(eligible[0].via).toBe(1);
+    expect(inFlightEpics).toEqual([]);
+  });
+
+  it("grandchild chains resolve to the deepest actionable leaf, via the nearest demoted ancestor", () => {
+    const items = [item(1, { priority: "P0" }), child(2, 1), child(3, 2)];
+    const { eligible } = rankNext(items);
+    expect(eligible.map((i) => i.number)).toEqual([3]);
+    expect(eligible[0].via).toBe(2); // nearest demoted root, not the top
+  });
+
+  it("an epic with a child in flight heads nothing — reported as inFlightEpics, not eligible", () => {
+    const items = [
+      item(1, { priority: "P0" }),
+      child(5, 1, { state: "In Progress", claim: { holder: "other@host", since: NOW } }),
+    ];
+    const { eligible, inFlightEpics } = rankNext(items);
+    expect(eligible).toEqual([]);
+    expect(inFlightEpics).toEqual([{ root: 1, child: 5, holder: "other@host" }]);
+  });
+
+  it("a claimed Backlog child also counts as in flight (a claim is work in motion)", () => {
+    const items = [item(1), child(5, 1, { claim: { holder: "w@h", since: NOW } })];
+    const { eligible, inFlightEpics } = rankNext(items);
+    expect(eligible).toEqual([]);
+    expect(inFlightEpics).toEqual([{ root: 1, child: 5, holder: "w@h" }]);
+  });
+
+  it("all children blocked: the root keeps its slot, annotated childrenBlocked — never emptier than flat", () => {
+    const items = [item(1), child(5, 1, { openBlockers: [9], openBlockerLabels: ["#9"] })];
+    const { eligible, blocked } = rankNext(items);
+    expect(eligible.map((i) => i.number)).toEqual([1]);
+    expect(eligible[0].childrenBlocked).toEqual([5]);
+    expect(blocked.map((i) => i.number)).toEqual([5]);
+  });
+
+  it("a cross-repo parent is a null edge — the item ranks as a plain leaf, no foreign tree binding", () => {
+    // hasParent true (tie-break keeps working) but parentNumber null (fail closed).
+    const items = [item(1), item(7, { hasParent: true, parentNumber: null })];
+    const { eligible } = rankNext(items);
+    expect(eligible.map((i) => i.number)).toEqual([7, 1]); // parented tie-break only
+    expect(eligible[0].via).toBeUndefined();
+  });
+
+  it("a closed intermediate node passes tree topology through — the root still demotes for a live grandchild", () => {
+    // epic 10 → phase 11 (closed, off the open list) → task 12 (in flight).
+    const items = [item(10, { priority: "P0" }), child(12, 11, { state: "In Progress", claim: { holder: "a@h", since: NOW } })];
+    const withEdge = rankNext(items, [{ number: 11, parentNumber: 10 }]);
+    expect(withEdge.eligible).toEqual([]);
+    expect(withEdge.inFlightEpics).toEqual([{ root: 10, child: 12, holder: "a@h" }]);
+    // And a Backlog grandchild inherits the root's P0 through the closed node.
+    const items2 = [item(10, { priority: "P0" }), item(2, { priority: "P1" }), child(12, 11)];
+    const r2 = rankNext(items2, [{ number: 11, parentNumber: 10 }]);
+    expect(r2.eligible.map((i) => i.number)).toEqual([12, 2]);
+    expect(r2.eligible[0].via).toBe(10);
+  });
+
+  it("a terminal-on-board (Done/Canceled) open child is reconcile drift, not flight — the root stays eligible", () => {
+    const items = [item(10), child(11, 10, { state: "Canceled" })];
+    const { eligible, inFlightEpics } = rankNext(items);
+    expect(eligible.map((i) => i.number)).toEqual([10]);
+    expect(eligible[0].childrenBlocked).toBeUndefined(); // drift is not blockage either
+    expect(inFlightEpics).toEqual([]);
+  });
+
+  it("a malformed parent cycle degrades to own priority instead of looping", () => {
+    const items = [child(1, 2), child(2, 1)];
+    const { eligible } = rankNext(items);
+    // Both are 'roots' with an eligible descendant (each other) — demoted both,
+    // and the cycle must not hang. Neither heads the queue; nothing crashes.
+    expect(eligible).toEqual([]);
+  });
+});
+
+describe("next: epic-aware output", () => {
+  it("prints the leaf with its epic context, and epic-in-flight when the tree is being worked", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(5, { number: 5, state: "Backlog", parent: 1 });
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["next"], ctx);
+      expect(said.join("")).toContain("next: #5 Issue 5 (under epic #1)");
+      said.length = 0;
+      gh.issues.get(5)!.state = "In Progress";
+      gh.issues.get(5)!.claim = encodeClaim("w@h", NOW);
+      run(["next"], ctx);
+      expect(said.join("")).toBe("queue empty — epic #1 is being worked (child #5 claimed by w@h)\n");
+      said.length = 0;
+      run(["next", "--json"], ctx);
+      const parsed = JSON.parse(said.join(""));
+      expect(parsed.diagnosis).toBe("epic-in-flight");
+      expect(parsed.inFlightEpics).toEqual([{ root: 1, child: 5, holder: "w@h" }]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("priority inheritance end-to-end: a P0 epic's plain leaf outranks P1 flat work through run()", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P0" });
+    gh.issues.set(5, { number: 5, state: "Backlog", parent: 1 });
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "P1" });
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["next", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    const parsed = JSON.parse(said.join(""));
+    expect(parsed.next.number).toBe(5); // inherited P0 beats the flat P1
+    expect(parsed.next.via).toBe(1);
+    expect(parsed.queue.map((i: any) => i.number)).toEqual([5, 2]);
+  });
+
+  it("a foreign-repo parent never rebuilds a tree edge onto the own repo's number", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" }); // own #1, NOT the parent
+    gh.issues.set(5, { number: 5, state: "Backlog", parent: 1, parentRepo: "other/repo" });
+    const items = listItems(ctx);
+    expect(items.find((i) => i.number === 5)?.parentNumber).toBeNull();
+    expect(items.find((i) => i.number === 5)?.hasParent).toBe(true);
+    const { eligible } = rankNext(items);
+    // #1 must rank as a plain item, not as #5's epic root.
+    expect(eligible.map((i) => i.number)).toEqual([5, 1]);
+    expect(eligible.every((i) => i.via === undefined)).toBe(true);
   });
 });
 
@@ -269,394 +427,56 @@ describe("parseArgs", () => {
   });
 });
 
+describe("failure diagnostics carry their context", () => {
+  it("realExec surfaces the spawn error (gh missing must not report a blank reason)", () => {
+    const r = realExec(["board-test-definitely-missing-cmd-7f3a"]);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toMatch(/ENOENT|not found/);
+  });
+
+  it("ghGraphQL names unparseable stdout instead of a bare SyntaxError", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.exec = () => ok("<!DOCTYPE html><html>proxy says hi</html>");
+    expect(() => ghGraphQL(ctx, "query { x }", {})).toThrow(/unparseable output.*DOCTYPE/);
+  });
+
+  it("loadConfig names the malformed config file as a UsageError (exit 64, not an anonymous crash)", () => {
+    const root = mkdtempSync(join(tmpdir(), "board-cfg-"));
+    writeFileSync(join(root, ".ralph.json"), "{ owner: oops,");
+    expect(() => loadConfig(root)).toThrow(UsageError);
+    expect(() => loadConfig(root)).toThrow(/\.ralph\.json is not valid JSON/);
+
+    const root2 = mkdtempSync(join(tmpdir(), "board-cfg-"));
+    mkdirSync(join(root2, ".claude"), { recursive: true });
+    writeFileSync(join(root2, ".claude", "settings.json"), "not json");
+    expect(() => loadConfig(root2)).toThrow(UsageError);
+    expect(() => loadConfig(root2)).toThrow(/settings\.json is not valid JSON/);
+
+    // "null" parses fine and then crashes on property access — same anonymous
+    // exit-1 the helper exists to remove, so it must be rejected too.
+    const root3 = mkdtempSync(join(tmpdir(), "board-cfg-"));
+    writeFileSync(join(root3, ".ralph.json"), "null");
+    expect(() => loadConfig(root3)).toThrow(UsageError);
+    expect(() => loadConfig(root3)).toThrow(/expected a JSON object/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Command flows against a fake gh
 // ---------------------------------------------------------------------------
 
-const NOW = new Date("2026-07-31T12:00:00Z");
-const PROJECT_ID = "PVT_test";
+import {
+  data,
+  FakeGh,
+  type FakeIssue,
+  makeCtx,
+  NOW,
+  ok,
+  PROJECT_ID,
+  refusalMessage,
+} from "./board.testkit.js";
 
-interface FakeIssue {
-  number: number;
-  archived?: boolean;
-  repo?: string; // nameWithOwner in the bulk items view; defaults to the own repo
-  blockedBy?: Array<{ number: number; state: "OPEN" | "CLOSED"; repo?: string }>;
-  state?: string | null;
-  claim?: string | null;
-  issueState?: "OPEN" | "CLOSED";
-  stateReason?: string | null;
-  onBoard?: boolean; // default true
-  parent?: number;
-  children?: Array<{ number: number; issueState: "OPEN" | "CLOSED"; state?: string | null }>;
-  childrenTruncated?: boolean;
-  blockersTruncated?: boolean;
-  comments?: string[];
-  labels?: string[];
-  labelsTruncated?: boolean;
-  body?: string;
-  closedAt?: string | null;
-  prs?: Array<{ number: number; merged: boolean; updatedAt?: string }>;
-  stateUpdatedAt?: string | null; // when the board last wrote Workflow State
-}
-
-/** Minimal in-memory board: answers the exact queries board.ts issues and
- *  records every mutation, so clear-then-set ordering is observable. */
-class FakeGh {
-  mutations: string[] = [];
-  comments: Array<{ body: string }> = [];
-  issues = new Map<number, FakeIssue>();
-  failNextStateWrite = false; // transport-failure injection
-  failNextComment = false;
-  raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
-  vanishClaim = false; // simulate a concurrent clear landing after our write
-  stickyClaim = false; // simulate a claim clear silently not sticking
-  dropCreates = false; // simulate a field create acking but not sticking
-  refreshClaimOnFetch = new Set<number>(); // holder renews its claim mid-sweep
-  omitFields: string[] = []; // simulate a fresh board missing these fields
-  createdFields: Array<{ name: string; dataType: string; options?: string[] }> = [];
-  linkedRepos = ["cdubiel08/ralph-hero"]; // projectV2 → repositories linkage
-  runListJson = "[]"; // gh run list payload for doctor's state-guard check
-
-  expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
-
-  exec: (argv: string[], stdin?: string) => ExecResult = (argv, stdin) => {
-    const cmd = argv.join(" ");
-    if (cmd.startsWith("gh api graphql")) {
-      if (!cmd.includes(`--hostname ${this.expectedHost}`)) {
-        return { code: 1, stdout: "", stderr: `wrong or missing --hostname (want ${this.expectedHost}): ${cmd}` };
-      }
-      return this.graphql(JSON.parse(stdin!));
-    }
-    if (cmd.startsWith("gh auth status")) return ok("");
-    if (cmd.startsWith("git") && cmd.includes("remote"))
-      return ok("git@github.com:cdubiel08/ralph-hero.git\n");
-    if (cmd.startsWith("gh run list")) return ok(this.runListJson);
-    return { code: 1, stdout: "", stderr: `unexpected: ${cmd}` };
-  };
-
-  private issuePayload(fi: FakeIssue) {
-    const fieldValues = (state?: string | null, claim?: string | null) => ({
-      nodes: [
-        ...(state ? [{ name: state, field: { name: "Workflow State" } }] : []),
-        ...(claim ? [{ text: claim, field: { name: "Claim" } }] : []),
-      ],
-    });
-    return {
-      id: `I_${fi.number}`,
-      number: fi.number,
-      title: `Issue ${fi.number}`,
-      url: `https://github.com/cdubiel08/ralph-hero/issues/${fi.number}`,
-      state: fi.issueState ?? "OPEN",
-      stateReason: fi.stateReason ?? null,
-      labels: {
-        pageInfo: { hasNextPage: fi.labelsTruncated ?? false },
-        nodes: (fi.labels ?? []).map((name) => ({ name })),
-      },
-      parent: fi.parent ? { number: fi.parent, title: `Issue ${fi.parent}` } : null,
-      subIssues: {
-        pageInfo: { hasNextPage: fi.childrenTruncated ?? false },
-        nodes: (fi.children ?? []).map((c) => ({
-          number: c.number,
-          title: `Issue ${c.number}`,
-          state: c.issueState,
-          projectItems: {
-            nodes: [{ project: { id: PROJECT_ID }, fieldValues: fieldValues(c.state) }],
-          },
-        })),
-      },
-      blockedBy: { nodes: [] },
-      closedByPullRequestsReferences: {
-        nodes: (fi.prs ?? []).map((p) => ({
-          number: p.number,
-          url: `https://github.com/cdubiel08/ralph-hero/pull/${p.number}`,
-          state: p.merged ? "MERGED" : "OPEN",
-          merged: p.merged,
-        })),
-      },
-      comments: { nodes: (fi.comments ?? []).map((body) => ({ body })) },
-      projectItems: {
-        nodes:
-          fi.onBoard === false
-            ? []
-            : [
-                {
-                  id: `ITEM_${fi.number}`,
-                  isArchived: fi.archived ?? false,
-                  project: { id: PROJECT_ID },
-                  fieldValues: fieldValues(fi.state, fi.claim),
-                },
-              ],
-      },
-    };
-  }
-
-  /** doctor's batched history query (GH-1715): N issues behind `aK:` aliases in
-   *  one round trip. Must be matched BEFORE the single-issue `comments(last`
-   *  branch below, which its selection set also contains. */
-  private historyPayload(fi: FakeIssue) {
-    return {
-      comments: { nodes: (fi.comments ?? []).map((body) => ({ body })) },
-      closedByPullRequestsReferences: {
-        nodes: (fi.prs ?? []).map((p) => ({ updatedAt: p.updatedAt ?? null })),
-      },
-      projectItems: {
-        nodes:
-          fi.onBoard === false
-            ? []
-            : [
-                {
-                  project: { id: PROJECT_ID },
-                  fieldValues: {
-                    nodes: fi.state
-                      ? [
-                          {
-                            updatedAt: fi.stateUpdatedAt ?? null,
-                            field: { name: "Workflow State" },
-                          },
-                        ]
-                      : [],
-                  },
-                },
-              ],
-      },
-    };
-  }
-
-  private graphql(payload: { query: string; variables: any }): ExecResult {
-    const { query, variables } = payload;
-
-    if (query.includes("a0: issue(number")) {
-      const repo: Record<string, unknown> = {};
-      for (const [key, num] of Object.entries(variables)) {
-        const m = /^n(\d+)$/.exec(key);
-        if (!m) continue;
-        const fi = this.issues.get(num as number);
-        repo[`a${m[1]}`] = fi ? this.historyPayload(fi) : null;
-      }
-      return data({ repository: repo });
-    }
-    if (query.includes("projectV2(number")) {
-      const defaults = [
-        {
-          id: "F_state", name: "Workflow State", dataType: "SINGLE_SELECT",
-          options: [...STATES, ...LEGACY_STATES].map((s) => ({ id: `OPT_${s}`, name: s })),
-        },
-        { id: "F_claim", name: "Claim", dataType: "TEXT" },
-        {
-          id: "F_status", name: "Status", dataType: "SINGLE_SELECT",
-          options: ["Todo", "In Progress", "Done"].map((s) => ({ id: `S_${s}`, name: s })),
-        },
-        {
-          id: "F_estimate", name: "Estimate", dataType: "SINGLE_SELECT",
-          options: ["XS", "S", "M", "L", "XL"].map((s) => ({ id: `E_${s}`, name: s })),
-        },
-        {
-          id: "F_priority", name: "Priority", dataType: "SINGLE_SELECT",
-          options: ["P0", "P1", "P2", "P3"].map((s) => ({ id: `P_${s}`, name: s })),
-        },
-      ];
-      const created = this.createdFields.map((f) => ({
-        id: `F_${f.name}`, name: f.name, dataType: f.dataType,
-        options: f.options?.map((o) => ({ id: `${f.name}_${o}`, name: o })),
-      }));
-      return data({
-        user: {
-          projectV2: {
-            id: PROJECT_ID,
-            fields: { nodes: [...defaults.filter((f) => !this.omitFields.includes(f.name)), ...created] },
-          },
-        },
-      });
-    }
-    if (query.includes("createProjectV2Field")) {
-      const dataType = query.includes("dataType: TEXT") ? "TEXT" : "SINGLE_SELECT";
-      if (!this.dropCreates) {
-        this.createdFields.push({
-          name: variables.name,
-          dataType,
-          options: (variables.options as Array<{ name: string }> | undefined)?.map((o) => o.name),
-        });
-      }
-      this.mutations.push(`createField(${variables.name})`);
-      return data({ createProjectV2Field: { projectV2Field: { id: `F_${variables.name}` } } });
-    }
-    if (query.includes("repositories(first")) {
-      return data({
-        node: { repositories: { nodes: this.linkedRepos.map((r) => ({ nameWithOwner: r })) } },
-      });
-    }
-    if (query.includes("repository(owner") && query.includes("{ id }") && !query.includes("issue(number")) {
-      return data({ repository: { id: "R_test" } });
-    }
-    if (query.includes("comments(last")) {
-      const fi = this.issues.get(variables.number)!;
-      return data({
-        repository: {
-          issue: {
-            body: fi.body ?? "",
-            comments: { nodes: (fi.comments ?? []).map((b) => ({ body: b })) },
-          },
-        },
-      });
-    }
-    if (query.includes("issue(number")) {
-      const fi = this.issues.get(variables.number);
-      if (!fi) return data({ repository: { issue: null } });
-      // The holder refreshed its claim between the page walk and this re-read.
-      if (fi.claim && this.refreshClaimOnFetch.has(fi.number)) {
-        this.refreshClaimOnFetch.delete(fi.number);
-        fi.claim = encodeClaim(fi.claim.slice(0, fi.claim.lastIndexOf("|")), NOW);
-      }
-      return data({ repository: { issue: this.issuePayload(fi) } });
-    }
-    if (query.includes("items(first")) {
-      return data({
-        node: {
-          items: {
-            pageInfo: { hasNextPage: false, endCursor: null },
-            nodes: [...this.issues.values()].map((fi) => ({
-              isArchived: fi.archived ?? false,
-              content: {
-                number: fi.number, title: `Issue ${fi.number}`, state: fi.issueState ?? "OPEN",
-                stateReason: fi.stateReason ?? null,
-                closedAt: fi.closedAt ?? null,
-                labels: {
-                  pageInfo: { hasNextPage: fi.labelsTruncated ?? false },
-                  nodes: (fi.labels ?? []).map((name) => ({ name })),
-                },
-                repository: { nameWithOwner: fi.repo ?? "cdubiel08/ralph-hero" },
-                parent: fi.parent ? { number: fi.parent } : null,
-                blockedBy: {
-                  pageInfo: { hasNextPage: fi.blockersTruncated ?? false },
-                  nodes: (fi.blockedBy ?? []).map((b) => ({
-                    number: b.number,
-                    state: b.state,
-                    repository: { nameWithOwner: b.repo ?? "cdubiel08/ralph-hero" },
-                  })),
-                },
-              },
-              fieldValues: {
-                nodes: [
-                  ...(fi.state ? [{ name: fi.state, field: { name: "Workflow State" } }] : []),
-                  ...(fi.claim ? [{ text: fi.claim, field: { name: "Claim" } }] : []),
-                ],
-              },
-            })),
-          },
-        },
-      });
-    }
-
-    // Mutations — record, and update the in-memory board so echo re-reads see them.
-    if (query.includes("updateProjectV2ItemFieldValue")) {
-      const itemNum = Number(String(variables.itemId).replace("ITEM_", ""));
-      const fi = this.issues.get(itemNum);
-      if (variables.optionId && variables.fieldId === "F_state" && fi) {
-        if (this.failNextStateWrite) {
-          this.failNextStateWrite = false;
-          return { code: 1, stdout: "", stderr: "simulated transport failure" };
-        }
-        fi.state = String(variables.optionId).replace("OPT_", "");
-        this.mutations.push(`setState(#${itemNum}, ${fi.state})`);
-      } else if (variables.fieldId === "F_claim" && fi) {
-        // A concurrent writer's claim (or clear) can land last — no CAS on Projects V2.
-        fi.claim = this.vanishClaim
-          ? null
-          : this.raceClaimTo
-            ? `${this.raceClaimTo}|${new Date().toISOString()}`
-            : variables.text;
-        this.mutations.push(`setClaim(#${itemNum})`);
-      } else {
-        this.mutations.push(`setField(${variables.fieldId})`);
-      }
-      return data({ updateProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
-    }
-    if (query.includes("clearProjectV2ItemFieldValue")) {
-      const itemNum = Number(String(variables.itemId).replace("ITEM_", ""));
-      const fi = this.issues.get(itemNum);
-      if (fi && variables.fieldId === "F_claim" && !this.stickyClaim) fi.claim = null;
-      this.mutations.push(`clearField(#${itemNum}, ${variables.fieldId})`);
-      return data({ clearProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
-    }
-    if (query.includes("addComment")) {
-      if (this.failNextComment) {
-        this.failNextComment = false;
-        return { code: 1, stdout: "", stderr: "simulated comment failure" };
-      }
-      this.comments.push({ body: variables.body });
-      this.mutations.push("addComment");
-      return data({ addComment: { clientMutationId: null } });
-    }
-    if (query.includes("closeIssue")) {
-      const num = Number(String(variables.issueId).replace("I_", ""));
-      const fi = this.issues.get(num);
-      if (fi) fi.issueState = "CLOSED";
-      this.mutations.push(`closeIssue(#${num}, ${variables.stateReason})`);
-      return data({ closeIssue: { issue: { id: variables.issueId } } });
-    }
-    if (query.includes("reopenIssue")) {
-      this.mutations.push("reopenIssue");
-      return data({ reopenIssue: { issue: { id: variables.issueId } } });
-    }
-    if (query.includes("addSubIssue")) {
-      this.mutations.push("addSubIssue");
-      return data({ addSubIssue: { issue: { id: "x" } } });
-    }
-    if (query.includes("addBlockedBy") || query.includes("removeBlockedBy")) {
-      this.mutations.push("dep");
-      return data({ addBlockedBy: { issue: { id: "x" } }, removeBlockedBy: { issue: { id: "x" } } });
-    }
-    if (query.includes("createIssue")) {
-      const number = 900 + this.issues.size;
-      this.issues.set(number, { number, state: null });
-      return data({ createIssue: { issue: { id: `I_${number}`, number, url: `u/${number}` } } });
-    }
-    if (query.includes("addProjectV2ItemById")) {
-      const num = Number(String(variables.contentId).replace("I_", ""));
-      const fi = this.issues.get(num);
-      if (fi) fi.onBoard = true;
-      this.mutations.push(`addToBoard(#${num})`);
-      return data({ addProjectV2ItemById: { item: { id: `ITEM_${num}` } } });
-    }
-    return { code: 1, stdout: "", stderr: `unhandled query: ${query.slice(0, 120)}` };
-  }
-}
-
-const ok = (stdout: string): ExecResult => ({ code: 0, stdout, stderr: "" });
-const data = (d: unknown): ExecResult => ok(JSON.stringify({ data: d }));
-
-/** Refusal text is a contract here (byte-identical fresh-claim refusals), so
- *  assert on the message rather than a regex through toThrow. */
-function refusalMessage(fn: () => unknown): string {
-  try {
-    fn();
-  } catch (e) {
-    if (e instanceof RefusalError) return e.message;
-    throw e;
-  }
-  throw new Error("expected a RefusalError, got none");
-}
-
-function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo"): Ctx {
-  const cfg: Config = {
-    owner: "cdubiel08",
-    repo: "ralph-hero",
-    projectNumber: 13,
-    host: "github.com",
-    lockTtlMin: 120,
-    holder,
-    apply: { enabled: false, label: APPLY_LABEL_DEFAULT, infraPaths: [] },
-    smells: { ...SMELL_DEFAULTS },
-  };
-  return {
-    // Delegate per-call so tests may overlay gh.exec after ctx construction.
-    exec: (argv, stdin) => gh.exec(argv, stdin),
-    cfg,
-    repoRoot,
-    cacheDir: mkdtempSync(join(tmpdir(), "board-test-")),
-    now: () => NOW,
-  };
-}
 
 describe("transition engine", () => {
   let gh: FakeGh;
@@ -673,6 +493,23 @@ describe("transition engine", () => {
     expect(after.state).toBe("In Progress");
     expect(after.claim?.holder).toBe("me@test");
     expect(after.claim?.since).toEqual(NOW);
+  });
+
+  it("refuses to mutate when the fieldValues page is truncated — state/claim reads are fiction", () => {
+    // A claimed item whose Claim value fell past the page window reads as
+    // unclaimed; without the fail-closed check this would double-claim it.
+    gh.issues.set(1, { number: 1, state: null, fieldValuesTruncated: true });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(RefusalError);
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/field values/);
+    expect(gh.mutations).toEqual([]); // refused before any write
+  });
+
+  it("a fieldValues-truncated item is never eligible in the queue (fail closed like blockers)", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", fieldValuesTruncated: true });
+    gh.issues.set(2, { number: 2, state: "Backlog" });
+    const { eligible, blocked } = rankNext(listItems(ctx));
+    expect(eligible.map((i) => i.number)).toEqual([2]);
+    expect(blocked.map((i) => i.number)).toEqual([1]);
   });
 
   it("refuses a live foreign claim, naming holder and TTL", () => {
@@ -899,6 +736,65 @@ describe("transition engine", () => {
   });
 });
 
+describe("fieldValues truncation fails closed on every write path", () => {
+  it("transition: a truncated POST-write echo says 'unverifiable', never a fictional race narrative", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      const r = inner(argv, stdin);
+      // The write itself pushes the item past the page: every read AFTER the
+      // first field write comes back truncated.
+      if (stdin?.includes("updateProjectV2ItemFieldValue")) gh.issues.get(1)!.fieldValuesTruncated = true;
+      return r;
+    };
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(RefusalError);
+    gh.issues.get(1)!.fieldValuesTruncated = false;
+    gh.issues.get(1)!.state = "Backlog";
+    gh.issues.get(1)!.claim = null;
+    const msg = refusalMessage(() => transition(ctx, fetchIssue(ctx, 1), "In Progress"));
+    expect(msg).toMatch(/unverifiable/);
+    expect(msg).not.toMatch(/vanished|lost/);
+  });
+
+  it("reconcile: refuses to 'correct' a state it cannot read (the cron would demote live WIP every tick)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: null, fieldValuesTruncated: true });
+    expect(reconcile(ctx, 1)).toMatch(/field values truncated.*refusing to reconcile/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("adopt: never writes Backlog over an on-board item's unreadable state", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: null, fieldValuesTruncated: true });
+    adopt(ctx, 1);
+    expect(gh.mutations.filter((m) => m.startsWith("setState"))).toEqual([]);
+  });
+
+  it("adopt: a fresh OFF-board item still gets added and set to Backlog — a never-added item has no field values to truncate", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: null, onBoard: false });
+    adopt(ctx, 1);
+    expect(gh.mutations).toContain("addToBoard(#1)");
+    expect(gh.mutations.filter((m) => m.startsWith("setState"))).toEqual(["setState(#1, Backlog)"]);
+  });
+
+  it("parentCheck: refuses to gate on a parent whose field values are truncated", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(10, {
+      number: 10, state: "In Progress", fieldValuesTruncated: true,
+      children: [{ number: 11, issueState: "CLOSED", state: "Done" }],
+    });
+    expect(parentCheck(ctx, 10)).toMatch(/field values truncated.*refusing to gate/);
+    expect(gh.mutations).toEqual([]);
+  });
+});
+
 describe("parent gate", () => {
   it("advances only when every child is closed, with a comment", () => {
     const gh = new FakeGh();
@@ -1014,6 +910,36 @@ describe("reality-sync lane (adopt + reconcile)", () => {
   });
 });
 
+describe("fetchNodeIds (link/dep/comment id lookups)", () => {
+  it("dep/link resolve both ids in ONE aliased id-only query, then mutate", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(12, { number: 12, state: "Backlog" });
+    gh.issues.set(13, { number: 13, state: "Backlog" });
+    let idQueries = 0;
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      if (stdin?.includes("a0: issue(number") && !stdin.includes("comments(last")) {
+        idQueries++;
+        expect(stdin).not.toMatch(/subIssues|blockedBy\(|fieldValues/); // id-only payload
+      }
+      return inner(argv, stdin);
+    };
+    expect(run(["dep", "12", "--on", "13"], ctx)).toBe(0);
+    expect(idQueries).toBe(1);
+    expect(gh.mutations).toEqual(["dep"]);
+  });
+
+  it("a missing issue keeps fetchIssue's contract: UsageError naming the repo (exit 64)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(12, { number: 12, state: "Backlog" });
+    expect(() => setDependency(ctx, 12, 999)).toThrow(UsageError);
+    expect(() => setDependency(ctx, 12, 999)).toThrow(/cdubiel08\/ralph-hero/);
+    expect(gh.mutations).toEqual([]); // refused before the mutation
+  });
+});
+
 describe("doctor + migrate", () => {
   it("doctor: legacy states warn by default, fail under --strict", () => {
     const gh = new FakeGh();
@@ -1056,6 +982,24 @@ describe("doctor + migrate", () => {
       if (prev === undefined) delete process.env.GITHUB_WORKFLOW;
       else process.env.GITHUB_WORKFLOW = prev;
     }
+  });
+
+  it("doctor: the state-guard check is pinned to the CONFIGURED repo with -R (never cwd's repo)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    let runListArgv: string[] | null = null;
+    const inner = ctx.exec;
+    ctx.exec = (argv, stdin) => {
+      if (argv[0] === "gh" && argv[1] === "run" && argv[2] === "list") runListArgv = argv;
+      return inner(argv, stdin);
+    };
+    doctor(ctx);
+    expect(runListArgv).not.toBeNull();
+    const argv: string[] = runListArgv!;
+    expect(argv.slice(argv.indexOf("-R"), argv.indexOf("-R") + 2)).toEqual([
+      "-R",
+      "github.com/cdubiel08/ralph-hero",
+    ]);
   });
 
   it("doctor: a green state-guard window is ok even inside the workflow", () => {
@@ -2082,6 +2026,28 @@ describe("doctor — state smells (GH-1715)", () => {
     const c = smell(doctor(ctx), "repeated-claim-expiry");
     expect(c.detail).toContain("#25(2 expired claims)");
     expect(historyQueries).toBe(2); // 25 items, chunk of 20 — not 25 round trips
+  });
+
+  it("one failed history chunk does not kill the others — smells evaluate over surviving chunks", () => {
+    const gh = new FakeGh();
+    for (let n = 1; n <= 25; n++) gh.issues.set(n, { number: n, state: "Backlog" });
+    // The smelly issue sits in chunk 2; chunk 1's round trip fails.
+    gh.issues.get(25)!.comments = [evicted(), released()];
+    const ctx = makeCtx(gh);
+    let historyQueries = 0;
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) => {
+      if (stdin?.includes("a0: issue(number")) {
+        historyQueries++;
+        if (historyQueries === 1)
+          return { code: 1, stdout: "", stderr: "simulated transient failure" };
+      }
+      return inner(argv, stdin);
+    };
+    const r = doctor(ctx);
+    const c = smell(r, "repeated-claim-expiry");
+    expect(c.detail).toContain("#25(2 expired claims)"); // chunk 2's data survived
+    expect(c.detail).not.toContain("not evaluated");
   });
 });
 
