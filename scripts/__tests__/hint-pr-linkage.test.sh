@@ -18,6 +18,10 @@
 set -euo pipefail
 
 HOOK="$(cd "$(dirname "$0")/../.." && pwd)/ralph/hooks/hint-pr-linkage.sh"
+# Every case below runs the hook as `bash "$HOOK"`, which works regardless of
+# the mode bit — but hooks.json invokes the path directly, so a lost +x would
+# silently stop the hook firing while this suite stayed green.
+[ -x "$HOOK" ] || { echo "  FAIL: $HOOK is not executable (hooks.json invokes it directly)"; exit 1; }
 TMP_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -372,7 +376,20 @@ done <<'POLICIES'
 [1,2,3]
 "a bare json string"
 42
+{"apply":{"enabled":"yes"}}
+{"apply":{"enabled":1}}
+{"apply":{"enabled":"true"}}
+{"apply":{"enabled":{"x":1}}}
 POLICIES
+
+# 12e. The four cases above that PARSE cleanly are the subtler half: a
+#      non-boolean `enabled` stringifies to something that isn't "true", which
+#      would DISARM the carve-out rather than fail closed — fail-open in the one
+#      place that must not. `"yes"` and `1` are the plausible hand-edits.
+#      (`enabled: false` genuinely means inert; case 12 covers that.)
+printf '{"apply":{"enabled":null}}\n' >"$POLICY"
+run_hook "$SETTINGS_REPO" "gh pr create --title t"
+expect_hint "explicitly null apply.enabled is inert, not malformed"
 
 # 13. Armed policy, but nothing in the branch, title, or body names a unit: the
 #     carve-out can't fire. Documented limit — gate 6 is the backstop. Asserted

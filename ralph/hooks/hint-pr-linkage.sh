@@ -88,8 +88,17 @@ URL=$(grep -oiE "${SCOPE//./\\.}/pull/[0-9]+" <<<"$RESULT" | head -1 || true)
 PR="${URL##*/}"
 [ -n "$PR" ] || exit 0
 
-cd "$ROOT" || exit 0
-PRJSON=$(gh pr view "$PR" --json closingIssuesReferences,headRefName,title,body 2>/dev/null) || exit 0
+# `-R` rather than gh's implicit resolution: GH_REPO, GH_HOST and
+# `gh repo set-default` all override the cwd's remote, so an unpinned lookup
+# could read another repo's PR (and, below, another repo's labels — which
+# would flip the carve-out) even though the origin check just passed. SCOPE is
+# already host/owner/repo, which is exactly gh's [HOST/]OWNER/REPO form.
+# Bounded when `timeout` exists (stock macOS has none): these are network calls
+# on the PostToolUse path, and a hang would stall the turn until the harness
+# timeout fires. Both calls still degrade to silence on any failure.
+GH=(gh)
+if command -v timeout >/dev/null 2>&1; then GH=(timeout 10 gh); fi
+PRJSON=$("${GH[@]}" pr view "$PR" -R "$SCOPE" --json closingIssuesReferences,headRefName,title,body 2>/dev/null) || exit 0
 # GitHub's own linkage, not a regex over the body: closing keywords are also
 # honoured in commit messages, so a body-only check reports false anomalies.
 LINKED=$(jq '(.closingIssuesReferences // []) | length' <<<"$PRJSON" 2>/dev/null) || exit 0
@@ -107,7 +116,12 @@ if [ -f "$POLICY" ]; then
   # `"apply": true` can't turn a hook that promises never to fail into one that
   # prints a raw jq error. Fail closed, same as the unparseable branch below.
   if jq -e . "$POLICY" >/dev/null 2>&1; then
-    ARMED=$(jq -r '.apply.enabled // false | tostring' "$POLICY" 2>/dev/null) || ARMED=true
+    # A non-boolean `enabled` is malformed, not falsy: `"yes"` or `1` would
+    # otherwise stringify into something that isn't "true" and DISARM the
+    # carve-out — fail-open, in the one place that must fail closed.
+    ARMED=$(jq -r 'if .apply.enabled == null then "false"
+                   elif (.apply.enabled | type) == "boolean" then (.apply.enabled | tostring)
+                   else "true" end' "$POLICY" 2>/dev/null) || ARMED=true
     LABEL=$(jq -r '(.apply.label | strings) // "ralph:apply"' "$POLICY" 2>/dev/null) || LABEL="ralph:apply"
   else
     ARMED=true
@@ -127,7 +141,7 @@ if [ "$ARMED" = "true" ]; then
     [ -n "$UNIT" ] || continue
     # Captured, not piped into `grep -q`: -q exits on first match, and under
     # `pipefail` gh's EPIPE would fail the condition and skip the carve-out.
-    LABELS=$(gh issue view "$UNIT" --json labels --jq '.labels[].name' 2>/dev/null || true)
+    LABELS=$("${GH[@]}" issue view "$UNIT" -R "$SCOPE" --json labels --jq '.labels[].name' 2>/dev/null || true)
     if grep -qxF "$LABEL" <<<"$LABELS"; then exit 0; fi
   done <<<"$UNITS"
 fi
