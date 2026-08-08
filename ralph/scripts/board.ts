@@ -178,9 +178,20 @@ export interface QueueItem {
   title: string;
   state: string;
   priority: string | null; // "P0".."P3"
-  hasParent: boolean;
+  hasParent: boolean; // ANY parent (repo-blind) — the ranker's tie-break
+  /** Parent's issue number when the parent is in the OWN repo, else null.
+   *  Fail-closed partitioning: a cross-repo parent must never let a foreign
+   *  #N bind to an own-repo root when the tree is rebuilt from these edges. */
+  parentNumber: number | null;
+  /** Set by rankNext when this item was promoted into an epic root's queue
+   *  position: the root it serves. Ranking output only, never fetched. */
+  via?: number;
+  /** Set by rankNext on an epic root whose children are all blocked: the
+   *  blockage to clear instead of implementing the root wholesale. */
+  childrenBlocked?: number[];
   openBlockers: number[];
   blockersTruncated: boolean; // fail closed: truncated blocker list = blocked
+  fieldValuesTruncated: boolean; // fail closed: state/claim reads unreliable = not eligible
   claim: Claim | null;
   claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited)
   openBlockerLabels: string[]; // display form of openBlockers: "#N" own-repo, "owner/repo#N" cross-repo
@@ -196,25 +207,149 @@ function priorityRank(p: string | null): number {
   return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
 }
 
+/** An epic root the ranker demoted because its subtree is already being
+ *  worked: the driver must not be handed the root while a child is in flight. */
+export interface InFlightEpic {
+  root: number;
+  child: number; // the in-flight descendant that demoted the root
+  holder: string | null; // its claim holder, when there is one
+}
+
 /** Backlog, unblocked, unclaimed — P0 first, parented work before new roots,
  *  then oldest. Blocked items are excluded but reported separately; an item
- *  whose blocker list was truncated counts as blocked (fail closed). */
+ *  whose blocker or field-value list was truncated counts as blocked (fail
+ *  closed).
+ *
+ *  Epic directionality (GH: root→leaf pairs): the board-resident tree is
+ *  rebuilt in memory from the parent edges the page walk already fetched —
+ *  zero extra round trips. An eligible item with open board-resident children
+ *  is a live ROOT, and handing it to a driver only forces a follow-up
+ *  `board get` to find the real work, so:
+ *    - its best eligible descendant (by inherited priority, then the usual
+ *      tie-breaks) takes the root's queue position, carrying `via: root`;
+ *    - if a descendant is instead in flight (claimed, or past Backlog), the
+ *      epic is being worked — neither root nor children head the queue, and
+ *      the root is reported in `inFlightEpics`;
+ *    - if every descendant is blocked, the root stays eligible annotated with
+ *      `childrenBlocked` — the queue is never emptier than it was flat.
+ *  Priority inheritance: an item's effective rank is the best priority on its
+ *  own-repo parent chain (visited-set bounded, so a malformed cycle degrades
+ *  to own priority). A tree the board doesn't hold is invisible by
+ *  construction: an off-board parent leaves an item ranking as a plain leaf. */
 export function rankNext(items: QueueItem[]): {
   eligible: QueueItem[];
   blocked: QueueItem[];
+  inFlightEpics: InFlightEpic[];
 } {
   const backlog = items.filter((i) => i.state === "Backlog" && !i.claim);
-  const blocked = backlog.filter((i) => i.openBlockers.length > 0 || i.blockersTruncated);
-  const eligible = backlog
-    .filter((i) => i.openBlockers.length === 0 && !i.blockersTruncated)
-    .sort((a, b) => {
-      const pa = priorityRank(a.priority);
-      const pb = priorityRank(b.priority);
-      if (pa !== pb) return pa - pb;
-      if (a.hasParent !== b.hasParent) return a.hasParent ? -1 : 1;
-      return a.number - b.number;
+  const ineligible = (i: QueueItem) =>
+    i.openBlockers.length > 0 || i.blockersTruncated || i.fieldValuesTruncated;
+  const blocked = backlog.filter(ineligible);
+
+  // Board-resident tree, own-repo edges only (parentNumber is null for
+  // cross-repo parents by construction — see QueueItem).
+  const byNumber = new Map(items.map((i) => [i.number, i]));
+  const childrenOf = new Map<number, QueueItem[]>();
+  for (const i of items) {
+    if (i.parentNumber === null || !byNumber.has(i.parentNumber)) continue;
+    const list = childrenOf.get(i.parentNumber) ?? [];
+    list.push(i);
+    childrenOf.set(i.parentNumber, list);
+  }
+
+  const effRank = (i: QueueItem): number => {
+    let r = priorityRank(i.priority);
+    const seen = new Set<number>([i.number]);
+    for (let p = i.parentNumber; p !== null && !seen.has(p); ) {
+      seen.add(p);
+      const parent = byNumber.get(p);
+      if (!parent) break;
+      r = Math.min(r, priorityRank(parent.priority));
+      p = parent.parentNumber;
+    }
+    return r;
+  };
+
+  const cmp = (a: QueueItem, b: QueueItem): number => {
+    const pa = effRank(a);
+    const pb = effRank(b);
+    if (pa !== pb) return pa - pb;
+    if (a.hasParent !== b.hasParent) return a.hasParent ? -1 : 1;
+    return a.number - b.number;
+  };
+
+  const descendants = (root: QueueItem): QueueItem[] => {
+    const out: QueueItem[] = [];
+    const seen = new Set<number>([root.number]);
+    const stack = [...(childrenOf.get(root.number) ?? [])];
+    while (stack.length) {
+      const c = stack.pop()!;
+      if (seen.has(c.number)) continue;
+      seen.add(c.number);
+      out.push(c);
+      stack.push(...(childrenOf.get(c.number) ?? []));
+    }
+    return out;
+  };
+
+  const sorted = backlog.filter((i) => !ineligible(i)).sort(cmp);
+  const eligibleSet = new Set(sorted.map((i) => i.number));
+
+  // Classify live roots (eligible items with open board-resident descendants).
+  // Priority inheritance already ranks a root's best leaf at-or-above the root
+  // itself, so demotion is a filter, not a reorder: a demoted root simply
+  // yields the queue to the descendants that inherited its rank.
+  const demoted = new Set<number>();
+  const childrenBlockedOf = new Map<number, number[]>();
+  const inFlightEpics: InFlightEpic[] = [];
+  for (const i of sorted) {
+    const desc = descendants(i);
+    if (desc.length === 0) continue;
+    if (desc.some((d) => eligibleSet.has(d.number))) {
+      demoted.add(i.number); // its eligible leaves carry the epic forward
+      continue;
+    }
+    const inFlight = desc.find((d) => d.state !== "Backlog" || d.claim);
+    if (inFlight) {
+      demoted.add(i.number);
+      inFlightEpics.push({
+        root: i.number,
+        child: inFlight.number,
+        holder: inFlight.claim?.holder ?? null,
+      });
+      continue;
+    }
+    // Every descendant blocked: the root keeps its slot, but the honest next
+    // move is unblocking, not implementing the root wholesale.
+    childrenBlockedOf.set(
+      i.number,
+      desc.map((d) => d.number).sort((a, b) => a - b),
+    );
+  }
+
+  const nearestDemotedRoot = (i: QueueItem): number | undefined => {
+    const seen = new Set<number>([i.number]);
+    for (let p = i.parentNumber; p !== null && !seen.has(p); ) {
+      if (demoted.has(p)) return p;
+      seen.add(p);
+      p = byNumber.get(p)?.parentNumber ?? null;
+    }
+    return undefined;
+  };
+
+  const eligible = sorted
+    .filter((i) => !demoted.has(i.number))
+    .map((i) => {
+      const via = nearestDemotedRoot(i);
+      const childrenBlocked = childrenBlockedOf.get(i.number);
+      if (via === undefined && childrenBlocked === undefined) return i;
+      return {
+        ...i,
+        ...(via !== undefined ? { via } : {}),
+        ...(childrenBlocked !== undefined ? { childrenBlocked } : {}),
+      };
     });
-  return { eligible, blocked };
+  return { eligible, blocked, inFlightEpics };
 }
 
 /** A blocked item whose every open blocker the board itself calls finished. */
@@ -224,9 +359,10 @@ export interface StaleBlockedEdge {
 }
 
 export interface EmptyQueueReport {
-  diagnosis: "no-items" | "human-needed" | "stale-blocked" | null;
+  diagnosis: "no-items" | "human-needed" | "epic-in-flight" | "stale-blocked" | null;
   humanNeededCount: number;
   staleBlockedEdges: StaleBlockedEdge[];
+  inFlightEpics: InFlightEpic[];
 }
 
 /** Board states that assert the work is finished; an item parked here still
@@ -245,6 +381,7 @@ export function diagnoseEmptyQueue(
   items: QueueItem[],
   eligible: QueueItem[],
   blocked: QueueItem[],
+  inFlightEpics: InFlightEpic[] = [],
 ): EmptyQueueReport {
   const humanNeededCount = items.filter((i) => i.state === "Human Needed").length;
   // Match on openBlockerLabels, not bare numbers: issue numbers repeat across
@@ -261,13 +398,16 @@ export function diagnoseEmptyQueue(
         i.openBlockerLabels.every((l) => terminalHere.has(l)),
     )
     .map((i) => ({ number: i.number, blockers: i.openBlockers }));
+  // epic-in-flight outranks stale-blocked: "the only work is an epic already
+  // being worked under #R" is the more actionable fact than a stale edge.
   const diagnosis =
     eligible.length > 0 ? null
     : items.length === 0 ? "no-items"
     : humanNeededCount > 0 ? "human-needed"
+    : inFlightEpics.length > 0 ? "epic-in-flight"
     : staleBlockedEdges.length > 0 ? "stale-blocked"
     : null;
-  return { diagnosis, humanNeededCount, staleBlockedEdges };
+  return { diagnosis, humanNeededCount, staleBlockedEdges, inFlightEpics };
 }
 
 // ---------------------------------------------------------------------------
@@ -482,16 +622,26 @@ export function loadConfig(repoRoot: string): Config {
   let projectNumber = 0;
   let host = "github.com";
 
+  // Config parse failures name the file: a truncated .ralph.json must read as
+  // "fix this file" (usage, exit 64), not as an anonymous SyntaxError (exit 1).
+  const parseConfigFile = (path: string): any => {
+    try {
+      return JSON.parse(readFileSync(path, "utf8"));
+    } catch (e) {
+      throw new UsageError(`${path} is not valid JSON: ${e instanceof Error ? e.message : e}`);
+    }
+  };
+
   const ralphJson = join(repoRoot, ".ralph.json");
   const settingsJson = join(repoRoot, ".claude", "settings.json");
   if (existsSync(ralphJson)) {
-    const c = JSON.parse(readFileSync(ralphJson, "utf8"));
+    const c = parseConfigFile(ralphJson);
     owner = c.owner ?? "";
     repo = c.repo ?? "";
     projectNumber = Number(c.projectNumber ?? 0);
     host = c.host ?? host;
   } else if (existsSync(settingsJson)) {
-    const env = JSON.parse(readFileSync(settingsJson, "utf8")).env ?? {};
+    const env = parseConfigFile(settingsJson).env ?? {};
     owner = env.RALPH_GH_OWNER ?? "";
     repo = env.RALPH_GH_REPO ?? "";
     projectNumber = Number(env.RALPH_GH_PROJECT_NUMBER ?? 0);
@@ -584,7 +734,10 @@ export const realExec: ExecFn = (argv, stdin) => {
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
   });
-  return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  // A spawn failure (ENOENT: gh not installed, EACCES, …) sets r.error and
+  // leaves stderr empty — surface it, or every caller reports a blank reason.
+  const stderr = r.error ? `${r.stderr ?? ""}${r.error.message}` : (r.stderr ?? "");
+  return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr };
 };
 
 export class UsageError extends Error {}
@@ -612,7 +765,13 @@ export function ghGraphQL<T = any>(
   if (r.code !== 0) {
     throw new Error(`gh api graphql failed (exit ${r.code}): ${r.stderr.trim() || r.stdout.trim()}`);
   }
-  const body = JSON.parse(r.stdout);
+  let body: any;
+  try {
+    body = JSON.parse(r.stdout);
+  } catch {
+    // exit 0 with non-JSON stdout (proxy interstitial, truncated pipe, …)
+    throw new Error(`gh api graphql returned unparseable output: ${r.stdout.slice(0, 200)}`);
+  }
   if (body.errors?.length) {
     throw new Error(`GraphQL: ${body.errors.map((e: any) => e.message).join("; ")}`);
   }
@@ -661,43 +820,41 @@ function cachePath(ctx: Ctx): string {
 }
 
 export function refreshCache(ctx: Ctx): BoardCache {
-  const fieldsQ = `query($owner: String!, $number: Int!) {
-    OWNER_TYPE(login: $owner) {
-      projectV2(number: $number) {
-        id
-        fields(first: 50) {
-          nodes {
-            ... on ProjectV2FieldCommon { id name dataType }
-            ... on ProjectV2SingleSelectField { id name dataType options { id name } }
-          }
+  // ONE round trip: repositoryOwner covers both user- and org-owned projects
+  // (inline fragments — the non-matching type simply contributes nothing, no
+  // probe loop, no swallowed errors), and repository{id} rides as a sibling
+  // root field. A transport/auth failure now surfaces as itself instead of
+  // being eaten by a try-next-owner-type catch.
+  const data = ghGraphQL(
+    ctx,
+    `query($owner: String!, $repo: String!, $number: Int!) {
+      repositoryOwner(login: $owner) {
+        ... on User { projectV2(number: $number) { ...pf } }
+        ... on Organization { projectV2(number: $number) { ...pf } }
+      }
+      repository(owner: $owner, name: $repo) { id }
+    }
+    fragment pf on ProjectV2 {
+      id
+      fields(first: 50) {
+        nodes {
+          ... on ProjectV2FieldCommon { id name dataType }
+          ... on ProjectV2SingleSelectField { id name dataType options { id name } }
         }
       }
-    }
-  }`;
-  let project: any = null;
-  for (const ownerType of ["user", "organization"]) {
-    try {
-      const data = ghGraphQL(ctx, fieldsQ.replace("OWNER_TYPE", ownerType), {
-        owner: ctx.cfg.owner,
-        number: ctx.cfg.projectNumber,
-      });
-      project = data[ownerType]?.projectV2;
-      if (project) break;
-    } catch {
-      /* try next owner type */
-    }
-  }
+    }`,
+    { owner: ctx.cfg.owner, repo: ctx.cfg.repo, number: ctx.cfg.projectNumber },
+  );
+  const project = data.repositoryOwner?.projectV2;
   if (!project) {
     throw new Error(
       `project ${ctx.cfg.owner}/#${ctx.cfg.projectNumber} not found (checked user + organization)`,
     );
   }
-
-  const repoData = ghGraphQL(
-    ctx,
-    `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { id } }`,
-    { owner: ctx.cfg.owner, repo: ctx.cfg.repo },
-  );
+  if (!data.repository?.id) {
+    throw new Error(`repository ${ctx.cfg.owner}/${ctx.cfg.repo} not found`);
+  }
+  const repoData = data;
 
   const fields: Record<string, FieldInfo> = {};
   for (const f of project.fields.nodes) {
@@ -788,6 +945,7 @@ export interface Issue {
   issueState: "OPEN" | "CLOSED";
   stateReason: string | null;
   state: string | null; // Workflow State field (may be legacy pre-migration)
+  fieldValuesTruncated: boolean; // >FIELD_VALUE_PAGE values — state/claim reads unreliable, mutations refuse
   claim: Claim | null;
   estimate: string | null;
   priority: string | null;
@@ -801,12 +959,23 @@ export interface Issue {
   prs: Array<{ number: number; url: string; state: string; merged: boolean }>;
 }
 
-const FIELD_VALUES_FRAGMENT = `fieldValues(first: 20) {
+/** One page of field values per item. Every other paged list in this file
+ *  fails CLOSED on truncation; field values must too — Workflow State or Claim
+ *  falling past the page would blind the MACHINE legality check (a null state
+ *  skips it) and the claim guard (a null claim reads as unclaimed). */
+const FIELD_VALUE_PAGE = 50;
+
+const FIELD_VALUES_FRAGMENT = `fieldValues(first: ${FIELD_VALUE_PAGE}) {
+  pageInfo { hasNextPage }
   nodes {
     ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
     ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } }
   }
 }`;
+
+function fieldValuesTruncated(fieldValues: any): boolean {
+  return fieldValues?.pageInfo?.hasNextPage ?? false;
+}
 
 function fieldValueMap(fieldValues: any): Record<string, string> {
   const out: Record<string, string> = {};
@@ -862,6 +1031,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       issueState: issue.state,
       stateReason: issue.stateReason ?? null,
       state: fv[STATE_FIELD] ?? null,
+      fieldValuesTruncated: fieldValuesTruncated(item?.fieldValues),
       claim: parseClaim(fv[CLAIM_FIELD]),
       estimate: fv[ESTIMATE_FIELD] ?? null,
       priority: fv[PRIORITY_FIELD] ?? null,
@@ -961,6 +1131,8 @@ export function fetchHistories(ctx: Ctx, numbers: number[]): Map<number, IssueHi
   const out = new Map<number, IssueHistory>();
   if (numbers.length === 0) return out;
   return withCache(ctx, (cache) => {
+    let succeeded = 0;
+    let lastFailure: unknown = null;
     for (let start = 0; start < numbers.length; start += HISTORY_CHUNK) {
       const chunk = numbers.slice(start, start + HISTORY_CHUNK);
       const decls = chunk.map((_, k) => `$n${k}: Int!`).join(", ");
@@ -969,15 +1141,27 @@ export function fetchHistories(ctx: Ctx, numbers: number[]): Map<number, IssueHi
         .join("\n");
       const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
       chunk.forEach((n, k) => (vars[`n${k}`] = n));
-      const data = ghGraphQL(
-        ctx,
-        `query($owner: String!, $repo: String!, ${decls}) {
-          repository(owner: $owner, name: $repo) {
-            ${aliases}
-          }
-        }`,
-        vars,
-      );
+      let data: any;
+      try {
+        data = ghGraphQL(
+          ctx,
+          `query($owner: String!, $repo: String!, ${decls}) {
+            repository(owner: $owner, name: $repo) {
+              ${aliases}
+            }
+          }`,
+          vars,
+        );
+      } catch (e) {
+        // Per-CHUNK fault isolation: one failed round trip (transient 5xx, or
+        // a deleted issue's NOT_FOUND poisoning its whole alias batch) leaves
+        // this chunk's issues absent from the map — the documented caller
+        // contract ("no history = no smell") — instead of throwing away every
+        // OTHER chunk's good data and degrading all smells to "not evaluated".
+        lastFailure = e;
+        continue;
+      }
+      succeeded++;
       const repo: any = data.repository ?? {};
       chunk.forEach((n, k) => {
         const issue = repo[`a${k}`];
@@ -997,6 +1181,9 @@ export function fetchHistories(ctx: Ctx, numbers: number[]): Map<number, IssueHi
         });
       });
     }
+    // EVERY chunk failing is not partial degradation — it is the history read
+    // failing, and the caller's honest report is "not evaluated", not "no smell".
+    if (succeeded === 0 && lastFailure !== null) throw lastFailure;
     return out;
   });
 }
@@ -1148,6 +1335,15 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
   // Cache freshness resolved BEFORE any write; the body never retries.
   const cache = mutationCache(ctx, [[STATE_FIELD, to]], [CLAIM_FIELD]);
   {
+    // Fail closed BEFORE any write: a truncated field-value page means the
+    // state and claim just read may be wrong — the legality check and claim
+    // guard below would be judging fiction.
+    if (issue.fieldValuesTruncated) {
+      throw new RefusalError(
+        `#${issue.number} has more than ${FIELD_VALUE_PAGE} project field values — ` +
+          `state/claim reads are unreliable, refusing to mutate`,
+      );
+    }
     const from = issue.state;
 
     if (from !== null && !isState(from)) {
@@ -1367,9 +1563,12 @@ export function parentCheck(ctx: Ctx, parentNumber: number): string {
 // ---------------------------------------------------------------------------
 
 /** Ensure the issue is on the board with a state; new items land in Backlog. */
-export function adopt(ctx: Ctx, number: number): Issue {
+export function adopt(ctx: Ctx, number: number, prefetched?: Issue): Issue {
   const cache = mutationCache(ctx, [[STATE_FIELD, "Backlog"]]);
-  let issue = fetchIssue(ctx, number);
+  // `prefetched` is internal plumbing for reconcile, whose own read of the
+  // same issue is milliseconds old — the CLI `board adopt` path always reads
+  // fresh. The echo re-read at the bottom (adopt's parity contract) stays.
+  let issue = prefetched ?? fetchIssue(ctx, number);
   if (issue.archived) return issue; // archived items reject writes — no-op
   if (!issue.itemId) {
     const added = ghGraphQL(
@@ -1398,7 +1597,7 @@ export function reconcile(ctx: Ctx, number: number): string {
   {
     const issue = fetchIssue(ctx, number);
     if (!issue.itemId) {
-      adopt(ctx, number);
+      adopt(ctx, number, issue);
       return `#${number}: adopted to board (Backlog)`;
     }
     if (issue.archived) {
@@ -1530,7 +1729,7 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
                       number title state stateReason closedAt
                       labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
                       repository { nameWithOwner }
-                      parent { number }
+                      parent { number repository { nameWithOwner } }
                       blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }
                     }
                   }
@@ -1573,12 +1772,19 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
           state: fv[STATE_FIELD] ?? "(none)",
           priority: fv[PRIORITY_FIELD] ?? null,
           hasParent: !!c.parent,
+          // Own-repo parents only: a foreign parent's #N must never rebuild
+          // a tree edge onto this repo's #N (fail-closed, like blocker labels).
+          parentNumber:
+            c.parent && c.parent.repository?.nameWithOwner?.toLowerCase() === self
+              ? c.parent.number
+              : null,
           openBlockers: openBlockerNodes.map((b: any) => b.number),
           openBlockerLabels: openBlockerNodes.map((b: any) => {
             const r = b.repository?.nameWithOwner;
             return r && r.toLowerCase() !== self ? `${r}#${b.number}` : `#${b.number}`;
           }),
           blockersTruncated: c.blockedBy?.pageInfo?.hasNextPage ?? false,
+          fieldValuesTruncated: fieldValuesTruncated(n.fieldValues),
           claim: parseClaim(fv[CLAIM_FIELD]),
           claimRaw: fv[CLAIM_FIELD] ?? null,
           labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
@@ -1681,28 +1887,64 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
   }
 }
 
+/** Node ids only, one aliased round trip for any number of issues. link/dep/
+ *  comment need exactly this — paying fetchIssue's full payload (100 labels,
+ *  50 sub-issues with nested field values, 50 blockers) twice per `board dep`
+ *  was the wrong reuse. Repository-scoped like every read, so a bare number
+ *  still cannot resolve outside the configured repo. */
+export function fetchNodeIds(ctx: Ctx, numbers: number[]): Map<number, string> {
+  const decls = numbers.map((_, k) => `$n${k}: Int!`).join(", ");
+  const aliases = numbers.map((_, k) => `a${k}: issue(number: $n${k}) { id }`).join(" ");
+  const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
+  numbers.forEach((n, k) => (vars[`n${k}`] = n));
+  let data: any;
+  try {
+    data = ghGraphQL(
+      ctx,
+      `query($owner: String!, $repo: String!, ${decls}) {
+        repository(owner: $owner, name: $repo) { ${aliases} }
+      }`,
+      vars,
+    );
+  } catch (e) {
+    // A missing issue surfaces as a NOT_FOUND entry in body.errors; keep
+    // fetchIssue's contract (UsageError, exit 64) rather than a bare Error.
+    if (e instanceof Error && /NOT_FOUND|Could not resolve/i.test(e.message)) {
+      throw new UsageError(
+        `issue not found in ${ctx.cfg.owner}/${ctx.cfg.repo} (of #${numbers.join(", #")}): ${e.message}`,
+      );
+    }
+    throw e;
+  }
+  const out = new Map<number, string>();
+  numbers.forEach((n, k) => {
+    const id = data.repository?.[`a${k}`]?.id;
+    if (!id) throw new UsageError(`issue #${n} not found in ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+    out.set(n, id);
+  });
+  return out;
+}
+
 export function linkParent(ctx: Ctx, parentNumber: number, childNumber: number): void {
-  const parent = fetchIssue(ctx, parentNumber);
-  const child = fetchIssue(ctx, childNumber);
+  const ids = fetchNodeIds(ctx, [parentNumber, childNumber]);
   ghGraphQL(
     ctx,
     `mutation($parentId: ID!, $childId: ID!) {
       addSubIssue(input: { issueId: $parentId, subIssueId: $childId }) { issue { id } }
     }`,
-    { parentId: parent.nodeId, childId: child.nodeId },
+    { parentId: ids.get(parentNumber), childId: ids.get(childNumber) },
   );
 }
 
 export function setDependency(ctx: Ctx, blockedNumber: number, blockingNumber: number, remove = false): void {
-  const blocked = fetchIssue(ctx, blockedNumber);
-  const blocking = fetchIssue(ctx, blockingNumber);
+  const ids = fetchNodeIds(ctx, [blockedNumber, blockingNumber]);
   const mutation = remove ? "removeBlockedBy" : "addBlockedBy";
   ghGraphQL(
     ctx,
     `mutation($blockedId: ID!, $blockingId: ID!) {
       ${mutation}(input: { issueId: $blockedId, blockingIssueId: $blockingId }) { issue { id } }
     }`,
-    { blockedId: blocked.nodeId, blockingId: blocking.nodeId },
+    { blockedId: ids.get(blockedNumber), blockingId: ids.get(blockingNumber) },
   );
 }
 
@@ -2084,7 +2326,10 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
 
   // state-guard proof-of-fire (Phase 2 workflow; tolerate absence)
   const runs = ctx.exec([
-    "gh", "run", "list", "--workflow", "state-guard.yml", "--limit", "5",
+    // -R pins the check to the CONFIGURED repo (and host): run from a foreign
+    // clone this must not judge whatever repo cwd resolves to.
+    "gh", "run", "list", "-R", `${ctx.cfg.host}/${ctx.cfg.owner}/${ctx.cfg.repo}`,
+    "--workflow", "state-guard.yml", "--limit", "5",
     "--json", "conclusion,updatedAt",
   ]);
   if (runs.code === 0) {
@@ -2519,7 +2764,10 @@ const HELP = `board — the ralph v2 board CLI (sole sanctioned mutation path)
 reads
   get NNN [--json]            issue: state, claim, parent/children, blockers, PRs
   list [--state S] [--json]   open items on the board
-  next [--json]               top-ranked actionable Backlog item (+ blocked report)
+  next [--json]               top-ranked actionable Backlog item (+ blocked report).
+                              Epic-aware: an epic root yields to its best open
+                              leaf (leaf inherits the root's priority, carries
+                              "via"); an epic with a child in flight heads nothing
   tree NNN                    subtree with states
 
 mutations
@@ -2603,6 +2851,11 @@ function emptyQueueLine(blocked: QueueItem[], dx: EmptyQueueReport): string {
     return `queue empty — nothing on the board; intake via /ralph:board or board create --title ...`;
   if (dx.diagnosis === "human-needed")
     return `queue empty — ${dx.humanNeededCount} in Human Needed awaiting answers (/ralph:board walks the queue)`;
+  if (dx.diagnosis === "epic-in-flight") {
+    const e = dx.inFlightEpics[0];
+    const who = e.holder ? ` claimed by ${e.holder}` : " in flight";
+    return `queue empty — epic #${e.root} is being worked (child #${e.child}${who})`;
+  }
   if (!blocked.length) return "queue empty";
   const stale = dx.diagnosis === "stale-blocked" ? dx.staleBlockedEdges[0] : null;
   const hint = stale
@@ -2677,13 +2930,18 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "next": {
       const own = ownRepo(ctx, listItems(ctx)).own;
-      const { eligible, blocked } = rankNext(own);
+      const { eligible, blocked, inFlightEpics } = rankNext(own);
       // --json carries the diagnosis as fields, never as the prose line.
-      const dx = diagnoseEmptyQueue(own, eligible, blocked);
+      const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics);
       if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked, ...dx });
       else if (eligible.length === 0) out(emptyQueueLine(blocked, dx));
       else {
-        out(`next: #${eligible[0].number} ${eligible[0].title}`);
+        const head = eligible[0];
+        out(
+          `next: #${head.number} ${head.title}` +
+            (head.via !== undefined ? ` (under epic #${head.via})` : "") +
+            (head.childrenBlocked ? ` (children blocked: ${head.childrenBlocked.map((n) => `#${n}`).join(" ")})` : ""),
+        );
         for (const i of eligible.slice(1, 6)) out(`  then #${i.number} ${i.title}`);
         if (blocked.length) out(`  blocked: ${blocked.map((b) => `#${b.number}←${b.openBlockerLabels.join("+")}`).join(" ")}`);
       }
@@ -2789,9 +3047,9 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "comment": {
       if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`comment requires -m "<body>"`);
-      const issue = fetchIssue(ctx, requireNumber(positional[0]));
-      addComment(ctx, issue.nodeId, flags.m);
-      out(`commented on #${issue.number}`);
+      const number = requireNumber(positional[0]);
+      addComment(ctx, fetchNodeIds(ctx, [number]).get(number)!, flags.m);
+      out(`commented on #${number}`);
       return 0;
     }
 

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "board": "tsx ralph/scripts/board.ts",
-    "test:board": "vitest run ralph/scripts/board.test.ts"
+    "test:board": "vitest run ralph/scripts/"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
