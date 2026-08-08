@@ -270,7 +270,3 @@ jobs:
           scandir: scripts
           severity: error
           format: gcc
-
-  # GH-1458: assert documented agent/skill/tool rosters in CLAUDE.md / README.md
-  # match the source files, so docs and code can't silently diverge (the failure
-  # mode GH-1452 had to fix by hand).
