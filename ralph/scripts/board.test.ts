@@ -1135,6 +1135,109 @@ describe("next: cross-repo blocker labels", () => {
   });
 });
 
+describe("next: tiered queue-empty diagnosis", () => {
+  const lines: string[] = [];
+  let restore = () => {};
+  beforeEach(() => {
+    lines.length = 0;
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      lines.push(String(s));
+      return true;
+    });
+    restore = () => spy.mockRestore();
+  });
+  afterEach(() => restore());
+  const said = () => lines.join("").trimEnd();
+
+  it("tier 2 — an empty board names intake, not just emptiness", () => {
+    const ctx = makeCtx(new FakeGh());
+    run(["next"], ctx);
+    expect(said()).toBe("queue empty — nothing on the board; intake via /ralph:board or board create --title ...");
+  });
+
+  it("tier 3 — Human Needed outranks the blocked report; still exactly one line", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    gh.issues.set(2, { number: 2, state: "Human Needed" });
+    gh.issues.set(3, { number: 3, state: "Backlog", blockedBy: [{ number: 9, state: "OPEN" }] });
+    gh.issues.set(9, { number: 9, state: "In Progress" });
+
+    run(["next"], makeCtx(gh));
+    expect(said()).toBe("queue empty — 2 in Human Needed awaiting answers (/ralph:board walks the queue)");
+  });
+
+  it("tier 4 — a blocker the board already calls Done reads as a stale edge, with the removal command", () => {
+    const gh = new FakeGh();
+    gh.issues.set(3, { number: 3, state: "Backlog", blockedBy: [{ number: 9, state: "OPEN" }] });
+    gh.issues.set(9, { number: 9, state: "Done" }); // open on GitHub, terminal on the board
+
+    run(["next"], makeCtx(gh));
+    expect(said()).toBe(
+      "queue empty (1 blocked: #3 — #3's blockers are all resolved on the board; stale edge? board dep 3 --on 9 --rm)",
+    );
+  });
+
+  it("tier 4 fails closed — a truncated blocker list is never called stale", () => {
+    const gh = new FakeGh();
+    gh.issues.set(3, {
+      number: 3, state: "Backlog", blockersTruncated: true,
+      blockedBy: [{ number: 9, state: "OPEN" }],
+    });
+    gh.issues.set(9, { number: 9, state: "Done" });
+
+    run(["next"], makeCtx(gh));
+    expect(said()).toBe("queue empty (1 blocked: #3)");
+  });
+
+  it("tier 5 — a live blocker prints today's line, unchanged", () => {
+    const gh = new FakeGh();
+    gh.issues.set(3, { number: 3, state: "Backlog", blockedBy: [{ number: 9, state: "OPEN" }] });
+    gh.issues.set(4, { number: 4, state: "Backlog", blockedBy: [{ number: 9, state: "OPEN" }] });
+    gh.issues.set(9, { number: 9, state: "In Progress" });
+
+    run(["next"], makeCtx(gh));
+    expect(said()).toBe("queue empty (2 blocked: #3 #4)");
+  });
+
+  it("a non-empty queue is byte-identical to today's output — no hint on a healthy run", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(2, { number: 2, state: "Backlog" });
+    gh.issues.set(3, { number: 3, state: "Backlog", blockedBy: [{ number: 9, state: "OPEN" }] });
+    gh.issues.set(4, { number: 4, state: "Human Needed" }); // would fire tier 3 on an empty queue
+    gh.issues.set(9, { number: 9, state: "Done" }); // would fire tier 4 on an empty queue
+
+    run(["next"], makeCtx(gh));
+    expect(said()).toBe("next: #1 Issue 1\n  then #2 Issue 2\n  blocked: #3←#9");
+  });
+
+  it("--json gets the diagnosis as fields, never as prose", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    gh.issues.set(3, { number: 3, state: "Backlog", blockedBy: [{ number: 9, state: "OPEN" }] });
+    gh.issues.set(9, { number: 9, state: "Done" });
+
+    run(["next", "--json"], makeCtx(gh));
+    const parsed = JSON.parse(lines.join(""));
+    expect(parsed.diagnosis).toBe("human-needed"); // first match wins here too
+    expect(parsed.humanNeededCount).toBe(1);
+    expect(parsed.staleBlockedEdges).toEqual([{ number: 3, blockers: [9] }]);
+    expect(parsed.next).toBeNull();
+    expect(JSON.stringify(parsed)).not.toContain("queue empty");
+  });
+
+  it("--json on a healthy queue reports no diagnosis", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(4, { number: 4, state: "Human Needed" });
+
+    run(["next", "--json"], makeCtx(gh));
+    const parsed = JSON.parse(lines.join(""));
+    expect(parsed.diagnosis).toBeNull();
+    expect(parsed.humanNeededCount).toBe(1); // facts stay; only the verdict is gated
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Setup — full field provisioning, host conventions respected
 // ---------------------------------------------------------------------------

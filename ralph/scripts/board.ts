@@ -193,6 +193,54 @@ export function rankNext(items: QueueItem[]): {
   return { eligible, blocked };
 }
 
+/** A blocked item whose every open blocker the board itself calls finished. */
+export interface StaleBlockedEdge {
+  number: number;
+  blockers: number[]; // the open-on-GitHub, terminal-on-board blockers
+}
+
+export interface EmptyQueueReport {
+  diagnosis: "no-items" | "human-needed" | "stale-blocked" | null;
+  humanNeededCount: number;
+  staleBlockedEdges: StaleBlockedEdge[];
+}
+
+/** Board states that assert the work is finished; an item parked here still
+ *  open on GitHub is the contradiction a stale blocked edge is made of. */
+const TERMINAL_BOARD_STATES = new Set(["Done", "Canceled"]);
+
+/** Why nothing is actionable, from data the caller already fetched — no new
+ *  round trip. Tiers are mutually exclusive, first match wins, and `diagnosis`
+ *  is null whenever anything IS eligible: a healthy run has no anomaly to name.
+ *
+ *  A GitHub-closed blocker never reaches openBlockers, so the only reachable
+ *  form of "the block is not real" is a blocker the board has moved to a
+ *  terminal state while the issue stayed open. A truncated blocker list hides
+ *  blockers, so it counts as live — the same fail-closed rule the ranker uses. */
+export function diagnoseEmptyQueue(
+  items: QueueItem[],
+  eligible: QueueItem[],
+  blocked: QueueItem[],
+): EmptyQueueReport {
+  const humanNeededCount = items.filter((i) => i.state === "Human Needed").length;
+  const boardState = new Map(items.map((i) => [i.number, i.state]));
+  const staleBlockedEdges = blocked
+    .filter(
+      (i) =>
+        !i.blockersTruncated &&
+        i.openBlockers.length > 0 &&
+        i.openBlockers.every((n) => TERMINAL_BOARD_STATES.has(boardState.get(n) ?? "")),
+    )
+    .map((i) => ({ number: i.number, blockers: i.openBlockers }));
+  const diagnosis =
+    eligible.length > 0 ? null
+    : items.length === 0 ? "no-items"
+    : humanNeededCount > 0 ? "human-needed"
+    : staleBlockedEdges.length > 0 ? "stale-blocked"
+    : null;
+  return { diagnosis, humanNeededCount, staleBlockedEdges };
+}
+
 // ---------------------------------------------------------------------------
 // Config + scope
 // ---------------------------------------------------------------------------
@@ -2260,6 +2308,21 @@ function issueLine(i: Issue): string {
   return `#${i.number} [${i.state ?? "no-state"}]${claim}${parent}${blocked} ${i.title}`;
 }
 
+/** Exactly one line, whatever the tier. With no diagnosis it is byte-identical
+ *  to what an empty queue has always printed. */
+function emptyQueueLine(blocked: QueueItem[], dx: EmptyQueueReport): string {
+  if (dx.diagnosis === "no-items")
+    return `queue empty — nothing on the board; intake via /ralph:board or board create --title ...`;
+  if (dx.diagnosis === "human-needed")
+    return `queue empty — ${dx.humanNeededCount} in Human Needed awaiting answers (/ralph:board walks the queue)`;
+  if (!blocked.length) return "queue empty";
+  const stale = dx.diagnosis === "stale-blocked" ? dx.staleBlockedEdges[0] : null;
+  const hint = stale
+    ? ` — #${stale.number}'s blockers are all resolved on the board; stale edge? board dep ${stale.number} --on ${stale.blockers[0]} --rm`
+    : "";
+  return `queue empty (${blocked.length} blocked: ${blocked.map((b) => `#${b.number}`).join(" ")}${hint})`;
+}
+
 function requireNumber(p: string | undefined, what = "issue number"): number {
   const n = Number(p);
   if (!p || !Number.isInteger(n) || n <= 0) throw new UsageError(`${what} required`);
@@ -2325,9 +2388,12 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "next": {
-      const { eligible, blocked } = rankNext(ownRepo(ctx, listItems(ctx)).own);
-      if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked });
-      else if (eligible.length === 0) out(`queue empty${blocked.length ? ` (${blocked.length} blocked: ${blocked.map((b) => `#${b.number}`).join(" ")})` : ""}`);
+      const own = ownRepo(ctx, listItems(ctx)).own;
+      const { eligible, blocked } = rankNext(own);
+      // --json carries the diagnosis as fields, never as the prose line.
+      const dx = diagnoseEmptyQueue(own, eligible, blocked);
+      if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked, ...dx });
+      else if (eligible.length === 0) out(emptyQueueLine(blocked, dx));
       else {
         out(`next: #${eligible[0].number} ${eligible[0].title}`);
         for (const i of eligible.slice(1, 6)) out(`  then #${i.number} ${i.title}`);
