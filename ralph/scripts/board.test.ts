@@ -18,6 +18,8 @@ import {
   parseApplyEvidence,
   parseVerifyAfter,
   validateApplyEvidence,
+  claimExpiry,
+  claimHintDue,
   claimIsStale,
   type Config,
   createIssue,
@@ -26,6 +28,7 @@ import {
   encodeClaim,
   type ExecResult,
   fetchIssue,
+  formatLocalHm,
   legalTransition,
   LEGACY_STATES,
   listItems,
@@ -119,6 +122,26 @@ describe("claims", () => {
     const at = (min: number) => new Date(t0.getTime() + min * 60_000);
     expect(claimIsStale(claim, at(119), 120)).toBe(false);
     expect(claimIsStale(claim, at(120), 120)).toBe(true);
+  });
+
+  it("the expiry hint is due strictly past 75% of TTL and only while fresh", () => {
+    const claim = { holder: "x", since: t0 };
+    const at = (min: number) => new Date(t0.getTime() + min * 60_000);
+    expect(claimHintDue(claim, at(0), 120)).toBe(false);
+    expect(claimHintDue(claim, at(90), 120)).toBe(false); // exactly 75% — not yet
+    expect(claimHintDue(claim, at(91), 120)).toBe(true);
+    expect(claimHintDue(claim, at(119), 120)).toBe(true);
+    expect(claimHintDue(claim, at(120), 120)).toBe(false); // stale — a different refusal
+  });
+
+  it("expiry is since + TTL, rendered as local HH:MM", () => {
+    const claim = { holder: "x", since: t0 };
+    const exp = claimExpiry(claim, 120);
+    expect(exp.getTime() - t0.getTime()).toBe(120 * 60_000);
+    expect(formatLocalHm(exp)).toBe(
+      `${String(exp.getHours()).padStart(2, "0")}:${String(exp.getMinutes()).padStart(2, "0")}`,
+    );
+    expect(formatLocalHm(new Date(2026, 0, 2, 4, 5))).toBe("04:05"); // zero-padded
   });
 });
 
@@ -552,6 +575,18 @@ class FakeGh {
 const ok = (stdout: string): ExecResult => ({ code: 0, stdout, stderr: "" });
 const data = (d: unknown): ExecResult => ok(JSON.stringify({ data: d }));
 
+/** Refusal text is a contract here (byte-identical fresh-claim refusals), so
+ *  assert on the message rather than a regex through toThrow. */
+function refusalMessage(fn: () => unknown): string {
+  try {
+    fn();
+  } catch (e) {
+    if (e instanceof RefusalError) return e.message;
+    throw e;
+  }
+  throw new Error("expected a RefusalError, got none");
+}
+
 function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo"): Ctx {
   const cfg: Config = {
     owner: "cdubiel08",
@@ -597,6 +632,55 @@ describe("transition engine", () => {
     expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(RefusalError);
     expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/other@host/);
     expect(gh.mutations).toEqual([]); // refused before any write
+  });
+
+  it("a fresh foreign claim's refusal carries no expiry hint (racing a live holder is healthy)", () => {
+    gh.issues.set(1, {
+      number: 1, state: "Backlog",
+      claim: encodeClaim("other@host", new Date(NOW.getTime() - 30 * 60_000)),
+    });
+    const msg = refusalMessage(() => transition(ctx, fetchIssue(ctx, 1), "In Progress"));
+    expect(msg).toBe(
+      "#1 is claimed by other@host (30 min ago, TTL 120 min). " +
+        "Pick other work, or wait for TTL and use `board claim 1 --steal`.",
+    );
+  });
+
+  it("exactly 75% elapsed is still hint-free — the threshold is strictly greater", () => {
+    gh.issues.set(1, {
+      number: 1, state: "Backlog",
+      claim: encodeClaim("other@host", new Date(NOW.getTime() - 90 * 60_000)),
+    });
+    const msg = refusalMessage(() => transition(ctx, fetchIssue(ctx, 1), "In Progress"));
+    expect(msg).not.toContain("expires");
+    expect(msg.split("\n")).toHaveLength(1);
+  });
+
+  it("late in the TTL, the refusal appends ONE line naming the expiry clock time", () => {
+    const since = new Date(NOW.getTime() - 100 * 60_000);
+    gh.issues.set(1, { number: 1, state: "Backlog", claim: encodeClaim("other@host", since) });
+    const msg = refusalMessage(() => transition(ctx, fetchIssue(ctx, 1), "In Progress"));
+    const lines = msg.split("\n");
+    expect(lines).toHaveLength(2);
+    // Line 1 is byte-identical to the un-hinted refusal.
+    expect(lines[0]).toBe(
+      "#1 is claimed by other@host (100 min ago, TTL 120 min). " +
+        "Pick other work, or wait for TTL and use `board claim 1 --steal`.",
+    );
+    expect(lines[1]).toBe(
+      `That claim expires ~${formatLocalHm(new Date(since.getTime() + 120 * 60_000))} — ` +
+        "`board claim 1 --steal` is honest after that.",
+    );
+    expect(gh.mutations).toEqual([]); // still refused before any write
+  });
+
+  it("the hint rides an unchanged refusal: still RefusalError (exit 2), still no writes", () => {
+    gh.issues.set(1, {
+      number: 1, state: "Backlog",
+      claim: encodeClaim("other@host", new Date(NOW.getTime() - 110 * 60_000)),
+    });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(RefusalError);
+    expect(gh.mutations).toEqual([]);
   });
 
   it("stale foreign claim: refused without --steal, evicted with it (comment posted)", () => {
