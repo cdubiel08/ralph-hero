@@ -236,7 +236,19 @@ export interface InFlightEpic {
  *  own-repo parent chain (visited-set bounded, so a malformed cycle degrades
  *  to own priority). A tree the board doesn't hold is invisible by
  *  construction: an off-board parent leaves an item ranking as a plain leaf. */
-export function rankNext(items: QueueItem[]): {
+/** A closed board item's tree edge: closed nodes are PASS-THROUGH topology —
+ *  a Done phase between an epic root and its live grandchildren must not sever
+ *  the tree — but contribute nothing else (no eligibility, no in-flight
+ *  status, no priority). */
+export interface ClosedEdge {
+  number: number;
+  parentNumber: number | null;
+}
+
+export function rankNext(
+  items: QueueItem[],
+  closedEdges: ClosedEdge[] = [],
+): {
   eligible: QueueItem[];
   blocked: QueueItem[];
   inFlightEpics: InFlightEpic[];
@@ -247,25 +259,28 @@ export function rankNext(items: QueueItem[]): {
   const blocked = backlog.filter(ineligible);
 
   // Board-resident tree, own-repo edges only (parentNumber is null for
-  // cross-repo parents by construction — see QueueItem).
+  // cross-repo parents by construction — see QueueItem). Closed items pass
+  // topology through; open items carry everything else.
   const byNumber = new Map(items.map((i) => [i.number, i]));
-  const childrenOf = new Map<number, QueueItem[]>();
-  for (const i of items) {
-    if (i.parentNumber === null || !byNumber.has(i.parentNumber)) continue;
-    const list = childrenOf.get(i.parentNumber) ?? [];
-    list.push(i);
-    childrenOf.set(i.parentNumber, list);
+  const parentOf = new Map<number, number | null>();
+  for (const i of items) parentOf.set(i.number, i.parentNumber);
+  for (const e of closedEdges) if (!parentOf.has(e.number)) parentOf.set(e.number, e.parentNumber);
+  const childrenOf = new Map<number, number[]>();
+  for (const [n, p] of parentOf) {
+    if (p === null || !parentOf.has(p)) continue;
+    const list = childrenOf.get(p) ?? [];
+    list.push(n);
+    childrenOf.set(p, list);
   }
 
   const effRank = (i: QueueItem): number => {
     let r = priorityRank(i.priority);
     const seen = new Set<number>([i.number]);
-    for (let p = i.parentNumber; p !== null && !seen.has(p); ) {
+    for (let p = i.parentNumber; p != null && !seen.has(p); ) {
       seen.add(p);
-      const parent = byNumber.get(p);
-      if (!parent) break;
-      r = Math.min(r, priorityRank(parent.priority));
-      p = parent.parentNumber;
+      const parent = byNumber.get(p); // closed ancestors pass through, rankless
+      if (parent) r = Math.min(r, priorityRank(parent.priority));
+      p = parentOf.get(p) ?? null;
     }
     return r;
   };
@@ -278,16 +293,18 @@ export function rankNext(items: QueueItem[]): {
     return a.number - b.number;
   };
 
+  /** OPEN descendants, walking through closed pass-through nodes. */
   const descendants = (root: QueueItem): QueueItem[] => {
     const out: QueueItem[] = [];
     const seen = new Set<number>([root.number]);
     const stack = [...(childrenOf.get(root.number) ?? [])];
     while (stack.length) {
-      const c = stack.pop()!;
-      if (seen.has(c.number)) continue;
-      seen.add(c.number);
-      out.push(c);
-      stack.push(...(childrenOf.get(c.number) ?? []));
+      const n = stack.pop()!;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      const open = byNumber.get(n);
+      if (open) out.push(open);
+      stack.push(...(childrenOf.get(n) ?? []));
     }
     return out;
   };
@@ -309,7 +326,13 @@ export function rankNext(items: QueueItem[]): {
       demoted.add(i.number); // its eligible leaves carry the epic forward
       continue;
     }
-    const inFlight = desc.find((d) => d.state !== "Backlog" || d.claim);
+    // In flight = actively worked: claimed, or in a WORKING state. A terminal
+    // board state (Done/Canceled) on a still-open issue is reconcile DRIFT,
+    // not flight — counting it would suppress the epic and assert work that
+    // does not exist, for as long as the corrective cron stays broken.
+    const inFlight = desc.find(
+      (d) => (d.state !== "Backlog" && !TERMINAL_BOARD_STATES.has(d.state)) || d.claim,
+    );
     if (inFlight) {
       demoted.add(i.number);
       inFlightEpics.push({
@@ -319,20 +342,22 @@ export function rankNext(items: QueueItem[]): {
       });
       continue;
     }
-    // Every descendant blocked: the root keeps its slot, but the honest next
-    // move is unblocking, not implementing the root wholesale.
-    childrenBlockedOf.set(
-      i.number,
-      desc.map((d) => d.number).sort((a, b) => a - b),
-    );
+    // Remaining descendants are blocked (or terminal drift): the root keeps
+    // its slot, and the honest next move for the blocked ones is unblocking,
+    // not implementing the root wholesale.
+    const blockedDesc = desc
+      .filter((d) => d.state === "Backlog")
+      .map((d) => d.number)
+      .sort((a, b) => a - b);
+    if (blockedDesc.length) childrenBlockedOf.set(i.number, blockedDesc);
   }
 
   const nearestDemotedRoot = (i: QueueItem): number | undefined => {
     const seen = new Set<number>([i.number]);
-    for (let p = i.parentNumber; p !== null && !seen.has(p); ) {
+    for (let p = i.parentNumber; p != null && !seen.has(p); ) {
       if (demoted.has(p)) return p;
       seen.add(p);
-      p = byNumber.get(p)?.parentNumber ?? null;
+      p = parentOf.get(p) ?? null;
     }
     return undefined;
   };
@@ -952,7 +977,15 @@ export interface Issue {
   labels: string[];
   labelsTruncated: boolean; // >LABEL_PAGE labels — apply detection fails closed
   parent: { number: number; title: string } | null;
-  children: Array<{ number: number; title: string; issueState: string; state: string | null }>;
+  children: Array<{
+    number: number;
+    title: string;
+    issueState: string;
+    state: string | null;
+    /** Child's own field-value page truncated: its board state is unreadable,
+     *  not unset. Display-only — parentCheck gates on issueState, never this. */
+    fieldValuesTruncated: boolean;
+  }>;
   childrenTruncated: boolean; // >50 children — parentCheck fails closed on this
   blockedBy: Array<{ number: number; issueState: string; repo: string }>;
   blockersTruncated: boolean;
@@ -1047,6 +1080,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
           title: c.title,
           issueState: c.state,
           state: fieldValueMap(cItem?.fieldValues)[STATE_FIELD] ?? null,
+          fieldValuesTruncated: fieldValuesTruncated(cItem?.fieldValues),
         };
       }),
       childrenTruncated: issue.subIssues?.pageInfo?.hasNextPage ?? false,
@@ -1486,6 +1520,16 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     // makes the loser find out and back off instead of believing it holds
     // the item. A residual window remains (documented in the design).
     const after = fetchIssue(ctx, issue.number);
+    // The write itself can push the item past the page (Claim + Status add up
+    // to two values): a truncated echo cannot verify claim state, and must
+    // say so rather than let the null-claim branches assert a race narrative
+    // ("vanished"/"lost") that may be fiction.
+    if ((to === "In Progress" || leavingInProgress) && after.fieldValuesTruncated) {
+      throw new RefusalError(
+        `#${issue.number}: the post-write read came back truncated (>${FIELD_VALUE_PAGE} field values) — ` +
+          `claim state unverifiable; check with \`board get ${issue.number}\` or let doctor reconcile`,
+      );
+    }
     if (to === "In Progress" && after.claim?.holder !== ctx.cfg.holder) {
       // Either a rival's write landed last, or a concurrent clear wiped the
       // claim — in both cases this session does NOT hold the item.
@@ -1525,6 +1569,9 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
 export function parentCheck(ctx: Ctx, parentNumber: number): string {
   const parent = fetchIssue(ctx, parentNumber);
   if (parent.children.length === 0) return `#${parentNumber}: no children`;
+  if (parent.fieldValuesTruncated) {
+    return `#${parentNumber}: field values truncated (>${FIELD_VALUE_PAGE}) — state unreadable, refusing to gate`;
+  }
   if (parent.state === null || !isState(parent.state)) return `#${parentNumber}: not on v2 board`;
   if (["In Review", "Done", "Canceled"].includes(parent.state)) {
     return `#${parentNumber}: already ${parent.state}`;
@@ -1580,7 +1627,11 @@ export function adopt(ctx: Ctx, number: number, prefetched?: Issue): Issue {
     );
     issue = { ...issue, itemId: added.addProjectV2ItemById.item.id };
   }
-  if (issue.state === null) {
+  // state === null on a TRUNCATED read may be a live state past the page —
+  // adding to the board (above) is safe for a truncated item (a never-added
+  // item has no field values), but writing Backlog over an unreadable state
+  // is not (fail closed, like every write lane).
+  if (issue.state === null && !issue.fieldValuesTruncated) {
     setSingleSelect(ctx, cache, issue.itemId!, STATE_FIELD, "Backlog");
     syncStatus(ctx, cache, issue.itemId!, "Backlog");
   }
@@ -1602,6 +1653,12 @@ export function reconcile(ctx: Ctx, number: number): string {
     }
     if (issue.archived) {
       return `#${number}: project item archived — skipped (unarchive in the board UI to reconcile)`;
+    }
+    // Fail closed on a truncated field-value page: the state this lane would
+    // "correct" may simply have fallen past the page window, and reconciling
+    // fiction demotes live WIP (the reconciler cron would redo it every tick).
+    if (issue.fieldValuesTruncated) {
+      return `#${number}: field values truncated (>${FIELD_VALUE_PAGE}) — state unreadable, refusing to reconcile`;
     }
 
     // Apply-kind correction lane (GH-1693). GitHub has no pre-close hook, so a
@@ -1702,6 +1759,7 @@ export interface ClosedItem {
   labelsTruncated: boolean; // fail closed: a truncated label list counts as apply-kind
   stateReason: string | null; // COMPLETED vs NOT_PLANNED — only the former is a claim of success
   closedAt: string | null; // ISO; how long an unevidenced close has been standing
+  parentNumber: number | null; // own-repo parent — closed nodes pass tree topology through
 }
 
 /** One page walk, two views: open items for the queue, closed items for
@@ -1758,6 +1816,10 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
             labelsTruncated: c.labels?.pageInfo?.hasNextPage ?? false,
             stateReason: c.stateReason ?? null,
             closedAt: c.closedAt ?? null,
+            parentNumber:
+              c.parent && c.parent.repository?.nameWithOwner?.toLowerCase() === self
+                ? c.parent.number
+                : null,
           });
           continue;
         }
@@ -2836,6 +2898,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { positional, flags };
 }
 
+/** A truncated child read means its board state is UNREADABLE, not unset —
+ *  "(none)"-style output would send the operator fixing a state that exists. */
+function childStateLabel(c: Issue["children"][number]): string {
+  if (c.state !== null) return c.state;
+  return c.fieldValuesTruncated ? "state unreadable — field values truncated" : c.issueState;
+}
+
 function issueLine(i: Issue): string {
   const claim = i.claim ? ` claim=${i.claim.holder}@${i.claim.since.toISOString()}` : "";
   const parent = i.parent ? ` parent=#${i.parent.number}` : "";
@@ -2907,7 +2976,8 @@ export function run(argv: string[], ctx: Ctx): number {
       if (flags.json) json(issue);
       else {
         out(issueLine(issue));
-        for (const c of issue.children) out(`  child #${c.number} [${c.state ?? c.issueState}] ${c.title}`);
+        for (const c of issue.children)
+          out(`  child #${c.number} [${childStateLabel(c)}] ${c.title}`);
         for (const p of issue.prs) out(`  pr #${p.number} ${p.merged ? "merged" : p.state} ${p.url}`);
       }
       return 0;
@@ -2929,8 +2999,11 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "next": {
-      const own = ownRepo(ctx, listItems(ctx)).own;
-      const { eligible, blocked, inFlightEpics } = rankNext(own);
+      const full = listItemsFull(ctx);
+      const own = ownRepo(ctx, full.open).own;
+      // Closed own-repo items ride along as pass-through tree edges only.
+      const closedEdges = ownRepo(ctx, full.closed).own;
+      const { eligible, blocked, inFlightEpics } = rankNext(own, closedEdges);
       // --json carries the diagnosis as fields, never as the prose line.
       const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics);
       if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked, ...dx });
@@ -2943,7 +3016,20 @@ export function run(argv: string[], ctx: Ctx): number {
             (head.childrenBlocked ? ` (children blocked: ${head.childrenBlocked.map((n) => `#${n}`).join(" ")})` : ""),
         );
         for (const i of eligible.slice(1, 6)) out(`  then #${i.number} ${i.title}`);
-        if (blocked.length) out(`  blocked: ${blocked.map((b) => `#${b.number}←${b.openBlockerLabels.join("+")}`).join(" ")}`);
+        if (blocked.length)
+          out(
+            `  blocked: ${blocked
+              .map((b) => {
+                // An empty label list means the blockage is a truncation, not
+                // an edge — name it, or the operator hunts a nonexistent dep.
+                const why =
+                  b.openBlockerLabels.length ? b.openBlockerLabels.join("+")
+                  : b.fieldValuesTruncated ? "(field values truncated)"
+                  : "(blockers truncated)";
+                return `#${b.number}←${why}`;
+              })
+              .join(" ")}`,
+          );
       }
       return 0;
     }
@@ -2951,7 +3037,7 @@ export function run(argv: string[], ctx: Ctx): number {
     case "tree": {
       const root = fetchIssue(ctx, requireNumber(positional[0]));
       out(issueLine(root));
-      for (const c of root.children) out(`  #${c.number} [${c.state ?? c.issueState}] ${c.title}`);
+      for (const c of root.children) out(`  #${c.number} [${childStateLabel(c)}] ${c.title}`);
       return 0;
     }
 

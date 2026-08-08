@@ -29,13 +29,19 @@ export interface FakeIssue {
   repo?: string; // nameWithOwner in the bulk items view; defaults to the own repo
   blockedBy?: Array<{ number: number; state: "OPEN" | "CLOSED"; repo?: string }>;
   state?: string | null;
+  priority?: string | null; // Priority single-select value ("P0".."P3")
   claim?: string | null;
   issueState?: "OPEN" | "CLOSED";
   stateReason?: string | null;
   onBoard?: boolean; // default true
   parent?: number;
   parentRepo?: string; // nameWithOwner of the parent's repo; defaults to own
-  children?: Array<{ number: number; issueState: "OPEN" | "CLOSED"; state?: string | null }>;
+  children?: Array<{
+    number: number;
+    issueState: "OPEN" | "CLOSED";
+    state?: string | null;
+    fieldValuesTruncated?: boolean;
+  }>;
   childrenTruncated?: boolean;
   blockersTruncated?: boolean;
   comments?: string[];
@@ -85,11 +91,17 @@ export class FakeGh {
   };
 
   private issuePayload(fi: FakeIssue) {
-    const fieldValues = (state?: string | null, claim?: string | null, truncated = false) => ({
+    const fieldValues = (
+      state?: string | null,
+      claim?: string | null,
+      truncated = false,
+      priority?: string | null,
+    ) => ({
       pageInfo: { hasNextPage: truncated },
       nodes: [
         ...(state ? [{ name: state, field: { name: "Workflow State" } }] : []),
         ...(claim ? [{ text: claim, field: { name: "Claim" } }] : []),
+        ...(priority ? [{ name: priority, field: { name: "Priority" } }] : []),
       ],
     });
     return {
@@ -111,7 +123,12 @@ export class FakeGh {
           title: `Issue ${c.number}`,
           state: c.issueState,
           projectItems: {
-            nodes: [{ project: { id: PROJECT_ID }, fieldValues: fieldValues(c.state) }],
+            nodes: [
+              {
+                project: { id: PROJECT_ID },
+                fieldValues: fieldValues(c.state, undefined, c.fieldValuesTruncated ?? false),
+              },
+            ],
           },
         })),
       },
@@ -134,7 +151,7 @@ export class FakeGh {
                   id: `ITEM_${fi.number}`,
                   isArchived: fi.archived ?? false,
                   project: { id: PROJECT_ID },
-                  fieldValues: fieldValues(fi.state, fi.claim, fi.fieldValuesTruncated ?? false),
+                  fieldValues: fieldValues(fi.state, fi.claim, fi.fieldValuesTruncated ?? false, fi.priority),
                 },
               ],
       },
@@ -318,6 +335,7 @@ export class FakeGh {
                 nodes: [
                   ...(fi.state ? [{ name: fi.state, field: { name: "Workflow State" } }] : []),
                   ...(fi.claim ? [{ text: fi.claim, field: { name: "Claim" } }] : []),
+                  ...(fi.priority ? [{ name: fi.priority, field: { name: "Priority" } }] : []),
                 ],
               },
             })),

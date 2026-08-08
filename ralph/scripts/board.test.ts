@@ -254,6 +254,27 @@ describe("rankNext", () => {
     expect(eligible[0].via).toBeUndefined();
   });
 
+  it("a closed intermediate node passes tree topology through — the root still demotes for a live grandchild", () => {
+    // epic 10 → phase 11 (closed, off the open list) → task 12 (in flight).
+    const items = [item(10, { priority: "P0" }), child(12, 11, { state: "In Progress", claim: { holder: "a@h", since: NOW } })];
+    const withEdge = rankNext(items, [{ number: 11, parentNumber: 10 }]);
+    expect(withEdge.eligible).toEqual([]);
+    expect(withEdge.inFlightEpics).toEqual([{ root: 10, child: 12, holder: "a@h" }]);
+    // And a Backlog grandchild inherits the root's P0 through the closed node.
+    const items2 = [item(10, { priority: "P0" }), item(2, { priority: "P1" }), child(12, 11)];
+    const r2 = rankNext(items2, [{ number: 11, parentNumber: 10 }]);
+    expect(r2.eligible.map((i) => i.number)).toEqual([12, 2]);
+    expect(r2.eligible[0].via).toBe(10);
+  });
+
+  it("a terminal-on-board (Done/Canceled) open child is reconcile drift, not flight — the root stays eligible", () => {
+    const items = [item(10), child(11, 10, { state: "Canceled" })];
+    const { eligible, inFlightEpics } = rankNext(items);
+    expect(eligible.map((i) => i.number)).toEqual([10]);
+    expect(eligible[0].childrenBlocked).toBeUndefined(); // drift is not blockage either
+    expect(inFlightEpics).toEqual([]);
+  });
+
   it("a malformed parent cycle degrades to own priority instead of looping", () => {
     const items = [child(1, 2), child(2, 1)];
     const { eligible } = rankNext(items);
@@ -290,6 +311,28 @@ describe("next: epic-aware output", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("priority inheritance end-to-end: a P0 epic's plain leaf outranks P1 flat work through run()", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P0" });
+    gh.issues.set(5, { number: 5, state: "Backlog", parent: 1 });
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "P1" });
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["next", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    const parsed = JSON.parse(said.join(""));
+    expect(parsed.next.number).toBe(5); // inherited P0 beats the flat P1
+    expect(parsed.next.via).toBe(1);
+    expect(parsed.queue.map((i: any) => i.number)).toEqual([5, 2]);
   });
 
   it("a foreign-repo parent never rebuilds a tree edge onto the own repo's number", () => {
@@ -683,6 +726,56 @@ describe("transition engine", () => {
     const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
     expect(after.claim?.holder).toBe("me@test");
     expect(gh.mutations).toContain("setClaim(#1)");
+  });
+});
+
+describe("fieldValues truncation fails closed on ALL three write lanes", () => {
+  it("transition: a truncated POST-write echo says 'unverifiable', never a fictional race narrative", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      const r = inner(argv, stdin);
+      // The write itself pushes the item past the page: every read AFTER the
+      // first field write comes back truncated.
+      if (stdin?.includes("updateProjectV2ItemFieldValue")) gh.issues.get(1)!.fieldValuesTruncated = true;
+      return r;
+    };
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(RefusalError);
+    gh.issues.get(1)!.fieldValuesTruncated = false;
+    gh.issues.get(1)!.state = "Backlog";
+    gh.issues.get(1)!.claim = null;
+    const msg = refusalMessage(() => transition(ctx, fetchIssue(ctx, 1), "In Progress"));
+    expect(msg).toMatch(/unverifiable/);
+    expect(msg).not.toMatch(/vanished|lost/);
+  });
+
+  it("reconcile: refuses to 'correct' a state it cannot read (the cron would demote live WIP every tick)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: null, fieldValuesTruncated: true });
+    expect(reconcile(ctx, 1)).toMatch(/field values truncated.*refusing to reconcile/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("adopt: adds a truncated item to the board but never writes Backlog over an unreadable state", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: null, fieldValuesTruncated: true });
+    adopt(ctx, 1);
+    expect(gh.mutations.filter((m) => m.startsWith("setState"))).toEqual([]);
+  });
+
+  it("parentCheck: refuses to gate on a parent whose field values are truncated", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(10, {
+      number: 10, state: "In Progress", fieldValuesTruncated: true,
+      children: [{ number: 11, issueState: "CLOSED", state: "Done" }],
+    });
+    expect(parentCheck(ctx, 10)).toMatch(/field values truncated.*refusing to gate/);
+    expect(gh.mutations).toEqual([]);
   });
 });
 

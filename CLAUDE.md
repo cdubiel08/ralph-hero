@@ -14,7 +14,7 @@ From the repo root:
 
 ```bash
 npm install                                    # workspace dev deps (tsx, vitest)
-npx vitest run ralph/scripts/board.test.ts     # the board CLI's contract suite
+npx vitest run ralph/scripts/                  # board contract suite + metrics registry
 npx tsc --noEmit                               # typecheck
 shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh
 ```

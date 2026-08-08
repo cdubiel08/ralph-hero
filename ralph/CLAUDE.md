@@ -30,7 +30,7 @@ Phase 3 (GH-1662) adds `scripts/tick.sh` + `scripts/install-loop.sh` — the sch
 ## Verify locally what CI verifies (repo root)
 
 ```bash
-npx vitest run ralph/scripts/board.test.ts && npx tsc --noEmit
+npx vitest run ralph/scripts/ && npx tsc --noEmit
 shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh
 ```
 
