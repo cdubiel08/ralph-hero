@@ -650,11 +650,18 @@ export function loadConfig(repoRoot: string): Config {
   // Config parse failures name the file: a truncated .ralph.json must read as
   // "fix this file" (usage, exit 64), not as an anonymous SyntaxError (exit 1).
   const parseConfigFile = (path: string): any => {
+    let parsed: unknown;
     try {
-      return JSON.parse(readFileSync(path, "utf8"));
+      parsed = JSON.parse(readFileSync(path, "utf8"));
     } catch (e) {
       throw new UsageError(`${path} is not valid JSON: ${e instanceof Error ? e.message : e}`);
     }
+    // "null"/"[]"/'"x"' parse fine and then crash on property access — same
+    // anonymous-exit-1 outcome this helper exists to remove.
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new UsageError(`${path} is not valid JSON: expected a JSON object`);
+    }
+    return parsed;
   };
 
   const ralphJson = join(repoRoot, ".ralph.json");
@@ -768,6 +775,18 @@ export const realExec: ExecFn = (argv, stdin) => {
 export class UsageError extends Error {}
 export class RefusalError extends Error {} // invariant refusal — exit 2
 
+/** GraphQL-level failure (body.errors non-empty). Carries the structured
+ *  error types so callers can branch on `NOT_FOUND` etc. instead of matching
+ *  GitHub's message wording. */
+export class GraphQLError extends Error {
+  constructor(
+    message: string,
+    public readonly types: string[],
+  ) {
+    super(message);
+  }
+}
+
 export interface Ctx {
   exec: ExecFn;
   cfg: Config;
@@ -798,7 +817,10 @@ export function ghGraphQL<T = any>(
     throw new Error(`gh api graphql returned unparseable output: ${r.stdout.slice(0, 200)}`);
   }
   if (body.errors?.length) {
-    throw new Error(`GraphQL: ${body.errors.map((e: any) => e.message).join("; ")}`);
+    throw new GraphQLError(
+      `GraphQL: ${body.errors.map((e: any) => e.message).join("; ")}`,
+      body.errors.map((e: any) => e?.type).filter((t: unknown): t is string => typeof t === "string"),
+    );
   }
   return body.data as T;
 }
@@ -1971,7 +1993,8 @@ export function fetchNodeIds(ctx: Ctx, numbers: number[]): Map<number, string> {
   } catch (e) {
     // A missing issue surfaces as a NOT_FOUND entry in body.errors; keep
     // fetchIssue's contract (UsageError, exit 64) rather than a bare Error.
-    if (e instanceof Error && /NOT_FOUND|Could not resolve/i.test(e.message)) {
+    // Match the structured type, not GitHub's message wording.
+    if (e instanceof GraphQLError && e.types.includes("NOT_FOUND")) {
       throw new UsageError(
         `issue not found in ${ctx.cfg.owner}/${ctx.cfg.repo} (of #${numbers.join(", #")}): ${e.message}`,
       );

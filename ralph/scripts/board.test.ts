@@ -452,6 +452,13 @@ describe("failure diagnostics carry their context", () => {
     writeFileSync(join(root2, ".claude", "settings.json"), "not json");
     expect(() => loadConfig(root2)).toThrow(UsageError);
     expect(() => loadConfig(root2)).toThrow(/settings\.json is not valid JSON/);
+
+    // "null" parses fine and then crashes on property access — same anonymous
+    // exit-1 the helper exists to remove, so it must be rejected too.
+    const root3 = mkdtempSync(join(tmpdir(), "board-cfg-"));
+    writeFileSync(join(root3, ".ralph.json"), "null");
+    expect(() => loadConfig(root3)).toThrow(UsageError);
+    expect(() => loadConfig(root3)).toThrow(/expected a JSON object/);
   });
 });
 
@@ -729,7 +736,7 @@ describe("transition engine", () => {
   });
 });
 
-describe("fieldValues truncation fails closed on ALL three write lanes", () => {
+describe("fieldValues truncation fails closed on every write path", () => {
   it("transition: a truncated POST-write echo says 'unverifiable', never a fictional race narrative", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
@@ -759,12 +766,21 @@ describe("fieldValues truncation fails closed on ALL three write lanes", () => {
     expect(gh.mutations).toEqual([]);
   });
 
-  it("adopt: adds a truncated item to the board but never writes Backlog over an unreadable state", () => {
+  it("adopt: never writes Backlog over an on-board item's unreadable state", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
     gh.issues.set(1, { number: 1, state: null, fieldValuesTruncated: true });
     adopt(ctx, 1);
     expect(gh.mutations.filter((m) => m.startsWith("setState"))).toEqual([]);
+  });
+
+  it("adopt: a fresh OFF-board item still gets added and set to Backlog — a never-added item has no field values to truncate", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: null, onBoard: false });
+    adopt(ctx, 1);
+    expect(gh.mutations).toContain("addToBoard(#1)");
+    expect(gh.mutations.filter((m) => m.startsWith("setState"))).toEqual(["setState(#1, Backlog)"]);
   });
 
   it("parentCheck: refuses to gate on a parent whose field values are truncated", () => {

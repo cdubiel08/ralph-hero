@@ -196,13 +196,17 @@ export class FakeGh {
     // fetchNodeIds: aliased id-only lookups — no selection beyond { id }.
     if (query.includes("a0: issue(number") && !query.includes("comments(last")) {
       const repo: Record<string, unknown> = {};
-      const errors: Array<{ message: string }> = [];
+      const errors: Array<{ type: string; message: string }> = [];
       for (const [key, num] of Object.entries(variables)) {
         const m = /^n(\d+)$/.exec(key);
         if (!m) continue;
         const fi = this.issues.get(num as number);
         repo[`a${m[1]}`] = fi ? { id: `I_${fi.number}` } : null;
-        if (!fi) errors.push({ message: `Could not resolve to an Issue with the number of ${num}.` });
+        if (!fi)
+          errors.push({
+            type: "NOT_FOUND",
+            message: `Could not resolve to an Issue with the number of ${num}.`,
+          });
       }
       // Real GitHub pairs a null alias with a NOT_FOUND errors entry.
       if (errors.length) return ok(JSON.stringify({ data: { repository: repo }, errors }));
