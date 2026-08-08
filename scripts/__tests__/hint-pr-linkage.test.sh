@@ -42,12 +42,12 @@ STUB
 chmod +x "$BIN/gh"
 export PATH="$BIN:$PATH"
 
-# stub_pr <headRefName> <closing-count>
+# stub_pr <headRefName> <closing-count> [title] [body]
 stub_pr() {
-  local br="$1" n="$2" nodes="[]"
+  local br="$1" n="$2" title="${3:-a title}" body="${4:-a body}" nodes="[]"
   [[ "$n" -gt 0 ]] && nodes='[{"number":42}]'
-  jq -n --arg br "$br" --argjson nodes "$nodes" \
-    '{headRefName: $br, closingIssuesReferences: $nodes}' >"$STUB_DIR/pr.json"
+  jq -n --arg br "$br" --arg t "$title" --arg b "$body" --argjson nodes "$nodes" \
+    '{headRefName: $br, title: $t, body: $b, closingIssuesReferences: $nodes}' >"$STUB_DIR/pr.json"
 }
 stub_labels() { printf '%s\n' "$@" >"$STUB_DIR/labels.txt"; }
 
@@ -179,6 +179,36 @@ expect_silent "repo with no ralph config"
 run_hook "$OFFSCOPE_REPO" "gh pr create --title t"
 expect_silent "ralph config present but origin is another repo"
 
+# 7b. Origin must BE the configured repo, not merely end with owner/repo. A
+#     suffix test would accept a mirror on another forge — the case board.ts
+#     scopeMatches() calls out by name.
+MIRROR_REPO="$TMP_ROOT/mirror"
+mk_repo "$MIRROR_REPO" "https://evil.example.com/cdubiel08/ralph-hero.git"
+mkdir -p "$MIRROR_REPO/.claude"
+cp "$SETTINGS_REPO/.claude/settings.json" "$MIRROR_REPO/.claude/settings.json"
+run_hook "$MIRROR_REPO" "gh pr create --title t"
+expect_silent "same owner/repo on a different forge"
+
+DEEP_REPO="$TMP_ROOT/deep"
+mk_repo "$DEEP_REPO" "https://github.com/enterprise/cdubiel08/ralph-hero.git"
+mkdir -p "$DEEP_REPO/.claude"
+cp "$SETTINGS_REPO/.claude/settings.json" "$DEEP_REPO/.claude/settings.json"
+run_hook "$DEEP_REPO" "gh pr create --title t"
+expect_silent "owner/repo nested under an extra path segment"
+
+# 7c. The created PR's URL must be OUR repo's. A bare `/pull/N` match would let
+#     a PR created in another clone (a `cd`, GH_REPO=…, `gh repo set-default` —
+#     none of which the -R guard sees) name an unrelated LOCAL issue number.
+run_hook "$SETTINGS_REPO" "cd ../other && gh pr create --title t" \
+  '{"exit_code":0,"stdout":"https://github.com/some-other-org/some-other-repo/pull/777\n","stderr":""}'
+expect_silent "created PR URL belongs to a different repo"
+
+# 7d. gh prints an EXISTING PR's URL when a create fails because the branch
+#     already has one. A non-zero exit_code is authoritative over the URL.
+run_hook "$SETTINGS_REPO" "gh pr create --title t" \
+  '{"exit_code":1,"stdout":"","stderr":"a pull request for branch feature/GH-1717 already exists: https://github.com/cdubiel08/ralph-hero/pull/777"}'
+expect_silent "failed create whose stderr carries an existing PR URL"
+
 # 8. .ralph.json as the scope source, from a subdirectory cwd (ROOT comes from
 #    `git rev-parse --show-toplevel`), with an SSH-form origin.
 run_hook "$RALPHJSON_REPO/nested/sub" "gh pr create --title t"
@@ -219,6 +249,30 @@ stub_pr "feature/GH-1717" 0
 stub_labels "ralph:apply" "enhancement"
 run_hook "$SETTINGS_REPO" "gh pr create --title t"
 expect_silent "apply-labelled branch issue (gate 6 forbids the keyword)"
+# ...and the silence must come from the label lookup, not from an earlier bail:
+# without this the case would keep passing if a future edit exited sooner.
+if grep -q "issue view 1717" "$STUB_DIR/calls.log"; then
+  pass "carve-out silence is genuine (the issue's labels were actually read)"
+else
+  fail "carve-out never consulted the issue: $(cat "$STUB_DIR/calls.log")"
+fi
+
+# 9b. gh writes one label per line and `grep -q` exits on the first match; piped,
+#     `pipefail` would turn gh's resulting EPIPE into a FAILED condition and skip
+#     the carve-out. Apply label FIRST, then more than one pipe buffer (64 KiB)
+#     of trailing labels, so the producer is still writing when grep quits —
+#     under 64 KiB the write completes into the buffer and nothing reproduces.
+{ echo "ralph:apply"; seq -f 'filler-label-%g' 1 20000; } >"$STUB_DIR/labels.txt"
+run_hook "$SETTINGS_REPO" "gh pr create --title t"
+expect_silent "apply label first, >64 KiB of trailing labels (no EPIPE race)"
+stub_labels "ralph:apply" "enhancement"
+
+# 9c. Apply units are REQUIRED to say "Refs #N" (gate 6 bans "Closes"), and an
+#     `apply/…` branch carries no GH-N — the carve-out must still resolve them.
+stub_pr "apply/arm-the-kind" 0 "apply: arm the kind" "Refs #1717 — deploy step"
+run_hook "$SETTINGS_REPO" "gh pr create --title t"
+expect_silent "apply unit resolved from 'Refs #N' on a branch with no GH-N"
+stub_pr "feature/GH-1717" 0
 
 # 10. Same repo, same armed policy, ordinary ship issue -> hint stands.
 stub_labels "enhancement"
@@ -244,14 +298,27 @@ else
   pass "inert apply policy skips the issue lookup entirely"
 fi
 
-# 13. Armed policy, but the branch carries no GH-N: the unit can't be
-#     identified, so the carve-out can't fire. Documented limit — gate 6 is
-#     the backstop. Asserted so a future change to this trade-off is deliberate.
-policy_armed
-stub_pr "chore/tidy-readme" 0
+# 12b. A malformed policy fails CLOSED — same rule as scripts/apply-keywords.sh
+#      ("a truncated policy must not silently disable the gate it configures").
+printf '{"apply":{"enabled":true,' >"$POLICY"
 stub_labels "ralph:apply"
 run_hook "$SETTINGS_REPO" "gh pr create --title t"
-expect_hint "branch with no GH-N (carve-out cannot resolve a unit)"
+expect_silent "malformed policy fails closed (carve-out stays armed)"
+
+# 12c. A non-string apply.label must not silently disable the carve-out — jq's
+#      `//` only defends against null/absent, so `[]` would emit a literal "[]".
+printf '{"apply":{"enabled":true,"label":[]}}\n' >"$POLICY"
+run_hook "$SETTINGS_REPO" "gh pr create --title t"
+expect_silent "non-string apply.label falls back to the default label"
+
+# 13. Armed policy, but nothing in the branch, title, or body names a unit: the
+#     carve-out can't fire. Documented limit — gate 6 is the backstop. Asserted
+#     so a future change to this trade-off has to be deliberate.
+policy_armed
+stub_pr "chore/tidy-readme" 0 "tidy the readme" "no references here"
+stub_labels "ralph:apply"
+run_hook "$SETTINGS_REPO" "gh pr create --title t"
+expect_hint "PR naming no unit at all (carve-out cannot resolve one)"
 
 # 14. Armed policy and the issue lookup fails (gh error) -> still non-blocking.
 stub_pr "feature/GH-1717" 0
@@ -263,6 +330,62 @@ expect_hint "issue lookup failure degrades to the hint, never to an error"
 rm -f "$STUB_DIR/pr.json"
 run_hook "$SETTINGS_REPO" "gh pr create --title t"
 expect_silent "gh pr view failure"
+
+# ---------------------------------------------------------------------------
+# Never-non-zero, under hostile conditions. The whole design rests on this, so
+# it gets tested directly rather than inferred from the happy-path cases above.
+# ---------------------------------------------------------------------------
+stub_pr "feature/GH-1717" 0
+policy_none
+
+# 16. The emit itself must not leak a status. `set -e` makes an unguarded final
+#     jq the hook's exit status, and jq exits 2 when it cannot write — which is
+#     exactly the blocking value. Closing stdout reproduces that.
+set +e
+printf '%s' "$(jq -n --arg cwd "$SETTINGS_REPO" --argjson r "$OK_RESULT" \
+  '{tool_input: {command: "gh pr create --title t"}, cwd: $cwd, tool_response: $r}')" \
+  | bash "$HOOK" >&- 2>/dev/null
+EMIT_RC=$?
+set -e
+if [[ "$EMIT_RC" == 0 ]]; then
+  pass "emit with stdout closed still exits 0"
+else
+  fail "emit with stdout closed exited $EMIT_RC — a hook that can exit 2 gates the turn"
+fi
+
+# 17. Malformed and hostile payloads: silent, exit 0, never a hook error.
+while IFS= read -r bad; do
+  set +e
+  BAD_OUT=$(printf '%s' "$bad" | bash "$HOOK" 2>/dev/null)
+  BAD_RC=$?
+  set -e
+  if [[ "$BAD_RC" != 0 ]]; then
+    fail "hostile payload exited $BAD_RC: ${bad:0:60}"
+  elif [[ -n "$BAD_OUT" ]]; then
+    fail "hostile payload produced output: ${bad:0:60}"
+  else
+    pass "hostile payload handled silently: ${bad:0:40}"
+  fi
+done <<'PAYLOADS'
+not json at all
+{"tool_input": {"command": "gh pr create"}
+null
+[]
+{"tool_input": {"command": 42}, "cwd": "/nonexistent/nowhere"}
+{"tool_input": {"command": "gh pr create"}, "cwd": "/nonexistent/nowhere"}
+{"tool_input": {"command": "gh pr create"}}
+PAYLOADS
+
+# 18. Empty stdin.
+set +e
+BAD_OUT=$(printf '' | bash "$HOOK" 2>/dev/null)
+BAD_RC=$?
+set -e
+if [[ "$BAD_RC" == 0 && -z "$BAD_OUT" ]]; then
+  pass "empty stdin handled silently"
+else
+  fail "empty stdin: rc=$BAD_RC out='$BAD_OUT'"
+fi
 
 # ---------------------------------------------------------------------------
 echo
