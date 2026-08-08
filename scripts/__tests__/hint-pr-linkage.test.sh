@@ -293,6 +293,30 @@ stub_pr "apply/arm-the-kind" 0 "apply: arm the kind (part of #1692)" \
 run_hook "$SETTINGS_REPO" "gh pr create --title t"
 expect_silent "apply unit named AFTER an epic/superseded reference"
 rm -f "$STUB_DIR"/labels-*.txt
+
+# 9e. ...but checking every reference must not turn one hook into a burst of API
+#     calls. Dedup and the cap-at-5 are both stated behaviour, so both get
+#     pinned: without them a reference-heavy body silently fans out.
+stub_labels "enhancement"
+stub_pr "chore/many-refs" 0 "touches a lot" \
+  "Refs #101 #102 #103 #104 #105 #106 #107 #108 #109 #110"
+run_hook "$SETTINGS_REPO" "gh pr create --title t"
+CALLS=$(grep -c "issue view" "$STUB_DIR/calls.log" || true)
+if [[ "$CALLS" == 5 ]]; then
+  pass "10 distinct references -> capped at 5 issue lookups"
+else
+  fail "10 distinct references -> expected 5 issue lookups, got $CALLS"
+fi
+
+stub_pr "feature/GH-1717" 0 "GH-1717 again" "Refs #1717, gh-1717, #1717 — one unit"
+run_hook "$SETTINGS_REPO" "gh pr create --title t"
+CALLS=$(grep -c "issue view" "$STUB_DIR/calls.log" || true)
+if [[ "$CALLS" == 1 ]]; then
+  pass "the same unit in four spellings -> one issue lookup (deduped)"
+else
+  fail "repeated references -> expected 1 issue lookup, got $CALLS"
+fi
+stub_labels "ralph:apply" "enhancement"
 stub_pr "feature/GH-1717" 0
 
 # 10. Same repo, same armed policy, ordinary ship issue -> hint stands.
