@@ -71,14 +71,19 @@ shopt -u nocasematch
 # {stdout,stderr} vs {type,text}) — reading them all outlives the next rename.
 # The URL must be OUR repo's: a bare /pull/N would let a PR created elsewhere
 # (a `cd` into another clone, GH_REPO=..., gh repo set-default) name an
-# unrelated local issue number. A non-zero exit_code, when the payload carries
-# one, is authoritative — gh prints an existing PR's URL when a create FAILS
-# because the branch already has one.
+# unrelated local issue number.
+#
+# A URL alone doesn't mean the create SUCCEEDED: gh prints the existing PR's
+# URL when it fails because the branch already has one. Two guards, because
+# neither is sufficient alone — an exit_code is only present if the harness
+# sends one (today's Bash tool_response carries stdout/stderr and no exit
+# status), and the message text is gh's wording rather than a contract.
 RC=$(printf '%s' "$INPUT" | jq -r '(.tool_response // .tool_output // {})
   | if type == "object" then (.exit_code // .exitCode // empty) else empty end
   | tostring' 2>/dev/null) || RC=""
 [ -z "$RC" ] || [ "$RC" = "0" ] || exit 0
 RESULT=$(printf '%s' "$INPUT" | jq -r '(.tool_response // .tool_output // empty) | [.. | strings] | join("\n")' 2>/dev/null) || exit 0
+if grep -qiE 'a pull request for branch .* already exists' <<<"$RESULT"; then exit 0; fi
 URL=$(grep -oiE "${SCOPE//./\\.}/pull/[0-9]+" <<<"$RESULT" | head -1 || true)
 PR="${URL##*/}"
 [ -n "$PR" ] || exit 0
@@ -97,27 +102,34 @@ POLICY="$ROOT/.github/ralph-merge-policy.json"
 ARMED=false
 LABEL="ralph:apply"
 if [ -f "$POLICY" ]; then
+  # `jq -e .` proves the file parses; it does NOT prove `.apply` is an object,
+  # and indexing a scalar makes jq exit 5. Guarded so a hand-edit typo like
+  # `"apply": true` can't turn a hook that promises never to fail into one that
+  # prints a raw jq error. Fail closed, same as the unparseable branch below.
   if jq -e . "$POLICY" >/dev/null 2>&1; then
-    ARMED=$(jq -r '.apply.enabled // false | tostring' "$POLICY")
-    LABEL=$(jq -r '(.apply.label | strings) // "ralph:apply"' "$POLICY")
+    ARMED=$(jq -r '.apply.enabled // false | tostring' "$POLICY" 2>/dev/null) || ARMED=true
+    LABEL=$(jq -r '(.apply.label | strings) // "ralph:apply"' "$POLICY" 2>/dev/null) || LABEL="ralph:apply"
   else
     ARMED=true
   fi
 fi
 if [ "$ARMED" = "true" ]; then
-  # Resolve the unit from every reference the PR carries, not the branch alone:
-  # apply units are REQUIRED to say "Refs #N" (gate 6 bans "Closes"), and
-  # `apply/…` / `claude/<slug>` branches carry no GH-N. GH-N wins over a bare
-  # #N. Over-resolving is the safe direction — it can only silence the hint.
+  # Check EVERY reference the PR carries, not just the branch and not just the
+  # first match: apply units are REQUIRED to say "Refs #N" (gate 6 bans
+  # "Closes"), `apply/…` and `claude/<slug>` branches carry no GH-N, and a body
+  # routinely names its epic or a superseded issue BEFORE the unit itself.
+  # Checking all of them makes over-resolution the only failure mode, and
+  # over-resolving can only silence the hint — the safe direction. Capped at 5
+  # so a reference-heavy body can't turn one hook into a burst of API calls.
   REFS=$(jq -r '[.headRefName, .title, .body] | map(. // "" | tostring) | join("\n")' <<<"$PRJSON" 2>/dev/null) || REFS=""
-  UNIT=$(grep -oiE 'gh-[0-9]+' <<<"$REFS" | head -1 | tr -dc '0-9' || true)
-  [ -n "$UNIT" ] || UNIT=$(grep -oE '#[0-9]+' <<<"$REFS" | head -1 | tr -dc '0-9' || true)
-  if [ -n "$UNIT" ]; then
+  UNITS=$(grep -oiE 'gh-[0-9]+|#[0-9]+' <<<"$REFS" | tr -dc '0-9\n' | grep -v '^$' | awk '!seen[$0]++' | head -5 || true)
+  while IFS= read -r UNIT; do
+    [ -n "$UNIT" ] || continue
     # Captured, not piped into `grep -q`: -q exits on first match, and under
     # `pipefail` gh's EPIPE would fail the condition and skip the carve-out.
     LABELS=$(gh issue view "$UNIT" --json labels --jq '.labels[].name' 2>/dev/null || true)
     if grep -qxF "$LABEL" <<<"$LABELS"; then exit 0; fi
-  fi
+  done <<<"$UNITS"
 fi
 
 MSG="PR #$PR has no closing keyword — link its issue (Closes #M) so the board can fold the merge in"

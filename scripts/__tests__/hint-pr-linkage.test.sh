@@ -35,7 +35,7 @@ cat >"$BIN/gh" <<'STUB'
 echo "$*" >>"$STUB_DIR/calls.log"
 case "${1:-} ${2:-}" in
   "pr view") cat "$STUB_DIR/pr.json" 2>/dev/null || exit 1 ;;
-  "issue view") cat "$STUB_DIR/labels.txt" 2>/dev/null || exit 1 ;;
+  "issue view") cat "$STUB_DIR/labels-$3.txt" 2>/dev/null || cat "$STUB_DIR/labels.txt" 2>/dev/null || exit 1 ;;
   *) exit 1 ;;
 esac
 STUB
@@ -50,6 +50,8 @@ stub_pr() {
     '{headRefName: $br, title: $t, body: $b, closingIssuesReferences: $nodes}' >"$STUB_DIR/pr.json"
 }
 stub_labels() { printf '%s\n' "$@" >"$STUB_DIR/labels.txt"; }
+# stub_issue_labels <issue> <label>... — per-issue override of the above
+stub_issue_labels() { local n="$1"; shift; printf '%s\n' "$@" >"$STUB_DIR/labels-$n.txt"; }
 
 # --- throwaway repos --------------------------------------------------------
 #   SETTINGS_REPO — ralph scope via .claude/settings.json env block (ralph-hero's shape)
@@ -209,6 +211,13 @@ run_hook "$SETTINGS_REPO" "gh pr create --title t" \
   '{"exit_code":1,"stdout":"","stderr":"a pull request for branch feature/GH-1717 already exists: https://github.com/cdubiel08/ralph-hero/pull/777"}'
 expect_silent "failed create whose stderr carries an existing PR URL"
 
+# 7e. ...and the exit_code is NOT load-bearing: today's Bash tool_response
+#     carries stdout/stderr and no exit status, so the same payload minus
+#     exit_code must still be recognised as a failure.
+run_hook "$SETTINGS_REPO" "gh pr create --title t" \
+  '{"stdout":"","stderr":"a pull request for branch feature/GH-1717 already exists: https://github.com/cdubiel08/ralph-hero/pull/777","interrupted":false,"isImage":false}'
+expect_silent "same failure with no exit_code field (the real payload shape)"
+
 # 8. .ralph.json as the scope source, from a subdirectory cwd (ROOT comes from
 #    `git rev-parse --show-toplevel`), with an SSH-form origin.
 run_hook "$RALPHJSON_REPO/nested/sub" "gh pr create --title t"
@@ -272,6 +281,18 @@ stub_labels "ralph:apply" "enhancement"
 stub_pr "apply/arm-the-kind" 0 "apply: arm the kind" "Refs #1717 — deploy step"
 run_hook "$SETTINGS_REPO" "gh pr create --title t"
 expect_silent "apply unit resolved from 'Refs #N' on a branch with no GH-N"
+
+# 9d. A body routinely names its epic or a superseded issue BEFORE the unit
+#     itself, so stopping at the first reference reads the wrong issue's labels
+#     and the apply unit draws the hint anyway. Every reference must be checked.
+stub_issue_labels 1692 "epic"
+stub_issue_labels 1400 "enhancement"
+stub_issue_labels 1717 "ralph:apply"
+stub_pr "apply/arm-the-kind" 0 "apply: arm the kind (part of #1692)" \
+  "Supersedes #1400. Epic #1692. Refs #1717 — the actual unit."
+run_hook "$SETTINGS_REPO" "gh pr create --title t"
+expect_silent "apply unit named AFTER an epic/superseded reference"
+rm -f "$STUB_DIR"/labels-*.txt
 stub_pr "feature/GH-1717" 0
 
 # 10. Same repo, same armed policy, ordinary ship issue -> hint stands.
@@ -310,6 +331,24 @@ expect_silent "malformed policy fails closed (carve-out stays armed)"
 printf '{"apply":{"enabled":true,"label":[]}}\n' >"$POLICY"
 run_hook "$SETTINGS_REPO" "gh pr create --title t"
 expect_silent "non-string apply.label falls back to the default label"
+
+# 12d. A policy that PARSES but has the wrong shape. `jq -e .` only proves the
+#      file is valid JSON; indexing a scalar makes jq exit 5, and under `set -e`
+#      that would become the hook's exit status. `"apply": true` and
+#      `"apply": "ralph:apply"` are the plausible hand-edit typos.
+while IFS= read -r bad_policy; do
+  printf '%s\n' "$bad_policy" >"$POLICY"
+  run_hook "$SETTINGS_REPO" "gh pr create --title t"
+  expect_silent "wrong-shape policy fails closed: $bad_policy"
+done <<'POLICIES'
+{"apply":"yes"}
+{"apply":true}
+{"apply":[1,2]}
+{"apply":42}
+[1,2,3]
+"a bare json string"
+42
+POLICIES
 
 # 13. Armed policy, but nothing in the branch, title, or body names a unit: the
 #     carve-out can't fire. Documented limit — gate 6 is the backstop. Asserted
