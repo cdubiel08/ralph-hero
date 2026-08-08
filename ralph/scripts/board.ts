@@ -1860,7 +1860,21 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       const parsed = JSON.parse(runs.stdout);
       const bad = parsed.filter((r: any) => r.conclusion && r.conclusion !== "success");
       if (parsed.length === 0) add("state-guard", "warn", "no runs recorded");
-      else add("state-guard", bad.length === 0 ? "ok" : "fail", bad.length === 0 ? `last ${parsed.length} runs green` : `${bad.length}/${parsed.length} recent runs not successful`);
+      else if (bad.length === 0) add("state-guard", "ok", `last ${parsed.length} runs green`);
+      else {
+        // Inside the state-guard workflow this check judges its own run
+        // history, and the job's exit code becomes the next window's newest
+        // entry — after any outage a hard fail here re-poisons the window
+        // every cron tick and can never self-heal (GH-1722). Warn there;
+        // local runs and doctor.yml keep the fail — the wall's watchers are
+        // outside the wall.
+        const selfRun = process.env.GITHUB_WORKFLOW === "state-guard";
+        add(
+          "state-guard",
+          selfRun ? "warn" : "fail",
+          `${bad.length}/${parsed.length} recent runs not successful${selfRun ? " (self-run: warn, letting this run go green so the window can heal)" : ""}`,
+        );
+      }
     } catch {
       add("state-guard", "warn", "run list unparseable");
     }

@@ -308,6 +308,7 @@ class FakeGh {
   omitFields: string[] = []; // simulate a fresh board missing these fields
   createdFields: Array<{ name: string; dataType: string; options?: string[] }> = [];
   linkedRepos = ["cdubiel08/ralph-hero"]; // projectV2 → repositories linkage
+  runListJson = "[]"; // gh run list payload for doctor's state-guard check
 
   expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
 
@@ -322,7 +323,7 @@ class FakeGh {
     if (cmd.startsWith("gh auth status")) return ok("");
     if (cmd.startsWith("git") && cmd.includes("remote"))
       return ok("git@github.com:cdubiel08/ralph-hero.git\n");
-    if (cmd.startsWith("gh run list")) return ok("[]");
+    if (cmd.startsWith("gh run list")) return ok(this.runListJson);
     return { code: 1, stdout: "", stderr: `unexpected: ${cmd}` };
   };
 
@@ -975,6 +976,51 @@ describe("doctor + migrate", () => {
 
     const strict = doctor(ctx, { strict: true });
     expect(strict.ok).toBe(false);
+  });
+
+  it("doctor: a red state-guard window fails outside the workflow, warns inside it (GH-1722)", () => {
+    // The reconciler lane's exit code becomes the next window's newest entry:
+    // a hard fail on own-history would re-poison the window every cron tick
+    // and could never self-heal after an outage.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.runListJson = JSON.stringify([
+      { conclusion: "failure", updatedAt: "2026-08-08T00:00:00Z" },
+      { conclusion: "success", updatedAt: "2026-08-07T23:45:00Z" },
+    ]);
+
+    const prev = process.env.GITHUB_WORKFLOW;
+    try {
+      delete process.env.GITHUB_WORKFLOW;
+      const outside = doctor(ctx);
+      expect(outside.ok).toBe(false);
+      expect(outside.checks.find((c) => c.name === "state-guard")?.level).toBe("fail");
+
+      process.env.GITHUB_WORKFLOW = "state-guard";
+      const inside = doctor(ctx);
+      expect(inside.ok).toBe(true);
+      const check = inside.checks.find((c) => c.name === "state-guard");
+      expect(check?.level).toBe("warn");
+      expect(check?.detail).toMatch(/self-run/);
+    } finally {
+      if (prev === undefined) delete process.env.GITHUB_WORKFLOW;
+      else process.env.GITHUB_WORKFLOW = prev;
+    }
+  });
+
+  it("doctor: a green state-guard window is ok even inside the workflow", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.runListJson = JSON.stringify([{ conclusion: "success", updatedAt: "2026-08-08T00:00:00Z" }]);
+    const prev = process.env.GITHUB_WORKFLOW;
+    try {
+      process.env.GITHUB_WORKFLOW = "state-guard";
+      const report = doctor(ctx);
+      expect(report.checks.find((c) => c.name === "state-guard")?.level).toBe("ok");
+    } finally {
+      if (prev === undefined) delete process.env.GITHUB_WORKFLOW;
+      else process.env.GITHUB_WORKFLOW = prev;
+    }
   });
 
   it("doctor --fix releases stale claims back to Backlog with a comment", () => {
