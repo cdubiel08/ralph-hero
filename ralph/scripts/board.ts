@@ -3285,7 +3285,9 @@ export function readiness(ctx: Ctx): ReadinessReport {
         "scheduled jobs), add an `apply` block to .github/ralph-merge-policy.json — the board then refuses to " +
         "call such work Done without deployed-and-verified evidence. Repos whose changes go live on merge need none of it",
   );
-  const ralphHome = process.env.RALPH_HOME ?? join(homedir(), ".ralph");
+  // `||`, not `??`: tick.sh's `${RALPH_HOME:-...}` treats empty as unset, and
+  // this row must read the same files the scripts write.
+  const ralphHome = process.env.RALPH_HOME || join(homedir(), ".ralph");
   const hb = existsSync(join(ralphHome, "heartbeat"));
   add(
     3, "loop", "info",
