@@ -79,7 +79,6 @@ export class FakeGh {
   comments: Array<{ body: string }> = [];
   issues = new Map<number, FakeIssue>();
   failNextStateWrite = false; // transport-failure injection
-  failNextComment = false;
   raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
   vanishClaim = false; // simulate a concurrent clear landing after our write
   stickyClaim = false; // simulate a claim clear silently not sticking
@@ -485,10 +484,6 @@ export class FakeGh {
       return data({ clearProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
     }
     if (query.includes("addComment")) {
-      if (this.failNextComment) {
-        this.failNextComment = false;
-        return { code: 1, stdout: "", stderr: "simulated comment failure" };
-      }
       this.comments.push({ body: variables.body });
       this.mutations.push("addComment");
       return data({ addComment: { clientMutationId: null } });

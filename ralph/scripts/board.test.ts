@@ -37,9 +37,9 @@ import {
   loadConfig,
   LEGACY_STATES,
   listItems,
+  listItemsFull,
+  isState,
   MACHINE,
-  migrate,
-  migrateMapping,
   parentCheck,
   parseArgs,
   parseClaim,
@@ -350,24 +350,16 @@ describe("next: epic-aware output", () => {
   });
 });
 
-describe("migrateMapping (11 → 6)", () => {
-  it("maps every legacy state", () => {
-    expect(migrateMapping("Research Needed", false)).toBe("Backlog");
-    expect(migrateMapping("Ready for Plan", false)).toBe("Backlog");
-    expect(migrateMapping("Research in Progress", false)).toBe("Backlog");
-    expect(migrateMapping("Plan in Progress", false)).toBe("Backlog");
-    expect(migrateMapping("Plan in Review", false)).toBe("Backlog");
-    expect(migrateMapping("Plan in Review", true)).toBe("Human Needed");
-  });
-
-  it("passes v2 states through and rejects unknowns", () => {
-    for (const s of STATES) expect(migrateMapping(s, false)).toBe(s);
-    expect(migrateMapping("Weird", false)).toBeNull();
-  });
-
-  it("LEGACY_STATES covers exactly the 5 removed states", () => {
-    expect(LEGACY_STATES).toHaveLength(5);
-    for (const s of LEGACY_STATES) expect(migrateMapping(s, false)).not.toBeNull();
+describe("LEGACY_STATES", () => {
+  it("names exactly the 5 removed v1 states, none of them a v2 state", () => {
+    expect(LEGACY_STATES).toEqual([
+      "Research Needed",
+      "Research in Progress",
+      "Ready for Plan",
+      "Plan in Progress",
+      "Plan in Review",
+    ]);
+    for (const s of LEGACY_STATES) expect(isState(s)).toBe(false);
   });
 });
 
@@ -601,9 +593,13 @@ describe("transition engine", () => {
     expect(gh.mutations).toEqual([]);
   });
 
-  it("legacy states are frozen until migrate", () => {
+  it("legacy states are frozen — the fix is a hand edit in the board UI", () => {
     gh.issues.set(1, { number: 1, state: "Ready for Plan" });
-    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/board migrate/);
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(
+      /legacy state "Ready for Plan".*board UI/,
+    );
+    // The deleted subcommand must not survive in the guidance.
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).not.toThrow(/migrate/);
   });
 
   it("Human Needed requires --why and posts it as the escalation comment", () => {
@@ -902,9 +898,10 @@ describe("reality-sync lane (adopt + reconcile)", () => {
     expect(reconcile(ctx, 1)).toMatch(/→ "Backlog"/);
   });
 
-  it("reconcile: leaves legacy states to migrate, reports no-drift honestly", () => {
+  it("reconcile: leaves legacy states alone, reports no-drift honestly", () => {
     gh.issues.set(1, { number: 1, state: "Ready for Plan", issueState: "OPEN" });
-    expect(reconcile(ctx, 1)).toMatch(/migrate/);
+    expect(reconcile(ctx, 1)).toMatch(/legacy state "Ready for Plan".*board UI/);
+    expect(reconcile(ctx, 1)).not.toMatch(/migrate/);
     gh.issues.set(2, { number: 2, state: "In Progress" });
     expect(reconcile(ctx, 2)).toMatch(/no drift/);
   });
@@ -940,7 +937,7 @@ describe("fetchNodeIds (link/dep/comment id lookups)", () => {
   });
 });
 
-describe("doctor + migrate", () => {
+describe("doctor (legacy states, archived items)", () => {
   it("doctor: legacy states warn by default, fail under --strict", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
@@ -1064,14 +1061,18 @@ describe("doctor + migrate", () => {
     expect(gh.issues.get(1)!.claim).toBeNull();
   });
 
-  it("archived items are invisible to list/next/migrate — they cannot be written", () => {
+  it("archived items are invisible to list/next — they cannot be written", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
-    gh.issues.set(1, { number: 1, state: "Ready for Plan", archived: true });
-    gh.issues.set(2, { number: 2, state: "Ready for Plan" });
-    const lines = migrate(ctx);
-    expect(lines.some((l) => l.includes("#2"))).toBe(true);
-    expect(lines.some((l) => l.includes("#1"))).toBe(false);
+    gh.issues.set(1, { number: 1, state: "Backlog", archived: true });
+    gh.issues.set(2, { number: 2, state: "Backlog" });
+    const numbers = listItems(ctx).map((i) => i.number);
+    expect(numbers).toContain(2);
+    expect(numbers).not.toContain(1);
+    // next ranks off the same page, so it inherits the exclusion.
+    const eligible = rankNext(listItemsFull(ctx).open).eligible.map((i) => i.number);
+    expect(eligible).toContain(2);
+    expect(eligible).not.toContain(1);
   });
 
   it("direct mutations refuse archived items with a clean message, not a raw API error", () => {
@@ -1082,35 +1083,6 @@ describe("doctor + migrate", () => {
     expect(reconcile(ctx, 1)).toMatch(/archived — skipped/);
   });
 
-  it("migrate: a failed audit comment does NOT report the migration as FAILED", () => {
-    const gh = new FakeGh();
-    const ctx = makeCtx(gh);
-    gh.issues.set(1, { number: 1, state: "Ready for Plan" });
-    gh.failNextComment = true;
-    const lines = migrate(ctx, { apply: true });
-    expect(gh.issues.get(1)!.state).toBe("Backlog"); // state converged
-    expect(lines[0]).toMatch(/audit comment failed/);
-    expect(lines[0]).not.toMatch(/FAILED —/);
-  });
-
-  it("migrate: dry-run by default; Decision Request routes Plan in Review to Human Needed", () => {
-    const gh = new FakeGh();
-    const ctx = makeCtx(gh);
-    gh.issues.set(1, { number: 1, state: "Ready for Plan" });
-    gh.issues.set(2, { number: 2, state: "Plan in Review", comments: ["## Decision Request\npick one"] });
-    gh.issues.set(3, { number: 3, state: "In Progress" });
-
-    const dry = migrate(ctx);
-    expect(dry).toContain('#1: "Ready for Plan" → "Backlog" (dry-run)');
-    expect(dry).toContain('#2: "Plan in Review" → "Human Needed" (dry-run)');
-    expect(dry.some((l) => l.includes("#3"))).toBe(false);
-    expect(gh.mutations.filter((m) => m.startsWith("setState"))).toEqual([]);
-
-    migrate(ctx, { apply: true });
-    expect(gh.issues.get(1)!.state).toBe("Backlog");
-    expect(gh.issues.get(2)!.state).toBe("Human Needed");
-    expect(gh.comments.filter((c) => c.body.includes("board migrate")).length).toBe(2);
-  });
 });
 
 describe("doctor hardening (closed drift, fix gating, resilience, garbled claims)", () => {
@@ -1423,11 +1395,12 @@ describe("setup", () => {
     expect(notes.some((n) => n.startsWith("MANUAL: add option(s)") && n.includes("In Review"))).toBe(true);
   });
 
-  it("legacy v1 options present get the MANUAL (after migrate) note", () => {
+  it("legacy v1 options present get a MANUAL delete note", () => {
     const gh = new FakeGh(); // default Workflow State fixture includes LEGACY_STATES
     const ctx = makeCtx(gh);
     const { notes } = setup(ctx);
-    expect(notes.some((n) => n.startsWith("MANUAL (after migrate):") && n.includes("Ready for Plan"))).toBe(true);
+    expect(notes.some((n) => n.startsWith("MANUAL: delete legacy option(s)") && n.includes("Ready for Plan"))).toBe(true);
+    expect(notes.some((n) => n.includes("migrate"))).toBe(false);
   });
 
   it("verifies its own work: a create that did not stick is a VERIFY FAILED note, ok=false, exit 1", () => {
