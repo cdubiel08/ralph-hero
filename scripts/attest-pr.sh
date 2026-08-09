@@ -128,7 +128,10 @@ for cmd in ${RUNS[@]+"${RUNS[@]}"}; do
   # Digest: the last non-empty output line, truncated — enough to recognize
   # the run ("212 passed"), never a transcript. Pipes escaped for the
   # markdown table row.
-  digest=$(printf '%s\n' "$run_out" | sed -e 's/\r$//' | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-120 | sed 's/|/\\|/g')
+  # `|| true`: a silent success (shellcheck clean, a bare `true`) has no
+  # output lines, grep -v exits 1, and pipefail would kill the whole
+  # attestation over an empty digest.
+  digest=$(printf '%s\n' "$run_out" | sed -e 's/\r$//' | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-120 | sed 's/|/\\|/g' || true)
   [[ -z "$digest" ]] && digest="(no output)"
   RUN_RESULTS=$(jq --arg c "$cmd" --argjson e "$run_rc" --arg s "$digest" --arg sha "$ran_at_sha" \
     '. + [{command: $c, exit_code: $e, summary: $s, ran_at_sha: $sha}]' <<<"$RUN_RESULTS")

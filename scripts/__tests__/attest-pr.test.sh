@@ -203,6 +203,15 @@ payload=$(extract_payload "$CASE_DIR/posted_body.txt")
 grep -q "212 passed" <<<"$(jq -r '.tests[0].summary' <<<"$payload")" && pass "--run digest carries output" || fail "--run digest wrong"
 [[ "$(jq -r '.tests[0].ran_at_sha' <<<"$payload")" == "$LOCAL_HEAD" ]] && pass "--run captures ran_at_sha" || fail "ran_at_sha wrong"
 
+# 6b. --run with a SILENT passing command (shellcheck-clean shape): the empty
+#     digest must not kill the attestation under pipefail.
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 --run "true" \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+[[ "$LAST_RC" -eq 0 ]] && pass "silent passing command posts (rc 0)" || fail "silent command rc=$LAST_RC out=$LAST_OUT"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+[[ "$(jq -r '.tests[0].summary' <<<"$payload")" == "(no output)" ]] && pass "empty output digested as (no output)" || fail "empty digest wrong: $(jq -c .tests <<<"$payload")"
+
 # 7. --run with a FAILING command: an honest failing attestation, exit 0 —
 #    the merge gate is what refuses it, not the composer.
 new_run_case "$LOCAL_HEAD"
