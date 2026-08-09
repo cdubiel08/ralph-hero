@@ -198,6 +198,11 @@ export interface QueueItem {
   labels: string[]; // issue labels — apply-kind detection without a second round trip
   labelsTruncated: boolean; // fail closed: a truncated label list counts as apply-kind
   closedBlockers: number[]; // CLOSED blockers: "the work this waited on has landed"
+  // Tend-lane inputs (GH-1712) — optional so pure-ranking fixtures stay terse;
+  // listItemsFull always populates them.
+  updatedAt?: string | null;
+  createdAt?: string | null;
+  estimate?: string | null;
 }
 
 /** Numeric rank of a priority option ("P0" → 0, "P10" → 10). A lexicographic
@@ -1806,7 +1811,7 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
                   isArchived
                   content {
                     ... on Issue {
-                      number title state stateReason closedAt
+                      number title state stateReason closedAt createdAt updatedAt
                       labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
                       repository { nameWithOwner }
                       parent { number repository { nameWithOwner } }
@@ -1876,6 +1881,9 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
           closedBlockers: (c.blockedBy?.nodes ?? [])
             .filter((b: any) => b.state !== "OPEN")
             .map((b: any) => b.number),
+          updatedAt: c.updatedAt ?? null,
+          createdAt: c.createdAt ?? null,
+          estimate: fv[ESTIMATE_FIELD] ?? null,
         });
       }
       if (!page?.pageInfo?.hasNextPage) break;
@@ -2391,6 +2399,168 @@ export function deliverQueue(
       : null;
   }
   return classifyDeliver(cands, opts, ctx.now(), probe);
+}
+
+// ---------------------------------------------------------------------------
+// Tend lane selector (GH-1712, D4) — spec §4.3.
+//
+// Deterministic hygiene queue over own-repo items. The selector CLASSIFIES;
+// all judgment (is this actually stale? is the dup real? should it close?)
+// belongs to the tend skill — and closures are proposals via Human Needed,
+// never selector or skill executions.
+// ---------------------------------------------------------------------------
+
+export const TEND_MARKER = "<!-- ralph-tend:v1 audited -->";
+
+export interface TendOpts {
+  staleDays: number; // RALPH_STALE_DAYS — Backlog items with no updates
+  auditDays: number; // RALPH_AUDIT_DAYS — Done-audit lookback
+}
+
+export const TEND_DEFAULTS: Readonly<TendOpts> = Object.freeze({
+  staleDays: 30,
+  auditDays: 14,
+});
+
+export function parseTendOpts(
+  env: Record<string, string | undefined> = process.env,
+): TendOpts {
+  const positive = (name: string, def: number): number => {
+    const raw = env[name];
+    if (raw === undefined) return def;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+    process.stderr.write(`warn: ${name}="${raw}" is not a positive number — using ${def}\n`);
+    return def;
+  };
+  return {
+    staleDays: positive("RALPH_STALE_DAYS", TEND_DEFAULTS.staleDays),
+    auditDays: positive("RALPH_AUDIT_DAYS", TEND_DEFAULTS.auditDays),
+  };
+}
+
+export type TendCategory =
+  | "stale-body" // Backlog, no updates in staleDays — grep the live tree before trusting it
+  | "deps-cleared" // Backlog, every blocker closed — the wait is over (or the edge is stale)
+  | "deps-truncated" // Backlog, blocker list truncated — the board cannot see its own edges
+  | "unformed" // no estimate, no parent, no dependencies, older than 7 days — likely raw intake
+  | "done-audit"; // closed recently, no audit marker — the cursor is the marker comment
+
+export interface TendRow {
+  number: number;
+  title: string;
+  category: TendCategory;
+  /** The timestamp that put it in the queue (ordering input, oldest first). */
+  at: string | null;
+}
+
+export interface TendQueueResult {
+  next: TendRow | null;
+  queue: TendRow[];
+  blocked: TendRow[]; // shape parity with next/deliver-queue; tend blocks nothing
+  /** §4.3.5 — the observation-intake slot. The selector never reads dream-loop
+   *  reflections (no MCP dependency); the SKILL decides whether to pull
+   *  surfaced observations during its session. */
+  observationSlot: true;
+}
+
+const UNFORMED_DAYS = 7;
+
+/** Pure classification per spec §4.3. `auditCandidates` carries the recent
+ *  closed items with their comment trails already fetched (batched upstream). */
+export function classifyTend(
+  open: QueueItem[],
+  closed: Array<{ number: number; title?: string; closedAt: string | null; comments: string[] }>,
+  opts: TendOpts,
+  now: Date,
+): TendQueueResult {
+  const ms = (iso: string | null | undefined): number | null => {
+    if (!iso) return null;
+    const t = new Date(iso).getTime();
+    return Number.isFinite(t) ? t : null;
+  };
+  const dayMs = 86_400_000;
+  const backlog = open.filter((i) => i.state === "Backlog");
+  const seen = new Set<number>(); // one row per issue — first category (spec order) wins
+  const rows: { [K in TendCategory]: TendRow[] } = {
+    "stale-body": [],
+    "deps-cleared": [],
+    "deps-truncated": [],
+    unformed: [],
+    "done-audit": [],
+  };
+  const push = (cat: TendCategory, i: { number: number; title?: string }, at: string | null) => {
+    if (seen.has(i.number)) return;
+    seen.add(i.number);
+    rows[cat].push({ number: i.number, title: i.title ?? "", category: cat, at });
+  };
+
+  // 1. Stale bodies: the repo's documented failure mode is trusting these.
+  for (const i of backlog) {
+    const t = ms(i.updatedAt);
+    if (t !== null && now.getTime() - t > opts.staleDays * dayMs) push("stale-body", i, i.updatedAt!);
+  }
+  // 2. Dependency anomalies — Backlog-scoped (§4.1 keeps tend out of In
+  //    Progress / In Review beyond comments).
+  for (const i of backlog) {
+    if (i.openBlockers.length === 0 && i.closedBlockers.length > 0 && !i.blockersTruncated)
+      push("deps-cleared", i, i.updatedAt ?? null);
+  }
+  for (const i of backlog) {
+    if (i.blockersTruncated) push("deps-truncated", i, i.updatedAt ?? null);
+  }
+  // 3. Formation candidates: likely unformed intake.
+  for (const i of backlog) {
+    const t = ms(i.createdAt);
+    const old = t !== null && now.getTime() - t > UNFORMED_DAYS * dayMs;
+    if (
+      old &&
+      !i.estimate &&
+      !i.hasParent &&
+      i.openBlockers.length === 0 &&
+      i.closedBlockers.length === 0 &&
+      !i.blockersTruncated
+    )
+      push("unformed", i, i.createdAt!);
+  }
+  // 4. Done audit: the marker is the cursor; no local state.
+  for (const c of closed) {
+    const t = ms(c.closedAt);
+    if (t === null || now.getTime() - t > opts.auditDays * dayMs) continue;
+    if (c.comments.some((b) => b.includes(TEND_MARKER))) continue;
+    push("done-audit", c, c.closedAt);
+  }
+
+  const oldestFirst = (a: TendRow, b: TendRow) => {
+    const ta = ms(a.at) ?? 0;
+    const tb = ms(b.at) ?? 0;
+    return ta - tb || a.number - b.number;
+  };
+  const queue = (
+    ["stale-body", "deps-cleared", "deps-truncated", "unformed", "done-audit"] as const
+  ).flatMap((cat) => rows[cat].sort(oldestFirst));
+  return { next: queue[0] ?? null, queue, blocked: [], observationSlot: true };
+}
+
+/** The tend lane's typed selector. Done-audit comment trails ride the same
+ *  batched history fetch doctor uses — no per-item round trips, no MCP. */
+export function tendQueue(ctx: Ctx, opts: TendOpts = parseTendOpts()): TendQueueResult {
+  const full = listItemsFull(ctx);
+  const open = ownRepo(ctx, full.open).own;
+  const closedOwn = ownRepo(ctx, full.closed).own.filter((c) => !c.archived);
+  const dayMs = 86_400_000;
+  const recent = closedOwn.filter((c) => {
+    const t = c.closedAt ? new Date(c.closedAt).getTime() : NaN;
+    return Number.isFinite(t) && ctx.now().getTime() - t <= opts.auditDays * dayMs;
+  });
+  const histories = fetchHistories(ctx, recent.map((c) => c.number));
+  const closed = recent.map((c) => ({
+    number: c.number,
+    title: "",
+    closedAt: c.closedAt,
+    comments: histories.get(c.number)?.comments ?? [],
+  }));
+  return classifyTend(open, closed, opts, ctx.now());
 }
 
 // ---------------------------------------------------------------------------
@@ -3364,6 +3534,12 @@ reads
                               means spawn nothing (idle-exit is the caller's
                               contract). Knobs: RALPH_SETTLE_MIN (5),
                               RALPH_RETRY_MIN (60), RALPH_DELIVER_DRYRUN_MAX (3)
+  tend-queue [--json]         tend lane (GH-1712): Backlog hygiene + Done audit
+                              — stale bodies, cleared/truncated deps, unformed
+                              intake, unaudited closes. Classification only;
+                              judgment (and every closure, via Human Needed
+                              proposal) belongs to /ralph:tend. Knobs:
+                              RALPH_STALE_DAYS (30), RALPH_AUDIT_DAYS (14)
 
 mutations
   create --title T [--body B] [--parent NNN] [--estimate XS..XL] [--state S]
@@ -3597,6 +3773,18 @@ export function run(argv: string[], ctx: Ctx): number {
               .map((b) => `#${b.number}${b.pr ? ` pr#${b.pr}` : ""}←${b.reason}`)
               .join(" ")}`,
           );
+      }
+      return 0;
+    }
+
+    case "tend-queue": {
+      const res = tendQueue(ctx);
+      if (flags.json) json(res);
+      else if (!res.next) out("tend queue empty — one clean sweep");
+      else {
+        out(`tend next: #${res.next.number} [${res.next.category}]${res.next.title ? ` ${res.next.title}` : ""}`);
+        for (const r of res.queue.slice(1, 8))
+          out(`  then #${r.number} [${r.category}]${r.title ? ` ${r.title}` : ""}`);
       }
       return 0;
     }

@@ -66,6 +66,10 @@ export interface FakeIssue {
   branchPrs?: FakeIssue["prs"]; // linked only via the feature/GH-NNN convention
   commentTimes?: Array<string | null>; // createdAt aligned with comments[]
   stateUpdatedAt?: string | null; // when the board last wrote Workflow State
+  // Tend-lane facts (GH-1712)
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  estimate?: string | null;
 }
 
 /** Minimal in-memory board: answers the exact queries board.ts issues and
@@ -412,6 +416,8 @@ export class FakeGh {
                 number: fi.number, title: `Issue ${fi.number}`, state: fi.issueState ?? "OPEN",
                 stateReason: fi.stateReason ?? null,
                 closedAt: fi.closedAt ?? null,
+                createdAt: fi.createdAt ?? null,
+                updatedAt: fi.updatedAt ?? null,
                 labels: {
                   pageInfo: { hasNextPage: fi.labelsTruncated ?? false },
                   nodes: (fi.labels ?? []).map((name) => ({ name })),
@@ -438,6 +444,7 @@ export class FakeGh {
                   ...(fi.state ? [{ name: fi.state, field: { name: "Workflow State" } }] : []),
                   ...(fi.claim ? [{ text: fi.claim, field: { name: "Claim" } }] : []),
                   ...(fi.priority ? [{ name: fi.priority, field: { name: "Priority" } }] : []),
+                  ...(fi.estimate ? [{ name: fi.estimate, field: { name: "Estimate" } }] : []),
                 ],
               },
             })),

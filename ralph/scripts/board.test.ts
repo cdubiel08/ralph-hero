@@ -2637,3 +2637,153 @@ describe("deliver-queue: fetch + CLI wiring", () => {
     expect(probes).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tend lane selector (GH-1712, D4) — spec §4.3 / A1 (tend portion).
+// ---------------------------------------------------------------------------
+
+import {
+  classifyTend,
+  parseTendOpts,
+  TEND_DEFAULTS,
+  TEND_MARKER,
+  tendQueue,
+} from "./board.js";
+
+describe("tend-queue (spec §4.3)", () => {
+  // NOW is 2026-07-31T12:00:00Z.
+  const days = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();
+  const item = (n: number, over: Partial<QueueItem> = {}): QueueItem => ({
+    number: n,
+    repo: "cdubiel08/ralph-hero",
+    title: `t${n}`,
+    state: "Backlog",
+    priority: null,
+    hasParent: false,
+    parentNumber: null,
+    openBlockers: [],
+    openBlockerLabels: [],
+    blockersTruncated: false,
+    fieldValuesTruncated: false,
+    claim: null,
+    claimRaw: null,
+    labels: [],
+    labelsTruncated: false,
+    closedBlockers: [],
+    updatedAt: days(1),
+    createdAt: days(2),
+    estimate: "S",
+    ...over,
+  });
+
+  it("stale bodies: Backlog with no updates past RALPH_STALE_DAYS; fresh ones stay out", () => {
+    const res = classifyTend(
+      [item(1, { updatedAt: days(31) }), item(2, { updatedAt: days(29) })],
+      [],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([[1, "stale-body"]]);
+  });
+
+  it("dependency anomalies are Backlog-scoped: cleared blockers and truncated blockers queue; In Review never does", () => {
+    const res = classifyTend(
+      [
+        item(1, { closedBlockers: [9] }), // all blockers closed — the wait is over
+        item(2, { blockersTruncated: true }), // the board cannot see its own edges
+        item(3, { state: "In Review", closedBlockers: [9] }), // not tend's business
+        item(4, { openBlockers: [9], openBlockerLabels: ["#9"], closedBlockers: [8] }), // still genuinely blocked
+      ],
+      [],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+      [1, "deps-cleared"],
+      [2, "deps-truncated"],
+    ]);
+  });
+
+  it("formation candidates: no estimate, no parent, no deps, older than 7 days", () => {
+    const res = classifyTend(
+      [
+        item(1, { estimate: null, createdAt: days(8) }),
+        item(2, { estimate: null, createdAt: days(6) }), // too young
+        item(3, { estimate: null, createdAt: days(8), hasParent: true }), // parented = formed enough
+        item(4, { createdAt: days(8) }), // has an estimate
+      ],
+      [],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([[1, "unformed"]]);
+  });
+
+  it("done-audit marker cursor: recent closes without the marker queue; marked or old ones don't", () => {
+    const res = classifyTend(
+      [],
+      [
+        { number: 1, closedAt: days(3), comments: [] },
+        { number: 2, closedAt: days(3), comments: [`${TEND_MARKER}\n{"at":"x","artifacts_checked":1}`] },
+        { number: 3, closedAt: days(20), comments: [] }, // outside the audit window
+        { number: 4, closedAt: null, comments: [] }, // unknown close time — skipped, not invented
+      ],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([[1, "done-audit"]]);
+  });
+
+  it("category order is spec order, oldest-first within; one row per issue (first category wins)", () => {
+    const res = classifyTend(
+      [
+        item(5, { estimate: null, createdAt: days(9) }), // unformed
+        item(1, { updatedAt: days(40), closedBlockers: [9] }), // stale AND deps-cleared → stale-body wins
+        item(2, { updatedAt: days(35) }),
+        item(3, { updatedAt: days(50) }),
+      ],
+      [{ number: 9, closedAt: days(1), comments: [] }],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+      [3, "stale-body"], // oldest first
+      [1, "stale-body"],
+      [2, "stale-body"],
+      [5, "unformed"],
+      [9, "done-audit"],
+    ]);
+    expect(res.next?.number).toBe(3);
+    expect(res.observationSlot).toBe(true); // §4.3.5 — the slot is typed, the skill decides
+  });
+
+  it("tendQueue wiring: own-repo scope, archived closes skipped, histories feed the marker cursor", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", updatedAt: days(45), createdAt: days(60), estimate: "M" });
+    gh.issues.set(2, { number: 2, state: "Backlog", repo: "other/repo", updatedAt: days(45) }); // foreign
+    gh.issues.set(3, {
+      number: 3, issueState: "CLOSED", state: "Done", closedAt: days(2), comments: [],
+    });
+    gh.issues.set(4, {
+      number: 4, issueState: "CLOSED", state: "Done", closedAt: days(2),
+      comments: [`${TEND_MARKER} audited`],
+    });
+    gh.issues.set(5, {
+      number: 5, issueState: "CLOSED", state: "Done", closedAt: days(2), archived: true,
+    });
+    const res = tendQueue(ctx, TEND_DEFAULTS);
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+      [1, "stale-body"],
+      [3, "done-audit"],
+    ]);
+  });
+
+  it("parseTendOpts: defaults and env overrides", () => {
+    expect(parseTendOpts({})).toEqual({ staleDays: 30, auditDays: 14 });
+    expect(parseTendOpts({ RALPH_STALE_DAYS: "10", RALPH_AUDIT_DAYS: "7" })).toEqual({
+      staleDays: 10,
+      auditDays: 7,
+    });
+  });
+});
