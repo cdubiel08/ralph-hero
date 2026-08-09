@@ -37,6 +37,7 @@ import {
   loadConfig,
   LEGACY_STATES,
   listItems,
+  listItemsFull,
   isState,
   MACHINE,
   parentCheck,
@@ -351,7 +352,13 @@ describe("next: epic-aware output", () => {
 
 describe("LEGACY_STATES", () => {
   it("names exactly the 5 removed v1 states, none of them a v2 state", () => {
-    expect(LEGACY_STATES).toHaveLength(5);
+    expect(LEGACY_STATES).toEqual([
+      "Research Needed",
+      "Research in Progress",
+      "Ready for Plan",
+      "Plan in Progress",
+      "Plan in Review",
+    ]);
     for (const s of LEGACY_STATES) expect(isState(s)).toBe(false);
   });
 });
@@ -591,6 +598,8 @@ describe("transition engine", () => {
     expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(
       /legacy state "Ready for Plan".*board UI/,
     );
+    // The deleted subcommand must not survive in the guidance.
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).not.toThrow(/migrate/);
   });
 
   it("Human Needed requires --why and posts it as the escalation comment", () => {
@@ -891,7 +900,8 @@ describe("reality-sync lane (adopt + reconcile)", () => {
 
   it("reconcile: leaves legacy states alone, reports no-drift honestly", () => {
     gh.issues.set(1, { number: 1, state: "Ready for Plan", issueState: "OPEN" });
-    expect(reconcile(ctx, 1)).toMatch(/legacy state "Ready for Plan"/);
+    expect(reconcile(ctx, 1)).toMatch(/legacy state "Ready for Plan".*board UI/);
+    expect(reconcile(ctx, 1)).not.toMatch(/migrate/);
     gh.issues.set(2, { number: 2, state: "In Progress" });
     expect(reconcile(ctx, 2)).toMatch(/no drift/);
   });
@@ -1059,6 +1069,10 @@ describe("doctor (legacy states, archived items)", () => {
     const numbers = listItems(ctx).map((i) => i.number);
     expect(numbers).toContain(2);
     expect(numbers).not.toContain(1);
+    // next ranks off the same page, so it inherits the exclusion.
+    const eligible = rankNext(listItemsFull(ctx).open).eligible.map((i) => i.number);
+    expect(eligible).toContain(2);
+    expect(eligible).not.toContain(1);
   });
 
   it("direct mutations refuse archived items with a clean message, not a raw API error", () => {
@@ -1386,6 +1400,7 @@ describe("setup", () => {
     const ctx = makeCtx(gh);
     const { notes } = setup(ctx);
     expect(notes.some((n) => n.startsWith("MANUAL: delete legacy option(s)") && n.includes("Ready for Plan"))).toBe(true);
+    expect(notes.some((n) => n.includes("migrate"))).toBe(false);
   });
 
   it("verifies its own work: a create that did not stick is a VERIFY FAILED note, ok=false, exit 1", () => {
