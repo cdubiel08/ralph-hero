@@ -52,6 +52,8 @@ An issue carrying the configured apply label (`apply.label`, default `ralph:appl
 
 Honestly labelled limits: GitHub has no pre-close hook, so a UI close is *corrected within one reconcile pass*, not prevented; a label added after a PR's status was computed doesn't recompute it (merge time is the backstop); and non-run evidence proves a command exited 0, not that the operator's claim is true. Plan: `thoughts/shared/plans/2026-08-01-infra-apply-isolation.md`.
 
+**Lane selectors** (GH-1712): `board deliver-queue` (quiescent In Review items with actionable PR signal — marker-gated per PR, gate truth from `merge-pr.sh --dry-run`, bounded verdict-agnostic retry) and `board tend-queue` (stale bodies, cleared/truncated deps, unformed intake, unaudited closes). Both are `next`-class typed read-only queries; empty `next` means spawn nothing. A lane = typed selector + judgment skill + goal; the four-dimension lane test gating new lane proposals is stated once in `ralph/CLAUDE.md`. Transport recipes (attended `/loop`, unattended routines/scheduler with the two-key fail-closed opt-in): `ralph/examples/README.md`.
+
 `board doctor [--fix] [--strict]` is the invariant sweep — plus three `i`-level **state smells** (GH-1715: `repeated-claim-expiry`, `escalation-ping-pong`, `review-stalled`) read from the comment trail the machine already wrote. Info lines are advisory by construction: `--strict` never escalates them, `--fix` never acts on them, and a history read that throws degrades to `not evaluated` rather than touching the exit code. `board readiness` is the advisory agent-readiness report (3 levels: interactive / unattended / autonomous loop — recommendations, never gates); `board help` lists everything.
 
 ### Enforcement layers (honestly labeled)
@@ -67,6 +69,8 @@ Honestly labelled limits: GitHub has no pre-close hook, so a UI close is *correc
 | Surface | Purpose |
 |---|---|
 | `/ralph:work` | The execution verb: claim → work at driver-judged depth (no prescribed phases) → PR → gates → close-out, under the 8-rule contract in its SKILL.md |
+| `/ralph:deliver` | Follow-through lane (GH-1712): one pass over `board deliver-queue` — shepherd In Review PRs through the gate (token-mapped outcomes), close out merged-but-open items, demote semantic rework via the legal two-hop. Never `--force`; re-attests only via `attest-pr.sh --run --carry-review`; post-merge Done writes yield to reconcile |
+| `/ralph:tend` | Hygiene lane (GH-1712): one bounded pass over `board tend-queue` — Backlog shape + Done audit, metadata-only, closures only ever PROPOSED via Human Needed. Grep the live tree before trusting a body |
 | `/ralph:board` | Human surface: orientation, intake, answering Human Needed, doctor, readiness |
 | `ralph/agents/investigator.md` | Read-only fan-out worker — Read/Grep/Glob only (hard allowlist, no Bash) |
 | `.claude/workflows/{research-panel,plan-critique,tree-impl,adversarial-review}.md` | Optional ultracode fan-out equipment — granted, never prescribed |

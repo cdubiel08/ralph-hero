@@ -2787,3 +2787,55 @@ describe("tend-queue (spec §4.3)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Readiness — per-lane rows (GH-1712, D6) — A6.
+// ---------------------------------------------------------------------------
+
+describe("readiness — lane rows (GH-1712)", () => {
+  it("lane rows are info in ALL states — absent, enabled-but-stale — and never change readyFor", () => {
+    const gh = new FakeGh();
+    const home = mkdtempSync(join(tmpdir(), "ralph-home-"));
+    // Enabled + a stale heartbeat + a non-empty outcomes log: the richest state.
+    writeFileSync(join(home, "config"), "autopilot=true\nautopilot.deliver=true\n");
+    writeFileSync(join(home, "deliver.heartbeat"), "");
+    writeFileSync(join(home, "deliver.outcomes.log"), "2026-07-31T00:00:00Z deliver GH-1 rc=0 checked=1 acted=1\n");
+    const root = mkdtempSync(join(tmpdir(), "readiness-lanes-"));
+    const ctx = makeCtx(gh, "me@test", root);
+    vi.stubEnv("RALPH_HOME", home);
+    try {
+      const withLanes = readiness(ctx);
+      const deliver = withLanes.checks.find((c) => c.name === "lane-deliver");
+      const tend = withLanes.checks.find((c) => c.name === "lane-tend");
+      expect(deliver?.status).toBe("info");
+      expect(deliver?.detail).toContain("unattended opt-in ON");
+      expect(deliver?.detail).toContain("heartbeat");
+      expect(deliver?.detail).toContain("outcomes log present");
+      expect(tend?.status).toBe("info"); // nothing configured for tend — still info
+      expect(tend?.detail).toContain("opt-in off");
+      expect(tend?.detail).toContain("no tend.heartbeat");
+
+      // readyFor is EXACTLY what it was without any lane state at all.
+      vi.stubEnv("RALPH_HOME", mkdtempSync(join(tmpdir(), "ralph-home-empty-")));
+      const bare = readiness(ctx);
+      expect(withLanes.readyFor).toBe(bare.readyFor);
+      expect(bare.checks.find((c) => c.name === "lane-deliver")?.status).toBe("info");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("the per-lane key alone is never sufficient — global-off reads as opt-in off", () => {
+    const gh = new FakeGh();
+    const home = mkdtempSync(join(tmpdir(), "ralph-home-partial-"));
+    writeFileSync(join(home, "config"), "autopilot.deliver=true\n"); // missing the global key
+    const ctx = makeCtx(gh, "me@test", mkdtempSync(join(tmpdir(), "readiness-partial-")));
+    vi.stubEnv("RALPH_HOME", home);
+    try {
+      const report = readiness(ctx);
+      expect(report.checks.find((c) => c.name === "lane-deliver")?.detail).toContain("opt-in off");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
