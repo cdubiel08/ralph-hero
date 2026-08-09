@@ -1,7 +1,7 @@
 #!/bin/bash
 # Merge a PR through verification gates, with deterministic worktree cleanup.
 #
-# Usage: ./scripts/merge-pr.sh PR_NUMBER [WORKTREE_ID] [--force "reason"]
+# Usage: ./scripts/merge-pr.sh PR_NUMBER [WORKTREE_ID] [--force "reason"] [--dry-run]
 #
 # GH-1589 (epic #1588): this script is the PORTABLE merge gate — the
 # verification lives here, in plain bash + gh + jq, so it binds from any
@@ -41,6 +41,16 @@
 # and posts a "## Merge Gate Override" comment on the PR (reason, actor,
 # skipped gates, head sha) BEFORE merging. Loud and durable, never silent.
 #
+# --dry-run (GH-1712, D8): evaluate every gate exactly as the merge path
+# does — same tokens, same exit codes (0/1/75) — then stop. No merge, no
+# worktree cleanup, no comment, no mutation of any kind. This is the single
+# source of truth for "is this PR mergeable and why not"; selectors and
+# skills read it rather than re-implementing gate logic. One sanctioned
+# divergence: gate 2 makes a single attempt with no retry sleep, and
+# mergeable UNKNOWN maps to PENDING — mergeable (the merge path retries
+# once, then soft-gates). Mutually exclusive with --force: a dry run of an
+# override is not a meaningful question.
+#
 # Output contract (loop-runners grep these):
 #   MERGE GATE PASS            — all gates satisfied (or force-skipped)   [0]
 #   MERGE GATE WARN — ...      — non-blocking anomaly (e.g. zero checks)
@@ -59,7 +69,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 PR_NUMBER [WORKTREE_ID] [--force \"reason\"]" >&2
+  echo "Usage: $0 PR_NUMBER [WORKTREE_ID] [--force \"reason\"] [--dry-run]" >&2
   exit 1
 }
 
@@ -67,9 +77,14 @@ PR_NUMBER=""
 WORKTREE_ID=""
 FORCE=false
 FORCE_REASON=""
+DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
     --force)
       FORCE=true
       FORCE_REASON="${2:-}"
@@ -96,6 +111,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "$PR_NUMBER" ]] && usage
+
+if [[ "$DRY_RUN" == "true" && "$FORCE" == "true" ]]; then
+  echo "MERGE GATE FAIL — args: --dry-run and --force are mutually exclusive" >&2
+  exit 1
+fi
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 if [[ -z "$PROJECT_ROOT" ]]; then
@@ -186,7 +206,12 @@ fi
 # ---------------------------------------------------------------------------
 # Gate 2: mergeable
 # ---------------------------------------------------------------------------
-if [[ "$mergeable" == "UNKNOWN" ]]; then
+# Dry-run divergence (the one sanctioned one, GH-1712 D8): a selector probing
+# many PRs cannot afford a 5s sleep per UNKNOWN, and "GitHub hasn't computed
+# mergeability yet" is evidence-not-in-yet, not a verdict — so dry-run makes a
+# single attempt and maps UNKNOWN to PENDING. The merge path keeps its
+# retry-then-soft-gate shape unchanged.
+if [[ "$mergeable" == "UNKNOWN" && "$DRY_RUN" != "true" ]]; then
   sleep 5
   mergeable=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable' 2>/dev/null || echo "UNKNOWN")
 fi
@@ -197,7 +222,11 @@ case "$mergeable" in
     block "mergeable" "PR #$PR_NUMBER has conflicts — rebase first"
     ;;
   *)
-    soft_gate "mergeable" "mergeable status is ${mergeable:-empty} after retry"
+    if [[ "$DRY_RUN" == "true" ]]; then
+      pending "mergeable" "mergeable status is ${mergeable:-empty} (not yet computed)"
+    else
+      soft_gate "mergeable" "mergeable status is ${mergeable:-empty} after retry"
+    fi
     ;;
 esac
 
@@ -370,6 +399,13 @@ _Posted by scripts/merge-pr.sh --force before merging (GH-1589)._"
 fi
 
 echo "MERGE GATE PASS — PR #$PR_NUMBER @ ${head_sha:0:8} (attestation=$ATTESTATION_REQUIRED external=$EXTERNAL_REQUIRED exempt=$EXEMPT force=$FORCE)"
+
+# Dry run stops here: gates evaluated, verdict emitted, nothing touched.
+# Everything below this line mutates (worktree removal, the merge itself).
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "Dry run: no merge attempted."
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # Worktree cleanup (pre-merge so --delete-branch succeeds)

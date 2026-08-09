@@ -8,13 +8,33 @@
 #     [--review-mode internal|external] [--review-url URL] \
 #     [--class "mcp-ts::adversarial:mcp-ts"]... [--no-auto-classes] \
 #     [--generated-by ID]
+#   ./scripts/attest-pr.sh PR_NUMBER \
+#     --run "npx vitest run ralph/scripts/" [--run "..."]... \
+#     --carry-review [other flags as above]
 #
-# --test packs "command::exit_code[::summary]". At least one is required —
-# an attestation without test evidence is rejected by the merge gate anyway.
-# Classes default to auto-computation from the PR diff via
+# --test packs "command::exit_code[::summary]". At least one test entry is
+# required — an attestation without test evidence is rejected by the merge
+# gate anyway. Classes default to auto-computation from the PR diff via
 # scripts/pr-file-classes.sh (reviewed_by "adversarial:<class>"); explicit
 # --class entries are appended (same packed format). --no-auto-classes
 # disables the auto pass.
+#
+# --run "<cmd>" (repeatable; GH-1712, D9): executes each command in the
+# current checkout, captures its REAL exit code, a truncated output digest,
+# and `git rev-parse HEAD` at execution time (ran_at_sha), and composes
+# tests[] exclusively from those observed runs. Mutually exclusive with
+# --test — observed and caller-typed evidence never mix. A failing command
+# produces an HONEST failing attestation (posted, exit 0) — the merge gate
+# is what refuses it. Posting refuses when any ran_at_sha differs from the
+# PR's current head: single line `ATTESTATION REFUSED — head moved`,
+# exit 75 (retryable — re-run at the new head). Consumers key on the token,
+# never the shared exit code.
+#
+# --carry-review (GH-1712, D9): copies the `review` block verbatim from the
+# PR's existing attestation comment instead of taking --review-verdict /
+# --reviewer. Refuses with `ATTESTATION REFUSED — no prior review` (exit 75)
+# when no prior attestation exists — re-attestation never invents, and never
+# retypes, a review verdict.
 #
 # The comment carries the machine-readable payload in a ```json fence under
 # the <!-- ralph-attestation:v1 --> marker. head_sha is captured from the PR
@@ -34,6 +54,8 @@ usage() {
 
 PR_NUMBER=""
 TESTS=()
+RUNS=()
+CARRY_REVIEW=false
 CLASSES=()
 AUTO_CLASSES=true
 REVIEW_VERDICT=""
@@ -45,6 +67,8 @@ GENERATED_BY="${RALPH_HARNESS_ID:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --test)           TESTS+=("${2:?--test needs a value}"); shift 2 ;;
+    --run)            RUNS+=("${2:?--run needs a command}"); shift 2 ;;
+    --carry-review)   CARRY_REVIEW=true; shift ;;
     --class)          CLASSES+=("${2:?--class needs a value}"); shift 2 ;;
     --no-auto-classes) AUTO_CLASSES=false; shift ;;
     --review-verdict) REVIEW_VERDICT="${2:?}"; shift 2 ;;
@@ -61,21 +85,114 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "$PR_NUMBER" ]] && usage
-if [[ ${#TESTS[@]} -eq 0 ]]; then
-  echo "ERROR: at least one --test \"command::exit_code[::summary]\" is required" >&2
+if [[ ${#TESTS[@]} -gt 0 && ${#RUNS[@]} -gt 0 ]]; then
+  echo "ERROR: --test and --run are mutually exclusive — observed and caller-typed evidence never mix" >&2
   exit 1
 fi
-if [[ -z "$REVIEW_VERDICT" || -z "$REVIEWER" ]]; then
-  echo "ERROR: --review-verdict and --reviewer are required" >&2
+if [[ ${#TESTS[@]} -eq 0 && ${#RUNS[@]} -eq 0 ]]; then
+  echo "ERROR: at least one --test \"command::exit_code[::summary]\" or --run \"<cmd>\" is required" >&2
+  exit 1
+fi
+if [[ "$CARRY_REVIEW" == "true" && ( -n "$REVIEW_VERDICT" || -n "$REVIEWER" ) ]]; then
+  echo "ERROR: --carry-review and --review-verdict/--reviewer are mutually exclusive — carry copies, it never retypes" >&2
+  exit 1
+fi
+if [[ "$CARRY_REVIEW" != "true" && ( -z "$REVIEW_VERDICT" || -z "$REVIEWER" ) ]]; then
+  echo "ERROR: --review-verdict and --reviewer are required (or --carry-review)" >&2
   exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Retry-able refusal, distinct from a failing test run (which posts an honest
+# failing attestation, exit 0). 75 is EX_TEMPFAIL, matching merge-pr.sh's
+# PENDING. Consumers key on the token, never the shared exit code.
+REFUSED_EXIT=75
+
+# --- observed runs (--run mode) --------------------------------------------
+# Executed BEFORE the head fetch: the binding compares the sha each command
+# actually ran at against the PR head as of posting time, so a push landing
+# mid-run is caught, not laundered.
+RUN_RESULTS="[]"
+for cmd in ${RUNS[@]+"${RUNS[@]}"}; do
+  echo "RUNNING: $cmd" >&2
+  set +e
+  run_out=$(bash -c "$cmd" 2>&1)
+  run_rc=$?
+  set -e
+  ran_at_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+  if [[ -z "$ran_at_sha" ]]; then
+    echo "ERROR: --run requires a git checkout (cannot resolve HEAD)" >&2
+    exit 1
+  fi
+  # Digest: the last non-empty output line, truncated — enough to recognize
+  # the run ("212 passed"), never a transcript. Pipes escaped for the
+  # markdown table row.
+  # `|| true`: a silent success (shellcheck clean, a bare `true`) has no
+  # output lines, grep -v exits 1, and pipefail would kill the whole
+  # attestation over an empty digest.
+  digest=$(printf '%s\n' "$run_out" | sed -e 's/\r$//' | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-120 | sed 's/|/\\|/g' || true)
+  [[ -z "$digest" ]] && digest="(no output)"
+  RUN_RESULTS=$(jq --arg c "$cmd" --argjson e "$run_rc" --arg s "$digest" --arg sha "$ran_at_sha" \
+    '. + [{command: $c, exit_code: $e, summary: $s, ran_at_sha: $sha}]' <<<"$RUN_RESULTS")
+done
+
 head_sha=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
 if [[ -z "$head_sha" ]]; then
   echo "ERROR: cannot resolve head SHA for PR #$PR_NUMBER" >&2
   exit 1
+fi
+
+# --- head binding (--run mode) ---------------------------------------------
+# Evidence is bound to the attested commit, not just to a real run: if the PR
+# head moved between running and posting, the observed runs prove nothing
+# about what would merge.
+if [[ ${#RUNS[@]} -gt 0 ]]; then
+  moved=$(jq -r --arg h "$head_sha" '[.[] | select(.ran_at_sha != $h)] | length' <<<"$RUN_RESULTS")
+  if [[ "$moved" -gt 0 ]]; then
+    first_ran=$(jq -r '.[0].ran_at_sha' <<<"$RUN_RESULTS")
+    echo "ATTESTATION REFUSED — head moved (ran at ${first_ran:0:8}, PR head now ${head_sha:0:8}; re-run at the new head)"
+    exit "$REFUSED_EXIT"
+  fi
+fi
+
+# --- comments (fetched once: carry-review source + update-in-place target) --
+# --paginate: the default page is 30 comments — a busy PR would hide an older
+# attestation and cause a duplicate post instead of an in-place update
+# (CodeRabbit finding, PR #1602). Last match across ALL pages wins.
+# per_page goes in the URL: `-F` would flip gh api to POST on this GET
+# endpoint. Exit code checked on the capture itself — a failed lookup must
+# fall through to fresh-post, not feed an error blob into the PATCH URL.
+comments_json=""
+comments_fetched=false
+if comments_json=$(gh api --paginate "repos/{owner}/{repo}/issues/$PR_NUMBER/comments?per_page=100" 2>/dev/null); then
+  comments_fetched=true
+fi
+
+# --- carried review (--carry-review mode) ----------------------------------
+if [[ "$CARRY_REVIEW" == "true" ]]; then
+  prior_body=""
+  if [[ "$comments_fetched" == "true" ]]; then
+    # -s + add: --paginate emits one array per page; slurp+add flattens them.
+    prior_body=$(jq -rs --arg m "$MARKER" \
+      'add // [] | [.[] | select(.body | contains($m))] | last | .body // ""' <<<"$comments_json")
+  fi
+  prior_payload=""
+  if [[ -n "$prior_body" ]]; then
+    prior_payload=$(awk '/^```json[[:space:]]*$/{f=1; next} f && /^```[[:space:]]*$/{exit} f' <<<"$prior_body")
+  fi
+  carried_review=""
+  if [[ -n "$prior_payload" ]] && jq -e '.review.verdict // empty' >/dev/null 2>&1 <<<"$prior_payload"; then
+    carried_review=$(jq -c '.review' <<<"$prior_payload")
+  fi
+  if [[ -z "$carried_review" ]]; then
+    echo "ATTESTATION REFUSED — no prior review (no prior attestation with a review block on PR #$PR_NUMBER; a fresh verdict needs --review-verdict/--reviewer from a real review)"
+    exit "$REFUSED_EXIT"
+  fi
+  REVIEW_VERDICT=$(jq -r '.verdict // ""' <<<"$carried_review")
+  REVIEWER=$(jq -r '.reviewer // ""' <<<"$carried_review")
+  REVIEW_MODE=$(jq -r '.mode // "internal"' <<<"$carried_review")
+  REVIEW_URL=$(jq -r '.url // ""' <<<"$carried_review")
 fi
 
 if [[ -z "$GENERATED_BY" ]]; then
@@ -85,7 +202,12 @@ generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # --- tests[] ---------------------------------------------------------------
 tests_json="[]"
-for t in "${TESTS[@]}"; do
+if [[ ${#RUNS[@]} -gt 0 ]]; then
+  # Observed runs only — real exit codes, digests, and ran_at_sha, captured
+  # above. Nothing caller-typed enters this lane.
+  tests_json="$RUN_RESULTS"
+fi
+for t in ${TESTS[@]+"${TESTS[@]}"}; do
   cmd="${t%%::*}"
   rest="${t#*::}"
   exit_code="${rest%%::*}"
@@ -139,6 +261,12 @@ payload=$(jq -n \
     generated_at: $at
   }')
 
+# Carried review replaces the composed block wholesale — verbatim copy, so
+# any extra keys the prior attestation carried survive the re-attestation.
+if [[ "$CARRY_REVIEW" == "true" ]]; then
+  payload=$(jq --argjson r "$carried_review" '.review = $r' <<<"$payload")
+fi
+
 tests_rows=$(jq -r '.[] | "| `\(.command)` | \(.exit_code) | \(.summary) |"' <<<"$tests_json")
 classes_rows=$(jq -r '.[] | "| \(.class) | \(.reviewed_by) |"' <<<"$classes_json")
 
@@ -162,14 +290,10 @@ $payload
 _Generated by \`$GENERATED_BY\` at $generated_at (scripts/attest-pr.sh, GH-1589). Pushing new commits invalidates this attestation._"
 
 # --- post or update --------------------------------------------------------
-# --paginate: the default page is 30 comments — a busy PR would hide an older
-# attestation and cause a duplicate post instead of an in-place update
-# (CodeRabbit finding, PR #1602). Last match across ALL pages wins.
-# per_page goes in the URL: `-F` would flip gh api to POST on this GET
-# endpoint. Exit code checked on the capture itself — a failed lookup must
-# fall through to fresh-post, not feed an error blob into the PATCH URL.
+# The comment list was fetched once above (carry-review shares it); a failed
+# fetch falls through to fresh-post, exactly as before.
 existing_id=""
-if comments_json=$(gh api --paginate "repos/{owner}/{repo}/issues/$PR_NUMBER/comments?per_page=100" 2>/dev/null); then
+if [[ "$comments_fetched" == "true" ]]; then
   existing_id=$(jq -r --arg m "$MARKER" \
     '[.[] | select(.body | contains($m))] | last | .id // empty' <<<"$comments_json" | tail -1)
 fi
