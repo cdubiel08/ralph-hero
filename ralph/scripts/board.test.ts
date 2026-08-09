@@ -2550,8 +2550,11 @@ describe("deliver-queue: marker + verdict parsing", () => {
       parseDeliverOpts({ RALPH_SETTLE_MIN: "10", RALPH_RETRY_MIN: "30", RALPH_DELIVER_DRYRUN_MAX: "1" }),
     ).toEqual({ settleMin: 10, retryMin: 30, dryrunMax: 1 });
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    expect(parseDeliverOpts({ RALPH_SETTLE_MIN: "banana" }).settleMin).toBe(5);
-    err.mockRestore();
+    try {
+      expect(parseDeliverOpts({ RALPH_SETTLE_MIN: "banana" }).settleMin).toBe(5);
+    } finally {
+      err.mockRestore();
+    }
   });
 });
 
@@ -2599,6 +2602,13 @@ describe("deliver-queue: fetch + CLI wiring", () => {
       return true;
     });
     try {
+      // Ambient RALPH_* exports (a real habit on dev machines) must not steer
+      // this test: a big RALPH_SETTLE_MIN would flip #1 to `settling`, and
+      // RALPH_MERGE_PR_SH would override the /repo fallback below.
+      vi.stubEnv("RALPH_SETTLE_MIN", undefined);
+      vi.stubEnv("RALPH_RETRY_MIN", undefined);
+      vi.stubEnv("RALPH_DELIVER_DRYRUN_MAX", undefined);
+      vi.stubEnv("RALPH_MERGE_PR_SH", undefined);
       // repoRoot "/repo" ships no scripts/merge-pr.sh → native-flow degrade, no probe.
       run(["deliver-queue", "--json"], ctx);
       const parsed = JSON.parse(said.join(""));
@@ -2609,6 +2619,7 @@ describe("deliver-queue: fetch + CLI wiring", () => {
       expect(said.join("")).toContain("deliver next: #1 pr#101 [actionable] Issue 1");
       expect(said.join("")).toContain("#2←no-pr");
     } finally {
+      vi.unstubAllEnvs();
       spy.mockRestore();
     }
   });
