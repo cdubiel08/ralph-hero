@@ -50,7 +50,21 @@ export interface FakeIssue {
   body?: string;
   fieldValuesTruncated?: boolean; // item's fieldValues page reports hasNextPage
   closedAt?: string | null;
-  prs?: Array<{ number: number; merged: boolean; updatedAt?: string }>;
+  prs?: Array<{
+    number: number;
+    merged: boolean;
+    updatedAt?: string;
+    // Deliver-lane facts (GH-1712) — served only by the deliver detail branch.
+    prState?: "OPEN" | "MERGED" | "CLOSED";
+    headSha?: string;
+    checks?: Array<{ name: string; conclusion: string | null }>;
+    reviewsAt?: string[];
+    threadsAt?: string[]; // unresolved-thread last-comment times
+    commentAt?: string;
+    pushedAt?: string;
+  }>;
+  branchPrs?: FakeIssue["prs"]; // linked only via the feature/GH-NNN convention
+  commentTimes?: Array<string | null>; // createdAt aligned with comments[]
   stateUpdatedAt?: string | null; // when the board last wrote Workflow State
 }
 
@@ -190,8 +204,92 @@ export class FakeGh {
     };
   }
 
+  /** One PR node for the deliver detail query (GH-1712). */
+  private deliverPrNode(p: NonNullable<FakeIssue["prs"]>[number]) {
+    return {
+      number: p.number,
+      state: p.prState ?? (p.merged ? "MERGED" : "OPEN"),
+      headRefOid: p.headSha ?? "deadbeef",
+      commits: {
+        nodes: [
+          {
+            commit: {
+              committedDate: p.pushedAt ?? null,
+              pushedDate: p.pushedAt ?? null,
+              statusCheckRollup: p.checks
+                ? {
+                    contexts: {
+                      nodes: p.checks.map((c) => ({
+                        __typename: "CheckRun",
+                        name: c.name,
+                        conclusion: c.conclusion,
+                      })),
+                    },
+                  }
+                : null,
+            },
+          },
+        ],
+      },
+      reviews: { nodes: (p.reviewsAt ?? []).map((t) => ({ submittedAt: t })) },
+      reviewThreads: {
+        nodes: (p.threadsAt ?? []).map((t) => ({
+          isResolved: false,
+          comments: { nodes: [{ createdAt: t }] },
+        })),
+      },
+      comments: { nodes: p.commentAt ? [{ createdAt: p.commentAt }] : [] },
+    };
+  }
+
   private graphql(payload: { query: string; variables: any }): ExecResult {
     const { query, variables } = payload;
+
+    // Deliver-lane detail fetch (GH-1712): dK/bK alias pairs. Matched before
+    // every other issue branch — its selection set contains their needles.
+    if (query.includes("d0: issue(number")) {
+      const repo: Record<string, unknown> = {};
+      for (const [key, num] of Object.entries(variables)) {
+        const m = /^n(\d+)$/.exec(key);
+        if (!m) continue;
+        const fi = this.issues.get(num as number);
+        if (!fi) {
+          repo[`d${m[1]}`] = null;
+          repo[`b${m[1]}`] = { nodes: [] };
+          continue;
+        }
+        repo[`d${m[1]}`] = {
+          number: fi.number,
+          title: `Issue ${fi.number}`,
+          comments: {
+            nodes: (fi.comments ?? []).map((body, i) => ({
+              body,
+              createdAt: fi.commentTimes?.[i] ?? null,
+            })),
+          },
+          closedByPullRequestsReferences: {
+            nodes: (fi.prs ?? []).map((p) => this.deliverPrNode(p)),
+          },
+          projectItems: {
+            nodes:
+              fi.onBoard === false
+                ? []
+                : [
+                    {
+                      project: { id: PROJECT_ID },
+                      fieldValues: {
+                        nodes: fi.state
+                          ? [{ updatedAt: fi.stateUpdatedAt ?? null, field: { name: "Workflow State" } }]
+                          : [],
+                      },
+                    },
+                  ],
+          },
+        };
+        repo[`b${m[1]}`] = { nodes: (fi.branchPrs ?? []).map((p) => this.deliverPrNode(p)) };
+      }
+      return data({ repository: repo });
+    }
 
     // fetchNodeIds: aliased id-only lookups — no selection beyond { id }.
     if (query.includes("a0: issue(number") && !query.includes("comments(last")) {

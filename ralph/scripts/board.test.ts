@@ -2269,3 +2269,360 @@ describe("create --apply", () => {
     expect(() => run(["create", "--title", "apply: it", "--apply"], ctx)).toThrow(/apply` block/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Deliver lane selector (GH-1712, D3) — spec §4.2 / A1.
+// ---------------------------------------------------------------------------
+
+import {
+  classifyDeliver,
+  DELIVER_DEFAULTS,
+  type DeliverCandidate,
+  type DeliverMarkerEntry,
+  type DeliverPrFacts,
+  deliverQueue,
+  parseDeliverMarker,
+  parseDeliverOpts,
+  parseMergeGateVerdict,
+} from "./board.js";
+
+describe("deliver-queue: classification (spec §4.2)", () => {
+  // NOW is 2026-07-31T12:00:00Z. Defaults: settle 5 min, retry 60 min, budget 3.
+  const dpr = (n: number, over: Partial<DeliverPrFacts> = {}): DeliverPrFacts => ({
+    number: n,
+    state: "OPEN",
+    headSha: "sha-a",
+    checkConclusions: "ci=success",
+    reviewCursor: null,
+    threadCursor: null,
+    lastActivityAt: "2026-07-31T11:00:00Z", // 60 min ago — well settled
+    ...over,
+  });
+  const cand = (n: number, over: Partial<DeliverCandidate> = {}): DeliverCandidate => ({
+    number: n,
+    title: `Issue ${n}`,
+    prs: [dpr(100 + n)],
+    stateUpdatedAt: "2026-07-31T10:00:00Z",
+    lastCommentAt: null,
+    marker: null,
+    ...over,
+  });
+  const entry = (over: Partial<DeliverMarkerEntry> = {}): DeliverMarkerEntry => ({
+    head_sha: "sha-a",
+    verdict: "PENDING",
+    gate: "external-review",
+    check_conclusions: "ci=success",
+    review_cursor: null,
+    thread_cursor: null,
+    at: "2026-07-31T11:30:00Z", // 30 min ago — inside the 60-min retry window
+    ...over,
+  });
+  const classify = (
+    cands: DeliverCandidate[],
+    probe: Parameters<typeof classifyDeliver>[3] = () => ({ verdict: "PASS", gate: null }),
+  ) => classifyDeliver(cands, DELIVER_DEFAULTS, NOW, probe);
+
+  it("quiescence boundary: fresh activity settles; exactly the window's age is quiescent", () => {
+    const fresh = classify([cand(1, { prs: [dpr(101, { lastActivityAt: "2026-07-31T11:56:00Z" })] })]);
+    expect(fresh.next).toBeNull();
+    expect(fresh.blocked[0]).toMatchObject({ number: 1, reason: "settling" });
+    expect(fresh.blocked[0].windowExpiresAt).toBe("2026-07-31T12:01:00.000Z");
+    // age == settleMin passes the guard (strictly-less-than keeps it settling)
+    const edge = classify([cand(1, { prs: [dpr(101, { lastActivityAt: "2026-07-31T11:55:00Z" })] })]);
+    expect(edge.next).toMatchObject({ number: 1, reason: "actionable" });
+  });
+
+  it("issue-side activity (state change, comment) settles too — not just PR pushes", () => {
+    const res = classify([cand(1, { stateUpdatedAt: "2026-07-31T11:58:00Z" })]);
+    expect(res.blocked[0]).toMatchObject({ reason: "settling" });
+    const res2 = classify([cand(1, { lastCommentAt: "2026-07-31T11:59:00Z" })]);
+    expect(res2.blocked[0]).toMatchObject({ reason: "settling" });
+  });
+
+  it("zero linked PRs is no-pr — rollup parents and human-placed items are not deliver's business", () => {
+    const res = classify([cand(1, { prs: [] })]);
+    expect(res.next).toBeNull();
+    expect(res.blocked[0]).toMatchObject({ number: 1, reason: "no-pr" });
+    expect(res.blocked[0].windowExpiresAt).toBeUndefined(); // only a human clears it
+  });
+
+  it("all linked PRs merged/closed is ELIGIBLE (no-open-pr) — the close-out branch un-strands it", () => {
+    const merged = classify([cand(1, { prs: [dpr(101, { state: "MERGED" })] })]);
+    expect(merged.next).toMatchObject({ number: 1, reason: "no-open-pr" });
+    // closed-unmerged is the SAME selector reason — merged-vs-unmerged is the session's judgment
+    const closed = classify([cand(2, { prs: [dpr(102, { state: "CLOSED" })] })]);
+    expect(closed.next).toMatchObject({ number: 2, reason: "no-open-pr" });
+  });
+
+  it("marker-absent PR is trivially actionable once probed; probe verdict/gate land on the row", () => {
+    const probed: number[] = [];
+    const res = classify([cand(1)], (pr) => {
+      probed.push(pr);
+      return { verdict: "FAIL", gate: "checks" };
+    });
+    expect(probed).toEqual([101]);
+    expect(res.next).toMatchObject({ number: 1, pr: 101, reason: "actionable", verdict: "FAIL", gate: "checks" });
+  });
+
+  it("dry-run verdict mapping: PASS / PENDING-by-gate / FAIL-by-gate all confirm when the tuple differs", () => {
+    for (const v of [
+      { verdict: "PASS", gate: null },
+      { verdict: "PENDING", gate: "mergeable" },
+      { verdict: "FAIL", gate: "attestation" },
+    ]) {
+      const res = classify([cand(1)], () => v);
+      expect(res.next).toMatchObject({ reason: "actionable", verdict: v.verdict, gate: v.gate });
+    }
+  });
+
+  it("cheap re-arm deltas: each of head/checks/review/thread re-arms the probe", () => {
+    const deltas: Array<Partial<DeliverMarkerEntry>> = [
+      { head_sha: "sha-OLD" },
+      { check_conclusions: "ci=failure" },
+      { review_cursor: "2026-07-31T09:00:00Z" },
+      { thread_cursor: "2026-07-31T09:00:00Z" },
+    ];
+    for (const d of deltas) {
+      const probed: number[] = [];
+      const res = classify(
+        [cand(1, { marker: { "101": entry(d) } })],
+        (pr) => {
+          probed.push(pr);
+          return { verdict: "PASS", gate: null };
+        },
+      );
+      expect(probed, JSON.stringify(d)).toEqual([101]);
+      expect(res.next, JSON.stringify(d)).toMatchObject({ reason: "actionable" });
+    }
+  });
+
+  it("probed-tuple-equal is marker-current until the window expires — a recorded PASS included", () => {
+    // Cheap delta (checks changed) but the probe still returns the recorded tuple.
+    const res = classify(
+      [cand(1, { marker: { "101": entry({ check_conclusions: "ci=failure", verdict: "PASS", gate: null }) } })],
+      () => ({ verdict: "PASS", gate: null }),
+    );
+    expect(res.next).toBeNull();
+    expect(res.blocked[0]).toMatchObject({ number: 1, pr: 101, reason: "marker-current" });
+    expect(res.blocked[0].windowExpiresAt).toBe("2026-07-31T12:30:00.000Z"); // at + 60 min
+  });
+
+  it("no cheap delta inside the window is retry-window — and the probe is NOT spent on it", () => {
+    const probed: number[] = [];
+    const res = classify([cand(1, { marker: { "101": entry() } })], (pr) => {
+      probed.push(pr);
+      return { verdict: "PASS", gate: null };
+    });
+    expect(probed).toEqual([]);
+    expect(res.next).toBeNull();
+    expect(res.blocked[0]).toMatchObject({ reason: "retry-window" });
+  });
+
+  it("bounded retry re-arms after RALPH_RETRY_MIN for EVERY verdict class — unchanged PENDING and unchanged PASS alike", () => {
+    for (const v of [
+      { verdict: "PENDING", gate: "external-review" },
+      { verdict: "PASS", gate: null }, // the PASS-that-never-merged class
+    ]) {
+      const probed: number[] = [];
+      const res = classify(
+        [cand(1, { marker: { "101": entry({ ...v, at: "2026-07-31T10:30:00Z" }) } })], // 90 min ago
+        (pr) => {
+          probed.push(pr);
+          return { verdict: "PASS", gate: null };
+        },
+      );
+      expect(probed, v.verdict).toEqual([]); // retries never consume the dry-run budget
+      expect(res.next, v.verdict).toMatchObject({ number: 1, pr: 101, reason: "retry", verdict: v.verdict });
+    }
+  });
+
+  it("anti-starvation: newest-delta-first budget — persistent old marker-current candidates cannot pin it", () => {
+    // 5 cheap-delta candidates; the 3 OLDEST would probe tuple-equal (marker-current).
+    // Budget 3, newest-first: the two newest get probed and confirm; the third
+    // probe lands on t3 (tuple-equal); t2/t1 are deferred, and the newest item
+    // still got its probe.
+    const at = (h: number) => `2026-07-31T0${h}:00:00Z`;
+    const cands = [1, 2, 3, 4, 5].map((k) =>
+      cand(k, {
+        prs: [dpr(100 + k, { lastActivityAt: at(k), headSha: "sha-new" })],
+        marker: { [String(100 + k)]: entry({ head_sha: "sha-old", verdict: "PASS", gate: null }) },
+      }),
+    );
+    const probed: number[] = [];
+    const res = classifyDeliver(cands, DELIVER_DEFAULTS, NOW, (pr) => {
+      probed.push(pr);
+      return { verdict: "PASS", gate: null };
+    });
+    expect(probed).toEqual([105, 104, 103]); // newest first, budget 3
+    const deferred = res.blocked.filter((b) => b.reason === "deferred").map((b) => b.pr);
+    expect(deferred.sort()).toEqual([101, 102]);
+    expect(res.queue.filter((r) => r.reason === "actionable").map((r) => r.pr)).toEqual([103, 104, 105]); // oldest-first
+  });
+
+  it("anti-starvation with genuinely marker-current elders: the newest delta still gets probed", () => {
+    const at = (h: number) => `2026-07-31T0${h}:00:00Z`;
+    // Elders 1..3: checks-delta but probe confirms the recorded tuple (marker-current).
+    const elders = [1, 2, 3].map((k) =>
+      cand(k, {
+        prs: [dpr(100 + k, { lastActivityAt: at(k) })],
+        marker: { [String(100 + k)]: entry({ check_conclusions: "ci=failure", verdict: "PASS", gate: null }) },
+      }),
+    );
+    // Newcomer 9: newest delta, marker-less.
+    const fresh = cand(9, { prs: [dpr(109, { lastActivityAt: at(9) })] });
+    const probed: number[] = [];
+    const res = classifyDeliver([...elders, fresh], DELIVER_DEFAULTS, NOW, (pr) => {
+      probed.push(pr);
+      return { verdict: "PASS", gate: null };
+    });
+    expect(probed[0]).toBe(109); // newest delta first — the fresh PR is never starved
+    expect(res.queue.filter((r) => r.reason === "actionable").map((r) => r.pr)).toEqual([109]);
+    expect(res.blocked.filter((b) => b.reason === "marker-current").length).toBe(2);
+    expect(res.blocked.filter((b) => b.reason === "deferred").length).toBe(1);
+  });
+
+  it("queue order: close-outs, then confirmed oldest-first, then retries — retries never starve fresh work", () => {
+    const res = classifyDeliver(
+      [
+        cand(1, { marker: { "101": entry({ at: "2026-07-31T10:00:00Z" }) } }), // retry (120 min old)
+        cand(2, { prs: [dpr(102, { lastActivityAt: "2026-07-31T09:00:00Z" })] }), // confirmed, older delta
+        cand(3, { prs: [dpr(103, { lastActivityAt: "2026-07-31T11:00:00Z" })] }), // confirmed, newer delta
+        cand(4, { prs: [dpr(104, { state: "MERGED" })] }), // close-out
+      ],
+      DELIVER_DEFAULTS,
+      NOW,
+      () => ({ verdict: "PASS", gate: null }),
+    );
+    expect(res.queue.map((r) => [r.number, r.reason])).toEqual([
+      [4, "no-open-pr"],
+      [2, "actionable"],
+      [3, "actionable"],
+      [1, "retry"],
+    ]);
+    expect(res.next).toMatchObject({ number: 4 });
+  });
+
+  it("no merge gate in the host repo: cheap-delta candidates are actionable unprobed (native-flow degrade)", () => {
+    const res = classifyDeliver([cand(1)], DELIVER_DEFAULTS, NOW, null);
+    expect(res.next).toMatchObject({ number: 1, reason: "actionable", verdict: null });
+  });
+
+  it("a crashed probe (no parseable verdict) still yields actionable — the session runs the gates itself", () => {
+    const res = classify([cand(1)], () => null);
+    expect(res.next).toMatchObject({ reason: "actionable", verdict: null });
+  });
+});
+
+describe("deliver-queue: marker + verdict parsing", () => {
+  it("parses the marker's fenced JSON keyed by PR number; last marker comment wins", () => {
+    const mk = (sha: string) =>
+      `<!-- ralph-deliver:v1 -->\n\`\`\`json\n{"prs":{"101":{"head_sha":"${sha}","verdict":"PASS","gate":null,"check_conclusions":"","review_cursor":null,"thread_cursor":null,"at":"2026-07-31T11:00:00Z"}}}\n\`\`\``;
+    const prs = parseDeliverMarker(["unrelated", mk("old"), mk("new")]);
+    expect(prs?.["101"]?.head_sha).toBe("new");
+  });
+
+  it("malformed marker JSON reads as no marker — one redundant probe, never a wrong mutation", () => {
+    expect(parseDeliverMarker(["<!-- ralph-deliver:v1 -->\n```json\n{not json\n```"])).toBeNull();
+    expect(parseDeliverMarker(["<!-- ralph-deliver:v1 --> no fence at all"])).toBeNull();
+    expect(parseDeliverMarker([])).toBeNull();
+  });
+
+  it("verdict is the LAST non-WARN MERGE GATE line (WARN-then-PASS parses as PASS)", () => {
+    expect(
+      parseMergeGateVerdict(
+        "MERGE GATE WARN — checks: no CI checks reported on PR #9 (continuing)\nMERGE GATE PASS — PR #9 @ abcd1234 (attestation=true external=true exempt=false force=false)\nDry run: no merge attempted.",
+      ),
+    ).toEqual({ verdict: "PASS", gate: null });
+    expect(parseMergeGateVerdict("MERGE GATE FAIL — checks: not green: build=fail\nMERGE BLOCKED — x")).toEqual({
+      verdict: "FAIL",
+      gate: "checks",
+    });
+    expect(parseMergeGateVerdict("MERGE GATE PENDING — external-review: no review yet")).toEqual({
+      verdict: "PENDING",
+      gate: "external-review",
+    });
+    expect(parseMergeGateVerdict("gh: connection refused")).toBeNull();
+  });
+
+  it("parseDeliverOpts: defaults, env overrides, invalid warns to default", () => {
+    expect(parseDeliverOpts({})).toEqual({ settleMin: 5, retryMin: 60, dryrunMax: 3 });
+    expect(
+      parseDeliverOpts({ RALPH_SETTLE_MIN: "10", RALPH_RETRY_MIN: "30", RALPH_DELIVER_DRYRUN_MAX: "1" }),
+    ).toEqual({ settleMin: 10, retryMin: 30, dryrunMax: 1 });
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(parseDeliverOpts({ RALPH_SETTLE_MIN: "banana" }).settleMin).toBe(5);
+    err.mockRestore();
+  });
+});
+
+describe("deliver-queue: fetch + CLI wiring", () => {
+  const OLD = "2026-07-31T10:00:00Z"; // settled
+
+  it("foreign-repo and archived In Review items never reach the queue; linkage unions refs + branch convention", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      prs: [{ number: 101, merged: false, headSha: "sha-a", pushedAt: OLD }],
+    });
+    gh.issues.set(2, { number: 2, state: "In Review", repo: "other/repo", stateUpdatedAt: OLD });
+    gh.issues.set(3, { number: 3, state: "In Review", archived: true, stateUpdatedAt: OLD });
+    gh.issues.set(4, {
+      number: 4,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      branchPrs: [{ number: 104, merged: false, headSha: "sha-b", pushedAt: OLD }], // convention-only linkage
+    });
+    const res = deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
+    expect(res.queue.map((r) => [r.number, r.pr]).sort()).toEqual([
+      [1, 101],
+      [4, 104],
+    ]);
+    expect(res.queue.length + res.blocked.length).toBe(2); // #2 foreign, #3 archived: absent entirely
+  });
+
+  it("run(): deliver-queue --json emits {next,queue,blocked} and prose mode names blocked reasons", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      prs: [{ number: 101, merged: false, headSha: "sha-a", pushedAt: OLD }],
+    });
+    gh.issues.set(2, { number: 2, state: "In Review", stateUpdatedAt: OLD }); // no PR at all
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      // repoRoot "/repo" ships no scripts/merge-pr.sh → native-flow degrade, no probe.
+      run(["deliver-queue", "--json"], ctx);
+      const parsed = JSON.parse(said.join(""));
+      expect(parsed.next).toMatchObject({ number: 1, pr: 101, reason: "actionable", verdict: null });
+      expect(parsed.blocked).toEqual([expect.objectContaining({ number: 2, reason: "no-pr" })]);
+      said.length = 0;
+      run(["deliver-queue"], ctx);
+      expect(said.join("")).toContain("deliver next: #1 pr#101 [actionable] Issue 1");
+      expect(said.join("")).toContain("#2←no-pr");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("an empty In Review set spawns no detail fetch and no probe (idle-exit is cheap)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    let probes = 0;
+    const res = deliverQueue(ctx, DELIVER_DEFAULTS, () => {
+      probes++;
+      return { verdict: "PASS", gate: null };
+    });
+    expect(res).toEqual({ next: null, queue: [], blocked: [] });
+    expect(probes).toBe(0);
+  });
+});
