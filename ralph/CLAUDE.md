@@ -2,23 +2,33 @@
 
 ## What this is
 
-ralph v2 (GH-1662): two skills, one agent, one board CLI, two courtesy hooks. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`.
+ralph v2 (GH-1662): four skills, one agent, one board CLI, courtesy hooks, and lane selectors. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`; lanes spec (GH-1712): `../thoughts/shared/specs/2026-08-07-loop-agent-lanes-spec.md`.
 
 ```text
 ralph/
 ├── skills/work/        # the execution verb — outcome, boundaries, contract
+├── skills/deliver/     # follow-through lane: In Review PRs → merged (GH-1712)
+├── skills/tend/        # hygiene lane: Backlog shape + Done audit (GH-1712)
 ├── skills/board/       # human surface — orientation, intake, answers, doctor
 ├── skills/using-html/  # vendored utility (byte-identical upstream; do not edit)
 ├── agents/investigator.md  # read-only fan-out worker (hard tools: allowlist)
 ├── scripts/board(.ts)  # THE board mutation path — typed 6-state machine,
-│                       #   claims with TTL, scope gate, doctor; vitest-covered
+│                       #   claims with TTL, scope gate, doctor, and the lane
+│                       #   selectors (next / deliver-queue / tend-queue)
+├── scripts/tick.sh     # ONE scheduler-transport example of driving the work
+│                       #   lane (+ install-loop.sh) — a recipe, not THE loop
+├── examples/README.md  # transport recipes: /loop, routines, scheduler — copy and own
 ├── hooks/funnel-*.sh   # courtesy redirects to board.ts / merge-pr.sh (merge
 │                       #   redirect only when the host repo ships the gate) —
 │                       #   NOT enforcement; board.ts + state-guard.yml are
 └── .claude-plugin/     # manifest
 ```
 
-Phase 3 (GH-1662) adds `scripts/tick.sh` + `scripts/install-loop.sh` — the scheduler-owned autonomous loop. Not present yet.
+## Lanes (GH-1712)
+
+A lane is a **typed selector + a judgment skill + a goal** — cadence is derived per pass from what the queue is blocked on, never configured. Three exist: **work** (`board next` → `/ralph:work`), **deliver** (`board deliver-queue` → `/ralph:deliver` — quiescent In Review items, marker-gated per PR, gate truth from `merge-pr.sh --dry-run`), **tend** (`board tend-queue` → `/ralph:tend` — Backlog hygiene + Done audit, metadata-only, closures only ever proposed). Skills are single-pass operators; pacing vocabulary lives only in `examples/README.md`.
+
+**The four-dimension lane test** (gates every future lane proposal; stated once, here): a new lane is justified only when **signal source, write lane, pacing signal, and permission set all four differ simultaneously** from every existing lane. The pacing signal is the observable a lane derives its next wake from (work: queue depth; deliver: check conclusions, review deltas, retry/settle windows; tend: accumulation age) — a proposal that differs only in derived cadence numbers fails the test.
 
 ## Conventions
 

@@ -2,7 +2,7 @@
 
 Board-driven autonomous development over a GitHub Projects V2 board, packaged as a Claude Code plugin.
 
-One execution verb (`/ralph:work`), one human surface (`/ralph:board`), one typed board CLI (`scripts/board`), one read-only fan-out agent, two courtesy hooks, and a scheduler-owned loop. The driving model sequences its own research/plan/build/verify at whatever depth the unit demands; enforcement is code, not prose.
+One execution verb (`/ralph:work`), two follow-through lanes (`/ralph:deliver`, `/ralph:tend`), one human surface (`/ralph:board`), one typed board CLI (`scripts/board`), and one read-only fan-out agent. The driving model sequences its own research/plan/build/verify at whatever depth the unit demands; enforcement is code, not prose.
 
 This is ralph v2 (GH-1662). Design record (normative): [`../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`](../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md).
 
@@ -11,11 +11,14 @@ This is ralph v2 (GH-1662). Design record (normative): [`../thoughts/shared/idea
 | Surface | Purpose |
 |---|---|
 | `/ralph:work` | The only execution verb: claim → work (no prescribed phase order) → PR → gates → close-out, under an 8-rule contract |
+| `/ralph:deliver` | Follow-through lane: shepherds In Review PRs to merged — concluded checks, review deltas, re-attestation (`--carry-review` only), rework demotion, close-outs. Mechanical remediation only, never `--force` |
+| `/ralph:tend` | Hygiene lane: Backlog shape + Done audit — dedup, dependency wiring, stale-body detection against the live tree, observation intake with provenance. Metadata-only; closures are proposals via Human Needed |
 | `/ralph:board` | Human surface: orientation ("what's going on"), intake ("make a ticket"), answering blocked items, doctor, readiness |
-| `scripts/board` | Typed board CLI — the sole sanctioned mutation path: 6-state machine, claims with TTL, scope gate, doctor |
+| `scripts/board` | Typed board CLI — the sole sanctioned mutation path: 6-state machine, claims with TTL, scope gate, doctor, and the lane selectors (`next`, `deliver-queue`, `tend-queue`) |
+| `examples/README.md` | Transport recipes for driving the lanes — `/loop` (fixed and self-paced), scheduled routines, scheduler scripts. Copy and own; ralph executes none of them |
 | `agents/investigator.md` | Read-only fan-out worker (Read/Grep/Glob hard allowlist) for parallel investigation |
 | `hooks/funnel-{board,merge}.sh` | Courtesy redirects: raw board mutations → the CLI; bare `gh pr merge` → the merge gate, when the host repo ships one. **Not** enforcement |
-| `scripts/tick.sh` + `scripts/install-loop.sh` | The autonomous loop: scheduler-owned, one iteration per invocation, typed opt-in |
+| `scripts/tick.sh` + `scripts/install-loop.sh` | The scheduler-transport recipe for the work lane: one iteration per invocation, typed opt-in — one transport among several (see `examples/README.md`), not *the* loop |
 | `skills/using-html` | Vendored utility (byte-identical upstream; do not edit) |
 
 ## The board
@@ -69,9 +72,21 @@ In an installed plugin the CLI lives at `${CLAUDE_PLUGIN_ROOT}/scripts/board` (i
 - `/ralph:work NNN` — drive one issue end-to-end. Also accepts an outcome description (creates the issue first) or empty args (folds Human Needed replies, then takes `board next`).
 - The CLI directly: `board get NNN`, `board list --state human`, `board next`, `board tree NNN`, `board create --title …`, `board claim NNN`, `board move NNN in-review`, `board doctor --fix`, `board readiness`.
 
-## The loop (optional autopilot)
+## Lanes and how to drive them
 
-`tick.sh` runs ONE iteration: lock → heartbeat → `board next` (empty queue = exit before spawning anything) → worktree-per-job → `$RALPH_TICK_RUNNER "/ralph:work NNN"` under a hard timeout → per-issue log. A timeout releases the claim; success is judged by board state, not exit codes (a no-op runner logs loudly). The scheduler owns cadence — no sentinels, no in-session wakeups.
+A **lane** is a typed selector + a judgment skill + a goal (its termination condition). Cadence is never configured — it is derived per pass from what the queue is blocked on, and each skill ends its pass reporting exactly what a driver needs (`checked`/`acted`, blocked reasons, earliest window expiry):
+
+| Lane | Selector | Skill | Goal |
+|---|---|---|---|
+| work | `board next` | `/ralph:work` | empty `next` |
+| deliver | `board deliver-queue` | `/ralph:deliver` | empty `next` + no time-bounded blocked rows |
+| tend | `board tend-queue` | `/ralph:tend` | one clean sweep (`checked>0, acted=0`) |
+
+Every transport is valid against the same contracts — a direct invocation, a `/loop` session (fixed or self-paced), a scheduled routine, or a scheduler script. Recipes, including the fail-closed opt-in keys and billing guard for unattended transports (`autopilot=true` plus `autopilot.<lane>=true` for deliver/tend): [`examples/README.md`](examples/README.md).
+
+## The scheduler recipe (optional autopilot for the work lane)
+
+`tick.sh` runs ONE iteration: lock → heartbeat → `board next` (empty queue = exit before spawning anything) → worktree-per-job → `$RALPH_TICK_RUNNER "/ralph:work NNN"` under a hard timeout → per-issue log. A timeout releases the claim; success is judged by board state, not exit codes (a no-op runner logs loudly). The scheduler owns cadence — no sentinels, no in-session wakeups. It is the worked example of the scheduler transport, not the architecture.
 
 ```bash
 ralph/scripts/install-loop.sh --enable    # writes autopilot=true, installs the launchd job (macOS) or prints the cron line
@@ -104,6 +119,12 @@ Merges in this repo go through `bash scripts/merge-pr.sh PR` (never bare `gh pr 
 | `RALPH_TICK_TIMEOUT_MIN` | `45` | Hard timeout per tick's work session |
 | `RALPH_TICK_INTERVAL_MIN` | `15` | Scheduler cadence written by `install-loop.sh` |
 | `RALPH_ALLOW_API_BILLING` | unset | Set `true` to let tick.sh spawn with `ANTHROPIC_API_KEY` present |
+| `RALPH_SETTLE_MIN` | `5` | deliver-queue quiescence window (minutes) |
+| `RALPH_RETRY_MIN` | `60` | deliver-queue bounded-retry window, any verdict (minutes) |
+| `RALPH_DELIVER_DRYRUN_MAX` | `3` | deliver-queue `merge-pr.sh --dry-run` probes per pass |
+| `RALPH_STALE_DAYS` | `30` | tend-queue stale-body threshold (days) |
+| `RALPH_AUDIT_DAYS` | `14` | tend-queue Done-audit lookback (days) |
+| `RALPH_TEND_BATCH` | `5` | tend skill's per-session item budget |
 
 Autopilot itself is not an env var: it is `autopilot=true` in `$RALPH_HOME/config` (default `~/.ralph/config`), written by `install-loop.sh --enable`.
 

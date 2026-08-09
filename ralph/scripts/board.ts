@@ -16,7 +16,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -3285,13 +3285,52 @@ export function readiness(ctx: Ctx): ReadinessReport {
         "scheduled jobs), add an `apply` block to .github/ralph-merge-policy.json — the board then refuses to " +
         "call such work Done without deployed-and-verified evidence. Repos whose changes go live on merge need none of it",
   );
-  const hb = existsSync(join(homedir(), ".ralph", "heartbeat"));
+  // `||`, not `??`: tick.sh's `${RALPH_HOME:-...}` treats empty as unset, and
+  // this row must read the same files the scripts write.
+  const ralphHome = process.env.RALPH_HOME || join(homedir(), ".ralph");
+  const hb = existsSync(join(ralphHome, "heartbeat"));
   add(
     3, "loop", "info",
     hb
       ? "scheduler heartbeat present on this machine"
       : "loop not installed on this machine (install-loop.sh --enable when wanted)",
   );
+
+  // Per-lane drive state (GH-1712) — machine-local like `loop`, and `info`
+  // UNCONDITIONALLY (spec §4.7): a stale heartbeat on one machine must never
+  // change the repo's readyFor. What it reports: the unattended opt-in keys
+  // (fail-closed two-key convention), heartbeat presence + age, outcomes log.
+  const autopilotKeys = new Set<string>();
+  try {
+    for (const line of readFileSync(join(ralphHome, "config"), "utf8").split("\n")) {
+      const m = /^\s*([A-Za-z0-9_.-]+)\s*=\s*true\s*$/.exec(line);
+      if (m) autopilotKeys.add(m[1]);
+    }
+  } catch {
+    /* no config = nothing enabled; still info */
+  }
+  for (const lane of ["deliver", "tend"] as const) {
+    const optIn =
+      autopilotKeys.has("autopilot") && autopilotKeys.has(`autopilot.${lane}`)
+        ? "unattended opt-in ON (autopilot + autopilot." + lane + ")"
+        : "unattended opt-in off (attended invocations need none)";
+    let hbNote = `no ${lane}.heartbeat on this machine`;
+    try {
+      const ageMin = Math.round(
+        (ctx.now().getTime() - statSync(join(ralphHome, `${lane}.heartbeat`)).mtimeMs) / 60_000,
+      );
+      hbNote = `heartbeat ${ageMin} min old`;
+    } catch {
+      /* absent: the note above stands */
+    }
+    let logNote = "no outcomes log yet";
+    try {
+      if (statSync(join(ralphHome, `${lane}.outcomes.log`)).size > 0) logNote = "outcomes log present";
+    } catch {
+      /* absent: the note above stands */
+    }
+    add(3, `lane-${lane}`, "info", `${optIn}; ${hbNote}; ${logNote}`);
+  }
 
   let readyFor: ReadinessReport["readyFor"] = 0;
   for (const lvl of [1, 2, 3] as const) {
