@@ -81,10 +81,11 @@ numbered step — 1 and 2 are the fail-closed opt-in and the billing guard:
 ```text
 You are one scheduled pass of the ralph deliver lane on this machine.
 
-1. Read ~/.ralph/config. Unless BOTH `autopilot=true` AND `autopilot.deliver=true`
-   are present, print "deliver: autopilot not enabled (fail closed)" and stop.
-   The global key alone is never sufficient; the per-lane key alone is never
-   sufficient.
+1. Read $RALPH_HOME/config (default ~/.ralph/config — the same resolution
+   tick.sh and the skills use). Unless BOTH `autopilot=true` AND
+   `autopilot.deliver=true` are present, print "deliver: autopilot not enabled
+   (fail closed)" and stop. The global key alone is never sufficient; the
+   per-lane key alone is never sufficient.
 2. If the environment has ANTHROPIC_API_KEY set and RALPH_ALLOW_API_BILLING is not
    "true", print "deliver: refusing to spawn on API billing" and stop.
 3. Invoke /ralph:deliver with no argument. It runs one pass and exits at a surfaced
@@ -131,8 +132,10 @@ do this at exit):
 2026-08-09T03:10:00Z deliver GH-1683 rc=0 checked=2 acted=1
 ```
 
-A lane always logging `checked=0` is visibly dead, never silently green. Script
-transports additionally log `skipped=lock` on lock skips — that is the contention datum
-that tells you whether one machine's serialization is costing you passes. `board
-readiness` reports the per-lane opt-in keys, heartbeat age, and outcomes log as
-informational rows — recommendations, never gates.
+A lane always logging `checked=0` is visibly dead, never silently green. When you copy
+the scheduler skeleton, also log `skipped=lock` on lock skips — that is the contention
+datum that tells you whether one machine's serialization is costing you passes.
+(`tick.sh` today prints its skip loudly to its own log rather than emitting this token —
+align the two when you copy it; the convention is yours to keep.) `board readiness`
+reports the per-lane opt-in keys, heartbeat age, and outcomes log as informational
+rows — recommendations, never gates.

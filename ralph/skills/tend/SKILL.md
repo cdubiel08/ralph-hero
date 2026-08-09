@@ -18,7 +18,7 @@ The board CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/board` — that placeholder reso
 
 ## One pass
 
-`board tend-queue --json` classifies; you judge. Work the queue in order, at most **`RALPH_TEND_BATCH` (default 5) items per pass**, then exit — a hygiene lane that runs long stops being hygiene. Empty queue = one clean sweep: write the exit report and stop. You are a single-pass operator: whatever invoked you decides whether another pass happens — never arrange one yourself.
+`board tend-queue --json` classifies; you judge. Work the queue in order, at most **`RALPH_TEND_BATCH` (default 5) items per pass**, then exit — a hygiene lane that runs long stops being hygiene. The lane's goal state is a **clean sweep**: a pass with `checked>0, acted=0` and no new observations pulled (an empty queue is the degenerate case — `checked=0`, nothing accumulated; both end the loop). You are a single-pass operator: whatever invoked you decides whether another pass happens — never arrange one yourself.
 
 Inherited from /ralph:work, verbatim: board truthful at all times; findings outlive the transcript; decisions journaled via `board comment`; scope is the selected item.
 
@@ -38,5 +38,5 @@ Close-as-stale / cancel-as-superseded / reopen-as-unevidenced are **never execut
 ## Exit — every pass, even a clean sweep
 
 1. On each Done item you audited: post the marker comment — `<!-- ralph-tend:v1 audited -->` followed by fenced JSON `{"at": "<iso8601>", "artifacts_checked": <n>}`. The marker is the cursor; a deleted one costs one redundant audit, never a wrong mutation.
-2. Append `<iso8601> tend GH-<n> rc=<code> checked=<N> acted=<M>` to `$RALPH_HOME/tend.outcomes.log` (default `~/.ralph/`) and touch `$RALPH_HOME/tend.heartbeat`.
-3. Report, as your final output: `checked`/`acted`, what you proposed vs applied, and whether this was a clean sweep (`checked>0, acted=0`, no observations pulled) — the lane's goal state; re-entry is by accumulation, and that is the transport's business, not yours.
+2. Append `<iso8601> tend GH-<n> rc=<code> checked=<N> acted=<M>` to `$RALPH_HOME/tend.outcomes.log` (default `~/.ralph/`) and touch `$RALPH_HOME/tend.heartbeat`. An empty pass writes `GH-none` in the subject slot; the line still lands.
+3. Report, as your final output, the uniform pass report every lane shares: `checked`/`acted`, the blocked-reason set (tend's selector blocks nothing — an empty set, said explicitly), the earliest window expiry (tend has no time-bounded windows — `none`), what you proposed vs applied, and whether this was a clean sweep — the goal state; re-entry is by accumulation, and that is the transport's business, not yours.
