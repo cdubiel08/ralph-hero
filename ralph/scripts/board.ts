@@ -1890,6 +1890,510 @@ export function listItems(ctx: Ctx): QueueItem[] {
 }
 
 // ---------------------------------------------------------------------------
+// Deliver lane selector (GH-1712, D3) — spec §4.2.
+//
+// Read-only apart from invoking `merge-pr.sh --dry-run` (itself side-effect-
+// free, D8). The selector CLASSIFIES; every judgment (what to do about an
+// actionable PR) belongs to the deliver skill. It never writes the marker —
+// only deliver sessions do, at exit.
+// ---------------------------------------------------------------------------
+
+export const DELIVER_MARKER = "<!-- ralph-deliver:v1 -->";
+
+export interface DeliverOpts {
+  /** Quiescence guard (min): fresh activity keeps an item settling. */
+  settleMin: number;
+  /** Bounded retry (min), any verdict: catches transitions no cheap signal
+   *  can observe (stuck PENDING, a recorded PASS whose PR never merged). */
+  retryMin: number;
+  /** Dry-run probes per pass — the only non-trivial cost this selector has. */
+  dryrunMax: number;
+}
+
+export const DELIVER_DEFAULTS: Readonly<DeliverOpts> = Object.freeze({
+  settleMin: 5,
+  retryMin: 60,
+  dryrunMax: 3,
+});
+
+export function parseDeliverOpts(
+  env: Record<string, string | undefined> = process.env,
+): DeliverOpts {
+  const positive = (name: string, def: number): number => {
+    const raw = env[name];
+    if (raw === undefined) return def;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+    process.stderr.write(`warn: ${name}="${raw}" is not a positive number — using ${def}\n`);
+    return def;
+  };
+  return {
+    settleMin: positive("RALPH_SETTLE_MIN", DELIVER_DEFAULTS.settleMin),
+    retryMin: positive("RALPH_RETRY_MIN", DELIVER_DEFAULTS.retryMin),
+    dryrunMax: positive("RALPH_DELIVER_DRYRUN_MAX", DELIVER_DEFAULTS.dryrunMax),
+  };
+}
+
+/** One PR's marker entry — the tuple that gates re-selection (§4.2.3a). */
+export interface DeliverMarkerEntry {
+  head_sha: string;
+  verdict: string;
+  gate: string | null;
+  check_conclusions: string;
+  review_cursor: string | null;
+  thread_cursor: string | null;
+  at: string; // ISO — anchors this PR's bounded retry window
+}
+
+/** Last DELIVER_MARKER comment wins; malformed JSON reads as "no marker"
+ *  (markers are cursors, not authority — the cost is one redundant probe,
+ *  never a wrong mutation). */
+export function parseDeliverMarker(
+  comments: string[],
+): Record<string, DeliverMarkerEntry> | null {
+  const body = [...comments].reverse().find((c) => c.includes(DELIVER_MARKER));
+  if (!body) return null;
+  const fence = /```json\s*\n([\s\S]*?)\n\s*```/.exec(body);
+  if (!fence) return null;
+  try {
+    const parsed = JSON.parse(fence[1]);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const prs = (parsed as any).prs;
+    if (typeof prs !== "object" || prs === null) return null;
+    return prs as Record<string, DeliverMarkerEntry>;
+  } catch {
+    return null;
+  }
+}
+
+/** What one linked PR looks like to the selector — cheap-signal cursors only;
+ *  gate truth stays in merge-pr.sh --dry-run (D8). */
+export interface DeliverPrFacts {
+  number: number;
+  state: "OPEN" | "MERGED" | "CLOSED";
+  headSha: string;
+  /** Sorted `name=conclusion` digest of check runs + status contexts. */
+  checkConclusions: string;
+  /** Latest review submittedAt. */
+  reviewCursor: string | null;
+  /** Latest comment createdAt across UNRESOLVED review threads. */
+  threadCursor: string | null;
+  /** Newest of head push / PR comment / review / thread activity — the PR's
+   *  contribution to the quiescence clock and the delta's own timestamp. */
+  lastActivityAt: string | null;
+}
+
+export interface DeliverCandidate {
+  number: number;
+  title: string;
+  /** Linked PRs: closing references ∪ `feature/GH-NNN` branch convention
+   *  (detect-if-present — hosts without the convention degrade to closing
+   *  references only). Deduped by PR number. */
+  prs: DeliverPrFacts[];
+  stateUpdatedAt: string | null; // when the board wrote the current state
+  lastCommentAt: string | null; // newest issue comment
+  marker: Record<string, DeliverMarkerEntry> | null;
+}
+
+export type DeliverReason =
+  | "actionable" // confirmed by a dry-run probe (or probe unavailable)
+  | "retry" // marker window expired — the session runs the gates itself
+  | "no-open-pr" // all linked PRs merged/closed — close-out branch (§4.4)
+  | "settling"
+  | "no-pr"
+  | "marker-current"
+  | "retry-window"
+  | "deferred";
+
+export interface DeliverRow {
+  number: number;
+  title: string;
+  pr: number | null; // null for no-pr / no-open-pr / settling (item-level rows)
+  reason: DeliverReason;
+  verdict?: string | null; // from the probe (or the marker, for retry rows)
+  gate?: string | null;
+  deltaAt?: string | null; // the delta's own timestamp (ordering input)
+  /** Time-bounded blocked rows: when to look again. The lane's pacing input —
+   *  rows without one (`no-pr`) only a human can clear. */
+  windowExpiresAt?: string | null;
+}
+
+export interface DeliverQueueResult {
+  next: DeliverRow | null;
+  queue: DeliverRow[];
+  blocked: DeliverRow[];
+}
+
+/** The verdict is the LAST non-WARN `MERGE GATE` line (D8 contract: WARN is a
+ *  non-terminal advisory that never appears alone). Null = no parseable
+ *  verdict (script crashed) — the caller treats that as "session decides". */
+export function parseMergeGateVerdict(
+  out: string,
+): { verdict: "PASS" | "PENDING" | "FAIL"; gate: string | null } | null {
+  const lines = out
+    .split("\n")
+    .filter((l) => l.startsWith("MERGE GATE ") && !l.startsWith("MERGE GATE WARN"));
+  const last = lines[lines.length - 1];
+  if (!last) return null;
+  const m = /^MERGE GATE (PASS|PENDING|FAIL)(?:\s+—\s+([a-z0-9-]+))?/.exec(last);
+  if (!m) return null;
+  return {
+    verdict: m[1] as "PASS" | "PENDING" | "FAIL",
+    gate: m[1] === "PASS" ? null : (m[2] ?? null),
+  };
+}
+
+/** A probe answers "what would the merge gate say right now" for one PR.
+ *  Null = the probe ran but produced no verdict (crash) — still actionable;
+ *  the session runs the gates itself and finds out. */
+export type DeliverProbe = (pr: number) => { verdict: string; gate: string | null } | null;
+
+/** Pure classification per spec §4.2 — deterministic given candidates, opts,
+ *  clock, and probe. `probe === null` means the host repo ships no merge gate:
+ *  cheap-delta candidates are actionable unprobed (native-flow degrade). */
+export function classifyDeliver(
+  cands: DeliverCandidate[],
+  opts: DeliverOpts,
+  now: Date,
+  probe: DeliverProbe | null,
+): DeliverQueueResult {
+  const ms = (iso: string | null | undefined): number | null => {
+    if (!iso) return null;
+    const t = new Date(iso).getTime();
+    return Number.isFinite(t) ? t : null;
+  };
+  const iso = (t: number): string => new Date(t).toISOString();
+  const settleMs = opts.settleMin * 60_000;
+  const retryMs = opts.retryMin * 60_000;
+
+  const blocked: DeliverRow[] = [];
+  const closeouts: DeliverRow[] = [];
+  const retries: DeliverRow[] = [];
+  const probeCands: Array<{
+    c: DeliverCandidate;
+    pr: DeliverPrFacts;
+    entry: DeliverMarkerEntry | null;
+    deltaAt: number;
+  }> = [];
+
+  for (const c of cands) {
+    if (c.prs.length === 0) {
+      // Rollup-advanced epic parents and human-placed items — not deliver's
+      // business; they never reach the signal checks.
+      blocked.push({ number: c.number, title: c.title, pr: null, reason: "no-pr" });
+      continue;
+    }
+    const open = c.prs.filter((p) => p.state === "OPEN");
+    if (open.length === 0) {
+      // All linked PRs merged/closed: the close-out branch (§4.4). Neither
+      // reconcile nor doctor covers an open In Review issue with a merged PR;
+      // without this such items strand forever. Merged-vs-closed-unmerged is
+      // the SESSION's judgment, not the selector's.
+      closeouts.push({ number: c.number, title: c.title, pr: null, reason: "no-open-pr" });
+      continue;
+    }
+    // Quiescence guard (§4.2.4): the newest of state change, issue comment,
+    // and every open PR's activity must be older than the settle window.
+    const newest = Math.max(
+      ...[ms(c.stateUpdatedAt), ms(c.lastCommentAt), ...open.map((p) => ms(p.lastActivityAt))]
+        .filter((t): t is number => t !== null),
+      -Infinity,
+    );
+    if (newest !== -Infinity && now.getTime() - newest < settleMs) {
+      blocked.push({
+        number: c.number,
+        title: c.title,
+        pr: null,
+        reason: "settling",
+        windowExpiresAt: iso(newest + settleMs),
+      });
+      continue;
+    }
+    for (const p of open) {
+      const entry = c.marker?.[String(p.number)] ?? null;
+      if (!entry) {
+        // Marker-less trivially differs from any tuple — probe candidate.
+        probeCands.push({ c, pr: p, entry: null, deltaAt: ms(p.lastActivityAt) ?? 0 });
+        continue;
+      }
+      const cheapDelta =
+        entry.head_sha !== p.headSha ||
+        entry.check_conclusions !== p.checkConclusions ||
+        (entry.review_cursor ?? null) !== p.reviewCursor ||
+        (entry.thread_cursor ?? null) !== p.threadCursor;
+      const entryAt = ms(entry.at);
+      const windowExpired = entryAt === null || now.getTime() - entryAt >= retryMs;
+      if (cheapDelta) {
+        probeCands.push({ c, pr: p, entry, deltaAt: ms(p.lastActivityAt) ?? 0 });
+      } else if (windowExpired) {
+        // Bounded retry, ANY verdict (§4.2.3b): a stuck PENDING and a recorded
+        // PASS whose PR never merged re-arm identically. No selector-side
+        // dry-run — the session runs the gates itself and refreshes `at`, so a
+        // stuck PR costs one session per window, never one per pass.
+        retries.push({
+          number: c.number,
+          title: c.title,
+          pr: p.number,
+          reason: "retry",
+          verdict: entry.verdict,
+          gate: entry.gate ?? null,
+          deltaAt: entry.at,
+        });
+      } else {
+        blocked.push({
+          number: c.number,
+          title: c.title,
+          pr: p.number,
+          reason: "retry-window",
+          windowExpiresAt: entryAt === null ? null : iso(entryAt + retryMs),
+        });
+      }
+    }
+  }
+
+  // Budgeted probes, NEWEST delta first (stateless anti-starvation: a freshly
+  // green PR outranks a stale thread delta, so persistent marker-current
+  // candidates cannot pin the budget). Retries never consume it.
+  probeCands.sort((a, b) => b.deltaAt - a.deltaAt);
+  const confirmed: DeliverRow[] = [];
+  let budget = opts.dryrunMax;
+  for (const pc of probeCands) {
+    const base = {
+      number: pc.c.number,
+      title: pc.c.title,
+      pr: pc.pr.number,
+      deltaAt: pc.deltaAt > 0 ? iso(pc.deltaAt) : null,
+    };
+    if (probe === null) {
+      // No merge gate in this repo — nothing to probe against; the delta
+      // itself is the signal and the session uses the native flow.
+      confirmed.push({ ...base, reason: "actionable", verdict: null, gate: null });
+      continue;
+    }
+    if (budget <= 0) {
+      blocked.push({ ...base, reason: "deferred", windowExpiresAt: null });
+      continue;
+    }
+    budget--;
+    const v = probe(pc.pr.number);
+    if (v === null) {
+      // Probe crashed (no parseable verdict) — still actionable; the session
+      // runs the gates itself and finds out.
+      confirmed.push({ ...base, reason: "actionable", verdict: null, gate: null });
+      continue;
+    }
+    const tupleEqual =
+      pc.entry !== null &&
+      pc.entry.head_sha === pc.pr.headSha &&
+      pc.entry.verdict === v.verdict &&
+      (pc.entry.gate ?? null) === (v.gate ?? null);
+    if (!tupleEqual) {
+      confirmed.push({ ...base, reason: "actionable", verdict: v.verdict, gate: v.gate });
+    } else {
+      // Probed and nothing changed — including a recorded PASS: it re-arms via
+      // the retry window like any other verdict, never via a special case.
+      const entryAt = ms(pc.entry!.at);
+      if (entryAt === null || now.getTime() - entryAt >= retryMs) {
+        retries.push({
+          ...base,
+          reason: "retry",
+          verdict: pc.entry!.verdict,
+          gate: pc.entry!.gate ?? null,
+        });
+      } else {
+        blocked.push({
+          ...base,
+          reason: "marker-current",
+          windowExpiresAt: iso(entryAt + retryMs),
+        });
+      }
+    }
+  }
+
+  // Queue order (§4.2): close-outs first (terminal, cheap, strand-forever
+  // otherwise — a judgment call journaled on GH-1712), then confirmed
+  // actionables oldest-first, then window-expired retries — a confirmed item
+  // always outranks a retry, so stuck retries can never starve fresh work.
+  confirmed.sort((a, b) => {
+    const ta = a.deltaAt ? new Date(a.deltaAt).getTime() : 0;
+    const tb = b.deltaAt ? new Date(b.deltaAt).getTime() : 0;
+    return ta - tb;
+  });
+  retries.sort((a, b) => {
+    const ta = a.deltaAt ? new Date(a.deltaAt).getTime() : 0;
+    const tb = b.deltaAt ? new Date(b.deltaAt).getTime() : 0;
+    return ta - tb;
+  });
+  const queue = [...closeouts, ...confirmed, ...retries];
+  return { next: queue[0] ?? null, queue, blocked };
+}
+
+const DELIVER_CHUNK = 10;
+
+/** Everything one PR contributes to the cheap checks, in one selection. */
+const DELIVER_PR_FACTS = `
+  number state headRefOid
+  commits(last: 1) { nodes { commit { committedDate pushedDate
+    statusCheckRollup { contexts(first: 100) { nodes {
+      __typename
+      ... on CheckRun { name conclusion }
+      ... on StatusContext { context state }
+    } } } } } }
+  reviews(last: 10) { nodes { submittedAt } }
+  reviewThreads(last: 50) { nodes { isResolved comments(last: 1) { nodes { createdAt } } } }
+  comments(last: 1) { nodes { createdAt } }`;
+
+function prFactsFrom(node: any): DeliverPrFacts {
+  const commit = node.commits?.nodes?.[0]?.commit;
+  const contexts: any[] = commit?.statusCheckRollup?.contexts?.nodes ?? [];
+  const digest = contexts
+    .map((x) =>
+      x.__typename === "CheckRun"
+        ? `${x.name}=${x.conclusion ?? "pending"}`
+        : `${x.context}=${x.state ?? "pending"}`,
+    )
+    .sort()
+    .join(",");
+  const maxIso = (vals: Array<string | null | undefined>): string | null => {
+    const ts = vals.filter((v): v is string => typeof v === "string");
+    return ts.length ? ts.sort()[ts.length - 1] : null;
+  };
+  const reviewCursor = maxIso((node.reviews?.nodes ?? []).map((r: any) => r?.submittedAt));
+  const threadCursor = maxIso(
+    (node.reviewThreads?.nodes ?? [])
+      .filter((t: any) => t && t.isResolved === false)
+      .map((t: any) => t.comments?.nodes?.[0]?.createdAt),
+  );
+  const anyThread = maxIso(
+    (node.reviewThreads?.nodes ?? []).map((t: any) => t?.comments?.nodes?.[0]?.createdAt),
+  );
+  return {
+    number: node.number,
+    state: node.state,
+    headSha: node.headRefOid ?? "",
+    checkConclusions: digest,
+    reviewCursor,
+    threadCursor,
+    lastActivityAt: maxIso([
+      commit?.pushedDate ?? commit?.committedDate,
+      node.comments?.nodes?.[0]?.createdAt,
+      reviewCursor,
+      anyThread,
+    ]),
+  };
+}
+
+/** Batched detail fetch for the In Review candidates: one GraphQL document
+ *  per DELIVER_CHUNK candidates (issue facts + branch-convention PRs), never
+ *  one ad-hoc call per signal per candidate (§4.2 cost bound). */
+export function fetchDeliverCandidates(
+  ctx: Ctx,
+  items: Array<{ number: number; title: string }>,
+): DeliverCandidate[] {
+  if (items.length === 0) return [];
+  return withCache(ctx, (cache) => {
+    const out: DeliverCandidate[] = [];
+    for (let start = 0; start < items.length; start += DELIVER_CHUNK) {
+      const chunk = items.slice(start, start + DELIVER_CHUNK);
+      const decls = chunk.map((_, k) => `$n${k}: Int!, $h${k}: String!`).join(", ");
+      const aliases = chunk
+        .map(
+          (_, k) => `
+        d${k}: issue(number: $n${k}) {
+          number title
+          comments(last: 50) { nodes { body createdAt } }
+          closedByPullRequestsReferences(first: 10) { nodes { ${DELIVER_PR_FACTS} } }
+          projectItems(first: 10) { nodes { project { id } fieldValues(first: 20) { nodes {
+            ... on ProjectV2ItemFieldSingleSelectValue {
+              updatedAt field { ... on ProjectV2FieldCommon { name } }
+            } } } } }
+        }
+        b${k}: pullRequests(first: 10, headRefName: $h${k}, states: [OPEN, MERGED, CLOSED]) {
+          nodes { ${DELIVER_PR_FACTS} }
+        }`,
+        )
+        .join("\n");
+      const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
+      chunk.forEach((it, k) => {
+        vars[`n${k}`] = it.number;
+        // Provenance convention (work rule 6), detect-if-present.
+        vars[`h${k}`] = `feature/GH-${it.number}`;
+      });
+      const data: any = ghGraphQL(
+        ctx,
+        `query($owner: String!, $repo: String!, ${decls}) {
+          repository(owner: $owner, name: $repo) {
+            ${aliases}
+          }
+        }`,
+        vars,
+      );
+      const repo: any = data.repository ?? {};
+      chunk.forEach((it, k) => {
+        const issue = repo[`d${k}`];
+        if (!issue) return; // deleted/foreign mid-walk — absent, not invented
+        const byNumber = new Map<number, DeliverPrFacts>();
+        for (const n of issue.closedByPullRequestsReferences?.nodes ?? []) {
+          if (n?.number) byNumber.set(n.number, prFactsFrom(n));
+        }
+        for (const n of repo[`b${k}`]?.nodes ?? []) {
+          if (n?.number && !byNumber.has(n.number)) byNumber.set(n.number, prFactsFrom(n));
+        }
+        const comments: Array<{ body: string; createdAt: string | null }> = (
+          issue.comments?.nodes ?? []
+        ).map((c: any) => ({ body: c?.body ?? "", createdAt: c?.createdAt ?? null }));
+        const item = (issue.projectItems?.nodes ?? []).find(
+          (x: any) => x?.project?.id === cache.projectId,
+        );
+        const stateValue = (item?.fieldValues?.nodes ?? []).find(
+          (v: any) => v?.field?.name === STATE_FIELD,
+        );
+        const commentTimes = comments
+          .map((c) => c.createdAt)
+          .filter((t): t is string => typeof t === "string")
+          .sort();
+        out.push({
+          number: issue.number,
+          title: issue.title ?? "",
+          prs: [...byNumber.values()],
+          stateUpdatedAt: stateValue?.updatedAt ?? null,
+          lastCommentAt: commentTimes[commentTimes.length - 1] ?? null,
+          marker: parseDeliverMarker(comments.map((c) => c.body)),
+        });
+      });
+    }
+    return out;
+  });
+}
+
+/** The deliver lane's typed selector: own-repo In Review items → classified
+ *  queue. `probeOverride` exists for tests; the CLI builds the real probe from
+ *  the host repo's own merge gate (absent gate = native-flow degrade). */
+export function deliverQueue(
+  ctx: Ctx,
+  opts: DeliverOpts = parseDeliverOpts(),
+  probeOverride?: DeliverProbe | null,
+): DeliverQueueResult {
+  const inReview = ownRepo(ctx, listItems(ctx))
+    .own.filter((i) => i.state === "In Review");
+  const cands = fetchDeliverCandidates(ctx, inReview);
+  let probe: DeliverProbe | null;
+  if (probeOverride !== undefined) {
+    probe = probeOverride;
+  } else {
+    // Test-only override, same pattern as RALPH_APPLY_KEYWORDS_SH.
+    const gateSh = process.env.RALPH_MERGE_PR_SH ?? join(ctx.repoRoot, "scripts", "merge-pr.sh");
+    probe = existsSync(gateSh)
+      ? (pr: number) => {
+          const r = ctx.exec(["bash", gateSh, String(pr), "--dry-run"]);
+          return parseMergeGateVerdict(r.stdout);
+        }
+      : null;
+  }
+  return classifyDeliver(cands, opts, ctx.now(), probe);
+}
+
+// ---------------------------------------------------------------------------
 // Create / link / dep
 // ---------------------------------------------------------------------------
 
@@ -2854,6 +3358,12 @@ reads
                               leaf (leaf inherits the root's priority, carries
                               "via"); an epic with a child in flight heads nothing
   tree NNN                    subtree with states
+  deliver-queue [--json]      deliver lane (GH-1712): In Review items whose
+                              linked PRs carry an actionable signal, marker-
+                              gated per PR. {next, queue, blocked}; empty next
+                              means spawn nothing (idle-exit is the caller's
+                              contract). Knobs: RALPH_SETTLE_MIN (5),
+                              RALPH_RETRY_MIN (60), RALPH_DELIVER_DRYRUN_MAX (3)
 
 mutations
   create --title T [--body B] [--parent NNN] [--estimate XS..XL] [--state S]
@@ -3061,6 +3571,33 @@ export function run(argv: string[], ctx: Ctx): number {
       const root = fetchIssue(ctx, requireNumber(positional[0]));
       out(issueLine(root));
       for (const c of root.children) out(`  #${c.number} [${childStateLabel(c)}] ${c.title}`);
+      return 0;
+    }
+
+    case "deliver-queue": {
+      const res = deliverQueue(ctx);
+      if (flags.json) json(res);
+      else if (!res.next) {
+        const why = res.blocked.length
+          ? ` (${res.blocked.length} blocked: ${res.blocked
+              .map((b) => `#${b.number}${b.pr ? ` pr#${b.pr}` : ""}←${b.reason}`)
+              .join(" ")})`
+          : "";
+        out(`deliver queue empty${why}`);
+      } else {
+        const rowLine = (r: DeliverRow): string =>
+          `#${r.number}${r.pr ? ` pr#${r.pr}` : ""} [${r.reason}${
+            r.verdict ? ` ${r.verdict}${r.gate ? ` — ${r.gate}` : ""}` : ""
+          }] ${r.title}`;
+        out(`deliver next: ${rowLine(res.next)}`);
+        for (const r of res.queue.slice(1, 6)) out(`  then ${rowLine(r)}`);
+        if (res.blocked.length)
+          out(
+            `  blocked: ${res.blocked
+              .map((b) => `#${b.number}${b.pr ? ` pr#${b.pr}` : ""}←${b.reason}`)
+              .join(" ")}`,
+          );
+      }
       return 0;
     }
 
