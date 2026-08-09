@@ -548,6 +548,97 @@ APPLY_KEYWORDS_STUB=""
 run_case "gate 6: absent checker is not an error (host repos without it)" 0 "$POLICY" setup_green
 expect_merged "gate 6 absent"
 
+# ---------------------------------------------------------------------------
+# --dry-run (GH-1712, D8): same tokens, same exit codes, provably no mutation.
+# The verdict is the LAST `MERGE GATE` line plus the exit code; WARN lines are
+# non-terminal advisories. One sanctioned divergence: gate 2 single-attempts
+# and maps UNKNOWN to PENDING — mergeable (merge path: retry-then-soft-gate).
+# ---------------------------------------------------------------------------
+echo
+echo "=== --dry-run (GH-1712, D8) ==="
+
+expect_no_mutation() { # expect_no_mutation <desc> — no merge, no comment posted
+  if grep -q "gh pr merge" "$LAST_DIR/gh.log" 2>/dev/null; then
+    fail "$1: dry run invoked gh pr merge"
+  elif grep -q "gh pr comment" "$LAST_DIR/gh.log" 2>/dev/null; then
+    fail "$1: dry run posted a comment"
+  else
+    pass "$1: no merge, no comment"
+  fi
+}
+expect_last_gate_line() { # expect_last_gate_line <desc> <pattern>
+  local last
+  last=$(grep "MERGE GATE" <<<"$LAST_OUT" | tail -1)
+  if grep -qF "$2" <<<"$last"; then pass "$1"; else fail "$1 — last gate line: $last"; fi
+}
+
+# D8.1 green fixture: PASS, exit 0, no mutation, worktree untouched.
+WT_ROOT_DRY="$TMP_ROOT/wtroot-dry"
+mkdir -p "$WT_ROOT_DRY/.claude/worktrees/GH-9999"
+export RALPH_WORKTREE_ROOT="$WT_ROOT_DRY"
+run_case "dry-run: green fixture emits PASS at exit 0" 0 "$POLICY" setup_green --dry-run
+expect_last_gate_line "dry-run: verdict is the last MERGE GATE line (PASS)" "MERGE GATE PASS"
+expect_out "dry-run: says no merge attempted" "Dry run: no merge attempted."
+expect_no_mutation "dry-run green"
+if [[ -d "$WT_ROOT_DRY/.claude/worktrees/GH-9999" ]]; then
+  pass "dry-run: worktree cleanup not invoked"
+else
+  fail "dry-run: worktree was removed"
+fi
+unset RALPH_WORKTREE_ROOT
+
+# D8.2 verdict parity with the merge path across the existing gate fixtures.
+run_case "dry-run: CHANGES_REQUESTED is FAIL — review (parity)" 1 "$POLICY" setup_cr --dry-run
+expect_last_gate_line "dry-run CR verdict token" "MERGE GATE FAIL — review"
+expect_no_mutation "dry-run CR"
+
+run_case "dry-run: pending checks are PENDING 75 (parity)" 75 "$POLICY" setup_pending --dry-run
+expect_last_gate_line "dry-run pending verdict token" "MERGE GATE PENDING — checks"
+expect_no_mutation "dry-run pending"
+
+run_case "dry-run: failing check is FAIL 1 (parity)" 1 "$POLICY" setup_failing --dry-run
+expect_last_gate_line "dry-run failing-check verdict token" "MERGE GATE FAIL — checks"
+
+run_case "dry-run: missing attestation is FAIL 1 (parity)" 1 "$POLICY" setup_no_att --dry-run
+expect_last_gate_line "dry-run no-attestation verdict token" "MERGE GATE FAIL — attestation"
+
+run_case "dry-run: missing external review is PENDING 75 (parity)" 75 "$POLICY" setup_no_ext --dry-run
+expect_last_gate_line "dry-run no-external verdict token" "MERGE GATE PENDING — external-review"
+
+run_case "dry-run: CONFLICTING is FAIL 1 (parity)" 1 "$POLICY" setup_conflicting --dry-run
+expect_last_gate_line "dry-run conflicting verdict token" "MERGE GATE FAIL — mergeable"
+
+APPLY_KEYWORDS_STUB="$APPLY_STUB_DIR/fail.sh"
+run_case "dry-run: gate 6 failure is FAIL 1 (parity)" 1 "$POLICY" setup_green --dry-run
+expect_last_gate_line "dry-run gate-6 verdict token" "MERGE GATE FAIL — apply-keywords"
+expect_no_mutation "dry-run gate 6"
+APPLY_KEYWORDS_STUB=""
+
+# D8.3 the sanctioned divergence: UNKNOWN mergeability → PENDING — mergeable,
+# single attempt (exactly one `pr view` in the log — no retry re-query).
+setup_unknown() {
+  write_pr_view "$1" "" "UNKNOWN" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "dry-run: UNKNOWN mergeability maps to PENDING — mergeable" 75 "$POLICY" setup_unknown --dry-run
+expect_last_gate_line "dry-run UNKNOWN verdict token" "MERGE GATE PENDING — mergeable"
+pr_view_calls=$(grep "gh pr view" "$LAST_DIR/gh.log" 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$pr_view_calls" -eq 1 ]]; then
+  pass "dry-run: single attempt, no retry re-query"
+else
+  fail "dry-run: expected 1 pr view call, got $pr_view_calls"
+fi
+
+# D8.4 WARN is non-terminal: zero checks emit WARN then PASS; the parsed
+# verdict (last MERGE GATE line) is PASS, never the WARN.
+run_case "dry-run: zero checks is WARN then PASS" 0 "$POLICY" setup_no_checks --dry-run
+expect_out "dry-run: WARN line present" "MERGE GATE WARN — checks"
+expect_last_gate_line "dry-run: last gate line is PASS despite WARN" "MERGE GATE PASS"
+
+# D8.5 --dry-run and --force are mutually exclusive.
+run_case "dry-run: --force is refused" 1 "$POLICY" setup_green --dry-run --force "why not"
+expect_not_merged "dry-run + force"
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
