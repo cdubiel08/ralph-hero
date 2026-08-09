@@ -38,5 +38,5 @@ Close-as-stale / cancel-as-superseded / reopen-as-unevidenced are **never execut
 ## Exit — every pass, even a clean sweep
 
 1. On each Done item you audited: post the marker comment — `<!-- ralph-tend:v1 audited -->` followed by fenced JSON `{"at": "<iso8601>", "artifacts_checked": <n>}`. The marker is the cursor; a deleted one costs one redundant audit, never a wrong mutation.
-2. Append `<iso8601> tend GH-<n> rc=<code> checked=<N> acted=<M>` to `$RALPH_HOME/tend.outcomes.log` (default `~/.ralph/`) and touch `$RALPH_HOME/tend.heartbeat`. An empty pass writes `GH-none` in the subject slot; the line still lands.
+2. `mkdir -p "$RALPH_HOME"` (default `~/.ralph`) first, then append `<iso8601> tend GH-<n> rc=<code> checked=<N> acted=<M>` to `$RALPH_HOME/tend.outcomes.log` and touch `$RALPH_HOME/tend.heartbeat` — surface a write failure rather than swallowing it. An empty pass writes `GH-none` in the subject slot; the line still lands.
 3. Report, as your final output, the uniform pass report every lane shares: `checked`/`acted`, the blocked-reason set (tend's selector blocks nothing — an empty set, said explicitly), the earliest window expiry (tend has no time-bounded windows — `none`), what you proposed vs applied, and whether this was a clean sweep — the goal state; re-entry is by accumulation, and that is the transport's business, not yours.

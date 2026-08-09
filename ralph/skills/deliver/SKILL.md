@@ -49,6 +49,11 @@ Reviewer nudges: at most one `@coderabbitai review` per head SHA; read rate-limi
 
 ## Exit — every pass, even an empty one
 
-1. Update the item's marker so the selector can gate re-selection: PATCH (or post) the issue's `<!-- ralph-deliver:v1 -->` comment, fenced JSON `{"prs": {"<pr#>": {head_sha, verdict, gate, check_conclusions, review_cursor, thread_cursor, at}}}` — one entry per PR you touched, `at` = now, verdict/gate = the last gate token you observed. Only sessions write this marker; the selector reads it.
-2. Append `<iso8601> deliver GH-<n> rc=<code> checked=<N> acted=<M>` to `$RALPH_HOME/deliver.outcomes.log` (default `~/.ralph/`) and touch `$RALPH_HOME/deliver.heartbeat` — a lane always logging `checked=0` must be visibly dead, never silently green. An empty pass (no item selected) writes `GH-none` in the subject slot; the line still lands.
+1. Update the item's marker so the selector can gate re-selection: PATCH (or post) the issue's `<!-- ralph-deliver:v1 -->` comment with fenced JSON, one entry per PR you touched (`at` = now; `verdict`/`gate` = the last gate token you observed; unknown cursors are `null`). Only sessions write this marker; the selector reads it. Example:
+
+   ```json
+   {"prs": {"1730": {"head_sha": "f47fa9a8c0ffee00", "verdict": "PENDING", "gate": "external-review", "check_conclusions": "board-tests=success,test-hooks=success", "review_cursor": "2026-08-09T03:10:00Z", "thread_cursor": null, "at": "2026-08-09T03:12:00Z"}}}
+   ```
+
+2. `mkdir -p "$RALPH_HOME"` (default `~/.ralph`) first, then append `<iso8601> deliver GH-<n> rc=<code> checked=<N> acted=<M>` to `$RALPH_HOME/deliver.outcomes.log` and touch `$RALPH_HOME/deliver.heartbeat` — surface a write failure rather than swallowing it; a lane always logging `checked=0` must be visibly dead, never silently green. An empty pass (no item selected) writes `GH-none` in the subject slot; the line still lands.
 3. Report, as your final output: `checked`/`acted` counts, the blocked-reason set from the queue read, and the earliest `windowExpiresAt` among time-bounded rows (`settling`, `retry-window`, `deferred`). The lane's goal state — for whatever invoked you — is: empty `next` AND no time-bounded blocked rows; rows only a human can clear (`no-pr`, Human Needed) don't count against it.
