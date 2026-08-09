@@ -47,7 +47,9 @@ export const MACHINE: Record<State, readonly State[]> = {
   Canceled: [],
 };
 
-/** Legacy (v1) states still meaningful to `migrate` and `doctor`. */
+/** Legacy (v1) states. The 11→6 collapse ran in GH-1662; these linger only as
+ *  Workflow State field options the API cannot delete, so `doctor` and `setup`
+ *  still surface them. */
 export const LEGACY_STATES = [
   "Research Needed",
   "Research in Progress",
@@ -91,27 +93,6 @@ export function parseStateArg(raw: string): State | null {
     cancelled: "Canceled",
   };
   return aliases[norm] ?? null;
-}
-
-/** migrate: v1 state → v2 state. `hasDecisionRequest` = issue has a
- *  "## Decision Request" comment (the held-plan marker). */
-export function migrateMapping(
-  oldState: string,
-  hasDecisionRequest: boolean,
-): State | null {
-  switch (oldState) {
-    case "Research Needed":
-    case "Ready for Plan":
-      return "Backlog";
-    // v1 lock states carry no v2 claim → treat as stale, back to the queue.
-    case "Research in Progress":
-    case "Plan in Progress":
-      return "Backlog";
-    case "Plan in Review":
-      return hasDecisionRequest ? "Human Needed" : "Backlog";
-    default:
-      return isState(oldState) ? (oldState as State) : null;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1409,7 +1390,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
 
     if (from !== null && !isState(from)) {
       throw new RefusalError(
-        `#${issue.number} is in legacy state "${from}" — run \`board migrate\` (Phase 2) before mutating it`,
+        `#${issue.number} is in legacy state "${from}" — set a v2 state on it in the board UI before mutating it`,
       );
     }
     // Same-state In Progress is claim (re)acquisition, not a transition:
@@ -1732,7 +1713,7 @@ export function reconcile(ctx: Ctx, number: number): string {
 
     if (target === null || issue.state === target) {
       if (issue.issueState === "OPEN" && issue.state !== null && !isState(issue.state)) {
-        return `#${number}: legacy state "${issue.state}" — migrate's job, not reconcile's`;
+        return `#${number}: legacy state "${issue.state}" — fix it in the board UI, not reconcile's job`;
       }
       return `#${number}: no drift`;
     }
@@ -2811,7 +2792,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         add(
           "state-field",
           opts.strict ? "fail" : "warn",
-          `legacy options present (pre-migration OK): ${legacy.join(", ")}`,
+          `legacy options present (delete by hand in the board UI; the API cannot): ${legacy.join(", ")}`,
         );
       else add("state-field", "ok", "6-state option set");
     }
@@ -3341,7 +3322,7 @@ export function readiness(ctx: Ctx): ReadinessReport {
 }
 
 // ---------------------------------------------------------------------------
-// Setup + migrate
+// Setup
 // ---------------------------------------------------------------------------
 
 export interface SetupReport {
@@ -3418,7 +3399,7 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
     const legacy = names.filter((n) => !isState(n));
     if (legacy.length) {
       note(
-        `MANUAL (after migrate): delete legacy option(s) ${legacy.join(", ")} from "${STATE_FIELD}" in the board UI`,
+        `MANUAL: delete legacy option(s) ${legacy.join(", ")} from "${STATE_FIELD}" in the board UI`,
       );
     }
   }
@@ -3485,74 +3466,6 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
   return { ok, notes };
 }
 
-export function migrate(ctx: Ctx, opts: { apply?: boolean } = {}): string[] {
-  const out: string[] = [];
-  // Cache resolved before any write; the loop never retries, and a report
-  // line is pushed only AFTER the write it describes succeeds.
-  const cache = mutationCache(ctx, STATES.map((s) => [STATE_FIELD, s] as [string, string]));
-  const { own, foreign } = ownRepo(ctx, listItems(ctx));
-  for (const f of foreign) {
-    out.push(`#${f.number} (${f.repo}): foreign-repo item — never touched by migrate`);
-  }
-  const legacyItems = own.filter((i) => i.state !== "(none)" && !isState(i.state));
-  const stateless = own.filter((i) => i.state === "(none)");
-
-  for (const i of [...legacyItems, ...stateless]) {
-    let hasDecisionRequest = false;
-    if (i.state === "Plan in Review") {
-      const comments = ghGraphQL(
-        ctx,
-        `query($owner: String!, $repo: String!, $number: Int!) {
-          repository(owner: $owner, name: $repo) {
-            issue(number: $number) { comments(last: 50) { nodes { body } } }
-          }
-        }`,
-        { owner: ctx.cfg.owner, repo: ctx.cfg.repo, number: i.number },
-      );
-      hasDecisionRequest = (comments.repository?.issue?.comments?.nodes ?? []).some((c: any) =>
-        c.body?.includes("## Decision Request"),
-      );
-    }
-    const target = i.state === "(none)" ? "Backlog" : migrateMapping(i.state, hasDecisionRequest);
-    if (!target) {
-      out.push(`#${i.number}: unmapped state "${i.state}" — SKIPPED (fix by hand)`);
-      continue;
-    }
-    if (!opts.apply) {
-      out.push(`#${i.number}: "${i.state}" → "${target}" (dry-run)`);
-      continue;
-    }
-    try {
-      const issue = fetchIssue(ctx, i.number);
-      if (!issue.itemId) {
-        out.push(`#${i.number}: not on the board — SKIPPED`);
-        continue;
-      }
-      setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, target);
-      syncStatus(ctx, cache, issue.itemId, target);
-      // The state converged; the audit comment is best-effort. A comment
-      // failure must NOT report the migration as FAILED — the item would
-      // leave the candidate set (state now valid) with no repair path.
-      let note = "";
-      try {
-        addComment(
-          ctx,
-          issue.nodeId,
-          `\`board migrate\`: workflow state "${i.state}" → "${target}" (v2 6-state collapse, GH-1662).`,
-        );
-      } catch (e) {
-        note = ` (migrated; audit comment failed — ${(e as Error).message})`;
-      }
-      out.push(`#${i.number}: "${i.state}" → "${target}"${note}`);
-    } catch (e) {
-      // One unwritable item (archived, permissions) must not strand the rest.
-      out.push(`#${i.number}: FAILED — ${(e as Error).message}`);
-    }
-  }
-  if (out.length === 0) out.push("nothing to migrate — all open items already in v2 states");
-  return out;
-}
-
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -3610,7 +3523,6 @@ maintenance
                               fields (idempotent; never edits existing fields)
   readiness [--json]          agent-readiness report — 3 levels (interactive,
                               unattended, autonomous); recommendations, never gates
-  migrate [--apply]           v1 11-state → v2 6-state collapse (dry-run by default)
 
 There is no --force flag. A stale claim (TTL 120 min; RALPH_LOCK_TTL_MIN
 overrides) is the only override path.`;
@@ -3690,7 +3602,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 const MUTATING = new Set([
   "create", "claim", "release", "move", "cancel", "reopen",
   "link", "dep", "comment", "adopt", "reconcile", "parent-check",
-  "setup", "migrate",
+  "setup",
 ]);
 
 export function run(argv: string[], ctx: Ctx): number {
@@ -3985,12 +3897,6 @@ export function run(argv: string[], ctx: Ctx): number {
       );
       out("recommendations are advisory — adopt what fits this repo; nothing here blocks work");
       return 0; // advisory by design: a gap is a recommendation, not a failure
-    }
-
-    case "migrate": {
-      for (const n of migrate(ctx, { apply: !!flags.apply })) out(n);
-      if (!flags.apply) out("(dry-run — re-run with --apply to write)");
-      return 0;
     }
 
     default:
