@@ -32,9 +32,11 @@ pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$t")
 if ! agent_start_when_ready ralph-tend "$pane"; then
   tab_id=$(jq -r '.result.tab.tab_id // empty' <<<"$t")
   [ -n "$tab_id" ] && "$HERDR" tab close "$tab_id" >/dev/null 2>&1 || true
-  die "agent start ralph-tend failed — a tend pass is already live; not starting a second (cleaned up the empty tab)"
+  die "agent start ralph-tend failed — see the herdr error above (a live tend pass owning the name is the common cause, but exhausted startup retries land here too); cleaned up the empty tab"
 fi
-# Past this point the agent is LIVE — a prompt failure must not strand it silently.
+# Past this point the agent is LIVE — a prompt failure must not strand it
+# silently, and hold_pane must not claim "no session spawned" about it.
+export RALPH_HERDR_AGENT_LIVE=1
 "$HERDR" agent prompt ralph-tend "/ralph:tend" \
   || die "prompt delivery failed — agent ralph-tend is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt ralph-tend \"/ralph:tend\""
 

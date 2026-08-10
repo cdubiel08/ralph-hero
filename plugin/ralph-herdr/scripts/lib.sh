@@ -55,6 +55,7 @@ billing_guard() {
 #   RALPH_HERDR_START_TRIES   attempts, 1s apart (default 15)
 agent_start_when_ready() {
   local name="$1" pane="$2" tries="${RALPH_HERDR_START_TRIES:-15}" n=0 out code
+  case "$tries" in '' | *[!0-9]* | 0) die "RALPH_HERDR_START_TRIES must be a positive integer (got '$tries')" ;; esac
   while :; do
     if out=$("$HERDR" agent start "$name" --kind claude --pane "$pane" 2>&1); then
       printf '%s\n' "$out"
@@ -74,11 +75,18 @@ agent_start_when_ready() {
 # hold_pane — EXIT trap for the spawn scripts. A plugin pane closes the instant
 # its command exits, taking the reason with it (a pane that flashes and
 # vanishes teaches nothing). The spawn scripts exec into notify-watch.sh on
-# success, so REACHING this trap at all means no session started — empty
-# queue, refusal, or failure. Hold the pane and say which.
+# success, so reaching this trap means the spawn did not complete — but that
+# splits into two truths: nothing started (empty queue, refusal), or the agent
+# DID start and only the dispatch after it failed (prompt delivery). Callers
+# set RALPH_HERDR_AGENT_LIVE=1 the moment agent start succeeds so the trap
+# never claims "no session" while a live agent sits idle in a pane.
 hold_pane() {
   local rc=$?
-  printf '\n[ralph-herdr] no session spawned (exit %d) — press Enter to close this pane.\n' "$rc"
+  if [ -n "${RALPH_HERDR_AGENT_LIVE:-}" ]; then
+    printf '\n[ralph-herdr] agent STARTED but dispatch did not complete (exit %d) — the agent is live and idle; see the error above for the manual prompt command. Enter to close.\n' "$rc"
+  else
+    printf '\n[ralph-herdr] no session spawned (exit %d) — press Enter to close this pane.\n' "$rc"
+  fi
   read -r _ || true
 }
 

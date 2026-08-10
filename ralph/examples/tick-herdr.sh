@@ -165,6 +165,10 @@ EXPECTED_HOLDER="${RALPH_CLAIM_HOLDER:-$(id -un)@$(hostname)}"
 # frameworks, version managers) — observed live: the identical call succeeds
 # seconds later. Retry that one code; anything else is real.
 START_TRIES="${RALPH_HERDR_START_TRIES:-15}"
+case "$START_TRIES" in '' | *[!0-9]* | 0)
+  echo "tick-herdr: RALPH_HERDR_START_TRIES must be a positive integer (got '$START_TRIES')" >&2
+  exit 1
+;; esac
 START_N=0
 while :; do
   START_ERR=$(mktemp)

@@ -48,7 +48,9 @@ pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out")
 agent_start_when_ready "gh-$N" "$pane" \
   || die "agent start gh-$N failed — a session for GH-$N is likely already live; not spawning a second"
 # Past this point the agent is LIVE — a prompt-delivery failure must not exit
-# silently under set -e and strand an idle session with no work.
+# silently under set -e and strand an idle session with no work, and hold_pane
+# must not claim "no session spawned" about it.
+export RALPH_HERDR_AGENT_LIVE=1
 "$HERDR" agent prompt "gh-$N" "/ralph:work $N" \
   || die "prompt delivery failed — agent gh-$N is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt gh-$N \"/ralph:work $N\""
 
