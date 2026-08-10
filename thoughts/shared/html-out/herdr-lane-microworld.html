@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>herdr × ralph — lane microworld</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#11151f; --panel2:#161b28; --border:#232a3b;
+    --fg:#c9d1e0; --dim:#7d8799; --faint:#4a5468;
+    --green:#3fd07f; --red:#ff6b6b; --amber:#ffc857; --blue:#6cb6ff; --purple:#b58cff;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--fg);font-family:var(--sans);overflow:hidden}
+
+  #app{display:flex;flex-direction:column;height:100vh}
+
+  /* ---------- top chrome ---------- */
+  #titlebar{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--panel);
+    border-bottom:1px solid var(--border);flex:0 0 auto}
+  .traffic{display:flex;gap:6px}
+  .traffic i{width:11px;height:11px;border-radius:50%;display:block}
+  .traffic i:nth-child(1){background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}
+  #titlebar .title{font-size:13px;color:var(--dim)}
+  #titlebar .title b{color:var(--fg);font-weight:600}
+  #titlebar .spacer{flex:1}
+  .btn{font:12px var(--sans);color:var(--fg);background:var(--panel2);border:1px solid var(--border);
+    border-radius:6px;padding:4px 10px;cursor:pointer;user-select:none}
+  .btn:hover{border-color:var(--faint)}
+  .btn.active{border-color:var(--purple);color:var(--purple)}
+
+  /* ---------- body ---------- */
+  #main{display:flex;flex:1;min-height:0}
+
+  #sidebar{width:172px;flex:0 0 auto;background:var(--panel);border-right:1px solid var(--border);
+    padding:10px 8px;font-size:12px}
+  #sidebar h5{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:4px 6px 8px}
+  .ws{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;color:var(--dim);cursor:default}
+  .ws.sel{background:var(--panel2);color:var(--fg)}
+  .ws .dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:0 0 auto}
+  .ws .dot.working{background:var(--green);box-shadow:0 0 6px rgba(63,208,127,.6)}
+  .ws .dot.blocked{background:var(--red);box-shadow:0 0 6px rgba(255,107,107,.7);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+
+  #stage{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+  #tabs{display:flex;gap:2px;padding:6px 10px 0;background:var(--panel);border-bottom:1px solid var(--border);font-size:12px}
+  .tab{padding:5px 14px;border:1px solid var(--border);border-bottom:none;border-radius:7px 7px 0 0;color:var(--dim)}
+  .tab.sel{background:var(--bg);color:var(--fg)}
+
+  #panes{flex:1;display:grid;min-height:0;gap:2px;padding:2px;background:var(--border);
+    grid-template-columns:7fr 5fr;grid-template-rows:8fr 5fr}
+  .pane{background:var(--bg);display:flex;flex-direction:column;min-height:0;min-width:0;border:1px solid transparent;position:relative}
+  .pane.focused{border-color:var(--purple)}
+  .pane header{display:flex;align-items:center;gap:8px;padding:5px 10px;background:var(--panel);
+    border-bottom:1px solid var(--border);font-size:12px;flex:0 0 auto}
+  .pane header .lane{font-weight:600}
+  .pane header .cmd{color:var(--faint);font-family:var(--mono);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pane header .spacer{flex:1}
+  .chip{font-size:10px;font-weight:600;letter-spacing:.04em;padding:2px 8px;border-radius:99px;
+    text-transform:uppercase;flex:0 0 auto}
+  .chip.idle{background:#242b3a;color:var(--dim)}
+  .chip.working{background:rgba(63,208,127,.14);color:var(--green)}
+  .chip.blocked{background:rgba(255,107,107,.16);color:var(--red);animation:pulse 1.1s infinite}
+  .chip.done{background:rgba(108,182,255,.14);color:var(--blue)}
+  .term{flex:1;overflow-y:auto;padding:10px 12px;font:11.5px/1.55 var(--mono);white-space:pre-wrap;word-break:break-word}
+  .term::-webkit-scrollbar{width:8px}.term::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+  .l-dim{color:var(--dim)} .l-faint{color:var(--faint)} .l-ok{color:var(--green)} .l-err{color:var(--red)}
+  .l-tool{color:var(--purple)} .l-blue{color:var(--blue)} .l-amber{color:var(--amber)}
+  .cursor::after{content:"▋";color:var(--green);animation:pulse .9s infinite}
+
+  /* permission prompt */
+  .perm{margin:8px 0;border:1px solid rgba(255,107,107,.5);border-radius:8px;padding:9px 11px;background:rgba(255,107,107,.06)}
+  .perm .q{color:var(--fg);margin-bottom:8px}
+  .perm .cmdline{color:var(--amber);font-family:var(--mono)}
+  .perm button{font:12px var(--sans);padding:3px 14px;margin-right:8px;border-radius:6px;cursor:pointer;
+    background:var(--panel2);color:var(--fg);border:1px solid var(--border)}
+  .perm button.yes{border-color:var(--green);color:var(--green)}
+  .perm button:hover{filter:brightness(1.3)}
+  .perm.answered{opacity:.45}.perm.answered button{display:none}
+
+  /* dashboard table styling */
+  .dash{font:11.5px/1.7 var(--mono);padding:12px 14px;flex:1;overflow-y:auto}
+  .dash .row{display:flex;justify-content:space-between;max-width:340px}
+  .dash .k{color:var(--dim)} .dash .v{color:var(--fg)}
+  .dash .v.hot{color:var(--amber)} .dash .v.bad{color:var(--red)} .dash .v.good{color:var(--green)}
+  .dash hr{border:none;border-top:1px solid var(--border);margin:8px 0}
+  .dash .hn-item{color:var(--red)}
+
+  /* ---------- status bar ---------- */
+  #status{display:flex;align-items:center;gap:16px;padding:6px 14px;background:var(--panel);
+    border-top:1px solid var(--border);font:11.5px var(--mono);color:var(--dim);flex:0 0 auto;flex-wrap:wrap}
+  #status .hint{color:var(--faint)}
+  #tokens b{color:var(--fg);font-weight:600}
+  #tokens .zero{color:var(--green)}
+  #simclock{color:var(--blue)}
+
+  /* ---------- toast ---------- */
+  #toast{position:absolute;top:14px;right:16px;z-index:40;width:300px;background:#1b2130;border:1px solid rgba(255,107,107,.55);
+    border-radius:10px;padding:11px 13px;box-shadow:0 8px 30px rgba(0,0,0,.5);cursor:pointer;
+    transform:translateX(340px);transition:transform .35s ease;font-size:12.5px}
+  #toast.show{transform:none}
+  #toast .t-title{font-weight:600;color:var(--red);margin-bottom:3px}
+  #toast .t-body{color:var(--dim);font-family:var(--mono);font-size:11px}
+  #toast .t-src{color:var(--faint);font-size:10px;margin-top:5px}
+
+  /* ---------- lid overlay ---------- */
+  #lid{position:absolute;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+    background:rgba(5,7,11,.88);backdrop-filter:blur(2px);flex-direction:column;gap:14px;text-align:center}
+  #lid.show{display:flex}
+  #lid h2{font-size:17px;font-weight:600}
+  #lid p{color:var(--dim);font-size:13px;max-width:420px;line-height:1.6}
+  #lid .server{font:12px var(--mono);color:var(--green)}
+
+  /* ---------- annotations ---------- */
+  .note{position:absolute;z-index:30;max-width:230px;background:#241d3a;border:1px solid var(--purple);
+    border-radius:8px;padding:8px 10px;font-size:11.5px;line-height:1.5;color:#d8ccf5;display:none;
+    box-shadow:0 6px 24px rgba(0,0,0,.5)}
+  .note b{color:var(--purple)}
+  body.annotated .note{display:block}
+
+  /* end card */
+  #endcard{display:none;margin:10px 0;border:1px solid rgba(108,182,255,.4);border-radius:8px;
+    padding:10px 12px;background:rgba(108,182,255,.07);font-size:12px;line-height:1.6}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="title"><b>herdr</b> — session <span style="font-family:var(--mono)">default</span> · workspace <b>ralph-hero</b> <span style="color:var(--faint)">(simulated — 0 tokens burned)</span></div>
+    <div class="spacer"></div>
+    <button class="btn" id="b-notes">ℹ ergonomics notes</button>
+    <button class="btn" id="b-speed">speed 1×</button>
+    <button class="btn" id="b-lid">close the lid</button>
+    <button class="btn" id="b-restart">↻ restart</button>
+  </div>
+
+  <div id="main">
+    <div id="sidebar">
+      <h5>workspaces</h5>
+      <div class="ws sel"><span class="dot" id="ws-dot"></span> ralph-hero</div>
+      <div class="ws"><span class="dot"></span> waystone</div>
+      <div class="ws"><span class="dot"></span> langfuse</div>
+      <h5 style="margin-top:16px">plugin · ralph-herdr</h5>
+      <div class="ws" style="color:var(--faint)">▸ work next</div>
+      <div class="ws" style="color:var(--faint)">▸ deliver pass</div>
+      <div class="ws" style="color:var(--faint)">▸ tend pass</div>
+      <div class="ws" style="color:var(--faint)">▸ board doctor</div>
+    </div>
+
+    <div id="stage">
+      <div id="tabs"><div class="tab sel">ralph-hero</div><div class="tab">GH-1741 ⌥worktree</div></div>
+
+      <div id="panes">
+        <div class="pane" id="p-work" data-pane="work">
+          <header><span class="lane">work</span><span class="cmd">claude "/ralph:work 1741" · wt: feature/GH-1741</span><span class="spacer"></span><span class="chip idle" id="c-work">idle</span></header>
+          <div class="term" id="t-work"></div>
+        </div>
+
+        <div class="pane" id="p-dash" data-pane="dash">
+          <header><span class="lane">board</span><span class="cmd">watch board next / queues / doctor (read-only, shell — no agent)</span><span class="spacer"></span><span class="chip idle" id="c-dash">shell</span></header>
+          <div class="dash" id="t-dash"></div>
+        </div>
+
+        <div class="pane" id="p-deliver" data-pane="deliver">
+          <header><span class="lane">deliver</span><span class="cmd">claude "/ralph:deliver"</span><span class="spacer"></span><span class="chip idle" id="c-deliver">idle</span></header>
+          <div class="term" id="t-deliver"></div>
+        </div>
+
+        <div class="pane" id="p-tend" data-pane="tend">
+          <header><span class="lane">tend</span><span class="cmd">claude "/ralph:tend"</span><span class="spacer"></span><span class="chip idle" id="c-tend">idle</span></header>
+          <div class="term" id="t-tend"></div>
+        </div>
+      </div>
+
+      <div id="toast"><div class="t-title">● gh-1741 blocked</div><div class="t-body" id="toast-body"></div><div class="t-src">herdr notification · click to focus pane</div></div>
+
+      <div id="lid">
+        <h2>🔒 lid closed</h2>
+        <p>Your terminal is gone — but the panes live in the <b>herdr server</b>, not your terminal. Agents keep streaming below this overlay. A <i>blocked</i> pane stays blocked and (via herdr-remote) pings your phone instead of silently burning the tick.</p>
+        <p class="server">herdr-server: running · 4 panes · sessions persist</p>
+        <button class="btn" id="b-open">open the lid</button>
+      </div>
+
+      <!-- ergonomics annotations -->
+      <div class="note" style="top:52px;left:24px"><b>Ambient tier.</b> One glance at chips: green = ignore, red = you. You never tail logs to know if it's alive.</div>
+      <div class="note" style="top:46px;right:340px"><b>Interrupt tier.</b> Toasts fire the moment a pane goes <i>blocked</i> — not 45 min later at tick timeout. Click → focus.</div>
+      <div class="note" style="bottom:210px;right:24px"><b>Triage tier.</b> The board pane is a shell watch loop: 0 tokens, and truth stays on the board — herdr never writes state.</div>
+      <div class="note" style="bottom:64px;left:200px"><b>Token meter.</b> The tick spends tokens only when the queue has work. Idle tick = 1 GraphQL query, 0 tokens. herdr changes <i>where sessions live</i>, not <i>how much they think</i>.</div>
+    </div>
+  </div>
+
+  <div id="status">
+    <span class="hint">ctrl+b q detach · ctrl+b z zoom</span>
+    <span id="simclock">sim 16:02Z</span>
+    <span id="tokens">tokens this tick — work <b id="tk-work">0</b> · deliver <b id="tk-deliver">0</b> · tend <b id="tk-tend">0</b> · board <b class="zero">0</b> · <span class="l-faint">overnight idle ticks: <b id="idlecount" class="zero">0</b> × 0 tok</span></span>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  /* ---------- helpers ---------- */
+  const $=id=>document.getElementById(id);
+  let SPEED=1, simSec=0, timers=[], answered=false, lidClosed=false;
+  const tk={work:0,deliver:0,tend:0};
+
+  function chip(p,s,label){const c=$('c-'+p);c.className='chip '+s;c.textContent=label||s;
+    const anyBlocked=document.querySelector('.chip.blocked');
+    const anyWorking=document.querySelector('.chip.working');
+    $('ws-dot').className='dot '+(anyBlocked?'blocked':anyWorking?'working':'');}
+  function line(p,html,cls){const t=$('t-'+p);const d=document.createElement('div');
+    if(cls)d.className=cls; d.innerHTML=html; t.appendChild(d); t.scrollTop=t.scrollHeight; return d;}
+  function tokens(p,k){tk[p]+=k;$('tk-'+p).textContent=(tk[p]>=1000?(tk[p]/1000).toFixed(1)+'k':tk[p]);}
+  function focus(p){document.querySelectorAll('.pane').forEach(x=>x.classList.remove('focused'));
+    $('p-'+p).classList.add('focused');}
+  function at(ms,fn){timers.push(setTimeout(fn,ms/SPEED));}
+
+  /* sim clock: 1 real sec = 1 sim min */
+  setInterval(()=>{simSec+=SPEED;const m=Math.floor(simSec);
+    const hh=16, mm=2+m; $('simclock').textContent='sim '+(hh+Math.floor(mm/60))+':'+String(mm%60).padStart(2,'0')+'Z';},1000);
+
+  /* ---------- dashboard ---------- */
+  const dashState={next:'GH-1741 · S · Backlog',inprog:'—',deliver:1,tend:0,hn:0,doctor:'0 err · smells none',last:'GH-1729 → PR #1738 quiescent 41m'};
+  function dash(){$('t-dash').innerHTML=
+    '<div class="row"><span class="k">project</span><span class="v">ralph-hero · #11</span></div>'+
+    '<div class="row"><span class="k">next</span><span class="v hot">'+dashState.next+'</span></div>'+
+    '<div class="row"><span class="k">in progress</span><span class="v">'+dashState.inprog+'</span></div><hr>'+
+    '<div class="row"><span class="k">deliver-queue</span><span class="v'+(dashState.deliver?' hot':'')+'">'+dashState.deliver+'</span></div>'+
+    '<div class="row"><span class="k">tend-queue</span><span class="v">'+dashState.tend+'</span></div>'+
+    '<div class="row"><span class="k">Human Needed</span><span class="v'+(dashState.hn?' bad':' good')+'">'+dashState.hn+'</span></div><hr>'+
+    '<div class="row"><span class="k">doctor</span><span class="v good">'+dashState.doctor+'</span></div>'+
+    '<div class="l-faint" style="margin-top:6px">'+dashState.last+'</div>';}
+  dash();
+
+  /* ---------- toast ---------- */
+  $('toast').onclick=()=>{$('toast').classList.remove('show');focus('work');
+    document.getElementById('perm-box')?.scrollIntoView({block:'center'});};
+
+  /* ---------- scenario ---------- */
+  function scenario(){
+    focus('work');
+
+    /* tend lane — cheap single pass */
+    at(2500,()=>{chip('tend','working');line('tend','$ claude "/ralph:tend"','l-dim');});
+    at(4200,()=>{line('tend','<span class="l-tool">⏺</span> board tend-queue --json');line('tend','  → <span class="l-faint">{ "items": [] }</span>');tokens('tend',900);});
+    at(5600,()=>{line('tend','<span class="l-ok">✔</span> nothing to tend — single pass, exiting');tokens('tend',500);chip('tend','done');});
+    at(9000,()=>{chip('tend','idle');});
+
+    /* deliver lane */
+    at(6000,()=>{chip('deliver','working');line('deliver','$ claude "/ralph:deliver"','l-dim');});
+    at(8000,()=>{line('deliver','<span class="l-tool">⏺</span> board deliver-queue --json');
+      line('deliver','  → 1 item: <span class="l-blue">GH-1729</span> / PR <span class="l-blue">#1738</span> (quiescent 41m, marker clear)');tokens('deliver',1600);});
+    at(11000,()=>{line('deliver','<span class="l-tool">⏺</span> Bash(scripts/merge-pr.sh 1738 --dry-run)');
+      line('deliver','  gates: CI <span class="l-ok">✓</span> · attestation <span class="l-ok">✓ head-bound</span> · review <span class="l-ok">✓</span> · apply-keywords <span class="l-ok">✓</span>');tokens('deliver',2400);});
+    at(14500,()=>{line('deliver','<span class="l-tool">⏺</span> Bash(scripts/merge-pr.sh 1738)');
+      line('deliver','  → <span class="l-ok">merged 4e1a77b</span> · branch deleted');tokens('deliver',2800);});
+    at(16500,()=>{line('deliver','<span class="l-dim">post-merge Done write yields to reconcile</span>');
+      line('deliver','<span class="l-ok">✔</span> pass complete — 1 shepherded, 0 demoted');tokens('deliver',1400);chip('deliver','done');
+      dashState.deliver=0;dashState.last='PR #1738 merged 4e1a77b · GH-1729 → Done (reconcile)';dash();});
+    at(20000,()=>{chip('deliver','idle');});
+
+    /* work lane — the long one, with the interrupt */
+    at(1000,()=>{chip('work','working');line('work','$ herdr agent prompt gh-1741 "/ralph:work 1741" --wait --until done','l-dim');});
+    at(2600,()=>{line('work','<span class="l-tool">⏺</span> board get 1741 --json');
+      line('work','  → Backlog · unclaimed · S · <span class="l-blue">"board help: link lane docs"</span>');tokens('work',1200);});
+    at(4600,()=>{line('work','<span class="l-tool">⏺</span> board transition 1741 "In Progress" --claim');
+      line('work','  → claim won: <span class="l-amber">tick@mbp|2026-08-09T16:04Z</span> (read-back ✓)');tokens('work',800);
+      dashState.next='— (queue drained)';dashState.inprog='GH-1741 · tick@mbp';dash();});
+    at(7000,()=>{line('work','<span class="l-faint">✻ sizing: S single — direct edit, no research phase</span>');
+      line('work','<span class="l-tool">⏺</span> Grep("lane docs", ralph/scripts/board.ts) · Read(board.ts:1042)');tokens('work',6500);});
+    at(10500,()=>{line('work','<span class="l-tool">⏺</span> Edit(board.ts — help text: link examples/README.md lanes section)');tokens('work',5200);});
+    at(13500,()=>{line('work','<span class="l-tool">⏺</span> Bash(npx vitest run ralph/scripts/)');
+      line('work','  → <span class="l-ok">214 passed</span> (0 failed)');tokens('work',7800);});
+    at(15500,()=>{line('work','<span class="l-tool">⏺</span> Bash(npx tsc --noEmit) → <span class="l-ok">clean</span>');tokens('work',2100);});
+
+    /* the interrupt */
+    at(18000,()=>{
+      chip('work','blocked');
+      const d=line('work','');d.id='perm-box';d.className='perm';
+      d.innerHTML='<div class="q">Permission needed:</div>'+
+        '<div class="cmdline">Bash(gh pr create --title "feat(board): link lane docs from help" --base main)</div>'+
+        '<div style="margin-top:9px"><button class="yes">y — allow</button><button>n — deny</button>'+
+        '<span class="l-faint" style="margin-left:8px;font-size:11px">herdr sees this UI → pane = blocked</span></div>';
+      d.querySelector('.yes').onclick=()=>{if(answered)return;answered=true;d.classList.add('answered');
+        $('toast').classList.remove('show');chip('work','working');resume();};
+      $('toast-body').textContent='Bash(gh pr create …) awaiting approval';
+      $('toast').classList.add('show');
+      dashState.last='⚠ gh-1741 pane blocked — permission prompt';dash();
+    });
+
+    function resume(){
+      timers=[];
+      at(1500,()=>{line('work','  → PR <span class="l-blue">#1742</span> opened');tokens('work',1900);});
+      at(4000,()=>{line('work','<span class="l-tool">⏺</span> Bash(scripts/attest-pr.sh --run 1742)');
+        line('work','  → attestation posted (head <span class="l-amber">9f3c2d1</span>, gates run not predicted)');tokens('work',8600);});
+      at(7000,()=>{line('work','<span class="l-tool">⏺</span> board transition 1741 "In Review" -m "PR #1742"');tokens('work',900);});
+      at(9000,()=>{line('work','<span class="l-ok">✔ done</span> — GH-1741 In Review, claim released');chip('work','done');
+        dashState.inprog='—';dashState.deliver=1;dashState.last='GH-1741 → In Review (PR #1742) · deliver-queue +1';dash();
+        const e=document.createElement('div');e.id='endcard';e.style.display='block';
+        e.innerHTML='<b>Tick complete.</b> One S issue: Backlog → In Review, ≈'+(tk.work/1000).toFixed(0)+'k tokens — the <i>same</i> tokens an interactive /ralph:work would spend. '+
+        'Next tick: <span class="l-ok">queue empty → exit before spawning → 0 tokens</span>. The overnight counter below is what "ticking" costs while you sleep.';
+        $('t-work').appendChild(e);e.scrollIntoView({block:'nearest'});
+        startIdleTicks();});
+    }
+  }
+
+  /* idle ticks counter — the token-fear killer */
+  let idleTimer=null;
+  function startIdleTicks(){let n=0;idleTimer=setInterval(()=>{n++;$('idlecount').textContent=n;
+    dashState.last='tick '+String(n)+': board next → empty · exit 0 · 0 tokens';dash();},4000/SPEED);}
+
+  /* ---------- controls ---------- */
+  $('b-notes').onclick=e=>{document.body.classList.toggle('annotated');e.target.classList.toggle('active');};
+  $('b-speed').onclick=e=>{SPEED=SPEED===1?3:1;e.target.textContent='speed '+SPEED+'×';};
+  $('b-lid').onclick=()=>{lidClosed=true;$('lid').classList.add('show');};
+  $('b-open').onclick=()=>{lidClosed=false;$('lid').classList.remove('show');};
+  $('b-restart').onclick=()=>location.reload();
+  document.querySelectorAll('.pane').forEach(p=>p.addEventListener('click',()=>focus(p.dataset.pane)));
+
+  scenario();
+})();
+</script>
+</body>
+</html>
