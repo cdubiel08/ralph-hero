@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # work-next.sh — cockpit action: spawn one /ralph:work session for board-next.
 #
-# No board mutation happens here: `board next` is a read, and the claim is
-# taken by /ralph:work inside the spawned session. This script is herdr
-# orchestration only; after the spawn it execs into notify-watch.sh so the
-# cockpit pane becomes the session's attention surface.
+# Thin caller: guards + one queue read + spawn_work_session (lib.sh owns the
+# whole spawn path) + exec into notify-watch.sh so the cockpit pane becomes
+# the session's attention surface. No board mutation happens here: `board
+# next` is a read, and the claim is taken by /ralph:work inside the spawned
+# session. Honors RALPH_HERDR_DRY_RUN=true (plan printed, nothing spawned).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,45 +16,23 @@ trap hold_pane EXIT
 
 billing_guard
 
-N=$("$BOARD" next --json | jq -r '.next.number // empty')
+QUEUE_JSON=$("$BOARD" next --json)
+N=$(jq -r '.next.number // empty' <<<"$QUEUE_JSON")
 if [ -z "$N" ]; then
   echo "queue empty — nothing to spawn"
   exit 0
 fi
 
-BRANCH="feature/GH-$N"
+# rc=2 is the sanctioned skip (agent gh-N already live) — that session already
+# has its own attention surface, so don't stack a second watcher on it.
+rc=0
+spawn_work_session "$N" "$QUEUE_JSON" || rc=$?
+case "$rc" in
+  0) ;;
+  2) exit 0 ;;
+  *) die "spawn failed for GH-$N (see above)" ;;
+esac
 
-# Never branch from local HEAD: herdr's `worktree create` bases NEW branches
-# on the parent checkout's HEAD unless told otherwise, so fetch and pin
-# --base origin/main (tick.sh parity). The fresh base only holds for
-# brand-new branches: an existing feature/GH-N branch is silently checked
-# out as-is (--base ignored) — resumed, possibly behind origin/main, and the
-# session is expected to rebase. Create refuses only when the CHECKOUT
-# already exists — then open it instead: resuming beats re-creating.
-git -C "$REPO" fetch -q origin main
-if ! out=$("$HERDR" worktree create --cwd "$REPO" --branch "$BRANCH" --base origin/main --no-focus); then
-  echo "worktree create refused (existing checkout is the usual cause) — opening instead"
-  out=$("$HERDR" worktree open --cwd "$REPO" --branch "$BRANCH" --no-focus) \
-    || die "neither worktree create nor worktree open succeeded for $BRANCH"
-fi
-
-# IDs are opaque server-local tokens — captured from the response, never
-# predicted or derived.
-pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out")
-[ -n "$pane" ] || die "no pane id in worktree response"
-
-# A name collision means a live session already owns gh-$N — refuse, never
-# improvise suffixes: two sessions on one issue is exactly what the board's
-# claim protocol exists to prevent.
-agent_start_when_ready "gh-$N" "$pane" \
-  || die "agent start gh-$N failed — a session for GH-$N is likely already live; not spawning a second"
-# Past this point the agent is LIVE — a prompt-delivery failure must not exit
-# silently under set -e and strand an idle session with no work, and hold_pane
-# must not claim "no session spawned" about it.
-export RALPH_HERDR_AGENT_LIVE=1
-"$HERDR" agent prompt "gh-$N" "/ralph:work $N" \
-  || die "prompt delivery failed — agent gh-$N is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt gh-$N \"/ralph:work $N\""
-
-echo "spawned GH-$N on $BRANCH (pane $pane, agent gh-$N)"
+[ "${RALPH_HERDR_DRY_RUN:-}" = "true" ] && exit 0
 
 exec "$SCRIPT_DIR/notify-watch.sh" "gh-$N"
