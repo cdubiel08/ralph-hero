@@ -97,7 +97,7 @@ of each script:
 
 | Var | Default | Meaning |
 |---|---|---|
-| `RALPH_HERDR_BOARD` | auto-discovered | board CLI override; without it the scripts try `<repo>/ralph/scripts/board`, then the newest installed ralph plugin copy under `~/.claude/plugins/cache`. Honest caveat: herdr panes inherit the herdr **server's** environment, not your shell's — an export only reaches panes if the server itself was started with it |
+| `RALPH_HERDR_BOARD` | auto-discovered | board CLI override — authoritative when set: only that path is validated, and a broken value dies loudly with no fallback. Unset, the scripts try `<repo>/ralph/scripts/board`, then the newest installed ralph plugin copy under `~/.claude/plugins/cache`. Honest caveat: herdr panes inherit the herdr **server's** environment, not your shell's — an export only reaches panes if the server itself was started with it |
 | `RALPH_HERDR_DASH_INTERVAL` | `120` | dashboard refresh interval, seconds |
 | `RALPH_HERDR_DRY_RUN` | unset | set to `true` and every spawn script (`work-next`, `work-fleet`, lane passes) prints its exact plan — issues, branches, agent names, the herdr commands it would run — and exits 0 before any herdr mutation. Dashboard/attend are reads and ignore it |
 | `RALPH_HERDR_FLEET` | `2` | how many work sessions `work-fleet` spawns from the top of the queue; positive integer, hard cap 4 (it dies above — this is an attended tool, not a farm) |

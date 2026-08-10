@@ -96,8 +96,11 @@ ralph_agents_json() {
 # machine — refuse, naming every location tried.
 # herdr-setup.sh's board-cli check mirrors this order; change them together.
 installed_board_cli() {
-  # shellcheck disable=SC2012  # glob over versioned plugin dirs; ls+sort -V is the point
-  ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null | sort -V | tail -1
+  # Sort by the VERSION component (…/ralph/<version>/scripts/board), not the
+  # whole path — full-path sort would rank marketplace namespace above version.
+  # shellcheck disable=SC2012  # glob over versioned plugin dirs is the point
+  ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null |
+    awk -F/ '{ print $(NF-2) "\t" $0 }' | sort -V -k1,1 | tail -1 | cut -f2-
 }
 if [ -n "${RALPH_HERDR_BOARD:-}" ]; then
   BOARD="$RALPH_HERDR_BOARD"

@@ -129,8 +129,10 @@ if [ -n "${RALPH_HERDR_BOARD:-}" ]; then
 elif [ -x "$REPO/ralph/scripts/board" ]; then
   pass "board-cli" "$REPO/ralph/scripts/board (vendored-checkout layout)"
 else
-  # shellcheck disable=SC2012  # glob over versioned plugin dirs; ls+sort -V is the point
-  installed=$(ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null | sort -V | tail -1 || true)
+  # Sorted by the VERSION component, not the whole path (namespace would win).
+  # shellcheck disable=SC2012  # glob over versioned plugin dirs is the point
+  installed=$(ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null |
+    awk -F/ '{ print $(NF-2) "\t" $0 }' | sort -V -k1,1 | tail -1 | cut -f2- || true)
   if [ -n "$installed" ] && [ -x "$installed" ]; then
     pass "board-cli" "$installed (installed plugin copy — the cockpit scripts discover this automatically)"
   else
