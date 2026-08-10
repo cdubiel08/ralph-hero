@@ -42,8 +42,8 @@ A sibling recipe to `tick.sh` (same contract: scheduler-owned cadence, one itera
 
 ```bash
 NEXT=$(board next --json | jq -r '.next.number // empty'); [ -z "$NEXT" ] && exit 0
-herdr worktree create --cwd "$REPO_ROOT" --branch "feature/GH-$NEXT"   # workspace per issue
-herdr agent start "gh-$NEXT" --kind claude-code --pane "$PANE_ID"
+herdr worktree create --cwd "$REPO_ROOT" --branch "feature/GH-$NEXT" --base origin/main   # workspace per issue (§6 finding 3: never branch from the parent checkout's HEAD)
+herdr agent start "gh-$NEXT" --kind claude --pane "$PANE_ID"
 herdr agent prompt "gh-$NEXT" "/ralph:work $NEXT" --wait --until done --timeout "$((TTL_MIN*60*1000))"
 ```
 
@@ -106,7 +106,7 @@ So the plugin's entire naming/layout surface is: **branch = `feature/GH-N` (alre
 
 ## 4. Honest limits
 
-- herdr's `blocked` is screen-heuristic unless the claude-code lifecycle integration is installed and reporting; treat it as a hint, never a gate input.
+- herdr's `blocked` for Claude Code is **always screen-detected** — the claude integration is *session identity* tier (native session refs for restore after server restart), not *lifecycle authority* tier (only Pi, OMP, OpenCode, Kimi, Kilo, MastraCode author their own states via hooks). Mitigation observed live (§6): the detection manifest is remotely maintained and auto-updating, with five Claude-specific `blocked` rules. Still a hint, never a gate input.
 - Notifications are advisory; the board remains the sole source of truth and `board.ts`/`state-guard.yml` the only enforcement. The plugin never writes Workflow State through any path of its own — human actions it hosts (3.3) are the sanctioned CLI verbs, human-initiated, one at a time.
 - A herdr plugin is unsandboxed local code; ours stays read-mostly (board reads + herdr orchestration + notifications), and its only mutations are the same sanctioned CLI calls a human would type, triggered by a human.
 - Dependency risk: herdr is days-old-ecosystem young. Everything ships as examples + an optional plugin behind the existing `RALPH_TICK_RUNNER` seam, so ralph without herdr keeps working byte-identically.
@@ -115,6 +115,19 @@ So the plugin's entire naming/layout surface is: **branch = `feature/GH-N` (alre
 ## 5. Suggested next step
 
 A half-day spike, in order: install herdr + the claude-code integration; drive one real board issue through the 3.1 recipe by hand (no plugin yet); verify claim/TTL behavior across a lid-close; then scaffold `plugin/ralph-herdr/` with the manifest above and `herdr plugin link` it. Only after the spike decides the TTL countermeasure does this become a board issue.
+
+**Status 2026-08-09 (same day)**: spike steps 0–1 ran live — GH-1670 driven end-to-end through a herdr pane (worktree → `agent start` → `agent prompt` → PR #1741 → In Review). Findings in §6. The step-2 lid-close/TTL probe has **not** run yet; accordingly the shipped `tick-herdr.sh` example bounds its wait at the claim TTL (countermeasure (a), wrap-up-not-kill) and unattended arming stays off until that probe happens.
+
+## 6. Spike findings (2026-08-09, live run: GH-1670 → PR #1741)
+
+1. **Detection is better-founded than assumed, differently than assumed.** `agent explain --json` mid-run showed the winning rule was `osc_title_working` at priority 1100 — Claude Code publishes a spinner via the terminal-title OSC channel, so `working` doesn't even need screen text. The manifest is fetched remotely (`~/.local/state/herdr/agent-detection/remote/claude.toml`, version 2026.08.04.1, auto-updated) and carries five Claude-specific `blocked` rules including `bash_permission_prompt` matching "do you want to proceed?". Upstream maintains UI drift; we don't.
+2. **`working` measures liveness, not progress.** The session read `working` for 13+ minutes while parked inside a background CI-wait doing nothing. The chip can never distinguish thinking from polling from stuck; the transcript and the board can. (This is also why `blocked` never fired this run: the session came up in auto mode from saved project defaults — flags passed at launch don't guarantee prompt behavior, so blocked-detection tests must be deliberate, not incidental.)
+3. **`worktree create` branches from the parent checkout's HEAD, not origin/main.** It was benign only because the main checkout happened to sit on up-to-date main. Every scripted create must fetch then pass `--base origin/main` — tick.sh parity.
+4. **IDs are opaque, server-local tokens.** A second machine produced workspace `wA` — the "w3 = third workspace" reading was a young-server coincidence. Never predict, sort, pattern-match, or carry IDs across servers; every ID comes from a response.
+5. **`agent start`'s preconditions are guardrails in practice.** Distinct error codes did real work during the spike: `agent_pane_not_found` (empty variable → missing arg), `agent_pane_busy` (refused to trample the running gh-1670 pane; also fires when targeting the pane you're typing in, since the CLI itself owns its foreground). A fat-fingered pane ID cannot destroy a session.
+6. **The courtesy-hook layer met herdr and behaved.** `hint-pr-linkage.sh` (GH-1717) fired on the real `gh pr create` inside the pane; the driver adjudicated it as a false alarm (keyword was in the body; the hook reads the command line) and moved on. Observation-grade, never blocking — as designed.
+7. **The composed-verb gap is real and felt.** Hand-driving exposed that herdr deliberately ships no "start an agent somewhere sensible and show me" verb — primitives refuse to create layout. That's the plugin layer's job, which is §3.2's cockpit `work-next` action verbatim. The friction is the addon's user story.
+8. **Env hygiene check is a one-liner and worth it**: the server env was verified key-free before first launch; panes inherit it for the server's lifetime.
 
 ## Sources
 

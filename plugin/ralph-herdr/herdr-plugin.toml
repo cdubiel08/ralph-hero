@@ -1,0 +1,104 @@
+# herdr-plugin.toml — ralph-herdr: a herdr cockpit for the ralph board.
+#
+# This is a herdr plugin (herdr.dev), NOT a Claude Code plugin. Actions are
+# user-invoked from a workspace; each one resolves the workspace cwd from
+# HERDR_PLUGIN_CONTEXT_JSON (the worktrunk pattern) and opens a plugin pane
+# whose script runs with that repo as its working directory. All board access
+# inside the scripts goes through the repo's own `ralph/scripts/board` CLI —
+# this plugin is an attention surface, never a write surface.
+#
+# Design record: thoughts/shared/research/2026-08-09-herdr-runtime-ralph-addon.md
+
+id = "ralph-herdr"
+name = "Ralph Herdr"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes."
+platforms = ["macos", "linux"]
+
+# --- Actions -----------------------------------------------------------------
+# Every action follows the same shape: extract the repo cwd from the plugin
+# context, then exec `plugin pane open` so the pane (not this action process)
+# does the real work. `--focus` is deliberate here and only here: the human
+# clicked the action, so the resulting pane may take focus. Scripted herdr
+# calls inside the pane scripts use --no-focus throughout.
+
+[[actions]]
+id = "work-next"
+title = "Ralph: work next board issue"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint work-next --placement split --direction down --cwd "$cwd" --focus'''
+]
+
+[[actions]]
+id = "deliver-pass"
+title = "Ralph: deliver pass"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint deliver-pass --placement split --direction down --cwd "$cwd" --focus'''
+]
+
+[[actions]]
+id = "tend-pass"
+title = "Ralph: tend pass"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint tend-pass --placement split --direction down --cwd "$cwd" --focus'''
+]
+
+[[actions]]
+id = "doctor"
+title = "Ralph: board doctor"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint doctor --placement popup --cwd "$cwd" --focus'''
+]
+
+[[actions]]
+id = "dashboard"
+title = "Ralph: board dashboard"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint dashboard --placement split --direction right --cwd "$cwd" --focus'''
+]
+
+# --- Panes -------------------------------------------------------------------
+# Pane cwd is the repo (the action's `pane open` passed --cwd), so each script
+# resolves the board CLI relative to $PWD. Scripts are owned by scripts/ in
+# this plugin dir; see scripts/lib.sh for the shared guards.
+
+[[panes]]
+id = "work-next"
+title = "Ralph: work next"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-next.sh\""]
+
+[[panes]]
+id = "deliver-pass"
+title = "Ralph: deliver pass"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/deliver-pass.sh\""]
+
+[[panes]]
+id = "tend-pass"
+title = "Ralph: tend pass"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/tend-pass.sh\""]
+
+[[panes]]
+id = "doctor"
+title = "Ralph: board doctor"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/doctor.sh\""]
+
+[[panes]]
+id = "dashboard"
+title = "Ralph: board dashboard"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/dashboard.sh\""]

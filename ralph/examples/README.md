@@ -139,3 +139,20 @@ datum that tells you whether one machine's serialization is costing you passes.
 align the two when you copy it; the convention is yours to keep.) `board readiness`
 reports the per-lane opt-in keys, heartbeat age, and outcomes log as informational
 rows — recommendations, never gates.
+
+## herdr transport
+
+`tick-herdr.sh` (this directory) is the same scheduler-script contract as `tick.sh` with
+the spawn swapped: the session runs in a persistent [herdr](https://herdr.dev/) pane that
+survives the tick, the wait is bounded at the claim TTL (a wrap-up prompt, never a kill),
+and the finished pane keeps the transcript. The optional cockpit — actions, lane panes,
+blocked/done notifications — lives in `plugin/ralph-herdr/`; the design record and honest
+limits (screen-detected `blocked`, the still-unprobed TTL/lid-close hazard) are in
+`thoughts/shared/research/2026-08-09-herdr-runtime-ralph-addon.md`. The transport adds
+one opt-in of its own: on top of the shared work-lane `autopilot=true` key,
+`tick-herdr.sh` requires `herdr_autopilot=true` in `~/.ralph/config` (typed,
+fail-closed) — a pane that outlives the tick is a different hazard class than a
+kill-on-timeout tick, and an existing tick.sh arming must not silently extend to it
+while the TTL/lid-close probe is unrun. Unattended deliver/tend drives still take the
+two-key fail-closed opt-in above, and the billing guard still lives wherever the
+process spawns.
