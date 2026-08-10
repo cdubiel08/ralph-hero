@@ -84,15 +84,33 @@ ralph_agents_json() {
     | {name: .name, status: .agent_status, pane: .pane_id}'
 }
 
-# The board CLI is the only sanctioned board surface. The default path is the
-# vendored-checkout layout (ralph-hero itself); repos that install ralph as a
-# Claude Code plugin carry board.ts inside the installed plugin instead, so
-# RALPH_HERDR_BOARD overrides (detect-if-present, degrade gracefully).
-# Missing/non-executable means this is not a ralph-configured repo — refuse
-# rather than guess (the real scope gate stays board.ts's; the cockpit just
-# shouldn't offer itself).
-BOARD="${RALPH_HERDR_BOARD:-$REPO/ralph/scripts/board}"
-[ -x "$BOARD" ] || die "no executable board CLI at $BOARD — not a ralph-configured repo (plugin-install host repos: set RALPH_HERDR_BOARD to the installed ralph plugin's scripts/board)"
+# The board CLI is the only sanctioned board surface. Resolution order
+# (GH-1761): RALPH_HERDR_BOARD override > the vendored-checkout layout
+# (ralph-hero itself) > the newest installed Claude Code plugin copy. The
+# fallback matters because host repos have no ralph/ tree AND no reliable env
+# channel: herdr panes inherit the SERVER's environment, not the user's shell,
+# so an exported RALPH_HERDR_BOARD never arrives unless the server itself was
+# started with it. Scope is board.ts's own problem and resolves from the repo
+# tree (.ralph.json > tracked .claude/settings.json env) — only the CLI path
+# needs discovering here. Nothing found anywhere = not a ralph-equipped
+# machine — refuse, naming every location tried.
+# herdr-setup.sh's board-cli check mirrors this order; change them together.
+installed_board_cli() {
+  # Sort by the VERSION component (…/ralph/<version>/scripts/board), not the
+  # whole path — full-path sort would rank marketplace namespace above version.
+  # shellcheck disable=SC2012  # glob over versioned plugin dirs is the point
+  ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null |
+    awk -F/ '{ print $(NF-2) "\t" $0 }' | sort -V -k1,1 | tail -1 | cut -f2-
+}
+if [ -n "${RALPH_HERDR_BOARD:-}" ]; then
+  BOARD="$RALPH_HERDR_BOARD"
+  [ -x "$BOARD" ] || die "RALPH_HERDR_BOARD=$BOARD is not an executable board CLI"
+elif [ -x "$REPO/ralph/scripts/board" ]; then
+  BOARD="$REPO/ralph/scripts/board"
+else
+  BOARD=$(installed_board_cli || true)
+  [ -n "$BOARD" ] && [ -x "$BOARD" ] || die "no board CLI found — tried \$RALPH_HERDR_BOARD (unset), $REPO/ralph/scripts/board, and ~/.claude/plugins/cache/*/ralph/*/scripts/board (is the ralph Claude Code plugin installed?)"
+fi
 
 # Billing guard (tick.sh parity): a pane env with a stray API key would
 # silently bill API credits instead of the subscription. Loud, not silent.

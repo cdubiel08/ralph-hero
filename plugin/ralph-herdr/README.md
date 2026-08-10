@@ -16,11 +16,14 @@ spawns does.
 
 - herdr >= 0.8.0 with a running server (`herdr`), plus `jq`
 - a ralph-configured repo: a reachable board CLI, board scope configured
-  (`.ralph.json` or the `RALPH_GH_*` env block), `gh` authed with `repo,project`
-  scopes. The board CLI default is `ralph/scripts/board` in the repo tree (the
-  vendored-checkout layout, i.e. ralph-hero itself); host repos that install ralph
-  as a Claude Code plugin have no `ralph/` tree — set `RALPH_HERDR_BOARD` to the
-  installed plugin's `scripts/board` path. The scripts die loudly anywhere else.
+  (`.ralph.json` or the tracked `.claude/settings.json` env block — board.ts reads
+  both from the repo tree, so panes need no scope env), `gh` authed with
+  `repo,project` scopes. The board CLI is discovered in order (GH-1761):
+  `RALPH_HERDR_BOARD` override → `ralph/scripts/board` in the repo tree (the
+  vendored-checkout layout, i.e. ralph-hero itself) → the newest installed ralph
+  Claude Code plugin copy (`~/.claude/plugins/cache/*/ralph/*/scripts/board`), so
+  host repos that install ralph as a plugin work with no configuration. The
+  scripts die loudly when none of the three exists.
 - optional but recommended: `herdr integration install claude` (session-identity
   restore after server restart; it does not change how `blocked` is detected)
 
@@ -94,7 +97,7 @@ of each script:
 
 | Var | Default | Meaning |
 |---|---|---|
-| `RALPH_HERDR_BOARD` | `<repo>/ralph/scripts/board` | path to the board CLI; set it on host repos that install ralph as a Claude Code plugin (board.ts ships inside the installed plugin, not the repo tree) |
+| `RALPH_HERDR_BOARD` | auto-discovered | board CLI override — authoritative when set: only that path is validated, and a broken value dies loudly with no fallback. Unset, the scripts try `<repo>/ralph/scripts/board`, then the newest installed ralph plugin copy under `~/.claude/plugins/cache`. Honest caveat: herdr panes inherit the herdr **server's** environment, not your shell's — an export only reaches panes if the server itself was started with it |
 | `RALPH_HERDR_DASH_INTERVAL` | `120` | dashboard refresh interval, seconds |
 | `RALPH_HERDR_DRY_RUN` | unset | set to `true` and every spawn script (`work-next`, `work-fleet`, lane passes) prints its exact plan — issues, branches, agent names, the herdr commands it would run — and exits 0 before any herdr mutation. Dashboard/attend are reads and ignore it |
 | `RALPH_HERDR_FLEET` | `2` | how many work sessions `work-fleet` spawns from the top of the queue; positive integer, hard cap 4 (it dies above — this is an attended tool, not a farm) |
