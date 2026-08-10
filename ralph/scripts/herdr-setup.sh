@@ -145,7 +145,13 @@ else
 fi
 
 # ── report / oneline ─────────────────────────────────────────────────────────
-gapnames() { local IFS=,; local names=(); local g; for g in ${GAPS[@]+"${GAPS[@]}"}; do names+=("${g%%|*}"); done; echo "${names[*]}"; }
+# Note the length guards before every "${GAPS[@]}" expansion: macOS ships
+# bash 3.2, where an empty array trips `set -u` even quoted.
+gapnames() {
+  local IFS=,; local names=() g
+  [ "${#GAPS[@]}" -gt 0 ] && for g in "${GAPS[@]}"; do names+=("${g%%|*}"); done
+  echo "${names[*]}"
+}
 
 if [ -n "$ONELINE" ]; then
   if [ "${#GAPS[@]}" -eq 0 ]; then echo "herdr: wired"
@@ -190,14 +196,16 @@ fi
 # Everything left needs a human hand (installs, auth, env) — print exact
 # commands rather than guessing at package managers or touching credentials.
 manual=0
-for g in ${GAPS[@]+"${GAPS[@]}"}; do
-  case "${g%%|*}" in
-    ralph-herdr-plugin) continue ;; # handled above (when the server was up)
-    *)
-      [ "$manual" -eq 0 ] && { echo; echo "remaining manual steps:"; manual=1; }
-      echo "  ${g%%|*}: ${g#*|}"
-      ;;
-  esac
-done
+if [ "${#GAPS[@]}" -gt 0 ]; then
+  for g in "${GAPS[@]}"; do
+    case "${g%%|*}" in
+      ralph-herdr-plugin) continue ;; # handled above (when the server was up)
+      *)
+        [ "$manual" -eq 0 ] && { echo; echo "remaining manual steps:"; manual=1; }
+        echo "  ${g%%|*}: ${g#*|}"
+        ;;
+    esac
+  done
+fi
 [ "$manual" -eq 0 ] && echo "done."
 exit 0
