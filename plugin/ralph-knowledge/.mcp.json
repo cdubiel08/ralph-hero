@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "ralph-knowledge": {
-      "command": "npx",
-      "args": ["-y", "ralph-hero-knowledge-index@0.1.59"]
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/launch-mcp.sh",
+      "args": []
     }
   }
 }

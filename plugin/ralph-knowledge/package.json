@@ -3,6 +3,9 @@
   "version": "0.1.59",
   "type": "module",
   "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
   "bin": {
     "ralph-hero-knowledge-index": "dist/index.js"
   },
