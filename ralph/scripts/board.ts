@@ -3099,6 +3099,35 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     add("state-guard", "ok", "workflow absent (pre-Phase-2)");
   }
 
+  // herdr cockpit (GH-1759). INFO level, always: the cockpit is optional
+  // equipment, so its absence is never an invariant breach — the weekly CI
+  // doctor has no herdr and must stay clean. The probing logic lives once, in
+  // herdr-setup.sh (the same script /ralph:help herdr drives); doctor only
+  // relays its one-line verdict. Any failure to run it degrades to
+  // "not evaluated" — an advisory hint is never worth an exit-code change.
+  try {
+    const setupSh =
+      process.env.RALPH_HERDR_SETUP_SH ??
+      join(dirname(fileURLToPath(import.meta.url)), "herdr-setup.sh");
+    if (!existsSync(setupSh)) {
+      add("herdr-cockpit", "info", `not evaluated: herdr-setup.sh not found at ${setupSh}`);
+    } else {
+      const r = ctx.exec(["bash", setupSh, "check", "--oneline"]);
+      const line = r.stdout.trim();
+      if (!line.startsWith("herdr:")) {
+        add("herdr-cockpit", "info", `not evaluated: ${(r.stderr || line || "no output").trim().slice(0, 200)}`);
+      } else if (r.code === 0) {
+        add("herdr-cockpit", "ok", "wired (optional cockpit)");
+      } else if (r.code === 2) {
+        add("herdr-cockpit", "info", "herdr not installed — optional cockpit; `/ralph:help herdr` to set it up");
+      } else {
+        add("herdr-cockpit", "info", `${line.replace(/^herdr:\s*/, "")} — \`/ralph:help herdr\` walks the setup`);
+      }
+    }
+  } catch (e) {
+    add("herdr-cockpit", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
   const ok = !checks.some((c) => c.level === "fail");
   return { ok, checks };
 }

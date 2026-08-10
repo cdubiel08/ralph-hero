@@ -1196,6 +1196,54 @@ describe("doctor hardening (closed drift, fix gating, resilience, garbled claims
   });
 });
 
+describe("doctor: herdr-cockpit (GH-1759) — advisory by construction", () => {
+  // Overlay the herdr-setup.sh call; every other exec stays on the fake.
+  const withSetupSh = (gh: FakeGh, result: { code: number; stdout: string; stderr?: string }) => {
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) =>
+      argv[0] === "bash" && argv[1]?.endsWith("herdr-setup.sh")
+        ? { code: result.code, stdout: result.stdout, stderr: result.stderr ?? "" }
+        : inner(argv, stdin);
+  };
+  const cockpit = (r: ReturnType<typeof doctor>) =>
+    r.checks.find((c) => c.name === "herdr-cockpit")!;
+
+  it("fully wired reads ok", () => {
+    const gh = new FakeGh();
+    withSetupSh(gh, { code: 0, stdout: "herdr: wired\n" });
+    const c = cockpit(doctor(makeCtx(gh)));
+    expect(c.level).toBe("ok");
+  });
+
+  it("herdr not installed is info and points at /ralph:help herdr — never a finding (weekly CI has no herdr)", () => {
+    const gh = new FakeGh();
+    const baseline = doctor(makeCtx(new FakeGh()), { strict: true }).ok;
+    withSetupSh(gh, { code: 2, stdout: "herdr: not installed\n" });
+    const r = doctor(makeCtx(gh), { strict: true });
+    expect(cockpit(r).level).toBe("info");
+    expect(cockpit(r).detail).toContain("/ralph:help herdr");
+    expect(r.ok).toBe(baseline); // info never touches the exit code, strict included
+  });
+
+  it("gaps relay the script's one-line verdict at info, even under --strict", () => {
+    const gh = new FakeGh();
+    const baseline = doctor(makeCtx(new FakeGh()), { strict: true }).ok;
+    withSetupSh(gh, { code: 1, stdout: "herdr: 2 gap(s) — board-cli,gh-auth\n" });
+    const r = doctor(makeCtx(gh), { strict: true });
+    expect(cockpit(r).level).toBe("info");
+    expect(cockpit(r).detail).toContain("board-cli,gh-auth");
+    expect(r.ok).toBe(baseline);
+  });
+
+  it("a script that fails to run degrades to not-evaluated info (the fake's default exec)", () => {
+    const gh = new FakeGh();
+    const r = doctor(makeCtx(gh));
+    expect(cockpit(r).level).toBe("info");
+    expect(cockpit(r).detail).toContain("not evaluated");
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe("next: cross-repo blocker labels", () => {
   it("a cross-repo blocker renders owner/repo#N in text and --json; own-repo stays #N; both block", () => {
     const gh = new FakeGh();
