@@ -47,10 +47,21 @@ if [ "$#" -gt 1 ]; then
 
   while [ -n "$watch_list" ]; do
     for t in $watch_list; do
-      state=$("$HERDR" agent get "$t" 2>/dev/null \
-        | jq -r '.result.agent.agent_status // empty' 2>/dev/null) || state=""
+      # "Gone" and "unreadable" are different facts: the CLI exits non-zero for
+      # server/read hiccups on agents that are still perfectly alive. Only a
+      # SUCCESSFUL response that resolves no live agent drops the target; a
+      # failed read keeps it on the watch list for the next poll.
+      if raw=$("$HERDR" agent get "$t" 2>&1); then
+        state=$(jq -r '.result.agent.agent_status // empty' <<<"$raw" 2>/dev/null) || state=""
+        [ -n "$state" ] || state="unknown"
+      elif jq -e '.error.code == "agent_not_found" or .error.code == "not_found"' <<<"$raw" >/dev/null 2>&1; then
+        state="__gone__"
+      else
+        echo "$(date -u +%FT%TZ) read failed for $t — keeping it on the watch list"
+        continue
+      fi
       case "$state" in
-        "")
+        "__gone__")
           notify "$t" "ralph: $t gone" "agent no longer live in $REPO_NAME — check the board for where it left things"
           watch_list=$(drop_from "$watch_list" "$t")
           blocked_seen=$(drop_from "$blocked_seen" "$t")

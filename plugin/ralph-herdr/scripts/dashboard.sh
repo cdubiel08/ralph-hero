@@ -81,10 +81,12 @@ while :; do
     line "${C_BOLD}WORK${C_RST}  ${C_DIM}queue $depth${C_RST}"
     n=$(jq -r '.next.number // empty' <<<"$next_json" 2>/dev/null) || n=""
     if [ -n "$n" ]; then
-      title=$(jq -r '.next.title // ""' <<<"$next_json")
-      est=$(jq -r '.next.estimate // "-"' <<<"$next_json")
-      prio=$(jq -r '.next.priority // "-"' <<<"$next_json")
-      parent=$(jq -r 'if .next.hasParent then (.next.parentNumber // empty) else empty end' <<<"$next_json")
+      # Every extraction is individually guarded: `set -e` must never let one
+      # malformed field escape the section's failure isolation.
+      title=$(jq -r '.next.title // ""' <<<"$next_json" 2>/dev/null) || title=""
+      est=$(jq -r '.next.estimate // "-"' <<<"$next_json" 2>/dev/null) || est="-"
+      prio=$(jq -r '.next.priority // "-"' <<<"$next_json" 2>/dev/null) || prio="-"
+      parent=$(jq -r 'if .next.hasParent then (.next.parentNumber // empty) else empty end' <<<"$next_json" 2>/dev/null) || parent=""
       via=""
       [ -n "$parent" ] && via=" ${C_DIM}via #$parent${C_RST}"
       title=$(trunc "$title" $((COLS - 25)))
@@ -110,9 +112,9 @@ while :; do
     line "${C_BOLD}DELIVER${C_RST}  ${C_DIM}queue $dq${C_RST}"
     dn=$(jq -r '.next.number // empty' <<<"$deliver_json" 2>/dev/null) || dn=""
     if [ -n "$dn" ]; then
-      dpr=$(jq -r '.next.pr // empty' <<<"$deliver_json")
-      dreason=$(jq -r '.next.reason // "-"' <<<"$deliver_json")
-      dtitle=$(jq -r '.next.title // ""' <<<"$deliver_json")
+      dpr=$(jq -r '.next.pr // empty' <<<"$deliver_json" 2>/dev/null) || dpr=""
+      dreason=$(jq -r '.next.reason // "-"' <<<"$deliver_json" 2>/dev/null) || dreason="-"
+      dtitle=$(jq -r '.next.title // ""' <<<"$deliver_json" 2>/dev/null) || dtitle=""
       dtitle=$(trunc "$dtitle" $((COLS - 30)))
       line "  ▸ #$dn${dpr:+ pr#$dpr} [$dreason] $dtitle"
     else

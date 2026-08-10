@@ -43,8 +43,19 @@ fi
 export C_RED C_GRN C_YLW C_BLU C_DIM C_BOLD C_RST
 
 # state_glyph STATUS — print a colored ● for an agent status (no newline).
-# working=green, blocked=red, idle/done=blue, anything else=dim.
+# working=green, blocked=red, idle/done=blue, anything else=dim. When color is
+# off (non-tty, NO_COLOR) the dot alone carries no signal AND breaks the
+# advertised ASCII fallback — degrade to a distinct ASCII marker per state.
 state_glyph() {
+  if [ -z "$C_RST" ]; then
+    case "${1:-}" in
+      working) printf '>' ;;
+      blocked) printf '!' ;;
+      idle|done) printf '.' ;;
+      *) printf '?' ;;
+    esac
+    return 0
+  fi
   case "${1:-}" in
     working)   printf '%s●%s' "$C_GRN" "$C_RST" ;;
     blocked)   printf '%s●%s' "$C_RED" "$C_RST" ;;
@@ -208,7 +219,14 @@ spawn_work_session() {
   # already exists — then open it instead: resuming beats re-creating.
   # The label carries spaces — build argv positionally, never via unquoted
   # expansion (bash 3.2, no arrays needed beyond "$@").
-  git -C "$REPO" fetch -q origin main
+  # Callers invoke this on the RHS of `||` (rc capture), which disables set -e
+  # through the whole function body — every step must check its own outcome. A
+  # failed fetch must stop here: --base origin/main against a stale or missing
+  # ref would branch from the wrong base (the very thing the fetch prevents).
+  git -C "$REPO" fetch -q origin main || {
+    echo "git fetch origin main failed for GH-$n — not branching from a stale ref" >&2
+    return 1
+  }
   set -- --cwd "$REPO" --branch "$branch" --base origin/main --no-focus
   [ -n "$label" ] && set -- "$@" --label "$label"
   if ! out=$("$HERDR" worktree create "$@"); then
