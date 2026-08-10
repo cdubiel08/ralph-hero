@@ -141,6 +141,10 @@ never answers, never kills — it moves your eyes, nothing else.
 
 ## Pointers
 
+- **Getting started at the terminal**: [CHEATSHEET.md](CHEATSHEET.md) — from-zero
+  quick start (ralph `board setup`/`readiness` + herdr install) through the seven
+  actions, herd inspection, hand-driving, and debugging.
+
 - Design record (normative): `thoughts/shared/research/2026-08-09-herdr-runtime-ralph-addon.md`
 - Scheduler-owned herdr tick recipe: `ralph/examples/tick-herdr.sh` (copy and own —
   scripts are examples, contracts are doctrine: `ralph/examples/README.md`)
