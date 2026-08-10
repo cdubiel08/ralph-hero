@@ -120,17 +120,22 @@ else
 fi
 
 # ── board CLI reachable the way the cockpit scripts will look for it ─────────
+# Mirrors lib.sh's resolution order (GH-1761): RALPH_HERDR_BOARD > vendored
+# ralph/ tree > newest installed Claude Code plugin copy. Change them together.
 if [ -n "${RALPH_HERDR_BOARD:-}" ]; then
-  if [ -x "$RALPH_HERDR_BOARD" ]; then pass "board-cli" "RALPH_HERDR_BOARD=$RALPH_HERDR_BOARD"
+  if [ -x "$RALPH_HERDR_BOARD" ]; then
+    pass "board-cli" "RALPH_HERDR_BOARD=$RALPH_HERDR_BOARD (note: reaches herdr panes only if the herdr SERVER was started with it)"
   else gap "board-cli" "RALPH_HERDR_BOARD=$RALPH_HERDR_BOARD is not executable"; fi
 elif [ -x "$REPO/ralph/scripts/board" ]; then
   pass "board-cli" "$REPO/ralph/scripts/board (vendored-checkout layout)"
-elif [ -x "$SCRIPT_DIR/board" ]; then
-  # This script ships next to board inside the installed plugin — the CLI
-  # exists, but the cockpit scripts won't find it without the env var.
-  gap "board-cli" "no ralph/ tree in $REPO — export RALPH_HERDR_BOARD=$SCRIPT_DIR/board (put it in the environment herdr panes inherit)"
 else
-  gap "board-cli" "no board CLI found — is ralph installed?"
+  # shellcheck disable=SC2012  # glob over versioned plugin dirs; ls+sort -V is the point
+  installed=$(ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null | sort -V | tail -1 || true)
+  if [ -n "$installed" ] && [ -x "$installed" ]; then
+    pass "board-cli" "$installed (installed plugin copy — the cockpit scripts discover this automatically)"
+  else
+    gap "board-cli" "no board CLI found (no ralph/ tree in $REPO, no installed ralph plugin under ~/.claude/plugins/cache) — install the ralph Claude Code plugin"
+  fi
 fi
 
 # ── gh auth scopes ───────────────────────────────────────────────────────────
