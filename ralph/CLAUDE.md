@@ -2,7 +2,7 @@
 
 ## What this is
 
-ralph v2 (GH-1662): four skills, one agent, one board CLI, courtesy hooks, and lane selectors. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`; lanes spec (GH-1712): `../thoughts/shared/specs/2026-08-07-loop-agent-lanes-spec.md`.
+ralph v2 (GH-1662): five skills, one agent, one board CLI, courtesy hooks, and lane selectors. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`; lanes spec (GH-1712): `../thoughts/shared/specs/2026-08-07-loop-agent-lanes-spec.md`.
 
 ```text
 ralph/
@@ -10,11 +10,14 @@ ralph/
 ├── skills/deliver/     # follow-through lane: In Review PRs → merged (GH-1712)
 ├── skills/tend/        # hygiene lane: Backlog shape + Done audit (GH-1712)
 ├── skills/board/       # human surface — orientation, intake, answers, doctor
+├── skills/help/        # topic-routed setup help (herdr cockpit wiring, GH-1759)
 ├── skills/using-html/  # vendored utility (byte-identical upstream; do not edit)
 ├── agents/investigator.md  # read-only fan-out worker (hard tools: allowlist)
 ├── scripts/board(.ts)  # THE board mutation path — typed 6-state machine,
 │                       #   claims with TTL, scope gate, doctor, and the lane
 │                       #   selectors (next / deliver-queue / tend-queue)
+├── scripts/herdr-setup.sh  # herdr-cockpit wiring truth: /ralph:help herdr drives
+│                       #   it; doctor relays its `check --oneline` verdict
 ├── scripts/tick.sh     # ONE scheduler-transport example of driving the work
 │                       #   lane (+ install-loop.sh) — a recipe, not THE loop
 ├── examples/README.md  # transport recipes: /loop, routines, scheduler — copy and own

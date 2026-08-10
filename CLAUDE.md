@@ -72,6 +72,7 @@ Honestly labelled limits: GitHub has no pre-close hook, so a UI close is *correc
 | `/ralph:deliver` | Follow-through lane (GH-1712): one pass over `board deliver-queue` — shepherd In Review PRs through the gate (token-mapped outcomes), close out merged-but-open items, demote semantic rework via the legal two-hop. Never `--force`; re-attests only via `attest-pr.sh --run --carry-review`; post-merge Done writes yield to reconcile |
 | `/ralph:tend` | Hygiene lane (GH-1712): one bounded pass over `board tend-queue` — Backlog shape + Done audit, metadata-only, closures only ever PROPOSED via Human Needed. Grep the live tree before trusting a body |
 | `/ralph:board` | Human surface: orientation, intake, answering Human Needed, doctor, readiness |
+| `/ralph:help` | Topic-routed setup help (GH-1759): `herdr` checks/wires the herdr cockpit via `ralph/scripts/herdr-setup.sh` (check + permission-gated fix); `board doctor` relays the same script's verdict as the advisory `herdr-cockpit` info line |
 | `ralph/agents/investigator.md` | Read-only fan-out worker — Read/Grep/Glob only (hard allowlist, no Bash) |
 | `.claude/workflows/{research-panel,plan-critique,tree-impl,adversarial-review}.md` | Optional ultracode fan-out equipment — granted, never prescribed |
 

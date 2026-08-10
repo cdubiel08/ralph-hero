@@ -24,6 +24,11 @@ spawns does.
 - optional but recommended: `herdr integration install claude` (session-identity
   restore after server restart; it does not change how `blocked` is detected)
 
+If ralph is installed as a Claude Code plugin, `/ralph:help herdr` checks all of
+the above (`ralph/scripts/herdr-setup.sh check`) and can wire the automatable
+steps with your permission; `board doctor` carries the same verdict as its
+advisory `herdr-cockpit` line.
+
 ## Install
 
 Development (local checkout):
