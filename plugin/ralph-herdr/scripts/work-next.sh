@@ -11,6 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
+trap hold_pane EXIT
+
 billing_guard
 
 N=$("$BOARD" next --json | jq -r '.next.number // empty')
@@ -43,7 +45,7 @@ pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out")
 # A name collision means a live session already owns gh-$N — refuse, never
 # improvise suffixes: two sessions on one issue is exactly what the board's
 # claim protocol exists to prevent.
-"$HERDR" agent start "gh-$N" --kind claude --pane "$pane" \
+agent_start_when_ready "gh-$N" "$pane" \
   || die "agent start gh-$N failed — a session for GH-$N is likely already live; not spawning a second"
 # Past this point the agent is LIVE — a prompt-delivery failure must not exit
 # silently under set -e and strand an idle session with no work.

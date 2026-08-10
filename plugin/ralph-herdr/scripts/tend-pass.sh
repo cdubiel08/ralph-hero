@@ -11,6 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
+trap hold_pane EXIT
+
 billing_guard
 
 next=$("$BOARD" tend-queue --json | jq -r '.next.number // empty')
@@ -27,7 +29,7 @@ pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$t")
 # name-taken refusal means a pass is already live — die, never suffix. The
 # just-created tab holds only an idle shell at this point (start failed), so
 # closing it is cleanup, not killing an agent.
-if ! "$HERDR" agent start ralph-tend --kind claude --pane "$pane"; then
+if ! agent_start_when_ready ralph-tend "$pane"; then
   tab_id=$(jq -r '.result.tab.tab_id // empty' <<<"$t")
   [ -n "$tab_id" ] && "$HERDR" tab close "$tab_id" >/dev/null 2>&1 || true
   die "agent start ralph-tend failed — a tend pass is already live; not starting a second (cleaned up the empty tab)"
