@@ -14,7 +14,7 @@ spawns does.
 
 ## Requirements
 
-- herdr >= 0.7.0 with a running server (`herdr`), plus `jq`
+- herdr >= 0.8.0 with a running server (`herdr`), plus `jq`
 - a ralph-configured repo: a reachable board CLI, board scope configured
   (`.ralph.json` or the `RALPH_GH_*` env block), `gh` authed with `repo,project`
   scopes. The board CLI default is `ralph/scripts/board` in the repo tree (the

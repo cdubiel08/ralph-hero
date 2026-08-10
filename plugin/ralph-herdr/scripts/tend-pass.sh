@@ -24,10 +24,17 @@ pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$t")
 [ -n "$pane" ] || die "no pane id in tab response"
 
 # One live pass per lane: the unique agent name is the interlock. A
-# name-taken refusal means a pass is already live — die, never suffix.
-"$HERDR" agent start ralph-tend --kind claude --pane "$pane" \
-  || die "agent start ralph-tend failed — a tend pass is already live; not starting a second"
-"$HERDR" agent prompt ralph-tend "/ralph:tend"
+# name-taken refusal means a pass is already live — die, never suffix. The
+# just-created tab holds only an idle shell at this point (start failed), so
+# closing it is cleanup, not killing an agent.
+if ! "$HERDR" agent start ralph-tend --kind claude --pane "$pane"; then
+  tab_id=$(jq -r '.result.tab.tab_id // empty' <<<"$t")
+  [ -n "$tab_id" ] && "$HERDR" tab close "$tab_id" >/dev/null 2>&1 || true
+  die "agent start ralph-tend failed — a tend pass is already live; not starting a second (cleaned up the empty tab)"
+fi
+# Past this point the agent is LIVE — a prompt failure must not strand it silently.
+"$HERDR" agent prompt ralph-tend "/ralph:tend" \
+  || die "prompt delivery failed — agent ralph-tend is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt ralph-tend \"/ralph:tend\""
 
 echo "spawned tend pass (queue head #$next, pane $pane, agent ralph-tend)"
 

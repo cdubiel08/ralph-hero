@@ -150,7 +150,8 @@ blocked/done notifications — lives in `plugin/ralph-herdr/`; the design record
 limits (screen-detected `blocked`, the still-unprobed TTL/lid-close hazard) are in
 `thoughts/shared/research/2026-08-09-herdr-runtime-ralph-addon.md`. The transport adds
 one opt-in of its own: on top of the shared work-lane `autopilot=true` key,
-`tick-herdr.sh` requires `herdr_autopilot=true` in `~/.ralph/config` (typed,
+`tick-herdr.sh` requires `herdr_autopilot=true` in `$RALPH_HOME/config`
+(default `~/.ralph/config`; typed,
 fail-closed) — a pane that outlives the tick is a different hazard class than a
 kill-on-timeout tick, and an existing tick.sh arming must not silently extend to it
 while the TTL/lid-close probe is unrun. Unattended deliver/tend drives still take the

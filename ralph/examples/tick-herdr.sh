@@ -168,13 +168,20 @@ fi
 
 # --- Prompt, waiting BOUNDED AT THE CLAIM TTL (see header). done|idle = the
 # session settled; blocked = herdr detected an approval/question UI (screen-
-# detected — a hint, never a gate input). A prompt that never observably
-# starts returns agent_prompt_stalled (non-zero), landing in the same non-ok
-# path as a timeout; so does an agent that died mid-wait.
+# detected — a hint, never a gate input). Non-zero exit is NOT synonymous
+# with timeout: the CLI exits 1 for deadline expiry, transport/server
+# failures, agent_prompt_stalled, and a dead agent alike, emitting a JSON
+# error (with .error.code) on stderr. Only a real "timeout" earns the
+# timeout path (wrap-up + release-≈-TTL); every other failure leaves the
+# claim to the TTL — a transport hiccup proves nothing about the session.
 RC=0
+ERR_TMP=$(mktemp)
 herdr agent prompt "gh-$NEXT" "/ralph:work $NEXT" \
   --wait --until "done" --until idle --until blocked --timeout "$WAIT_MS" \
-  >>"$LOG" 2>&1 || RC=$?
+  >>"$LOG" 2>"$ERR_TMP" || RC=$?
+ERR_CODE=$(jq -r '.error.code // empty' "$ERR_TMP" 2>/dev/null || true)
+cat "$ERR_TMP" >>"$LOG" 2>/dev/null || true
+rm -f "$ERR_TMP"
 
 # agent get is JSON-native (no --json flag).
 AGENT_STATE=$(herdr agent get "gh-$NEXT" 2>/dev/null | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || true)
@@ -182,7 +189,12 @@ AGENT_STATE=$(herdr agent get "gh-$NEXT" 2>/dev/null | jq -r '.result.agent.agen
 ELAPSED_MIN=$(( ( $(date +%s) - START_EPOCH ) / 60 ))
 
 if [ "$RC" -ne 0 ]; then
-  STATUS=timeout
+  if [ "$ERR_CODE" = "timeout" ]; then
+    STATUS=timeout
+  else
+    STATUS="prompt-failed(${ERR_CODE:-rc=$RC})"
+    echo "tick-herdr: agent prompt failed (${ERR_CODE:-rc=$RC}) after ${ELAPSED_MIN}m — not a timeout; leaving claim to TTL, pane $PANE untouched" >>"$LOG"
+  fi
 elif [ "$AGENT_STATE" = "blocked" ]; then
   STATUS=blocked
 fi
@@ -241,8 +253,11 @@ fi
 # in ticks.log; repeated no-ops mean the pane session isn't picking up the
 # work skill (read the pane transcript, not this log).
 if [ "$STATUS" = "ok" ]; then
-  AFTER_STATE=$("$BOARD" get "$NEXT" --json 2>/dev/null | jq -r '.state // "unknown"')
-  [ "$AFTER_STATE" = "Backlog" ] && STATUS="no-op (agent settled but board untouched — read pane $PANE)"
+  if AFTER_STATE=$("$BOARD" get "$NEXT" --json 2>>"$LOG" | jq -r '.state // "unknown"' 2>>"$LOG"); then
+    [ "$AFTER_STATE" = "Backlog" ] && STATUS="no-op (agent settled but board untouched — read pane $PANE)"
+  else
+    STATUS="unknown (agent settled; final board read failed — read pane $PANE)"
+  fi
 fi
 
 # Deliberately NO worktree/workspace removal here — see the header. The

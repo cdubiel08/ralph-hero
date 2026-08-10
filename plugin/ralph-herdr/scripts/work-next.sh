@@ -45,7 +45,10 @@ pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out")
 # claim protocol exists to prevent.
 "$HERDR" agent start "gh-$N" --kind claude --pane "$pane" \
   || die "agent start gh-$N failed — a session for GH-$N is likely already live; not spawning a second"
-"$HERDR" agent prompt "gh-$N" "/ralph:work $N"
+# Past this point the agent is LIVE — a prompt-delivery failure must not exit
+# silently under set -e and strand an idle session with no work.
+"$HERDR" agent prompt "gh-$N" "/ralph:work $N" \
+  || die "prompt delivery failed — agent gh-$N is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt gh-$N \"/ralph:work $N\""
 
 echo "spawned GH-$N on $BRANCH (pane $pane, agent gh-$N)"
 

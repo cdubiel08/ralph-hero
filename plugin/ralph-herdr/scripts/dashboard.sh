@@ -14,6 +14,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib.sh"
 
 INTERVAL="${RALPH_HERDR_DASH_INTERVAL:-120}"
+# A zero/garbage interval would turn the poll into a hot loop against the
+# GitHub API — refuse it.
+[[ "$INTERVAL" =~ ^[1-9][0-9]*$ ]] || die "RALPH_HERDR_DASH_INTERVAL must be a positive integer (got '$INTERVAL')"
 REPO_NAME=$(basename "$REPO")
 
 while :; do
