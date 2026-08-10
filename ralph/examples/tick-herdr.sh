@@ -186,9 +186,10 @@ while :; do
   sleep 1
 done
 
-# --- Prompt, waiting BOUNDED AT THE CLAIM TTL (see header). done|idle = the
-# session settled; blocked = herdr detected an approval/question UI (screen-
-# detected — a hint, never a gate input). Non-zero exit is NOT synonymous
+# --- Prompt, waiting BOUNDED AT THE CLAIM TTL (see header). `--wait` already
+# waits until done|idle|blocked by default (never repeat defaults as flags):
+# done|idle = the session settled; blocked = herdr detected an
+# approval/question UI (screen-detected — a hint, never a gate input). Non-zero exit is NOT synonymous
 # with timeout: the CLI exits 1 for deadline expiry, transport/server
 # failures, agent_prompt_stalled, and a dead agent alike, emitting a JSON
 # error (with .error.code) on stderr. Only a real "timeout" earns the
@@ -197,7 +198,7 @@ done
 RC=0
 ERR_TMP=$(mktemp)
 herdr agent prompt "gh-$NEXT" "/ralph:work $NEXT" \
-  --wait --until "done" --until idle --until blocked --timeout "$WAIT_MS" \
+  --wait --timeout "$WAIT_MS" \
   >>"$LOG" 2>"$ERR_TMP" || RC=$?
 ERR_CODE=$(jq -r '.error.code // empty' "$ERR_TMP" 2>/dev/null || true)
 cat "$ERR_TMP" >>"$LOG" 2>/dev/null || true

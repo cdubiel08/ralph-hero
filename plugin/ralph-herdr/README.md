@@ -41,20 +41,42 @@ herdr plugin install cdubiel08/ralph-hero/plugin/ralph-herdr
 Invoke actions from a workspace whose cwd is the ralph-configured repo (herdr's action
 menu, or `herdr plugin action invoke <id> --plugin ralph-herdr`).
 
-## The five actions
+## The nesting model
+
+herdr's shapes map onto ralph's without translation:
+
+- **workspace = project.** The repo workspace is where you invoke actions; its cwd
+  is the board's scope.
+- **grouped worktree workspaces = issues.** Each `gh-N` session lives in its own
+  worktree workspace, and herdr groups those under the repo workspace — exactly as
+  children group under an epic on the board. When an issue has a board parent, the
+  worktree carries a `--label "GH-N via GH-parent"` so the grouping reads the same
+  in herdr as it does on the board.
+- **tabs = lanes.** A lane pass (`ralph-deliver` / `ralph-tend`) gets a tab of its
+  own; one live pass per lane, by name.
+- **panes = sessions.** One agent per pane; the pane outliving the session is the
+  point (transcript stays for review).
+
+## The seven actions
 
 | Action | Pane | What it does |
 |---|---|---|
-| `work-next` | split (down) | `board next` → if empty, says so and exits. Otherwise: fetch, `herdr worktree create --branch feature/GH-N --base origin/main` (`--base` only applies to brand-new branches — an existing `feature/GH-N` branch is silently resumed as-is, possibly behind origin/main, and the session rebases; `worktree open` is the fallback when the *checkout* already exists), start agent `gh-N` in the new workspace's pane, prompt `/ralph:work N`, then the cockpit pane becomes the notification watcher |
+| `work-next` | split (down) | `board next` → if empty, says so and exits. Otherwise: fetch, `herdr worktree create --branch feature/GH-N --base origin/main` (`--base` only applies to brand-new branches — an existing `feature/GH-N` branch is silently resumed as-is, possibly behind origin/main, and the session rebases; `worktree open` is the fallback when the *checkout* already exists), start agent `gh-N` in the new workspace's pane, prompt `/ralph:work N`, then the cockpit pane becomes the notification watcher. An already-live `gh-N` is a skip, not an error: it prints "SKIP gh-N already live" and exits 0 with no worktree touched (wrapper authors: exit 0 does not always mean a session was spawned) |
+| `work-fleet` | split (down) | reads `board next` once and spawns up to `RALPH_HERDR_FLEET` (default 2, hard cap 4) work sessions from the top of the ranked queue — same spawn path as `work-next`, per issue. Already-live `gh-N` agents are skipped, one failed spawn doesn't strand the rest; the pane then watches all spawned agents |
+| `attend` | none | no pane, no loop: finds the first `blocked` ralph agent (`gh-*` preferred over lane passes), `herdr agent focus` jumps you to it, and a notification names it. Nothing blocked → "herd calm" notification. Safe to bind to a key |
 | `deliver-pass` | split (down) | `board deliver-queue` → empty means spawn nothing (the lane contract). Otherwise a new tab hosts agent `ralph-deliver` running `/ralph:deliver`; cockpit pane watches |
 | `tend-pass` | split (down) | same shape over `board tend-queue` → agent `ralph-tend` running `/ralph:tend` |
 | `doctor` | popup | runs `board doctor` once, holds the popup open until Enter |
 | `dashboard` | split (right) | read-only watch loop: board `next` (number/title/estimate + queue depth), deliver-queue, tend-queue, Human Needed count. No doctor call in the loop — doctor is its own action |
 
-The watcher (`scripts/notify-watch.sh`) uses `herdr agent wait --until blocked --until
-done --until idle` — level-triggered, no timeout, hangs on purpose — then fires
-`herdr notification show` naming the agent, its state, and the repo. It re-arms while
-the session keeps blocking and exits once the session is done or idle.
+The watcher (`scripts/notify-watch.sh`) tracks one or many agents. Single target:
+`herdr agent wait` (its default until-states are exactly blocked/done/idle — never
+repeated as flags) — level-triggered, no timeout, hangs on purpose — then fires
+`herdr notification show` naming the agent, its state, and the repo; it re-arms
+while the session keeps blocking and exits once the session is done or idle.
+Multiple targets (the fleet case): a portable poll loop (`agent get` every
+`RALPH_HERDR_WATCH_POLL`s) notifies on each agent's first block and once on
+done/idle/gone, dropping it from the watch list; exits when the list is empty.
 
 Agent names are fixed: `gh-N` for work sessions, `ralph-deliver` / `ralph-tend` for
 lane passes — one live pass per lane. If a name is taken the script dies loudly
@@ -69,12 +91,31 @@ of each script:
 |---|---|---|
 | `RALPH_HERDR_BOARD` | `<repo>/ralph/scripts/board` | path to the board CLI; set it on host repos that install ralph as a Claude Code plugin (board.ts ships inside the installed plugin, not the repo tree) |
 | `RALPH_HERDR_DASH_INTERVAL` | `120` | dashboard refresh interval, seconds |
+| `RALPH_HERDR_DRY_RUN` | unset | set to `true` and every spawn script (`work-next`, `work-fleet`, lane passes) prints its exact plan — issues, branches, agent names, the herdr commands it would run — and exits 0 before any herdr mutation. Dashboard/attend are reads and ignore it |
+| `RALPH_HERDR_FLEET` | `2` | how many work sessions `work-fleet` spawns from the top of the queue; positive integer, hard cap 4 (it dies above — this is an attended tool, not a farm) |
+| `RALPH_HERDR_START_TRIES` | `15` | retries (1s apart) for `agent start` on a just-created pane still sourcing rc files (`agent_pane_busy` only, just-created panes only) |
+| `RALPH_HERDR_REPO` | `$PWD` | repo the scripts operate on; the default (the pane's cwd) is almost always right |
+| `HERDR_BIN_PATH` | `herdr` | path to the herdr binary |
+| `RALPH_HERDR_WATCH_POLL` | `15` | poll interval, seconds, for the multi-target watcher loop (single-target watch stays event-driven) |
 | `RALPH_ALLOW_API_BILLING` | unset | billing guard override, same contract as `tick.sh`: if `ANTHROPIC_API_KEY` is set, spawning is refused (it would bill API credits, not the subscription) unless this is exactly `true` |
 
 Board scope (`RALPH_GH_OWNER` / `RALPH_GH_REPO` / `RALPH_GH_PROJECT_NUMBER`,
 `.ralph.json`) belongs to `board.ts`, not this plugin — the scripts inherit whatever
 the repo is configured with. The repo is always the pane's working directory (the
 workspace the action was invoked from).
+
+## Herding
+
+`work-fleet` is **attended-only** parallelism: a human clicks it, watches the herd,
+and answers what blocks. The mutual-exclusion backstop is not this plugin — it is
+the per-issue claim protocol in `board.ts` (each spawned session claims its own
+issue; a race is read back, refused, and visible). The design doc's §3.5 deferral
+covers *unattended* parallelism only; a fleet you are sitting in front of is the
+already-sanctioned case, capped at 4 so it stays one.
+
+`attend` is the other half: when a notification says something blocked, one
+keypress finds the first blocked agent and focuses its pane. It never prompts,
+never answers, never kills — it moves your eyes, nothing else.
 
 ## Honest limits
 

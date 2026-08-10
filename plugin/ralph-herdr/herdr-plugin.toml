@@ -73,6 +73,28 @@ command = [
   '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint dashboard --placement split --direction right --cwd "$cwd" --focus'''
 ]
 
+[[actions]]
+id = "work-fleet"
+title = "Ralph: work fleet (parallel)"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint work-fleet --placement split --direction down --cwd "$cwd" --focus'''
+]
+
+# attend needs NO pane: it acts via `agent focus` + a notification and exits.
+# The script runs in the action process itself, cwd'd to the repo.
+[[actions]]
+id = "attend"
+title = "Ralph: attend next blocked"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); cd "$cwd"; exec bash "$HERDR_PLUGIN_ROOT/scripts/attend.sh"'''
+]
+
 # --- Panes -------------------------------------------------------------------
 # Pane cwd is the repo (the action's `pane open` passed --cwd), so each script
 # resolves the board CLI relative to $PWD. Scripts are owned by scripts/ in
@@ -97,6 +119,11 @@ command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/tend-pass.sh\""
 id = "doctor"
 title = "Ralph: board doctor"
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/doctor.sh\""]
+
+[[panes]]
+id = "work-fleet"
+title = "Ralph: work fleet"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-fleet.sh\""]
 
 [[panes]]
 id = "dashboard"

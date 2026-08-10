@@ -21,6 +21,15 @@ if [ -z "$next" ]; then
   exit 0
 fi
 
+if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
+  echo "DRY RUN — would spawn tend pass (queue head #$next):"
+  echo "  agent: ralph-tend"
+  echo "  $HERDR tab create --cwd $REPO --label \"ralph-tend\" --no-focus"
+  echo "  $HERDR agent start ralph-tend --kind claude --pane <captured>"
+  echo "  $HERDR agent prompt ralph-tend \"/ralph:tend\""
+  exit 0
+fi
+
 t=$("$HERDR" tab create --cwd "$REPO" --label "ralph-tend" --no-focus)
 pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$t")
 [ -n "$pane" ] || die "no pane id in tab response"
