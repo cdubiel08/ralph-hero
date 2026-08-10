@@ -157,14 +157,34 @@ WAIT_MS=$(( TTL_MIN * 60 * 1000 ))
 # to something else, the check degrades safely to leaving the claim to TTL.
 EXPECTED_HOLDER="${RALPH_CLAIM_HOLDER:-$(id -un)@$(hostname)}"
 
-# --- Spawn: the agent in the worktree's root pane. `agent start` refuses a
-# busy pane and a taken name — both mean something already live is working
-# this issue in herdr. Die loudly; never improvise suffixes, never trample
-# (design doc §6, finding 5). Never kill an agent process.
-if ! herdr agent start "gh-$NEXT" --kind claude --pane "$PANE" >>"$LOG" 2>&1; then
-  echo "tick-herdr: agent start gh-$NEXT refused (name taken or pane busy) — a session for GH-$NEXT is already live; see $LOG" >&2
+# --- Spawn: the agent in the worktree's root pane. Two different refusals
+# hide behind one command. A TAKEN NAME means something live is already
+# working this issue — die loudly, never improvise suffixes, never trample
+# (design doc §6, finding 5). agent_pane_busy on a pane herdr JUST created
+# means only that its shell has not reached its prompt yet (rc files, prompt
+# frameworks, version managers) — observed live: the identical call succeeds
+# seconds later. Retry that one code; anything else is real.
+START_TRIES="${RALPH_HERDR_START_TRIES:-15}"
+case "$START_TRIES" in '' | *[!0-9]* | 0)
+  echo "tick-herdr: RALPH_HERDR_START_TRIES must be a positive integer (got '$START_TRIES')" >&2
   exit 1
-fi
+;; esac
+START_N=0
+while :; do
+  START_ERR=$(mktemp)
+  if herdr agent start "gh-$NEXT" --kind claude --pane "$PANE" >>"$LOG" 2>"$START_ERR"; then
+    rm -f "$START_ERR"; break
+  fi
+  START_CODE=$(jq -r '.error.code // empty' "$START_ERR" 2>/dev/null || true)
+  cat "$START_ERR" >>"$LOG" 2>/dev/null || true
+  rm -f "$START_ERR"
+  START_N=$((START_N + 1))
+  if [ "$START_CODE" != "agent_pane_busy" ] || [ "$START_N" -ge "$START_TRIES" ]; then
+    echo "tick-herdr: agent start gh-$NEXT refused (${START_CODE:-unknown}) — see $LOG" >&2
+    exit 1
+  fi
+  sleep 1
+done
 
 # --- Prompt, waiting BOUNDED AT THE CLAIM TTL (see header). done|idle = the
 # session settled; blocked = herdr detected an approval/question UI (screen-

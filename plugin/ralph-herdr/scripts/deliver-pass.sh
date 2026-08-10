@@ -11,6 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
+trap hold_pane EXIT
+
 billing_guard
 
 next=$("$BOARD" deliver-queue --json | jq -r '.next.number // empty')
@@ -27,12 +29,14 @@ pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$t")
 # name-taken refusal means a pass is already live — die, never suffix. The
 # just-created tab holds only an idle shell at this point (start failed), so
 # closing it is cleanup, not killing an agent.
-if ! "$HERDR" agent start ralph-deliver --kind claude --pane "$pane"; then
+if ! agent_start_when_ready ralph-deliver "$pane"; then
   tab_id=$(jq -r '.result.tab.tab_id // empty' <<<"$t")
   [ -n "$tab_id" ] && "$HERDR" tab close "$tab_id" >/dev/null 2>&1 || true
-  die "agent start ralph-deliver failed — a deliver pass is already live; not starting a second (cleaned up the empty tab)"
+  die "agent start ralph-deliver failed — see the herdr error above (a live deliver pass owning the name is the common cause, but exhausted startup retries land here too); cleaned up the empty tab"
 fi
-# Past this point the agent is LIVE — a prompt failure must not strand it silently.
+# Past this point the agent is LIVE — a prompt failure must not strand it
+# silently, and hold_pane must not claim "no session spawned" about it.
+export RALPH_HERDR_AGENT_LIVE=1
 "$HERDR" agent prompt ralph-deliver "/ralph:deliver" \
   || die "prompt delivery failed — agent ralph-deliver is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt ralph-deliver \"/ralph:deliver\""
 

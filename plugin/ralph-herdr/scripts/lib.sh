@@ -45,6 +45,51 @@ billing_guard() {
   fi
 }
 
+# agent_start_when_ready NAME PANE — `agent start` needs the pane's shell to
+# own the foreground at its prompt. A pane herdr just created is still sourcing
+# rc files for a beat (prompt frameworks, version managers), so herdr answers
+# agent_pane_busy — a race, not a refusal: observed live, the identical call
+# succeeds seconds later. Retry ONLY that code, and only on a pane we just
+# created, where it cannot mean "something else is working here". Every other
+# error (a taken agent name above all) is a real refusal and dies at once.
+#   RALPH_HERDR_START_TRIES   attempts, 1s apart (default 15)
+agent_start_when_ready() {
+  local name="$1" pane="$2" tries="${RALPH_HERDR_START_TRIES:-15}" n=0 out code
+  case "$tries" in '' | *[!0-9]* | 0) die "RALPH_HERDR_START_TRIES must be a positive integer (got '$tries')" ;; esac
+  while :; do
+    if out=$("$HERDR" agent start "$name" --kind claude --pane "$pane" 2>&1); then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    code=$(jq -r '.error.code // empty' <<<"$out" 2>/dev/null || true)
+    n=$((n + 1))
+    if [ "$code" != "agent_pane_busy" ] || [ "$n" -ge "$tries" ]; then
+      printf '%s\n' "$out" >&2
+      return 1
+    fi
+    [ "$n" -eq 1 ] && echo "waiting for the pane's shell to reach its prompt…"
+    sleep 1
+  done
+}
+
+# hold_pane — EXIT trap for the spawn scripts. A plugin pane closes the instant
+# its command exits, taking the reason with it (a pane that flashes and
+# vanishes teaches nothing). The spawn scripts exec into notify-watch.sh on
+# success, so reaching this trap means the spawn did not complete — but that
+# splits into two truths: nothing started (empty queue, refusal), or the agent
+# DID start and only the dispatch after it failed (prompt delivery). Callers
+# set RALPH_HERDR_AGENT_LIVE=1 the moment agent start succeeds so the trap
+# never claims "no session" while a live agent sits idle in a pane.
+hold_pane() {
+  local rc=$?
+  if [ -n "${RALPH_HERDR_AGENT_LIVE:-}" ]; then
+    printf '\n[ralph-herdr] agent STARTED but dispatch did not complete (exit %d) — the agent is live and idle; see the error above for the manual prompt command. Enter to close.\n' "$rc"
+  else
+    printf '\n[ralph-herdr] no session spawned (exit %d) — press Enter to close this pane.\n' "$rc"
+  fi
+  read -r _ || true
+}
+
 # notify TARGET TITLE BODY — advisory toast via herdr. The echoed line keeps a
 # visible trail in the watcher pane; the toast itself is fire-and-forget and a
 # delivery failure must never kill a watcher that could re-arm.
