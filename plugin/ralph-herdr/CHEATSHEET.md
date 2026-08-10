@@ -8,6 +8,12 @@ Distilled from live sessions — every command here has been run for real.
 Skip whatever you already have. Ralph first, herdr second — the cockpit is a
 window onto the board, so the board has to exist before the window is useful.
 
+**Prerequisites** — the cockpit shells out to both of these:
+
+```bash
+command -v gh && command -v jq || brew install gh jq
+```
+
 **Ralph** (full detail: `/ralph:board` and `board help`):
 
 ```bash
@@ -83,11 +89,14 @@ Notes that save confusion:
 
 ## 3. Inspect the herd from any shell
 
+Get real agent names from `herdr agent list` first — `<agent>` below is a name
+(or pane ID) copied from that response, never typed from memory:
+
 ```bash
 herdr agent list                                            # everyone + state
-herdr agent read gh-1518 --lines 60                         # transcript, no focus steal
-herdr agent get gh-1518 | jq -r '.result.agent.agent_status'  # just the state
-herdr agent wait gh-1518 --until blocked && herdr notification show "gh-1518 needs you"
+herdr agent read <agent> --lines 60                         # transcript, no focus steal
+herdr agent get <agent> | jq -r '.result.agent.agent_status'  # just the state
+herdr agent wait <agent> --until blocked && herdr notification show "<agent> needs you"
 ```
 
 Agent commands are JSON-native (no `--json` flag). `wait` with no timeout hangs
