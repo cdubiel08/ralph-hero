@@ -118,9 +118,12 @@ jobs:
           # suite here: funnel-merge.test.sh, funnel-board.test.sh, tick.test.sh.
           # plugin/ralph-herdr/tests carries the bash half of the grammar-B
           # naming mirror — naming.test.sh, also `npm run test:naming` — plus
-          # the Phase-2 watcher suite watcher.test.sh (`npm run test:watcher`;
-          # its fake-herdr.sh PATH shim is a helper, not a *.test.sh, so the
-          # glob deliberately skips it).)
+          # the Phase-2 watcher suite watcher.test.sh (`npm run test:watcher`)
+          # and the Phase-3 fleet suite fleet.test.sh (`npm run test:fleet`;
+          # its brief-validation cases run the real board CLI offline, so the
+          # runner needs a node/npx — ubuntu-latest ships one). The
+          # fake-herdr.sh and fake-board.sh PATH shims are helpers, not
+          # *.test.sh, so the glob deliberately skips them.)
           find scripts/__tests__ plugin/ralph-herdr/tests \
             \( -name '*.test.sh' -o -name 'test-*.sh' \) \
             -type f -print0 \

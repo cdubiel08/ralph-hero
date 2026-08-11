@@ -46,6 +46,11 @@ _RALPH_HERDR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_RALPH_HERDR_LIB_DIR/ledger.sh"
 # shellcheck source=tokens.sh
 . "$_RALPH_HERDR_LIB_DIR/tokens.sh"
+# Fleet controller (Phase 3): per-run state, FleetBriefs, refill arming,
+# shared-claim issue fleets — pure functions + file writes, no side effects
+# at source time.
+# shellcheck source=fleet.sh
+. "$_RALPH_HERDR_LIB_DIR/fleet.sh"
 
 # ── Color helpers ────────────────────────────────────────────────────────────
 # Detected ONCE at source time: stdout is a terminal, terminfo reports >= 8
@@ -200,34 +205,42 @@ notify() {
 #   {ts, ev: "spawn", agent_ref, pane_id?, lineage: <C7>, tokens: <C8 map>}
 # The C7 LineageRecord mirrors contracts.ts buildLineageRecord: issue and
 # parent_issue are numbers, spawner.script is the invoking script ($0 —
-# lib.sh is sourced, so that is work-next.sh / work-fleet.sh), invoked_by is
-# "human" (every cockpit action is a click; Phase-3 orchestrator spawns will
-# thread their own identity alongside ralph_depth_guard), plane is "herdr".
+# lib.sh is sourced, so that is work-next.sh / work-fleet.sh / the watcher's
+# refill branch), invoked_by defaults to "human" (every cockpit action is a
+# click); orchestrator-driven spawns thread their identity via
+# RALPH_HERDR_INVOKED_BY (validated against the C1 enum — the watcher's
+# refill sets "scheduler"; anything unrecognized honestly stays "human",
+# the cockpit default), plane is "herdr".
 # PANE may be empty (the dry-run plan — pane ids are captured live, never
 # predicted): pane_id is then omitted, C7 marks it optional for exactly this.
 # The C8 token map is the spawn-time truth: work-next/work-fleet spawns are
 # depth-0 roots from a human, so depth=0, root=self, and no parent token.
 _ralph_spawn_record() {
   local ref="$1" n="$2" parent_issue="$3" branch="$4" label="$5" pane="$6" ts="$7"
-  local parsed lane slug epoch
+  local parsed lane slug epoch by
   parsed=$(ralph_agent_parse "${ref%%#*}") || return 1
   # shellcheck disable=SC2086  # intentional: parse output is space-separated
   set -- $parsed
   lane="$1" slug="$3"
   [ "$slug" = "''" ] && slug=""
   epoch="${ref##*#}"
+  case "${RALPH_HERDR_INVOKED_BY:-}" in
+    agent | scheduler) by="$RALPH_HERDR_INVOKED_BY" ;;
+    *) by="human" ;;
+  esac
   jq -nc \
     --arg ts "$ts" --arg ref "$ref" --arg pane "$pane" \
     --argjson n "$n" --arg pi "$parent_issue" \
     --arg script "${0##*/}" --arg branch "$branch" --arg label "$label" \
-    --arg lane "$lane" --arg slug "$slug" --arg epoch "$epoch" '
+    --arg lane "$lane" --arg slug "$slug" --arg epoch "$epoch" \
+    --arg by "$by" '
     {ts: $ts, ev: "spawn", agent_ref: $ref}
     + (if $pane == "" then {} else {pane_id: $pane} end)
     + {lineage:
         ({contract: "ralph.lineage", contract_version: 1,
           agent_ref: $ref, issue: $n}
          + (if $pi == "" then {} else {parent_issue: ($pi | tonumber)} end)
-         + {spawner: {script: $script, invoked_by: "human"},
+         + {spawner: {script: $script, invoked_by: $by},
             herdr: ({worktree_branch: $branch}
               + (if $pane == "" then {} else {pane_id: $pane} end)
               + (if $label == "" then {} else {workspace_label: $label} end)),
@@ -315,7 +328,13 @@ spawn_work_session() {
   local ref ts record ledger
   RALPH_HERDR_SPAWNED_AGENT=""
   RALPH_HERDR_SPAWNED_REF=""
+  # Pane id + worktree checkout path, read back from the live responses
+  # (never predicted; empty in dry runs). spawn_issue_fleet splits sibling
+  # panes inside exactly this workspace — same read-back rule as the name.
+  RALPH_HERDR_SPAWNED_PANE=""
+  RALPH_HERDR_SPAWNED_WORKTREE=""
   export RALPH_HERDR_SPAWNED_AGENT RALPH_HERDR_SPAWNED_REF
+  export RALPH_HERDR_SPAWNED_PANE RALPH_HERDR_SPAWNED_WORKTREE
   case "$n" in ''|*[!0-9]*) echo "spawn_work_session: bad issue number '$n'" >&2; return 1 ;; esac
   branch="feature/GH-$n"
 
@@ -408,12 +427,17 @@ spawn_work_session() {
   fi
 
   # IDs are opaque server-local tokens — captured from the response, never
-  # predicted or derived.
+  # predicted or derived. The worktree checkout path rides along for callers
+  # that split sibling panes into the same workspace (spawn_issue_fleet);
+  # its absence costs those callers, never this spawn.
   pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out")
   if [ -z "$pane" ]; then
     echo "no pane id in worktree response for GH-$n" >&2
     return 1
   fi
+  RALPH_HERDR_SPAWNED_PANE="$pane"
+  RALPH_HERDR_SPAWNED_WORKTREE=$(jq -r '.result.worktree.path // .result.workspace.worktree.path // empty' <<<"$out" 2>/dev/null) ||
+    RALPH_HERDR_SPAWNED_WORKTREE=""
 
   # A confirmed-live name collision at start means a session already owns
   # issue N: the name is always w<N>-<slug>, so any live agent holding it
@@ -422,9 +446,9 @@ spawn_work_session() {
   # was swallowed (fail-open). Both are the lost race rc=2 exists for; never
   # improvise a --N sibling here — that would put TWO /ralph:work sessions on
   # one issue, the very thing the pre-check (and the board's claim protocol)
-  # refuse. Shared-claim sibling fleets are Phase 3, and they JOIN a claim
-  # deliberately, not by collision; the --N generation suffix belongs to that
-  # plane (ralph_agent_name_collide stays for it). Liveness is confirmed by a
+  # refuse. Shared-claim sibling fleets exist (spawn_issue_fleet), and they
+  # JOIN a claim deliberately, not by collision; the --N generation suffix
+  # belongs to that plane (ralph_agent_name_collide). Liveness is confirmed by a
   # read, never inferred from error prose; every other start failure dies at
   # once, unchanged.
   if ! agent_start_when_ready "$agent" "$pane"; then

@@ -11,9 +11,9 @@
 
 id = "ralph-herdr"
 name = "Ralph Herdr"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.8.0"
-description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens."
+description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets."
 platforms = ["macos", "linux"]
 
 # --- Actions -----------------------------------------------------------------
@@ -83,6 +83,18 @@ command = [
   '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint work-fleet --placement split --direction down --cwd "$cwd" --focus'''
 ]
 
+# Shared-claim sibling fleet on ONE issue (Phase 3): the pane prompts for the
+# issue number (actions carry no arguments — the pane is the input surface).
+[[actions]]
+id = "work-issue-fleet"
+title = "Ralph: sibling fleet on one issue"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint work-issue-fleet --placement split --direction down --cwd "$cwd" --focus'''
+]
+
 # attend needs NO pane: it acts via `agent focus` + a notification and exits.
 # The script runs in the action process itself, cwd'd to the repo.
 [[actions]]
@@ -139,6 +151,11 @@ command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/doctor.sh\""]
 id = "work-fleet"
 title = "Ralph: work fleet"
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-fleet.sh\""]
+
+[[panes]]
+id = "work-issue-fleet"
+title = "Ralph: sibling fleet on one issue"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-issue-fleet.sh\""]
 
 [[panes]]
 id = "dashboard"

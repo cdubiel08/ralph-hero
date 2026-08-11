@@ -15,11 +15,17 @@
 #
 # Fixture files, first match wins (all under $FAKE_HERDR_FIXTURES):
 #   agent list                    agent-list.json
+#   agent start <NAME> …          agent-start.<NAME>.json, then agent-start.json
+#   agent prompt …                agent-prompt.json
 #   pane get <ID>                 pane-get.<ID>.json, then pane-get.json
+#   pane split <ID> …             pane-split.<ID>.json, then pane-split.json
 #   pane report-metadata …        pane-report-metadata.json
+#   worktree create …             worktree-create.json
+#   worktree open …               worktree-open.json
 #   notification show …           notification-show.json
 #   any of the above              <cmd>-<sub>.rc — forces the exit code
-#                                 (failure injection; body still printed)
+#                                 (failure injection; body still printed;
+#                                 per-arg fixtures share the base key's .rc)
 #
 # Built-in defaults answer the shapes the watcher scripts parse: an empty
 # herd, an empty pane, and bare success envelopes. Anything not modeled here
@@ -69,11 +75,32 @@ case "$key" in
   agent-list)
     emit_fixture agent-list || echo '{"result":{"agents":[]}}'
     ;;
+  agent-start)
+    emit_fixture "agent-start.${3-}" agent-start ||
+      printf '{"result":{"agent":{"name":"%s"}}}\n' "${3-}"
+    ;;
+  agent-prompt)
+    emit_fixture agent-prompt || echo '{"result":{}}'
+    ;;
   pane-get)
     emit_fixture "pane-get.${3-}" pane-get || echo '{"result":{"pane":{}}}'
     ;;
+  pane-split)
+    emit_fixture "pane-split.${3-}" pane-split ||
+      echo '{"result":{"pane":{"pane_id":"pS1"}}}'
+    ;;
   pane-report-metadata)
     emit_fixture pane-report-metadata || echo '{"result":{"ok":true}}'
+    ;;
+  worktree-create)
+    # The spawn path reads root_pane.pane_id and worktree.path — a default
+    # must answer both or every live-spawn test would need a fixture.
+    emit_fixture worktree-create ||
+      echo '{"result":{"root_pane":{"pane_id":"pW1"},"worktree":{"path":"/tmp/fake-herdr-wt"}}}'
+    ;;
+  worktree-open)
+    emit_fixture worktree-open ||
+      echo '{"result":{"root_pane":{"pane_id":"pW1"},"worktree":{"path":"/tmp/fake-herdr-wt"}}}'
     ;;
   notification-show)
     emit_fixture notification-show || echo '{"result":{}}'

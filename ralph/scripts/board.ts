@@ -23,7 +23,9 @@ import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  addHolder,
   BOARD_STATES,
+  CLAIM_MAX_HOLDERS,
   type ClaimV2,
   CONTRACT_IDS,
   type ContractId,
@@ -33,6 +35,7 @@ import {
   heartbeat,
   isContractId,
   isMember,
+  isValidHolder,
   type LiveLintDeps,
   parseClaim,
   removeHolder,
@@ -431,6 +434,69 @@ export function diagnoseEmptyQueue(
     : staleBlockedEdges.length > 0 ? "stale-blocked"
     : null;
   return { diagnosis, humanNeededCount, staleBlockedEdges, inFlightEpics };
+}
+
+// ---------------------------------------------------------------------------
+// Frontier (ralph-herdr v2 Phase 3, D4) — the work-stealing frontier is
+// next's eligible queue, item for item and in the same order. This section is
+// a RE-PROJECTION of rankNext's output with a per-item explanation attached;
+// it never computes eligibility itself, so the fleet controller and any DAG
+// viz reading this shape cannot drift from what `next` would hand a driver.
+// ---------------------------------------------------------------------------
+
+export interface FrontierItem {
+  number: number;
+  title: string;
+  /** Own-repo parent, when the item has one (cross-repo parents are null in
+   *  QueueItem by construction and stay absent here). */
+  parentNumber?: number;
+  /** Epic context carried through from rankNext: the demoted root this leaf
+   *  serves / the blocked children keeping a root eligible. */
+  via?: number;
+  childrenBlocked?: number[];
+  /** WHY it is eligible: every dependency edge with its issue state. For an
+   *  eligible item these are all CLOSED (an open blocker is what ineligible
+   *  means) — the state field exists so blocked/eligible share one shape. */
+  blockers: Array<{ number: number; state: "OPEN" | "CLOSED" }>;
+  eligible: true;
+}
+
+export interface FrontierBlockedItem {
+  number: number;
+  blockers_open: number[];
+  /** The blockage is (at least partly) a truncated read, not a listed edge —
+   *  the same fail-closed rule the ranker applies. */
+  truncated?: true;
+}
+
+export interface FrontierResult {
+  frontier: FrontierItem[];
+  blocked: FrontierBlockedItem[];
+}
+
+export function frontierView(ranked: {
+  eligible: QueueItem[];
+  blocked: QueueItem[];
+}): FrontierResult {
+  return {
+    frontier: ranked.eligible.map((i) => ({
+      number: i.number,
+      title: i.title,
+      ...(i.parentNumber !== null ? { parentNumber: i.parentNumber } : {}),
+      ...(i.via !== undefined ? { via: i.via } : {}),
+      ...(i.childrenBlocked !== undefined ? { childrenBlocked: i.childrenBlocked } : {}),
+      blockers: [
+        ...i.openBlockers.map((n) => ({ number: n, state: "OPEN" as const })),
+        ...i.closedBlockers.map((n) => ({ number: n, state: "CLOSED" as const })),
+      ],
+      eligible: true as const,
+    })),
+    blocked: ranked.blocked.map((i) => ({
+      number: i.number,
+      blockers_open: [...i.openBlockers],
+      ...(i.blockersTruncated || i.fieldValuesTruncated ? { truncated: true as const } : {}),
+    })),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1002,6 +1068,7 @@ export interface Issue {
   state: string | null; // Workflow State field (may be legacy pre-migration)
   fieldValuesTruncated: boolean; // >FIELD_VALUE_PAGE values — state/claim reads unreliable, mutations refuse
   claim: Claim | null;
+  claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited); join/leave refuse
   estimate: string | null;
   priority: string | null;
   labels: string[];
@@ -1096,6 +1163,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       state: fv[STATE_FIELD] ?? null,
       fieldValuesTruncated: fieldValuesTruncated(item?.fieldValues),
       claim: parseClaim(fv[CLAIM_FIELD]),
+      claimRaw: fv[CLAIM_FIELD] ?? null,
       estimate: fv[ESTIMATE_FIELD] ?? null,
       priority: fv[PRIORITY_FIELD] ?? null,
       labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
@@ -1646,6 +1714,154 @@ export function parentCheck(ctx: Ctx, parentNumber: number): string {
     `\`board\`: all ${parent.children.length} children closed — parent advanced to In Review (rollup lane).`,
   );
   return `#${parentNumber}: advanced to In Review (all ${parent.children.length} children closed)`;
+}
+
+// ---------------------------------------------------------------------------
+// Shared-claim fleet verbs (ralph-herdr v2 Phase 3) — explicit join/leave for
+// multi-sibling issues. ClaimV2 already carries the fleet (1..8 holders, ONE
+// shared since); these verbs give the cockpit the membership edit that
+// transition() only performs as a side effect of moving state. They touch the
+// Claim field ONLY: a last-out leave deliberately strands an In Progress item
+// claimless (doctor's claimless-wip line surfaces it) rather than inventing a
+// fourth state-write lane — board transitions stay the skills' job.
+// ---------------------------------------------------------------------------
+
+/** The guards every claim edit shares: item on the board, field values fully
+ *  readable (a truncated page could hide the live claim), and a parseable
+ *  claim — a hand-edited Claim field is a human's note to self and is never
+ *  rewritten (the same rule doctor's claim-garbled check states). */
+function guardClaimEdit(issue: Issue): string {
+  const itemId = requireItem(issue);
+  if (issue.fieldValuesTruncated) {
+    throw new RefusalError(
+      `#${issue.number} has more than ${FIELD_VALUE_PAGE} project field values — ` +
+        `state/claim reads are unreliable, refusing to mutate`,
+    );
+  }
+  if (issue.claimRaw !== null && !issue.claim) {
+    throw new RefusalError(
+      `#${issue.number}'s Claim text is unparseable (${JSON.stringify(issue.claimRaw)}) — ` +
+        `want "holder[+holder2...]|iso8601"; a hand-edited claim is never rewritten. Fix it in the board UI first.`,
+    );
+  }
+  return itemId;
+}
+
+/** Post-write membership verify, shared by join and leave: GitHub has no CAS,
+ *  so the echo re-read is the only proof the edit stuck (same protocol as
+ *  transition()). `wantMember` is the direction being verified. */
+function verifyClaimEcho(ctx: Ctx, number: number, holder: string, wantMember: boolean): Issue {
+  const after = fetchIssue(ctx, number);
+  if (after.fieldValuesTruncated) {
+    throw new RefusalError(
+      `#${number}: the post-write read came back truncated (>${FIELD_VALUE_PAGE} field values) — ` +
+        `claim state unverifiable; check with \`board get ${number}\` or let doctor reconcile`,
+    );
+  }
+  const member = after.claim !== null && isMember(after.claim, holder);
+  if (wantMember && !member) {
+    throw new RefusalError(
+      after.claim
+        ? `lost the claim race on #${number} to ${after.claim.holders.join("+")} — the join did not stick`
+        : `claim on #${number} vanished after the write (concurrent clear) — the join did not stick`,
+    );
+  }
+  if (!wantMember && member) {
+    throw new RefusalError(
+      `claim on #${number} survived the leave (the write did not stick) — ` +
+        `re-run the leave or let doctor release it`,
+    );
+  }
+  return after;
+}
+
+/** Fleet join: addHolder onto the item's shared claim. In Progress only — a
+ *  sibling joining work nobody started would smuggle in the state transition
+ *  this verb refuses to own (and there is no --force, by design). Joining a
+ *  claimless In Progress item creates the claim, mirroring transition()'s
+ *  acquisition arm; joining refreshes the ONE shared since (any-member
+ *  heartbeat semantics), so a fleet's TTL clock restarts on every arrival.
+ *  That refresh applies to a STALE claim too — deliberately: arrival is
+ *  treated as liveness, so a join resurrects the absent holders' claim with
+ *  no comment trail. A driver waiting out a stale TTL should evict via
+ *  `board claim NNN --steal` (which posts the eviction comment), not join. */
+export function claimJoin(ctx: Ctx, number: number, holder: string): Issue {
+  if (!isValidHolder(holder)) {
+    throw new UsageError(
+      `--holder must be a grammar-B agent name (<lane><issue>-<slug>, lanes ` +
+        `w/r/o/d/s/x) or a legacy name (gh-N, ralph-deliver, ralph-tend) — got ${JSON.stringify(holder)}`,
+    );
+  }
+  // Cache freshness resolved BEFORE any write; the body never retries.
+  const cache = mutationCache(ctx, [[CLAIM_FIELD]]);
+  const issue = fetchIssue(ctx, number);
+  const itemId = guardClaimEdit(issue);
+  if (issue.state !== "In Progress") {
+    throw new RefusalError(
+      `#${number} is "${issue.state ?? "(none)"}" — join is for In Progress items only. ` +
+        `Claim it first (\`board claim ${number}\`); there is no --force.`,
+    );
+  }
+  let next: Claim;
+  try {
+    next = issue.claim
+      ? addHolder(issue.claim, holder, ctx.now())
+      : { holders: [holder], since: ctx.now() };
+  } catch (e) {
+    // addHolder's holder-cap (8) refusal — an invariant, not a usage slip.
+    if (e instanceof RangeError) throw new RefusalError(`#${number}: ${e.message}`);
+    throw e;
+  }
+  // Clear-then-set, like every claim write: the value carries the timestamp,
+  // so we never depend on the field's own updatedAt.
+  clearField(ctx, cache, itemId, CLAIM_FIELD);
+  setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(next));
+  return verifyClaimEcho(ctx, number, holder, true);
+}
+
+/** Fleet leave: removeHolder from the shared claim. A non-member leave is an
+ *  idempotent no-op (`changed: false`, no write); the LAST member out clears
+ *  the field; co-holders keep the claim with its since untouched. No state
+ *  guard: removing oneself from an anomalous claim (claim on a non-In-
+ *  Progress item) is cleanup, and trapping the holder would help nobody. */
+export function claimLeave(
+  ctx: Ctx,
+  number: number,
+  holder: string,
+): { issue: Issue; changed: boolean } {
+  const cache = mutationCache(ctx, [[CLAIM_FIELD]]);
+  const issue = fetchIssue(ctx, number);
+  const itemId = guardClaimEdit(issue);
+  if (!issue.claim || !isMember(issue.claim, holder)) return { issue, changed: false };
+  const rest = removeHolder(issue.claim, holder);
+  clearField(ctx, cache, itemId, CLAIM_FIELD);
+  if (rest) setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(rest));
+  return { issue: verifyClaimEcho(ctx, number, holder, false), changed: true };
+}
+
+/** What `claim show` reports — the claim exactly as the board holds it, plus
+ *  the time semantics board.ts owns (age against the configured TTL). */
+export interface ClaimShow {
+  number: number;
+  state: string | null;
+  claim: Claim | null;
+  claimRaw: string | null; // non-null with claim null = garbled
+  ageMin: number | null;
+  ttlMin: number;
+  stale: boolean | null; // null when there is nothing to age
+}
+
+export function claimShow(ctx: Ctx, number: number): ClaimShow {
+  const issue = fetchIssue(ctx, number);
+  return {
+    number: issue.number,
+    state: issue.state,
+    claim: issue.claim,
+    claimRaw: issue.claimRaw,
+    ageMin: issue.claim ? claimAgeMin(issue.claim, ctx.now()) : null,
+    ttlMin: ctx.cfg.lockTtlMin,
+    stale: issue.claim ? claimIsStale(issue.claim, ctx.now(), ctx.cfg.lockTtlMin) : null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -3591,7 +3807,17 @@ reads
                               Epic-aware: an epic root yields to its best open
                               leaf (leaf inherits the root's priority, carries
                               "via"); an epic with a child in flight heads nothing
+  frontier [--json]           the work-stealing frontier (ralph-herdr fleets):
+                              every issue eligible to start NOW — next's queue,
+                              item for item — each with its explanation
+                              {number, title, parentNumber?, blockers:
+                              [{number, state}], eligible}, plus a blocked
+                              section [{number, blockers_open, truncated?}].
+                              A re-projection of next's ranking, never a
+                              second eligibility computation
   tree NNN                    subtree with states
+  claim show NNN [--json]     the claim as the board holds it: holders, shared
+                              since, age vs TTL, raw text when garbled
   deliver-queue [--json]      deliver lane (GH-1712): In Review items whose
                               linked PRs carry an actionable signal, marker-
                               gated per PR. {next, queue, blocked}; empty next
@@ -3612,6 +3838,14 @@ mutations
                               label: it closes only on deployed-and-verified
                               evidence, never on a merge
   claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
+  claim join NNN --holder H   add a fleet sibling to an In Progress item's
+                              shared claim (ClaimV2, max 8 holders; H must be
+                              a grammar-B or legacy agent name). Refreshes the
+                              ONE shared since; refuses when not In Progress
+  claim leave NNN --holder H  remove a sibling from the shared claim; non-
+                              member leave is a no-op; the LAST one out clears
+                              the field. Never transitions state — board moves
+                              stay the skills' job
   release NNN -m "why"        In Progress → Backlog; parking comment required
   move NNN <state> [--why W]  any legal transition; Human Needed requires --why
   cancel NNN -m "why"         any open state → Canceled (closes as not-planned)
@@ -3744,8 +3978,10 @@ export function run(argv: string[], ctx: Ctx): number {
   const json = (v: unknown) => out(JSON.stringify(v, null, 2));
 
   // Scope gate before ANY command that can write — including doctor --fix,
-  // which mutates. Plain reads work from any clone (doctor reports scope).
-  if (MUTATING.has(cmd) || (cmd === "doctor" && flags.fix)) {
+  // which mutates. Plain reads work from any clone (doctor reports scope);
+  // `claim show` is a plain read wearing a mutating command's name, so it
+  // gets the read path's carve-out.
+  if ((MUTATING.has(cmd) && !(cmd === "claim" && positional[0] === "show")) || (cmd === "doctor" && flags.fix)) {
     const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
     if (remote.code !== 0 || !scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) {
       throw new RefusalError(
@@ -3820,6 +4056,35 @@ export function run(argv: string[], ctx: Ctx): number {
                   : "(blockers truncated)";
                 return `#${b.number}←${why}`;
               })
+              .join(" ")}`,
+          );
+      }
+      return 0;
+    }
+
+    case "frontier": {
+      // EXACTLY next's inputs and ranking — frontier is a re-projection.
+      const full = listItemsFull(ctx);
+      const own = ownRepo(ctx, full.open).own;
+      const closedEdges = ownRepo(ctx, full.closed).own;
+      const res = frontierView(rankNext(own, closedEdges));
+      if (flags.json) json(res);
+      else if (res.frontier.length === 0) {
+        out(
+          `frontier empty${res.blocked.length ? ` (${res.blocked.length} blocked: ${res.blocked.map((b) => `#${b.number}`).join(" ")})` : ""}`,
+        );
+      } else {
+        for (const f of res.frontier)
+          out(
+            `#${f.number}` +
+              (f.via !== undefined ? ` (under epic #${f.via})` : "") +
+              (f.blockers.length ? ` [blockers closed: ${f.blockers.map((b) => `#${b.number}`).join(",")}]` : "") +
+              ` ${f.title}`,
+          );
+        if (res.blocked.length)
+          out(
+            `blocked: ${res.blocked
+              .map((b) => `#${b.number}←${b.truncated ? "(truncated)" : b.blockers_open.map((n) => `#${n}`).join("+")}`)
               .join(" ")}`,
           );
       }
@@ -3908,6 +4173,42 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "claim": {
+      // Fleet subverbs (join/leave/show) ride the same command word the
+      // classic single-arg claim uses; a bare number keeps today's behavior.
+      const sub = positional[0];
+      if (sub === "show") {
+        const view = claimShow(ctx, requireNumber(positional[1]));
+        if (flags.json) json(view);
+        else if (view.claim) {
+          out(
+            `#${view.number} claim: ${view.claim.holders.join("+")} since ${view.claim.since.toISOString()} ` +
+              `(${view.ageMin!.toFixed(0)} min ago, TTL ${view.ttlMin} min, ` +
+              `${view.claim.holders.length}/${CLAIM_MAX_HOLDERS} holders${view.stale ? ", STALE" : ""})`,
+          );
+        } else if (view.claimRaw !== null) {
+          out(`#${view.number} claim: GARBLED — raw text ${JSON.stringify(view.claimRaw)} (want "holder[+holder2...]|iso8601")`);
+        } else {
+          out(`#${view.number}: no claim`);
+        }
+        return 0;
+      }
+      if (sub === "join" || sub === "leave") {
+        const number = requireNumber(positional[1]);
+        if (typeof flags.holder !== "string" || !flags.holder) {
+          throw new UsageError(`claim ${sub} requires --holder <agent name>`);
+        }
+        if (sub === "join") {
+          out(issueLine(claimJoin(ctx, number, flags.holder)));
+          return 0;
+        }
+        const { issue: after, changed } = claimLeave(ctx, number, flags.holder);
+        out(
+          changed
+            ? issueLine(after)
+            : `#${number}: ${flags.holder} is not a claim holder — no-op`,
+        );
+        return 0;
+      }
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
       const after = transition(ctx, issue, "In Progress", { steal: !!flags.steal });
       out(issueLine(after));
