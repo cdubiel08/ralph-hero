@@ -227,6 +227,7 @@ jobs:
         working-directory: .
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
+          RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -237,7 +238,24 @@ jobs:
           git commit -m "chore(release): knowledge-v${NEW_VERSION} [skip ci]"
           git tag "knowledge-v${NEW_VERSION}"
           git pull --rebase origin main
-          git push origin main --tags
+          # GH-1589: push via the release deploy key — the sole bypass actor
+          # on the protected-main ruleset. GITHUB_TOKEN pushes are blocked by
+          # the pull_request rule, and the github-actions app cannot be a
+          # bypass actor on user-owned repos. Mirrors release-ralph.yml; this
+          # workflow missed the port and stranded knowledge-v0.1.58 on
+          # 2026-08-09 (npm published, bump commit rejected by the ruleset).
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$RELEASE_DEPLOY_KEY" > "$HOME/.ssh/release_key"
+          chmod 600 "$HOME/.ssh/release_key"
+          # GitHub's published Ed25519 host key, pinned rather than scanned:
+          # `ssh-keyscan` accepts whatever key answers, so it authenticates
+          # nothing and leaves a MITM window on the release push. Source of
+          # truth is the `ssh_keys` array of https://api.github.com/meta.
+          printf 'github.com ssh-ed25519 %s\n' \
+            'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+            >> "$HOME/.ssh/known_hosts"
+          GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes" \
+            git push "git@github.com:${GITHUB_REPOSITORY}.git" main --tags
 
       - name: Create GitHub Release
         if: inputs.republish != true
