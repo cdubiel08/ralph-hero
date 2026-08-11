@@ -45,6 +45,13 @@
 # Exit codes: 0 terminal verdict, 10 still waiting, 2 usage, 1 gh unreachable.
 # Env: PR_GATE_ATTEST_CHECK (default "ralph-attestation") names the status
 # published by validate-attestation.yml, for repos that renamed it.
+#
+# Honest limit: the attested-at-this-head check reads `gh pr view --json
+# comments`, so on a PR with more comments than that window returns, the
+# attestation comment can fall outside it and the verdict reverts to
+# GATE-YOURS attestation. That errs in the safe direction — attest-pr.sh
+# updates its existing comment rather than duplicating it, so acting on the
+# stale verdict is idempotent. validate-attestation.sh reads the same window.
 
 set -euo pipefail
 
