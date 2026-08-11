@@ -11,6 +11,7 @@
     "test:fleet": "bash plugin/ralph-herdr/tests/fleet.test.sh",
     "test:lineage": "bash plugin/ralph-herdr/tests/doctor-lineage.test.sh",
     "test:substrate": "bash plugin/ralph-herdr/tests/substrate.test.sh",
+    "test:cockpit": "bash plugin/ralph-herdr/tests/cockpit.test.sh",
     "contracts:emit": "tsx ralph/scripts/board.ts contract emit",
     "contracts:check": "tmp=$(mktemp -d) && tsx ralph/scripts/board.ts contract emit --out \"$tmp\" >/dev/null && diff -r ralph/contracts/generated \"$tmp\""
   },

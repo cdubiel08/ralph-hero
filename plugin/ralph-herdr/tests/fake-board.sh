@@ -24,8 +24,12 @@
 #   get N …              get.<N>.json, then get.json, else a one-line issue
 #                        view (the human `board get` text — link-offer and
 #                        ralph-answer print it verbatim, so text is honest)
-#   list --state …       list.json, else an empty {items, foreign} envelope
-#                        (board.ts's list --json shape)
+#   list --state …       list.<state-slug>.json (the state lowercased,
+#                        spaces → dashes: list.in-progress.json — the cockpit
+#                        tests model three DIFFERENT columns), then list.json,
+#                        else an empty {items, foreign} envelope (board.ts's
+#                        list --json shape); rc via list.<state-slug>.rc then
+#                        list.rc
 #   answer N …           answer.<N>.json, then answer.json, else board.ts's
 #                        "answer commented; Human Needed → In Progress" line
 #   move N STATE         move.json, else a bare success line
@@ -103,8 +107,16 @@ case "${1-} ${2-}" in
     key="get"
     ;;
   "list --state")
-    emit_fixture list || echo '{"items":[],"foreign":[]}'
-    key="list"
+    # Per-state fixture first (list.in-progress.json), so one fixtures dir can
+    # model three different columns; the state-agnostic list.json still wins
+    # for the older single-column tests.
+    state_slug=$(printf '%s' "${3-}" | tr '[:upper:] ' '[:lower:]-')
+    emit_fixture "list.$state_slug" list || echo '{"items":[],"foreign":[]}'
+    if [ -n "$FIX" ] && [ -f "$FIX/list.$state_slug.rc" ]; then
+      key="list.$state_slug"
+    else
+      key="list"
+    fi
     ;;
   "answer "*)
     emit_fixture "answer.${2-}" answer ||

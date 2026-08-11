@@ -121,16 +121,46 @@ jobs:
           # the Phase-2 watcher suite watcher.test.sh (`npm run test:watcher`),
           # the Phase-3 fleet suite fleet.test.sh (`npm run test:fleet`;
           # its brief-validation cases run the real board CLI offline, so the
-          # runner needs a node/npx — ubuntu-latest ships one), and the
+          # runner needs a node/npx — ubuntu-latest ships one), the
           # Phase-4 card-substrate suite substrate.test.sh
-          # (`npm run test:substrate`). The fake-herdr.sh and fake-board.sh
-          # PATH shims are helpers, not *.test.sh, so the glob deliberately
-          # skips them.)
+          # (`npm run test:substrate`), and the Phase-5 cockpit suite
+          # cockpit.test.sh (`npm run test:cockpit`; launcher ladder +
+          # cockpit-fzf.sh's sourced pure functions — it never drives a real
+          # fzf, so the runner needs none). The fake-herdr.sh and
+          # fake-board.sh PATH shims are helpers, not *.test.sh, so the glob
+          # deliberately skips them.)
           find scripts/__tests__ plugin/ralph-herdr/tests \
             \( -name '*.test.sh' -o -name 'test-*.sh' \) \
             -type f -print0 \
             | sort -z \
             | xargs -0 -n1 bash -c 'echo "=== $0 ==="; bash "$0"; rc=$?; if [ $rc -ne 0 ]; then echo "FAIL: $0 exited $rc"; exit $rc; fi'
+
+      # The cockpit Go TUI (plugin/ralph-herdr/cockpit) — gofmt, vet, and the
+      # table-driven update-loop tests. Gated the same way the host-key
+      # freshness step gates on the network: a runtime probe that degrades to
+      # "not evaluated" instead of failing, because a runner without a Go
+      # toolchain says nothing about the code (ubuntu-latest ships one, so in
+      # practice this runs; the probe keeps the job honest on leaner runners
+      # and local act/self-hosted setups). No setup-go: the ladder's rung-1
+      # binary is built locally by scripts/build-cockpit.sh, never in CI.
+      - name: Cockpit Go suite (only when a Go toolchain is present)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then
+            echo "::notice::Cockpit Go suite not evaluated — no Go toolchain on this runner (build-cockpit.sh documents the local run)."
+            exit 0
+          fi
+          cd plugin/ralph-herdr/cockpit
+          go version
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt required on:"
+            echo "$unformatted"
+            exit 1
+          fi
+          go vet ./...
+          go test -count=1 ./...
 
   # Defense-in-depth guard against the failure mode from GH-#####:
   # `.mcp.json` referencing an npm version that was never published, leaving

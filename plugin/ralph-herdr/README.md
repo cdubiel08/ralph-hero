@@ -78,6 +78,7 @@ herdr's shapes map onto ralph's without translation:
 | `deliver-pass` | split (down) | `board deliver-queue` → empty means spawn nothing (the lane contract). Otherwise a new tab hosts agent `ralph-deliver` running `/ralph:deliver`; cockpit pane watches |
 | `tend-pass` | split (down) | same shape over `board tend-queue` → agent `ralph-tend` running `/ralph:tend` |
 | `doctor` | popup | runs `board doctor` once, holds the popup open until Enter |
+| `cockpit` | split (right) | the board cockpit through the degradation ladder (`scripts/cockpit-launch.sh`): the built Go TUI when present, the verb-complete fzf fallback when not, the read-only dashboard when neither — the pane's first line names the rung it took and why. See [The cockpit](#the-cockpit-phase-5-and-its-degradation-ladder) |
 | `dashboard` | split (right) | read-only watch loop: board `next` (number/title/estimate + queue depth), deliver-queue, tend-queue, Human Needed count. No doctor call in the loop — doctor is its own action |
 
 The watcher (`scripts/notify-watch.sh`) tracks one or many agents. Single target:
@@ -101,6 +102,8 @@ of each script:
 | Var | Default | Meaning |
 |---|---|---|
 | `RALPH_HERDR_BOARD` | auto-discovered | board CLI override — authoritative when set: only that path is validated, and a broken value dies loudly with no fallback. Unset, the scripts try `<repo>/ralph/scripts/board`, then the newest installed ralph plugin copy under `~/.claude/plugins/cache`. Honest caveat: herdr panes inherit the herdr **server's** environment, not your shell's — an export only reaches panes if the server itself was started with it |
+| `RALPH_COCKPIT_INTERVAL` | `30` | Go cockpit TUI board-poll cadence, seconds (min 10). The fzf rung ignores it — it re-reads the board on every interaction instead of on a timer |
+| `RALPH_HERDR_PEEK_LINES` | `40` | fzf-rung peek/preview depth: pane-tail lines (`herdr agent read`) or latest-comment lines (`gh issue view --comments` tail) |
 | `RALPH_HERDR_DASH_INTERVAL` | `120` | dashboard refresh interval, seconds |
 | `RALPH_HERDR_DRY_RUN` | unset | set to `true` and every spawn script (`work-next`, `work-fleet`, lane passes) prints its exact plan — issues, branches, agent names, the herdr commands it would run — and exits 0 before any herdr mutation. Dashboard/attend are reads and ignore it |
 | `RALPH_HERDR_FLEET` | `2` | how many work sessions `work-fleet` spawns from the top of the frontier; positive integer, hard cap 4 (it dies above — this is an attended tool, not a farm). Also the refill loop's concurrency target `k` |
@@ -173,6 +176,94 @@ write path:
   names the moment a CLI form appears; the intended view is pinned in its
   header. `reconcile.sh` calls it after the token re-push so the view
   re-arms on server restart the day it becomes real.
+
+## The cockpit (Phase 5) and its degradation ladder
+
+One action, five rungs. `Ralph: cockpit` opens a right-split pane running
+`scripts/cockpit-launch.sh`, which probes the host and execs the best surface
+it can — logging `cockpit: rung N (<reason>)` as its first line so a pane that
+opened on the "wrong" surface says why. The doctrine is fixed: **every rung
+loses chrome, never a verb.**
+
+| Rung | Surface | Taken when | What it loses |
+|---|---|---|---|
+| 1 | `cockpit/ralph-cockpit` — the Go TUI | the binary is built and executable (`scripts/build-cockpit.sh`, run at install by the manifest `[[build]]` hook) | nothing — full chrome |
+| 2 | the **same binary**, poll-only | always, today: poll-only IS the shipped mode (herdr `[[events]]` feed the watcher, not the TUI — events integration is Phase-6+ work). A documentation distinction, not a launcher branch | event-driven freshness — the board re-reads every `RALPH_COCKPIT_INTERVAL` seconds |
+| 3 | `scripts/cockpit-fzf.sh` | no built TUI, `fzf` on PATH | side-by-side columns, mouse, live glyph refresh, timed refresh — **every verb kept** (observe / peek / reply / answer / spawn / diff / browser / quit, over the same `board` / `herdr` / `gh` calls) |
+| 4 | `scripts/dashboard.sh` | no built TUI, no fzf | interactivity — a read-only glance; the verbs survive one command away (`board answer N -m …`, `herdr agent focus …`) |
+| 5 | `board` + `gh` standalone | no herdr at all — not a launcher branch, just the floor the ladder stands on | all chrome. `board list --state "Human Needed"`, `board answer N -m`, `board frontier`, `gh pr diff N` are the cockpit's verbs with no cockpit |
+
+### The TUI
+
+Three columns — **In Progress / In Review / Human Needed**, board states
+verbatim. A card's column derives ONLY from board data; the herdr agent
+state (live/blocked glyphs) is a decoration overlay joined by parsing agent
+names (`w<N>-*`, legacy `gh-N`) — a failed herdr read costs glyphs, never
+cards. Human Needed cards show the blocking question **verbatim** (the
+latest issue comment's first line): the column is meant to be answerable
+from a phone-sized pane without opening anything.
+
+| Key | Verb |
+|---|---|
+| `h` / `l`, `←` / `→` | move between columns |
+| `j` / `k`, `↑` / `↓` | move between cards |
+| `Enter` | **observe** — `herdr agent focus` on the card's live session |
+| `Space`, `o` | **peek** — agent pane-tail overlay (`herdr agent read`), no focus steal |
+| `r` | **reply** — input box → `herdr agent prompt`; the delivered checkmark appears ONLY after herdr confirms (rc 0) — never an optimistic ack; a failure preserves the typed text and shows the error |
+| `a` | **answer** — Human Needed exit, comment-first: `board answer N -m` posts the durable **Answer** comment FIRST, then any live session gets the nudge |
+| `s` | **spawn** — a `/ralph:work` session for the card, via the same `spawn_work_session` path as `work-next` |
+| `v` | **DAG view** — text tree from `board frontier --json`: eligible items with their closed edges, blocked items with their open blocker lists |
+| `d` | **PR diff** — `gh pr diff` in a popup pane (`herdr plugin pane open`) |
+| `g` | open the issue in the browser |
+| `q` | quit |
+| mouse | click selects, double-click observes |
+
+### Keybinding audit (herdr 0.8.0)
+
+The one fact the key table stands on: **a focused herdr pane receives ALL
+keys except the prefix.** herdr's prefix is `ctrl+b` — the only key the
+multiplexer intercepts for a focused pane — and the TUI deliberately binds
+nothing on `ctrl+b`. herdr's `[keys.indexed]` tab/workspace chords exist
+only if the user enabled them in their own herdr config; everything else
+reaches the TUI untouched. (fzf on rung 3 inherits the same guarantee.)
+
+### The fzf rung, honestly
+
+Rung 3 is verb-complete, chrome-minimal: a loop of `board list --state`
+over the three columns (stdout-only into the parse, fail-closed on
+unparseable output — the ralph-answer.sh precedent: an empty column and a
+failed query are different facts) → one fzf pick with a preview (live
+agent's pane tail, else the issue's latest comments) → a second fzf menu of
+the verbs. Reply and answer read one line (`read -r`); answer is
+comment-first through `board answer`; delivered is claimed only on
+`agent prompt --wait` rc 0 — a bare prompt merely submits, so wait expiry
+reports "sent but not confirmed", never "delivered" (ralph-answer.sh
+parity). The PR diff pages inline (`gh pr diff | less`) instead of a popup —
+the popup needs herdr's plugin-pane surface, which rung 3 does not assume.
+No poll timer: the board re-reads after every verb.
+
+### Honest limits (cockpit)
+
+- **Poll-only in this phase.** The TUI polls (`RALPH_COCKPIT_INTERVAL`,
+  default 30 s); the herdr `[[events]]` hooks feed the watcher ledger, not
+  the TUI. Wiring events into the cockpit is Phase-6+ — until then a state
+  change shows up at the next poll, not the moment it happens.
+- **The install never blocks on the TUI.** The manifest `[[build]]` hook is
+  `scripts/build-cockpit.sh`, which exits 0 with a loud warning when Go is
+  absent, `cockpit/` is missing, or the compile fails — a herdr build
+  failure would abort the whole plugin install, and blocking every action
+  because optional chrome didn't compile would invert the ladder. The
+  warning (in `herdr plugin log`) names the reason and the manual build
+  command; the launcher lands on rung 3/4 meanwhile. A failed REbuild also
+  removes any previously built binary — a stale TUI never poses as rung 1.
+- **Pane tails stay in the terminal.** peek/preview render agent tails into
+  the pane only — allowed; the `SECRET_RE` gate guards notification
+  channels (attend.sh), and the cockpit sends no notifications.
+- **The popup diff needs herdr.** `d` opens a herdr plugin pane; on rung 3
+  the same verb pages inline.
+- **Glyphs are decoration.** `blocked`/`working` come from herdr's
+  screen-detected agent status — attention hints joined onto board-truth
+  cards, never a gate.
 
 ## Fleet refill (EXPERIMENTAL until the claim-TTL probe)
 
@@ -317,6 +408,9 @@ sibling semantics, so expect to attend these fleets closely.
 - **The `ralph` agent view does not exist yet.** `agent.view.set` lives on the
   socket, not in the 0.8.0 CLI — cockpit-view.sh is a probing no-op until a
   CLI form ships (see [The card substrate](#the-card-substrate-phase-4)).
+- **The cockpit TUI is poll-only and optional.** Rung 2 IS the shipped mode,
+  the install never fails over the TUI build, and every rung below it keeps
+  the verbs — see [Honest limits (cockpit)](#honest-limits-cockpit).
 - **A herdr plugin is unsandboxed local code** with your permissions. This one stays
   read-mostly by construction, but read the scripts before linking — they are short
   on purpose.
