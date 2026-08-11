@@ -1,0 +1,2 @@
+depth is 4 — the herdr-plane spawn depth is capped at 3 (inner subagents are
+free and do not count). Schema: depth must be an integer 0..3.

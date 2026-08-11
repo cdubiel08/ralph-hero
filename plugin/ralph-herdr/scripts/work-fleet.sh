@@ -40,10 +40,13 @@ for n in $NUMBERS; do
   rc=0
   spawn_work_session "$n" "$QUEUE_JSON" || rc=$?
   case "$rc" in
-    0) spawned="$spawned gh-$n" ;;
-    2) skipped="$skipped gh-$n" ;;
+    # The agent name is derived inside spawn_work_session (grammar B, slug
+    # from the issue title) and read back from its out-variable — the watcher
+    # exec below needs the real names, never reconstructed ones.
+    0) spawned="$spawned ${RALPH_HERDR_SPAWNED_AGENT:?spawn reported success without an agent name}" ;;
+    2) skipped="$skipped GH-$n" ;;
     # One bad spawn must not strand the rest of the fleet — note and continue.
-    *) failed="$failed gh-$n"; echo "GH-$n: spawn failed (see above) — continuing" >&2 ;;
+    *) failed="$failed GH-$n"; echo "GH-$n: spawn failed (see above) — continuing" >&2 ;;
   esac
 done
 

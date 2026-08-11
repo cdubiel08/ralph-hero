@@ -112,12 +112,12 @@ describe("claims", () => {
 
   it("round-trips encode/parse (parity of the claim wire format)", () => {
     const c = parseClaim(encodeClaim("chad@mbp", t0));
-    expect(c).toEqual({ holder: "chad@mbp", since: t0 });
+    expect(c).toEqual({ holders: ["chad@mbp"], since: t0 });
   });
 
   it("holder may contain | — last separator wins", () => {
     const c = parseClaim(`weird|host|${t0.toISOString()}`);
-    expect(c?.holder).toBe("weird|host");
+    expect(c?.holders).toEqual(["weird|host"]);
   });
 
   it("rejects malformed values instead of guessing", () => {
@@ -128,14 +128,14 @@ describe("claims", () => {
   });
 
   it("staleness is >= TTL, not >", () => {
-    const claim = { holder: "x", since: t0 };
+    const claim = { holders: ["x"], since: t0 };
     const at = (min: number) => new Date(t0.getTime() + min * 60_000);
     expect(claimIsStale(claim, at(119), 120)).toBe(false);
     expect(claimIsStale(claim, at(120), 120)).toBe(true);
   });
 
   it("the expiry hint is due strictly past 75% of TTL and only while fresh", () => {
-    const claim = { holder: "x", since: t0 };
+    const claim = { holders: ["x"], since: t0 };
     const at = (min: number) => new Date(t0.getTime() + min * 60_000);
     expect(claimHintDue(claim, at(0), 120)).toBe(false);
     expect(claimHintDue(claim, at(90), 120)).toBe(false); // exactly 75% — not yet
@@ -145,7 +145,7 @@ describe("claims", () => {
   });
 
   it("expiry is since + TTL, rendered as local HH:MM", () => {
-    const claim = { holder: "x", since: t0 };
+    const claim = { holders: ["x"], since: t0 };
     const exp = claimExpiry(claim, 120);
     expect(exp.getTime() - t0.getTime()).toBe(120 * 60_000);
     expect(formatLocalHm(exp)).toBe(
@@ -183,7 +183,7 @@ describe("rankNext", () => {
       item(3, { priority: "P0" }),
       item(4, { hasParent: true }),
       item(5, { openBlockers: [3] }),
-      item(6, { claim: { holder: "other", since: new Date() } }),
+      item(6, { claim: { holders: ["other"], since: new Date() } }),
       item(7, { state: "In Review" }),
       item(8, { blockersTruncated: true }), // truncated blocker list = blocked (fail closed)
     ];
@@ -224,7 +224,7 @@ describe("rankNext", () => {
   it("an epic with a child in flight heads nothing — reported as inFlightEpics, not eligible", () => {
     const items = [
       item(1, { priority: "P0" }),
-      child(5, 1, { state: "In Progress", claim: { holder: "other@host", since: NOW } }),
+      child(5, 1, { state: "In Progress", claim: { holders: ["other@host"], since: NOW } }),
     ];
     const { eligible, inFlightEpics } = rankNext(items);
     expect(eligible).toEqual([]);
@@ -232,7 +232,7 @@ describe("rankNext", () => {
   });
 
   it("a claimed Backlog child also counts as in flight (a claim is work in motion)", () => {
-    const items = [item(1), child(5, 1, { claim: { holder: "w@h", since: NOW } })];
+    const items = [item(1), child(5, 1, { claim: { holders: ["w@h"], since: NOW } })];
     const { eligible, inFlightEpics } = rankNext(items);
     expect(eligible).toEqual([]);
     expect(inFlightEpics).toEqual([{ root: 1, child: 5, holder: "w@h" }]);
@@ -256,7 +256,7 @@ describe("rankNext", () => {
 
   it("a closed intermediate node passes tree topology through — the root still demotes for a live grandchild", () => {
     // epic 10 → phase 11 (closed, off the open list) → task 12 (in flight).
-    const items = [item(10, { priority: "P0" }), child(12, 11, { state: "In Progress", claim: { holder: "a@h", since: NOW } })];
+    const items = [item(10, { priority: "P0" }), child(12, 11, { state: "In Progress", claim: { holders: ["a@h"], since: NOW } })];
     const withEdge = rankNext(items, [{ number: 11, parentNumber: 10 }]);
     expect(withEdge.eligible).toEqual([]);
     expect(withEdge.inFlightEpics).toEqual([{ root: 10, child: 12, holder: "a@h" }]);
@@ -452,6 +452,28 @@ describe("failure diagnostics carry their context", () => {
     expect(() => loadConfig(root3)).toThrow(UsageError);
     expect(() => loadConfig(root3)).toThrow(/expected a JSON object/);
   });
+
+  it("loadConfig refuses a RALPH_CLAIM_HOLDER carrying ClaimV2 wire delimiters ('+' or '|')", () => {
+    // A "build+deploy@ci" holder would serialize as TWO holders and fail its
+    // own read-back membership verify — refuse at the door, naming the var.
+    const root = mkdtempSync(join(tmpdir(), "board-cfg-holder-"));
+    writeFileSync(join(root, ".ralph.json"), JSON.stringify({ owner: "o", repo: "r", projectNumber: 1 }));
+    for (const bad of ["build+deploy@ci", "weird|host", ""]) {
+      vi.stubEnv("RALPH_CLAIM_HOLDER", bad);
+      try {
+        expect(() => loadConfig(root), bad).toThrow(UsageError);
+        expect(() => loadConfig(root), bad).toThrow(/RALPH_CLAIM_HOLDER/);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    }
+    vi.stubEnv("RALPH_CLAIM_HOLDER", "tick@mbp");
+    try {
+      expect(loadConfig(root).holder).toBe("tick@mbp");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -483,7 +505,7 @@ describe("transition engine", () => {
     const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
     expect(gh.mutations.slice(0, 3)).toEqual(["clearField(#1, F_claim)", "setClaim(#1)", "setState(#1, In Progress)"]);
     expect(after.state).toBe("In Progress");
-    expect(after.claim?.holder).toBe("me@test");
+    expect(after.claim?.holders).toEqual(["me@test"]);
     expect(after.claim?.since).toEqual(NOW);
   });
 
@@ -571,7 +593,7 @@ describe("transition engine", () => {
     expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/--steal/);
     const after = transition(ctx, fetchIssue(ctx, 1), "In Progress", { steal: true });
     expect(gh.comments.some((c) => c.body.includes("evicted"))).toBe(true);
-    expect(after.claim?.holder).toBe("me@test");
+    expect(after.claim?.holders).toEqual(["me@test"]);
   });
 
   it("leaving In Progress requires holder-or-stale; clears the claim", () => {
@@ -693,7 +715,7 @@ describe("transition engine", () => {
   it("claim from In Progress is (re)acquisition: adopts claimless WIP, refuses a live foreign claim", () => {
     gh.issues.set(1, { number: 1, state: "In Progress" }); // claimless WIP (pre-v2 or UI-driven)
     const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
-    expect(after.claim?.holder).toBe("me@test");
+    expect(after.claim?.holders).toEqual(["me@test"]);
 
     gh.issues.set(2, {
       number: 2, state: "In Progress",
@@ -727,7 +749,7 @@ describe("transition engine", () => {
       }),
     );
     const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
-    expect(after.claim?.holder).toBe("me@test");
+    expect(after.claim?.holders).toEqual(["me@test"]);
     expect(gh.mutations).toContain("setClaim(#1)");
   });
 });

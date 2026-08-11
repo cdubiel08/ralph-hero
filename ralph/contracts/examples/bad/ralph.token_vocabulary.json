@@ -1,0 +1,10 @@
+{
+  "contract": "ralph.token_vocabulary",
+  "contract_version": 1,
+  "tokens": {
+    "role": "w",
+    "issue": "1743",
+    "state": "sleeping",
+    "harness": "claude"
+  }
+}

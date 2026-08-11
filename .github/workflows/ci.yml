@@ -25,6 +25,10 @@ jobs:
         # Directory, not filename: a new *.test.ts beside board.ts (e.g. the
         # metrics registry) must not be silently skipped by CI.
         run: npx vitest run ralph/scripts/
+      - name: Contract schema drift check
+        # Re-emit the ralph/contracts/generated artifacts to a temp dir and
+        # diff — contracts.ts and the committed schemas cannot drift apart.
+        run: npm run contracts:check
 
   build-and-test-demo:
     runs-on: ubuntu-latest
@@ -111,8 +115,10 @@ jobs:
           # cannot abort the suite. First non-zero rc propagates.
           # (ralph/hooks/scripts/__tests__ deleted in the v2 cutover, GH-1662 —
           # funnel-merge.sh, funnel-board.sh, and tick.sh each have a dedicated
-          # suite here: funnel-merge.test.sh, funnel-board.test.sh, tick.test.sh.)
-          find scripts/__tests__ \
+          # suite here: funnel-merge.test.sh, funnel-board.test.sh, tick.test.sh.
+          # plugin/ralph-herdr/tests carries the bash half of the grammar-B
+          # naming mirror — naming.test.sh, also `npm run test:naming`.)
+          find scripts/__tests__ plugin/ralph-herdr/tests \
             \( -name '*.test.sh' -o -name 'test-*.sh' \) \
             -type f -print0 \
             | sort -z \
@@ -323,5 +329,14 @@ jobs:
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca
         with:
           scandir: scripts
+          severity: error
+          format: gcc
+
+      # ralph-herdr cockpit: naming.sh/lib.sh derive agent names at spawn —
+      # the bash half of the grammar-B mirror deserves the same lint bar.
+      - name: Run ShellCheck on ralph-herdr plugin scripts
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca
+        with:
+          scandir: plugin/ralph-herdr
           severity: error
           format: gcc

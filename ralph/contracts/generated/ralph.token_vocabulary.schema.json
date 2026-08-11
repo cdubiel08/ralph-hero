@@ -1,0 +1,31 @@
+{
+  "$id": "ralph:contracts/ralph.token_vocabulary",
+  "type": "object",
+  "properties": {
+    "contract": {
+      "type": "string",
+      "const": "ralph.token_vocabulary"
+    },
+    "contract_version": {
+      "type": "number",
+      "const": 1
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 80
+      },
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_-]{1,32}$"
+      }
+    }
+  },
+  "required": [
+    "contract",
+    "contract_version",
+    "tokens"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

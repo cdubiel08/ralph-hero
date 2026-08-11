@@ -30,6 +30,12 @@ HERDR="${HERDR_BIN_PATH:-herdr}"
 
 die() { echo "${0##*/}: $*" >&2; exit 1; }
 
+# Grammar-B agent naming (slugify/format/parse/collide/ref) — a pure-function
+# sibling lib, sourced here so every cockpit script gets it with lib.sh.
+_RALPH_HERDR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=naming.sh
+. "$_RALPH_HERDR_LIB_DIR/naming.sh"
+
 # ── Color helpers ────────────────────────────────────────────────────────────
 # Detected ONCE at source time: stdout is a terminal, terminfo reports >= 8
 # colors, and NO_COLOR is unset. Otherwise every variable is empty, so callers
@@ -73,14 +79,16 @@ validate_pos_int() {
 }
 
 # ralph_agents_json — live ralph agents as compact JSON lines
-# {name,status,pane}, filtered to names ^gh-[0-9]+$ or ^ralph-(deliver|tend)$.
+# {name,status,pane}, filtered to ralph-shaped names: the legacy grammar
+# (^gh-[0-9]+$ / ^ralph-(deliver|tend)$) plus grammar-B <lane><issue>-<slug>
+# names (^[a-z][0-9]+-[a-z].*$) — both accepted through the transition.
 # Read-only; prints nothing when no ralph agent is live. Non-zero only if the
 # herdr read itself fails.
 ralph_agents_json() {
   "$HERDR" agent list | jq -c '
     .result.agents[]?
     | select(.name != null)
-    | select(.name | test("^gh-[0-9]+$|^ralph-(deliver|tend)$"))
+    | select(.name | test("^gh-[0-9]+$|^ralph-(deliver|tend)$|^[a-z][0-9]+-[a-z].*$"))
     | {name: .name, status: .agent_status, pane: .pane_id}'
 }
 
@@ -186,45 +194,78 @@ notify() {
 #   N           issue number (digits)
 #   QUEUE_JSON  optional: the caller's `board next --json` output. When it
 #               carries parentNumber for N, the worktree workspace gets
-#               --label "GH-N via GH-parent" so the cockpit shows the nesting.
+#               --label "GH-N via GH-parent" so the cockpit shows the nesting;
+#               when it carries N's title, the agent name gets its slug.
 #
-# stdout: progress lines ending in "spawned GH-N on BRANCH (pane P, agent gh-N)"
+# Agent naming is grammar B (naming.sh, which mirrors contracts.ts slugify
+# exactly — the golden table pins both): w<N>-<slug> from the queue item's
+# title. An absent title takes the "work" slug; a pathological one (all
+# punctuation/digits) takes ralph_slugify's shared "task" fallback. Legacy
+# gh-N sessions stay first-class through the transition: the skip check
+# treats either shape as "issue N already owned".
+#
+# stdout: progress lines ending in "spawned GH-N on BRANCH (pane P, agent A)"
 #         (or the dry-run plan / a SKIP line).
-# Returns: 0 spawned (or dry-run plan printed); 2 skipped — agent gh-N already
-#          live (no mutation attempted); 1 real failure (worktree/start/prompt).
+# On rc 0 the started (or dry-run planned) agent name is exported in
+# RALPH_HERDR_SPAWNED_AGENT — the name is derived in here, so callers that
+# watch or report must read it back rather than reconstruct it.
+# Returns: 0 spawned (or dry-run plan printed); 2 skipped — a session already
+#          owns issue N (from the pre-check: no mutation attempted; from the
+#          start-time race: the already-opened worktree pane is left to the
+#          winning session); 1 real failure (worktree/start/prompt).
 # Honors RALPH_HERDR_DRY_RUN=true: prints the exact plan and returns 0 before
 # ANY herdr mutation.
 spawn_work_session() {
-  local n="$1" queue_json="${2:-}" branch label parent pane out
+  local n="$1" queue_json="${2:-}" branch label parent title agent live pane out
+  RALPH_HERDR_SPAWNED_AGENT=""
+  export RALPH_HERDR_SPAWNED_AGENT
   case "$n" in ''|*[!0-9]*) echo "spawn_work_session: bad issue number '$n'" >&2; return 1 ;; esac
   branch="feature/GH-$n"
 
-  # Nesting label: children group under an epic on the board; carry that into
-  # the worktree workspace label when the caller's queue JSON knows the parent.
-  label=""
+  # Nesting label + title: children group under an epic on the board; carry
+  # that into the worktree workspace label when the caller's queue JSON knows
+  # the parent. The same queue item's title feeds the agent-name slug.
+  label="" title=""
   if [ -n "$queue_json" ]; then
     parent=$(jq -r --argjson n "$n" '
       [.next, .queue[]?] | map(select(. != null and .number == $n)) | .[0].parentNumber // empty
     ' <<<"$queue_json" 2>/dev/null || true)
     [ -n "$parent" ] && label="GH-$n via GH-$parent"
+    title=$(jq -r --argjson n "$n" '
+      [.next, .queue[]?] | map(select(. != null and .number == $n)) | .[0].title // empty
+    ' <<<"$queue_json" 2>/dev/null || true)
   fi
 
-  # Skip, don't die, when a session already owns gh-N: fleet callers must keep
-  # going. Checked before any mutation so the skip is side-effect free.
-  if "$HERDR" agent list | jq -e --arg name "gh-$n" \
-      '.result.agents[]? | select(.name == $name)' >/dev/null 2>&1; then
-    echo "SKIP gh-$n already live"
+  # Grammar-B name. ralph_slugify itself falls back to "task" for a title
+  # that slugifies to nothing letter-led (mirroring contracts.ts), so the
+  # second call is unreachable defense against future naming.sh edits.
+  agent=$(ralph_agent_name w "$n" "${title:-work}" 2>/dev/null) ||
+    agent=$(ralph_agent_name w "$n" work) || {
+      echo "could not derive an agent name for GH-$n" >&2
+      return 1
+    }
+
+  # Skip, don't die, when a session already owns issue N — under EITHER
+  # grammar (legacy gh-N or any w<N>-*): fleet callers must keep going.
+  # Checked before any mutation so the skip is side-effect free.
+  live=$("$HERDR" agent list | jq -r --arg legacy "gh-$n" --arg pfx "w$n-" '
+    [.result.agents[]? | select(.name != null)
+     | select(.name == $legacy or (.name | startswith($pfx))) | .name]
+    | first // empty' 2>/dev/null || true)
+  if [ -n "$live" ]; then
+    echo "SKIP $live already live"
     return 2
   fi
 
   if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
     echo "DRY RUN — would spawn GH-$n:"
-    echo "  branch:  $branch   agent: gh-$n${label:+   label: $label}"
+    echo "  branch:  $branch   agent: $agent${label:+   label: $label}"
     echo "  git -C $REPO fetch -q origin main"
     echo "  $HERDR worktree create --cwd $REPO --branch $branch --base origin/main --no-focus${label:+ --label \"$label\"}"
     echo "    (fallback: $HERDR worktree open --cwd $REPO --branch $branch --no-focus${label:+ --label \"$label\"})"
-    echo "  $HERDR agent start gh-$n --kind claude --pane <captured>"
-    echo "  $HERDR agent prompt gh-$n \"/ralph:work $n\""
+    echo "  $HERDR agent start $agent --kind claude --pane <captured>"
+    echo "  $HERDR agent prompt $agent \"/ralph:work $n\""
+    RALPH_HERDR_SPAWNED_AGENT="$agent"
     return 0
   fi
 
@@ -265,23 +306,37 @@ spawn_work_session() {
     return 1
   fi
 
-  # A name collision means a live session already owns gh-$N — refuse, never
-  # improvise suffixes: two sessions on one issue is exactly what the board's
-  # claim protocol exists to prevent. (The pre-check above catches the common
-  # case; this catches the race.)
-  agent_start_when_ready "gh-$n" "$pane" || {
-    echo "agent start gh-$n failed — see the herdr error above (a live session owning gh-$n is the common cause, but exhausted startup retries land here too); not spawning a second" >&2
+  # A confirmed-live name collision at start means a session already owns
+  # issue N: the name is always w<N>-<slug>, so any live agent holding it
+  # would have matched the w<N>-* pre-check — it either spawned inside the
+  # check→start race window, or the pre-check's agent-list read failed and
+  # was swallowed (fail-open). Both are the lost race rc=2 exists for; never
+  # improvise a --N sibling here — that would put TWO /ralph:work sessions on
+  # one issue, the very thing the pre-check (and the board's claim protocol)
+  # refuse. Shared-claim sibling fleets are Phase 3, and they JOIN a claim
+  # deliberately, not by collision; the --N generation suffix belongs to that
+  # plane (ralph_agent_name_collide stays for it). Liveness is confirmed by a
+  # read, never inferred from error prose; every other start failure dies at
+  # once, unchanged.
+  if ! agent_start_when_ready "$agent" "$pane"; then
+    if "$HERDR" agent list | jq -e --arg name "$agent" \
+        '.result.agents[]? | select(.name == $name)' >/dev/null 2>&1; then
+      echo "SKIP $agent already live (lost the spawn race for GH-$n) — leaving the worktree pane $pane to the winning session"
+      return 2
+    fi
+    echo "agent start $agent failed — see the herdr error above (exhausted startup retries and non-collision refusals land here); not spawning" >&2
     return 1
-  }
+  fi
   # Past this point the agent is LIVE — a prompt-delivery failure must not exit
   # silently and strand an idle session with no work, and hold_pane must not
   # claim "no session spawned" about it.
   export RALPH_HERDR_AGENT_LIVE=1
-  "$HERDR" agent prompt "gh-$n" "/ralph:work $n" || {
-    echo "prompt delivery failed — agent gh-$n is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt gh-$n \"/ralph:work $n\"" >&2
+  "$HERDR" agent prompt "$agent" "/ralph:work $n" || {
+    echo "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:work $n\"" >&2
     return 1
   }
 
-  echo "spawned GH-$n on $branch (pane $pane, agent gh-$n)"
+  RALPH_HERDR_SPAWNED_AGENT="$agent"
+  echo "spawned GH-$n on $branch (pane $pane, agent $agent)"
   return 0
 }

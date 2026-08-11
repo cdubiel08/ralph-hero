@@ -23,8 +23,8 @@ if [ -z "$N" ]; then
   exit 0
 fi
 
-# rc=2 is the sanctioned skip (agent gh-N already live) — that session already
-# has its own attention surface, so don't stack a second watcher on it.
+# rc=2 is the sanctioned skip (a session already owns GH-N) — that session
+# already has its own attention surface, so don't stack a second watcher on it.
 rc=0
 spawn_work_session "$N" "$QUEUE_JSON" || rc=$?
 case "$rc" in
@@ -35,4 +35,6 @@ esac
 
 [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ] && exit 0
 
-exec "$SCRIPT_DIR/notify-watch.sh" "gh-$N"
+# The agent name is derived inside spawn_work_session (grammar B, slug from
+# the issue title) and read back from its out-variable — never reconstructed.
+exec "$SCRIPT_DIR/notify-watch.sh" "${RALPH_HERDR_SPAWNED_AGENT:?spawn reported success without an agent name}"

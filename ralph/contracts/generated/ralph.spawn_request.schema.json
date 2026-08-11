@@ -1,0 +1,79 @@
+{
+  "$id": "ralph:contracts/ralph.spawn_request",
+  "type": "object",
+  "properties": {
+    "contract": {
+      "type": "string",
+      "const": "ralph.spawn_request"
+    },
+    "contract_version": {
+      "type": "number",
+      "const": 1
+    },
+    "issue": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "lane": {
+      "type": "string",
+      "enum": [
+        "w",
+        "r",
+        "o",
+        "d",
+        "s",
+        "x"
+      ]
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "harness": {
+      "type": "string",
+      "enum": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parent_ref": {
+      "type": "string"
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3
+    },
+    "invoked_by": {
+      "type": "string",
+      "enum": [
+        "human",
+        "agent",
+        "scheduler"
+      ]
+    }
+  },
+  "required": [
+    "contract",
+    "contract_version",
+    "issue",
+    "lane",
+    "slug",
+    "harness",
+    "branch",
+    "base",
+    "depth",
+    "invoked_by"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

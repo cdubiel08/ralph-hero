@@ -1,0 +1,16 @@
+{
+  "contract": "ralph.escalation",
+  "contract_version": 1,
+  "agent": "w1743-claim-v2-multi-holder",
+  "issue": 1743,
+  "title": "Claim wire format needs a call",
+  "body": "Eight grammar-B holders can overflow the Claim text field on this host. Cap the fleet at 4 holders, or keep 8 and truncate display only?",
+  "options": [
+    { "id": "cap4", "label": "Cap fleet size at 4 holders", "recommended": true },
+    { "id": "keep8", "label": "Keep 8; truncate cockpit display only", "recommended": true }
+  ],
+  "resume": {
+    "kind": "board_comment",
+    "target": "#1743"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "contract": "ralph.completion_report",
+  "contract_version": 1,
+  "agent": "w1743-claim-v2-multi-holder",
+  "agent_ref": "w1743-claim-v2-multi-holder#a3f2",
+  "issue": 1743,
+  "outcome": "completed",
+  "tests": [],
+  "blockers": [],
+  "started_at": "2026-08-10T14:00:00Z",
+  "finished_at": "2026-08-10T15:12:33Z",
+  "lineage": {
+    "spawned_by": "o1700-herdr-v2-rollout#a3f2"
+  }
+}

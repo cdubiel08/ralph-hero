@@ -1,0 +1,866 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ralph-herdr v2 — decision microworld</title>
+<style>
+:root {
+  --paper:#f5f1e8; --ink:#1b2329; --accent:#2e5d7e; --rust:#b35a2c; --moss:#5a7847;
+  --sand:#e6dcc4; --slate:#1f262b; --g150:#ece7db; --g300:#cdc6b7; --g500:#847d6c; --g700:#3a3a36; --white:#fff;
+  --serif:'Iowan Old Style',Charter,ui-serif,Georgia,serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:'JetBrains Mono','SF Mono',Menlo,ui-monospace,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--paper);color:var(--g700);font-family:var(--sans);font-size:15px;line-height:1.6;padding:48px 28px 140px}
+.wrap{max-width:1180px;margin:0 auto}
+h1{font-family:var(--serif);font-weight:500;font-size:36px;line-height:1.15;color:var(--ink);margin-bottom:14px;letter-spacing:-0.01em}
+h2{font-family:var(--serif);font-weight:500;font-size:23px;color:var(--ink);margin:46px 0 6px;scroll-margin-top:70px}
+h3{font-family:var(--serif);font-weight:500;font-size:16px;color:var(--ink);margin:18px 0 8px}
+p{margin-bottom:10px;max-width:780px}
+code{font-family:var(--mono);font-size:12.5px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--g500);margin-bottom:8px}
+.dim-sub{font-size:13.5px;color:var(--g500);max-width:780px;margin-bottom:14px}
+.topbar{position:sticky;top:0;z-index:50;background:rgba(245,241,232,.96);backdrop-filter:blur(4px);border-bottom:1.5px solid var(--g300);margin:0 -28px 28px;padding:10px 28px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.topbar .t{font-family:var(--mono);font-size:12px;color:var(--g500)}
+.topbar .chips{display:flex;gap:6px;flex-wrap:wrap}
+.tchip{font-family:var(--mono);font-size:10.5px;padding:3px 8px;border-radius:999px;border:1.5px solid var(--g300);background:var(--white);color:var(--g500);cursor:pointer;border-bottom:1.5px solid var(--g300)}
+.tchip.done{border-color:var(--moss);color:var(--moss);background:rgba(90,120,71,.1)}
+.topbar .gen{margin-left:auto;font-family:var(--mono);font-size:12px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer}
+.tldr{border:1.5px solid var(--g300);border-left:3px solid var(--accent);border-radius:10px;background:var(--white);padding:14px 18px;margin:14px 0 8px;max-width:840px}
+.tldr b{color:var(--ink)}
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:14px 0 8px}
+.opt{background:var(--white);border:2px solid var(--g300);border-radius:12px;padding:16px 18px;cursor:pointer;position:relative;transition:border-color .12s, box-shadow .12s}
+.opt:hover{border-color:var(--g500)}
+.opt.sel{border-color:var(--accent);box-shadow:0 0 0 3px rgba(46,93,126,.15)}
+.opt.sel::after{content:"✓ selected";position:absolute;top:10px;right:12px;font-family:var(--mono);font-size:10px;color:var(--accent);letter-spacing:.05em}
+.opt h3{margin:0 0 6px;font-size:15.5px}
+.opt .tag{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--g500);display:block;margin-bottom:6px}
+.opt p{font-size:13px;margin-bottom:6px}
+.opt .pro,.opt .con{font-size:12.5px;display:block;padding-left:14px;position:relative;margin-bottom:3px}
+.opt .pro::before{content:"";position:absolute;left:0;top:7px;width:6px;height:6px;border-radius:50%;background:var(--moss)}
+.opt .con::before{content:"";position:absolute;left:0;top:7px;width:6px;height:6px;border-radius:50%;background:var(--rust)}
+.opt .reco-star{color:var(--accent);font-size:11px;font-family:var(--mono)}
+.note{margin:10px 0 4px;max-width:840px}
+.note input{width:100%;font-family:var(--mono);font-size:12.5px;padding:8px 12px;border:1.5px solid var(--g300);border-radius:8px;background:var(--white);color:var(--g700)}
+.note input::placeholder{color:var(--g500)}
+.panel{background:var(--slate);border-radius:12px;padding:16px 18px;overflow-x:auto;margin:12px 0;max-width:840px}
+.panel pre{font-family:var(--mono);font-size:12px;line-height:1.6;color:#e8e6de;white-space:pre}
+.panel .kw{color:#7fb0d4}.panel .str{color:#9dba8a}.panel .cm{color:#8a8578}.panel .fn{color:#c9b98a}
+.panel .cap{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8a8578;margin-bottom:8px}
+.callout{display:flex;gap:12px;border:1.5px solid var(--sand);background:rgba(230,220,196,.35);border-radius:10px;padding:12px 16px;margin:16px 0;font-size:13.5px;max-width:840px}
+.callout .ico{color:var(--accent);font-weight:600}
+table{border-collapse:collapse;margin:12px 0 18px;background:var(--white);border:1.5px solid var(--g300);font-size:12.5px}
+th,td{padding:7px 11px;border-bottom:1px solid var(--g150);text-align:left;vertical-align:top}
+th{background:var(--g150);font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--g500)}
+tr:last-child td{border-bottom:none}
+details{border:1.5px solid var(--g300);border-radius:10px;background:var(--white);margin:12px 0;overflow:hidden;max-width:840px}
+details summary{list-style:none;cursor:pointer;padding:12px 16px;font-family:var(--serif);font-size:15.5px;color:var(--ink);display:flex;align-items:baseline;gap:10px}
+details summary::-webkit-details-marker{display:none}
+details summary::before{content:"▸";color:var(--accent);font-size:12px;transition:transform .12s}
+details[open] summary::before{transform:rotate(90deg)}
+details .body{padding:0 16px 14px}
+details .body p,details .body li{font-size:13.5px}
+.viz{background:var(--white);border:1.5px solid var(--g300);border-radius:12px;padding:18px;margin:14px 0;overflow-x:auto}
+.viz .cap{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--g500);margin-bottom:10px}
+.journeys{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin:14px 0}
+.jcard{background:var(--white);border:1.5px solid var(--g300);border-radius:12px;padding:16px}
+.jcard h3{margin:0 0 4px}
+.jcard .who{font-family:var(--mono);font-size:10.5px;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
+.jcard ol{padding-left:18px}
+.jcard li{font-size:12.5px;margin-bottom:3px}
+.jcard .touch{margin-top:8px;font-family:var(--mono);font-size:10.5px;color:var(--accent)}
+.jscope{margin-top:10px;display:flex;gap:6px}
+.jscope button{font-family:var(--mono);font-size:10.5px;padding:3px 10px;border-radius:999px;border:1.5px solid var(--g300);background:var(--g150);cursor:pointer;color:var(--g700)}
+.jscope button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+/* cockpit sim */
+.cockpit{background:#14181b;border-radius:12px;border:1.5px solid #2c343a;padding:0;margin:14px 0;font-family:var(--mono);max-width:920px;overflow:hidden;outline:none}
+.cockpit .cbar{display:flex;gap:10px;align-items:center;background:#1c2226;padding:8px 14px;border-bottom:1px solid #2c343a;font-size:11px;color:#8a9299}
+.cockpit .cbar .dotr{width:10px;height:10px;border-radius:50%;background:#b35a2c}
+.cockpit .cbar .doty{width:10px;height:10px;border-radius:50%;background:#c9993c}
+.cockpit .cbar .dotg{width:10px;height:10px;border-radius:50%;background:#5a7847}
+.cockpit .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;min-height:290px}
+.cockpit .col{border-right:1px solid #2c343a;padding:10px}
+.cockpit .col:last-child{border-right:none}
+.cockpit .col h4{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#8a9299;margin-bottom:8px;font-weight:400}
+.ccard{border:1px solid #2c343a;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:11.5px;color:#c8cdd2;cursor:pointer;background:#181d21}
+.ccard .cid{color:#7fb0d4}
+.ccard .glyph{float:right}
+.ccard .q{display:block;color:#c9993c;font-size:10.5px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ccard .ag{display:block;color:#6a737a;font-size:10px;margin-top:3px}
+.ccard.focus{border-color:#7fb0d4;background:#1c242b;box-shadow:0 0 0 2px rgba(127,176,212,.2)}
+.cockpit .status{background:#1c2226;border-top:1px solid #2c343a;padding:7px 14px;font-size:10.5px;color:#8a9299;display:flex;gap:16px;flex-wrap:wrap}
+.cockpit .status b{color:#c8cdd2;font-weight:400}
+.cockpit .overlay{background:#10151b;border-top:1px solid #2c343a;padding:12px 16px;font-size:11px;color:#9dba8a;display:none;white-space:pre-wrap;line-height:1.55}
+.cockpit .overlay.on{display:block}
+.cockpit .overlay .otitle{color:#7fb0d4;margin-bottom:6px}
+.cockpit .reply{display:none;background:#10151b;border-top:1px solid #2c343a;padding:10px 16px}
+.cockpit .reply.on{display:flex;gap:8px}
+.cockpit .reply input{flex:1;background:#181d21;border:1px solid #2c343a;color:#c8cdd2;font-family:var(--mono);font-size:12px;padding:7px 10px;border-radius:6px;outline:none}
+.cockpit .reply input:focus{border-color:#7fb0d4}
+.cockpit .reply .rlabel{color:#8a9299;font-size:11px;align-self:center;white-space:nowrap}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--slate);color:#e8e6de;font-family:var(--mono);font-size:12.5px;padding:12px 18px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:all .25s;z-index:100;pointer-events:none}
+.toast.on{opacity:1;transform:none}
+/* prompt modal */
+.pmodal{position:fixed;inset:0;background:rgba(27,35,41,.55);display:none;z-index:90;align-items:center;justify-content:center;padding:30px}
+.pmodal.on{display:flex}
+.pbox{background:var(--paper);border-radius:14px;max-width:860px;width:100%;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.pbox header{display:flex;align-items:center;padding:16px 22px;border-bottom:1.5px solid var(--g300)}
+.pbox header h3{margin:0;font-size:18px}
+.pbox header .x{margin-left:auto;cursor:pointer;font-size:20px;color:var(--g500);background:none;border:none}
+.pbox textarea{flex:1;margin:16px 22px;min-height:340px;font-family:var(--mono);font-size:12px;line-height:1.55;padding:14px;border:1.5px solid var(--g300);border-radius:10px;background:var(--white);color:var(--g700);resize:vertical}
+.pbox .pfoot{padding:0 22px 18px;display:flex;gap:10px;align-items:center}
+.pbox .pfoot button{font-family:var(--mono);font-size:12.5px;padding:9px 18px;border-radius:8px;border:1.5px solid var(--accent);cursor:pointer}
+.pbox .copy{background:var(--accent);color:#fff}
+.pbox .dl{background:var(--white);color:var(--accent)}
+.pbox .pfoot .hint{font-size:12px;color:var(--g500)}
+.sidebar-sim{background:#14181b;border-radius:10px;padding:12px 14px;font-family:var(--mono);font-size:12px;color:#c8cdd2;max-width:420px;line-height:1.9}
+.sidebar-sim .h{color:#8a9299;font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+.sidebar-sim .tok{color:#6a737a;font-size:10px}
+.sidebar-sim .b{color:#c9993c}.sidebar-sim .w{color:#9dba8a}.sidebar-sim .o{color:#7fb0d4}
+.gherk{background:var(--white);border:1.5px solid var(--g300);border-radius:10px;padding:14px 18px;font-family:var(--mono);font-size:12px;line-height:1.6;margin:12px 0;max-width:840px;overflow-x:auto;white-space:pre}
+.gherk .k{color:var(--accent)}.gherk .s{color:var(--moss)}
+.lintlist{columns:2;column-gap:28px;max-width:900px;margin:10px 0;font-size:13px}
+.lintlist label{display:block;break-inside:avoid;margin-bottom:7px;cursor:pointer}
+.lintlist input{accent-color:var(--accent);margin-right:7px}
+@media(max-width:900px){.lintlist{columns:1}.cockpit .cols{grid-template-columns:1fr}}
+.small{font-size:12.5px;color:var(--g500)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="topbar">
+  <span class="t">DECISIONS</span>
+  <div class="chips" id="chipbar"></div>
+  <button class="gen" onclick="genPrompt()">Generate prompt →</button>
+</div>
+
+<div class="eyebrow">Microworld · ralph-herdr v2 · the fleet-native cockpit · 2026-08-10</div>
+<h1>Eight decisions, then I build it</h1>
+<div class="tldr"><b>How to use this:</b> click one card per decision (D1–D8), check the lint rules and journeys you want in scope, add notes in any free-text field, try the live cockpit simulator in D7 — then hit <b>Generate prompt</b> (top right). Copy the output back to Claude and it executes. Selections persist in this browser. Recommended options are starred; nothing is preselected — the recommendations are arguments, not defaults.</div>
+
+<!-- ================= D1 NAMING ================= -->
+<h2 id="d1">D1 · Naming grammar</h2>
+<p class="dim-sub">Retiring <code>gh-N</code>. Constraint: Herdr names match <code>[a-z][a-z0-9_-]{0,31}</code>, unique among <i>live</i> agents only (dead names recycle — the ABA hazard is real, so durable refs use <code>name#spawn-epoch</code>). Shared principle across all three: <b>name = identity + scan key; metadata tokens = attributes.</b> The name is immutable at spawn — anything that changes (state, parent-after-adoption, PR#) must live in tokens.</p>
+<div class="opts" data-d="d1">
+  <div class="opt" data-v="A">
+    <span class="tag">Grammar A · readable</span>
+    <h3><code>&lt;role&gt;-&lt;issue&gt;-&lt;slug&gt;</code></h3>
+    <p><code>work-1743-oauth-refresh</code> · <code>orch-1700-auth-epic</code><br>collision → <code>--2</code> suffix (double-hyphen is reserved)</p>
+    <span class="pro">Most readable; conventional-commit feel; role words self-document</span>
+    <span class="pro">Positional parse-back always exact (role, issue = segments 1, 2)</span>
+    <span class="con">Longest overhead — 4-digit issue + "work" leaves ~19-char slug budget</span>
+    <span class="con">Role vocabulary must be a closed registry or parse-back dies</span>
+  </div>
+  <div class="opt" data-v="B">
+    <span class="tag">Grammar B · compressed <span class="reco-star">★ recommended</span></span>
+    <h3><code>&lt;lane&gt;&lt;issue&gt;-&lt;slug&gt;</code></h3>
+    <p><code>w1743-oauth-refresh</code> · <code>o1700-auth-epic</code> · <code>d1743-flaky-probe</code><br>lanes: w work · r review · o orch · d disposable · s watcher · x relay</p>
+    <span class="pro">Best sidebar density; all <code>w17xx-*</code> column-align and sort together</span>
+    <span class="pro">6-char overhead → 26-char slug; trivial regex parse <code>^([a-z])([0-9]+)-</code></span>
+    <span class="con">Cryptic for newcomers; lane alphabet finite (~6-8 letters)</span>
+    <span class="con">New role class later = migration</span>
+  </div>
+  <div class="opt" data-v="C">
+    <span class="tag">Grammar C · lineage-in-name (the foil)</span>
+    <h3><code>&lt;parent&gt;--&lt;child&gt;</code></h3>
+    <p><code>o1700--w1743-oauth</code> — dots are illegal, so <code>--</code> as path separator</p>
+    <span class="con">Names are immutable → adoption makes the name lie</span>
+    <span class="con">Depth ≥3 cannot fit in 32 chars, period</span>
+    <span class="con">Parent segment burns 6–12 chars of slug budget</span>
+    <span class="pro">Its one good idea — parent visible at a glance — is better served by a sidebar view grouped on the <code>root</code> token</span>
+  </div>
+</div>
+<div class="viz"><div class="cap">Live preview — the same herd rendered in each grammar (click a card above)</div>
+  <div class="sidebar-sim" id="namePreview"></div>
+  <p class="small" style="margin-top:8px">Token complement (any grammar): <code>role · issue · slug(full) · parent · root · depth · state · branch · claim(TTL=claim TTL — expiry becomes visible) · pr · spawn_epoch</code> — 11 of Herdr's 16-token budget, 5 spare.</p>
+</div>
+<div class="note"><input data-note="d1" placeholder="Notes on D1 (optional) — e.g. preferred lane letters, slug conventions…"></div>
+
+<!-- ================= D2 ROLES ================= -->
+<h2 id="d2">D2 · Role taxonomy</h2>
+<p class="dim-sub">Key insight: cadence's planner/researcher/developer/qa are <b>job content</b>; your disposable/sibling/orchestrator are <b>lifecycle contracts</b>. The taxonomy should be the lifecycle contract — job content goes in the slug and the brief. A "reviewer" is a disposable whose brief is a PR; it earns a taxonomy slot only if it differs in who reaps it, whether it claims, or whether it fans out.</p>
+<div class="opts" data-d="d2">
+  <div class="opt" data-v="min3">
+    <span class="tag">Minimal-3</span>
+    <h3>disposable · sibling · orchestrator</h3>
+    <span class="pro">Every lifecycle question has exactly one answer; fits in your head</span>
+    <span class="con">Infra agents (relay, watcher/janitor) get shoehorned as "orchestrator with no children"</span>
+  </div>
+  <div class="opt" data-v="ext5">
+    <span class="tag">Extended-5 (reads as 3+2) <span class="reco-star">★ recommended</span></span>
+    <h3>+ relay · watcher</h3>
+    <p>3 work classes + 2 infra classes. The <b>watcher</b> is load-bearing: single ledger writer, orphan detector, TTL reaper (see D3-C).</p>
+    <span class="pro">Infra agents get honest contracts; watcher enables the hybrid lineage store</span>
+    <span class="con">Bigger matrix; forces the "issue 0" naming carve-out (<code>s0-watch</code>, <code>x0-relay</code>)</span>
+  </div>
+</div>
+<div class="viz"><div class="cap">The lifecycle-contract matrix</div>
+<table>
+<tr><th></th><th>disposable</th><th>sibling</th><th>orchestrator</th><th>relay / watcher (ext-5)</th></tr>
+<tr><td><b>lifetime</b></td><td>one brief → one report</td><td>one issue, Ready→merged</td><td>one issue group</td><td>cockpit lifetime</td></tr>
+<tr><td><b>spawned by</b></td><td>anyone</td><td>human or fleet controller</td><td>human only</td><td>cockpit start</td></tr>
+<tr><td><b>reaped by</b></td><td>spawner; watcher after idle-TTL</td><td>self-reap on Done, or controller</td><td>human, never auto</td><td>cockpit shutdown</td></tr>
+<tr><td><b>holds claim</b></td><td><b>never</b> (spawner's claim)</td><td>own issue, TTL heartbeat</td><td>parent issue only</td><td>never</td></tr>
+<tr><td><b>spawns herdr children</b></td><td>no (in-process subagents OK)</td><td>disposables only</td><td>siblings + disposables</td><td>no</td></tr>
+<tr><td><b>notification route</b></td><td>reply-to-spawner</td><td>board is truth; courtesy ping to controller</td><td>receives child replies; escalates to human</td><td>routes / observes</td></tr>
+</table>
+</div>
+<div class="note"><input data-note="d2" placeholder="Notes on D2 — e.g. extra roles you foresee, reap policies…"></div>
+
+<!-- ================= D3 LINEAGE ================= -->
+<h2 id="d3">D3 · Agent graph &amp; lineage store — the unlock</h2>
+<p class="dim-sub">Two nesting planes in one graph: <b>herdr peers</b> (visible panes, governed: depth limits, claims, adoption) and <b>in-process Agent-tool subagents</b> (invisible to Herdr, free: auto-die with parent, orphaning impossible by construction — represented as leaf clusters via an <code>inner=N</code> count token). Depth limit: hard max 3 in the herdr plane, enforced at spawn.</p>
+<div class="opts" data-d="d3">
+  <div class="opt" data-v="ledger">
+    <span class="tag">A · Append-only JSONL ledger</span>
+    <h3>Durable history</h3>
+    <p><code>~/.ralph/&lt;repo&gt;/ledger.jsonl</code> — spawn/state/adopt/exit events; graph = fold. IDs are <code>name#epoch</code>.</p>
+    <span class="pro">Full forensics — dead ancestors queryable; survives everything</span>
+    <span class="con">Worktree-per-issue means multi-writer merge hell unless single-writer outside worktrees</span>
+    <span class="con">Drifts from reality on crash — needs reconciliation anyway</span>
+  </div>
+  <div class="opt" data-v="tokens">
+    <span class="tag">B · Herdr tokens only</span>
+    <h3>Live truth</h3>
+    <p>Each agent carries <code>parent= root= depth= state=</code>; graph = <code>agent list</code> + token join. <code>root</code> flattens the transitive closure — "everything under X" is a one-token view filter.</p>
+    <span class="pro">Cannot drift — it <i>is</i> reality; sidebar renders subtrees natively; TTL tokens give free staleness detection</span>
+    <span class="con">Dead agents vanish instantly — no forensics; dies with the herdr daemon</span>
+  </div>
+  <div class="opt" data-v="hybrid">
+    <span class="tag">C · Hybrid <span class="reco-star">★ recommended</span></span>
+    <h3>Ledger + tokens + watcher reconciles</h3>
+    <p>Agents self-report tokens only; the <b>watcher</b> (D2 ext-5) subscribes to <code>events.subscribe</code> and is the <b>sole ledger appender</b> — single-writer solved. Startup reconciliation: live-but-unledgered → <code>discover</code>; ledgered-but-gone → <code>exit:lost</code>; dead parent → adoption policy.</p>
+    <span class="pro">Durability + live display + drift repair in one design</span>
+    <span class="con">One more moving part; ledger freshness = watcher liveness (mitigate: watcher heartbeat token with TTL → cockpit shows "graph stale")</span>
+  </div>
+</div>
+<div class="viz"><div class="cap">Agent graph — one epic, two planes (SVG updates with your D1 grammar choice)</div>
+<svg id="lineageSvg" viewBox="0 0 860 300" width="100%" style="max-width:860px">
+  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#847d6c"/></marker></defs>
+  <g font-family="JetBrains Mono,monospace" font-size="11">
+    <rect x="330" y="16" width="200" height="34" rx="8" fill="#fff" stroke="#2e5d7e" stroke-width="2"/>
+    <text id="ln-orch" x="430" y="37" text-anchor="middle" fill="#1b2329">o1700-auth-epic</text>
+    <text x="430" y="10" text-anchor="middle" font-size="9" fill="#847d6c">ORCHESTRATOR · holds parent claim</text>
+    <rect x="70" y="110" width="185" height="34" rx="8" fill="#fff" stroke="#5a7847" stroke-width="2"/>
+    <text id="ln-w1" x="162" y="131" text-anchor="middle" fill="#1b2329">w1743-oauth-refresh</text>
+    <rect x="340" y="110" width="185" height="34" rx="8" fill="#fff" stroke="#5a7847" stroke-width="2"/>
+    <text id="ln-w2" x="432" y="131" text-anchor="middle" fill="#1b2329">w1744-token-store</text>
+    <rect x="608" y="110" width="185" height="34" rx="8" fill="#fff" stroke="#b35a2c" stroke-width="2" stroke-dasharray="5 3"/>
+    <text id="ln-w3" x="700" y="131" text-anchor="middle" fill="#1b2329">w1745-session-mw</text>
+    <text x="700" y="158" text-anchor="middle" font-size="9" fill="#b35a2c">⏸ blocked 6m · state token</text>
+    <rect x="40" y="210" width="150" height="30" rx="8" fill="#f5f1e8" stroke="#847d6c" stroke-width="1.5"/>
+    <text id="ln-d1" x="115" y="229" text-anchor="middle" fill="#3a3a36" font-size="10">d1743-flaky-probe</text>
+    <text x="115" y="256" text-anchor="middle" font-size="9" fill="#847d6c">DISPOSABLE · no claim</text>
+    <g opacity=".75">
+      <circle cx="410" cy="222" r="11" fill="#ece7db" stroke="#847d6c"/><circle cx="436" cy="222" r="11" fill="#ece7db" stroke="#847d6c"/>
+      <text x="423" y="256" text-anchor="middle" font-size="9" fill="#847d6c">inner=2 (Agent-tool plane, token only)</text>
+    </g>
+    <line x1="400" y1="50" x2="180" y2="110" stroke="#847d6c" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="430" y1="50" x2="432" y2="110" stroke="#847d6c" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="462" y1="50" x2="688" y2="110" stroke="#847d6c" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="140" y1="144" x2="118" y2="210" stroke="#847d6c" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+    <line x1="428" y1="144" x2="420" y2="211" stroke="#cdc6b7" stroke-width="1.2" stroke-dasharray="2 3"/>
+    <text x="14" y="290" font-size="9.5" fill="#847d6c">solid = spawn edge (ledger event + parent token) · dashed = disposable · dotted = in-process · orphan policy: parent reaped → cascade; parent crashed → adopt-to-grandparent, else escalate + freeze claim</text>
+  </g>
+</svg>
+</div>
+<div class="viz"><div class="cap">Lifecycle state machine — H = herdr-native, S = self-report token, D = watcher-derived</div>
+<svg viewBox="0 0 860 190" width="100%" style="max-width:860px">
+  <defs><marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2e5d7e"/></marker></defs>
+  <g font-family="JetBrains Mono,monospace" font-size="10.5">
+    <g><rect x="16" y="40" width="86" height="28" rx="14" fill="#fff" stroke="#2e5d7e" stroke-width="1.5"/><text x="59" y="58" text-anchor="middle" fill="#1b2329">spawned</text><text x="59" y="30" text-anchor="middle" font-size="8.5" fill="#5a7847">H</text></g>
+    <g><rect x="146" y="40" width="80" height="28" rx="14" fill="#fff" stroke="#2e5d7e" stroke-width="1.5"/><text x="186" y="58" text-anchor="middle" fill="#1b2329">briefed</text><text x="186" y="30" text-anchor="middle" font-size="8.5" fill="#b35a2c">S</text></g>
+    <g><rect x="270" y="40" width="86" height="28" rx="14" fill="#fff" stroke="#2e5d7e" stroke-width="1.5"/><text x="313" y="58" text-anchor="middle" fill="#1b2329">working</text><text x="313" y="30" text-anchor="middle" font-size="8.5" fill="#5a7847">H±S</text></g>
+    <g><rect x="270" y="120" width="86" height="28" rx="14" fill="#fff" stroke="#c9993c" stroke-width="1.5"/><text x="313" y="138" text-anchor="middle" fill="#1b2329">blocked</text><text x="313" y="166" text-anchor="middle" font-size="8.5" fill="#847d6c">mirror: board → Human Needed</text></g>
+    <g><rect x="404" y="40" width="96" height="28" rx="14" fill="#fff" stroke="#2e5d7e" stroke-width="1.5"/><text x="452" y="58" text-anchor="middle" fill="#1b2329">reporting</text><text x="452" y="30" text-anchor="middle" font-size="8.5" fill="#b35a2c">S</text></g>
+    <g><rect x="548" y="40" width="80" height="28" rx="14" fill="#ece7db" stroke="#847d6c" stroke-width="1.5"/><text x="588" y="58" text-anchor="middle" fill="#1b2329">reaped</text><text x="588" y="30" text-anchor="middle" font-size="8.5" fill="#5a7847">H</text></g>
+    <g><rect x="548" y="120" width="96" height="28" rx="14" fill="#fff" stroke="#b35a2c" stroke-width="1.5"/><text x="596" y="138" text-anchor="middle" fill="#1b2329">orphaned</text><text x="596" y="166" text-anchor="middle" font-size="8.5" fill="#847d6c">D · adopt | cascade | escalate</text></g>
+    <g><rect x="700" y="120" width="86" height="28" rx="14" fill="#fff" stroke="#5a7847" stroke-width="1.5"/><text x="743" y="138" text-anchor="middle" fill="#1b2329">adopted</text></g>
+    <line x1="102" y1="54" x2="146" y2="54" stroke="#2e5d7e" stroke-width="1.3" marker-end="url(#arr2)"/>
+    <line x1="226" y1="54" x2="270" y2="54" stroke="#2e5d7e" stroke-width="1.3" marker-end="url(#arr2)"/>
+    <line x1="356" y1="54" x2="404" y2="54" stroke="#2e5d7e" stroke-width="1.3" marker-end="url(#arr2)"/>
+    <line x1="500" y1="54" x2="548" y2="54" stroke="#2e5d7e" stroke-width="1.3" marker-end="url(#arr2)"/>
+    <path d="M300 68 L300 120" stroke="#c9993c" stroke-width="1.3" marker-end="url(#arr2)"/>
+    <path d="M326 120 L326 68" stroke="#c9993c" stroke-width="1.3" marker-end="url(#arr2)"/>
+    <path d="M356 134 Q450 134 548 134" stroke="#b35a2c" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arr2)"/>
+    <line x1="644" y1="134" x2="700" y2="134" stroke="#5a7847" stroke-width="1.3" marker-end="url(#arr2)"/>
+    <path d="M743 120 Q743 54 628 54" stroke="#5a7847" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arr2)"/>
+    <text x="16" y="100" font-size="9" fill="#847d6c">herdr gives you the edges of life (spawn/exit/busy) natively; the middle is a self-report contract written into every brief — which is why state lives in tokens and the watcher exists.</text>
+  </g>
+</svg>
+</div>
+<div class="note"><input data-note="d3" placeholder="Notes on D3 — e.g. ledger path preference, depth limit, orphan policy overrides…"></div>
+
+<!-- ================= D4 FLEET ================= -->
+<h2 id="d4">D4 · Fleets over issue groups</h2>
+<div class="opts" data-d="d4">
+  <div class="opt" data-v="frontier">
+    <span class="tag">A · Board-frontier pool</span>
+    <h3>Query Ready, keep k live, refill</h3>
+    <span class="pro">Claims are the mutex — conflicts are benign skip-and-next; no idle barriers</span>
+    <span class="con">Unmodeled dependency → picks blocked-in-reality work; shared-file rebase churn</span>
+  </div>
+  <div class="opt" data-v="epic">
+    <span class="tag">B · Epic-subtree orchestrator</span>
+    <h3>Orch claims parent, walks sub-issues</h3>
+    <span class="pro">Claim tree mirrors agent tree; merge order is orch-controlled — rebase storms scheduled, not emergent</span>
+    <span class="con">Orch death orphans the subtree (D3 adoption is load-bearing); serialization point past ~8 leaves</span>
+  </div>
+  <div class="opt" data-v="waves">
+    <span class="tag">C · DAG waves</span>
+    <h3>Topo-sort, barrier per wave</h3>
+    <span class="pro">Within-wave conflicts impossible by construction; cleanest history</span>
+    <span class="con">One straggler blocks the barrier; fictional waves when dependency edges are stale</span>
+  </div>
+  <div class="opt" data-v="synth">
+    <span class="tag">E · Synthesis <span class="reco-star">★ recommended</span></span>
+    <h3>Dependency-aware work-stealing frontier</h3>
+    <p>C-as-scheduler + A-as-executor: refill the pool with any issue whose blockers are all merged (streamed Kahn's algorithm). No barriers, no unmodeled pickups.</p>
+    <span class="pro">Degrades only when the dependency graph is wrong — a board-hygiene problem (<code>tend</code>'s job), not a fleet problem</span>
+    <span class="con">Requires dependency edges as structured board data, or every viz and wave lies (D5 contract note)</span>
+  </div>
+</div>
+<p class="small">D · Static assignment (human picks the set) stays available as the demo/curated mode — it's a flag, not a strategy decision.</p>
+<div class="viz"><div class="cap">Issue DAG with wave overlay — node fill = board column, ring = agent state; the synthesis streams the frontier instead of waiting at wave boundaries</div>
+<svg viewBox="0 0 860 240" width="100%" style="max-width:860px">
+  <g font-family="JetBrains Mono,monospace" font-size="10.5">
+    <rect x="20" y="20" width="200" height="200" rx="10" fill="rgba(90,120,71,.07)"/><text x="120" y="38" text-anchor="middle" fill="#5a7847" font-size="9.5">WAVE 1 · merged</text>
+    <rect x="240" y="20" width="240" height="200" rx="10" fill="rgba(201,153,60,.08)"/><text x="360" y="38" text-anchor="middle" fill="#8a6420" font-size="9.5">WAVE 2 · in flight</text>
+    <rect x="500" y="20" width="200" height="200" rx="10" fill="rgba(46,93,126,.06)"/><text x="600" y="38" text-anchor="middle" fill="#2e5d7e" font-size="9.5">WAVE 3 · frontier-eligible</text>
+    <rect x="716" y="20" width="126" height="200" rx="10" fill="rgba(132,125,108,.08)"/><text x="779" y="38" text-anchor="middle" fill="#847d6c" font-size="9.5">BLOCKED-BY</text>
+    <defs><marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#cdc6b7"/></marker></defs>
+    <circle cx="90" cy="90" r="22" fill="#5a7847"/><text x="90" y="94" text-anchor="middle" fill="#fff">1741</text>
+    <circle cx="90" cy="170" r="22" fill="#5a7847"/><text x="90" y="174" text-anchor="middle" fill="#fff">1742</text>
+    <circle cx="320" cy="70" r="22" fill="#fff" stroke="#c9993c" stroke-width="3"/><text x="320" y="74" text-anchor="middle" fill="#1b2329">1743</text>
+    <circle cx="320" cy="150" r="22" fill="#fff" stroke="#b35a2c" stroke-width="3" stroke-dasharray="4 3"/><text x="320" y="154" text-anchor="middle" fill="#1b2329">1744</text>
+    <text x="320" y="190" text-anchor="middle" font-size="9" fill="#b35a2c">⏸ blocked</text>
+    <circle cx="420" cy="110" r="22" fill="#fff" stroke="#c9993c" stroke-width="3"/><text x="420" y="114" text-anchor="middle" fill="#1b2329">1745</text>
+    <circle cx="590" cy="90" r="22" fill="#fff" stroke="#2e5d7e" stroke-width="2"/><text x="590" y="94" text-anchor="middle" fill="#1b2329">1746</text>
+    <text x="590" y="130" text-anchor="middle" font-size="9" fill="#2e5d7e">spawns the moment<tspan x="590" dy="11">1743 merges — no barrier</tspan></text>
+    <circle cx="590" cy="180" r="22" fill="#fff" stroke="#cdc6b7" stroke-width="2"/><text x="590" y="184" text-anchor="middle" fill="#847d6c">1747</text>
+    <line x1="112" y1="90" x2="298" y2="72" stroke="#cdc6b7" stroke-width="1.5" marker-end="url(#arr3)"/>
+    <line x1="112" y1="166" x2="298" y2="152" stroke="#cdc6b7" stroke-width="1.5" marker-end="url(#arr3)"/>
+    <line x1="112" y1="96" x2="398" y2="106" stroke="#cdc6b7" stroke-width="1.5" marker-end="url(#arr3)"/>
+    <line x1="342" y1="74" x2="568" y2="88" stroke="#cdc6b7" stroke-width="1.5" marker-end="url(#arr3)"/>
+    <line x1="442" y1="116" x2="568" y2="176" stroke="#cdc6b7" stroke-width="1.5" marker-end="url(#arr3)"/>
+    <line x1="342" y1="154" x2="568" y2="180" stroke="#cdc6b7" stroke-width="1.5" marker-end="url(#arr3)"/>
+  </g>
+</svg>
+</div>
+<div class="note"><input data-note="d4" placeholder="Notes on D4 — e.g. default k, refill cadence, when to force static mode…"></div>
+
+<!-- ================= D5 CONTRACTS ================= -->
+<h2 id="d5">D5 · Contract stack</h2>
+<p class="dim-sub">Ten boundaries need versioned JSON contracts (C1 SpawnRequest · C2 CompletionReport · C3 FleetBrief · C4 FleetReply · C5 BoardMutation · C6 BoardQueue · C7 LineageRecord · C8 TokenVocabulary · C9 EscalationPayload · C10 the pinned Herdr envelope). C6 is today's most-consumed, least-declared. Every contract: <code>contract</code> + <code>contract_version</code> fields, unknown-higher versions refuse loudly, <code>additionalProperties: false</code> on producers / ignore-unknown on consumers.</p>
+<div class="opts" data-d="d5">
+  <div class="opt" data-v="jsonschema">
+    <span class="tag">A · JSON Schema files in-repo</span>
+    <h3>Language-neutral, herdr-native format</h3>
+    <p><code>ralph/contracts/*.schema.json</code>; CI = check-jsonschema + ajv over examples/bad-examples; runtime = <code>board contract validate</code> verb + jq structural asserts on hot bash paths.</p>
+    <span class="pro">Off-the-shelf tooling; no toolchain coupling</span>
+    <span class="con">Schema ↔ board.ts type drift needs its own test; cross-field rules are ugly if/then chains</span>
+  </div>
+  <div class="opt" data-v="zod">
+    <span class="tag">B · Zod-in-board.ts, emitted artifacts <span class="reco-star">★ recommended</span></span>
+    <h3>One source where the logic lives</h3>
+    <p>Zod schemas <i>are</i> the TS types (<code>z.infer</code> kills QueueItem drift); <code>zod-to-json-schema</code> emits artifacts for the bash side; CI fails on stale generated files; bash validates via <code>board contract validate</code> or ajv on artifacts.</p>
+    <span class="pro">Parse = validate at every board.ts boundary; superRefine expresses cross-field rules cleanly</span>
+    <span class="con">Generated JSON Schema loses refinements — bash side is structural-only; ties contracts to the TS toolchain</span>
+  </div>
+  <div class="opt" data-v="cue">
+    <span class="tag">C · CUE structure + policy</span>
+    <h3>One artifact for schema and policy</h3>
+    <p>Constraints like fleet-cap ≤ 4 and TTL bounds are first-class; vets config files too.</p>
+    <span class="pro">Best expressiveness; config vetting for free</span>
+    <span class="con">New toolchain in a "gh + jq" repo; CUE→TS codegen immature; runtime still ends up JSON-Schema-shaped</span>
+  </div>
+</div>
+<details><summary>Example contract instances (C2 CompletionReport · C3 FleetBrief · C7 LineageRecord)</summary><div class="body">
+<div class="panel"><div class="cap">C2 · completion report — outcome-conditional requirements: pr+sha iff completed, blockers[] iff blocked</div><pre>{ <span class="str">"contract"</span>: <span class="str">"ralph.completion_report"</span>, <span class="str">"contract_version"</span>: 1,
+  <span class="str">"agent"</span>: <span class="str">"w1743-oauth-refresh"</span>, <span class="str">"issue"</span>: 1743, <span class="str">"outcome"</span>: <span class="str">"completed"</span>,
+  <span class="str">"pr"</span>: 1745, <span class="str">"commit_sha"</span>: <span class="str">"9f2c1ab8…"</span>, <span class="str">"board_state_claimed"</span>: <span class="str">"In Review"</span>,
+  <span class="str">"tests"</span>: [<span class="str">"npx vitest run …"</span>], <span class="str">"blockers"</span>: [],
+  <span class="str">"lineage"</span>: {<span class="str">"spawned_by"</span>: <span class="str">"o1700-auth-epic#9b01"</span>, <span class="str">"parent_issue"</span>: 1700} }</pre></div>
+<div class="panel"><div class="cap">C3 · fleet brief — reply_to required (lint L1); skill_invocation derivable from role+issue (deliberate checkable redundancy)</div><pre>{ <span class="str">"contract"</span>: <span class="str">"ralph.fleet_brief"</span>, <span class="str">"contract_version"</span>: 1,
+  <span class="str">"issue"</span>: 1743, <span class="str">"role"</span>: <span class="str">"work"</span>, <span class="str">"skill_invocation"</span>: <span class="str">"/ralph:work 1743"</span>,
+  <span class="str">"reply_to"</span>: {<span class="str">"kind"</span>: <span class="str">"herdr_agent"</span>, <span class="str">"name"</span>: <span class="str">"o1700-auth-epic"</span>},
+  <span class="str">"report_path"</span>: <span class="str">"~/.ralph/runs/…/w1743/report.json"</span>,
+  <span class="str">"constraints"</span>: {<span class="str">"branch"</span>: <span class="str">"feature/GH-1743"</span>, <span class="str">"base"</span>: <span class="str">"origin/main"</span>, <span class="str">"no_force"</span>: true} }</pre></div>
+<div class="panel"><div class="cap">C7 · lineage record — pane_id documented as opaque and server-scoped; agent#epoch is the durable key</div><pre>{ <span class="str">"contract"</span>: <span class="str">"ralph.lineage"</span>, <span class="str">"contract_version"</span>: 1,
+  <span class="str">"agent"</span>: <span class="str">"w1743-oauth-refresh#a4f2"</span>, <span class="str">"issue"</span>: 1743, <span class="str">"parent_issue"</span>: 1700,
+  <span class="str">"spawner"</span>: {<span class="str">"script"</span>: <span class="str">"work-fleet.sh"</span>, <span class="str">"invoked_by"</span>: <span class="str">"human"</span>},
+  <span class="str">"herdr"</span>: {<span class="str">"pane_id"</span>: <span class="str">"pn_8f3a"</span>, <span class="str">"worktree_branch"</span>: <span class="str">"feature/GH-1743"</span>} }</pre></div>
+</div></details>
+<h3>Semantic lint rules — check the ones in scope (all recommended)</h3>
+<div class="lintlist" id="lints">
+  <label><input type="checkbox" checked data-lint="L1"> <b>L1</b> brief-must-carry-reply-address (resolvable at send time)</label>
+  <label><input type="checkbox" checked data-lint="L2"> <b>L2</b> agent-name-parses-to-issue+role; issue live on board</label>
+  <label><input type="checkbox" checked data-lint="L3"> <b>L3</b> report commit_sha exists in repo; PR head contains it</label>
+  <label><input type="checkbox" checked data-lint="L4"> <b>L4</b> outcome-evidence coherence (completed ⇒ pr+sha; blocked ⇒ blockers[])</label>
+  <label><input type="checkbox" checked data-lint="L5"> <b>L5</b> claim-TTL consistency vs live board read-back</label>
+  <label><input type="checkbox" checked data-lint="L6"> <b>L6</b> contract-version-known; unknown-higher refuses loudly</label>
+  <label><input type="checkbox" checked data-lint="L7"> <b>L7</b> no-orphan-parent-ref (rollup integrity, fail closed)</label>
+  <label><input type="checkbox" checked data-lint="L8"> <b>L8</b> branch-name-derivable from issue (grammar violation, not preference)</label>
+  <label><input type="checkbox" checked data-lint="L9"> <b>L9</b> queue-rank integrity (.next ≡ .queue[0]; numbers unique)</label>
+  <label><input type="checkbox" checked data-lint="L10"> <b>L10</b> lineage-closure (every live agent ↔ exactly one open record)</label>
+  <label><input type="checkbox" checked data-lint="L11"> <b>L11</b> escalation-has-resume-path (machine-actionable, never prose alone)</label>
+  <label><input type="checkbox" checked data-lint="L12"> <b>L12</b> no-secret-leak in durable payloads (key patterns)</label>
+  <label><input type="checkbox" checked data-lint="L13"> <b>L13</b> timestamp sanity (UTC ISO-8601, ordering, future deadlines)</label>
+</div>
+<div class="note"><input data-note="d5" placeholder="Notes on D5 — e.g. contracts to add/cut, versioning policy…"></div>
+
+<!-- ================= D6 TESTS ================= -->
+<h2 id="d6">D6 · Test strategy + BDD executor</h2>
+<p class="dim-sub">Shared pyramid regardless of choice: L0 metaschema/drift checks → L1 round-trips + bad-examples → L2 golden files (recorded herdr responses; every jq expression in lib.sh tested as a unit) → L3 bats with a fake <code>herdr</code> shim (bash 3.2-compatible) → L4 live integration against <code>herdr --session ralph-test</code> (isolated socket) → L5 chaos (server restart mid-wait, pane closed between worktree-create and agent-start, the rc-file race, claim expiry mid-run).</p>
+<div class="opts" data-d="d6">
+  <div class="opt" data-v="replay">
+    <span class="tag">Record/replay-first</span>
+    <h3>Transcript capture + deterministic replays</h3>
+    <p>A herdr wrapper tees every request/response to <code>tests/transcripts/*.jsonl</code>; replays drive the fake shim; protocol upgrades = re-record once, diff.</p>
+    <span class="pro">Fast (&lt;10s), deterministic, no live server in CI; transcript diff doubles as protocol-migration detector</span>
+    <span class="con">Blind to timing races — exactly the bug class this codebase has actually hit; staleness is the failure mode</span>
+  </div>
+  <div class="opt" data-v="live">
+    <span class="tag">Live-session-first</span>
+    <h3>Named test session per PR</h3>
+    <span class="pro">Highest confidence where it matters (timing, restart semantics); catches herdr upgrades immediately</span>
+    <span class="con">herdr in CI, scratch board + PAT, minutes not seconds, flake management</span>
+  </div>
+  <div class="opt" data-v="hybrid">
+    <span class="tag">Hybrid <span class="reco-star">★ recommended</span></span>
+    <h3>Replay per-PR + nightly live + incident rule</h3>
+    <p>Rule: <b>every live incident that produces a lib.sh comment must also produce a transcript or chaos case.</b></p>
+    <span class="pro">Cheap loop + real coverage; institutionalizes the lessons currently memorialized as prose comments</span>
+    <span class="con">Two harnesses to maintain</span>
+  </div>
+</div>
+<h3>BDD executor</h3>
+<div class="opts" data-d="d6b">
+  <div class="opt" data-v="cucumber">
+    <span class="tag">cucumber-js on the socket <span class="reco-star">★ recommended if D5=Zod</span></span>
+    <h3>Real execution binding</h3>
+    <p>Step defs in TS reuse the Zod contracts, drive <code>herdr --session</code>, assert on NDJSON events (<code>pane_agent_status_changed</code>).</p>
+    <span class="pro">Features actually execute; event-level asserts</span>
+    <span class="con">New dep; TS step-def maintenance</span>
+  </div>
+  <div class="opt" data-v="bats">
+    <span class="tag">bats + gherkin-lite convention</span>
+    <h3>Zero new deps</h3>
+    <p>Each scenario = one bats test named for the scenario line; features/ are documentation with a lint that every scenario name has a matching test.</p>
+    <span class="pro">Matches repo ethos; runs the real bash</span>
+    <span class="con">Features don't execute — drift risk held off only by the lint</span>
+  </div>
+</div>
+<details><summary>Sample scenarios (the feature corpus is shared; tag @replay / @live)</summary><div class="body">
+<div class="gherk"><span class="k">Feature:</span> Fleet spawn honors the naming grammar
+  <span class="k">Scenario:</span> spawn derives agent, branch, and label from one issue number
+    <span class="k">Given</span> the board queue ranks issue 1743 first with parent 1700
+    <span class="k">When</span> the cockpit spawns the next work session
+    <span class="k">Then</span> a herdr agent named <span class="s">"w1743-oauth-refresh"</span> is live
+    <span class="k">And</span> its worktree branch is <span class="s">"feature/GH-1743"</span> based on origin/main
+    <span class="k">And</span> a lineage record binds the agent to issue 1743 and parent 1700
+
+<span class="k">Feature:</span> Blocked agents escalate
+  <span class="k">Scenario:</span> one escalation within 10 seconds, no repeats while blocked
+    <span class="k">Given</span> agent <span class="s">"w1743-oauth-refresh"</span> is watched
+    <span class="k">When</span> its herdr status changes to <span class="s">"blocked"</span>
+    <span class="k">Then</span> an escalation referencing it is emitted within 10 seconds
+    <span class="k">And</span> the payload carries a machine-actionable resume path
+
+<span class="k">Feature:</span> Human answers via card and the agent resumes
+  <span class="k">Scenario:</span> card answer flows comment-first, then prompt
+    <span class="k">Given</span> issue 1745 is Human Needed with enumerated options on the issue
+    <span class="k">When</span> the human answers <span class="s">"B"</span> via the card
+    <span class="k">Then</span> the answer lands as a GitHub issue comment first
+    <span class="k">And</span> any live agent is prompted to re-read and resume
+    <span class="k">And</span> the card leaves Human Needed on the next reconcile</div>
+</div></details>
+<div class="note"><input data-note="d6" placeholder="Notes on D6 — e.g. CI budget, nightly cadence, chaos priorities…"></div>
+
+<!-- ================= D7 CARDS ================= -->
+<h2 id="d7">D7 · Human surface — the clickable cards</h2>
+<p class="dim-sub">Constraint: Herdr has no custom TUI widgets — panes ARE the UI, so the card surface is a terminal program in a plugin pane. Web cockpit assessed and rejected (GitHub Projects is already the web board; PTY-streaming reopens the plaintext-transcript hygiene problem) — web survives only as generated HTML <i>reports</i> opened via link handler. Governing rule everywhere: <b>board state is authoritative; herdr agent state is a decoration overlay — never the reverse.</b></p>
+<div class="opts" data-d="d7">
+  <div class="opt" data-v="linksOnly">
+    <span class="tag">A · Substrate only</span>
+    <h3>Link handlers + tokens + attend</h3>
+    <p>Ctrl-click any issue/PR URL anywhere → focus live agent or offer spawn; sidebar tokens + a blocked-first agent view are the attention inbox.</p>
+    <span class="pro">Ships this week; zero drift; works where your eye already is</span>
+    <span class="con">No board overview as cards; reply is still focus-and-type; agent-less Human Needed items invisible</span>
+  </div>
+  <div class="opt" data-v="cardtui">
+    <span class="tag">A + B · Card TUI pane <span class="reco-star">★ recommended</span></span>
+    <h3><code>ralph cockpit</code> — bubbletea, 5-rung degradation</h3>
+    <p>Board columns as cards; Enter observe, o peek, r reply, a answer (comment-first), s spawn, d diff, v DAG view. Data = board JSON poll for correctness + <code>events.subscribe</code> for feel. Degrades: full → poll-only → fzf loop → dashboard.sh → board/gh standalone. Every rung down loses chrome, never a verb.</p>
+    <span class="pro">The walk-the-herd overview; answer is a 3-keystroke loop; A ships first as its substrate</span>
+    <span class="con">A real binary to build/version ([[build]] step); two renderers of one truth — the authority rule must be enforced in code</span>
+  </div>
+</div>
+<div class="viz"><div class="cap">Live simulator — click into it, then: ←→/hl columns · ↑↓/jk cards · Enter observe · o peek · r reply · a answer · Esc close. Mouse: click selects, double-click observes.</div>
+  <div class="cockpit" id="cockpit" tabindex="0">
+    <div class="cbar"><span class="dotr"></span><span class="doty"></span><span class="dotg"></span><span style="margin-left:8px">ralph cockpit — split-right pane · events: live · board: 12s ago</span></div>
+    <div class="cols" id="cols"></div>
+    <div class="overlay" id="overlay"></div>
+    <div class="reply" id="replyBox"><span class="rlabel" id="replyLabel">reply →</span><input id="replyInput" placeholder="type, Enter to deliver — no optimistic checkmark; ✓ only after herdr confirms"></div>
+    <div class="status"><b id="statusLine">select a card</b><span style="margin-left:auto">Enter observe · o peek · r reply · a answer · s spawn · v DAG · q quit</span></div>
+  </div>
+</div>
+<div class="note"><input data-note="d7" placeholder="Notes on D7 — e.g. binding changes, must-have card fields, fzf-first instead of bubbletea…"></div>
+
+<!-- ================= D8 EXTENSIBILITY ================= -->
+<h2 id="d8">D8 · Extensibility guardrails</h2>
+<div class="opts" data-d="d8">
+  <div class="opt" data-v="adapter">
+    <span class="tag">Adapter-strict <span class="reco-star">★ recommended</span></span>
+    <h3>Four-verb adapter interface</h3>
+    <p>Cards and skills call <code>focus / prompt / tail / spawn</code> through a <code>ralph cockpit</code> adapter — herdr is implementation #1; tmux/zellij/standalone implement the same four verbs; no adapter degrades every verb to its board/gh equivalent. Answer path is comment-first by construction, so the durable half survives a vanished multiplexer.</p>
+    <span class="pro">Multiplexer-agnostic from day one — the vendor-risk hedge the gap analysis demanded</span>
+    <span class="con">Indirection tax on every call; adapter interface becomes its own contract to version</span>
+  </div>
+  <div class="opt" data-v="herdrFirst">
+    <span class="tag">Herdr-native-first</span>
+    <h3>Direct herdr CLI, abstract later</h3>
+    <span class="pro">Less machinery now; herdr verbs are already good</span>
+    <span class="con">Every script grows herdr assumptions; the retreat gets more expensive monthly</span>
+  </div>
+</div>
+<p class="small">Fixed regardless of choice (from all three lenses): append-only events ledger <code>{ts, kind, issue, agent?, from?, to?}</code> feeds all visualizations — reports never read the socket directly; card metadata additive-only with schema_version; sidebar tokens/notifications stay best-effort decoration; dependency edges must be structured board data.</p>
+<div class="note"><input data-note="d8" placeholder="Notes on D8…"></div>
+
+<!-- ================= JOURNEYS ================= -->
+<h2 id="journeys">Hero journeys — scope each (v1 / v2 / cut)</h2>
+<div class="journeys" id="jgrid">
+  <div class="jcard" data-j="J1">
+    <div class="who">J1 · Solo maintainer, morning</div>
+    <h3>Inbox-zero in 12 minutes</h3>
+    <ol><li>Open herdr — cockpit restored, transcripts intact</li><li>Attention inbox: 2 blocked, 1 Human Needed, 3 In Review</li><li>First card shows the question verbatim → <code>r</code> reply, delivered ✓</li><li>Second is a permission prompt → Enter, approve in-pane, hop back</li><li>Human Needed (no session) → <code>a</code> answer as issue comment</li><li>Skim 3 review diffs via <code>d</code> popups</li><li>Spawn deliver-pass; notification: 3 merged</li><li><code>s</code> on top Ready card before context-switching away</li></ol>
+    <div class="touch">touches: naming (scan), tokens, answer contract</div>
+    <div class="jscope"><button data-s="v1" class="on">v1</button><button data-s="v2">v2</button><button data-s="cut">cut</button></div>
+  </div>
+  <div class="jcard" data-j="J2">
+    <div class="who">J2 · Fleet commander, epic of 12</div>
+    <h3>One intervention, twelve issues</h3>
+    <ol><li>Hand epic #1700 to an orchestrator</li><li>DAG view: 12 nodes, 3 waves; wave 1 running</li><li>Sidebar groups children under the epic (root token)</li><li>Wave 2: two siblings hit the same rebase conflict, block adjacent — pattern visible because cards sit together</li><li>Resolve one in-pane; <code>r</code> the other with the fix</li><li>Waves complete; deliver merges in dependency order</li><li>Lineage tree archived as HTML into the epic's closing comment</li></ol>
+    <div class="touch">touches: lineage, DAG edges as board data, fleet strategy</div>
+    <div class="jscope"><button data-s="v1">v1</button><button data-s="v2" class="on">v2</button><button data-s="cut">cut</button></div>
+  </div>
+  <div class="jcard" data-j="J3">
+    <div class="who">J3 · Phone-only escalation</div>
+    <h3>The board is the only remote surface</h3>
+    <ol><li>Agent hits an irreversible choice → Human Needed + issue comment with enumerated options ("Recommend B")</li><li>GitHub mobile push — no herdr dependency off-desk</li><li>Reply "B" from phone</li><li>Watcher detects the comment → back to In Progress → agent prompted to re-read and resume</li><li>Desk 2h later: inbox empty, PR in review</li></ol>
+    <div class="touch">touches: escalation contract (phone-answerable, enumerated), comment-first answer path</div>
+    <div class="jscope"><button data-s="v1" class="on">v1</button><button data-s="v2">v2</button><button data-s="cut">cut</button></div>
+  </div>
+  <div class="jcard" data-j="J4">
+    <div class="who">J4 · New adopter</div>
+    <h3>0 → merged PR in 30 minutes</h3>
+    <ol><li>Plugin install; doctor popup: red, but every red line carries its remedy</li><li><code>board init</code> → green</li><li>File first issue via intake; work-next spawns <code>w1-…</code></li><li>Ctrl-clicks the issue URL the agent printed — learns the click affordance by accident</li><li>Blocked → notification names agent + state → attend → approve</li><li>Deliver pass → merged. Five names touched, each did what it said</li></ol>
+    <div class="touch">touches: board init, naming discoverability, doctor remedies</div>
+    <div class="jscope"><button data-s="v1" class="on">v1</button><button data-s="v2">v2</button><button data-s="cut">cut</button></div>
+  </div>
+</div>
+
+<div class="viz"><div class="cap">Message-activity swimlane (per issue) — the form chosen over sequence diagrams past ~10 messages; feeds from the events ledger + gh timeline. TUI shows only a last-5-events strip; this is the HTML-report artifact.</div>
+<svg viewBox="0 0 860 210" width="100%" style="max-width:860px">
+  <g font-family="JetBrains Mono,monospace" font-size="10">
+    <text x="8" y="44" fill="#847d6c">human</text><line x1="70" y1="40" x2="850" y2="40" stroke="#ece7db" stroke-width="18"/>
+    <text x="8" y="89" fill="#847d6c">agent</text><line x1="70" y1="85" x2="850" y2="85" stroke="#ece7db" stroke-width="18"/>
+    <text x="8" y="134" fill="#847d6c">board</text><line x1="70" y1="130" x2="850" y2="130" stroke="#ece7db" stroke-width="18"/>
+    <text x="8" y="179" fill="#847d6c">ci</text><line x1="70" y1="175" x2="850" y2="175" stroke="#ece7db" stroke-width="18"/>
+    <rect x="90" y="78" width="240" height="14" rx="7" fill="#5a7847" opacity=".8"/><text x="94" y="72" fill="#5a7847">working 38m</text>
+    <rect x="330" y="78" width="90" height="14" rx="7" fill="#c9993c" opacity=".85"/><text x="334" y="72" fill="#8a6420">blocked 12m</text>
+    <rect x="420" y="78" width="300" height="14" rx="7" fill="#5a7847" opacity=".8"/>
+    <circle cx="120" cy="130" r="6" fill="#2e5d7e"/><text x="112" y="152" fill="#2e5d7e">→In Prog</text>
+    <circle cx="345" cy="130" r="6" fill="#b35a2c"/><text x="322" y="152" fill="#b35a2c">→Human Needed</text>
+    <circle cx="360" cy="40" r="6" fill="#2e5d7e"/><text x="340" y="28" fill="#2e5d7e">answer "B"</text>
+    <circle cx="430" cy="130" r="6" fill="#2e5d7e"/><text x="418" y="152" fill="#2e5d7e">→In Prog</text>
+    <circle cx="700" cy="130" r="6" fill="#5a7847"/><text x="680" y="152" fill="#5a7847">→In Review</text>
+    <rect x="700" y="168" width="110" height="14" rx="7" fill="#2e5d7e" opacity=".7"/><text x="704" y="200" fill="#2e5d7e">checks 9m ✓</text>
+    <line x1="352" y1="46" x2="368" y2="78" stroke="#847d6c" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="740" y="28" fill="#847d6c">PR #1745 opened ↗</text><circle cx="726" cy="40" r="6" fill="#5a7847"/>
+  </g>
+</svg>
+</div>
+
+<!-- ================= GENERATE ================= -->
+<h2 id="gen">Generate the execution prompt</h2>
+<p>When your eight decisions are made (chips above all green), generate the prompt and paste it back to Claude. It includes every selection, checked lint rules, journey scoping, and your notes.</p>
+<p><button class="gen" style="font-size:14px;padding:12px 24px" onclick="genPrompt()">Generate prompt →</button></p>
+
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="pmodal" id="pmodal">
+  <div class="pbox">
+    <header><h3>Execution prompt — paste this back to Claude</h3><button class="x" onclick="document.getElementById('pmodal').classList.remove('on')">×</button></header>
+    <textarea id="ptext" spellcheck="false"></textarea>
+    <div class="pfoot">
+      <button class="copy" onclick="copyPrompt()">Copy to clipboard</button>
+      <span class="hint" id="phint"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- state ----------
+const DIMS = ["d1","d2","d3","d4","d5","d6","d6b","d7","d8"];
+const LABELS = {d1:"D1 naming",d2:"D2 roles",d3:"D3 lineage",d4:"D4 fleet",d5:"D5 contracts",d6:"D6 tests",d6b:"D6b BDD",d7:"D7 cards",d8:"D8 extensibility"};
+const OPTDESC = {
+  d1:{A:"Grammar A — <role>-<issue>-<slug> (readable, e.g. work-1743-oauth-refresh)",B:"Grammar B — <lane><issue>-<slug> (compressed, e.g. w1743-oauth-refresh)",C:"Grammar C — lineage-in-name (the foil; if chosen, revisit — flagged as fatally limited)"},
+  d2:{min3:"Minimal-3: disposable / sibling / orchestrator",ext5:"Extended-5 (3 work + 2 infra): + relay + watcher (watcher = single ledger writer, orphan detector, TTL reaper)"},
+  d3:{ledger:"A — in-repo append-only JSONL ledger only",tokens:"B — herdr metadata tokens only (live, no forensics)",hybrid:"C — hybrid: tokens for live display, watcher as sole ledger appender, startup reconciliation"},
+  d4:{frontier:"A — board-frontier work-stealing pool",epic:"B — epic-subtree orchestrator",waves:"C — DAG topological waves with barriers",synth:"E — synthesis: dependency-aware work-stealing frontier (streamed Kahn's; C-as-scheduler + A-as-executor)"},
+  d5:{jsonschema:"A — JSON Schema 2020-12 files in-repo + ajv/check-jsonschema + board contract validate verb",zod:"B — Zod-in-board.ts as source of truth, generated JSON Schema artifacts for bash, drift-checked in CI",cue:"C — CUE single source for structure + policy"},
+  d6:{replay:"Record/replay-first (transcript capture + fake herdr shim)",live:"Live-session-first (herdr --session per PR)",hybrid:"Hybrid: replay per-PR + nightly live + rule that every live incident produces a transcript/chaos case"},
+  d6b:{cucumber:"cucumber-js step defs on the socket, reusing contracts for assertions",bats:"bats + gherkin-lite convention with scenario-name lint"},
+  d7:{linksOnly:"A only — link handlers + tokens + attend (substrate)",cardtui:"A + B — substrate now, then ralph cockpit card TUI (bubbletea, 5-rung degradation ladder, board-authoritative)"},
+  d8:{adapter:"Adapter-strict — four-verb interface (focus/prompt/tail/spawn), herdr as implementation #1",herdrFirst:"Herdr-native-first, abstract later"}
+};
+let S = {};
+try { S = JSON.parse(localStorage.getItem("rhv2") || "{}"); } catch(e) { S = {}; }
+S.sel = S.sel || {}; S.notes = S.notes || {}; S.lints = S.lints || null; S.journeys = S.journeys || {J1:"v1",J2:"v2",J3:"v1",J4:"v1"};
+function save(){ localStorage.setItem("rhv2", JSON.stringify(S)); renderChips(); }
+
+// ---------- option cards ----------
+document.querySelectorAll(".opts").forEach(box => {
+  const d = box.dataset.d;
+  box.querySelectorAll(".opt").forEach(o => {
+    o.addEventListener("click", () => {
+      box.querySelectorAll(".opt").forEach(x => x.classList.remove("sel"));
+      o.classList.add("sel");
+      S.sel[d] = o.dataset.v; save();
+      if (d === "d1") renderNames();
+    });
+    if (S.sel[d] === o.dataset.v) o.classList.add("sel");
+  });
+});
+// notes
+document.querySelectorAll("[data-note]").forEach(i => {
+  i.value = S.notes[i.dataset.note] || "";
+  i.addEventListener("input", () => { S.notes[i.dataset.note] = i.value; save(); });
+});
+// lints
+const lintBoxes = document.querySelectorAll("#lints input");
+if (S.lints) lintBoxes.forEach(b => b.checked = S.lints.includes(b.dataset.lint));
+lintBoxes.forEach(b => b.addEventListener("change", () => {
+  S.lints = [...lintBoxes].filter(x => x.checked).map(x => x.dataset.lint); save();
+}));
+// journeys
+document.querySelectorAll(".jcard").forEach(c => {
+  const j = c.dataset.j;
+  c.querySelectorAll(".jscope button").forEach(b => {
+    b.classList.toggle("on", S.journeys[j] === b.dataset.s);
+    b.addEventListener("click", () => {
+      S.journeys[j] = b.dataset.s;
+      c.querySelectorAll(".jscope button").forEach(x => x.classList.toggle("on", x === b));
+      save();
+    });
+  });
+});
+// chips
+function renderChips(){
+  const bar = document.getElementById("chipbar"); bar.innerHTML = "";
+  DIMS.forEach(d => {
+    const c = document.createElement("span");
+    c.className = "tchip" + (S.sel[d] ? " done" : "");
+    c.textContent = LABELS[d] + (S.sel[d] ? " ✓" : "");
+    c.onclick = () => document.getElementById(d.replace("d6b","d6"))?.scrollIntoView({behavior:"smooth"});
+    bar.appendChild(c);
+  });
+}
+renderChips();
+
+// ---------- naming preview ----------
+const HERD = [
+  {role:"orch", lane:"o", issue:1700, slug:"auth-epic", st:"o", glyph:"▶", note:"root · depth=0"},
+  {role:"work", lane:"w", issue:1743, slug:"oauth-refresh", st:"w", glyph:"▶", note:"parent=o1700 · claim 41m"},
+  {role:"work", lane:"w", issue:1744, slug:"token-store", st:"w", glyph:"▶", note:"parent=o1700 · pr=1748"},
+  {role:"work", lane:"w", issue:1745, slug:"session-mw", st:"b", glyph:"⏸", note:"blocked 6m · Human Needed"},
+  {role:"probe", lane:"d", issue:1743, slug:"flaky-probe", st:"", glyph:"·", note:"disposable · no claim · fresh(TTL 10m)"},
+  {role:"watch", lane:"s", issue:0, slug:"watch", st:"", glyph:"◦", note:"watcher · heartbeat token"},
+];
+function fmtName(a, g){
+  if (g === "A") return (a.role + "-" + a.issue + (a.slug ? "-" + a.slug : "")).slice(0,32);
+  if (g === "C") { const p = a.role === "orch" ? "" : "o1700--"; return (p + a.lane + a.issue + "-" + a.slug.split("-")[0]).slice(0,32); }
+  return (a.lane + a.issue + (a.slug ? "-" + a.slug : "")).slice(0,32);
+}
+function renderNames(){
+  const g = S.sel.d1 || "B";
+  const el = document.getElementById("namePreview");
+  el.innerHTML = '<div class="h">herdr sidebar · agents (grammar ' + g + ')</div>' +
+    HERD.map(a => '<div><span class="' + (a.st||"tok") + '">' + a.glyph + '</span> <span class="' + (a.st === "b" ? "b" : a.st === "o" ? "o" : "w") + '">' + fmtName(a, g) + '</span>  <span class="tok">' + a.note + '</span></div>').join("");
+  const orchNames = {A:"orch-1700-auth-epic",B:"o1700-auth-epic",C:"o1700-auth-epic"};
+  const wNames = {A:["work-1743-oauth-refresh","work-1744-token-store","work-1745-session-mw"],B:["w1743-oauth-refresh","w1744-token-store","w1745-session-mw"],C:["o1700--w1743-oauth","o1700--w1744-token","o1700--w1745-session"]};
+  const dName = {A:"probe-1743-flaky-probe",B:"d1743-flaky-probe",C:"o1700--d1743-flaky"};
+  const ids = ["ln-w1","ln-w2","ln-w3"];
+  document.getElementById("ln-orch").textContent = orchNames[g];
+  ids.forEach((id,i) => document.getElementById(id).textContent = wNames[g][i]);
+  document.getElementById("ln-d1").textContent = dName[g];
+}
+renderNames();
+
+// ---------- cockpit simulator ----------
+const BOARD = {
+  "In Progress": [
+    {n:1743, t:"OAuth token refresh", agent:"w1743-oauth-refresh", st:"▶ working 41m", q:null},
+    {n:1744, t:"Token store migration", agent:"w1744-token-store", st:"▶ working 12m", q:null},
+  ],
+  "In Review": [
+    {n:1741, t:"Rate-limit middleware", agent:"w1741-ratelimit", st:"✓ done · PR #1748 checks green", q:null},
+    {n:1742, t:"Session cookie hardening", agent:null, st:"∅ no session · PR #1749 1 comment", q:null},
+  ],
+  "Human Needed": [
+    {n:1745, t:"Session middleware rewrite", agent:"w1745-session-mw", st:"⏸ blocked 6m", q:"drop legacy shim or keep behind flag? (A) drop (B) flag — recommend B"},
+    {n:1746, t:"Deprecate v1 auth endpoints", agent:null, st:"∅ no session", q:"OK to break the mobile 2.x clients? (A) yes (B) sunset header first"},
+  ]
+};
+const COLS = Object.keys(BOARD);
+let cur = {c:0, r:0};
+const colsEl = document.getElementById("cols"), overlay = document.getElementById("overlay"),
+      replyBox = document.getElementById("replyBox"), replyInput = document.getElementById("replyInput"),
+      replyLabel = document.getElementById("replyLabel"), statusLine = document.getElementById("statusLine"),
+      cockpit = document.getElementById("cockpit");
+let replyMode = null; // 'r' | 'a'
+function card(){ return BOARD[COLS[cur.c]][cur.r]; }
+function renderCockpit(){
+  colsEl.innerHTML = "";
+  COLS.forEach((cn, ci) => {
+    const col = document.createElement("div"); col.className = "col";
+    col.innerHTML = "<h4>" + cn + " · " + BOARD[cn].length + "</h4>";
+    BOARD[cn].forEach((it, ri) => {
+      const d = document.createElement("div");
+      d.className = "ccard" + (ci === cur.c && ri === cur.r ? " focus" : "");
+      d.innerHTML = '<span class="cid">#' + it.n + '</span> ' + it.t + '<span class="glyph">' + it.st.split(" ")[0] + '</span>' +
+        (it.q ? '<span class="q">? ' + it.q + '</span>' : "") +
+        '<span class="ag">' + (it.agent || "no agent") + ' · ' + it.st + '</span>';
+      d.onclick = () => { cur = {c:ci, r:ri}; hideOver(); renderCockpit(); status(); cockpit.focus(); };
+      d.ondblclick = () => { observe(); };
+      col.appendChild(d);
+    });
+    colsEl.appendChild(col);
+  });
+}
+function status(msg){ statusLine.textContent = msg || ("#" + card().n + " · " + (card().agent || "no agent") + " · " + card().st); }
+function hideOver(){ overlay.classList.remove("on"); replyBox.classList.remove("on"); replyMode = null; }
+function observe(){
+  const it = card(); replyBox.classList.remove("on");
+  overlay.classList.add("on");
+  if (it.agent) {
+    overlay.innerHTML = '<div class="otitle">herdr agent focus ' + it.agent + ' → focus jumps to the pane (cockpit preserved; one keystroke returns). Simulated tail (pane.read, recent-unwrapped):</div>' +
+      (it.q ? "…\nI need a decision before continuing:\n  " + it.q + "\n\n(waiting)" : "…\n✻ Running: npx vitest run ralph/scripts/\n  ✓ 41 passed\n✻ Editing scripts/lib.sh — extracting spawn contract…");
+    status("observing " + it.agent + " — Esc to close");
+  } else {
+    overlay.innerHTML = '<div class="otitle">no live session — inline tail of latest board/PR activity (board get ' + it.n + ' --json + gh pr view):</div>' +
+      "latest: " + (it.q ? "Human Needed — " + it.q : "PR review comment 2h ago: \"LGTM after nit on cookie flags\"") + "\n\npress s to spawn a session for #" + it.n;
+    status("no agent for #" + it.n + " — s to spawn");
+  }
+}
+function peek(){
+  const it = card(); if (!it.agent) return observe();
+  overlay.classList.add("on");
+  overlay.innerHTML = '<div class="otitle">peek (no focus steal) — pane.read ' + it.agent + ' | tail -40</div>' + (it.q ? "…blocked on: " + it.q : "…working; last tool: Edit scripts/lib.sh");
+  status("peeking " + it.agent);
+}
+function startReply(mode){
+  const it = card(); replyMode = mode;
+  if (mode === "a" && !it.q) { toast("not a Human Needed card — a is for answers"); return; }
+  replyBox.classList.add("on");
+  replyLabel.textContent = mode === "r" ? ("reply → agent prompt " + (it.agent || "(no agent)")) : ("answer #" + it.n + " → GitHub comment FIRST, then prompt");
+  replyInput.value = ""; replyInput.focus();
+}
+replyInput.addEventListener("keydown", e => {
+  e.stopPropagation();
+  if (e.key === "Escape") { hideOver(); cockpit.focus(); }
+  if (e.key === "Enter" && replyInput.value.trim()) {
+    const it = card(), txt = replyInput.value.trim();
+    if (replyMode === "a") {
+      toast("① gh issue comment #" + it.n + " ✓ (durable)  ② " + (it.agent ? "agent prompt " + it.agent + " ✓" : "no agent — comment only"));
+      const colArr = BOARD["Human Needed"], i = colArr.indexOf(it);
+      if (i > -1) { colArr.splice(i,1); it.q = null; it.st = it.agent ? "▶ resuming" : "∅ answered"; BOARD["In Progress"].push(it); cur = {c:0, r:BOARD["In Progress"].length-1}; }
+    } else {
+      toast("herdr agent prompt " + (it.agent || "?") + " — delivered ✓ (left blocked state)");
+      if (it.q) { it.q = null; it.st = "▶ resuming"; }
+    }
+    hideOver(); renderCockpit(); status(); cockpit.focus();
+  }
+});
+cockpit.addEventListener("keydown", e => {
+  const k = e.key;
+  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," "].includes(k)) e.preventDefault();
+  if (k === "ArrowRight" || k === "l") { cur.c = Math.min(COLS.length-1, cur.c+1); cur.r = Math.min(cur.r, BOARD[COLS[cur.c]].length-1); hideOver(); }
+  else if (k === "ArrowLeft" || k === "h") { cur.c = Math.max(0, cur.c-1); cur.r = Math.min(cur.r, BOARD[COLS[cur.c]].length-1); hideOver(); }
+  else if (k === "ArrowDown" || k === "j") { cur.r = Math.min(BOARD[COLS[cur.c]].length-1, cur.r+1); hideOver(); }
+  else if (k === "ArrowUp" || k === "k") { cur.r = Math.max(0, cur.r-1); hideOver(); }
+  else if (k === "Enter") observe();
+  else if (k === "o") peek();
+  else if (k === "r") startReply("r");
+  else if (k === "a") startReply("a");
+  else if (k === "s") toast("spawn: worktree create feature/GH-" + card().n + " → agent start " + (S.sel.d1 === "A" ? "work-" : "w") + card().n + "-… → brief (C3 contract)");
+  else if (k === "v") toast("DAG view — see the wave diagram in D4; in the real TUI this is the v pane");
+  else if (k === "d") toast("popup pane: gh pr diff — placement popup, session-modal");
+  else if (k === "q") toast("in the real TUI this closes the pane; here it just says hi");
+  else if (k === "Escape") hideOver();
+  else return;
+  renderCockpit(); if (!overlay.classList.contains("on") && !replyBox.classList.contains("on")) status();
+});
+renderCockpit(); status();
+
+// ---------- toast ----------
+let toastT = null;
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("on");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), 3400);
+}
+
+// ---------- prompt generation ----------
+function genPrompt(){
+  const missing = DIMS.filter(d => !S.sel[d]);
+  const lints = S.lints || [...lintBoxes].filter(x => x.checked).map(x => x.dataset.lint);
+  const lines = [];
+  lines.push("Execute the ralph-herdr v2 design decisions from the microworld (2026-08-10-ralph-herdr-v2-microworld.html).");
+  lines.push("Produce an implementation plan first (phased, with the contract files, scripts, skills, and manifest changes named), then start executing phase 1.");
+  lines.push("");
+  lines.push("## Decisions");
+  DIMS.forEach(d => {
+    const v = S.sel[d];
+    lines.push("- " + LABELS[d] + ": " + (v ? OPTDESC[d][v] : "«UNDECIDED — propose and justify a default»"));
+    if (S.notes[d] && S.notes[d].trim()) lines.push("  - note: " + S.notes[d].trim());
+  });
+  lines.push("");
+  lines.push("## Lint rules in scope");
+  lines.push(lints.length === 13 ? "- All 13 semantic lint rules (L1–L13)." : ("- " + (lints.join(", ") || "none checked — confirm") + " (of L1–L13; unchecked ones are cut)"));
+  lines.push("");
+  lines.push("## Journey scoping");
+  Object.entries(S.journeys).forEach(([j, s]) => lines.push("- " + j + ": " + s));
+  lines.push("");
+  lines.push("## Fixed constraints (not decisions — carry them through)");
+  lines.push("- Name = identity + scan key; metadata tokens = attributes (state, parent, claim, pr never in the name).");
+  lines.push("- Durable refs use name#spawn-epoch (ABA guard); pane_id is opaque and server-scoped, never a durable key.");
+  lines.push("- Board state is authoritative; herdr agent state is a decoration overlay — enforced in code, never the reverse.");
+  lines.push("- Answer path is comment-first (GitHub durable half before any agent prompt).");
+  lines.push("- Escalations must be phone-answerable: enumerated options with a recommended default, in the issue comment body.");
+  lines.push("- Append-only events ledger feeds all visualizations; reports never read the herdr socket directly.");
+  lines.push("- Card metadata is additive-only with schema_version; consumers ignore unknown keys.");
+  lines.push("- Dependency edges must be structured board data (tend owns their hygiene).");
+  lines.push("- Depth limit 3 in the herdr plane; in-process Agent-tool subagents are free (inner=N token only).");
+  lines.push("- Every degradation rung loses chrome, never a verb.");
+  lines.push("- Unattended arming stays gated on the claim-TTL vs pane-persistence probe (design §5) — run it before any autopilot work.");
+  if (missing.length) { lines.push(""); lines.push("## Caution"); lines.push("Undecided: " + missing.map(m => LABELS[m]).join(", ") + " — propose defaults with rationale before building on them."); }
+  document.getElementById("ptext").value = lines.join("\n");
+  document.getElementById("phint").textContent = missing.length ? (missing.length + " decision(s) still open — the prompt asks Claude to propose defaults for them.") : "All 9 selections made.";
+  document.getElementById("pmodal").classList.add("on");
+}
+function copyPrompt(){
+  const t = document.getElementById("ptext");
+  t.select(); document.execCommand("copy");
+  navigator.clipboard && navigator.clipboard.writeText(t.value);
+  document.getElementById("phint").textContent = "Copied — paste it back to Claude.";
+}
+document.getElementById("pmodal").addEventListener("click", e => { if (e.target.id === "pmodal") e.target.classList.remove("on"); });
+</script>
+</body>
+</html>

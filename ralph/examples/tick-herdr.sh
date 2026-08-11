@@ -259,9 +259,12 @@ fi
 if [ "$STATUS" = "timeout" ]; then
   NOTE="tick-herdr timeout after ${ELAPSED_MIN}m (bounded at claim TTL ${TTL_MIN}m) — pane $PANE stays live on $(hostname -s); transcript in herdr, tick log $LOG"
   if AFTER_JSON=$("$BOARD" get "$NEXT" --json 2>>"$LOG"); then
-    B_HOLDER=$(printf '%s' "$AFTER_JSON" | jq -r '.claim.holder // empty' 2>/dev/null || true)
+    # ClaimV2: .claim.holders is an ARRAY (a single holder is a one-element
+    # array) — release only when the expected holder is a member.
+    B_HOLDER_OK=$(printf '%s' "$AFTER_JSON" | jq -r --arg h "$EXPECTED_HOLDER" \
+      '(.claim.holders // []) | index($h) != null' 2>/dev/null || echo false)
     B_STATE=$(printf '%s' "$AFTER_JSON" | jq -r '.state // empty' 2>/dev/null || true)
-    if [ "$B_HOLDER" = "$EXPECTED_HOLDER" ] && [ "$B_STATE" = "In Progress" ]; then
+    if [ "$B_HOLDER_OK" = "true" ] && [ "$B_STATE" = "In Progress" ]; then
       "$BOARD" release "$NEXT" -m "$NOTE" >>"$LOG" 2>&1 || true
     fi
   else

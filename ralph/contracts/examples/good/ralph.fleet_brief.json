@@ -1,0 +1,18 @@
+{
+  "contract": "ralph.fleet_brief",
+  "contract_version": 1,
+  "issue": 1743,
+  "role": "w",
+  "skill_invocation": "/ralph:work 1743",
+  "reply_to": {
+    "kind": "herdr_agent",
+    "name": "o1700-herdr-v2-rollout"
+  },
+  "report_path": "~/.ralph/runs/a3f2/reports/w1743-claim-v2-multi-holder.json",
+  "constraints": {
+    "branch": "feature/GH-1743",
+    "base": "main",
+    "no_force": true
+  },
+  "deadline": "2026-08-10T18:00:00Z"
+}

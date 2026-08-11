@@ -124,9 +124,12 @@ if [ "$RC" -ne 0 ]; then
     NOTE="tick runner exited RC=$RC — see $LOG on $(hostname -s); work may be partially committed on feature/GH-$NEXT"
   fi
   if AFTER_JSON=$("$BOARD" get "$NEXT" --json 2>>"$LOG"); then
-    HOLDER=$(printf '%s' "$AFTER_JSON" | jq -r '.claim.holder // empty' 2>/dev/null || true)
+    # ClaimV2: .claim.holders is an ARRAY (a single holder is a one-element
+    # array) — release only when THIS holder is a member, not on string match.
+    HOLDER_OK=$(printf '%s' "$AFTER_JSON" | jq -r --arg h "$RALPH_CLAIM_HOLDER" \
+      '(.claim.holders // []) | index($h) != null' 2>/dev/null || echo false)
     STATE=$(printf '%s' "$AFTER_JSON" | jq -r '.state // empty' 2>/dev/null || true)
-    if [ "$HOLDER" = "$RALPH_CLAIM_HOLDER" ] && [ "$STATE" = "In Progress" ]; then
+    if [ "$HOLDER_OK" = "true" ] && [ "$STATE" = "In Progress" ]; then
       "$BOARD" release "$NEXT" -m "$NOTE" >> "$LOG" 2>&1 || true
     fi
   else

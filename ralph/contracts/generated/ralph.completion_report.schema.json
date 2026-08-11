@@ -1,0 +1,104 @@
+{
+  "$id": "ralph:contracts/ralph.completion_report",
+  "type": "object",
+  "properties": {
+    "contract": {
+      "type": "string",
+      "const": "ralph.completion_report"
+    },
+    "contract_version": {
+      "type": "number",
+      "const": 1
+    },
+    "agent": {
+      "type": "string",
+      "maxLength": 32
+    },
+    "agent_ref": {
+      "type": "string"
+    },
+    "issue": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "blocked",
+        "failed",
+        "abandoned"
+      ]
+    },
+    "pr": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "board_state_claimed": {
+      "type": "string",
+      "enum": [
+        "Backlog",
+        "In Progress",
+        "In Review",
+        "Human Needed",
+        "Done",
+        "Canceled"
+      ]
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "lineage": {
+      "type": "object",
+      "properties": {
+        "spawned_by": {
+          "type": "string"
+        },
+        "parent_issue": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "spawned_by"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "contract",
+    "contract_version",
+    "agent",
+    "agent_ref",
+    "issue",
+    "outcome",
+    "tests",
+    "blockers",
+    "started_at",
+    "finished_at",
+    "lineage"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

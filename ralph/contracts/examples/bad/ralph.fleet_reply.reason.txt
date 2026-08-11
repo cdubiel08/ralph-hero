@@ -1,0 +1,3 @@
+kind is "question" but options is absent — a question must be phone-answerable:
+nonempty enumerated options with exactly one recommended default. Free-text
+questions stall the fleet on a keyboard.

@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Herdr Plugin API — deep dive, ecosystem comparison, and ralph-herdr roadmap</title>
+<style>
+:root {
+  --paper:    #f5f1e8;
+  --ink:      #1b2329;
+  --accent:   #2e5d7e;
+  --rust:     #b35a2c;
+  --moss:     #5a7847;
+  --sand:     #e6dcc4;
+  --slate:    #1f262b;
+  --gray-150: #ece7db;
+  --gray-300: #cdc6b7;
+  --gray-500: #847d6c;
+  --gray-700: #3a3a36;
+  --white:    #ffffff;
+  --serif: 'Iowan Old Style', Charter, ui-serif, Georgia, serif;
+  --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:  'JetBrains Mono', 'SF Mono', Menlo, ui-monospace, monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--paper); color: var(--gray-700); font-family: var(--sans); font-size: 15px; line-height: 1.65; -webkit-font-smoothing: antialiased; padding: 56px 32px 96px; }
+h1 { font-family: var(--serif); font-weight: 500; font-size: 38px; line-height: 1.15; color: var(--ink); margin-bottom: 18px; letter-spacing: -0.01em; }
+h2 { font-family: var(--serif); font-weight: 500; font-size: 22px; color: var(--ink); margin: 40px 0 14px; scroll-margin-top: 24px; }
+h3 { font-family: var(--serif); font-weight: 500; font-size: 17px; color: var(--ink); margin: 24px 0 8px; }
+p { margin-bottom: 12px; max-width: 720px; }
+code { font-family: var(--mono); font-size: 13px; }
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid currentColor; }
+ul, ol { padding-left: 20px; max-width: 720px; }
+li { margin-bottom: 6px; }
+.eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gray-500); margin-bottom: 10px; }
+.tldr { border: 1.5px solid var(--gray-300); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--white); padding: 16px 18px; margin-bottom: 8px; max-width: 780px; }
+.tldr b { color: var(--ink); }
+.callout { display: flex; gap: 12px; border: 1.5px solid var(--sand); background: rgba(230, 220, 196, 0.35); border-radius: 10px; padding: 14px 16px; margin: 18px 0; font-size: 14px; max-width: 780px; }
+.callout .ico { color: var(--accent); font-weight: 600; }
+details { border: 1.5px solid var(--gray-300); border-radius: 10px; background: var(--white); margin: 14px 0; overflow: hidden; max-width: 780px; }
+details summary { list-style: none; cursor: pointer; padding: 14px 16px; font-family: var(--serif); font-size: 16px; color: var(--ink); display: flex; align-items: baseline; gap: 10px; }
+details summary::-webkit-details-marker { display: none; }
+details summary::before { content: "▸"; color: var(--accent); font-family: var(--sans); font-size: 12px; transition: transform 120ms; }
+details[open] summary::before { transform: rotate(90deg); }
+details summary .where { font-family: var(--mono); font-size: 11px; color: var(--gray-500); margin-left: auto; }
+details .body { padding: 0 16px 16px; }
+details .body p, details .body li { font-size: 14px; }
+.report { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 48px; }
+@media (max-width: 920px) { .report { grid-template-columns: 1fr; } .report nav { display: none; } }
+.report nav { position: sticky; top: 32px; align-self: start; font-size: 13px; }
+.report nav .label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray-500); margin-bottom: 12px; }
+.report nav a { display: block; padding: 5px 0 5px 12px; border-left: 2px solid var(--gray-300); color: var(--gray-700); text-decoration: none; border-bottom: none; }
+.report nav a:hover { color: var(--ink); border-color: var(--ink); }
+.report nav a.l2 { padding-left: 24px; font-size: 12.5px; color: var(--gray-500); }
+.report nav .files { margin-top: 28px; border-top: 1px solid var(--gray-300); padding-top: 16px; }
+.report nav .files code { display: block; font-family: var(--mono); font-size: 11px; color: var(--gray-500); padding: 3px 0; }
+table { border-collapse: collapse; margin: 14px 0 22px; background: var(--white); border: 1.5px solid var(--gray-300); border-radius: 10px; font-size: 13.5px; max-width: 100%; }
+th, td { padding: 8px 12px; border-bottom: 1px solid var(--gray-150); text-align: left; vertical-align: top; }
+th { background: var(--gray-150); font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--gray-500); }
+tr:last-child td { border-bottom: none; }
+.sev { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: 6px; border: 1.5px solid var(--gray-300); color: var(--gray-700); white-space: nowrap; }
+.sev.high { background: rgba(179, 90, 44, 0.14); border-color: var(--rust); color: var(--rust); }
+.sev.med  { background: rgba(201, 153, 60, 0.16); border-color: #b8893a; color: #8a6420; }
+.sev.low  { background: rgba(90, 120, 71, 0.14); border-color: var(--moss); color: var(--moss); }
+.chip { font-family: var(--mono); font-size: 11.5px; background: var(--gray-150); border: 1.5px solid var(--gray-300); color: var(--gray-700); padding: 3px 9px; border-radius: 8px; white-space: nowrap; }
+.chip.used { background: rgba(90,120,71,0.14); border-color: var(--moss); color: var(--moss); }
+.chip.unused { background: rgba(179,90,44,0.12); border-color: var(--rust); color: var(--rust); }
+.code-panel { background: var(--slate); border-radius: 12px; padding: 16px 18px; overflow-x: auto; margin: 12px 0 18px; max-width: 780px; }
+.code-panel pre { font-family: var(--mono); font-size: 12.5px; line-height: 1.65; color: #E8E6DE; white-space: pre; }
+.code-panel .kw  { color: #7fb0d4; }
+.code-panel .str { color: #9dba8a; }
+.code-panel .cm  { color: var(--gray-500); }
+.code-panel .fn  { color: #c9b98a; }
+.open-q { border: 1.5px solid var(--gray-300); border-left: 3px solid #b8893a; border-radius: 0 12px 12px 0; background: var(--white); padding: 16px 20px; margin: 14px 0; max-width: 780px; }
+.open-q .oq { padding: 6px 0; }
+.open-q .oq .qt { color: var(--ink); font-weight: 600; }
+.reco { border-left: 4px solid var(--accent); background: var(--white); border-radius: 0 12px 12px 0; padding: 22px 26px; max-width: 860px; margin: 18px 0; }
+.reco h3 { margin-top: 0; }
+.gotchas li b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="report">
+  <nav>
+    <div class="label">ON THIS PAGE</div>
+    <a href="#tldr">TL;DR</a>
+    <a href="#api">1 · Herdr plugin API map</a>
+    <a href="#api" class="l2">Manifest surfaces</a>
+    <a href="#api" class="l2">Socket API + events</a>
+    <a href="#api" class="l2">Hard limits</a>
+    <a href="#usage">2 · What ralph-herdr uses today</a>
+    <a href="#landscape">3 · Ecosystem inspiration</a>
+    <a href="#gap">4 · Gap verdict</a>
+    <a href="#ideate">5 · Employing the API better</a>
+    <a href="#ux">6 · Primitive UX roadmap</a>
+    <a href="#ux" class="l2">board init</a>
+    <a href="#ux" class="l2">Docs &amp; hooks in the plugin</a>
+    <a href="#fleet">7 · Fleet thinking</a>
+    <a href="#openq">Open questions</a>
+    <div class="files">
+      <div class="label">SOURCES READ</div>
+      <code>plugin/ralph-herdr/herdr-plugin.toml</code>
+      <code>plugin/ralph-herdr/scripts/*.sh</code>
+      <code>ralph/scripts/board.ts (setup, readiness)</code>
+      <code>ralph/scripts/herdr-setup.sh</code>
+      <code>ralph/skills/help/SKILL.md</code>
+      <code>thoughts/shared/research/2026-08-09-herdr-runtime-ralph-addon.md</code>
+      <code>/tmp/herdr-schema.json (protocol 19)</code>
+      <code>herdr.dev/docs/{plugins,socket-api,marketplace}</code>
+    </div>
+  </nav>
+
+  <main>
+    <header>
+      <div class="eyebrow">Research · Herdr plugin API × ralph-herdr · 2026-08-10</div>
+      <h1>Herdr's plugin API, what <code>ralph-herdr</code> actually uses, and where the leverage is</h1>
+      <div class="tldr" id="tldr">
+        <b>TL;DR</b> — Herdr protocol 19 exposes 90 socket methods, 6 manifest sections, 5 action contexts, live event subscriptions, sidebar metadata tokens, and declarative agent views. <b>ralph-herdr uses two manifest sections, one action context, and zero of the event/metadata/view surface</b> — the cockpit is a polling shell script sitting on an event-driven runtime. The board-as-queue + terminal-cockpit direction is a genuine gap (nobody combines a vendor-neutral GitHub Projects queue with a local multiplexer), and the two highest-leverage moves are an event-subscribed watcher daemon replacing the poll loops, and a one-command <code>board init</code> that collapses today's ten-step manual bootstrap.
+      </div>
+    </header>
+
+    <h2 id="api">1 · The Herdr plugin API, mapped</h2>
+    <p>Herdr's stated design is <i>"the entire Herdr CLI is the plugin API"</i> — a plugin is a directory with <code>herdr-plugin.toml</code> plus commands in any language, escalating through a documented ladder: agent skill → CLI wrappers → raw newline-delimited-JSON socket (<code>~/.config/herdr/herdr.sock</code>, discoverable via <code>herdr api schema</code>).</p>
+
+    <h3>Manifest surfaces (used vs unused by ralph-herdr)</h3>
+    <table>
+      <tr><th>Surface</th><th>What it does</th><th>ralph-herdr</th></tr>
+      <tr><td><code>[[actions]]</code></td><td>Palette verbs; contexts: <code>global · workspace · tab · pane · selection</code></td><td><span class="chip used">7 actions, workspace-only</span></td></tr>
+      <tr><td><code>[[panes]]</code></td><td>Entrypoints; placements <code>overlay · popup · split · tab · zoomed</code></td><td><span class="chip used">6 panes</span></td></tr>
+      <tr><td><code>[[events]]</code></td><td>Run a command on any server event (e.g. <code>pane.agent_status_changed</code>), payload in <code>HERDR_PLUGIN_EVENT_JSON</code></td><td><span class="chip unused">unused</span></td></tr>
+      <tr><td><code>[[startup]]</code></td><td>One-shot restore hook after session restore (<code>HERDR_PLUGIN_EVENT=startup</code>)</td><td><span class="chip unused">unused</span></td></tr>
+      <tr><td><code>[[link_handlers]]</code></td><td>Regex over URLs rendered in terminals; Ctrl-click routes to a plugin action with <code>HERDR_PLUGIN_CLICKED_URL</code></td><td><span class="chip unused">unused</span></td></tr>
+      <tr><td><code>[[build]]</code></td><td>Build step on GitHub install</td><td><span class="chip unused">n/a (pure bash)</span></td></tr>
+      <tr><td><code>HERDR_PLUGIN_CONFIG_DIR</code> / <code>STATE_DIR</code></td><td>Per-plugin user config and runtime state dirs</td><td><span class="chip unused">unused — all knobs are server-env vars</span></td></tr>
+    </table>
+
+    <h3>Socket API highlights a long-running plugin process can use</h3>
+    <ul>
+      <li><b><code>events.subscribe</code></b> — persistent connection, pushed JSON lines for workspace/tab/pane/worktree lifecycle, <code>pane.agent_status_changed</code> (filterable by status), and <code>pane.output_matched</code> (substring/regex watch on live output). <code>events.wait</code> is the one-shot variant. No event history — live only.</li>
+      <li><b><code>pane.report_metadata</code> / <code>workspace.report_metadata</code></b> — plugins can push up to 16 named tokens (with TTLs) per report that render in sidebar rows, plus set pane title, display-agent, and state labels. This is a sanctioned presentation channel for things like <code>issue=GH-1743</code>, <code>state=In&nbsp;Review</code>, <code>claim=9m</code>.</li>
+      <li><b><code>agent.view.set</code></b> — declarative sidebar projections: filter/sort the agent list by status, seen-ness, or metadata tokens, owned per plugin source. A "ralph lens" over the herd is a config object, not a TUI.</li>
+      <li><b><code>layout.export</code> / <code>layout.apply</code></b> — portable BSP layout trees with labels, cwd, and argv (does not preserve live PTYs). This is Herdr's native "session template" primitive.</li>
+      <li><b><code>pane.report_agent</code> / <code>report_agent_session</code></b> — a session can self-report semantic status and a resume ref, overriding screen-scrape detection.</li>
+      <li><code>notification.show</code> (240-char body, sound, rate-limited), <code>worktree.create/open/remove</code>, full pane/agent driving (<code>prompt --wait</code>, <code>wait --until</code>, <code>read</code>, <code>send_keys</code>), <code>plugin.pane.open</code> with per-open <code>env</code> map and placement overrides.</li>
+    </ul>
+
+    <h3>Hard limits (explicit in docs)</h3>
+    <ul class="gotchas">
+      <li><b>No runtime registration</b> — actions/panes/link handlers are manifest-declared; re-link to change.</li>
+      <li><b>No custom TUI widgets or keybinding contribution</b> — UI is panes + notifications + sidebar tokens/agent-views only; keybindings live in the user's <code>config.toml</code>.</li>
+      <li><b>No notification click callbacks</b> — only the user-side <code>open_notification_target</code> keybinding focuses the target.</li>
+      <li><b>No sandboxing, no permissions model, no plugin auto-update</b> — reinstall to update; <code>--ref</code> pins; marketplace (GitHub topic <code>herdr-plugin</code>, ~530 entries) is unvetted.</li>
+      <li><b>Popup panes are invisible to pane/agent APIs</b> — no pane ID, no lifecycle events.</li>
+      <li><b>Panes inherit the <i>server's</i> env</b>, not your shell's — the root cause of ralph-herdr's board-discovery workaround (GH-1761) and why env-var knobs are the wrong config channel.</li>
+    </ul>
+
+    <h2 id="usage">2 · What ralph-herdr uses today</h2>
+    <p>The shipped plugin (v0.1.0, one commit stale in the installed snapshot) is seven workspace-context actions fronting six pane entrypoints: <code>work-next</code>, <code>work-fleet</code> (cap 4), <code>deliver-pass</code>, <code>tend-pass</code>, <code>doctor</code> (popup), <code>dashboard</code> (split-right poll loop, 120s), and pane-less <code>attend</code> (focus first blocked agent). Spawning is disciplined — worktree per issue, agent named <code>gh-N</code> (name uniqueness doubles as the one-live-pass interlock), IDs always parsed from JSON, billing guard, truthful failure panes held open.</p>
+    <p>But the attention layer is the weak half. <code>notify-watch.sh</code> is a pane-resident process: single-target it blocks on <code>agent wait</code>; multi-target it polls <code>agent get</code> every 15s (bash 3.2 has no <code>wait&nbsp;-n</code>). <b>Close the watcher pane and notifications stop.</b> The design doc's §3.3 blocked⇄Human-Needed bridge and §3.4 in-session lifecycle reporting were specced and never shipped; <code>[[events]]</code>, <code>report_metadata</code>, <code>agent.view</code>, and the socket API are all untouched. The dashboard re-derives state every 120s that the server would push for free.</p>
+    <details>
+      <summary>Other audit findings worth fixing regardless of direction <span class="where">repo map, 2026-08-10</span></summary>
+      <div class="body">
+        <ul>
+          <li>Board-CLI discovery and <code>MIN_HERDR</code> are duplicated between <code>lib.sh</code> and <code>herdr-setup.sh</code> with only a comment guarding drift.</li>
+          <li>Plugin version never bumped past 0.1.0 despite behavior changes — and Herdr has no auto-update, so installs go silently stale.</li>
+          <li><code>worktree remove</code> is never called; worktrees/panes accumulate per issue.</li>
+          <li><code>attend</code> ordering is arbitrary (<code>.[0]</code>); no blocked-duration ranking.</li>
+          <li>No tests in <code>plugin/ralph-herdr/</code>, unlike sibling plugins.</li>
+          <li><code>--base origin/main</code> only applies to new branches; resuming an existing <code>feature/GH-N</code> may be behind main.</li>
+        </ul>
+      </div>
+    </details>
+
+    <h2 id="landscape">3 · Ecosystem inspiration — don't reinvent these wheels</h2>
+    <table>
+      <tr><th>Pattern</th><th>Canonical source</th><th>Maps to Herdr as</th></tr>
+      <tr><td>Named session templates: one verb spawns a full multi-pane working set; freeze-live-session-back-to-template inverse</td><td>tmuxinator / tmuxp / Zellij KDL layouts</td><td><code>layout.apply</code> + a <code>board cockpit</code> verb; <code>layout.export</code> for the freeze</td></tr>
+      <tr><td>Persistence: serialize session state to a file on interval, replay on start</td><td>tmux-resurrect / continuum</td><td><code>[[startup]]</code> hook + <code>STATE_DIR</code> file of board↔pane bindings</td></tr>
+      <tr><td>Launch-on-message pipes; CLI as a pipe into a possibly-not-running plugin</td><td>Zellij plugin pipes</td><td><code>plugin action invoke</code> + an event-spawned watcher</td></tr>
+      <tr><td>Declare surface statically, activate lazily, route every trigger through one command ID layer</td><td>VS Code contribution points</td><td>manifest actions as the single verb layer; panes/notifications/link-handlers all route to them</td></tr>
+      <tr><td>Attention routing as the product: one needs-attention inbox, push when an agent blocks; board state flips automatically with agent/PR lifecycle</td><td>Omnara ("PagerDuty for agents") / vibe-kanban</td><td><code>[[events]]</code> on <code>pane.agent_status_changed</code> → notification + board write</td></tr>
+    </table>
+    <details>
+      <summary>Agent-fleet landscape, one-line each <span class="where">web research, Aug 2026</span></summary>
+      <div class="body">
+        <ul>
+          <li><b>vibe-kanban</b> — closest conceptually: kanban-driven, auto worktrees, statuses flip with agent/PR lifecycle; but a proprietary board, and its hosted service folded (Bloop, early 2026).</li>
+          <li><b>claude-squad / Conductor / Crystal / Sculptor / dmux</b> — parallel-session cockpits, no durable queue.</li>
+          <li><b>Terragon / Cursor background agents / Codex cloud</b> — queue-driven but cloud-proprietary queues (Terragon also shut down Jan 2026).</li>
+          <li><b>Omnara</b> — strongest attention-routing story (mobile push when an agent needs you), cloud not terminal.</li>
+          <li><b>Claude Code agent teams + Agent View</b> — Anthropic moving into the cockpit layer natively.</li>
+          <li><b>GitButler</b> — novel merge model (many agents, one worktree, virtual branches).</li>
+        </ul>
+      </div>
+    </details>
+
+    <h2 id="gap">4 · Gap verdict</h2>
+    <p><b>The gap is real.</b> No tool found combines a durable, vendor-neutral queue (GitHub Projects V2) with a local terminal cockpit and attention routing. The board-driven competitors owned proprietary queues and two of them died with their vendors in early 2026 — which is itself the argument for a queue you don't own. Three caveats shape the strategy:</p>
+    <ul>
+      <li><b>Anthropic is absorbing the cockpit layer</b> (Agent View, agent teams). The defensible part of ralph is board semantics, lane doctrine, and attention routing — not pane management. Invest there.</li>
+      <li><b>Herdr-ecosystem risk mirrors vibe-kanban's vendor risk.</b> Keep the board logic multiplexer-agnostic (it already is — herdr is "a transport, not a lane" per the design record). The plugin should stay a thin adapter.</li>
+      <li><b>GitHub API latency/rate limits</b> mean the cockpit should cache board state locally and reconcile, not poll per refresh.</li>
+    </ul>
+
+    <h2 id="ideate">5 · Employing the plugin API better</h2>
+
+    <div class="reco">
+      <h3>P1 — Event-driven attention bridge (replaces the poll loops)</h3>
+      <p>Add a <code>[[events]]</code> subscription on <code>pane.agent_status_changed</code> (or a tiny watcher started by <code>[[startup]]</code> holding one <code>events.subscribe</code> connection). On <code>blocked</code> for a <code>gh-N</code>/lane agent: <code>notification.show</code> with sound, push a <code>blocked</code> metadata token, and — the unshipped §3.3 bridge — optionally comment/flip the issue toward Human Needed so the phone-visible board reflects the terminal. This survives closed watcher panes, kills the 15s poll, removes the bash-3.2 workaround, and makes "notified the moment it blocks" actually true. It also un-blocks retiring <code>notify-watch.sh</code>'s multi-target mode entirely.</p>
+    </div>
+    <div class="reco">
+      <h3>P2 — Sidebar becomes the dashboard: <code>report_metadata</code> + <code>agent.view</code></h3>
+      <p>Have spawn scripts tag each pane with tokens (<code>issue</code>, <code>lane</code>, <code>pr</code>) and let <code>/ralph:work|deliver|tend</code> self-report semantic state via <code>pane.report_agent</code> / <code>report_metadata</code> when <code>HERDR_ENV=1</code> (the unshipped §3.4 — a ~10-line hook or skill preamble). Then ship an <code>agent.view.set</code> "ralph lens": blocked first, sorted by blocked-duration. Much of <code>dashboard.sh</code>'s render loop dissolves into server-native sidebar state; the dashboard pane can shrink to queue counts only.</p>
+    </div>
+    <div class="reco">
+      <h3>P3 — Cockpit as a layout template (the tmuxinator move)</h3>
+      <p>One verb — action <code>cockpit</code> or <code>board cockpit</code> — that <code>layout.apply</code>s a saved tree: dashboard split-right, deliver/tend tabs, doctor popup on demand. Persist board↔pane bindings in <code>STATE_DIR</code>; <code>[[startup]]</code> re-arms the watcher and re-applies metadata tokens after restart (resurrect/continuum semantics). Offer <code>cockpit --freeze</code> via <code>layout.export</code>.</p>
+    </div>
+    <div class="reco">
+      <h3>P4 — Close the dead ends: link handlers, answer verb, richer contexts</h3>
+      <p><code>[[link_handlers]]</code> on <code>github.com/.../issues/N</code> → an action that opens/focuses that issue's session or spawns <code>work N</code> — the terminal becomes clickable into the board. Add pane-context actions (<code>contexts=["pane"]</code>): "read this agent's tail", "answer this blocked agent" (popup prompting for text, then <code>agent prompt</code>), "release claim / requeue". Pair with the design doc's proposed <code>board answer N -m</code> verb so every surface inherits it. Move plugin knobs from server-env vars to a <code>CONFIG_DIR</code> file read by <code>lib.sh</code> — fixing the broken-by-design env delivery.</p>
+    </div>
+    <p>Deliberately <b>not</b> recommended: building a custom TUI (API forbids it — sidebar tokens and panes are the sanctioned surface), notification click actions (unsupported), or unattended arming before the claim-TTL probe runs (see open questions).</p>
+
+    <h2 id="ux">6 · Primitive UX roadmap</h2>
+
+    <h3>Spawning a new board: ship <code>board init</code></h3>
+    <p>Today there is no creation path — <code>board setup</code> only provisions fields on a project the user already created, linked, and numbered by hand, then configured via one of <i>two competing scope schemas</i>. Ten manual steps, and a typo'd project number decorates a stranger's board with only a warning. The fix is one idempotent verb:</p>
+    <div class="code-panel"><pre><span class="fn">board init</span> [--repo owner/name] [--title <span class="str">"..."</span>]
+  <span class="cm"># 1. gh project create (owner inferred from repo)     — was: GitHub UI</span>
+  <span class="cm"># 2. link project ↔ repo (linkProjectV2ToRepository)   — was: GitHub UI</span>
+  <span class="cm"># 3. write .ralph.json scope                           — was: hand-edit, 2 schemas</span>
+  <span class="cm"># 4. run existing `board setup` (fields, idempotent)</span>
+  <span class="cm"># 5. run `board doctor` + print readiness next steps</span></pre></div>
+    <ul>
+      <li>Resurrect the v1 golden-template research (<code>copyProjectV2</code> copies a template project with views/fields intact) as <code>board init --from-template</code> — views are otherwise un-API-able.</li>
+      <li>Make wrong-project detection blocking in <code>init</code> (it creates, so it knows the right number), and collapse to one scope schema with a deprecation shim.</li>
+      <li>Add <code>board init --herdr</code> to chain <code>herdr-setup.sh fix</code>, so repo-zero-to-cockpit is two commands.</li>
+      <li>Longer term: <code>board scaffold</code> for readiness rungs (copy <code>state-guard.yml</code>, <code>merge-pr.sh</code>, PR ruleset via API) — readiness currently <i>recommends</i> seven manual steps and scaffolds none.</li>
+    </ul>
+
+    <h3>Ship Herdr guidance inside the ralph plugin</h3>
+    <p>Today an agent asked to "spawn a work session in herdr" has nothing local to read: the cheatsheet lives in the <i>herdr</i> plugin dir (unreachable from <code>${CLAUDE_PLUGIN_ROOT}</code>), skills other than <code>/ralph:help herdr</code> never mention Herdr, and hooks are herdr-blind. Concretely:</p>
+    <ul>
+      <li><b>Reference doc in skills</b> — <code>ralph/skills/&lt;lane&gt;/references/herdr-api.md</code>: the sanctioned verbs (<code>spawn_work_session</code> contract, agent naming, <code>--no-focus</code> discipline, ID-from-JSON rule), the ralph-herdr action/entrypoint catalog, and pointers to <code>herdr --skill</code> and <code>herdr api schema</code> for self-discovery. Duplicate or symlink the cheatsheet so it's plugin-root-reachable.</li>
+      <li><b>Guiding hook</b> — a SessionStart (or skill-preamble) check: if <code>HERDR_ENV=1</code>, inject one line telling the session it's cockpit-hosted, to self-report via <code>pane report-agent</code>, and where the herdr reference lives. This is also the delivery vehicle for §3.4.</li>
+      <li><b>Escalation-writing guidance</b> — the design doc's unwritten note: blocked questions should be phone-answerable ("pick A or B, default A") since notifications carry 240 chars. Belongs in the work/board skills.</li>
+      <li><b>Single source of truth</b> — deduplicate board-discovery and <code>MIN_HERDR</code> between <code>lib.sh</code> and <code>herdr-setup.sh</code>; bump the plugin version on every behavior change and have <code>herdr-setup.sh check</code> compare installed vs repo version (Herdr won't auto-update it for you).</li>
+    </ul>
+
+    <h2 id="fleet">7 · Teaching ralph-herdr agents to think in fleets</h2>
+    <p>Four sources examined. The requested <a href="https://github.com/ray-amjad/peer-sessions"><b>ray-amjad/peer-sessions</b></a> — a Claude Code <i>skill</i> (not a herdr plugin) that runs a fleet of sibling <code>claude</code> sessions on one machine, coordinated via Claude Code 2.1.224's cross-session <code>SendMessage</code>, spawning into cmux or <b>herdr</b> (auto-detected backend: <code>pane split</code> / <code>workspace create</code> + <code>agent start</code> with a settling-retry, readiness verified via <code>herdr agent get</code>). Plus the three closest herdr-marketplace plugins: <a href="https://github.com/Elio2000/herdr-peer-review">herdr-peer-review</a> (bash peer-agent sessions), <a href="https://github.com/zhenyufu/herdr-cadence">herdr-cadence</a> (Rust; one Lead agent commanding a role fleet), and <a href="https://github.com/ribbons-digital/pi-herd">pi-herd</a> (TS; durable run state + verdict protocol). Together they demonstrate the pattern ralph-herdr lacks: <b>the agent itself is the orchestrator</b>, given a small library of verified spawn/message verbs and a report-back contract.</p>
+
+    <h3>What peer-sessions gets right (its doctrine, largely portable verbatim)</h3>
+    <ul>
+      <li><b>Reply-is-the-notification.</b> A peer's message arrives as a new <i>user turn</i> in the orchestrator — so the loop is spawn → brief → <b>end your turn</b>; no poll loops burning tokens. Briefs end with the sender's literal reply address (peers can't discover who briefed them) and demand a fixed reply format so a large fleet collates for free. ralph-herdr's equivalent: prefer <code>SendMessage</code> peer replies where available; fall back to <code>herdr agent prompt/wait/read</code> — peer-sessions documents exactly when SendMessage is harness-scoped and the herdr surface is the right transport.</li>
+      <li><b>Placement as a decision table, not a flag dump:</b> <code>split</code> for ≤3 peers of short watched work, <code>workspace</code> (default) for 3+/minutes-long, window for big fleets — ask the user only when the choice changes their screen. Ready-made UX doctrine for a ralph fleet skill.</li>
+      <li><b>Teardown is opt-in and printed at spawn time.</b> The spawn script emits exact, placement-matched teardown commands using durable UUIDs (refs are indexes that renumber); kill processes first, close UI second (closing UI leaves addressable orphans); close only what you made. Live peers keep context — a follow-up costs one message, not a re-spawn.</li>
+      <li><b>Honest semantics:</b> <code>success: true</code> means delivered, not done; a send is one-way; the first bare-name send bouncing with a ref is a confirmation, not a failure; <code>--permission-mode auto</code> is the only unattended-viable mode. And the non-optional rule: <b>a peer carries none of the user's authority — never route around a permission denial through another session.</b></li>
+      <li><b>Diagnosable failure:</b> <code>peer-addr.py</code> gives a per-session reason for unreachability; <code>peer-inbox.py</code> recovers truncated replies from transcripts; a Codex bridge uses a real Claude relay rather than faking the socket protocol.</li>
+    </ul>
+
+    <h3>The composite pattern worth adopting</h3>
+    <ul>
+      <li><b>Ship a fleet skill in the ralph plugin that composes peer-sessions' loop with ralph's board contract.</b> A lane session (or the user) says "fan out": the skill spawns <code>gh-N</code> peers via the existing <code>spawn_work_session</code> path, briefs each with issue scope + reply address + fixed report format, ends its turn, and collates replies as they arrive. Where <code>SendMessage</code> is unavailable/scoped, the same skill drives <code>herdr agent prompt/wait/read</code>. Don't fork peer-sessions — depend on its doctrine and add the board layer (claims, Workflow State, worktree-per-issue) it deliberately doesn't have.</li>
+      <li><b>Ship a <code>fleet.sh</code> library + skill, peer-review style.</b> A sourced bash library of hardened primitives — <code>peer_launch / peer_ask / peer_decide / peer_exec / peer_escalate / peer_close</code> — plus a SKILL.md that teaches a Claude session to compose them. This is the direct answer to "teach agents to spawn sub-fleets of scripts and agents via the herdr CLI," and it reuses <code>lib.sh</code>'s existing discipline (IDs from JSON, <code>--no-focus</code>, billing guard).</li>
+      <li><b>Cadence's Lead contract:</b> every spawned agent is handed its scope <i>and the exact command line to report completion</i> (<code>agent complete &lt;id&gt; --report-file</code>, JSON: status/summary/tests/changed_paths/commit_sha); the Lead gets exact spawn/list/report/cancel commands in its prompt. File-based JSON reports, never chat-scrollback parsing. The orchestrator pushes updates back into the Lead via <code>herdr agent prompt</code>.</li>
+      <li><b>Durable run state, pi-herd style:</b> <code>.ralph-herdr/runs/&lt;id&gt;/state.json</code> + artifacts + inbox in-repo, verdict-marker lines (<code>verdict: done|blocked pass=N</code>) in required artifacts as a restart-surviving completion protocol; duplicate-run refusal per lead pane; <code>[[startup]]</code> reconciliation (cadence) so the fleet survives herdr restarts — dovetails with P3's state file.</li>
+    </ul>
+
+    <h3>Hardening tricks to copy verbatim</h3>
+    <ul class="gotchas">
+      <li><b>Shell-readiness dance before <code>pane run</code></b> (peer-review <code>_run_clean</code>): <code>pane split</code> returns before the shell is usable; poll <code>pane process-info</code> until argv0 is a shell, then <code>ctrl+c</code>+<code>ctrl+u</code> — observed live: oh-my-zsh startup eating first characters (<code>codex</code> → <code>odex</code>).</li>
+      <li><b>Random per-call markers + <code>pane read --source recent-unwrapped</code></b> to slice an answer out of scrollback without matching the echoed prompt; <b>prompt-via-stdin-file</b> to dodge command-line truncation; <b>process-exit detection</b> (not text sentinels) for headless <code>exec</code> runs.</li>
+      <li><b>Fatal timeouts</b> — never read stale output after a wait fails; <b><code>agent_pane_busy</code> retry loops</b> on <code>agent start</code> (ralph-herdr already has this).</li>
+      <li><b>Dual-channel escalation</b> — local toasts can be config-disabled (<code>[ui.toast]</code>), so pair <code>notification show --sound request</code> with <code>pane report-agent --state blocked --custom-status</code> (phone-visible via herdr-remote), and warn loudly when the remote page fails.</li>
+    </ul>
+    <div class="callout"><span class="ico">★</span><div><b>Don't rebuild what the marketplace already has:</b> fleet dashboards (<code>herdr-agent-office</code>, <code>herdr-agent-inbox</code>), Telegram gating (<code>herdr-telegram-gate</code>), issue-launchers (<code>herdr-plugin-github-start</code>), PR trackers (<code>herdr-pr-tracker</code>). ralph-herdr's edge stays the board contract; fleet primitives should layer on <code>herdr agent start</code> (cadence's choice) rather than raw <code>send-keys</code> (pi-herd's, partly a herdr-0.7.1 workaround since actions couldn't take arguments).</div></div>
+
+    <h2 id="openq">Open questions (gating, recorded but never run)</h2>
+    <div class="open-q">
+      <div class="oq"><span class="qt">Claim-TTL vs pane persistence probe (design §5).</span> Blocks all unattended herdr arming; outstanding since the design record. Half-day experiment: lid-close and server-restart while a claim is live.</div>
+      <div class="oq"><span class="qt">Does an in-flight <code>agent prompt --wait</code> survive a server restart?</span> Untested; determines watcher re-arm semantics after <code>[[startup]]</code>.</div>
+      <div class="oq"><span class="qt">Where does the board write from the blocked-event bridge?</span> P1 can start notification-only; flipping issues to Human Needed from an event hook needs the same care the lane contracts get.</div>
+    </div>
+
+    <p class="eyebrow" style="margin-top:40px">Synthesized from three parallel research passes (repo audit · herdr.dev + protocol-19 schema · ecosystem web research), 2026-08-10.</p>
+  </main>
+</div>
+</body>
+</html>

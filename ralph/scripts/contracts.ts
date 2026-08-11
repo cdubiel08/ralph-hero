@@ -1,0 +1,1046 @@
+/**
+ * contracts.ts — the Zod source of truth for ralph-herdr v2 (Phase 1).
+ *
+ * Plan: thoughts/shared/plans/2026-08-10-ralph-herdr-v2-implementation.md
+ * Decision record: thoughts/shared/html-out/2026-08-10-ralph-herdr-v2-microworld.html
+ *
+ * Invariants carried here, not in prose:
+ *   - naming grammar B: name = <lane><issue>-<slug>[--<gen>], ≤32 chars,
+ *     parse-back guaranteed (lane = char 1, issue = leading digits, slug =
+ *     the rest before any --N); "--" appears ONLY in the collision suffix
+ *   - durable ref = name#spawn_epoch — pane_id is NEVER a durable key
+ *   - ClaimV2 wire = "h1+h2+...|iso8601"; one holder == today's board.ts
+ *     format byte-for-byte (back-compatible by construction)
+ *   - every contract carries `contract` (literal id) + `contract_version: 1`;
+ *     producers validate .strict(), consumers .passthrough() (additive-only —
+ *     unknown keys are ignored on read, refused on write)
+ *   - board state authoritative, herdr decorative: C6 declares the board CLI's
+ *     REAL --json shapes (parity with board.ts, which imports this file — so
+ *     this file must never import board.ts)
+ *
+ * Lints: L1–L13. Static ones run here; L3/L5/L7/L10 are LIVE lints (watcher,
+ * Phase 2) — named stubs that return { skipped: "requires --live" } so the
+ * rule ids exist from day one.
+ */
+
+import { createRequire } from "node:module";
+import type { SafeParseReturnType, ZodRawShape, ZodTypeAny } from "zod";
+
+// ---------------------------------------------------------------------------
+// Lazy zod runtime
+// ---------------------------------------------------------------------------
+// board.ts imports this module on EVERY command, and installed-plugin copies
+// ship no node_modules (the shim's `npx tsx` fallback is a supported runtime,
+// ralph/scripts/board + ralph/README.md). A top-level `import "zod"` would
+// therefore crash every board command on such hosts before any work happens —
+// so zod loads lazily, on the first schema-needing call (`contract validate`
+// / `contract emit`). Everything else in this file — naming, ClaimV2, the
+// token vocabulary, the lints — is dependency-free on purpose.
+//
+// The type-only imports above are erased at runtime; only the values below
+// touch the real package. Assigned once by loadZod(); the schema builders
+// below only run after it.
+let z: typeof import("zod")["z"];
+let zodToJsonSchema: typeof import("zod-to-json-schema")["zodToJsonSchema"];
+let zIssue: ZodTypeAny;
+let zNonEmpty: ZodTypeAny;
+let zIsoUtc: ZodTypeAny;
+let zLane: ZodTypeAny;
+let zAgentName: ZodTypeAny;
+let zAgentRef: ZodTypeAny;
+
+function loadZod(): void {
+  if (z !== undefined) return;
+  const require = createRequire(import.meta.url);
+  try {
+    ({ z } = require("zod") as typeof import("zod"));
+    ({ zodToJsonSchema } = require("zod-to-json-schema") as typeof import("zod-to-json-schema"));
+  } catch (e) {
+    throw new Error(
+      "`board contract validate|emit` needs the zod package, which is not resolvable beside this board copy " +
+        "(installed-plugin copies ship without node_modules). Run it from a ralph-hero checkout after `npm install`, " +
+        "or install bun. Every other board command works without zod. " +
+        `(${e instanceof Error ? e.message : e})`,
+    );
+  }
+  zIssue = z.number().int().positive();
+  zNonEmpty = z.string().min(1);
+  // ISO-8601, Z-anchored UTC (zod's .datetime() rejects offsets by default).
+  zIsoUtc = z.string().datetime();
+  zLane = z.enum(LANE_CHARS as [Lane, ...Lane[]]);
+  zAgentName = z
+    .string()
+    .max(NAME_MAX)
+    .refine((n) => parseAgentName(n)?.kind === "v2", {
+      message: "not a grammar-B agent name (<lane><issue>-<slug>[--N])",
+    });
+  zAgentRef = z.string().refine((r) => parseRef(r) !== null, {
+    message: "not a durable ref (name#epoch, epoch = 4-8 lowercase hex)",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Naming grammar B
+// ---------------------------------------------------------------------------
+
+/** Lane registry — the single char that opens every agent name. Issue 0 is
+ *  reserved for infra agents (s0-watch, x0-relay). */
+export const LANES = {
+  w: "work",
+  r: "review",
+  o: "orchestrator",
+  d: "disposable",
+  s: "watcher",
+  x: "relay",
+} as const;
+export type Lane = keyof typeof LANES;
+export const LANE_CHARS = Object.keys(LANES) as Lane[];
+
+export const NAME_MAX = 32;
+/** Chars reserved at format time for a possible collision suffix (--2..--9). */
+export const GEN_RESERVE = 3;
+
+/** The locked grammar: <lane><issue>-<slug>[--<gen>]. The slug starts with a
+ *  letter and never contains "--", so the collision suffix is unambiguous. */
+export const AGENT_NAME_RE = /^([a-z])([0-9]+)-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)(--[2-9])?$/;
+export const SLUG_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+/** What herdr itself accepts as an agent name — grammar B is a strict subset. */
+export const HERDR_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+/** spawn_epoch: lowercase hex, 4–8 chars. */
+export const EPOCH_RE = /^[0-9a-f]{4,8}$/;
+
+export type ParsedAgentName =
+  | { kind: "v2"; lane: Lane; issue: number; slug: string; gen: number | null }
+  | { kind: "legacy"; name: string; issue: number | null };
+
+/** lowercase, non-alnum runs → single hyphen, trim hyphens. The grammar also
+ *  requires a leading letter, so leading digit/hyphen runs are stripped; an
+ *  empty result falls back to "task" (a name must exist to be a scan key). */
+export function slugify(title: string): string {
+  const s = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/^[^a-z]+/, "")
+    .replace(/^-+/, "");
+  return s === "" ? "task" : s;
+}
+
+/** Slug budget for a given issue: 32 − lane(1) − digits − hyphen(1) − 3
+ *  reserved for a possible --N suffix (so collisions never re-truncate). */
+export function slugBudget(issue: number): number {
+  return NAME_MAX - 1 - String(issue).length - 1 - GEN_RESERVE;
+}
+
+/** Truncate at the last full word of ≥3 chars within budget, else hard cut;
+ *  strip trailing hyphens either way. */
+export function truncateSlug(slug: string, issue: number): string {
+  const budget = slugBudget(issue);
+  if (slug.length <= budget) return slug;
+  let keep = "";
+  for (const w of slug.split("-")) {
+    const cand = keep ? `${keep}-${w}` : w;
+    if (cand.length > budget) break;
+    keep = cand;
+  }
+  // A trailing "-a" / "-of" is noise, not a scan key — drop short last words.
+  while (keep !== "") {
+    const parts = keep.split("-");
+    if (parts[parts.length - 1].length >= 3) break;
+    parts.pop();
+    keep = parts.join("-");
+  }
+  if (keep === "") keep = slug.slice(0, budget).replace(/-+$/, "");
+  return keep;
+}
+
+/** Canonical name for (lane, issue, title). Title goes through slugify +
+ *  truncateSlug; collision suffixes are collideName's job. */
+export function formatAgentName(lane: Lane, issue: number, title: string): string {
+  if (!(lane in LANES)) throw new RangeError(`unknown lane ${JSON.stringify(lane)}`);
+  if (!Number.isInteger(issue) || issue < 0) throw new RangeError(`issue must be a non-negative integer (got ${issue})`);
+  return `${lane}${issue}-${truncateSlug(slugify(title), issue)}`;
+}
+
+/** Parse-back: grammar B first, then the legacy transition names (gh-N,
+ *  ralph-deliver, ralph-tend). Unknown lanes fail — the registry is closed. */
+export function parseAgentName(name: string): ParsedAgentName | null {
+  if (name.length === 0 || name.length > NAME_MAX) return null;
+  const gh = /^gh-([0-9]+)$/.exec(name);
+  if (gh) return { kind: "legacy", name, issue: Number(gh[1]) };
+  if (name === "ralph-deliver" || name === "ralph-tend") return { kind: "legacy", name, issue: null };
+  const m = AGENT_NAME_RE.exec(name);
+  if (!m) return null;
+  if (!(m[1] in LANES)) return null;
+  return {
+    kind: "v2",
+    lane: m[1] as Lane,
+    issue: Number(m[2]),
+    slug: m[3],
+    gen: m[4] ? Number(m[4].slice(2)) : null,
+  };
+}
+
+/** First free name among base, base--2 .. base--9. The slug budget reserved 3
+ *  chars, so a suffixed name never exceeds NAME_MAX. Nine live generations of
+ *  one (lane, issue, slug) is a runaway spawner, not a naming problem. */
+export function collideName(base: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(base)) return base;
+  for (let g = 2; g <= 9; g++) {
+    const cand = `${base}--${g}`;
+    if (!taken.has(cand)) return cand;
+  }
+  throw new RangeError(`collision space exhausted for ${base} (--2..--9 all taken)`);
+}
+
+// --- durable refs: name#spawn_epoch ---------------------------------------
+
+export interface AgentRef {
+  name: string;
+  epoch: string;
+}
+
+export function formatRef(name: string, epoch: string): string {
+  if (parseAgentName(name)?.kind !== "v2") throw new RangeError(`not a grammar-B name: ${name}`);
+  if (!EPOCH_RE.test(epoch)) throw new RangeError(`epoch must be 4-8 lowercase hex chars (got ${JSON.stringify(epoch)})`);
+  return `${name}#${epoch}`;
+}
+
+export function parseRef(ref: string): AgentRef | null {
+  const idx = ref.indexOf("#");
+  if (idx < 1) return null;
+  const name = ref.slice(0, idx);
+  const epoch = ref.slice(idx + 1);
+  if (parseAgentName(name)?.kind !== "v2") return null;
+  if (!EPOCH_RE.test(epoch)) return null;
+  return { name, epoch };
+}
+
+// ---------------------------------------------------------------------------
+// ClaimV2 — multi-holder, wire-compatible with board.ts's single-holder claim
+// ---------------------------------------------------------------------------
+
+/** Wire format: "holder1+holder2+...|iso8601". One holder serializes to
+ *  exactly today's "{holder}|{iso}" — a v1 reader sees a v2 single-holder
+ *  claim unchanged, and a v1-written claim parses here as holders:[h]. */
+export interface ClaimV2 {
+  holders: string[]; // 1..8, unique, insertion order preserved
+  since: Date; // ONE shared timestamp — any member's heartbeat refreshes it
+}
+
+export const CLAIM_MAX_HOLDERS = 8;
+
+/** During transition a holder is a grammar-B name OR a legacy name (gh-N,
+ *  ralph-deliver, ralph-tend). NOT enforced by the wire parser — today's
+ *  boards hold arbitrary "user@host" holders and the board reads them fine;
+ *  strictness belongs to producers and lints, never to reads. */
+export function isValidHolder(holder: string): boolean {
+  return parseAgentName(holder) !== null;
+}
+
+/** Lenient by design (parity with board.ts parseClaim): any '+'-free,
+ *  non-empty holder tokens before the LAST '|', ISO date after it. Duplicates
+ *  dedupe on read; >8 holders or an empty token reads as garbled (null) — the
+ *  same fail-closed convention as board.ts's claimRaw-non-null/claim-null. */
+export function parseClaim(value: string | null | undefined): ClaimV2 | null {
+  if (!value) return null;
+  const idx = value.lastIndexOf("|");
+  if (idx < 1) return null;
+  const since = new Date(value.slice(idx + 1));
+  if (Number.isNaN(since.getTime())) return null;
+  const raw = value.slice(0, idx).split("+");
+  if (raw.some((h) => h === "")) return null;
+  const holders = [...new Set(raw)];
+  if (holders.length < 1 || holders.length > CLAIM_MAX_HOLDERS) return null;
+  return { holders, since };
+}
+
+/** The ONE claim wire writer. A holder carrying a wire delimiter would parse
+ *  back as a different holder set ("a+b" reads as two members, and neither is
+ *  "a+b" — its own writer would then fail the read-back membership verify and
+ *  strand the item claimed under names nobody uses), so every write refuses
+ *  such holders loudly. Reads stay lenient (parseClaim) — strictness belongs
+ *  to producers, never to reads. */
+export function formatClaim(claim: ClaimV2): string {
+  for (const h of claim.holders)
+    if (h === "" || h.includes("+") || h.includes("|"))
+      throw new RangeError(`claim holder contains wire delimiters: ${JSON.stringify(h)}`);
+  return `${claim.holders.join("+")}|${claim.since.toISOString()}`;
+}
+
+export function isMember(claim: ClaimV2, holder: string): boolean {
+  return claim.holders.includes(holder);
+}
+
+/** Fleet join: adds the holder (no-op membership-wise if already in) and
+ *  refreshes the shared since. Throws past the 8-holder cap — a full fleet is
+ *  a refusal the caller must surface, not silently absorb. */
+export function addHolder(claim: ClaimV2, holder: string, now: Date): ClaimV2 {
+  if (holder === "" || holder.includes("+") || holder.includes("|"))
+    throw new RangeError(`holder contains wire delimiters: ${JSON.stringify(holder)}`);
+  if (isMember(claim, holder)) return { holders: [...claim.holders], since: now };
+  if (claim.holders.length >= CLAIM_MAX_HOLDERS)
+    throw new RangeError(`claim holder cap (${CLAIM_MAX_HOLDERS}) reached; ${holder} cannot join`);
+  return { holders: [...claim.holders, holder], since: now };
+}
+
+/** Leave: removing the last holder returns null — the caller clears the
+ *  field. Removing a non-member is a no-op (idempotent release). */
+export function removeHolder(claim: ClaimV2, holder: string): ClaimV2 | null {
+  if (!isMember(claim, holder)) return claim;
+  const holders = claim.holders.filter((h) => h !== holder);
+  if (holders.length === 0) return null;
+  return { holders, since: claim.since };
+}
+
+/** Any member refreshes the single shared since; a non-member gets null (its
+ *  claim to be heartbeating is itself the anomaly). TTL/staleness semantics
+ *  are unchanged from v1 — board.ts owns them against this one timestamp. */
+export function heartbeat(claim: ClaimV2, holder: string, now: Date): ClaimV2 | null {
+  if (!isMember(claim, holder)) return null;
+  return { holders: [...claim.holders], since: now };
+}
+
+// ---------------------------------------------------------------------------
+// Shared schema primitives
+// ---------------------------------------------------------------------------
+
+export const HARNESSES = ["claude", "codex", "pi"] as const;
+export type Harness = (typeof HARNESSES)[number];
+export const INVOKED_BY = ["human", "agent", "scheduler"] as const;
+
+/** THE board state list — the single declaration. Declared here rather than
+ *  in board.ts because board.ts imports this file (a reverse import would be
+ *  a cycle); board.ts re-exports it as STATES (`STATES = BOARD_STATES`), so
+ *  drift between the machine and the C2/C6 schemas is impossible by
+ *  construction, not guarded by a test. */
+export const BOARD_STATES = [
+  "Backlog",
+  "In Progress",
+  "In Review",
+  "Human Needed",
+  "Done",
+  "Canceled",
+] as const;
+
+/** THE deliver-lane reason list (same single-declaration rule): board.ts
+ *  derives its DeliverReason type from this tuple. */
+export const DELIVER_REASONS = [
+  "actionable", // confirmed by a dry-run probe (or probe unavailable)
+  "retry", // marker window expired — the session runs the gates itself
+  "no-open-pr", // all linked PRs merged/closed — close-out branch (§4.4)
+  "settling",
+  "no-pr",
+  "marker-current",
+  "retry-window",
+  "deferred",
+] as const;
+/** THE tend-lane category list (same single-declaration rule): board.ts
+ *  derives its TendCategory type from this tuple. */
+export const TEND_CATEGORIES = [
+  "stale-body", // Backlog, no updates in staleDays — grep the live tree before trusting it
+  "deps-cleared", // Backlog, every blocker closed — the wait is over (or the edge is stale)
+  "deps-truncated", // Backlog, blocker list truncated — the board cannot see its own edges
+  "unformed", // no estimate, no parent, no dependencies, older than 7 days — likely raw intake
+  "done-audit", // closed recently, no audit marker — the cursor is the marker comment
+] as const;
+
+/** Producer schemas are .strict() (refuse unknown keys at the source);
+ *  consumer schemas are .passthrough() (ignore unknown keys — additive-only
+ *  evolution needs old readers to survive new fields). One factory per
+ *  contract builds both so the shapes can never drift apart.
+ *  (The zIssue/zLane/… primitives it composes live in loadZod() above —
+ *  every build* function below runs only behind loadSchemas().) */
+type Mode = "strict" | "loose";
+function obj<T extends ZodRawShape>(mode: Mode, shape: T) {
+  return mode === "strict" ? z.object(shape).strict() : z.object(shape).passthrough();
+}
+
+// ---------------------------------------------------------------------------
+// Contracts C1–C9 (C5 is deliberately absent from the locked spec)
+// ---------------------------------------------------------------------------
+
+export const CONTRACT_IDS = [
+  "ralph.spawn_request",
+  "ralph.completion_report",
+  "ralph.fleet_brief",
+  "ralph.fleet_reply",
+  "ralph.board_queue",
+  "ralph.lineage",
+  "ralph.token_vocabulary",
+  "ralph.escalation",
+] as const;
+export type ContractId = (typeof CONTRACT_IDS)[number];
+
+// --- C1 SpawnRequest -------------------------------------------------------
+
+function buildSpawnRequest(mode: Mode) {
+  return obj(mode, {
+    contract: z.literal("ralph.spawn_request"),
+    contract_version: z.literal(1),
+    issue: zIssue,
+    lane: zLane,
+    slug: z.string().regex(SLUG_RE, "not a valid slug"),
+    harness: z.enum(HARNESSES),
+    branch: zNonEmpty,
+    base: zNonEmpty,
+    parent_ref: zAgentRef.optional(),
+    depth: z.number().int().min(0).max(3),
+    invoked_by: z.enum(INVOKED_BY),
+  }).superRefine((v, ctx) => {
+    // The assembled name must obey the grammar's length cap with the gen
+    // suffix still reserved — i.e. the producer already ran truncateSlug.
+    if (1 + String(v.issue).length + 1 + v.slug.length > NAME_MAX - GEN_RESERVE)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["slug"],
+        message: `slug over budget for issue ${v.issue}: run truncateSlug (name must fit ${NAME_MAX} chars incl. --N reserve)`,
+      });
+  });
+}
+
+// --- C2 CompletionReport ---------------------------------------------------
+
+function buildCompletionReport(mode: Mode) {
+  return obj(mode, {
+    contract: z.literal("ralph.completion_report"),
+    contract_version: z.literal(1),
+    agent: zAgentName,
+    agent_ref: zAgentRef,
+    issue: zIssue,
+    outcome: z.enum(["completed", "blocked", "failed", "abandoned"]),
+    pr: zIssue.optional(),
+    commit_sha: z.string().regex(/^[0-9a-f]{40}$/, "not a 40-char lowercase hex sha").optional(),
+    board_state_claimed: z.enum(BOARD_STATES).optional(),
+    tests: z.array(z.string()),
+    blockers: z.array(z.string()),
+    started_at: zIsoUtc,
+    finished_at: zIsoUtc,
+    lineage: obj(mode, {
+      spawned_by: zAgentRef,
+      parent_issue: zIssue.optional(),
+    }),
+  }).superRefine((v, ctx) => {
+    if (v.outcome === "completed" && v.pr === undefined)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["pr"], message: "outcome=completed requires pr" });
+    if (v.outcome === "completed" && v.commit_sha === undefined)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["commit_sha"], message: "outcome=completed requires commit_sha" });
+    if (v.outcome === "blocked" && v.blockers.length === 0)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["blockers"], message: "outcome=blocked requires at least one blocker" });
+    if (Date.parse(v.finished_at) < Date.parse(v.started_at))
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["finished_at"], message: "finished_at must be >= started_at" });
+  });
+}
+
+// --- C3 FleetBrief ---------------------------------------------------------
+
+/** Skill invocation a brief for (lane, issue) must carry, when the lane has a
+ *  known skill mapping; null = free-form (any nonempty invocation is legal). */
+export function expectedSkillInvocation(lane: Lane, issue: number): string | null {
+  return lane === "w" ? `/ralph:work ${issue}` : null;
+}
+
+function buildFleetBrief(mode: Mode) {
+  return obj(mode, {
+    contract: z.literal("ralph.fleet_brief"),
+    contract_version: z.literal(1),
+    issue: zIssue,
+    role: zLane,
+    skill_invocation: zNonEmpty,
+    reply_to: obj(mode, {
+      kind: z.literal("herdr_agent"),
+      name: zAgentName,
+    }),
+    report_path: zNonEmpty,
+    constraints: obj(mode, {
+      branch: zNonEmpty,
+      base: zNonEmpty,
+      no_force: z.literal(true),
+    }),
+    deadline: zIsoUtc.optional(),
+  }).superRefine((v, ctx) => {
+    const want = expectedSkillInvocation(v.role, v.issue);
+    if (want !== null && v.skill_invocation !== want)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["skill_invocation"],
+        message: `lane ${v.role} for issue ${v.issue} must invoke ${JSON.stringify(want)}`,
+      });
+  });
+}
+
+// --- C4 FleetReply ---------------------------------------------------------
+
+function zOption(mode: Mode) {
+  return obj(mode, {
+    id: zNonEmpty,
+    label: zNonEmpty,
+    recommended: z.boolean().optional(),
+  });
+}
+
+function buildFleetReply(mode: Mode) {
+  return obj(mode, {
+    contract: z.literal("ralph.fleet_reply"),
+    contract_version: z.literal(1),
+    agent_ref: zAgentRef,
+    issue: zIssue,
+    kind: z.enum(["progress", "blocked", "done", "question"]),
+    body: z.string().max(2000),
+    options: z.array(zOption(mode)).optional(),
+  }).superRefine((v, ctx) => {
+    if (v.kind !== "question") return;
+    const opts = v.options ?? [];
+    if (opts.length === 0)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["options"], message: "kind=question requires options" });
+    else if (opts.filter((o) => o.recommended === true).length !== 1)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["options"], message: "kind=question requires exactly one recommended option" });
+  });
+}
+
+// --- C6 BoardQueue ---------------------------------------------------------
+// TODAY's real shapes of `board next|deliver-queue|tend-queue --json`,
+// declared field-for-field from board.ts (QueueItem / DeliverRow / TendRow +
+// the EmptyQueueReport spread `next` adds). Do not "improve" these here —
+// board.ts is the producer; this contract only names what it already emits.
+// Parity is EXECUTABLE, not prose: contracts.test.ts drives the real CLI
+// (run(["next"|"deliver-queue"|"tend-queue","--json"]) over FakeGh) and
+// validates the captured output against these schemas.
+// NOTE on the envelope: board.ts emits the BARE result object today — the
+// {contract, contract_version, selector, result} wrapper is added by the
+// consumer that ships a queue snapshot across a boundary (the Phase-2
+// watcher). Nothing produces the envelope yet; the schema exists so that
+// consumer has a contract to meet on day one.
+
+function zClaimJson(mode: Mode) {
+  // board.ts Claim (= ClaimV2) JSON-serialized: Date → ISO string, holders
+  // 1..8 in insertion order (one shared since — see the ClaimV2 section).
+  return obj(mode, {
+    holders: z.array(zNonEmpty).min(1).max(CLAIM_MAX_HOLDERS),
+    since: zIsoUtc,
+  });
+}
+
+function zQueueItem(mode: Mode) {
+  return obj(mode, {
+    number: zIssue,
+    repo: zNonEmpty, // nameWithOwner — the board is cross-repo capable
+    title: z.string(),
+    state: z.string(), // string, not enum: legacy v1 options still exist on the field
+    priority: z.string().nullable(),
+    hasParent: z.boolean(),
+    parentNumber: z.number().int().nullable(),
+    via: z.number().int().optional(),
+    childrenBlocked: z.array(z.number().int()).optional(),
+    openBlockers: z.array(z.number().int()),
+    blockersTruncated: z.boolean(),
+    fieldValuesTruncated: z.boolean(),
+    claim: zClaimJson(mode).nullable(),
+    claimRaw: z.string().nullable(),
+    openBlockerLabels: z.array(z.string()),
+    labels: z.array(z.string()),
+    labelsTruncated: z.boolean(),
+    closedBlockers: z.array(z.number().int()),
+    updatedAt: zIsoUtc.nullable().optional(),
+    createdAt: zIsoUtc.nullable().optional(),
+    estimate: z.string().nullable().optional(),
+  });
+}
+
+function zNextResult(mode: Mode) {
+  return obj(mode, {
+    next: zQueueItem(mode).nullable(),
+    queue: z.array(zQueueItem(mode)),
+    blocked: z.array(zQueueItem(mode)),
+    diagnosis: z.enum(["no-items", "human-needed", "epic-in-flight", "stale-blocked"]).nullable(),
+    humanNeededCount: z.number().int().min(0),
+    staleBlockedEdges: z.array(obj(mode, { number: zIssue, blockers: z.array(z.number().int()) })),
+    inFlightEpics: z.array(obj(mode, { root: zIssue, child: zIssue, holder: z.string().nullable() })),
+  });
+}
+
+function zDeliverRow(mode: Mode) {
+  return obj(mode, {
+    number: zIssue,
+    title: z.string(),
+    pr: z.number().int().nullable(),
+    reason: z.enum(DELIVER_REASONS),
+    verdict: z.string().nullable().optional(),
+    gate: z.string().nullable().optional(),
+    deltaAt: zIsoUtc.nullable().optional(),
+    windowExpiresAt: zIsoUtc.nullable().optional(),
+  });
+}
+
+function zDeliverResult(mode: Mode) {
+  return obj(mode, {
+    next: zDeliverRow(mode).nullable(),
+    queue: z.array(zDeliverRow(mode)),
+    blocked: z.array(zDeliverRow(mode)),
+  });
+}
+
+function zTendRow(mode: Mode) {
+  return obj(mode, {
+    number: zIssue,
+    title: z.string(),
+    category: z.enum(TEND_CATEGORIES),
+    at: zIsoUtc.nullable(),
+  });
+}
+
+function zTendResult(mode: Mode) {
+  return obj(mode, {
+    next: zTendRow(mode).nullable(),
+    queue: z.array(zTendRow(mode)),
+    blocked: z.array(zTendRow(mode)), // shape parity — tend blocks nothing
+    observationSlot: z.literal(true),
+  });
+}
+
+function buildBoardQueue(mode: Mode) {
+  const head = {
+    contract: z.literal("ralph.board_queue"),
+    contract_version: z.literal(1),
+  };
+  return z
+    .discriminatedUnion("selector", [
+      obj(mode, { ...head, selector: z.literal("next"), result: zNextResult(mode) }),
+      obj(mode, { ...head, selector: z.literal("deliver-queue"), result: zDeliverResult(mode) }),
+      obj(mode, { ...head, selector: z.literal("tend-queue"), result: zTendResult(mode) }),
+    ])
+    .superRefine((v, ctx) => {
+      const r = v.result as { next: unknown; queue: Array<{ number: number }> };
+      if (r.next !== null && r.queue.length > 0 && JSON.stringify(r.next) !== JSON.stringify(r.queue[0]))
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["result", "next"],
+          message: "next must deep-equal queue[0] when both present",
+        });
+      if (new Set(r.queue.map((q) => q.number)).size !== r.queue.length)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["result", "queue"],
+          message: "queue numbers must be unique",
+        });
+    });
+}
+
+// --- C7 LineageRecord ------------------------------------------------------
+
+function buildLineageRecord(mode: Mode) {
+  return obj(mode, {
+    contract: z.literal("ralph.lineage"),
+    contract_version: z.literal(1),
+    agent_ref: zAgentRef,
+    issue: zIssue,
+    parent_issue: zIssue.optional(),
+    spawner: obj(mode, {
+      script: zNonEmpty,
+      invoked_by: z.enum(INVOKED_BY),
+    }),
+    herdr: obj(mode, {
+      session: z.string().optional(),
+      /** pane_id is OPAQUE and server-scoped: it names a live pane on one
+       *  herdr server instance and dies with it. It is NEVER a durable key —
+       *  agent_ref (name#spawn_epoch) is the durable identity. */
+      pane_id: z.string().optional(),
+      worktree_branch: z.string().optional(),
+      workspace_label: z.string().optional(),
+    }),
+    plane: z.enum(["herdr", "inner"]),
+    spawned_at: zIsoUtc,
+  });
+}
+
+// --- C8 TokenVocabulary ----------------------------------------------------
+
+export const TOKEN_NAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
+export const TOKEN_VALUE_MAX = 80;
+
+export const AGENT_STATES = [
+  "spawned",
+  "briefed",
+  "working",
+  "blocked",
+  "reporting",
+  "orphaned",
+  "adopted",
+] as const;
+export type AgentState = (typeof AGENT_STATES)[number];
+
+export interface TokenSpec {
+  doc: string;
+  /** Cheap per-value validator; free-form tokens only get the shared ≤80 cap. */
+  validate: (value: string) => boolean;
+}
+
+const freeForm = (doc: string): TokenSpec => ({ doc, validate: () => true });
+
+/** The token vocabulary — tokens are ATTRIBUTES; the name is identity. */
+export const TOKENS = {
+  role: { doc: "lane letter from the LANES registry", validate: (v) => v in LANES },
+  issue: { doc: "board issue number (0 = infra)", validate: (v) => /^(0|[1-9][0-9]*)$/.test(v) },
+  slug: { doc: "the name's slug part", validate: (v) => SLUG_RE.test(v) },
+  parent: freeForm("parent agent name or durable ref"),
+  root: freeForm("root of this agent's spawn tree"),
+  depth: { doc: "herdr-plane spawn depth (inner subagents are free)", validate: (v) => /^[0-3]$/.test(v) },
+  state: {
+    doc: "agent lifecycle state",
+    validate: (v) => (AGENT_STATES as readonly string[]).includes(v),
+  },
+  branch: freeForm("git branch the agent works on"),
+  claim: freeForm("board claim summary for the cockpit"),
+  pr: { doc: "pull request number", validate: (v) => /^[1-9][0-9]*$/.test(v) },
+  spawn_epoch: { doc: "durable-ref epoch (4-8 lowercase hex)", validate: (v) => EPOCH_RE.test(v) },
+  harness: {
+    doc: "which coding agent runs in the pane — metadata, NEVER in the name",
+    validate: (v) => (HARNESSES as readonly string[]).includes(v),
+  },
+  inner: { doc: "count of inner-plane subagents", validate: (v) => /^(0|[1-9][0-9]*)$/.test(v) },
+  fresh: freeForm("freshness marker for the cockpit"),
+} as const satisfies Record<string, TokenSpec>;
+export type TokenName = keyof typeof TOKENS;
+export const TOKEN_NAMES = Object.keys(TOKENS) as TokenName[];
+
+function buildTokenVocabulary(mode: Mode) {
+  return obj(mode, {
+    contract: z.literal("ralph.token_vocabulary"),
+    contract_version: z.literal(1),
+    tokens: z.record(z.string().regex(TOKEN_NAME_RE), z.string().max(TOKEN_VALUE_MAX)),
+  }).superRefine((v, ctx) => {
+    for (const [name, value] of Object.entries(v.tokens)) {
+      const spec = (TOKENS as Record<string, TokenSpec>)[name];
+      if (!spec) {
+        // Producers stay inside the vocabulary; consumers ignore strangers.
+        if (mode === "strict")
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["tokens", name],
+            message: `unknown token name ${JSON.stringify(name)} (vocabulary: ${TOKEN_NAMES.join(", ")})`,
+          });
+        continue;
+      }
+      if (!spec.validate(value))
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tokens", name],
+          message: `invalid value for token ${name}: ${JSON.stringify(value)} (${spec.doc})`,
+        });
+    }
+  });
+}
+
+// --- C9 EscalationPayload --------------------------------------------------
+// Phone-answerable by construction: short single-line body, ≥2 enumerated
+// options with exactly one recommended default, and a machine-actionable
+// resume path — a human taps a choice; nothing needs a keyboard.
+
+function buildEscalationPayload(mode: Mode) {
+  return obj(mode, {
+    contract: z.literal("ralph.escalation"),
+    contract_version: z.literal(1),
+    agent: zAgentName.optional(),
+    issue: zIssue,
+    title: z.string().min(1).max(80),
+    body: z
+      .string()
+      .min(1)
+      .max(240)
+      .refine((b) => !/[\r\n]/.test(b), { message: "body must be a single line" }),
+    options: z.array(zOption(mode)).min(2),
+    resume: obj(mode, {
+      kind: z.enum(["herdr_prompt", "board_comment"]),
+      target: zNonEmpty,
+    }),
+  }).superRefine((v, ctx) => {
+    if (v.options.filter((o) => o.recommended === true).length !== 1)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["options"], message: "exactly one option must be recommended" });
+  });
+}
+
+// --- lazy schema registry --------------------------------------------------
+
+export interface ContractEntry {
+  /** Producer-side: .strict() everywhere — unknown keys refuse to serialize. */
+  strict: ZodTypeAny;
+  /** Consumer-side: .passthrough() everywhere — unknown keys ride along. */
+  loose: ZodTypeAny;
+}
+
+/** Built on first use (see the lazy-zod note at the top of this file) —
+ *  importing this module must stay free of any zod dependency at runtime. */
+let CONTRACTS: Record<ContractId, ContractEntry> | null = null;
+
+function loadSchemas(): Record<ContractId, ContractEntry> {
+  if (CONTRACTS) return CONTRACTS;
+  loadZod();
+  CONTRACTS = {
+    "ralph.spawn_request": { strict: buildSpawnRequest("strict"), loose: buildSpawnRequest("loose") },
+    "ralph.completion_report": { strict: buildCompletionReport("strict"), loose: buildCompletionReport("loose") },
+    "ralph.fleet_brief": { strict: buildFleetBrief("strict"), loose: buildFleetBrief("loose") },
+    "ralph.fleet_reply": { strict: buildFleetReply("strict"), loose: buildFleetReply("loose") },
+    "ralph.board_queue": { strict: buildBoardQueue("strict"), loose: buildBoardQueue("loose") },
+    "ralph.lineage": { strict: buildLineageRecord("strict"), loose: buildLineageRecord("loose") },
+    "ralph.token_vocabulary": { strict: buildTokenVocabulary("strict"), loose: buildTokenVocabulary("loose") },
+    "ralph.escalation": { strict: buildEscalationPayload("strict"), loose: buildEscalationPayload("loose") },
+  };
+  return CONTRACTS;
+}
+
+export function isContractId(id: string): id is ContractId {
+  return (CONTRACT_IDS as readonly string[]).includes(id);
+}
+
+export function validateContract(
+  id: ContractId,
+  data: unknown,
+  opts: { loose?: boolean } = {},
+): SafeParseReturnType<unknown, unknown> {
+  const entry = loadSchemas()[id];
+  return (opts.loose ? entry.loose : entry.strict).safeParse(data);
+}
+
+// ---------------------------------------------------------------------------
+// Lints L1–L13
+// ---------------------------------------------------------------------------
+// Static lints run on any payload and answer "not applicable" (skipped) when
+// the payload lacks the fields they judge. L3/L5/L7/L10 are LIVE lints —
+// they need the watcher's socket / board access (Phase 2) and exist here only
+// so the rule ids are stable from day one.
+
+export const LINT_IDS = [
+  "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10", "L11", "L12", "L13",
+] as const;
+export type LintId = (typeof LINT_IDS)[number];
+export const LIVE_LINT_IDS: readonly LintId[] = ["L3", "L5", "L7", "L10"];
+
+export type LintResult =
+  | { rule: LintId; ok: true; note?: string }
+  | { rule: LintId; ok: false; message: string }
+  | { rule: LintId; skipped: string };
+
+type Dict = Record<string, unknown>;
+const isDict = (v: unknown): v is Dict => typeof v === "object" && v !== null && !Array.isArray(v);
+const notApplicable = (rule: LintId, why: string): LintResult => ({ rule, skipped: `not applicable — ${why}` });
+
+/** L1: a brief's reply_to must be a routable herdr agent. */
+export function lintL1ReplyToShape(payload: unknown): LintResult {
+  const rule: LintId = "L1";
+  if (!isDict(payload) || !("reply_to" in payload)) return notApplicable(rule, "no reply_to");
+  const rt = payload.reply_to;
+  if (!isDict(rt)) return { rule, ok: false, message: "reply_to must be an object" };
+  if (rt.kind !== "herdr_agent")
+    return { rule, ok: false, message: `reply_to.kind must be "herdr_agent" (got ${JSON.stringify(rt.kind)})` };
+  if (typeof rt.name !== "string" || parseAgentName(rt.name)?.kind !== "v2")
+    return { rule, ok: false, message: `reply_to.name is not a grammar-B agent name: ${JSON.stringify(rt.name)}` };
+  return { rule, ok: true };
+}
+
+/** L2: the agent name parses, and the issue baked into the name matches the
+ *  payload's issue — a w1743 pane reporting on issue 1800 is lying somewhere. */
+export function lintL2AgentNameIssue(payload: unknown): LintResult {
+  const rule: LintId = "L2";
+  if (!isDict(payload)) return notApplicable(rule, "not an object");
+  const source =
+    typeof payload.agent === "string" ? payload.agent
+    : typeof payload.agent_ref === "string" ? payload.agent_ref.split("#")[0]
+    : null;
+  if (source === null) return notApplicable(rule, "no agent / agent_ref");
+  const parsed = parseAgentName(source);
+  if (parsed === null) return { rule, ok: false, message: `agent name does not parse: ${JSON.stringify(source)}` };
+  if (typeof payload.issue === "number" && parsed.issue !== null && parsed.issue !== payload.issue)
+    return { rule, ok: false, message: `name says issue ${parsed.issue}, payload says issue ${payload.issue}` };
+  return { rule, ok: true };
+}
+
+/** L3 (LIVE): reserved — needs the watcher's socket view. */
+export function lintL3Live(_payload: unknown): LintResult {
+  return { rule: "L3", skipped: "requires --live" };
+}
+
+/** L4: outcome–evidence coherence on completion reports (schema-independent,
+ *  so it also catches loose-parsed payloads a consumer accepted). */
+export function lintL4OutcomeEvidence(payload: unknown): LintResult {
+  const rule: LintId = "L4";
+  if (!isDict(payload) || typeof payload.outcome !== "string") return notApplicable(rule, "no outcome");
+  const problems: string[] = [];
+  if (payload.outcome === "completed") {
+    if (typeof payload.pr !== "number") problems.push("completed without pr");
+    if (typeof payload.commit_sha !== "string" || !/^[0-9a-f]{40}$/.test(payload.commit_sha))
+      problems.push("completed without a valid commit_sha");
+  }
+  if (payload.outcome === "blocked" && (!Array.isArray(payload.blockers) || payload.blockers.length === 0))
+    problems.push("blocked without blockers");
+  if (problems.length) return { rule, ok: false, message: problems.join("; ") };
+  return { rule, ok: true };
+}
+
+/** L5 (LIVE): reserved — needs board access. */
+export function lintL5Live(_payload: unknown): LintResult {
+  return { rule: "L5", skipped: "requires --live" };
+}
+
+/** L6: contract_version must be KNOWN. A higher version is refused loudly —
+ *  guessing at a future wire format is how silent corruption starts. */
+export function lintL6ContractVersion(payload: unknown): LintResult {
+  const rule: LintId = "L6";
+  if (!isDict(payload) || !("contract_version" in payload)) return notApplicable(rule, "no contract_version");
+  const v = payload.contract_version;
+  if (v === 1) return { rule, ok: true };
+  if (typeof v === "number" && Number.isInteger(v) && v > 1)
+    return {
+      rule,
+      ok: false,
+      message: `REFUSING contract_version ${v}: this validator knows only version 1 — upgrade before trusting this payload`,
+    };
+  return { rule, ok: false, message: `contract_version must be the integer 1 (got ${JSON.stringify(v)})` };
+}
+
+/** L7 (LIVE): reserved — needs the watcher's socket view. */
+export function lintL7Live(_payload: unknown): LintResult {
+  return { rule: "L7", skipped: "requires --live" };
+}
+
+/** L8: the working branch is derived, not chosen: feature/GH-<issue>. */
+export function lintL8BranchConvention(payload: unknown): LintResult {
+  const rule: LintId = "L8";
+  if (!isDict(payload) || typeof payload.issue !== "number") return notApplicable(rule, "no issue");
+  const branch =
+    typeof payload.branch === "string" ? payload.branch
+    : isDict(payload.constraints) && typeof payload.constraints.branch === "string" ? payload.constraints.branch
+    : null;
+  if (branch === null) return notApplicable(rule, "no branch");
+  const want = `feature/GH-${payload.issue}`;
+  if (branch !== want)
+    return { rule, ok: false, message: `branch must be ${JSON.stringify(want)} (got ${JSON.stringify(branch)})` };
+  return { rule, ok: true };
+}
+
+/** L9: queue-rank integrity — next deep-equals queue[0] when both present,
+ *  queue numbers unique. Accepts a C6 envelope or a bare result object. */
+export function lintL9QueueRank(payload: unknown): LintResult {
+  const rule: LintId = "L9";
+  const r = isDict(payload) && isDict(payload.result) ? payload.result : payload;
+  if (!isDict(r) || !Array.isArray(r.queue) || !("next" in r)) return notApplicable(rule, "no next/queue");
+  if (r.next !== null && r.queue.length > 0 && JSON.stringify(r.next) !== JSON.stringify(r.queue[0]))
+    return { rule, ok: false, message: "next does not deep-equal queue[0]" };
+  const nums = r.queue.filter(isDict).map((q) => q.number);
+  if (new Set(nums).size !== nums.length) return { rule, ok: false, message: "queue numbers are not unique" };
+  return { rule, ok: true };
+}
+
+/** L10 (LIVE): reserved — needs board access. */
+export function lintL10Live(_payload: unknown): LintResult {
+  return { rule: "L10", skipped: "requires --live" };
+}
+
+/** L11: an escalation's resume path must be machine-actionable — a target the
+ *  resuming side can act on without a human decoding free text. */
+export function lintL11EscalationResume(payload: unknown): LintResult {
+  const rule: LintId = "L11";
+  if (!isDict(payload) || !("resume" in payload)) return notApplicable(rule, "no resume");
+  const r = payload.resume;
+  if (!isDict(r)) return { rule, ok: false, message: "resume must be an object" };
+  const target = typeof r.target === "string" ? r.target : "";
+  if (r.kind === "herdr_prompt") {
+    if (parseAgentName(target)?.kind !== "v2" && parseRef(target) === null)
+      return { rule, ok: false, message: `herdr_prompt target must be an agent name or ref (got ${JSON.stringify(r.target)})` };
+    return { rule, ok: true };
+  }
+  if (r.kind === "board_comment") {
+    if (!/^#?[0-9]+$/.test(target) && !/^https:\/\/[^\s]+\/issues\/[0-9]+([#?].*)?$/.test(target))
+      return { rule, ok: false, message: `board_comment target must be an issue number or issue URL (got ${JSON.stringify(r.target)})` };
+    return { rule, ok: true };
+  }
+  return { rule, ok: false, message: `resume.kind must be herdr_prompt|board_comment (got ${JSON.stringify(r.kind)})` };
+}
+
+/** L12: no-secret-leak — a contract payload travels through comments, ledgers
+ *  and phone notifications; a credential anywhere in it is an incident. */
+export const SECRET_RE = /sk-ant-|ANTHROPIC_API_KEY\s*=|ghp_[A-Za-z0-9]/;
+export function lintL12NoSecretLeak(payload: unknown): LintResult {
+  const rule: LintId = "L12";
+  let text: string;
+  try {
+    text = JSON.stringify(payload) ?? "";
+  } catch {
+    return { rule, ok: false, message: "payload is not JSON-serializable — cannot prove it leaks no secret" };
+  }
+  if (SECRET_RE.test(text)) return { rule, ok: false, message: "payload matches a secret pattern (sk-ant-/ANTHROPIC_API_KEY=/ghp_)" };
+  return { rule, ok: true };
+}
+
+/** L13: timestamps are UTC-Z ISO strings and internally ordered
+ *  (finished_at ≥ started_at wherever both appear). Deadline-in-the-future is
+ *  deliberately NOT checked — no clock injection here; ordering only. */
+export function lintL13Timestamps(payload: unknown): LintResult {
+  const rule: LintId = "L13";
+  const TS_KEY = /(_at$|^deadline$|^since$|^at$)/;
+  const ISO_Z = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+  const bad: string[] = [];
+  let sawAny = false;
+  const walk = (v: unknown, path: string): void => {
+    if (Array.isArray(v)) {
+      v.forEach((e, i) => walk(e, `${path}[${i}].`));
+      return;
+    }
+    if (!isDict(v)) return;
+    for (const [k, val] of Object.entries(v)) {
+      if (TS_KEY.test(k) && typeof val === "string") {
+        sawAny = true;
+        if (!ISO_Z.test(val) || Number.isNaN(Date.parse(val))) bad.push(`${path}${k} not UTC-Z ISO: ${JSON.stringify(val)}`);
+      }
+      walk(val, `${path}${k}.`);
+    }
+    const s = v.started_at;
+    const f = v.finished_at;
+    if (typeof s === "string" && typeof f === "string" && ISO_Z.test(s) && ISO_Z.test(f) && Date.parse(f) < Date.parse(s))
+      bad.push(`${path}finished_at precedes started_at`);
+  };
+  walk(payload, "");
+  if (!sawAny) return notApplicable(rule, "no timestamp fields");
+  if (bad.length) return { rule, ok: false, message: bad.join("; ") };
+  return { rule, ok: true, note: "deadline future-at-emit deliberately unchecked (no clock injection)" };
+}
+
+export const LINTS: Record<LintId, (payload: unknown) => LintResult> = {
+  L1: lintL1ReplyToShape,
+  L2: lintL2AgentNameIssue,
+  L3: lintL3Live,
+  L4: lintL4OutcomeEvidence,
+  L5: lintL5Live,
+  L6: lintL6ContractVersion,
+  L7: lintL7Live,
+  L8: lintL8BranchConvention,
+  L9: lintL9QueueRank,
+  L10: lintL10Live,
+  L11: lintL11EscalationResume,
+  L12: lintL12NoSecretLeak,
+  L13: lintL13Timestamps,
+};
+
+/** Run every lint against one payload, in rule order. */
+export function runLints(payload: unknown): LintResult[] {
+  return LINT_IDS.map((id) => LINTS[id](payload));
+}
+
+// ---------------------------------------------------------------------------
+// JSON Schema emission (D5: zod-to-json-schema; artifacts land via
+// `board contract emit` and are drift-checked in CI)
+// ---------------------------------------------------------------------------
+
+/** One self-contained JSON Schema per contract, from the STRICT (producer)
+ *  variant — external validators should hold producers to the producer bar.
+ *  Note: Zod refinements (outcome coherence, queue integrity, …) have no JSON
+ *  Schema equivalent and are emitted as the input shape only; the lints and
+ *  the Zod schemas remain the full truth. */
+export function emitJsonSchemas(): Record<ContractId, Record<string, unknown>> {
+  const contracts = loadSchemas();
+  const out = {} as Record<ContractId, Record<string, unknown>>;
+  for (const id of CONTRACT_IDS) {
+    const schema = zodToJsonSchema(contracts[id].strict, { $refStrategy: "none" }) as Record<string, unknown>;
+    out[id] = { $id: `ralph:contracts/${id}`, ...schema };
+  }
+  return out;
+}

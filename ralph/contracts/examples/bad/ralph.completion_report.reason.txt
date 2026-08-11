@@ -1,0 +1,3 @@
+outcome is "completed" but neither pr nor commit_sha is present — the
+outcome-evidence coherence refinement (and lint L4) requires both: a completed
+unit of work IS a PR at a commit, or it did not happen.

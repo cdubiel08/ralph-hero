@@ -1,0 +1,94 @@
+{
+  "$id": "ralph:contracts/ralph.fleet_brief",
+  "type": "object",
+  "properties": {
+    "contract": {
+      "type": "string",
+      "const": "ralph.fleet_brief"
+    },
+    "contract_version": {
+      "type": "number",
+      "const": 1
+    },
+    "issue": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "w",
+        "r",
+        "o",
+        "d",
+        "s",
+        "x"
+      ]
+    },
+    "skill_invocation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reply_to": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "herdr_agent"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "report_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "no_force": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "branch",
+        "base",
+        "no_force"
+      ],
+      "additionalProperties": false
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "contract",
+    "contract_version",
+    "issue",
+    "role",
+    "skill_invocation",
+    "reply_to",
+    "report_path",
+    "constraints"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

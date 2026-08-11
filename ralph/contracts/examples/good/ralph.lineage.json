@@ -1,0 +1,19 @@
+{
+  "contract": "ralph.lineage",
+  "contract_version": 1,
+  "agent_ref": "w1743-claim-v2-multi-holder#a3f2",
+  "issue": 1743,
+  "parent_issue": 1700,
+  "spawner": {
+    "script": "plugin/ralph-herdr/scripts/lib.sh",
+    "invoked_by": "agent"
+  },
+  "herdr": {
+    "session": "ralph",
+    "pane_id": "%17",
+    "worktree_branch": "feature/GH-1743",
+    "workspace_label": "ralph-hero"
+  },
+  "plane": "herdr",
+  "spawned_at": "2026-08-10T14:00:00Z"
+}

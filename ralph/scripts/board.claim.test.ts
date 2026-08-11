@@ -1,0 +1,150 @@
+/**
+ * board.claim.test.ts — ClaimV2 (contracts.ts) wired into the board machine.
+ *
+ * The wire contract: "h1+h2+...|iso8601", 1..8 holders, ONE shared since.
+ * A single holder must serialize byte-identically to the v1 "{holder}|{iso}"
+ * format — existing boards read back unchanged — and the garbled path
+ * (claimRaw non-null with claim null) survives untouched. The transition
+ * suite here pins the fleet semantics: any-member heartbeat preserves
+ * co-holders, release = removeHolder, and the LAST one out clears the field.
+ */
+
+import { describe, expect, it } from "vitest";
+import {
+  addHolder,
+  CLAIM_MAX_HOLDERS,
+  type Claim,
+  encodeClaim,
+  fetchIssue,
+  formatClaim,
+  heartbeat,
+  isMember,
+  listItems,
+  parseClaim,
+  removeHolder,
+  transition,
+} from "./board.js";
+import { FakeGh, makeCtx, NOW, refusalMessage } from "./board.testkit.js";
+
+const T0 = new Date("2026-08-10T12:00:00Z");
+const iso = T0.toISOString();
+
+describe("ClaimV2 wire format (single-holder back-compat)", () => {
+  it("one holder serializes byte-identically to the legacy {holder}|{iso} format", () => {
+    expect(encodeClaim("chad@mbp", T0)).toBe(`chad@mbp|${iso}`);
+    expect(formatClaim({ holders: ["chad@mbp"], since: T0 })).toBe(`chad@mbp|${iso}`);
+  });
+
+  it("a v1-written claim round-trips through parse→format unchanged", () => {
+    const legacy = `me@host|${iso}`;
+    const parsed = parseClaim(legacy);
+    expect(parsed).toEqual({ holders: ["me@host"], since: T0 });
+    expect(formatClaim(parsed!)).toBe(legacy);
+  });
+
+  it("multi-holder round-trips with insertion order preserved", () => {
+    const wire = `w1743-claim+r1743-review+me@host|${iso}`;
+    const parsed = parseClaim(wire);
+    expect(parsed?.holders).toEqual(["w1743-claim", "r1743-review", "me@host"]);
+    expect(formatClaim(parsed!)).toBe(wire);
+  });
+
+  it("rejects garbled multi-holder text (empty token, >8 holders) as null", () => {
+    expect(parseClaim(`a++b|${iso}`)).toBeNull(); // empty holder token
+    expect(parseClaim(`+a|${iso}`)).toBeNull(); // leading separator
+    const nine = Array.from({ length: 9 }, (_, i) => `w${i}`).join("+");
+    expect(parseClaim(`${nine}|${iso}`)).toBeNull(); // over the cap on read
+  });
+});
+
+describe("ClaimV2 membership operations", () => {
+  const base: Claim = { holders: ["w1-a"], since: T0 };
+
+  it("addHolder joins and refreshes the ONE shared since", () => {
+    const later = new Date(T0.getTime() + 60_000);
+    expect(addHolder(base, "w1-b", later)).toEqual({ holders: ["w1-a", "w1-b"], since: later });
+    // Re-adding a member is membership-idempotent but still refreshes since.
+    expect(addHolder(base, "w1-a", later)).toEqual({ holders: ["w1-a"], since: later });
+  });
+
+  it("addHolder refuses the 9th holder (cap = 8) — a full fleet is a refusal, not a silent drop", () => {
+    let claim: Claim = base;
+    for (let i = 2; i <= CLAIM_MAX_HOLDERS; i++) claim = addHolder(claim, `w1-h${i}`, T0);
+    expect(claim.holders).toHaveLength(CLAIM_MAX_HOLDERS);
+    expect(() => addHolder(claim, "w1-overflow", T0)).toThrow(/cap/);
+  });
+
+  it("removeHolder drops a member; the LAST one out returns null (caller clears the field)", () => {
+    const two = addHolder(base, "w1-b", T0);
+    expect(removeHolder(two, "w1-a")).toEqual({ holders: ["w1-b"], since: T0 });
+    expect(removeHolder(base, "w1-a")).toBeNull();
+    expect(removeHolder(base, "stranger")).toBe(base); // non-member: idempotent no-op
+  });
+
+  it("heartbeat: ANY member refreshes the shared since; a non-member gets null", () => {
+    const later = new Date(T0.getTime() + 5 * 60_000);
+    const two = addHolder(base, "w1-b", T0);
+    expect(heartbeat(two, "w1-b", later)).toEqual({ holders: ["w1-a", "w1-b"], since: later });
+    expect(heartbeat(two, "stranger", later)).toBeNull();
+    expect(isMember(two, "w1-b")).toBe(true);
+    expect(isMember(two, "stranger")).toBe(false);
+  });
+});
+
+describe("ClaimV2 through the board machine", () => {
+  it("claim from Backlog writes the exact v1 single-holder bytes (existing boards unchanged)", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const ctx = makeCtx(gh);
+    transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(gh.issues.get(1)!.claim).toBe(`me@test|${NOW.toISOString()}`);
+  });
+
+  it("a member's claim refresh heartbeats the fleet — co-holders survive, since refreshes", () => {
+    const gh = new FakeGh();
+    const old = new Date(NOW.getTime() - 30 * 60_000);
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: `me@test+w1-sibling|${old.toISOString()}` });
+    const ctx = makeCtx(gh);
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(gh.issues.get(1)!.claim).toBe(`me@test+w1-sibling|${NOW.toISOString()}`);
+    expect(after.claim?.holders).toEqual(["me@test", "w1-sibling"]);
+  });
+
+  it("leaving In Progress removes only the leaving member; co-holders keep the claim and its since", () => {
+    const gh = new FakeGh();
+    const old = new Date(NOW.getTime() - 30 * 60_000);
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: `w1-sibling+me@test|${old.toISOString()}` });
+    const ctx = makeCtx(gh);
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Review");
+    expect(gh.issues.get(1)!.claim).toBe(`w1-sibling|${old.toISOString()}`);
+    expect(after.claim?.holders).toEqual(["w1-sibling"]); // this session is OUT
+  });
+
+  it("the LAST member out clears the field — the single-holder path is byte-for-byte v1 behavior", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    const ctx = makeCtx(gh);
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Review");
+    expect(gh.issues.get(1)!.claim).toBeNull();
+    expect(after.claim).toBeNull();
+  });
+
+  it("a fresh fleet claim refuses a non-member, naming every holder", () => {
+    const gh = new FakeGh();
+    const fresh = new Date(NOW.getTime() - 10 * 60_000);
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: `w1-a+w1-b|${fresh.toISOString()}` });
+    const ctx = makeCtx(gh);
+    const msg = refusalMessage(() => transition(ctx, fetchIssue(ctx, 1), "In Review"));
+    expect(msg).toContain("claimed by w1-a+w1-b");
+    expect(gh.issues.get(1)!.claim).toBe(`w1-a+w1-b|${fresh.toISOString()}`); // untouched
+  });
+
+  it("garbled Claim text still reads as claimRaw non-null with claim null (fail-closed parse)", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: "hand-edited note to self" });
+    const ctx = makeCtx(gh);
+    const [item] = listItems(ctx);
+    expect(item.claim).toBeNull();
+    expect(item.claimRaw).toBe("hand-edited note to self");
+  });
+});

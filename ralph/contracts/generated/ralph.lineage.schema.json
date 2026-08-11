@@ -1,0 +1,88 @@
+{
+  "$id": "ralph:contracts/ralph.lineage",
+  "type": "object",
+  "properties": {
+    "contract": {
+      "type": "string",
+      "const": "ralph.lineage"
+    },
+    "contract_version": {
+      "type": "number",
+      "const": 1
+    },
+    "agent_ref": {
+      "type": "string"
+    },
+    "issue": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "parent_issue": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "spawner": {
+      "type": "object",
+      "properties": {
+        "script": {
+          "type": "string",
+          "minLength": 1
+        },
+        "invoked_by": {
+          "type": "string",
+          "enum": [
+            "human",
+            "agent",
+            "scheduler"
+          ]
+        }
+      },
+      "required": [
+        "script",
+        "invoked_by"
+      ],
+      "additionalProperties": false
+    },
+    "herdr": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "type": "string"
+        },
+        "pane_id": {
+          "type": "string"
+        },
+        "worktree_branch": {
+          "type": "string"
+        },
+        "workspace_label": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "plane": {
+      "type": "string",
+      "enum": [
+        "herdr",
+        "inner"
+      ]
+    },
+    "spawned_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "contract",
+    "contract_version",
+    "agent_ref",
+    "issue",
+    "spawner",
+    "herdr",
+    "plane",
+    "spawned_at"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
