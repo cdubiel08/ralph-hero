@@ -22,6 +22,7 @@
 #   GATE-WAIT ci            non-attestation checks still running     exit 10
 #   GATE-YOURS review       no verdict AND the reviewer needs a nudge  exit 0
 #   GATE-WAIT review        reviewer simply has not posted yet        exit 10
+#   GATE-WAIT attestation   attested at this head; validator running  exit 10
 #   GATE-YOURS attestation  everything else green; attestation left   exit 0
 #   GATE-READY              green + reviewed + attested → merge       exit 0
 #
@@ -90,6 +91,9 @@ case "$INTERVAL" in
 esac
 
 ATTEST_CHECK="${PR_GATE_ATTEST_CHECK:-ralph-attestation}"
+# Must stay in sync with MARKER in attest-pr.sh and validate-attestation.sh,
+# which hardcode the same literal.
+ATTEST_MARKER='<!-- ralph-attestation:v1 -->'
 
 # The precedence ladder, as one jq program so it reads top-to-bottom in a
 # single place and the shell holds no branching logic of its own. Kept in a
@@ -114,6 +118,18 @@ def is_attest: .name == $attest or ((.description // "") | test("attest-pr\\.sh"
 | ($reviews | map(select(.state == "COMMENTED")))       as $commented
 | ($approved | last)                                    as $verdict
 | ($att_pending | map(.name) | join(", "))              as $att_names
+# Is there already an attestation for the CURRENT head? The status stays
+# pending for the minute or two validate-attestation.yml takes to recompute,
+# and during that window the next move is to wait, not to attest again. The
+# same comparison covers the other direction: after a new push the recorded
+# sha no longer matches, so re-attesting is correctly demanded.
+| (($pr.comments // [])
+   | map(select(.body | contains($marker)))
+   | last | (.body // "")
+   | (try (split("```json") | .[1] | split("```") | .[0] | fromjson | .head_sha)
+      catch null) // "")                                as $attested_sha
+| (($attested_sha != "") and ($attested_sha == ($pr.headRefOid // "")))
+                                                        as $attested_current
 
 | if ($pr.state // "OPEN") != "OPEN" then
     "GATE-DONE \($pr.state | ascii_downcase): PR #\($num) is not open — nothing to wait for"
@@ -129,6 +145,8 @@ def is_attest: .name == $attest or ((.description // "") | test("attest-pr\\.sh"
     "GATE-YOURS review: \($commented | length) comment-only review(s), no verdict — adjudicate threads, then attest with the real verdict"
   elif ($approved | length) == 0 then
     "GATE-WAIT review: no review verdict posted yet"
+  elif ($att_pending | length) > 0 and $attested_current then
+    "GATE-WAIT attestation: attested at \($attested_sha[0:8]) — validate-attestation is recomputing \($att_names)"
   elif ($att_pending | length) > 0 then
     "GATE-YOURS attestation: \($att_names) is the only check left — bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
   else
@@ -143,6 +161,7 @@ classify() {
     --argjson pr "$2" \
     --argjson reviews "$3" \
     --arg attest "$ATTEST_CHECK" \
+    --arg marker "$ATTEST_MARKER" \
     --arg num "$PR" \
     "$CLASSIFY_JQ"
 }
@@ -170,7 +189,8 @@ snapshot() {
   reviews=$(json_array_or_empty "$reviews")
 
   # PR state is the one query whose failure means we genuinely cannot judge.
-  pr_json=$(gh pr view "$PR" --json state,reviewDecision 2>/dev/null) || return 1
+  pr_json=$(gh pr view "$PR" \
+    --json state,reviewDecision,headRefOid,comments 2>/dev/null) || return 1
   [ -n "$pr_json" ] || return 1
 
   classify "$checks" "$pr_json" "$reviews"

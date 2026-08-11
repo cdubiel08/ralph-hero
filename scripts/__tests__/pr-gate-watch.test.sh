@@ -44,7 +44,7 @@ case "${1:-} ${2:-}" in
     # failing; the script must tolerate that rather than treat it as an error.
     exit "${GH_STUB_CHECKS_EXIT:-0}"
     ;;
-  "pr view") serve pr_view.json '{"state":"OPEN","reviewDecision":null}' ;;
+  "pr view") serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}' ;;
   "api repos/"*) serve pr_reviews.json '[]' ;;
   *) echo "stub: unhandled gh $*" >&2; exit 64 ;;
 esac
@@ -66,8 +66,28 @@ scenario() {
   printf '%s' "$4" >"$dir/pr_reviews.json"
 }
 
-OPEN_PR='{"state":"OPEN","reviewDecision":null}'
-APPROVED_PR='{"state":"OPEN","reviewDecision":"APPROVED"}'
+HEAD_SHA="306c13de306c13de306c13de306c13de306c13de"
+OLD_SHA="0000000011111111222222223333333344444444"
+
+# attestation_comment <head-sha> -> the comment shape attest-pr.sh posts: the
+# v1 marker plus a fenced JSON block carrying head_sha.
+attestation_comment() {
+  jq -n --arg sha "$1" '
+    {body: ("<!-- ralph-attestation:v1 -->\n## Merge Attestation\n\n```json\n"
+      + ({version: 1, head_sha: $sha} | tojson)
+      + "\n```\n")}'
+}
+
+# pr_state <state> <reviewDecision-or-null> [comments-json]
+pr_state() {
+  jq -n --arg s "$1" --arg rd "$2" --arg sha "$HEAD_SHA" \
+    --argjson comments "${3:-[]}" \
+    '{state: $s, reviewDecision: (if $rd == "" then null else $rd end),
+      headRefOid: $sha, comments: $comments}'
+}
+
+OPEN_PR=$(pr_state OPEN "")
+APPROVED_PR=$(pr_state OPEN APPROVED)
 NO_REVIEWS='[]'
 APPROVAL='[{"state":"APPROVED","user":{"login":"coderabbitai[bot]"},"html_url":"https://example.test/r/1"}]'
 
@@ -113,6 +133,30 @@ fi
 # The stranding condition itself: gh pr checks exits 8 while pending.
 CHECKS_EXIT=8 expect "non-zero gh pr checks exit is not an error" "$D" "GATE-YOURS attestation" 0
 unset CHECKS_EXIT
+
+echo "=== attested, but the validator has not caught up ==="
+# The gap that made the first dogfood run wrong: attest-pr.sh has posted, so
+# the next move is to WAIT for validate-attestation.yml — telling the caller to
+# attest again here would have them redo work they just did.
+ATT_CHECKS=$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')
+D="$TMP_ROOT/attested-recomputing"
+scenario "$D" "$ATT_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+expect "GATE-WAIT attestation while the validator recomputes" "$D" "GATE-WAIT attestation" 10
+
+# Same comparison, other direction: a new push moves the head, so the recorded
+# attestation is stale and re-attesting is correctly demanded again.
+D="$TMP_ROOT/attested-stale"
+scenario "$D" "$ATT_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$OLD_SHA")]")" "$APPROVAL"
+expect "GATE-YOURS attestation again after the head moves" "$D" "GATE-YOURS attestation" 0
+
+# A malformed attestation comment must not be read as a valid attestation.
+D="$TMP_ROOT/attested-garbage"
+scenario "$D" "$ATT_CHECKS" \
+  "$(pr_state OPEN APPROVED '[{"body":"<!-- ralph-attestation:v1 -->\nno json fence here"}]')" \
+  "$APPROVAL"
+expect "unparseable attestation comment is not treated as attested" "$D" "GATE-YOURS attestation" 0
 
 echo "=== the other false signal: green board, no actual review ==="
 D="$TMP_ROOT/yours-review-ratelimit"
@@ -170,7 +214,7 @@ scenario "$D" "$(jq -n --argjson f "$(check board-tests cancel)" '[$f]')" "$APPR
 expect "GATE-FAIL on a cancelled check" "$D" "GATE-FAIL ci" 0
 
 D="$TMP_ROOT/fail-review"
-scenario "$D" "$GREEN_CHECKS" '{"state":"OPEN","reviewDecision":"CHANGES_REQUESTED"}' \
+scenario "$D" "$GREEN_CHECKS" "$(pr_state OPEN CHANGES_REQUESTED)" \
   '[{"state":"CHANGES_REQUESTED","user":{"login":"coderabbitai[bot]"}}]'
 expect "GATE-FAIL on live CHANGES_REQUESTED" "$D" "GATE-FAIL review" 0
 
@@ -188,7 +232,7 @@ fi
 
 for state in MERGED CLOSED; do
   D="$TMP_ROOT/done-$state"
-  scenario "$D" "$GREEN_CHECKS" "{\"state\":\"$state\",\"reviewDecision\":null}" "$APPROVAL"
+  scenario "$D" "$GREEN_CHECKS" "$(pr_state "$state" "")" "$APPROVAL"
   expect "GATE-DONE when PR is $state" "$D" "GATE-DONE" 0
 done
 
