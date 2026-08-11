@@ -123,6 +123,24 @@ rc=$?
 set -e
 if [ "$rc" -eq 0 ]; then pass "non-JSON stdin"; else fail "non-JSON stdin (rc=$rc)"; fi
 
+echo "=== registration covers both Bash and Monitor ==="
+# An armed Monitor is the form this mistake actually takes — it fails silently
+# for a whole session instead of returning — so the rail must cover that tool
+# too, not only Bash. Both carry the command in .tool_input.command.
+HOOKS_JSON="$(cd "$(dirname "$0")/../.." && pwd)/ralph/hooks/hooks.json"
+for tool in Bash Monitor; do
+  if jq -e --arg t "$tool" '
+      .hooks.PreToolUse[]
+      | select(.matcher == $t)
+      | .hooks[]
+      | select(.command | endswith("funnel-gate-watch.sh"))' \
+      "$HOOKS_JSON" >/dev/null 2>&1; then
+    pass "registered as a PreToolUse rail for $tool"
+  else
+    fail "not registered for $tool in hooks.json"
+  fi
+done
+
 echo
 echo "funnel-gate-watch: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

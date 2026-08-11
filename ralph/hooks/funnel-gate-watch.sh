@@ -15,6 +15,11 @@
 # is only the wait-for-quiescence loop that is broken. Scope is the repo the
 # command runs in — an explicit -R/--repo target is another repo's PR, outside
 # this rail's jurisdiction (hooks are courtesy, never enforcement).
+#
+# Registered for BOTH Bash and Monitor in hooks.json: an armed Monitor is the
+# form this mistake actually takes (it fails silently for the whole session
+# rather than returning), and both tools carry the command in
+# .tool_input.command, so one script serves both.
 set -euo pipefail
 
 INPUT=$(cat)
