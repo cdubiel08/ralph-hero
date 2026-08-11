@@ -7,6 +7,8 @@
 # spawned /ralph:work session is the mutual-exclusion backstop (design doc
 # §3.5 defers only UNATTENDED parallelism); this script never claims, never
 # transitions, never writes board state — `board next` is its one read.
+# Each spawn is a depth-0 root from a human; spawn_work_session appends the
+# C7 spawn record and pushes the spawn tokens per session (lib.sh owns it).
 #
 # Knobs:
 #   RALPH_HERDR_FLEET     sessions to spawn (default 2; positive integer;

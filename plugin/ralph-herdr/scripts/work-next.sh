@@ -2,10 +2,12 @@
 # work-next.sh — cockpit action: spawn one /ralph:work session for board-next.
 #
 # Thin caller: guards + one queue read + spawn_work_session (lib.sh owns the
-# whole spawn path) + exec into notify-watch.sh so the cockpit pane becomes
-# the session's attention surface. No board mutation happens here: `board
-# next` is a read, and the claim is taken by /ralph:work inside the spawned
-# session. Honors RALPH_HERDR_DRY_RUN=true (plan printed, nothing spawned).
+# whole spawn path — including the C7 spawn-record ledger append and the
+# spawn-time pane tokens; this spawn is a depth-0 root from a human) + exec
+# into notify-watch.sh so the cockpit pane becomes the session's attention
+# surface. No board mutation happens here: `board next` is a read, and the
+# claim is taken by /ralph:work inside the spawned session. Honors
+# RALPH_HERDR_DRY_RUN=true (plan printed, nothing spawned).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

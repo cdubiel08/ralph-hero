@@ -33,7 +33,7 @@ import {
   heartbeat,
   isContractId,
   isMember,
-  LIVE_LINT_IDS,
+  type LiveLintDeps,
   parseClaim,
   removeHolder,
   runLints,
@@ -3555,6 +3555,29 @@ function readContractPayload(arg: string | undefined): unknown {
   }
 }
 
+/** The live-lint effect functions (contracts.ts LiveLintDeps) wired to this
+ *  CLI's own plumbing: L3's commit probe through the exec seam against the
+ *  repo root, L5/L7's board read-back through fetchIssue — the same fetch
+ *  path every other read uses. Built only under `contract lint --live`; a
+ *  plain lint run stays repo- and network-free. */
+export function liveLintDeps(ctx: Ctx): LiveLintDeps {
+  return {
+    execGit: (args) => ({ code: ctx.exec(["git", "-C", ctx.repoRoot, ...args]).code }),
+    readBoardItem: (issue) => {
+      try {
+        const i = fetchIssue(ctx, issue);
+        return { issueState: i.issueState, state: i.state, claim: i.claim };
+      } catch (e) {
+        // fetchIssue's not-found contract is UsageError; anything else
+        // (transport, GraphQL) must propagate — a network failure is not
+        // evidence the issue is missing.
+        if (e instanceof UsageError) return null;
+        throw e;
+      }
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -3622,8 +3645,13 @@ contracts (ralph-herdr v2 — the Zod source of truth is contracts.ts)
                               checks the artifacts via npm run contracts:check
   contract lint <id> [file|-] [--live]
                               run lints L1-L13 against a payload; exit 1 on any
-                              failure. Live lints (L3/L5/L7/L10) are watcher-
-                              plane rules (Phase 2) and report skipped
+                              failure. --live also runs L3 (commit_sha exists,
+                              git cat-file against this repo), L5 (claim read-
+                              back: the agent holds the issue's claim) and L7
+                              (parent_issue exists and is not Done/Canceled);
+                              without it they report skipped. L10 (lineage
+                              closure) is ledger-side — see
+                              plugin/ralph-herdr/scripts/doctor-lineage.sh
   ids: ralph.spawn_request ralph.completion_report ralph.fleet_brief
        ralph.fleet_reply ralph.board_queue ralph.lineage
        ralph.token_vocabulary ralph.escalation
@@ -4040,13 +4068,9 @@ export function run(argv: string[], ctx: Ctx): number {
           failed++;
           out(`✗ payload declares contract "${declared}", not "${id}"`);
         }
-        for (const r of runLints(payload)) {
+        for (const r of runLints(payload, flags.live ? liveLintDeps(ctx) : undefined)) {
           if ("skipped" in r) {
-            const why =
-              flags.live && (LIVE_LINT_IDS as readonly string[]).includes(r.rule)
-                ? "live lint lands with the watcher (Phase 2)"
-                : r.skipped;
-            out(`- ${r.rule}: skipped (${why})`);
+            out(`- ${r.rule}: skipped (${r.skipped})`);
           } else if (r.ok) {
             out(`✓ ${r.rule}${r.note ? ` (${r.note})` : ""}`);
           } else {

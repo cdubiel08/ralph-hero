@@ -42,7 +42,10 @@ case "${1:-}" in
   next) printf '{"next":{"number":42}}\n' ;;
   get)
     if [ "${STUB_GET_FAIL:-0}" = "1" ]; then echo "stub: get failed" >&2; exit 1; fi
-    printf '{"number":42,"state":"%s","claim":{"holder":"%s","since":"2026-01-01T00:00:00Z"}}\n' \
+    # ClaimV2 (contracts.ts): get --json serializes .claim.holders as an
+    # ARRAY — a single holder is a one-element array. tick.sh checks
+    # membership, never string equality against a scalar .holder.
+    printf '{"number":42,"state":"%s","claim":{"holders":["%s"],"since":"2026-01-01T00:00:00Z"}}\n' \
       "$STUB_STATE" "$STUB_HOLDER"
     ;;
   *) exit 0 ;;

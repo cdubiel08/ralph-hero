@@ -117,7 +117,10 @@ jobs:
           # funnel-merge.sh, funnel-board.sh, and tick.sh each have a dedicated
           # suite here: funnel-merge.test.sh, funnel-board.test.sh, tick.test.sh.
           # plugin/ralph-herdr/tests carries the bash half of the grammar-B
-          # naming mirror — naming.test.sh, also `npm run test:naming`.)
+          # naming mirror — naming.test.sh, also `npm run test:naming` — plus
+          # the Phase-2 watcher suite watcher.test.sh (`npm run test:watcher`;
+          # its fake-herdr.sh PATH shim is a helper, not a *.test.sh, so the
+          # glob deliberately skips it).)
           find scripts/__tests__ plugin/ralph-herdr/tests \
             \( -name '*.test.sh' -o -name 'test-*.sh' \) \
             -type f -print0 \

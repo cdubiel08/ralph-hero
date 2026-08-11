@@ -136,6 +136,29 @@ never answers, never kills — it moves your eyes, nothing else.
 - **The board is the sole source of truth.** No script here writes Workflow State,
   uses `--force`, or kills an agent process. Read the queues, spawn a session, watch,
   notify — that is the whole surface.
+- **The watcher observes; it never enforces.** The `[[events]]` hooks
+  (`watch-event.sh`) fire only while the herdr server runs — server down means no
+  events, and nothing replays them. The `[[startup]]` reconcile pass heals the gap
+  after the fact (exit `reason=lost` for vanished agents, `discover` for unledgered
+  live ones), so the ledger is *eventually* honest, never real-time: its freshness is
+  bounded by server uptime plus the last reconcile. A blocked agent whose event was
+  missed is caught by the next status change or reconcile, not guaranteed at the
+  moment it blocked.
+- **The ledger (`~/.ralph/<owner>/<repo>/ledger.jsonl`) is an append-only
+  observation log, not an authority.** Nothing gates on it; readers are pure jq
+  reductions and duplicate events are tolerated by design. The watcher is its sole
+  appender with one documented carve-out: `lib.sh`'s spawn path appends the spawn
+  record itself (the C7 lineage), because spawn completes before any event hook can
+  fire. It lives outside every repo on purpose — worktree-per-job would make an
+  in-repo ledger a merge hazard.
+- **Pane tokens are chrome.** Pushed best-effort via `herdr pane report-metadata`;
+  a push failure is a one-time warning, never an aborted verb, and a server restart
+  drops them until reconcile re-pushes. The state token only claims what maps
+  honestly (`working`/`blocked`); `idle`/`done` update the ledger, not the chip.
+- **The orphan pass records, it does not reap.** A dead parent's children are
+  adopted by a live grandparent or marked `orphaned` (token + ledger + one
+  notification) — their claims and panes are left alone. Cascade reap is Phase-3
+  fleet-controller behavior, deliberately absent here.
 - **No unattended arming here.** The claim TTL vs pane-persistence probe (a pane that
   outlives its claim can double-work against a fresh claimant) has not been run yet —
   design doc §3.1/§5. Until it is, every action in this plugin is human-clicked;

@@ -11,9 +11,9 @@
 
 id = "ralph-herdr"
 name = "Ralph Herdr"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.8.0"
-description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes."
+description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens."
 platforms = ["macos", "linux"]
 
 # --- Actions -----------------------------------------------------------------
@@ -95,6 +95,21 @@ command = [
   '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); cd "$cwd"; exec bash "$HERDR_PLUGIN_ROOT/scripts/attend.sh"'''
 ]
 
+# reconcile also needs NO pane: the same single pass the [[startup]] hook runs
+# (exit-lost / discover / token re-push / orphan pass), invokable by hand. The
+# script needs no workspace cwd — it scans every board scope's
+# ~/.ralph/<owner>/<repo>/ledger.jsonl and reads scope from pane cwds;
+# output lands in `herdr plugin log`.
+[[actions]]
+id = "reconcile"
+title = "Ralph: reconcile watcher ledger"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; exec bash "$HERDR_PLUGIN_ROOT/scripts/reconcile.sh"'''
+]
+
 # --- Panes -------------------------------------------------------------------
 # Pane cwd is the repo (the action's `pane open` passed --cwd), so each script
 # resolves the board CLI relative to $PWD. Scripts are owned by scripts/ in
@@ -129,3 +144,31 @@ command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-fleet.sh\"
 id = "dashboard"
 title = "Ralph: board dashboard"
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/dashboard.sh\""]
+
+# --- Watcher (Phase 2) -------------------------------------------------------
+# Event hooks are the watcher's steady state: the server runs the command per
+# event with the name in HERDR_PLUGIN_EVENT and the payload in
+# HERDR_PLUGIN_EVENT_JSON (no workspace context — watch-event.sh resolves
+# everything from the payload + the ledger). Event names are the server's
+# dotted EventKind vocabulary (`herdr api schema`); pane.exited fires when the
+# pane's process dies, pane.closed when the pane is removed — both are watched
+# because either can arrive alone, and the ledger correlation makes the
+# duplicate a no-op. The hooks only run while the herdr server does; the
+# [[startup]] reconcile pass heals whatever happened in between.
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["bash", "-c", '''exec bash "$HERDR_PLUGIN_ROOT/scripts/watch-event.sh"''']
+
+[[events]]
+on = "pane.exited"
+command = ["bash", "-c", '''exec bash "$HERDR_PLUGIN_ROOT/scripts/watch-event.sh"''']
+
+[[events]]
+on = "pane.closed"
+command = ["bash", "-c", '''exec bash "$HERDR_PLUGIN_ROOT/scripts/watch-event.sh"''']
+
+# One reconciliation pass after every server (re)start; the script always
+# exits — no daemon. Also exposed as the "reconcile" action above.
+[[startup]]
+command = ["bash", "-c", '''exec bash "$HERDR_PLUGIN_ROOT/scripts/reconcile.sh"''']

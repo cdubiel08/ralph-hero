@@ -35,11 +35,11 @@ import {
   LINTS,
   lintL1ReplyToShape,
   lintL2AgentNameIssue,
-  lintL3Live,
+  lintL3CommitInRepo,
   lintL4OutcomeEvidence,
-  lintL5Live,
+  lintL5ClaimReadback,
   lintL6ContractVersion,
-  lintL7Live,
+  lintL7ParentOpen,
   lintL8BranchConvention,
   lintL9QueueRank,
   lintL10Live,
@@ -47,6 +47,8 @@ import {
   lintL12NoSecretLeak,
   lintL13Timestamps,
   LIVE_LINT_IDS,
+  type BoardItemView,
+  type LiveLintDeps,
   NAME_MAX,
   parseAgentName,
   parseClaim,
@@ -755,19 +757,157 @@ describe("lints", () => {
     expect(lintL13Timestamps({ nothing: "here" })).toMatchObject({ rule: "L13", skipped: expect.any(String) });
   });
 
-  it("live lints L3/L5/L7/L10 are named stubs that report skipped: requires --live", () => {
-    expect(lintL3Live({})).toEqual({ rule: "L3", skipped: "requires --live" });
-    expect(lintL5Live({})).toEqual({ rule: "L5", skipped: "requires --live" });
-    expect(lintL7Live({})).toEqual({ rule: "L7", skipped: "requires --live" });
-    expect(lintL10Live({})).toEqual({ rule: "L10", skipped: "requires --live" });
-    for (const id of LIVE_LINT_IDS) expect(LINTS[id]({})).toEqual({ rule: id, skipped: "requires --live" });
-  });
-
   it("runLints runs every rule in id order and finds nothing wrong with a good payload", () => {
     const results = runLints(loadExample("good", "ralph.completion_report"));
     expect(results.map((r) => r.rule)).toEqual([...LINT_IDS]);
     expect(results.filter((r) => "ok" in r && r.ok === false)).toEqual([]);
-    for (const id of LIVE_LINT_IDS)
+    for (const id of ["L3", "L5", "L7"] as const)
       expect(results.find((r) => r.rule === id)).toEqual({ rule: id, skipped: "requires --live" });
+    expect(results.find((r) => r.rule === "L10")).toMatchObject({
+      skipped: expect.stringContaining("doctor-lineage.sh"),
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Live lints L3/L5/L7 — deps-injected unit level. The effect functions are
+// fakes here; board.lint.test.ts drives the same rules through the real CLI
+// (`contract lint --live`) over FakeGh and a real temp git repo.
+// ---------------------------------------------------------------------------
+
+describe("live lints (deps-injected)", () => {
+  const SHA = "0123456789abcdef0123456789abcdef01234567";
+  const t0 = new Date("2026-08-10T14:00:00Z");
+  const gitSaying = (code: number): LiveLintDeps => ({ execGit: () => ({ code }) });
+  const board = (items: Record<number, BoardItemView>): LiveLintDeps => ({
+    readBoardItem: (n) => items[n] ?? null,
+  });
+  const open = (claim: BoardItemView["claim"] = null, state: string | null = "In Progress"): BoardItemView => ({
+    issueState: "OPEN",
+    state,
+    claim,
+  });
+
+  it("without deps — or without the specific effect function — every live rule skips: requires --live", () => {
+    expect(lintL3CommitInRepo({ commit_sha: SHA })).toEqual({ rule: "L3", skipped: "requires --live" });
+    expect(lintL5ClaimReadback({ agent: "w7-wire", issue: 7 })).toEqual({ rule: "L5", skipped: "requires --live" });
+    expect(lintL7ParentOpen({ parent_issue: 5 })).toEqual({ rule: "L7", skipped: "requires --live" });
+    // Wrong dep present: L3 needs execGit, L5/L7 need readBoardItem.
+    expect(lintL3CommitInRepo({ commit_sha: SHA }, board({}))).toEqual({ rule: "L3", skipped: "requires --live" });
+    expect(lintL5ClaimReadback({ agent: "w7-wire", issue: 7 }, gitSaying(0))).toEqual({ rule: "L5", skipped: "requires --live" });
+    expect(lintL7ParentOpen({ parent_issue: 5 }, gitSaying(0))).toEqual({ rule: "L7", skipped: "requires --live" });
+  });
+
+  it("L3: probes `git cat-file -e <sha>^{commit}` — exit 0 passes, nonzero fails with the sha named", () => {
+    const calls: string[][] = [];
+    const deps: LiveLintDeps = { execGit: (args) => (calls.push(args), { code: 0 }) };
+    expect(lintL3CommitInRepo({ commit_sha: SHA }, deps)).toEqual({ rule: "L3", ok: true });
+    expect(calls).toEqual([["cat-file", "-e", `${SHA}^{commit}`]]);
+    expect(lintL3CommitInRepo({ commit_sha: SHA }, gitSaying(1))).toMatchObject({
+      ok: false,
+      message: expect.stringContaining(SHA),
+    });
+  });
+
+  it("L3: a non-sha commit_sha never reaches a git argv — refused before the probe", () => {
+    const execGit = vi.fn(() => ({ code: 0 }));
+    for (const bad of ["--help", "HEAD", SHA.toUpperCase(), SHA.slice(0, 39), 7]) {
+      expect(lintL3CommitInRepo({ commit_sha: bad }, { execGit })).toMatchObject({
+        ok: false,
+        message: expect.stringContaining("refusing to probe"),
+      });
+    }
+    expect(execGit).not.toHaveBeenCalled();
+  });
+
+  it("L3: no commit_sha stays not-applicable even live", () => {
+    expect(lintL3CommitInRepo({ outcome: "blocked" }, gitSaying(0))).toMatchObject({
+      rule: "L3",
+      skipped: expect.stringContaining("not applicable"),
+    });
+  });
+
+  it("L5: the agent must be a live claim holder — sole or fleet member", () => {
+    const claim = { holders: ["w7-wire"], since: t0 };
+    expect(lintL5ClaimReadback({ agent: "w7-wire", issue: 7 }, board({ 7: open(claim) }))).toEqual({ rule: "L5", ok: true });
+    // agent_ref's name half is the holder identity, same as L2's source rule.
+    expect(lintL5ClaimReadback({ agent_ref: "w7-wire#a3f2", issue: 7 }, board({ 7: open(claim) }))).toEqual({ rule: "L5", ok: true });
+    const fleet = { holders: ["w7-wire", "r7-review"], since: t0 };
+    expect(lintL5ClaimReadback({ agent: "r7-review", issue: 7 }, board({ 7: open(fleet) }))).toEqual({ rule: "L5", ok: true });
+  });
+
+  it("L5 fails closed: missing issue, unclaimed issue, and non-member all refuse", () => {
+    expect(lintL5ClaimReadback({ agent: "w7-wire", issue: 7 }, board({}))).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("does not exist"),
+    });
+    expect(lintL5ClaimReadback({ agent: "w7-wire", issue: 7 }, board({ 7: open() }))).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("carries no claim"),
+    });
+    const other = { holders: ["r7-review"], since: t0 };
+    expect(lintL5ClaimReadback({ agent: "w7-wire", issue: 7 }, board({ 7: open(other) }))).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("r7-review"),
+    });
+  });
+
+  it("L5: a payload without agent + issue is not applicable even live", () => {
+    expect(lintL5ClaimReadback({ issue: 7 }, board({}))).toMatchObject({ rule: "L5", skipped: expect.any(String) });
+    expect(lintL5ClaimReadback({ agent: "w7-wire" }, board({}))).toMatchObject({ rule: "L5", skipped: expect.any(String) });
+  });
+
+  it("L7: parent_issue resolves top-level (C7) and under lineage (C2); open parents pass", () => {
+    const items = { 5: open(null, "In Progress") };
+    expect(lintL7ParentOpen({ parent_issue: 5 }, board(items))).toEqual({ rule: "L7", ok: true });
+    expect(lintL7ParentOpen({ lineage: { parent_issue: 5 } }, board(items))).toEqual({ rule: "L7", ok: true });
+    // No state on the board but the issue is open: still legal parent work.
+    expect(lintL7ParentOpen({ parent_issue: 5 }, board({ 5: open(null, null) }))).toEqual({ rule: "L7", ok: true });
+  });
+
+  it("L7 fails closed: absent, Done/Canceled, and GitHub-closed parents all refuse", () => {
+    expect(lintL7ParentOpen({ parent_issue: 5 }, board({}))).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("orphan parent ref"),
+    });
+    for (const state of ["Done", "Canceled"]) {
+      expect(lintL7ParentOpen({ parent_issue: 5 }, board({ 5: open(null, state) }))).toMatchObject({
+        ok: false,
+        message: expect.stringContaining(state),
+      });
+    }
+    expect(
+      lintL7ParentOpen({ parent_issue: 5 }, board({ 5: { issueState: "CLOSED", state: "In Review", claim: null } })),
+    ).toMatchObject({ ok: false, message: expect.stringContaining("closed on GitHub") });
+  });
+
+  it("L7: no parent_issue anywhere is not applicable even live", () => {
+    expect(lintL7ParentOpen({ issue: 7 }, board({}))).toMatchObject({ rule: "L7", skipped: expect.any(String) });
+  });
+
+  it("L10 stays a ledger-side stub pointing at doctor-lineage.sh, deps or not", () => {
+    expect(lintL10Live({})).toMatchObject({ rule: "L10", skipped: expect.stringContaining("doctor-lineage.sh") });
+    expect(lintL10Live({}, { ...gitSaying(0), ...board({}) })).toMatchObject({
+      rule: "L10",
+      skipped: expect.stringContaining("doctor-lineage.sh"),
+    });
+  });
+
+  it("runLints threads deps through to the live rules — a good payload over an agreeing world is all-green", () => {
+    const payload = loadExample("good", "ralph.completion_report") as Record<string, unknown>;
+    const deps: LiveLintDeps = {
+      ...gitSaying(0),
+      ...board({
+        1743: open({ holders: ["w1743-claim-v2-multi-holder"], since: t0 }),
+        1700: open(),
+      }),
+    };
+    const results = runLints(payload, deps);
+    expect(results.filter((r) => "ok" in r && r.ok === false)).toEqual([]);
+    for (const id of ["L3", "L5", "L7"] as const)
+      expect(results.find((r) => r.rule === id)).toEqual({ rule: id, ok: true });
+    // The registry agrees with the direct functions — LIVE_LINT_IDS names them.
+    expect(LIVE_LINT_IDS).toEqual(["L3", "L5", "L7", "L10"]);
+    for (const id of ["L3", "L5", "L7"] as const) expect(LINTS[id](payload, deps)).toEqual({ rule: id, ok: true });
   });
 });

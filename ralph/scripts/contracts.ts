@@ -18,9 +18,11 @@
  *     REAL --json shapes (parity with board.ts, which imports this file — so
  *     this file must never import board.ts)
  *
- * Lints: L1–L13. Static ones run here; L3/L5/L7/L10 are LIVE lints (watcher,
- * Phase 2) — named stubs that return { skipped: "requires --live" } so the
- * rule ids exist from day one.
+ * Lints: L1–L13. Static ones run on the payload alone; L3/L5/L7 are LIVE
+ * lints that run through injected effect functions (LiveLintDeps — board.ts
+ * wires them under `contract lint --live`) and report
+ * { skipped: "requires --live" } when no deps are given. L10 needs the herdr
+ * ledger and stays bash-side (plugin/ralph-herdr/scripts/doctor-lineage.sh).
  */
 
 import { createRequire } from "node:module";
@@ -805,9 +807,13 @@ export function validateContract(
 // Lints L1–L13
 // ---------------------------------------------------------------------------
 // Static lints run on any payload and answer "not applicable" (skipped) when
-// the payload lacks the fields they judge. L3/L5/L7/L10 are LIVE lints —
-// they need the watcher's socket / board access (Phase 2) and exist here only
-// so the rule ids are stable from day one.
+// the payload lacks the fields they judge. L3/L5/L7 are LIVE lints: they take
+// the same payload plus an optional LiveLintDeps of injected effect functions
+// (git probe, board read-back) and skip with "requires --live" when no deps
+// arrive — so this file stays dependency-free and the caller (board.ts under
+// `contract lint --live`) is the only place that touches git or the network.
+// L10 (lineage closure) needs the herdr ledger, which no TS surface reads —
+// it stays a named stub here and is implemented bash-side.
 
 export const LINT_IDS = [
   "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10", "L11", "L12", "L13",
@@ -823,6 +829,35 @@ export type LintResult =
 type Dict = Record<string, unknown>;
 const isDict = (v: unknown): v is Dict => typeof v === "object" && v !== null && !Array.isArray(v);
 const notApplicable = (rule: LintId, why: string): LintResult => ({ rule, skipped: `not applicable — ${why}` });
+
+/** The projection of board.ts's Issue the live lints judge — declared here
+ *  rather than imported because board.ts imports THIS file (a reverse import
+ *  would be a cycle). board.ts's liveLintDeps() narrows its Issue to this. */
+export interface BoardItemView {
+  issueState: "OPEN" | "CLOSED";
+  /** Workflow State field value (board truth; null = no state / not on board). */
+  state: string | null;
+  claim: ClaimV2 | null;
+}
+
+/** Effect functions the LIVE lints (L3/L5/L7) run through. Injected by the
+ *  caller — board.ts builds them only under `contract lint --live`, so a
+ *  plain lint run stays repo- and network-free. An absent deps object (or an
+ *  absent individual function) makes the lint report skipped, never guess. */
+export interface LiveLintDeps {
+  /** Run `git <args>` against the working repo; only the exit code is judged. */
+  execGit?: (args: string[]) => { code: number };
+  /** One issue by number; null = the issue does not exist. */
+  readBoardItem?: (issue: number) => BoardItemView | null;
+}
+
+/** L2's shared source rule: the payload's agent name, from `agent` or the
+ *  name half of `agent_ref`. */
+function agentNameOf(payload: Dict): string | null {
+  if (typeof payload.agent === "string") return payload.agent;
+  if (typeof payload.agent_ref === "string") return payload.agent_ref.split("#")[0];
+  return null;
+}
 
 /** L1: a brief's reply_to must be a routable herdr agent. */
 export function lintL1ReplyToShape(payload: unknown): LintResult {
@@ -842,10 +877,7 @@ export function lintL1ReplyToShape(payload: unknown): LintResult {
 export function lintL2AgentNameIssue(payload: unknown): LintResult {
   const rule: LintId = "L2";
   if (!isDict(payload)) return notApplicable(rule, "not an object");
-  const source =
-    typeof payload.agent === "string" ? payload.agent
-    : typeof payload.agent_ref === "string" ? payload.agent_ref.split("#")[0]
-    : null;
+  const source = agentNameOf(payload);
   if (source === null) return notApplicable(rule, "no agent / agent_ref");
   const parsed = parseAgentName(source);
   if (parsed === null) return { rule, ok: false, message: `agent name does not parse: ${JSON.stringify(source)}` };
@@ -854,9 +886,25 @@ export function lintL2AgentNameIssue(payload: unknown): LintResult {
   return { rule, ok: true };
 }
 
-/** L3 (LIVE): reserved — needs the watcher's socket view. */
-export function lintL3Live(_payload: unknown): LintResult {
-  return { rule: "L3", skipped: "requires --live" };
+/** L3 (LIVE): a reported commit_sha must exist in the repo — an agent
+ *  reporting a sha `git cat-file` has never seen is reporting fiction. */
+export function lintL3CommitInRepo(payload: unknown, deps?: LiveLintDeps): LintResult {
+  const rule: LintId = "L3";
+  const execGit = deps?.execGit;
+  if (!execGit) return { rule, skipped: "requires --live" };
+  if (!isDict(payload) || !("commit_sha" in payload)) return notApplicable(rule, "no commit_sha");
+  const sha = payload.commit_sha;
+  // Shape-gate before shelling out: a non-sha value must never reach a git
+  // argv (L4 owns the shape complaint; L3 refuses to probe with garbage).
+  if (typeof sha !== "string" || !/^[0-9a-f]{40}$/.test(sha))
+    return {
+      rule,
+      ok: false,
+      message: `commit_sha is not a 40-char lowercase hex sha — refusing to probe the repo with ${JSON.stringify(sha)}`,
+    };
+  if (execGit(["cat-file", "-e", `${sha}^{commit}`]).code !== 0)
+    return { rule, ok: false, message: `commit_sha ${sha} is not a commit in this repo` };
+  return { rule, ok: true };
 }
 
 /** L4: outcome–evidence coherence on completion reports (schema-independent,
@@ -876,9 +924,31 @@ export function lintL4OutcomeEvidence(payload: unknown): LintResult {
   return { rule, ok: true };
 }
 
-/** L5 (LIVE): reserved — needs board access. */
-export function lintL5Live(_payload: unknown): LintResult {
-  return { rule: "L5", skipped: "requires --live" };
+/** L5 (LIVE): claim read-back — the payload's agent must be a live holder of
+ *  the claim on the payload's issue. Membership is what a lying reporter
+ *  fakes first; TTL/staleness semantics stay board.ts's job (it owns time
+ *  against the one shared since). Fails closed: an unreadable or absent
+ *  issue is a finding, not a pass. */
+export function lintL5ClaimReadback(payload: unknown, deps?: LiveLintDeps): LintResult {
+  const rule: LintId = "L5";
+  const readBoardItem = deps?.readBoardItem;
+  if (!readBoardItem) return { rule, skipped: "requires --live" };
+  if (!isDict(payload)) return notApplicable(rule, "not an object");
+  const agent = agentNameOf(payload);
+  if (agent === null || typeof payload.issue !== "number")
+    return notApplicable(rule, "no agent + issue");
+  const item = readBoardItem(payload.issue);
+  if (item === null)
+    return { rule, ok: false, message: `issue #${payload.issue} does not exist — no claim to read back` };
+  if (item.claim === null)
+    return { rule, ok: false, message: `issue #${payload.issue} carries no claim — ${agent} does not hold it` };
+  if (!item.claim.holders.includes(agent))
+    return {
+      rule,
+      ok: false,
+      message: `claim on #${payload.issue} is held by ${item.claim.holders.join("+")} — ${agent} is not a member`,
+    };
+  return { rule, ok: true };
 }
 
 /** L6: contract_version must be KNOWN. A higher version is refused loudly —
@@ -897,9 +967,31 @@ export function lintL6ContractVersion(payload: unknown): LintResult {
   return { rule, ok: false, message: `contract_version must be the integer 1 (got ${JSON.stringify(v)})` };
 }
 
-/** L7 (LIVE): reserved — needs the watcher's socket view. */
-export function lintL7Live(_payload: unknown): LintResult {
-  return { rule: "L7", skipped: "requires --live" };
+/** L7 (LIVE): no orphan parent ref — a declared parent_issue (top-level, C7;
+ *  or under lineage, C2) must exist and still be open work. Fails closed: a
+ *  parent the board cannot resolve IS the orphan ref this rule exists for. */
+export function lintL7ParentOpen(payload: unknown, deps?: LiveLintDeps): LintResult {
+  const rule: LintId = "L7";
+  const readBoardItem = deps?.readBoardItem;
+  if (!readBoardItem) return { rule, skipped: "requires --live" };
+  const parent =
+    isDict(payload) && typeof payload.parent_issue === "number" ? payload.parent_issue
+    : isDict(payload) && isDict(payload.lineage) && typeof payload.lineage.parent_issue === "number"
+      ? payload.lineage.parent_issue
+      : null;
+  if (parent === null) return notApplicable(rule, "no parent_issue");
+  const item = readBoardItem(parent);
+  if (item === null)
+    return { rule, ok: false, message: `parent_issue #${parent} does not exist — an orphan parent ref` };
+  if (item.state === "Done" || item.state === "Canceled")
+    return { rule, ok: false, message: `parent #${parent} is ${item.state} — closed work cannot parent new work` };
+  if (item.issueState === "CLOSED")
+    return {
+      rule,
+      ok: false,
+      message: `parent #${parent} is closed on GitHub — reconcile will move it to Done/Canceled`,
+    };
+  return { rule, ok: true };
 }
 
 /** L8: the working branch is derived, not chosen: feature/GH-<issue>. */
@@ -930,9 +1022,15 @@ export function lintL9QueueRank(payload: unknown): LintResult {
   return { rule, ok: true };
 }
 
-/** L10 (LIVE): reserved — needs board access. */
-export function lintL10Live(_payload: unknown): LintResult {
-  return { rule: "L10", skipped: "requires --live" };
+/** L10 (LIVE, ledger-side): lineage closure — every live agent ↔ exactly one
+ *  open ledger record. Needs herdr and ~/.ralph/<owner>-<repo>/ledger.jsonl,
+ *  which no TS surface reads; the rule is implemented bash-side. The stub
+ *  keeps the rule id stable and points at the real implementation. */
+export function lintL10Live(_payload: unknown, _deps?: LiveLintDeps): LintResult {
+  return {
+    rule: "L10",
+    skipped: "requires --live ledger access — implemented by plugin/ralph-herdr/scripts/doctor-lineage.sh",
+  };
 }
 
 /** L11: an escalation's resume path must be machine-actionable — a target the
@@ -1004,14 +1102,14 @@ export function lintL13Timestamps(payload: unknown): LintResult {
   return { rule, ok: true, note: "deadline future-at-emit deliberately unchecked (no clock injection)" };
 }
 
-export const LINTS: Record<LintId, (payload: unknown) => LintResult> = {
+export const LINTS: Record<LintId, (payload: unknown, deps?: LiveLintDeps) => LintResult> = {
   L1: lintL1ReplyToShape,
   L2: lintL2AgentNameIssue,
-  L3: lintL3Live,
+  L3: lintL3CommitInRepo,
   L4: lintL4OutcomeEvidence,
-  L5: lintL5Live,
+  L5: lintL5ClaimReadback,
   L6: lintL6ContractVersion,
-  L7: lintL7Live,
+  L7: lintL7ParentOpen,
   L8: lintL8BranchConvention,
   L9: lintL9QueueRank,
   L10: lintL10Live,
@@ -1020,9 +1118,10 @@ export const LINTS: Record<LintId, (payload: unknown) => LintResult> = {
   L13: lintL13Timestamps,
 };
 
-/** Run every lint against one payload, in rule order. */
-export function runLints(payload: unknown): LintResult[] {
-  return LINT_IDS.map((id) => LINTS[id](payload));
+/** Run every lint against one payload, in rule order. Live deps (when given)
+ *  reach only the rules that declare them; static rules ignore the argument. */
+export function runLints(payload: unknown, deps?: LiveLintDeps): LintResult[] {
+  return LINT_IDS.map((id) => LINTS[id](payload, deps));
 }
 
 // ---------------------------------------------------------------------------

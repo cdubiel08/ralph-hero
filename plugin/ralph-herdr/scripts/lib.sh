@@ -36,6 +36,17 @@ _RALPH_HERDR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=naming.sh
 . "$_RALPH_HERDR_LIB_DIR/naming.sh"
 
+# Watcher plumbing (Phase 2): the events ledger + pane-token pushers — pure
+# functions and file appends, no side effects at source time. The spawn path
+# needs both for the C7 spawn record and spawn-time tokens (the one documented
+# carve-out from "the watcher is the sole ledger appender": spawn completes
+# before any event hook can fire, and a single-line O_APPEND write stays
+# atomic).
+# shellcheck source=ledger.sh
+. "$_RALPH_HERDR_LIB_DIR/ledger.sh"
+# shellcheck source=tokens.sh
+. "$_RALPH_HERDR_LIB_DIR/tokens.sh"
+
 # ── Color helpers ────────────────────────────────────────────────────────────
 # Detected ONCE at source time: stdout is a terminal, terminfo reports >= 8
 # colors, and NO_COLOR is unset. Otherwise every variable is empty, so callers
@@ -184,6 +195,82 @@ notify() {
   "$HERDR" notification show "$title" --body "$body" || true
 }
 
+# _ralph_spawn_record REF N PARENT_ISSUE BRANCH LABEL PANE TS — print the
+# ledger spawn event as ONE compact JSON line:
+#   {ts, ev: "spawn", agent_ref, pane_id?, lineage: <C7>, tokens: <C8 map>}
+# The C7 LineageRecord mirrors contracts.ts buildLineageRecord: issue and
+# parent_issue are numbers, spawner.script is the invoking script ($0 —
+# lib.sh is sourced, so that is work-next.sh / work-fleet.sh), invoked_by is
+# "human" (every cockpit action is a click; Phase-3 orchestrator spawns will
+# thread their own identity alongside ralph_depth_guard), plane is "herdr".
+# PANE may be empty (the dry-run plan — pane ids are captured live, never
+# predicted): pane_id is then omitted, C7 marks it optional for exactly this.
+# The C8 token map is the spawn-time truth: work-next/work-fleet spawns are
+# depth-0 roots from a human, so depth=0, root=self, and no parent token.
+_ralph_spawn_record() {
+  local ref="$1" n="$2" parent_issue="$3" branch="$4" label="$5" pane="$6" ts="$7"
+  local parsed lane slug epoch
+  parsed=$(ralph_agent_parse "${ref%%#*}") || return 1
+  # shellcheck disable=SC2086  # intentional: parse output is space-separated
+  set -- $parsed
+  lane="$1" slug="$3"
+  [ "$slug" = "''" ] && slug=""
+  epoch="${ref##*#}"
+  jq -nc \
+    --arg ts "$ts" --arg ref "$ref" --arg pane "$pane" \
+    --argjson n "$n" --arg pi "$parent_issue" \
+    --arg script "${0##*/}" --arg branch "$branch" --arg label "$label" \
+    --arg lane "$lane" --arg slug "$slug" --arg epoch "$epoch" '
+    {ts: $ts, ev: "spawn", agent_ref: $ref}
+    + (if $pane == "" then {} else {pane_id: $pane} end)
+    + {lineage:
+        ({contract: "ralph.lineage", contract_version: 1,
+          agent_ref: $ref, issue: $n}
+         + (if $pi == "" then {} else {parent_issue: ($pi | tonumber)} end)
+         + {spawner: {script: $script, invoked_by: "human"},
+            herdr: ({worktree_branch: $branch}
+              + (if $pane == "" then {} else {pane_id: $pane} end)
+              + (if $label == "" then {} else {workspace_label: $label} end)),
+            plane: "herdr", spawned_at: $ts}),
+       tokens:
+        ({role: $lane, issue: ($n | tostring)}
+         + (if $slug == "" then {} else {slug: $slug} end)
+         + {root: $ref, depth: "0", state: "spawned", branch: $branch,
+            harness: "claude", spawn_epoch: $epoch})}'
+}
+
+# ralph_depth_guard PARENT_REF — the herdr-plane spawn-depth cap: at most
+# three nested levels (depths 0-2; inner-plane subagents are free and never
+# counted). Prints the CHILD's depth on rc 0; rc 1 REFUSES the spawn when the
+# parent's recorded depth is already >= 2.
+#
+# An empty (or "-") PARENT_REF is a root spawn — human or scheduler — and
+# prints 0; work-next/work-fleet never call this (their spawns are depth-0 by
+# construction). A parent the ledger knows but without a depth token (discover
+# records carry none) is treated as depth 0: the guard enforces what the
+# ledger can prove — the ledger is eventually-honest by design, and a missing
+# record must never block work (degradation loses chrome, never verbs; the
+# cap is about runaway TREES, which by definition wrote spawn records).
+# Callers arrive with Phase 3's fleet controller; the guard ships (and is
+# tested) now so the contract is pinned before any orchestrator exists.
+# Honors $RALPH_HERDR_LEDGER / cwd scope like every ledger reader.
+ralph_depth_guard() {
+  local parent="${1-}" d
+  if [ -z "$parent" ] || [ "$parent" = "-" ]; then
+    echo 0
+    return 0
+  fi
+  d=$(_ralph_ledger_latest '((try .tokens.depth catch null) // "")' "$parent" 2>/dev/null) || d=""
+  case "$d" in
+    '' | *[!0-9]*) d=0 ;; # unknown/unparseable depth — treated as a root
+  esac
+  if [ "$d" -ge 2 ]; then
+    echo "ralph_depth_guard: parent $parent is at depth $d — refusing a herdr-plane child (cap: 3 levels, depths 0-2; use inner subagents instead)" >&2
+    return 1
+  fi
+  echo $((d + 1))
+}
+
 # spawn_work_session N [QUEUE_JSON] — spawn one /ralph:work session for issue N.
 #
 # The single sanctioned spawn path (extracted from work-next.sh; work-fleet.sh
@@ -208,7 +295,15 @@ notify() {
 #         (or the dry-run plan / a SKIP line).
 # On rc 0 the started (or dry-run planned) agent name is exported in
 # RALPH_HERDR_SPAWNED_AGENT — the name is derived in here, so callers that
-# watch or report must read it back rather than reconstruct it.
+# watch or report must read it back rather than reconstruct it. The durable
+# ref (name#epoch) is exported alongside as RALPH_HERDR_SPAWNED_REF the
+# moment the agent is live (dry-run: planned), same read-back rule.
+#
+# Phase 2: once the agent is LIVE this function appends the C7 spawn record
+# to the events ledger (the documented carve-out — see ledger.sh) and pushes
+# the spawn-time C8 tokens onto the pane. Both are observations: a failed
+# append or push warns and never aborts the spawn — reconcile discovers the
+# agent later (eventually-honest), and tokens are chrome.
 # Returns: 0 spawned (or dry-run plan printed); 2 skipped — a session already
 #          owns issue N (from the pre-check: no mutation attempted; from the
 #          start-time race: the already-opened worktree pane is left to the
@@ -217,15 +312,17 @@ notify() {
 # ANY herdr mutation.
 spawn_work_session() {
   local n="$1" queue_json="${2:-}" branch label parent title agent live pane out
+  local ref ts record ledger
   RALPH_HERDR_SPAWNED_AGENT=""
-  export RALPH_HERDR_SPAWNED_AGENT
+  RALPH_HERDR_SPAWNED_REF=""
+  export RALPH_HERDR_SPAWNED_AGENT RALPH_HERDR_SPAWNED_REF
   case "$n" in ''|*[!0-9]*) echo "spawn_work_session: bad issue number '$n'" >&2; return 1 ;; esac
   branch="feature/GH-$n"
 
   # Nesting label + title: children group under an epic on the board; carry
   # that into the worktree workspace label when the caller's queue JSON knows
   # the parent. The same queue item's title feeds the agent-name slug.
-  label="" title=""
+  label="" title="" parent=""
   if [ -n "$queue_json" ]; then
     parent=$(jq -r --argjson n "$n" '
       [.next, .queue[]?] | map(select(. != null and .number == $n)) | .[0].parentNumber // empty
@@ -265,7 +362,19 @@ spawn_work_session() {
     echo "    (fallback: $HERDR worktree open --cwd $REPO --branch $branch --no-focus${label:+ --label \"$label\"})"
     echo "  $HERDR agent start $agent --kind claude --pane <captured>"
     echo "  $HERDR agent prompt $agent \"/ralph:work $n\""
+    # The exact spawn record the live path would append (pane_id omitted —
+    # pane ids are captured from the worktree response, never predicted) and
+    # the token push derived from it. Printed, never written: dry-run stops
+    # before ANY mutation, ledger appends included.
+    ref=$(ralph_agent_ref "$agent") || {
+      echo "could not derive a durable ref for $agent" >&2
+      return 1
+    }
+    record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "" "$(date -u +%FT%TZ)") || record=""
+    echo "  ledger append (spawn): ${record:-<could not build the record>}"
+    echo "  tokens push (pane <captured>): $(jq -r '[.tokens | to_entries[] | "\(.key)=\(.value)"] | join(" ")' <<<"$record" 2>/dev/null || echo '<none>')"
     RALPH_HERDR_SPAWNED_AGENT="$agent"
+    RALPH_HERDR_SPAWNED_REF="$ref"
     return 0
   fi
 
@@ -331,6 +440,36 @@ spawn_work_session() {
   # silently and strand an idle session with no work, and hold_pane must not
   # claim "no session spawned" about it.
   export RALPH_HERDR_AGENT_LIVE=1
+
+  # Spawn record + spawn tokens, BEFORE the prompt: a live-but-unprompted
+  # agent still belongs in the ledger. The ledger resolves from $REPO (not
+  # $PWD — same scope board.ts reads), and every failure here is a warning,
+  # never an abort: reconcile discovers an unledgered live agent, and tokens
+  # are chrome. The pushed tokens are read back off the record so the pane
+  # chrome and the ledger can never disagree at spawn.
+  ts=$(date -u +%FT%TZ)
+  if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
+    RALPH_HERDR_SPAWNED_REF="$ref"
+    record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "$pane" "$ts") || record=""
+    ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
+    if [ -n "$record" ] && [ -n "$ledger" ]; then
+      RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" ||
+        echo "spawn ledger append failed for $ref — reconcile will discover it" >&2
+    else
+      echo "spawn ledger: ${ledger:+record build failed}${ledger:-no board scope discoverable from $REPO} — reconcile will discover $ref" >&2
+    fi
+    if [ -n "$record" ]; then
+      set --
+      while IFS= read -r kv; do
+        [ -n "$kv" ] || continue
+        set -- "$@" "$kv"
+      done < <(jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' <<<"$record" 2>/dev/null || true)
+      [ "$#" -ge 1 ] && ralph_tokens_push "$pane" "$@"
+    fi
+  else
+    echo "no durable ref derivable for $agent — spawning unledgered (reconcile will discover it)" >&2
+  fi
+
   "$HERDR" agent prompt "$agent" "/ralph:work $n" || {
     echo "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:work $n\"" >&2
     return 1
