@@ -208,6 +208,59 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
+      # GH-1770. `ssh-keyscan` trusts whatever key answers, so it
+      # authenticates nothing; in the release workflows it guarded the push
+      # carrying RELEASE_DEPLOY_KEY, the sole ruleset-bypass actor on
+      # protected main. Fixed twice already — PR #1740 (release-knowledge.yml)
+      # and PR #1767 (release-ralph.yml, which missed the first port) — so the
+      # convention clearly does not survive review on its own.
+      #
+      # The rule is about executable lines, not mentions: both release
+      # workflows explain the hazard in prose beside the pinned key, and the
+      # check excludes comment lines so that rationale can stay. Logic lives
+      # in scripts/ because a guard whose own source is in scope matches
+      # itself; these comments are free to name it.
+      - name: Guard host-key pinning in release workflows
+        run: bash scripts/check-host-key-pinning.sh
+
+      # Advisory by construction, in the same spirit as doctor's state smells:
+      # this step never gates a PR. GitHub rotating its Ed25519 host key is
+      # rare but would break the release push with a host-key mismatch, so
+      # drift is worth surfacing early. It is warn-only because the assertion
+      # needs the network, and api.github.com being unreachable is not
+      # evidence about our key — an unrelated outage must not redden PRs. A
+      # failed fetch therefore degrades to "not evaluated" rather than a
+      # verdict.
+      #
+      # The key is read back out of the workflows rather than restated here;
+      # a third copy of the pinned material would be one more thing to drift.
+      - name: Check pinned host key is still published by GitHub (warn-only)
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          pinned="$(grep -rhoE 'AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/=]+' \
+            .github/workflows/ | sort -u)"
+          if [ -z "$pinned" ]; then
+            echo "::notice::No pinned Ed25519 host key found under .github/workflows/ — nothing to compare."
+            exit 0
+          fi
+          if ! meta="$(curl -sSf --max-time 15 https://api.github.com/meta)"; then
+            echo "::notice::Host-key freshness not evaluated — api.github.com unreachable."
+            exit 0
+          fi
+          published="$(printf '%s' "$meta" | jq -r '.ssh_keys[]')"
+          rc=0
+          while IFS= read -r key; do
+            [ -z "$key" ] && continue
+            if printf '%s\n' "$published" | grep -qxF "ssh-ed25519 ${key}"; then
+              echo "OK — pinned key ...${key: -12} is still published by GitHub"
+            else
+              echo "::warning::Pinned Ed25519 host key ...${key: -12} is not in the .ssh_keys array of https://api.github.com/meta. If GitHub rotated it, the release push will fail host-key verification until the release workflows are updated."
+              rc=1
+            fi
+          done <<< "$pinned"
+          exit "$rc"
+
       - name: Run actionlint
         env:
           ACTIONLINT_VERSION: 1.7.12
