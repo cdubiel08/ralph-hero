@@ -46,12 +46,22 @@ STUB
 chmod +x "$BIN/gh"
 export PATH="$BIN:$PATH"
 
-# stub_pr <headRefName> <closing-count> [title] [body]
+# stub_pr <headRefName> <closing-count> [title] [body] [commit-message]...
+# closing-count is GitHub's DERIVED linkage, which lags creation — so it varies
+# independently of whether the body/commits carry a keyword. That independence
+# is the whole subject of the settle-race cases below.
 stub_pr() {
   local br="$1" n="$2" title="${3:-a title}" body="${4:-a body}" nodes="[]"
+  shift 4 2>/dev/null || shift $#
   [[ "$n" -gt 0 ]] && nodes='[{"number":42}]'
-  jq -n --arg br "$br" --arg t "$title" --arg b "$body" --argjson nodes "$nodes" \
-    '{headRefName: $br, title: $t, body: $b, closingIssuesReferences: $nodes}' >"$STUB_DIR/pr.json"
+  local commits="[]"
+  if [[ $# -gt 0 ]]; then
+    commits=$(printf '%s\n' "$@" | jq -R . | jq -sc 'map({messageHeadline: ., messageBody: ""})')
+  fi
+  jq -n --arg br "$br" --arg t "$title" --arg b "$body" \
+    --argjson nodes "$nodes" --argjson commits "$commits" \
+    '{headRefName: $br, title: $t, body: $b, closingIssuesReferences: $nodes, commits: $commits}' \
+    >"$STUB_DIR/pr.json"
 }
 stub_labels() { printf '%s\n' "$@" >"$STUB_DIR/labels.txt"; }
 # stub_issue_labels <issue> <label>... — per-issue override of the above
@@ -156,6 +166,79 @@ expect_silent "unrelated command entirely"
 stub_pr "feature/GH-1717" 1
 run_hook "$SETTINGS_REPO" "gh pr create --title t --body 'Closes #1717'"
 expect_silent "PR with closing-issue linkage"
+stub_pr "feature/GH-1717" 0
+
+# ---------------------------------------------------------------------------
+# The settle race. closingIssuesReferences is DERIVED asynchronously; this hook
+# runs milliseconds after `gh pr create` returns, so a correctly-linked PR
+# routinely reports ZERO for the first moments of its life. Every case below
+# therefore stubs count=0 — GitHub's honest not-yet-answer — and asserts the
+# hook re-reads the PR's own body/commits before accusing it of anything.
+# Reproduced on #1764: body carried `Closes #1763`, hint fired anyway.
+# ---------------------------------------------------------------------------
+
+# 3b. THE REPRO: body supplied through a command-substituted heredoc. The
+#     keyword reaches GitHub intact, so the fix must come from .body — not from
+#     parsing this command string, which `--body-file`/`--fill`/an editor-
+#     composed body would defeat anyway.
+HEREDOC_CMD=$(cat <<'OUTER'
+gh pr create --title "feat: a thing" --body "$(cat <<'EOF'
+Some body prose.
+
+Closes #1763
+EOF
+)"
+OUTER
+)
+stub_pr "feat/pr-gate-watch" 0 "feat: a thing" $'Some body prose.\n\nCloses #1763'
+run_hook "$SETTINGS_REPO" "$HEREDOC_CMD"
+expect_silent "heredoc-supplied body, linkage not yet derived (#1764 repro)"
+
+# 3c. Keyword carried ONLY by a commit message — the case the API call exists
+#     to cover in the first place, and which races identically.
+stub_pr "feat/pr-gate-watch" 0 "feat: a thing" "no keyword in this body" \
+  "chore: wip" "feat: the thing (Closes #1763)"
+run_hook "$SETTINGS_REPO" "gh pr create --title t"
+expect_silent "keyword only in a commit message, linkage not yet derived"
+
+# 3d. Every spelling GitHub honours, in every reference form.
+while IFS= read -r phrase; do
+  stub_pr "feat/x" 0 "a title" "prose before. $phrase and prose after."
+  run_hook "$SETTINGS_REPO" "gh pr create --title t"
+  expect_silent "settle fallback honours: $phrase"
+done <<'PHRASES'
+Closes #1763
+closes #1763
+Close #1763
+Closed #1763
+Fix #1763
+Fixes #1763
+Fixed #1763
+Resolve #1763
+Resolves #1763
+Resolved #1763
+Closes: #1763
+Closes cdubiel08/ralph-hero#1763
+Fixes https://github.com/cdubiel08/ralph-hero/issues/1763
+PHRASES
+
+# 3e. ...and the fallback must not swallow the hook whole. These name an issue
+#     WITHOUT a closing keyword — exactly the anomaly this rail exists to
+#     report — including the substring traps a boundary-free regex would eat.
+while IFS= read -r phrase; do
+  stub_pr "feat/x" 0 "a title" "prose before. $phrase and prose after."
+  run_hook "$SETTINGS_REPO" "gh pr create --title t"
+  expect_hint "settle fallback still reports: $phrase"
+done <<'PHRASES'
+Refs #1763
+See #1763
+Part of #1763
+Related to #1763
+disclosed #1763
+Discloses #1763
+prefixes #1763
+PHRASES
+
 stub_pr "feature/GH-1717" 0
 
 # 4. The create failed: no PR URL in the tool result.
