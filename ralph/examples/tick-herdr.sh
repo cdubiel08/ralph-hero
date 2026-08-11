@@ -30,10 +30,18 @@
 #
 # Unattended arming takes TWO typed keys in ~/.ralph/config: the shared
 # work-lane `autopilot=true` (tick.sh's key) plus `herdr_autopilot=true` for
-# this transport. The second key exists because the lid-close/server-restart
-# TTL probe (design doc §5) has not been run — an existing tick.sh arming
-# must not silently extend to pane-persistence ticks. Drop the extra key only
-# once the probe is run and recorded.
+# this transport. The second key STAYS: the server-restart TTL probe (design
+# doc §5) ran 2026-08-11 (plugin/ralph-herdr/scripts/probe-claim-ttl.sh →
+# thoughts/shared/research/2026-08-11-claim-ttl-pane-persistence-probe.md)
+# and returned NO-GO for unattended arming — a restart restores pane
+# topology (~225ms, same IDs) but KILLS the process in every pane and every
+# in-flight `pane wait-output` (clean rc=1 `server_unavailable`, no resume;
+# this tick's bounded wait errors, correctly leaving the claim to TTL). So
+# an unattended tick chain across a restart strands one claim per in-flight
+# issue for up to the TTL with a restored-but-idle pane looking alive.
+# Revisit the extra key only once (a) a restart-aware reconcile releases
+# dead-worker claims at watcher startup and (b) agent resume
+# (`resume_agents_on_restore`) is verified live — see the probe doc §3.
 #
 # Design record: thoughts/shared/research/2026-08-09-herdr-runtime-ralph-addon.md
 # Cockpit sibling (actions, lane panes, notifications): plugin/ralph-herdr/
@@ -69,7 +77,7 @@ if ! grep -q '^autopilot=true$' "$RALPH_HOME/config" 2>/dev/null; then
   exit 3
 fi
 if ! grep -q '^herdr_autopilot=true$' "$RALPH_HOME/config" 2>/dev/null; then
-  echo "tick-herdr: herdr transport not armed — write 'herdr_autopilot=true' to $RALPH_HOME/config (distinct from tick.sh's key: the pane outlives the tick, and the TTL/lid-close probe in design doc §5 has not been run)" >&2
+  echo "tick-herdr: herdr transport not armed — write 'herdr_autopilot=true' to $RALPH_HOME/config (distinct from tick.sh's key: the pane outlives the tick, and the 2026-08-11 server-restart TTL probe returned NO-GO for unattended arming — a restart restores pane topology but kills the process in every pane, stranding one claim per in-flight issue for up to the TTL behind a restored-but-idle pane; see this script's header and the probe doc §3)" >&2
   exit 3
 fi
 

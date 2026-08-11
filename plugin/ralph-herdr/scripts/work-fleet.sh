@@ -17,14 +17,18 @@
 # dependency-aware (unclaimed Backlog, no open blockers, truncation fails
 # closed). One probe, one read (fleet.sh normalizes both to {next, queue}).
 #
-# REFILL (--refill / RALPH_HERDR_REFILL=1) — EXPERIMENTAL until the
-# claim-TTL probe (design §3.1/§5) has been run: after the initial spawns
-# this ARMS the run's fleet.json, and the watcher (watch-event.sh) tops the
-# fleet back up to k from the frontier whenever a w-lane session exits or
-# finishes — the BOARD is the wait state; nothing idles in a pane. Arming is
-# bounded three ways: opt-in per run, a TTL (default 120 min), and a
-# max-total-spawns budget (default 8, initial spawns included). Without the
-# flag, behavior is today's one-shot fleet, byte-compatible in spirit.
+# REFILL (--refill / RALPH_HERDR_REFILL=1) — STAYS OPT-IN: the claim-TTL probe
+# (design §3.1/§5) ran 2026-08-11 and returned NO-GO for default/unattended
+# arming — a restart restores pane topology but kills every pane's process, so
+# an unattended armed run stalls its claims at TTL scale; see
+# thoughts/shared/research/2026-08-11-claim-ttl-pane-persistence-probe.md §3.
+# After the initial spawns this ARMS the run's fleet.json, and the watcher
+# (watch-event.sh) tops the fleet back up to k from the frontier whenever a
+# w-lane session exits or finishes — the BOARD is the wait state; nothing
+# idles in a pane. Arming is bounded three ways: opt-in per run, a TTL
+# (default 120 min), and a max-total-spawns budget (default 8, initial spawns
+# included). Without the flag, behavior is today's one-shot fleet,
+# byte-compatible in spirit.
 #
 # Knobs:
 #   RALPH_HERDR_FLEET       sessions to spawn (default 2; positive integer;
@@ -112,7 +116,7 @@ if [ -n "$REFILL" ]; then
   else
     # shellcheck disable=SC2086  # intentional word-splitting: one argv per issue
     if fleet_file=$(ralph_fleet_arm "$FLEET" 1 $spawned_issues); then
-      echo "  refill: ARMED (experimental until the claim-TTL probe) — $fleet_file"
+      echo "  refill: ARMED (opt-in only — the claim-TTL probe says NO-GO for unattended arming; stay at the keyboard) — $fleet_file"
       echo "          k=$FLEET, ttl ${RALPH_HERDR_REFILL_TTL_MIN:-120}m, budget left $(jq -r '.budget_left' "$fleet_file") of ${RALPH_HERDR_REFILL_BUDGET:-8} total spawns"
       echo "          the watcher refills from the frontier when a w-lane session exits or finishes"
     else

@@ -19,7 +19,8 @@
 #   (work-fleet.sh / work-issue-fleet.sh) and exported; the watcher never
 #   needs it (it scans runs/*/fleet.json).
 #
-# ARMING (refill) — EXPERIMENTAL until the claim-TTL probe (design §3.1/§5)
+# ARMING (refill) — STAYS OPT-IN: the claim-TTL probe (design §3.1/§5) ran
+# 2026-08-11 and returned NO-GO for default/unattended arming (probe doc §3)
 #   Refill is OPT-IN PER RUN (work-fleet --refill / RALPH_HERDR_REFILL=1) and
 #   self-limiting by construction: fleet.json carries an expires_at TTL
 #   (default 120 min) and a max-total-spawns budget (default 8, counted

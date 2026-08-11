@@ -49,6 +49,15 @@ Only in repos that opted in (`board readiness` says whether yours has). There, a
 
 sonnet is the default for everything; haiku for mechanical fan-out. Frontier (`fable`, else `opus`) only as in-session bookends on feature/epic units — plan authorship/critique and the final group review — via `Agent(model="fable")` or the plan-critique / adversarial-review workflows. XS/S singles never touch frontier. A blocked step gets one re-dispatch at `opus`; a second block → Human Needed. (`CLAUDE_CODE_SUBAGENT_MODEL=opus` is the harness escape hatch for non-Fable accounts; it flattens every tier.)
 
+## Cockpit-hosted sessions (HERDR_ENV=1)
+
+When `HERDR_ENV=1` you are running in a herdr pane under the ralph-herdr cockpit. Two additions; neither changes the contract below.
+
+- **Self-report at the natural checkpoints** — best-effort chrome, never a gate: `herdr pane report-metadata "$HERDR_PANE_ID" --source ralph-herdr --token state=working` when you start, `state=blocked` when you escalate, `state=reporting` at close-out. A refused push costs the sidebar chrome only; warn once and keep working.
+- **Escalations must be phone-answerable.** The `--why` on a Human Needed move becomes the **Decision needed** issue comment, and its first line reaches the human as a ≤240-char notification. Lead with one line that states the decision, then enumerated options (A/B/…) with exactly one recommended default — answerable from a phone without opening anything. `board contract validate ralph.escalation` checks the typed form of this bar.
+
+Full surface — naming, tokens, spawn path, fleets, ledger: [references/herdr-api.md](references/herdr-api.md).
+
 ## Contract — what must be true when you stop
 
 The board is the only memory the next session has. Write to it, not to me.

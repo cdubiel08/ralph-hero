@@ -93,7 +93,7 @@ live_names() {
     tr '\n' ' ' || true
 }
 
-# ── refill (Phase 3 — experimental until the claim-TTL probe) ────────────────
+# ── refill (Phase 3 — opt-in only; claim-TTL probe said NO-GO by default) ────
 # The board is the wait state: when a w-lane session exits or finishes, an
 # ARMED fleet run (work-fleet --refill) is topped back up to k from the
 # frontier. NEVER on blocked — blocked is attention, not capacity. All

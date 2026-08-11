@@ -30,6 +30,16 @@ jobs:
         # diff — contracts.ts and the committed schemas cannot drift apart.
         run: npm run contracts:check
 
+      - name: BDD replay suite (cucumber-js)
+        # plugin/ralph-herdr/features — the replay profile only: cucumber
+        # steps drive the real bash scripts (spawn path, watch-event.sh,
+        # reconcile.sh, ralph-answer.sh, work-fleet.sh) through the
+        # tests/fake-herdr.sh + fake-board.sh shims, same harness as the
+        # *.test.sh suites in the test-hooks job. @live scenarios need a
+        # real herdr server and NEVER run in CI — scripts/nightly-live.sh
+        # runs them from local launchd (see its header for the wiring).
+        run: npm run test:bdd
+
   build-and-test-demo:
     runs-on: ubuntu-latest
     defaults:

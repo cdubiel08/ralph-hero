@@ -55,9 +55,9 @@ herdr's shapes map onto ralph's without translation:
 
 - **workspace = project.** The repo workspace is where you invoke actions; its cwd
   is the board's scope.
-- **grouped worktree workspaces = issues.** Each `gh-N` session lives in its own
-  worktree workspace, and herdr groups those under the repo workspace — exactly as
-  children group under an epic on the board. When an issue has a board parent, the
+- **grouped worktree workspaces = issues.** Each work session (`w<N>-<slug>`,
+  legacy `gh-N`) lives in its own worktree workspace, and herdr groups those under
+  the repo workspace — exactly as children group under an epic on the board. When an issue has a board parent, the
   worktree carries a `--label "GH-N via GH-parent"` so the grouping reads the same
   in herdr as it does on the board.
 - **tabs = lanes.** A lane pass (`ralph-deliver` / `ralph-tend`) gets a tab of its
@@ -69,8 +69,8 @@ herdr's shapes map onto ralph's without translation:
 
 | Action | Pane | What it does |
 |---|---|---|
-| `work-next` | split (down) | `board next` → if empty, says so and exits. Otherwise: fetch, `herdr worktree create --branch feature/GH-N --base origin/main` (`--base` only applies to brand-new branches — an existing `feature/GH-N` branch is silently resumed as-is, possibly behind origin/main, and the session rebases; `worktree open` is the fallback when the *checkout* already exists), start agent `gh-N` in the new workspace's pane, prompt `/ralph:work N`, then the cockpit pane becomes the notification watcher. An already-live `gh-N` is a skip, not an error: it prints "SKIP gh-N already live" and exits 0 with no worktree touched (wrapper authors: exit 0 does not always mean a session was spawned) |
-| `work-fleet` | split (down) | reads the frontier once (`board frontier --json` when the verb exists, else the ranked `board next` queue — already dependency-aware) and spawns up to `RALPH_HERDR_FLEET` (default 2, hard cap 4) work sessions — same spawn path as `work-next`, per issue, plus a C3 FleetBrief per spawn under the run's `briefs/` dir. Already-live agents are skipped, one failed spawn doesn't strand the rest; the pane then watches all spawned agents. With `--refill` / `RALPH_HERDR_REFILL=1` it also ARMS the run for watcher refill — see [Fleet refill](#fleet-refill-experimental-until-the-claim-ttl-probe) |
+| `work-next` | split (down) | `board next` → if empty, says so and exits. Otherwise: fetch, `herdr worktree create --branch feature/GH-N --base origin/main` (`--base` only applies to brand-new branches — an existing `feature/GH-N` branch is silently resumed as-is, possibly behind origin/main, and the session rebases; `worktree open` is the fallback when the *checkout* already exists), start agent `w<N>-<slug>` (grammar B, slug from the issue title — see [Agent names](#agent-names-grammar-b)) in the new workspace's pane, prompt `/ralph:work N`, then the cockpit pane becomes the notification watcher. An issue already owned by a live session (any `w<N>-*`, or legacy `gh-N`) is a skip, not an error: it prints "SKIP <name> already live" and exits 0 with no worktree touched (wrapper authors: exit 0 does not always mean a session was spawned) |
+| `work-fleet` | split (down) | reads the frontier once (`board frontier --json` when the verb exists, else the ranked `board next` queue — already dependency-aware) and spawns up to `RALPH_HERDR_FLEET` (default 2, hard cap 4) work sessions — same spawn path as `work-next`, per issue, plus a C3 FleetBrief per spawn under the run's `briefs/` dir. Already-live agents are skipped, one failed spawn doesn't strand the rest; the pane then watches all spawned agents. With `--refill` / `RALPH_HERDR_REFILL=1` it also ARMS the run for watcher refill — see [Fleet refill](#fleet-refill-opt-in-the-claim-ttl-probe-says-no-go-on-default-arming) |
 | `work-issue-fleet` | split (down) | **shared-claim sibling fleet**: `RALPH_HERDR_SIBLINGS` (default 2, cap 4) sessions on ONE issue, one worktree, one branch. Sibling 1 is a normal `work-next`-style spawn; siblings 2..K are pane splits in the same workspace (names `w<N>-<slug>--2`…), each prompted `/ralph:work N` and briefed with the shared branch. The claim join runs AFTER the spawns: `board claim join` is for In Progress items only, so the script waits (bounded, `RALPH_HERDR_JOIN_WAIT_SEC`) for sibling 1's session to claim, then joins each sibling via `board claim join N --holder <name>` — a timeout or refusal warns and prints the manual join, never blocks the spawn. The pane prompts for the issue number (or set `RALPH_HERDR_ISSUE`) |
 | `attend` | none | no pane, no loop: finds the highest-priority `blocked` ralph agent (issue sessions — `gh-N` / w-lane — before every other lane; within a group, oldest blocked-since first from the ledger's state-record timestamps, agent-list order when the ledger can't say), `herdr agent focus` jumps you to it, and the notification **carries the question**: the pane's last non-empty tail lines (`agent read --source recent-unwrapped`), flattened to one ≤240-char line, with `#N` in the title when the name resolves to an issue. Nothing blocked → "herd calm". Safe to bind to a key |
 | `answer` | popup | walk Human Needed and answer ONE item, **comment-first**: `board list --state "Human Needed" --json` → pick → the issue's latest comments (bounded `gh issue view --comments` tail) → type the answer mail(1)-style (end with a lone `.` line) → `board answer N -m` posts the **Answer** issue comment BEFORE the Human Needed → In Progress move (board.ts owns that ordering — if the pane or herdr vanishes mid-answer, the decision is already on the record). Only then, if a live session owns N, a `herdr agent prompt … --wait` nudge — delivery reported honestly, never assumed. A board CLI predating the verb falls back to `gh issue comment` + `board move`, same ordering |
@@ -90,9 +90,20 @@ Multiple targets (the fleet case): a portable poll loop (`agent get` every
 `RALPH_HERDR_WATCH_POLL`s) notifies on each agent's first block and once on
 done/idle/gone, dropping it from the watch list; exits when the list is empty.
 
-Agent names are fixed: `gh-N` for work sessions, `ralph-deliver` / `ralph-tend` for
-lane passes — one live pass per lane. If a name is taken the script dies loudly
-("a pass is already live"); it never improvises suffixes, never kills the live agent.
+### Agent names (grammar B)
+
+Work sessions are named `<lane><issue>-<slug>[--<gen>]` (≤32 chars) —
+`w1743-fix-claim-race` — with the slug derived from the issue title
+(`scripts/naming.sh`, mirroring `ralph/scripts/contracts.ts`; a shared golden
+table pins both). `--2`..`--9` generations belong to sibling issue fleets
+only; the spawn path never improvises one on a collision — a live session
+owning the issue is a skip. The durable identity is the ref `name#epoch` in
+the ledger; pane ids are server-scoped and never durable. Lane passes keep
+their fixed names `ralph-deliver` / `ralph-tend` — one live pass per lane; a
+taken name dies loudly ("a pass is already live") and never kills the live
+agent. Legacy `gh-N` names stay first-class through the transition. The full
+agent-facing reference (lane table, tokens, self-report, fleet claims) is
+`ralph/skills/work/references/herdr-api.md` in the ralph Claude Code plugin.
 
 ## Knobs
 
@@ -107,7 +118,7 @@ of each script:
 | `RALPH_HERDR_DASH_INTERVAL` | `120` | dashboard refresh interval, seconds |
 | `RALPH_HERDR_DRY_RUN` | unset | set to `true` and every spawn script (`work-next`, `work-fleet`, lane passes) prints its exact plan — issues, branches, agent names, the herdr commands it would run — and exits 0 before any herdr mutation. Dashboard/attend are reads and ignore it |
 | `RALPH_HERDR_FLEET` | `2` | how many work sessions `work-fleet` spawns from the top of the frontier; positive integer, hard cap 4 (it dies above — this is an attended tool, not a farm). Also the refill loop's concurrency target `k` |
-| `RALPH_HERDR_REFILL` | unset | `1` → `work-fleet` arms watcher refill for the run (same as `--refill`); **experimental until the claim-TTL probe** |
+| `RALPH_HERDR_REFILL` | unset | `1` → `work-fleet` arms watcher refill for the run (same as `--refill`); **stays opt-in — the 2026-08-11 claim-TTL probe returned NO-GO for default arming** |
 | `RALPH_HERDR_REFILL_TTL_MIN` | `120` | refill arming TTL, minutes — checked at read time, a lapsed arming reads as disarmed |
 | `RALPH_HERDR_REFILL_BUDGET` | `8` | max total spawns per armed run (attempts count, initial spawns included) |
 | `RALPH_HERDR_SIBLINGS` | `2` | `work-issue-fleet` fleet size K; 1..4 |
@@ -265,7 +276,7 @@ No poll timer: the board re-reads after every verb.
   screen-detected agent status — attention hints joined onto board-truth
   cards, never a gate.
 
-## Fleet refill (EXPERIMENTAL until the claim-TTL probe)
+## Fleet refill (opt-in: the claim-TTL probe says NO-GO on default arming)
 
 **The board is the wait state** — nothing idles in a pane waiting for work.
 With `work-fleet --refill` (or `RALPH_HERDR_REFILL=1`), the run is ARMED:
@@ -273,11 +284,21 @@ whenever a w-lane session **exits or finishes**, the watcher tops the fleet
 back up to `k` from the dependency-aware frontier. **Never on blocked** —
 blocked is attention, not capacity, and only ever produces a notification.
 
-This is *experimental until the claim-TTL probe* (design doc §3.1/§5 — a pane
-that outlives its claim can double-work against a fresh claimant; the probe
-has not been run yet). Until then refill is bounded three ways, all recorded
-in the run's `fleet.json` at arm time and enforced at read time — no timers,
-no daemons, no arming survives them:
+This *stays opt-in*: the claim-TTL vs pane-persistence probe ran 2026-08-11
+(`scripts/probe-claim-ttl.sh` →
+`thoughts/shared/research/2026-08-11-claim-ttl-pane-persistence-probe.md`)
+and returned **NO-GO for unattended arming**. A herdr server restart restores
+workspace/pane topology in ~225ms with stable IDs — but **kills the process
+inside every pane** (~100ms, verified with a heartbeat marker) and every
+in-flight `pane wait-output` dies cleanly with `server_unavailable`, never
+resuming. An armed-but-unattended run would therefore stall its claims for up
+to the claim TTL (default 120m per issue) with a restored-but-idle pane
+posing as a live session. (The originally feared inverse — a pane *outliving*
+its claim and double-working, design doc §3.1/§5 — was NOT observed for plain
+processes; agent-pane resume is still unverified, no billed agents in the
+probe.) Until a restart-aware reconcile closes that stall window, refill is
+bounded three ways, all recorded in the run's `fleet.json` at arm time and
+enforced at read time — no timers, no daemons, no arming survives them:
 
 - **opt-in per run** — the flag arms exactly one run; the default click is
   today's one-shot fleet, unchanged;
@@ -375,11 +396,14 @@ sibling semantics, so expect to attend these fleets closely.
   adopted by a live grandparent or marked `orphaned` (token + ledger + one
   notification) — their claims and panes are left alone. The Phase-3 fleet
   controller REFILLS capacity; it still never reaps, kills, or releases anything.
-- **Refill is experimental until the claim-TTL probe, and bounded like it.** The
-  probe (a pane that outlives its claim can double-work against a fresh claimant —
-  design doc §3.1/§5) has not been run yet, so nothing here arms itself: refill is
-  opt-in per run, TTL-capped, budget-capped, and disarms itself at frontier-empty
-  or budget-exhausted (see [Fleet refill](#fleet-refill-experimental-until-the-claim-ttl-probe)).
+- **Refill stays opt-in: the claim-TTL probe ran and said NO-GO.** The 2026-08-11
+  probe (`scripts/probe-claim-ttl.sh` →
+  `thoughts/shared/research/2026-08-11-claim-ttl-pane-persistence-probe.md`) found
+  a server restart kills every pane's process and in-flight wait while restoring
+  the topology — an unattended armed run stalls its claims at TTL scale — so
+  nothing here arms itself: refill is opt-in per run, TTL-capped, budget-capped,
+  and disarms itself at frontier-empty or budget-exhausted (see
+  [Fleet refill](#fleet-refill-opt-in-the-claim-ttl-probe-says-no-go-on-default-arming)).
   Every OTHER action in this plugin remains human-clicked one-shots;
   scheduler-owned herdr ticks stay in `ralph/examples/tick-herdr.sh`, which bounds its
   wait at the TTL, wraps up rather than kills, and requires its own typed
@@ -419,7 +443,14 @@ sibling semantics, so expect to attend these fleets closely.
 
 - **Getting started at the terminal**: [CHEATSHEET.md](CHEATSHEET.md) — from-zero
   quick start (ralph `board setup`/`readiness` + herdr install) through the
-  actions, herd inspection, hand-driving, and debugging.
+  actions, the cockpit keys, naming, answer/fleet verbs, and debugging.
+- **For the sessions themselves**: `ralph/skills/work/references/herdr-api.md`
+  (in the ralph Claude Code plugin) — what a `/ralph:work` session hosted in a
+  cockpit pane needs: the naming grammar, the C8 token vocabulary and
+  self-report syntax, the sanctioned spawn path, shared-claim fleets, and the
+  ledger's read-only contract. The `/ralph:work` skill points cockpit-hosted
+  sessions at it via a SessionStart hook (`ralph/hooks/herdr-context.sh`,
+  active only when `HERDR_ENV=1`).
 
 - Design record (normative): `thoughts/shared/research/2026-08-09-herdr-runtime-ralph-addon.md`
 - Scheduler-owned herdr tick recipe: `ralph/examples/tick-herdr.sh` (copy and own —
