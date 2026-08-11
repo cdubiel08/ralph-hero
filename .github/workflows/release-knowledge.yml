@@ -247,7 +247,13 @@ jobs:
           mkdir -p "$HOME/.ssh"
           printf '%s\n' "$RELEASE_DEPLOY_KEY" > "$HOME/.ssh/release_key"
           chmod 600 "$HOME/.ssh/release_key"
-          ssh-keyscan -t ed25519 github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          # GitHub's published Ed25519 host key, pinned rather than scanned:
+          # `ssh-keyscan` accepts whatever key answers, so it authenticates
+          # nothing and leaves a MITM window on the release push. Source of
+          # truth is the `ssh_keys` array of https://api.github.com/meta.
+          printf 'github.com ssh-ed25519 %s\n' \
+            'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+            >> "$HOME/.ssh/known_hosts"
           GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes" \
             git push "git@github.com:${GITHUB_REPOSITORY}.git" main --tags
 
