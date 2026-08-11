@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-`ralph` v2 (GH-1662) — a Claude Code plugin for board-driven autonomous development over a GitHub Projects V2 board. Two skills, one read-only agent, one typed board CLI, three hooks (two courtesy funnels + one PostToolUse observation), and a scheduler-owned loop. The driving model sequences its own research/plan/build/verify; enforcement is code, not prose. Design record (normative): `thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`.
+`ralph` v2 (GH-1662) — a Claude Code plugin for board-driven autonomous development over a GitHub Projects V2 board. Two skills, one read-only agent, one typed board CLI, four hooks (three courtesy funnels + one PostToolUse observation), and a scheduler-owned loop. The driving model sequences its own research/plan/build/verify; enforcement is code, not prose. Design record (normative): `thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`.
 
 The repo also ships two independent plugins: `plugin/ralph-knowledge/` (semantic search over thoughts/, own MCP server + npm release) and `plugin/ralph-playwright/` (UI-testing skills), plus `plugin/ralph-demo/` (Remotion demo videos).
 
@@ -60,7 +60,7 @@ Honestly labelled limits: GitHub has no pre-close hook, so a UI close is *correc
 
 1. `board.ts` — typed gates at the path all sanctioned traffic uses.
 2. `.github/workflows/state-guard.yml` — the corrective wall: issue-event lane (adopt/reconcile/parent gate) + 15-min reconciler cron (`doctor --fix`). Needs the `ROUTING_PAT` secret (GITHUB_TOKEN can't write a personal-account Projects V2 board). Every correction is a visible comment.
-3. `ralph/hooks/funnel-{board,merge}.sh` — ~35-line courtesy redirects to the CLI / merge gate, registered once in `ralph/hooks/hooks.json`. **Never counted as enforcement.**
+3. `ralph/hooks/funnel-{board,merge,gate-watch}.sh` — ~35-line courtesy redirects to the CLI / merge gate / `pr-gate-watch.sh`, registered once in `ralph/hooks/hooks.json`. **Never counted as enforcement.** `funnel-gate-watch.sh` is the one rail registered for **Monitor as well as Bash**, because an armed Monitor is the form its mistake actually takes — a Bash loop at least returns, a Monitor stays silent for the session.
    - `ralph/hooks/hint-pr-linkage.sh` (GH-1717) is the *non-redirect* sibling: a PostToolUse observation that notes an unlinked `gh pr create` and never exits 2, because `gh pr create` has no sanctioned alternative to redirect to (the funnel-merge test, #1713). It stays silent on apply units — gate 6 forbids the very keyword a naive hint would ask for.
 4. `.github/workflows/doctor.yml` — weekly `doctor --strict` from CI: the watcher-of-the-watcher (this repo has observed silent Actions non-fire and an expired PAT).
 
