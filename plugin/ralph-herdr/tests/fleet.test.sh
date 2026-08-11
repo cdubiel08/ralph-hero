@@ -320,15 +320,40 @@ line_has "brief: no board CLI warns (unvalidated)" "$err" "brief written unvalid
 
 # The REAL validator, offline: contract validate is pure schema work — run it
 # from the repo checkout (board.ts resolves scope from the tree, no network).
+#
+# CAPABILITY-GATED. `contract validate` is the one board verb that needs zod,
+# lazy-loaded by design so an installed-plugin copy without node_modules keeps
+# every other verb working — a zod-less host is SUPPORTED, and CI's test-hooks
+# job is one (it installs no deps). Asserting the strict path there fails on a
+# working configuration; worse, the rejection assertion below would PASS for
+# the wrong reason, since a zod-less refusal is also a nonzero exit. So probe
+# once and assert whichever contract actually applies. C3 enforcement itself is
+# covered independently by contracts.test.ts in the board-tests job.
 REAL_BOARD="$ROOT/ralph/scripts/board"
-rc=0
-err=$( (cd "$ROOT" && BOARD="$REAL_BOARD" ralph_brief_write "w42-real#beef" 42 >/dev/null) 2>&1 ) || rc=$?
-is "brief: the REAL board CLI validates a written brief (rc 0)" "0" "$rc"
-is "brief: the real validator raised no warning" "" "$err"
-jq -c '.skill_invocation = "/ralph:work 999"' "$RDIR/briefs/w42-real#beef.json" >"$TMP/bad-brief.json"
-rc=0
-(cd "$ROOT" && "$REAL_BOARD" contract validate ralph.fleet_brief "$TMP/bad-brief.json" >/dev/null 2>&1) || rc=$?
-is "brief: the REAL validator REJECTS a skill/issue mismatch (C3 is enforced)" "1" "$rc"
+probe=$( (cd "$ROOT" && "$REAL_BOARD" contract validate ralph.fleet_brief \
+  "$ROOT/ralph/contracts/examples/good/ralph.fleet_brief.json") 2>&1 >/dev/null ) || true
+case $probe in
+  *"needs the zod package"*) real_validator=absent ;;
+  *) real_validator=present ;;
+esac
+
+if [ "$real_validator" = present ]; then
+  rc=0
+  err=$( (cd "$ROOT" && BOARD="$REAL_BOARD" ralph_brief_write "w42-real#beef" 42 >/dev/null) 2>&1 ) || rc=$?
+  is "brief: the REAL board CLI validates a written brief (rc 0)" "0" "$rc"
+  is "brief: the real validator raised no warning" "" "$err"
+  jq -c '.skill_invocation = "/ralph:work 999"' "$RDIR/briefs/w42-real#beef.json" >"$TMP/bad-brief.json"
+  rc=0
+  (cd "$ROOT" && "$REAL_BOARD" contract validate ralph.fleet_brief "$TMP/bad-brief.json" >/dev/null 2>&1) || rc=$?
+  is "brief: the REAL validator REJECTS a skill/issue mismatch (C3 is enforced)" "1" "$rc"
+else
+  rc=0
+  err=$( (cd "$ROOT" && BOARD="$REAL_BOARD" ralph_brief_write "w42-real#beef" 42 >/dev/null) 2>&1 ) || rc=$?
+  is "brief: a zod-less host still writes the brief (rc 0)" "0" "$rc"
+  line_has "brief: a zod-less host warns and keeps it" "$err" "kept anyway"
+  is "brief: the brief survived the unavailable validator" "1" \
+    "$([ -f "$RDIR/briefs/w42-real#beef.json" ] && echo 1 || echo 0)"
+fi
 
 # ═══ 5. frontier probe — one normalized {next, queue} envelope ═══════════════
 cat >"$FAKE_BOARD_FIXTURES/frontier.json" <<'EOF'
