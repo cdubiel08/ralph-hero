@@ -1865,6 +1865,73 @@ export function claimShow(ctx: Ctx, number: number): ClaimShow {
 }
 
 // ---------------------------------------------------------------------------
+// Answer — the Human Needed exit verb (ralph-herdr v2), COMMENT-FIRST.
+//
+// The durable half (a GitHub **Answer** comment) lands BEFORE the state write,
+// extending transition()'s comments-before-state rule across the whole verb:
+// if the process — or the multiplexer driving it — vanishes mid-answer, the
+// decision is on the record and the item is still in Human Needed for a clean
+// retry. The herdr prompt half (nudging the paused agent to resume) is
+// deliberately NOT here: the board is authoritative and herdr decorative, so
+// the prompt belongs to plugin/ralph-herdr. Escalation payload shape stays
+// `board contract validate ralph.escalation`'s job — this verb validates
+// nothing about the question, it only answers it.
+// ---------------------------------------------------------------------------
+
+export interface AnswerResult {
+  commented: boolean;
+  transitioned: boolean;
+  state: string | null;
+}
+
+export function answer(
+  ctx: Ctx,
+  number: number,
+  opts: { message: string; anyState?: boolean; commentOnly?: boolean },
+): AnswerResult {
+  const issue = fetchIssue(ctx, number);
+  // Fail closed BEFORE the comment: a truncated field-value page means the
+  // state just read may be fiction, and the Human Needed gate below would be
+  // judging it.
+  if (issue.fieldValuesTruncated) {
+    throw new RefusalError(
+      `#${number} has more than ${FIELD_VALUE_PAGE} project field values — ` +
+        `the state read is unreliable, refusing to answer`,
+    );
+  }
+  if (issue.state !== "Human Needed" && !opts.anyState) {
+    throw new RefusalError(
+      `#${number} is "${issue.state ?? "(none)"}" — answer is for Human Needed items. ` +
+        `Re-run with --any-state to post the answer comment anyway (comment only, no transition), ` +
+        `or use \`board comment ${number} -m\` for a plain comment.`,
+    );
+  }
+  // Durable half FIRST. Whatever happens after this line, the decision exists.
+  addComment(ctx, issue.nodeId, `**Answer** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${opts.message}`);
+  // The Human Needed → In Progress edge is the ONLY move this verb owns:
+  // --comment-only skips it, and an --any-state answer outside Human Needed
+  // has no edge to take — relaxing the refusal never relaxes the MACHINE.
+  if (opts.commentOnly || issue.state !== "Human Needed") {
+    return { commented: true, transitioned: false, state: issue.state };
+  }
+  try {
+    const after = transition(ctx, issue, "In Progress");
+    return { commented: true, transitioned: true, state: after.state };
+  } catch (e) {
+    // The durable half already happened — a refusal here (fleet co-holders
+    // still on the claim, a lost claim race) must say so, or the operator
+    // re-posts the same answer to retry a move.
+    if (e instanceof RefusalError) {
+      throw new RefusalError(
+        `${e.message}\nThe answer comment IS on the record — retry the move ` +
+          `(\`board claim ${number}\`), not the answer.`,
+      );
+    }
+    throw e;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Adopt + reconcile — the reality-sync lane (used by state-guard.yml).
 //
 // `transition` governs agent INTENT and is guarded by the MACHINE table.
@@ -3848,6 +3915,22 @@ mutations
                               stay the skills' job
   release NNN -m "why"        In Progress → Backlog; parking comment required
   move NNN <state> [--why W]  any legal transition; Human Needed requires --why
+  answer NNN -m "decision"    Human Needed → In Progress, COMMENT-FIRST: the
+                              answer lands as an issue comment (**Answer** —
+                              the durable half) BEFORE any state write, so a
+                              session that vanishes mid-answer leaves the
+                              decision on the record, not a bare move.
+                              --message is an alias for -m. --comment-only
+                              posts without the move; --any-state answers an
+                              item outside Human Needed (comment only — the
+                              Human Needed → In Progress edge is the only
+                              move this verb owns). [--json] reports
+                              {commented, transitioned, state}. The herdr
+                              prompt half (nudging the paused agent to
+                              resume) is deliberately NOT here — the
+                              ralph-herdr plugin owns it. Escalation payload
+                              shape is checked by \`board contract validate
+                              ralph.escalation\`, never by this verb
   cancel NNN -m "why"         any open state → Canceled (closes as not-planned)
   reopen NNN                  Done/Canceled → Backlog (reopens the issue)
   link PARENT CHILD           add sub-issue edge
@@ -3908,7 +3991,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live"].includes(key)) {
+      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state"].includes(key)) {
         flags[key] = next;
         i++;
       } else {
@@ -3966,7 +4049,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 }
 
 const MUTATING = new Set([
-  "create", "claim", "release", "move", "cancel", "reopen",
+  "create", "claim", "release", "move", "cancel", "reopen", "answer",
   "link", "dep", "comment", "adopt", "reconcile", "parent-check",
   "setup",
 ]);
@@ -4229,6 +4312,29 @@ export function run(argv: string[], ctx: Ctx): number {
       if (!to) throw new UsageError(`move requires a target state (${STATES.join(" | ")})`);
       const after = transition(ctx, issue, to, { why: typeof flags.why === "string" ? flags.why : undefined });
       out(issueLine(after));
+      return 0;
+    }
+
+    case "answer": {
+      const number = requireNumber(positional[0]);
+      const message =
+        typeof flags.m === "string" && flags.m ? flags.m
+        : typeof flags.message === "string" && flags.message ? flags.message
+        : null;
+      if (!message) throw new UsageError(`answer requires -m "<the decision>" (--message also accepted)`);
+      const res = answer(ctx, number, {
+        message,
+        anyState: !!flags["any-state"],
+        commentOnly: !!flags["comment-only"],
+      });
+      if (flags.json) json(res);
+      else {
+        out(
+          res.transitioned
+            ? `#${number}: answer commented; Human Needed → ${res.state}`
+            : `#${number}: answer commented; no transition (state: ${res.state ?? "(none)"})`,
+        );
+      }
       return 0;
     }
 

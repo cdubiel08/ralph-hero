@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   adopt,
+  answer,
   APPLY_EVIDENCE_MARKER,
   APPLY_LABEL_DEFAULT,
   applyEvidenceFailure,
@@ -2880,5 +2881,127 @@ describe("readiness — lane rows (GH-1712)", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("answer verb (ralph-herdr v2) — comment-first", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("refuses outside Human Needed before ANY write — no comment, no state", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(() => answer(ctx, 1, { message: "ship it" })).toThrow(RefusalError);
+    expect(() => answer(ctx, 1, { message: "ship it" })).toThrow(/--any-state/);
+    expect(gh.mutations).toEqual([]); // refused before any write
+    expect(gh.comments).toEqual([]);
+  });
+
+  it("a truncated fieldValues page refuses before the comment — the state gate would judge fiction", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed", fieldValuesTruncated: true });
+    expect(() => answer(ctx, 1, { message: "ship it" })).toThrow(/field values/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("Human Needed: the **Answer** comment lands BEFORE the state write (durable half first)", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const res = answer(ctx, 1, { message: "use option B" });
+    expect(res).toEqual({ commented: true, transitioned: true, state: "In Progress" });
+    const comment = gh.comments.find((c) => c.body.startsWith("**Answer**"));
+    expect(comment?.body).toContain("use option B");
+    expect(comment?.body).toContain("`me@test`");
+    // The ordering guarantee, on the recorded mutation stream: comment first.
+    expect(gh.mutations.indexOf("addComment")).toBeLessThan(gh.mutations.indexOf("setState(#1, In Progress)"));
+    // The move rode the transition engine: claim acquired by the answerer.
+    expect(gh.issues.get(1)!.claim).toContain("me@test");
+  });
+
+  it("--comment-only posts the durable half and skips the transition", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const res = answer(ctx, 1, { message: "use option B", commentOnly: true });
+    expect(res).toEqual({ commented: true, transitioned: false, state: "Human Needed" });
+    expect(gh.mutations).toEqual(["addComment"]); // no state, no claim writes
+  });
+
+  it("--any-state answers an item outside Human Needed: comment only, never a move", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const res = answer(ctx, 1, { message: "context for later", anyState: true });
+    expect(res).toEqual({ commented: true, transitioned: false, state: "Backlog" });
+    expect(gh.mutations).toEqual(["addComment"]);
+  });
+
+  it("transition guards stay intact AFTER the comment: a live fleet co-holder refuses the move, not the answer", () => {
+    // Leaving In Progress for Human Needed removes only the mover — a fleet
+    // sibling can remain on the claim. The answer's comment must land anyway.
+    gh.issues.set(1, {
+      number: 1, state: "Human Needed",
+      claim: encodeClaim("w1-other", new Date(NOW.getTime() - 10 * 60_000)),
+    });
+    const msg = refusalMessage(() => answer(ctx, 1, { message: "use option B" }));
+    expect(msg).toContain("w1-other");
+    expect(msg).toContain("The answer comment IS on the record");
+    expect(gh.comments.some((c) => c.body.startsWith("**Answer**"))).toBe(true);
+    expect(gh.mutations.filter((m) => m.startsWith("setState"))).toEqual([]);
+  });
+
+  it("run(): --message aliases -m; a missing message is a usage error", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    expect(() => run(["answer", "1"], ctx)).toThrow(UsageError);
+    expect(run(["answer", "1", "--message", "use option B"], ctx)).toBe(0);
+    expect(gh.comments[0]!.body).toContain("use option B");
+  });
+
+  it("run(): --json reports exactly {commented, transitioned, state}", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["answer", "1", "-m", "use option B", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(JSON.parse(said.join(""))).toEqual({
+      commented: true,
+      transitioned: true,
+      state: "In Progress",
+    });
+  });
+
+  it("run(): --comment-only followed by -m parses as booleans, not a flag value", () => {
+    // parseArgs must not eat "-m" as --comment-only's value.
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["answer", "1", "--comment-only", "-m", "use option B", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(JSON.parse(said.join(""))).toEqual({
+      commented: true,
+      transitioned: false,
+      state: "Human Needed",
+    });
+  });
+
+  it("run(): answer is scope-gated like every mutation", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const base = gh.exec;
+    gh.exec = (argv, stdin) => {
+      if (argv.join(" ").startsWith("git") && argv.includes("remote"))
+        return { code: 0, stdout: "git@github.com:someone-else/other.git\n", stderr: "" };
+      return base(argv, stdin);
+    };
+    expect(() => run(["answer", "1", "-m", "x"], ctx)).toThrow(RefusalError);
+    expect(gh.comments).toEqual([]);
   });
 });

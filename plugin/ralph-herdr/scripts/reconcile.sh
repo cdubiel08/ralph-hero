@@ -224,6 +224,13 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
 done
 unset RALPH_HERDR_LEDGER
 
+# ── C2: re-arm the cockpit agent view (best-effort, chrome only) ─────────────
+# Server restarts drop any agent view along with the pane metadata; re-arm it
+# after the tokens are back so a token-based sort has tokens to sort on.
+# cockpit-view.sh is a documented no-op until the herdr CLI grows an
+# agent-view surface (see its header); either way it never fails this pass.
+bash "$SCRIPT_DIR/cockpit-view.sh" || true
+
 # ── D: orphan pass — open children whose parent is no longer open ────────────
 for f in "$(ledger_root)"/*/*/ledger.jsonl; do
   [ -f "$f" ] || continue

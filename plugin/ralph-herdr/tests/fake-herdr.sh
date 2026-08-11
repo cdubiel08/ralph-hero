@@ -17,9 +17,17 @@
 #   agent list                    agent-list.json
 #   agent start <NAME> …          agent-start.<NAME>.json, then agent-start.json
 #   agent prompt …                agent-prompt.json
+#   agent focus <NAME>            agent-focus.json
+#   agent read <NAME> …           agent-read.<NAME>.txt, then agent-read.txt —
+#                                 RAW pane text, not a JSON envelope (default:
+#                                 empty output, the blank-tail degradation)
+#   agent                         agent-help.txt — RAW command list (default
+#                                 mimics 0.8.0's "herdr agent commands" list;
+#                                 cockpit-view.sh's capability probe)
 #   pane get <ID>                 pane-get.<ID>.json, then pane-get.json
 #   pane split <ID> …             pane-split.<ID>.json, then pane-split.json
 #   pane report-metadata …        pane-report-metadata.json
+#   plugin pane …                 plugin-pane.json
 #   worktree create …             worktree-create.json
 #   worktree open …               worktree-open.json
 #   notification show …           notification-show.json
@@ -59,6 +67,20 @@ emit_fixture() {
   return 1
 }
 
+# emit_raw KEY... — cat the first existing "$FIX/<KEY>.txt" (RAW text
+# surfaces: agent read's pane tail, the bare `agent` command list); rc 1 when
+# none exists.
+emit_raw() {
+  local key
+  for key in "$@"; do
+    if [ -n "$FIX" ] && [ -f "$FIX/$key.txt" ]; then
+      cat "$FIX/$key.txt"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # rc_for KEY — the forced exit code from "$FIX/<KEY>.rc", default 0.
 rc_for() {
   local key="$1"
@@ -81,6 +103,25 @@ case "$key" in
     ;;
   agent-prompt)
     emit_fixture agent-prompt || echo '{"result":{}}'
+    ;;
+  agent-focus)
+    emit_fixture agent-focus || echo '{"result":{}}'
+    ;;
+  agent-read)
+    # RAW pane text (what --source recent-unwrapped prints), never a JSON
+    # envelope. No fixture = an empty tail — the honest blank-pane read.
+    emit_raw "agent-read.${3-}" agent-read || true
+    key="agent-read"
+    ;;
+  agent-)
+    # Bare `herdr agent` echoes its command list (the real 0.8.0 exits rc 2,
+    # a usage exit; force it with agent-help.rc when a test needs the code —
+    # cockpit-view.sh's probe judges content only).
+    emit_raw agent-help || printf 'herdr agent commands:\n  list\n  start\n  stop\n  prompt\n  focus\n  read\n'
+    key="agent-help"
+    ;;
+  plugin-pane)
+    emit_fixture plugin-pane || echo '{"result":{"pane":{"pane_id":"pP1"}}}'
     ;;
   pane-get)
     emit_fixture "pane-get.${3-}" pane-get || echo '{"result":{"pane":{}}}'

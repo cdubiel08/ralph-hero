@@ -21,9 +21,22 @@
 #                        models the timeout path)
 #   claim join …         claim-join.json, else a bare success line
 #   contract validate …  contract-validate.json, else a ✓ line
+#   get N …              get.<N>.json, then get.json, else a one-line issue
+#                        view (the human `board get` text — link-offer and
+#                        ralph-answer print it verbatim, so text is honest)
+#   list --state …       list.json, else an empty {items, foreign} envelope
+#                        (board.ts's list --json shape)
+#   answer N …           answer.<N>.json, then answer.json, else board.ts's
+#                        "answer commented; Human Needed → In Progress" line
+#   move N STATE         move.json, else a bare success line
+#   help …               help.txt (RAW text) — ABSENT prints a default that
+#                        INCLUDES the `  answer NNN` verb line; a help.txt
+#                        without it models a board CLI predating the verb
+#                        (ralph-answer.sh's fallback probe)
 #   any of the above     <fixture-name>.rc — forces the exit code (failure
 #                        injection; body still printed): frontier.rc, next.rc,
-#                        claim-show.rc, claim-join.rc, contract-validate.rc
+#                        claim-show.rc, claim-join.rc, contract-validate.rc,
+#                        get.rc, list.rc, answer.rc, move.rc, help.rc
 #
 # The real board CLI validates briefs offline; tests that assert VALIDATION
 # semantics use the real CLI — this shim only answers the verbs that need a
@@ -83,6 +96,33 @@ case "${1-} ${2-}" in
   "contract validate")
     emit_fixture contract-validate || echo "OK ${3-}: valid (fake)"
     key="contract-validate"
+    ;;
+  "get "*)
+    emit_fixture "get.${2-}" get ||
+      printf '#%s [Backlog] Fake issue (canned board get)\n' "${2-}"
+    key="get"
+    ;;
+  "list --state")
+    emit_fixture list || echo '{"items":[],"foreign":[]}'
+    key="list"
+    ;;
+  "answer "*)
+    emit_fixture "answer.${2-}" answer ||
+      printf '#%s: answer commented; Human Needed → In Progress\n' "${2-}"
+    key="answer"
+    ;;
+  "move "*)
+    emit_fixture move || printf '#%s moved to %s (fake)\n' "${2-}" "${3-}"
+    key="move"
+    ;;
+  "help "* | "help")
+    if [ -n "$FIX" ] && [ -f "$FIX/help.txt" ]; then
+      cat "$FIX/help.txt"
+    else
+      # The one line ralph-answer.sh's capability probe greps for.
+      printf 'mutations:\n  answer NNN -m "decision"    Human Needed → In Progress, COMMENT-FIRST\n'
+    fi
+    key="help"
     ;;
   *)
     printf '{"error":{"code":"fake_board_unhandled","command":"%s %s"}}\n' "${1-}" "${2-}" >&2

@@ -11,9 +11,9 @@
 
 id = "ralph-herdr"
 name = "Ralph Herdr"
-version = "0.3.0"
+version = "0.4.0"
 min_herdr_version = "0.8.0"
-description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets."
+description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets; v4 adds the card substrate: issue/PR link handlers (click → focus-or-offer), a comment-first Human Needed answer pane, and attend carrying the blocking question."
 platforms = ["macos", "linux"]
 
 # --- Actions -----------------------------------------------------------------
@@ -107,6 +107,35 @@ command = [
   '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); cd "$cwd"; exec bash "$HERDR_PLUGIN_ROOT/scripts/attend.sh"'''
 ]
 
+# answer: the Human Needed exit surface (Phase 4). A popup, because answering
+# is a focused interruption, not a workspace layout change; the durable half
+# (the **Answer** issue comment, via `board answer`) lands before any board
+# move or herdr prompt — see scripts/ralph-answer.sh.
+[[actions]]
+id = "answer"
+title = "Ralph: answer Human Needed"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint answer --placement popup --cwd "$cwd" --focus'''
+]
+
+# link-open runs in the ACTION process (attend pattern): focusing a live
+# agent needs no pane, and the no-agent path opens its own link-offer popup.
+# Normally invoked by the [[link_handlers]] entry below (clicked URL in
+# HERDR_PLUGIN_CLICKED_URL); from the plain action menu — where nothing was
+# clicked — it says so in the plugin log and exits 0.
+[[actions]]
+id = "link-open"
+title = "Ralph: open issue/PR link"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''exec bash "$HERDR_PLUGIN_ROOT/scripts/link-open.sh"'''
+]
+
 # reconcile also needs NO pane: the same single pass the [[startup]] hook runs
 # (exit-lost / discover / token re-push / orphan pass), invokable by hand. The
 # script needs no workspace cwd — it scans every board scope's
@@ -161,6 +190,34 @@ command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-issue-flee
 id = "dashboard"
 title = "Ralph: board dashboard"
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/dashboard.sh\""]
+
+[[panes]]
+id = "answer"
+title = "Ralph: answer Human Needed"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/ralph-answer.sh\""]
+
+# Opened only by scripts/link-open.sh (issue number + URL arrive via --env).
+[[panes]]
+id = "link-offer"
+title = "Ralph: issue link"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/link-offer.sh\""]
+
+# --- Link handlers (Phase 4) -------------------------------------------------
+# A clicked terminal URL matching `pattern` (Rust regex, matched against the
+# full URL) invokes `action` with HERDR_PLUGIN_CLICKED_URL set (the context
+# JSON carries clicked_url + link_handler_id too). The pattern is deliberately
+# GENERIC — any github.com owner/repo — because the manifest cannot know the
+# board scope; scripts/link-open.sh validates the URL against the workspace's
+# configured scope and hands out-of-scope URLs to the OS browser. Verified
+# against the installed herdr 0.8.0 (manifest schema PluginManifestLinkHandler:
+# id/title/pattern/action; env HERDR_PLUGIN_CLICKED_URL/_LINK_HANDLER_ID);
+# older herdr versions may ignore or reject this section — see README.
+
+[[link_handlers]]
+id = "github-issue-or-pr"
+title = "Ralph: issue/PR on the board"
+pattern = '^https://github\.com/[^/]+/[^/]+/(issues|pull)/[0-9]+'
+action = "link-open"
 
 # --- Watcher (Phase 2) -------------------------------------------------------
 # Event hooks are the watcher's steady state: the server runs the command per

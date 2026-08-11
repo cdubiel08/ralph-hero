@@ -72,7 +72,9 @@ herdr's shapes map onto ralph's without translation:
 | `work-next` | split (down) | `board next` → if empty, says so and exits. Otherwise: fetch, `herdr worktree create --branch feature/GH-N --base origin/main` (`--base` only applies to brand-new branches — an existing `feature/GH-N` branch is silently resumed as-is, possibly behind origin/main, and the session rebases; `worktree open` is the fallback when the *checkout* already exists), start agent `gh-N` in the new workspace's pane, prompt `/ralph:work N`, then the cockpit pane becomes the notification watcher. An already-live `gh-N` is a skip, not an error: it prints "SKIP gh-N already live" and exits 0 with no worktree touched (wrapper authors: exit 0 does not always mean a session was spawned) |
 | `work-fleet` | split (down) | reads the frontier once (`board frontier --json` when the verb exists, else the ranked `board next` queue — already dependency-aware) and spawns up to `RALPH_HERDR_FLEET` (default 2, hard cap 4) work sessions — same spawn path as `work-next`, per issue, plus a C3 FleetBrief per spawn under the run's `briefs/` dir. Already-live agents are skipped, one failed spawn doesn't strand the rest; the pane then watches all spawned agents. With `--refill` / `RALPH_HERDR_REFILL=1` it also ARMS the run for watcher refill — see [Fleet refill](#fleet-refill-experimental-until-the-claim-ttl-probe) |
 | `work-issue-fleet` | split (down) | **shared-claim sibling fleet**: `RALPH_HERDR_SIBLINGS` (default 2, cap 4) sessions on ONE issue, one worktree, one branch. Sibling 1 is a normal `work-next`-style spawn; siblings 2..K are pane splits in the same workspace (names `w<N>-<slug>--2`…), each prompted `/ralph:work N` and briefed with the shared branch. The claim join runs AFTER the spawns: `board claim join` is for In Progress items only, so the script waits (bounded, `RALPH_HERDR_JOIN_WAIT_SEC`) for sibling 1's session to claim, then joins each sibling via `board claim join N --holder <name>` — a timeout or refusal warns and prints the manual join, never blocks the spawn. The pane prompts for the issue number (or set `RALPH_HERDR_ISSUE`) |
-| `attend` | none | no pane, no loop: finds the first `blocked` ralph agent (`gh-*` preferred over lane passes), `herdr agent focus` jumps you to it, and a notification names it. Nothing blocked → "herd calm" notification. Safe to bind to a key |
+| `attend` | none | no pane, no loop: finds the highest-priority `blocked` ralph agent (issue sessions — `gh-N` / w-lane — before every other lane; within a group, oldest blocked-since first from the ledger's state-record timestamps, agent-list order when the ledger can't say), `herdr agent focus` jumps you to it, and the notification **carries the question**: the pane's last non-empty tail lines (`agent read --source recent-unwrapped`), flattened to one ≤240-char line, with `#N` in the title when the name resolves to an issue. Nothing blocked → "herd calm". Safe to bind to a key |
+| `answer` | popup | walk Human Needed and answer ONE item, **comment-first**: `board list --state "Human Needed" --json` → pick → the issue's latest comments (bounded `gh issue view --comments` tail) → type the answer mail(1)-style (end with a lone `.` line) → `board answer N -m` posts the **Answer** issue comment BEFORE the Human Needed → In Progress move (board.ts owns that ordering — if the pane or herdr vanishes mid-answer, the decision is already on the record). Only then, if a live session owns N, a `herdr agent prompt … --wait` nudge — delivery reported honestly, never assumed. A board CLI predating the verb falls back to `gh issue comment` + `board move`, same ordering |
+| `link-open` | none* | the `[[link_handlers]]` target — click a `github.com/<owner>/<repo>/issues\|pull/N` URL in any pane: in-scope URL with a live session for N → `agent focus`; in-scope with no session → the `link-offer` popup (board state + `[s]` spawn via the same sanctioned `spawn_work_session` path / `[o]` browser / `[q]` close); out-of-scope or unresolvable scope → OS browser. The manifest pattern is generic on purpose; the script owns the scope judgment. *Also listed as a plain action; invoked without a clicked URL it says so in the plugin log and exits |
 | `deliver-pass` | split (down) | `board deliver-queue` → empty means spawn nothing (the lane contract). Otherwise a new tab hosts agent `ralph-deliver` running `/ralph:deliver`; cockpit pane watches |
 | `tend-pass` | split (down) | same shape over `board tend-queue` → agent `ralph-tend` running `/ralph:tend` |
 | `doctor` | popup | runs `board doctor` once, holds the popup open until Enter |
@@ -113,6 +115,8 @@ of each script:
 | `RALPH_HERDR_REPO` | `$PWD` | repo the scripts operate on; the default (the pane's cwd) is almost always right |
 | `HERDR_BIN_PATH` | `herdr` | path to the herdr binary |
 | `RALPH_HERDR_WATCH_POLL` | `15` | poll interval, seconds, for the multi-target watcher loop (single-target watch stays event-driven) |
+| `RALPH_HERDR_ANSWER_TAIL` | `40` | lines of `gh issue view --comments` the answer pane shows before the answer prompt |
+| `RALPH_HERDR_ANSWER_NUDGE_MS` | `15000` | `--wait` timeout for the post-answer `agent prompt` nudge; expiry reports "sent but not confirmed", never "delivered" |
 | `RALPH_ALLOW_API_BILLING` | unset | billing guard override, same contract as `tick.sh`: if `ANTHROPIC_API_KEY` is set, spawning is refused (it would bill API credits, not the subscription) unless this is exactly `true` |
 
 Board scope (`RALPH_GH_OWNER` / `RALPH_GH_REPO` / `RALPH_GH_PROJECT_NUMBER`,
@@ -130,8 +134,45 @@ covers *unattended* parallelism only; a fleet you are sitting in front of is the
 already-sanctioned case, capped at 4 so it stays one.
 
 `attend` is the other half: when a notification says something blocked, one
-keypress finds the first blocked agent and focuses its pane. It never prompts,
-never answers, never kills — it moves your eyes, nothing else.
+keypress finds the first blocked agent and focuses its pane — and since v0.4.0
+the notification carries the pane's last lines, so the question reaches you
+even before the focus does. It never prompts, never answers, never kills — it
+moves your eyes, nothing else. Answering is `answer`'s job.
+
+## The card substrate (Phase 4)
+
+Four surfaces make board items clickable, answerable, and orderable from the
+cockpit — all decoration over the same sanctioned verbs, none of them a new
+write path:
+
+- **Link handlers.** The `[[link_handlers]]` manifest section (herdr manifest
+  schema: `id`/`title`/`pattern`/`action`; the pattern is a Rust regex over
+  the clicked URL) routes clicks on `github.com/*/*/issues|pull/N` URLs to the
+  `link-open` action, with the URL in `HERDR_PLUGIN_CLICKED_URL` (and as
+  `.clicked_url` + `.link_handler_id` in the context JSON). The pattern
+  matches ANY owner/repo deliberately: the manifest cannot know the board
+  scope, so `link-open.sh` reads the workspace's scope (`.ralph.json` /
+  settings env — the same files board.ts reads) and judges: in-scope → focus
+  the live session or offer to spawn one; out-of-scope → OS browser. GHE
+  URLs never match (github.com only).
+- **Answer pane.** The Human Needed exit, comment-first end to end — see the
+  `answer` row above. The board verb (`board answer N -m`) owns the ordering;
+  this pane only drives it and then nudges the paused session, reporting the
+  nudge honestly.
+- **Attend with the question attached.** See the `attend` row above; the
+  blocked-since ordering reads the ledger's state records and degrades to
+  agent-list order — ordering is chrome over a read, never a gate.
+- **Agent view (stubbed, honestly).** `scripts/cockpit-view.sh` would pin a
+  `ralph` sidebar view — filter to agents carrying the C8 `role` token, sort
+  blocked-first via the `state` token. The herdr **socket** schema (protocol
+  19) has `agent.view.set`/`agent.view.clear` with exactly that expressive
+  power (token filters + token sorts), but the herdr **0.8.0 CLI exposes no
+  invocation surface** for them — no `herdr agent view` subcommand, no
+  generic `herdr api` request sender. So the script is a documented no-op
+  (tokens.sh pattern: one log line, exit 0) that probes on every run and
+  names the moment a CLI form appears; the intended view is pinned in its
+  header. `reconcile.sh` calls it after the token re-push so the view
+  re-arms on server restart the day it becomes real.
 
 ## Fleet refill (EXPERIMENTAL until the claim-TTL probe)
 
@@ -257,6 +298,25 @@ sibling semantics, so expect to attend these fleets closely.
   `reports/` decorate and bound the cockpit's own behavior; the board stays
   authoritative for what is claimed and what is done, and nothing on the board
   gates on a run file.
+- **Link handlers need a herdr that ships them.** The installed herdr 0.8.0
+  demonstrably does (its API schema carries `PluginManifestLinkHandler`, its
+  binary exports `HERDR_PLUGIN_CLICKED_URL`/`HERDR_PLUGIN_LINK_HANDLER_ID` —
+  both probed read-only); an older herdr may ignore or reject the
+  `[[link_handlers]]` section, and `min_herdr_version = "0.8.0"` encodes only
+  what was verified here. The manifest is validated as TOML with cross-checked
+  action references (`python3 -c 'import tomllib; …'`) — deliberately **not**
+  by `herdr plugin link` against a scratch copy, because linking registers a
+  live plugin (actions, event hooks and all) and a validation step must not
+  touch the plugin registry. Re-linking your real checkout after editing is
+  the honest end-to-end check.
+- **The answer nudge is best-effort and says so.** The durable half is the
+  **Answer** issue comment; the `agent prompt --wait` afterwards can time out
+  with the prompt delivered (a working session just didn't change status in
+  time) — the pane reports "sent but not confirmed", prints the manual prompt
+  command, and the board record is complete either way.
+- **The `ralph` agent view does not exist yet.** `agent.view.set` lives on the
+  socket, not in the 0.8.0 CLI — cockpit-view.sh is a probing no-op until a
+  CLI form ships (see [The card substrate](#the-card-substrate-phase-4)).
 - **A herdr plugin is unsandboxed local code** with your permissions. This one stays
   read-mostly by construction, but read the scripts before linking — they are short
   on purpose.
