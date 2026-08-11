@@ -104,6 +104,27 @@ expect 1 "trailing comment on a live call fails" "$d"
 #    that returns 0 for a path that does not exist is worse than no guard.
 expect 2 "missing directory is an error, not a pass" "$TMP_ROOT/does-not-exist"
 
+# 8. An unreadable file is the fail-OPEN direction, and the dangerous one:
+#    grep exits 2 on a permission error, and treating that as "no match" would
+#    report a workflow carrying a live ssh-keyscan as clean. A guard that
+#    cannot read the tree does not know the tree is safe.
+#
+#    Skipped as root, where chmod 000 does not actually deny reads.
+if [ "$(id -u)" -eq 0 ]; then
+  echo "  SKIP: unreadable file (running as root — chmod 000 does not deny reads)"
+else
+  d=$(fixture unreadable)
+  cat >"$d/release-ralph.yml" <<'YML'
+jobs:
+  release:
+    steps:
+      - run: ssh-keyscan -t ed25519 github.com >> known_hosts
+YML
+  chmod 000 "$d/release-ralph.yml"
+  expect 2 "unreadable file is an error, not a pass" "$d"
+  chmod 644 "$d/release-ralph.yml"
+fi
+
 echo
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

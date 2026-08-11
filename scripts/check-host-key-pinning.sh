@@ -45,13 +45,38 @@ fi
 # comment on a real command still counts as executable, which is the
 # conservative direction.
 #
-# `|| true` is load-bearing: grep exits 1 when there is no match, and no match
-# is the PASSING case here. Without it `set -e` aborts on a clean tree and the
-# guard fails closed on every PR — the exact inversion of its purpose.
-hits="$(
-  grep -rn 'ssh-keyscan' "$WORKFLOW_DIR" |
-    grep -v '^[^:]*:[0-9][0-9]*:[[:space:]]*#' || true
-)"
+# grep's three exit codes must be told apart, and conflating any two of them
+# breaks the guard in a different direction:
+#
+#   0  matches found        -> candidate hits, keep filtering
+#   1  no matches           -> the PASSING case
+#   2+ the scan itself failed (unreadable file, bad path)
+#
+# Swallowing 1 with a bare `set -e` fails CLOSED on a clean tree: the guard
+# would redden every PR. Swallowing 2 as if it were 1 fails OPEN, which is
+# worse — an unreadable workflow carrying a live ssh-keyscan would be reported
+# as clean. A guard that cannot read the tree does not know the tree is safe,
+# so an unreadable file is an error, never a pass.
+scan_status=0
+raw="$(grep -rn 'ssh-keyscan' "$WORKFLOW_DIR")" || scan_status=$?
+if [ "$scan_status" -gt 1 ]; then
+  echo "HOST KEY PINNING ERROR — could not scan $WORKFLOW_DIR (grep exit $scan_status)" >&2
+  exit 2
+fi
+
+# Guard the empty case explicitly: `printf '%s\n' ""` emits a blank line, and
+# a blank line survives the comment filter, so piping an empty scan onward
+# would manufacture a phantom hit and fail a clean tree.
+hits=''
+if [ -n "$raw" ]; then
+  filter_status=0
+  hits="$(printf '%s\n' "$raw" |
+    grep -v '^[^:]*:[0-9][0-9]*:[[:space:]]*#')" || filter_status=$?
+  if [ "$filter_status" -gt 1 ]; then
+    echo "HOST KEY PINNING ERROR — comment filter failed (grep exit $filter_status)" >&2
+    exit 2
+  fi
+fi
 
 if [ -n "$hits" ]; then
   echo "HOST KEY PINNING FAIL — executable ssh-keyscan under $WORKFLOW_DIR"
