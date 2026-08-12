@@ -34,6 +34,8 @@ import {
   fetchIssue,
   formatLocalHm,
   ghGraphQL,
+  instrumentQuery,
+  COST_ALIAS,
   legalTransition,
   loadConfig,
   LEGACY_STATES,
@@ -422,6 +424,13 @@ describe("parseArgs", () => {
   });
 });
 
+// A developer shell that exports RALPH_GQL_COST=1 would put EVERY ghGraphQL
+// call in this suite into measurement mode — instrumented query text plus a
+// stderr write — breaking assertions far from the one test that wants it.
+// Clear the inherited value for the process; the measurement test opts in
+// locally via vi.stubEnv and cleans up after itself.
+delete process.env.RALPH_GQL_COST;
+
 describe("failure diagnostics carry their context", () => {
   it("realExec surfaces the spawn error (gh missing must not report a blank reason)", () => {
     const r = realExec(["board-test-definitely-missing-cmd-7f3a"]);
@@ -434,6 +443,94 @@ describe("failure diagnostics carry their context", () => {
     const ctx = makeCtx(gh);
     ctx.exec = () => ok("<!DOCTYPE html><html>proxy says hi</html>");
     expect(() => ghGraphQL(ctx, "query { x }", {})).toThrow(/unparseable output.*DOCTYPE/);
+  });
+
+  it("RALPH_GQL_COST instruments queries, spares mutations, and strips the probe (GH-1801)", () => {
+    expect(instrumentQuery("mutation($id: ID!) { updateX(id: $id) { ok } }").instrumented).toBe(
+      false,
+    );
+    expect(instrumentQuery("subscription { onThing { id } }").instrumented).toBe(false);
+
+    const q = instrumentQuery("query($n: Int!) {\n  repository(number: $n) { id }\n}");
+    expect(q.instrumented).toBe(true);
+    expect(q.query).toContain(`${COST_ALIAS}: rateLimit {`);
+    // Injected INSIDE the operation's selection set, after the header brace.
+    expect(q.query.indexOf(COST_ALIAS)).toBeGreaterThan(q.query.indexOf("$n: Int!"));
+    expect(q.query).toContain("repository(number: $n)");
+
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.exec = () =>
+      ok(
+        JSON.stringify({
+          data: {
+            repository: { id: "R1" },
+            [COST_ALIAS]: { cost: 3, nodeCount: 301, used: 10, limit: 5000, remaining: 4990, resetAt: "2026-08-11T00:00:00Z" },
+          },
+        }),
+      );
+    vi.stubEnv("RALPH_GQL_COST", "1");
+    const err = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const data = ghGraphQL(ctx, "query($n: Int!) { repository(number: $n) { id } }", { n: 1 });
+      expect(data).toEqual({ repository: { id: "R1" } }); // probe stripped
+      expect(err.mock.calls[0][0]).toMatch(/\[gql-cost\] repository cost=3 nodes=301/);
+    } finally {
+      err.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("instrumentQuery finds the SELECTION SET, not the first brace (GH-1801 review)", () => {
+    // A variable default value carries its own braces. Splicing at the first
+    // `{` would land inside the default and emit an invalid document.
+    const dflt = instrumentQuery("query($f: Input = { state: OPEN }) { viewer { login } }");
+    expect(dflt.instrumented).toBe(true);
+    expect(dflt.query).toContain("$f: Input = { state: OPEN }"); // default intact
+    expect(dflt.query.indexOf(COST_ALIAS)).toBeGreaterThan(dflt.query.indexOf("OPEN"));
+
+    // Shorthand IS a query — it must be instrumented, not silently skipped.
+    const short = instrumentQuery("{ viewer { login } }");
+    expect(short.instrumented).toBe(true);
+    expect(short.query).toContain(COST_ALIAS);
+
+    // Leading comments precede the operation keyword.
+    const commented = instrumentQuery("# fetch the viewer\nquery { viewer { login } }");
+    expect(commented.instrumented).toBe(true);
+    expect(commented.query).toContain(COST_ALIAS);
+
+    // A `{` inside a string in the header must not be mistaken for the set.
+    const str = instrumentQuery('query($s: String = "a { b") { viewer { login } }');
+    expect(str.instrumented).toBe(true);
+    expect(str.query).toContain('"a { b"');
+    expect(str.query.indexOf(COST_ALIAS)).toBeGreaterThan(str.query.indexOf('"a { b"'));
+
+    // Unreadable input leaves the query untouched rather than corrupting it.
+    expect(instrumentQuery("query($f: Input = { oops").instrumented).toBe(false);
+  });
+
+  it("the probe is aliased, so a caller-requested rateLimit survives (GH-1801 review)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.exec = () =>
+      ok(
+        JSON.stringify({
+          data: {
+            rateLimit: { cost: 99 }, // the CALLER's own selection
+            [COST_ALIAS]: { cost: 1, nodeCount: 1, used: 1, limit: 5000, remaining: 4999, resetAt: "2026-08-11T00:00:00Z" },
+          },
+        }),
+      );
+    vi.stubEnv("RALPH_GQL_COST", "1");
+    const err = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const data: any = ghGraphQL(ctx, "query { rateLimit { cost } }", {});
+      expect(data.rateLimit).toEqual({ cost: 99 }); // caller's data preserved
+      expect(data[COST_ALIAS]).toBeUndefined(); // only our alias removed
+    } finally {
+      err.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("loadConfig names the malformed config file as a UsageError (exit 64, not an anonymous crash)", () => {

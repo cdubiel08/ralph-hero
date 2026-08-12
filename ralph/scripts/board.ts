@@ -869,16 +869,99 @@ export interface Ctx {
   now: () => Date;
 }
 
+/** The probe is ALIASED: a caller that selects `rateLimit` itself keeps its own
+ *  value, and cleanup deletes only our key. Aliases are free — cost is charged
+ *  per connection, and `rateLimit` is not one. */
+export const COST_ALIAS = "__ralphGqlCost";
+const RATE_LIMIT_SELECTION = `${COST_ALIAS}: rateLimit { cost remaining limit used resetAt nodeCount }`;
+
+/** Index of the `{` that opens the operation's SELECTION SET, or -1.
+ *
+ *  Not `indexOf("{")`: a variable default value carries its own braces
+ *  (`query($f: Input = { state: OPEN })`), and splicing there yields an invalid
+ *  document. The selection set is the first `{` at paren/bracket depth 0,
+ *  skipping strings and `#` comments. Handles shorthand (`{ viewer { … } }`)
+ *  and leading comments; anything it cannot read leaves the query untouched. */
+function selectionSetStart(query: string): number {
+  let depth = 0;
+  for (let i = 0; i < query.length; i++) {
+    const c = query[i];
+    if (c === "#") {
+      const nl = query.indexOf("\n", i);
+      if (nl < 0) return -1;
+      i = nl;
+    } else if (query.startsWith('"""', i)) {
+      const end = query.indexOf('"""', i + 3);
+      if (end < 0) return -1;
+      i = end + 2;
+    } else if (c === '"') {
+      i++;
+      while (i < query.length && query[i] !== '"') i += query[i] === "\\" ? 2 : 1;
+      if (i >= query.length) return -1;
+    } else if (c === "(" || c === "[") {
+      depth++;
+    } else if (c === ")" || c === "]") {
+      depth--;
+    } else if (c === "{" && depth === 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** RALPH_GQL_COST=1 measurement mode (GH-1801). `rateLimit` is a field on the
+ *  Query root only, so mutations and subscriptions are left alone — including
+ *  shorthand `{ … }`, which IS a query and is instrumented. */
+export function instrumentQuery(query: string): { query: string; instrumented: boolean } {
+  // Skip whitespace and leading `#` comments to reach the operation keyword.
+  let head = 0;
+  for (;;) {
+    const rest = query.slice(head);
+    const ws = rest.match(/^\s+/);
+    if (ws) {
+      head += ws[0].length;
+      continue;
+    }
+    if (query[head] === "#") {
+      const nl = query.indexOf("\n", head);
+      if (nl < 0) return { query, instrumented: false };
+      head = nl + 1;
+      continue;
+    }
+    break;
+  }
+  const isQuery = /^query\b/.test(query.slice(head)) || query[head] === "{";
+  if (!isQuery) return { query, instrumented: false };
+  const brace = selectionSetStart(query.slice(head));
+  if (brace < 0) return { query, instrumented: false };
+  const at = head + brace;
+  return {
+    query: `${query.slice(0, at + 1)}\n  ${RATE_LIMIT_SELECTION}${query.slice(at + 1)}`,
+    instrumented: true,
+  };
+}
+
+/** Cumulative points observed this process, for the per-command totals line. */
+export const gqlCost = { calls: 0, points: 0 };
+
+function costLabel(query: string): string {
+  const brace = selectionSetStart(query);
+  const first = query.slice(brace + 1).match(/[A-Za-z_][A-Za-z0-9_]*/);
+  return first ? first[0] : "query";
+}
+
 export function ghGraphQL<T = any>(
   ctx: Ctx,
   query: string,
   variables: Record<string, unknown>,
 ): T {
+  const measuring = process.env.RALPH_GQL_COST === "1";
+  const sent = measuring ? instrumentQuery(query) : { query, instrumented: false };
   // --hostname keeps API traffic on the same host the scope gate verified —
   // a GHE config must not silently query github.com.
   const r = ctx.exec(
     ["gh", "api", "graphql", "--hostname", ctx.cfg.host, "--input", "-"],
-    JSON.stringify({ query, variables }),
+    JSON.stringify({ query: sent.query, variables }),
   );
   if (r.code !== 0) {
     throw new Error(`gh api graphql failed (exit ${r.code}): ${r.stderr.trim() || r.stdout.trim()}`);
@@ -895,6 +978,22 @@ export function ghGraphQL<T = any>(
       `GraphQL: ${body.errors.map((e: any) => e.message).join("; ")}`,
       body.errors.map((e: any) => e?.type).filter((t: unknown): t is string => typeof t === "string"),
     );
+  }
+  if (sent.instrumented) {
+    const rl = body.data?.[COST_ALIAS];
+    if (rl) {
+      gqlCost.calls += 1;
+      gqlCost.points += rl.cost;
+      process.stderr.write(
+        `[gql-cost] ${costLabel(query)} cost=${rl.cost} nodes=${rl.nodeCount} ` +
+          `used=${rl.used}/${rl.limit} remaining=${rl.remaining} resetAt=${rl.resetAt} ` +
+          `| session calls=${gqlCost.calls} points=${gqlCost.points}\n`,
+      );
+    }
+    // Callers destructure known keys, but leaving the probe in would leak into
+    // --json output paths that re-emit whole nodes. Only OUR alias is removed —
+    // a caller that selected `rateLimit` itself keeps its value.
+    if (body.data && typeof body.data === "object") delete body.data[COST_ALIAS];
   }
   return body.data as T;
 }
