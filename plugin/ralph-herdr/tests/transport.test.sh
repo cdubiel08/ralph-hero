@@ -285,6 +285,20 @@ RC=0; ralph_herdr_snapshot >/dev/null 2>"$TMP/err" || RC=$?
 is "snapshot: a partial snapshot (no agents array) is refused" "1" "$RC"
 line_has "snapshot: named as partial, not read as empty" "$(cat "$TMP/err")" "partial snapshot"
 
+# A SUCCESSFUL call that also logged to stderr. The binary does this; the bug it
+# provokes is in the caller, which is why the assertion is about the herd rather
+# than the adapter: a consumer capturing with 2>&1 gets the diagnostic prepended
+# to the JSON, jq rejects the value, and the scoped herd reads as empty —
+# "I could not find out" silently rendered as "no agents are running".
+reset
+herd_fixture '[{"name":"w42-fix","agent_status":"working"}]' "$REPO_DIR"
+printf 'warning: chatty but harmless\n' >"$FAKE_HERDR_FIXTURES/api-snapshot.err"
+is "stderr noise: a successful snapshot still parses" "0" \
+  "$(ralph_herdr_snapshot >/dev/null 2>&1; echo $?)"
+is "stderr noise: and the herd is NOT emptied by it" "w42-fix" \
+  "$(ralph_scoped_agents_now "$REPO_DIR" 2>/dev/null | jq -r '.name')"
+rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.err"
+
 # ═══ 10. multi-repository containment ════════════════════════════════════════
 # The acceptance criterion: two repositories in one Herdr session cannot
 # discover or mutate each other's agents. Both name their worker `w42-fix`,

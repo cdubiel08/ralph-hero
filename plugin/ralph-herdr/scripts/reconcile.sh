@@ -81,9 +81,9 @@ scope_key() {
 # any stray diagnostic line to the JSON, jq rejects the whole value, and the
 # scoped herd collapses to an empty list — re-erasing the "no agents" vs
 # "could not find out" distinction the transport layer works to preserve.
-_snap_err=$(mktemp "${TMPDIR:-/tmp}/ralph-reconcile-err.XXXXXX") || _snap_err=/dev/null
+_snap_err=$(ralph_diag_file)
 if ! snapshot=$(ralph_herdr_snapshot 2>"$_snap_err"); then
-  log "herdr snapshot failed — not reconciling ($(head -c 120 "$_snap_err" 2>/dev/null))"
+  log "herdr snapshot failed — not reconciling ($(ralph_diag_read "$_snap_err"))"
   rm -f "$_snap_err"
   exit 0
 fi
@@ -128,7 +128,13 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
     candidates="$candidates $ref"
   done < <(ralph_ledger_open_agents || true)
   if [ -n "$candidates" ]; then
-    if fresh_snapshot=$(ralph_herdr_snapshot 2>&1); then
+    # Same rule as the pass-start read, and it matters MORE here: a corrupted
+    # capture yields an empty fresh_names, and every candidate then gets an
+    # exit reason=lost. Merging stderr would let one stray diagnostic line
+    # close every open record in the ledger.
+    _probe_err=$(ralph_diag_file)
+    if fresh_snapshot=$(ralph_herdr_snapshot 2>"$_probe_err"); then
+      rm -f "$_probe_err"
       fresh_names=$(ralph_names_for_ledger \
         "$(ralph_herd_by_scope "$fresh_snapshot" 2>/dev/null)" "$f") || fresh_names=""
       for ref in $candidates; do
@@ -146,7 +152,8 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
         log "exit $ref (reason lost) [$f]"
       done
     else
-      log "fresh herd re-probe failed — leaving$candidates open for the next reconcile [$f]"
+      log "fresh herd re-probe failed ($(ralph_diag_read "$_probe_err")) — leaving$candidates open for the next reconcile [$f]"
+      rm -f "$_probe_err"
       for ref in $candidates; do
         open_all="$open_all $(scope_key "$f")|${ref%%#*}"
       done

@@ -58,6 +58,10 @@
 #   worktree open …               worktree-open.json
 #   notification show …           notification-show.json
 #   any of the above              <cmd>-<sub>.raw   verbatim body, no envelope
+#                                 <cmd>-<sub>.err   text emitted on STDERR
+#                                                   (a chatty-but-successful
+#                                                   server; pins that callers
+#                                                   never merge it into stdout)
 #                                 <cmd>-<sub>.rc    forces the exit code
 #                                 (failure injection; body still printed;
 #                                 per-arg fixtures share the base key's .rc)
@@ -167,6 +171,14 @@ respond() {
 }
 
 key="${1-}-${2-}"
+
+# Stderr noise, independent of the body: the real binary logs diagnostics there
+# on successful calls too, and a caller that captures with 2>&1 turns them into
+# a corrupt response. Emitted BEFORE the body so a merging caller gets exactly
+# the prepended-garbage shape that breaks jq.
+if [ -n "$FIX" ] && [ -f "$FIX/$key.err" ]; then
+  cat "$FIX/$key.err" >&2
+fi
 
 # A .raw fixture short-circuits everything: byte-for-byte output, then the
 # forced rc. Checked before dispatch so even an unmodeled subcommand can be

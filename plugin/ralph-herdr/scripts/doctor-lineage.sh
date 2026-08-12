@@ -77,10 +77,16 @@ if ! command -v "$HERDR" >/dev/null 2>&1; then
   note "lineage" "not evaluable — herdr is not installed (looked for '$HERDR')"
   exit 2
 fi
-if ! raw=$(ralph_herdr_snapshot 2>&1); then
-  note "lineage" "not evaluable — herdr snapshot unavailable (${raw:0:120})"
+# stderr to a file, never merged: on success `2>&1` would prepend a diagnostic
+# line to the JSON, ralph_herd_by_scope would yield nothing, and this check
+# would report every open record as a gap — findings invented by the capture.
+_snap_err=$(ralph_diag_file)
+if ! raw=$(ralph_herdr_snapshot 2>"$_snap_err"); then
+  note "lineage" "not evaluable — herdr snapshot unavailable ($(ralph_diag_read "$_snap_err"))"
+  rm -f "$_snap_err"
   exit 2
 fi
+rm -f "$_snap_err"
 # Tagged with each agent's repository, because a name is only meaningful
 # WITHIN one: two repositories in one session both produce `w42-fix`, and
 # comparing across them would report one repository's live agent as the other's

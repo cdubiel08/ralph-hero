@@ -171,6 +171,12 @@ Spawn is a state machine:
 4. Append and atomically persist `spawn_intent`.
 5. Release the lock.
 6. Claim the board issue as the generated scoped agent name and require the board command's normal read-back verification to confirm that exact holder. A claim conflict terminates the local intent before any Herdr topology is created.
+
+   **Origin provenance is inherited, not re-implemented.** Resolving `repo_scope` and a Git root proves only that a directory *claims* an identity; it does not prove the checkout points at the configured remote. That proof already exists one layer down: `board.ts` runs a scope gate before **any** mutating command — `git remote get-url origin` compared against the configured `host/owner/repo` via `scopeMatches` (host, owner and repo all case-insensitively, with `.git` and trailing slashes normalised), and it refuses rather than warns. `doctor --fix` is explicitly inside that gate; only plain reads are carved out. Archived items are likewise rejected at every write path.
+
+   The spawn step above claims *through that CLI*, so it inherits both guarantees by construction. The design therefore adds no second provenance check: a parallel implementation here would be a weaker copy that can drift from the one that actually guards the mutation, and the failure mode of a drifted guard is worse than having only one.
+
+   The honest residual, which step 7 covers rather than this step: the scope gate proves the *invoking checkout's* origin matches the board. It does not prove the Herdr worktree the agent will run in is that same checkout. That binding is exactly what step 7's response-provenance validation establishes, which is why the order matters — claim first (cheap, reversible, and gated), create topology second (expensive), validate its provenance before anything is bound to it.
 7. Create/open topology and strictly validate the response and repository provenance.
 8. Append a provisional binding for workspace and pane.
 9. Submit a shell export containing only generated, grammar-validated values:
@@ -224,8 +230,18 @@ Lifecycle rules include:
 
 Events set a dirty generation for the relevant session/repository and attempt to start a singleflight reconciler. They do not launch one unbounded snapshot per callback.
 
+**Dirtiness is per repository; the snapshot is per session.** These are deliberately different keys, and an earlier draft conflated them — keying the singleflight by session/repository while the performance contract below demands one Herdr snapshot per *session* per refresh. Those cannot both hold: two repositories sharing a session would each acquire their own snapshot and the call-count test would fail exactly when containment matters most.
+
+The resolution follows the shape of the data. A `session.snapshot` is a property of the **session** — one request returns every workspace, tab, pane and agent in it, including all repositories. So:
+
+- **Snapshot acquisition is keyed by `session_key`.** At most one snapshot request is in flight per session. Repositories do not each ask.
+- **The result fans out.** One acquired snapshot is handed to every repository whose dirty generation is set, and each applies its own scoped join (§2) to it. Scoping is a read over an already-fetched structure, not a reason to re-fetch.
+- **Reconciliation remains keyed by session/repository.** Two repositories reconcile independently against the same snapshot, under their own ledger locks and their own revision fences. That independence is the point of §5 and is unaffected.
+
+A repository marked dirty while a session snapshot is already in flight is served by that same request if it has not yet been captured, and otherwise earns the one follow-up pass described below — the same rule, applied at the session level.
+
 - A short bounded debounce coalesces bursts.
-- At most one reconciliation is in flight for a session/repository scope.
+- At most one reconciliation is in flight per session/repository scope, and at most one snapshot request per session.
 - The runner clears only the dirty generation it observed. Events arriving during the request cause at most one immediate follow-up pass.
 - A minimum refresh interval and bounded backoff protect a failing Herdr server; a maximum coalescing delay prevents starvation.
 - Plugin startup, successful spawn/prompt mutations, periodic health checks, and an explicit manual reconcile recover state if an event is lost.
@@ -237,7 +253,21 @@ The file lock becomes an atomic-directory owner-token lock:
 
 - Acquisition creates a lock directory and writes owner PID, random token, and creation time.
 - A contender never removes a lock whose owner is alive.
-- A dead or expired lock is atomically renamed to a unique tombstone before cleanup, preventing two contenders from stealing the same lock.
+- A **proven-dead** lock is atomically renamed to a unique tombstone before cleanup, preventing two contenders from stealing the same lock.
+
+**Expiry alone never breaks a lock.** An earlier draft said both "a contender never removes a live owner's lock" and "a dead *or expired* lock may be recovered", which contradict each other: age is not evidence of death. A paused, swapped-out or simply slow owner is still inside the critical section when its lock turns old, and recovering on age alone puts a second writer into the ledger beside it.
+
+Breaking a lock therefore requires **positive evidence the owner is gone**, not the absence of evidence that it lives:
+
+- The owner is a local PID, so liveness is directly observable: `kill -0` distinguishes a live process from a dead one, which is a stronger primitive than anything available for a distributed claim.
+- PID reuse is the one hole in that check, and the stored creation time closes it: a live PID whose start time postdates the lock's creation is a *different* process that inherited the number, not our owner.
+- Only when the owner is proven dead does the tombstone rename run. The rename is what makes the break itself atomic, so two contenders that both observe the same dead owner cannot both win.
+
+**This is the claim protocol's reasoning, not a second protocol.** `board.ts` faces the same question for board claims and answers it the same way: a TTL makes staleness *visible*, but the only sanctioned side door is expiry plus read-back confirming who actually won — and there is deliberately no `--force` anywhere. The local lock differs in one respect only, and it differs in the safe direction: locally we can *prove* death with `kill -0`, where the board can only infer it from a TTL. So the local rule is strictly stricter than the distributed one it mirrors.
+
+What remains honestly unsolved is the owner that is alive but wedged. Neither TTL nor liveness helps there; the lock is held and the pass does not progress. That is a surfacing problem, not a locking one — doctor reports a lock held far beyond its expected lifetime, and a human decides. Inventing an automatic break for that case would reintroduce exactly the theft this section forbids.
+
+Tests must cover process suspension (`SIGSTOP` — old lock, live owner, must not break), a slow owner crossing the expiry boundary mid-section, PID reuse after death, and two contenders racing one genuinely dead owner.
 - Unlock succeeds only when the stored token matches the caller's token.
 - Lock acquisition has a bounded timeout and fails closed.
 - Network calls, Herdr commands, board calls, sleeps, prompts, and notifications occur outside the critical section.

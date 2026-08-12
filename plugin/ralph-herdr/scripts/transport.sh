@@ -272,6 +272,37 @@ ralph_herdr_call() {
   printf '%s' "$out" | jq -c '.result'
 }
 
+# ralph_diag_file — a private temp file for one call's stderr. Callers that
+# want the diagnostic on failure use this instead of `2>&1`.
+#
+# NEVER capture a snapshot with `2>&1`. It reads as a convenience — the
+# diagnostic is right there when the call fails — but on SUCCESS it prepends
+# any stray stderr line to the JSON, jq then rejects the whole value, and the
+# scoped herd collapses to an empty list. That is the exact failure this file
+# exists to prevent, arriving through the back door: "I could not find out"
+# rendered as "no agents are running". Downstream, reconcile marks live agents
+# lost and doctor reports a herd of gaps.
+#
+# So: stderr to a file, read only on the failure branch.
+#
+#   err=$(ralph_diag_file)
+#   if ! snap=$(ralph_herdr_snapshot 2>"$err"); then
+#     log "... ($(ralph_diag_read "$err"))"
+#     rm -f "$err"; return 1
+#   fi
+#   rm -f "$err"
+ralph_diag_file() {
+  mktemp "${TMPDIR:-/tmp}/ralph-herdr-diag.XXXXXX" 2>/dev/null || echo /dev/null
+}
+
+# ralph_diag_read FILE — the first 200 bytes of a diagnostic, sanitized and
+# flattened to one line. Sanitized because herdr's stderr is terminal-derived
+# and this lands in a log a human reads.
+ralph_diag_read() {
+  [ -r "${1:-}" ] || return 0
+  head -c 200 "$1" 2>/dev/null | tr '\n' ' ' | ralph_sanitize
+}
+
 # ralph_herdr_snapshot — the one validated `session.snapshot` a reconciliation
 # cycle is built on. Prints the SessionSnapshot object (not the enclosing
 # result) on rc 0; propagates the adapter's codes otherwise.

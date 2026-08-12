@@ -43,6 +43,7 @@ is() {
 # partial agents (herd_fixture builds the snapshot join); sets OUT and RC.
 run() {
   herd_fixture "$1"
+  printf 'warning: chatty but harmless\n' >"$FAKE_HERDR_FIXTURES/api-snapshot.err"
   RC=0
   OUT=$(bash "$DOCTOR" 2>&1) || RC=$?
 }
