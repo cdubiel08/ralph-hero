@@ -666,6 +666,19 @@ func TestParseRateLimit(t *testing.T) {
 	if parseRateLimit(`{"resources":{}}`).known {
 		t.Error("absent graphql resource must be unknown, not a zero budget")
 	}
+
+	// reset:0 = "no reset known". time.Unix(0,0) is a real instant and would
+	// render a confident, wrong "resets 01:00 (in 0m)".
+	z := parseRateLimit(`{"resources":{"graphql":{"limit":5000,"remaining":42,"reset":0}}}`)
+	if !z.known || z.remaining != 42 {
+		t.Fatalf("a budget with no reset is still a known budget: %+v", z)
+	}
+	if !z.reset.IsZero() {
+		t.Errorf("missing reset must stay the zero time, got %v", z.reset)
+	}
+	if got := describeRateLimit(z, time.Unix(1700000000, 0)); strings.Contains(got, "resets") {
+		t.Errorf("no reset known — must omit the resets clause, got %q", got)
+	}
 }
 
 func TestDescribeRateLimitNamesResetTime(t *testing.T) {

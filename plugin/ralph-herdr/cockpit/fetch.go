@@ -580,7 +580,15 @@ func parseRateLimit(out string) rateLimitState {
 	if g.Limit == 0 && g.Reset == 0 {
 		return rateLimitState{}
 	}
-	return rateLimitState{known: true, limit: g.Limit, remaining: g.Remaining, reset: time.Unix(g.Reset, 0)}
+	// A missing `reset` stays the ZERO time, not the Unix epoch:
+	// describeRateLimit reads IsZero() as "no reset known" and omits the
+	// clause, but time.Unix(0,0) is a real instant and would render a
+	// confident, wrong "resets 01:00 (in 0m)".
+	st := rateLimitState{known: true, limit: g.Limit, remaining: g.Remaining}
+	if g.Reset != 0 {
+		st.reset = time.Unix(g.Reset, 0)
+	}
+	return st
 }
 
 // describeRateLimit renders the operator's two questions: how much budget is
