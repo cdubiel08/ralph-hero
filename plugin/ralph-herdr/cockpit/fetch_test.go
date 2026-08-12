@@ -124,6 +124,64 @@ func TestParseBoardColumns(t *testing.T) {
 	}
 }
 
+// TestParseBoardColumnsRejectsMissingItemsArray closes the schema-invalid
+// hole in the "empty is not unknown" rule (CodeRabbit on #1820).
+//
+// A slice decodes to nil from all three of these, which read as a board with
+// no cards — the precise collapse TestFetchBoardFailureMarksEveryColumnUnknown
+// exists to prevent, just arriving as a well-formed-JSON payload rather than
+// as a failed exec. A truncated response or a board CLI printing `{}` on an
+// internal error would render three empty columns and look calm.
+func TestParseBoardColumnsRejectsMissingItemsArray(t *testing.T) {
+	for _, payload := range []string{`{}`, `null`, `{"items":null}`, `{"foreign":[]}`} {
+		t.Run(payload, func(t *testing.T) {
+			cols, err := parseBoardColumns(payload)
+			if err == nil {
+				t.Fatalf("%s must be a FAILED read, not an empty board; got cols=%+v", payload, cols)
+			}
+			if !strings.Contains(err.Error(), "no items array") {
+				t.Errorf("the refusal should name the reason, got %q", err)
+			}
+		})
+	}
+	// The boundary that must NOT move: a real empty board still parses.
+	cols, err := parseBoardColumns(`{"items":[],"foreign":[]}`)
+	if err != nil {
+		t.Fatalf("an EMPTY items array is a real fact, not a failure: %v", err)
+	}
+	for i := range cols {
+		if len(cols[i]) != 0 {
+			t.Errorf("column %d should be empty, got %+v", i, cols[i])
+		}
+	}
+}
+
+// TestFetchBoardMalformedPayloadMarksEveryColumnUnknown carries the rule
+// through the Cmd: a schema-invalid payload must reach the model as all three
+// columns UNKNOWN, so update.go keeps the last good cards under an error
+// banner instead of rendering a falsely calm board.
+func TestFetchBoardMalformedPayloadMarksEveryColumnUnknown(t *testing.T) {
+	for _, payload := range []string{`{}`, `null`, `{"items":null}`} {
+		t.Run(payload, func(t *testing.T) {
+			r := &fakeRunner{respond: func(string, []string) (string, string, error) {
+				return payload, "", nil // rc 0 — the board CLI "succeeded"
+			}}
+			msg := fetchBoardCmd(Config{Board: "board"}, r)().(boardMsg)
+			if msg.failed != allColumnsUnknown {
+				t.Errorf("every column must read as unknown, got %v", msg.failed)
+			}
+			for i := range msg.cols {
+				if msg.cols[i] != nil {
+					t.Errorf("column %d must carry no cards, got %+v", i, msg.cols[i])
+				}
+			}
+			if msg.err == "" {
+				t.Error("the failure must be surfaced, not swallowed")
+			}
+		})
+	}
+}
+
 // TestParseBoardColumnsNeedsOnlyCoreFields pins the cockpit's half of the
 // board contract after GH-1803 made nested connections a per-caller choice.
 //

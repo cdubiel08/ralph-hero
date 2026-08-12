@@ -196,15 +196,26 @@ type listItemJSON struct {
 // still cannot mis-column a card; items in any other state (Backlog, and
 // anything the board grows later) are simply not cockpit cards. Board order
 // is preserved within each column.
+//
+// `items` is a POINTER so absence survives decoding: `{}`, `null` and
+// `{"items":null}` all leave a plain slice nil, which is indistinguishable
+// from a board with no cards. Rendering those as an empty board is exactly the
+// "no items" / "I could not find out" collapse this whole change exists to
+// prevent — a schema-invalid payload is a FAILED read, and the caller maps a
+// failed read to all three columns UNKNOWN. Same rule, and the same pointer
+// idiom, as the snapshot envelope's arrays in parseAgents (GH-1774).
 func parseBoardColumns(out string) ([3][]Card, error) {
 	var cols [3][]Card
 	var payload struct {
-		Items []listItemJSON `json:"items"`
+		Items *[]listItemJSON `json:"items"`
 	}
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
 		return cols, fmt.Errorf("list --json: %w", err)
 	}
-	for _, it := range payload.Items {
+	if payload.Items == nil {
+		return cols, fmt.Errorf("list --json: payload carries no items array — a malformed read is not an empty board")
+	}
+	for _, it := range *payload.Items {
 		idx := -1
 		for i, state := range columnStates {
 			if it.State == state {

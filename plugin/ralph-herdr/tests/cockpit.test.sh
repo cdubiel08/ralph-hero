@@ -257,6 +257,18 @@ rc=$?
 err=$(read_board 2>&1 >/dev/null)
 is "read_board: 0-exit garbage stdout is rc 1 (no false empty)" "1 " "$rc $out"
 line_has "read_board: the refusal names the reason" "$err" "unparseable JSON"
+
+# Fail-closed on SCHEMA-INVALID JSON: parseable, but carrying no items array.
+# The Go rung had this hole (CodeRabbit on #1820); this rung fails closed only
+# because iterating a null errors in jq. Pinned so a later `.items[]?` — which
+# reads like a harmless robustness tweak — cannot silently turn a malformed
+# payload back into a calm empty board.
+for bad in '{}' 'null' '{"items":null}'; do
+  printf '%s\n' "$bad" >"$FAKE_BOARD_FIXTURES/list.json"
+  out=$(read_board 2>/dev/null)
+  rc=$?
+  is "read_board: $bad is a FAILED read, never an empty board" "1 " "$rc $out"
+done
 rm -f "$FAKE_BOARD_FIXTURES/list.json"
 
 # ── decorate: the glyph join by NAME PARSE, board rows stay authoritative ────
