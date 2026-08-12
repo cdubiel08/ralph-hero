@@ -88,7 +88,7 @@ describe("item cache (GH-1806) — cross-process bounded staleness", () => {
 
     it("refuses an entry whose meter is missing rather than reporting a zero-volume board", () => {
       listItemsFull(proc());
-      const path = join(dir, "items-full-github.com-cdubiel08-ralph-hero-13.json");
+      const path = entryPath("full");
       const entry = JSON.parse(readFileSync(path, "utf8"));
       delete entry.scan; // a v1-shaped entry, or a hand-truncated one
       writeFileSync(path, JSON.stringify(entry));
@@ -452,9 +452,9 @@ describe("item cache (GH-1806) — cross-process bounded staleness", () => {
       // cache dir. `+00:00` is the SAME instant and must behave identically —
       // a lexical compare would let a barred entry through.
       listItemsFull(proc());
-      const marks = join(dir, "items-marks-github.com-cdubiel08-ralph-hero-13.json");
+      const marks = marksPath();
       const entryAt = JSON.parse(
-        readFileSync(join(dir, "items-full-github.com-cdubiel08-ralph-hero-13.json"), "utf8"),
+        readFileSync(entryPath("full"), "utf8"),
       ).fetchedAt as string;
       // Same instant as the entry, written the other legal way.
       writeFileSync(marks, JSON.stringify({ epoch: entryAt.replace(".000Z", "+00:00"), servedAt: null }));
@@ -463,7 +463,7 @@ describe("item cache (GH-1806) — cross-process bounded staleness", () => {
 
     it("treats a corrupt mark as absent rather than wedging every read", () => {
       listItemsFull(proc());
-      const marks = join(dir, "items-marks-github.com-cdubiel08-ralph-hero-13.json");
+      const marks = marksPath();
       writeFileSync(marks, JSON.stringify({ epoch: "not-a-date", servedAt: "also-not" }));
       // Degrades to the ordinary Δ check, never to "refuse forever".
       expect(listItemsFull(proc({ at: later(5) })).cached).toBe(true);

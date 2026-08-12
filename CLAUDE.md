@@ -108,14 +108,15 @@ Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OW
 
 ### Item cache — reads may be stale, writes see truth (GH-1806)
 
-The item walk is memoized to `~/.ralph/cache/items-*` for 90 s, so a `next` → `frontier` → `list` chain pays **42 points instead of 107** (measured, live board; `frontier` and `list` cost zero — `list` is derived from the full scan by filtering, an identity the suite pins). `--fresh` forces a walk for one command; a cached answer always says so, including on an empty queue.
+The item walk is memoized to `~/.ralph/cache/items-{kind}-{select}-*` for 90 s, so a chain of board reads pays for one walk instead of one each. `--fresh` forces a walk for one command; a cached answer always says so, including on an empty queue.
 
-This is **client-side bounded staleness, not a lease** — GitHub offers no server participation. Two carve-outs carry the whole safety argument, both enforced in code:
+This is **client-side bounded staleness, not a lease** — GitHub offers no server participation. Three rules carry the whole safety argument, all enforced in code:
 
-1. **The cache never drives a write-guard evaluation.** Every MUTATING command and `doctor --fix` run with the TTL zeroed (in `doctor()` itself, not only at the CLI dispatch), and every write path already re-reads the single item fresh at the guard. A stale entry can cost one wasted claim attempt — never a wrong transition — because the claim protocol is read-back verification, not read freshness.
-2. **Read-your-writes + monotonic reads.** Every mutation bumps an `epoch` mark (hooked in `ghGraphQL`, the one path all writes take); `servedAt` is a high-water mark. `fetchedAt` is stamped at the *start* of the walk, so a ~22 s walk that began before a write cannot end-stamp its way past the epoch check.
+1. **The cache never drives a write-guard evaluation.** Every MUTATING command, `doctor --fix`, and `prune --apply` run with the TTL zeroed (in `doctor()` itself, not only at the CLI dispatch), and every write path already re-reads the single item fresh at the guard. A stale entry can cost one wasted claim attempt — never a wrong transition — because the claim protocol is read-back verification, not read freshness.
+2. **Read-your-writes + monotonic reads.** Every mutation bumps an `epoch` mark (hooked in `ghGraphQL`, the one path all writes take) and unlinks every selection variant; `servedAt` is a high-water mark. `fetchedAt` is stamped at the *start* of the walk, so a ~22 s walk that began before a write cannot end-stamp its way past the epoch check.
+3. **An entry serves only a request its selection COVERS** (`selectCovers`). Since GH-1803 the walk's shape varies per caller, and an unselected group is *absent* from the item rather than empty — so serving a labels-less entry to a caller that reads labels would not lose data, it would fabricate "GitHub said there are none", and `next` would rank an item as unblocked whose dependencies were never fetched. `tsc` cannot catch this across a JSON file, so the check is at runtime and the cast on serve is honest only because it ran. The converse is free: a *wider* entry serves narrower requests, so a `list` or `doctor` walk pays for the `next`/`deliver-queue` reads after it. Entries are keyed by selection, so a lean walk cannot evict a fat one.
 
-The cached walk carries `scan` (GH-1788's meter) with it, so `board-volume` and `prune`'s dry run report the board they were actually computed from rather than a zeroed counter. `prune --apply` removes project items — a mutation, so it bumps the epoch like any other, and the next read walks.
+The cached walk also carries `scan` (GH-1788's meter), so `board-volume` and `prune`'s dry run report the board they were actually computed from rather than a zeroed counter.
 
 ## Gotchas
 
