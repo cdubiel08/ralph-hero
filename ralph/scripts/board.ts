@@ -2572,8 +2572,16 @@ function readMarks(ctx: Ctx): ItemCacheMarks {
  *  a racing writer with an older value cannot walk either guarantee backwards. */
 function advanceMarks(ctx: Ctx, patch: Partial<ItemCacheMarks>): void {
   const cur = readMarks(ctx);
-  const max = (a: string | null, b: string | null | undefined) =>
-    b && (!a || b > a) ? b : a;
+  // By INSTANT, for the same reason the read path compares that way: a lexical
+  // max over a non-canonical on-disk value could pick the earlier timestamp
+  // and LOWER a mark, which is a safety regression, not a missed optimisation.
+  const max = (a: string | null, b: string | null | undefined) => {
+    if (!b) return a;
+    const ta = markMs(a);
+    const tb = markMs(b);
+    if (tb === null) return a;
+    return ta === null || tb > ta ? b : a;
+  };
   const next: ItemCacheMarks = {
     epoch: max(cur.epoch, patch.epoch),
     servedAt: max(cur.servedAt, patch.servedAt),
@@ -2666,17 +2674,39 @@ function readItemCacheAt(
   // "very fresh" — it is unreadable, so it is refused.
   if (ageSec < 0 || ageSec > ttl) return null;
   const marks = readMarks(ctx);
-  if (marks.epoch && entry.fetchedAt <= marks.epoch) return null;
-  if (marks.servedAt && entry.fetchedAt < marks.servedAt) return null;
+  // Compared as INSTANTS, not strings. We write canonical toISOString(), but
+  // these files are plain JSON in the user's cache dir — an equivalent instant
+  // written any other way (`+00:00`, a different fractional precision) would
+  // compare wrong lexically, and comparing wrong here means serving an entry
+  // a guarantee says to refuse.
+  if (atOrBefore(t, marks.epoch)) return null;
+  if (strictlyBefore(t, marks.servedAt)) return null;
   return entry;
+}
+
+/** An unparseable mark is treated as ABSENT, not as a barrier: a corrupt marks
+ *  file must degrade to today's always-walk behaviour, never wedge every read. */
+function markMs(mark: string | null): number | null {
+  if (!mark) return null;
+  const t = Date.parse(mark);
+  return Number.isFinite(t) ? t : null;
+}
+
+function atOrBefore(t: number, mark: string | null): boolean {
+  const m = markMs(mark);
+  return m !== null && t <= m;
+}
+
+function strictlyBefore(t: number, mark: string | null): boolean {
+  const m = markMs(mark);
+  return m !== null && t < m;
 }
 
 function writeItemCache(ctx: Ctx, kind: ItemCacheKind, entry: ItemCacheEntry): void {
   if (itemCacheTtlSec(ctx) === 0) return;
   // A walk that began before a local write of ours carries a pre-write view;
   // storing it would hand read-your-writes back to the next process.
-  const epoch = readMarks(ctx).epoch;
-  if (epoch !== null && epoch >= entry.fetchedAt) return;
+  if (atOrBefore(Date.parse(entry.fetchedAt), readMarks(ctx).epoch)) return;
   try {
     mkdirSync(ctx.cacheDir, { recursive: true });
     atomicWrite(itemCachePath(ctx, kind, entry.select), JSON.stringify(entry));

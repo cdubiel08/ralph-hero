@@ -401,6 +401,28 @@ describe("item cache (GH-1806) — cross-process bounded staleness", () => {
       expect(listItemsFull(proc({ at: later(3) })).cached).toBe(false);
     });
 
+    it("compares marks as instants, so an equivalent non-canonical timestamp still bars the entry", () => {
+      // We write toISOString(), but these are plain JSON files in the user's
+      // cache dir. `+00:00` is the SAME instant and must behave identically —
+      // a lexical compare would let a barred entry through.
+      listItemsFull(proc());
+      const marks = join(dir, "items-marks-github.com-cdubiel08-ralph-hero-13.json");
+      const entryAt = JSON.parse(
+        readFileSync(join(dir, "items-full-github.com-cdubiel08-ralph-hero-13.json"), "utf8"),
+      ).fetchedAt as string;
+      // Same instant as the entry, written the other legal way.
+      writeFileSync(marks, JSON.stringify({ epoch: entryAt.replace(".000Z", "+00:00"), servedAt: null }));
+      expect(listItemsFull(proc({ at: later(5) })).cached).toBe(false);
+    });
+
+    it("treats a corrupt mark as absent rather than wedging every read", () => {
+      listItemsFull(proc());
+      const marks = join(dir, "items-marks-github.com-cdubiel08-ralph-hero-13.json");
+      writeFileSync(marks, JSON.stringify({ epoch: "not-a-date", servedAt: "also-not" }));
+      // Degrades to the ordinary Δ check, never to "refuse forever".
+      expect(listItemsFull(proc({ at: later(5) })).cached).toBe(true);
+    });
+
     it("refuses a future-dated entry rather than treating it as very fresh", () => {
       listItemsFull(proc({ at: later(3600) })); // clock step / copied file
       expect(listItemsFull(proc()).cached).toBe(false);
