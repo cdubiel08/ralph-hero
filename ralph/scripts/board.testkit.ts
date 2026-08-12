@@ -614,7 +614,19 @@ export function refusalMessage(fn: () => unknown): string {
   throw new Error("expected a RefusalError, got none");
 }
 
-export function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo"): Ctx {
+/** `now` and `itemCacheTtlSec` are the two knobs the item-cache suite (GH-1806)
+ *  needs and nothing else does. The TTL default is 0 — every pre-existing test
+ *  keeps the always-fresh behaviour it was written against, and a test that
+ *  wants the cache must say so, which is also how the production default gets
+ *  its own dedicated coverage rather than silently colouring 300 assertions.
+ *  `cacheDir` is shared to model TWO PROCESSES against one machine's cache. */
+export interface CtxOpts {
+  cacheDir?: string;
+  itemCacheTtlSec?: number;
+  now?: () => Date;
+}
+
+export function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo", opts: CtxOpts = {}): Ctx {
   const cfg: Config = {
     owner: "cdubiel08",
     repo: "ralph-hero",
@@ -631,7 +643,8 @@ export function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo"): Ctx
     exec: (argv, stdin) => gh.exec(argv, stdin),
     cfg,
     repoRoot,
-    cacheDir: mkdtempSync(join(tmpdir(), "board-test-")),
-    now: () => NOW,
+    cacheDir: opts.cacheDir ?? mkdtempSync(join(tmpdir(), "board-test-")),
+    now: opts.now ?? (() => NOW),
+    itemCacheTtlSec: opts.itemCacheTtlSec ?? 0,
   };
 }

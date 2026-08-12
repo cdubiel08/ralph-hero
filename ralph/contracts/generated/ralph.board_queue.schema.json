@@ -585,6 +585,28 @@
                 ],
                 "additionalProperties": false
               }
+            },
+            "cache": {
+              "type": "object",
+              "properties": {
+                "cached": {
+                  "type": "boolean"
+                },
+                "fetchedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "ageSec": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "cached",
+                "fetchedAt",
+                "ageSec"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
