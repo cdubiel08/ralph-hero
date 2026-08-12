@@ -563,6 +563,15 @@ function zNextResult(mode: Mode) {
     humanNeededCount: z.number().int().min(0),
     staleBlockedEdges: z.array(obj(mode, { number: zIssue, blockers: z.array(z.number().int()) })),
     inFlightEpics: z.array(obj(mode, { root: zIssue, child: zIssue, holder: z.string().nullable() })),
+    // Item-cache staleness facts (GH-1806). OPTIONAL in both modes: a payload
+    // produced before the cache existed, or by a `--fresh` run, is still valid
+    // — and a strict producer that passes `board next --json` through verbatim
+    // must not start failing because the read was answered from disk.
+    cache: obj(mode, {
+      cached: z.boolean(),
+      fetchedAt: zIsoUtc,
+      ageSec: z.number().int().min(0),
+    }).optional(),
   });
 }
 

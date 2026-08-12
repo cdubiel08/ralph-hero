@@ -125,7 +125,7 @@ describe("frontier: a re-projection of next's ranking", () => {
     });
   });
 
-  it("CLI: empty frontier names the blocked count; --json is the {frontier, blocked} envelope", () => {
+  it("CLI: empty frontier names the blocked count; --json is the {frontier, blocked, cache} envelope", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
     gh.issues.set(6, {
@@ -135,7 +135,14 @@ describe("frontier: a re-projection of next's ranking", () => {
     });
     expect(captured(["frontier"], ctx)).toBe("frontier empty (1 blocked: #6)\n");
     const parsed = JSON.parse(captured(["frontier", "--json"], ctx));
-    expect(parsed).toEqual({ frontier: [], blocked: [{ number: 6, blockers_open: [9] }] });
+    // `cache` (GH-1806) rides alongside the envelope, never inside it: a fleet
+    // reading `frontier`/`blocked` is unaffected, and one that wants to know
+    // how old the read was has it without a second call.
+    expect(parsed).toEqual({
+      frontier: [],
+      blocked: [{ number: 6, blockers_open: [9] }],
+      cache: { cached: false, fetchedAt: NOW.toISOString(), ageSec: 0 },
+    });
   });
 });
 

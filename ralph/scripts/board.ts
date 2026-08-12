@@ -18,7 +18,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -940,6 +940,30 @@ export function parseTtlMin(raw: string | undefined): number {
   return 120;
 }
 
+/** Item-cache staleness bound Δ, seconds (GH-1806). Unlike the claim TTL this
+ *  one is economic, not safety: it bounds E[wasted work] ≈ P(stale within Δ) ×
+ *  cost(failed claim attempt), because no write guard ever reads it.
+ *
+ *  0 disables. The ceiling is a guard against a typo (`900000`) silently
+ *  turning a hint into a fiction — a value past it is refused, not clamped
+ *  silently, so the operator learns their setting did not take. */
+export const ITEM_CACHE_TTL_DEFAULT_SEC = 90;
+export const ITEM_CACHE_TTL_MAX_SEC = 600;
+
+export function parseItemCacheTtlSec(raw: string | undefined): number {
+  // `RALPH_ITEM_CACHE_TTL_SEC=` (exported empty by a shell profile) must read
+  // as unset, not as Number("") === 0 — which would silently switch the cache
+  // off and leave someone measuring a "fix" that is not running.
+  if (raw === undefined || raw.trim() === "") return ITEM_CACHE_TTL_DEFAULT_SEC;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n >= 0 && n <= ITEM_CACHE_TTL_MAX_SEC) return n;
+  process.stderr.write(
+    `warn: RALPH_ITEM_CACHE_TTL_SEC="${raw}" is not a number in 0..${ITEM_CACHE_TTL_MAX_SEC} — ` +
+      `using ${ITEM_CACHE_TTL_DEFAULT_SEC}\n`,
+  );
+  return ITEM_CACHE_TTL_DEFAULT_SEC;
+}
+
 // ---------------------------------------------------------------------------
 // Exec + gh transport (injected for tests)
 // ---------------------------------------------------------------------------
@@ -985,6 +1009,14 @@ export interface Ctx {
   repoRoot: string;
   cacheDir: string;
   now: () => Date;
+  /** Bounded-staleness window for the ITEM walk cache, seconds (GH-1806).
+   *  0 (and absent) disables it in both directions — no read, no write.
+   *
+   *  Absent-means-off is deliberate: a Ctx built by a future caller that has
+   *  not thought about staleness gets today's always-fresh behaviour, and the
+   *  write-guard carve-out is expressed by handing a mutating path a Ctx with
+   *  this zeroed. Fail-safe is the only safe default direction for a cache. */
+  itemCacheTtlSec?: number;
 }
 
 /** The probe is ALIASED: a caller that selects `rateLimit` itself keeps its own
@@ -1075,6 +1107,12 @@ export function ghGraphQL<T = any>(
 ): T {
   const measuring = process.env.RALPH_GQL_COST === "1";
   const sent = measuring ? instrumentQuery(query) : { query, instrumented: false };
+  // Read-your-writes, half one (GH-1806): mark BEFORE the wire, because a
+  // mutation that lands and then fails to report back (non-zero exit,
+  // unparseable body, dropped connection) has still happened. Marking only on
+  // success would leave exactly that case serving a pre-write view.
+  const mutating = isMutationOp(query);
+  if (mutating) markLocalWrite(ctx);
   // --hostname keeps API traffic on the same host the scope gate verified —
   // a GHE config must not silently query github.com.
   const r = ctx.exec(
@@ -1113,7 +1151,36 @@ export function ghGraphQL<T = any>(
     // a caller that selected `rateLimit` itself keeps its value.
     if (body.data && typeof body.data === "object") delete body.data[COST_ALIAS];
   }
+  // Half two: mark AFTER the write lands as well. The pre-mark refuses every
+  // entry that existed when we started; this one also refuses an entry from a
+  // walk that ran DURING the write. Together they close both windows.
+  //
+  // Both halves live in ghGraphQL because it is the one path every write
+  // takes — a per-mutation-helper rule is one a future writer can forget.
+  if (mutating) markLocalWrite(ctx);
   return body.data as T;
+}
+
+/** True for a GraphQL `mutation` operation. Anonymous shorthand (`{ … }`) is a
+ *  QUERY by the spec, so the absence of the keyword is not ambiguity. Leading
+ *  whitespace and `#` comments are skipped, matching instrumentQuery. */
+export function isMutationOp(query: string): boolean {
+  let head = 0;
+  for (;;) {
+    const ws = query.slice(head).match(/^\s+/);
+    if (ws) {
+      head += ws[0].length;
+      continue;
+    }
+    if (query[head] === "#") {
+      const nl = query.indexOf("\n", head);
+      if (nl < 0) return false;
+      head = nl + 1;
+      continue;
+    }
+    break;
+  }
+  return /^mutation\b/.test(query.slice(head));
 }
 
 // ---------------------------------------------------------------------------
@@ -2334,6 +2401,357 @@ function assertPageInfo(pageInfo: any, what: string): void {
     throw new Error(`${what}: more pages reported but no cursor to fetch them`);
 }
 
+// ---------------------------------------------------------------------------
+// Item-walk cache (GH-1806) — cross-process bounded staleness
+//
+// The field cache above memoizes the SCHEMA. The item walk was never memoized,
+// so a `next` → `frontier` → `list` chain paid 42 + 42 + 23 = 107 points for
+// three reads of the same board. A CLI process does one walk and exits, so
+// in-process singleflight collapses nothing; only a file-backed cache helps.
+//
+// What this is, precisely: **client-side bounded staleness, not a lease.** A
+// real lease needs server participation (Gray & Cheriton, SOSP '89) and GitHub
+// offers none. The claim is "no read older than Δ" and nothing stronger.
+//
+// Why that is safe here — the whole argument in three parts:
+//
+//  1. Double-claim is a lost-update race on a CAS-less store, not a staleness
+//     bug. A perfectly fresh read does not close the read→write window either;
+//     read-back verification is the mitigation and it is already in place. So a
+//     stale entry costs one wasted claim attempt, never a wrong outcome.
+//  2. **The cache may drive candidate selection and display; it may NEVER
+//     drive a write-guard evaluation.** Every write path already re-reads the
+//     single item fresh (~6 pts) at the instant of the guard — transition()
+//     via mutationCache + read-back, reconcile() and doctor's stale-claim fix
+//     via fetchIssue. This module keeps that true by construction: a mutating
+//     path is handed a Ctx with itemCacheTtlSec = 0.
+//  3. Session guarantees (Terry et al. 1994) — the two that get forgotten:
+//     **read-your-writes** (every local mutation bumps `epoch`; an entry at or
+//     older than it is refused) and **monotonic reads** (`servedAt` is a
+//     high-water mark; an entry older than one already served is refused).
+//
+// Honest limit: the marks file is read-modify-write, not atomic. Updates
+// monotone-merge (max per field) to shrink the window, but two exactly-
+// interleaved writers on one machine can still lose one. This is machine-local
+// state behind a single flock'd scheduler, and the failure mode is bounded by
+// (1) above — a wasted claim attempt.
+// ---------------------------------------------------------------------------
+
+/** A walk plus the staleness facts every consumer needs to judge it.
+ *
+ *  Extends ItemPages (GH-1788) rather than replacing it: `scan` is the walk's
+ *  own cost meter and every consumer of it — `board-volume`, prune's dry run —
+ *  must see the meter of the walk the data actually came from, cached or not.
+ *  Generic over the selection (GH-1803) for the same reason: a cached walk must
+ *  narrow to exactly the shape its caller asked for, never a wider promise. */
+export interface ItemWalk<S extends QueueSelect = typeof QUEUE_SELECT_FULL> extends ItemPages<S> {
+  /** ISO. Stamped at the START of the walk — see startStamp below. */
+  fetchedAt: string;
+  ageSec: number;
+  cached: boolean;
+}
+
+type ItemCacheKind = "full" | "own-open";
+/** 1 → 2: `scan` joined the entry (GH-1788). 2 → 3: `select` joined it
+ *  (GH-1803). Both are load-bearing on serve, and an older file has neither,
+ *  so the version check drops it rather than serving a confident wrong shape. */
+const ITEM_CACHE_VERSION = 3;
+
+interface ItemCacheEntry {
+  version: number;
+  kind: ItemCacheKind;
+  /** The connections this walk ACTUALLY requested. Load-bearing: see
+   *  selectCovers. Stored, never inferred from the items — an item with no
+   *  blockers and an item whose blockers were never fetched look identical. */
+  select: QueueSelect;
+  fetchedAt: string;
+  open: QueueItemAny[];
+  closed: ClosedItemAny[];
+  scan: ItemPages["scan"];
+}
+
+/** Does an entry fetched with `have` satisfy a request for `want`?
+ *
+ *  THE correctness rule of caching a variable-shape walk (GH-1803 × GH-1806).
+ *  An unselected group is ABSENT from the item, never `[]` with
+ *  `truncated: false` — so serving a labels-less entry to a caller that reads
+ *  labels does not merely lose data, it fabricates "GitHub said there are
+ *  none". `next` would then read `openBlockers: []` as "not blocked" and hand
+ *  the ranker an item whose dependencies were never fetched.
+ *
+ *  TypeScript cannot catch this: the entry crosses a JSON file, where every
+ *  static guarantee is erased. So the check is at RUNTIME, here, and the cast
+ *  on serve is honest only because this ran first.
+ *
+ *  A WIDER entry serving a narrower request is safe and free — the extra
+ *  groups are truthful, and the caller's own type declares them optional. That
+ *  is the same subset-not-superset asymmetry that lets a full scan answer an
+ *  own-open read. */
+function selectCovers(have: QueueSelect, want: QueueSelect): boolean {
+  return (!want.labels || have.labels) && (!want.blockers || have.blockers);
+}
+
+const SELECT_COMBOS: readonly QueueSelect[] = [
+  { labels: true, blockers: true },
+  { labels: true, blockers: false },
+  { labels: false, blockers: true },
+  { labels: false, blockers: false },
+];
+
+/** Entry files a request may legally be served from, nearest first: the exact
+ *  selection, then any wider one already on disk. Keying by selection (rather
+ *  than one file per kind) means a lean `next` walk cannot evict the fat entry
+ *  that `list` and `doctor` need, and vice versa — no thrash, no downgrade. */
+function candidateSelects(want: QueueSelect): QueueSelect[] {
+  const covering = SELECT_COMBOS.filter((s) => selectCovers(s, want));
+  const extra = (s: QueueSelect) =>
+    (s.labels === want.labels ? 0 : 1) + (s.blockers === want.blockers ? 0 : 1);
+  return [...covering].sort((a, b) => extra(a) - extra(b));
+}
+
+function selectTag(s: QueueSelect): string {
+  return `l${s.labels ? 1 : 0}b${s.blockers ? 1 : 0}`;
+}
+
+interface ItemCacheMarks {
+  /** Newest local mutation observed. Entries at or before it are refused. */
+  epoch: string | null;
+  /** Newest fetchedAt ever served. Older entries are refused (monotonic reads). */
+  servedAt: string | null;
+}
+
+function itemCacheTtlSec(ctx: Ctx): number {
+  const t = ctx.itemCacheTtlSec ?? 0;
+  return Number.isFinite(t) && t > 0 ? t : 0;
+}
+
+/** Host is part of the key even though the field cache omits it: this file
+ *  carries ISSUE DATA, so a GHE board colliding with a github.com board on the
+ *  same owner/repo/number would serve another host's work queue. */
+function itemCacheKey(ctx: Ctx): string {
+  const safe = (s: string | number) => String(s).replace(/[^A-Za-z0-9._-]/g, "_");
+  return `${safe(ctx.cfg.host)}-${safe(ctx.cfg.owner)}-${safe(ctx.cfg.repo)}-${safe(ctx.cfg.projectNumber)}`;
+}
+
+function itemCachePath(ctx: Ctx, kind: ItemCacheKind, select: QueueSelect): string {
+  return join(ctx.cacheDir, `items-${kind}-${selectTag(select)}-${itemCacheKey(ctx)}.json`);
+}
+
+function itemMarksPath(ctx: Ctx): string {
+  return join(ctx.cacheDir, `items-marks-${itemCacheKey(ctx)}.json`);
+}
+
+/** tmp+rename: a reader must never observe a half-written walk. The pid in the
+ *  tmp name keeps two concurrent writers from clobbering each other's tmp. */
+function atomicWrite(path: string, contents: string): void {
+  const tmp = `${path}.tmp-${process.pid}`;
+  try {
+    writeFileSync(tmp, contents);
+    renameSync(tmp, path);
+  } catch (e) {
+    // A rename that never happened leaves a ~500 KB orphan in the user's
+    // cache dir, once per failure, forever. Clean up rather than accumulate.
+    removeIfPresent(tmp);
+    throw e;
+  }
+}
+
+function readMarks(ctx: Ctx): ItemCacheMarks {
+  try {
+    const raw = JSON.parse(readFileSync(itemMarksPath(ctx), "utf8"));
+    return {
+      epoch: typeof raw?.epoch === "string" ? raw.epoch : null,
+      servedAt: typeof raw?.servedAt === "string" ? raw.servedAt : null,
+    };
+  } catch {
+    return { epoch: null, servedAt: null }; // absent or corrupt — no marks yet
+  }
+}
+
+/** Monotone merge, never a blind overwrite: a mark only ever moves forward, so
+ *  a racing writer with an older value cannot walk either guarantee backwards. */
+function advanceMarks(ctx: Ctx, patch: Partial<ItemCacheMarks>): void {
+  const cur = readMarks(ctx);
+  // By INSTANT, for the same reason the read path compares that way: a lexical
+  // max over a non-canonical on-disk value could pick the earlier timestamp
+  // and LOWER a mark, which is a safety regression, not a missed optimisation.
+  const max = (a: string | null, b: string | null | undefined) => {
+    if (!b) return a;
+    const ta = markMs(a);
+    const tb = markMs(b);
+    if (tb === null) return a;
+    return ta === null || tb > ta ? b : a;
+  };
+  const next: ItemCacheMarks = {
+    epoch: max(cur.epoch, patch.epoch),
+    servedAt: max(cur.servedAt, patch.servedAt),
+  };
+  if (next.epoch === cur.epoch && next.servedAt === cur.servedAt) return;
+  mkdirSync(ctx.cacheDir, { recursive: true });
+  atomicWrite(itemMarksPath(ctx), JSON.stringify(next));
+}
+
+function removeIfPresent(path: string): void {
+  try {
+    if (existsSync(path)) unlinkSync(path);
+  } catch {
+    /* best-effort; the epoch mark is the real guard */
+  }
+}
+
+/** Read-your-writes. Called from ghGraphQL for EVERY successful mutation.
+ *
+ *  Both halves are deliberate: unlinking handles the ordinary case, and the
+ *  epoch handles the race unlinking cannot — a walk that was already in flight
+ *  when the write landed, repopulating the file a moment later with data that
+ *  predates it. If neither can be recorded we warn rather than proceed
+ *  silently, because a write we failed to remember is exactly the state that
+ *  serves an agent its own pre-write view. */
+export function markLocalWrite(ctx: Ctx): void {
+  const at = ctx.now().toISOString();
+  // EVERY selection variant, not just the one this process happens to use —
+  // a write invalidates the board, not one shape of reading it.
+  for (const kind of ["full", "own-open"] as const)
+    for (const s of SELECT_COMBOS) removeIfPresent(itemCachePath(ctx, kind, s));
+  try {
+    advanceMarks(ctx, { epoch: at });
+  } catch (e) {
+    process.stderr.write(
+      `warn: could not record the item-cache write epoch (${(e as Error).message}) — ` +
+        `a chained read may serve a pre-write view; \`--fresh\` forces a walk\n`,
+    );
+  }
+}
+
+/** null = nothing servable. Every refusal reason is a guarantee, not a
+ *  heuristic: a selection that does not cover the request, expired Δ, an entry
+ *  that predates a local write (read-your-writes), or one older than something
+ *  already served (monotonic reads).
+ *
+ *  Tries the exact selection first, then any wider entry already on disk. */
+function readItemCache(ctx: Ctx, kind: ItemCacheKind, want: QueueSelect): ItemCacheEntry | null {
+  if (itemCacheTtlSec(ctx) === 0) return null;
+  for (const s of candidateSelects(want)) {
+    const entry = readItemCacheAt(ctx, kind, s, want);
+    if (entry) return entry;
+  }
+  return null;
+}
+
+function readItemCacheAt(
+  ctx: Ctx,
+  kind: ItemCacheKind,
+  at: QueueSelect,
+  want: QueueSelect,
+): ItemCacheEntry | null {
+  const ttl = itemCacheTtlSec(ctx);
+  let entry: ItemCacheEntry;
+  try {
+    entry = JSON.parse(readFileSync(itemCachePath(ctx, kind, at), "utf8"));
+  } catch {
+    return null; // absent or corrupt — walk
+  }
+  if (entry?.version !== ITEM_CACHE_VERSION || entry.kind !== kind) return null;
+  if (!Array.isArray(entry.open) || !Array.isArray(entry.closed)) return null;
+  // The selection is read from the ENTRY, never assumed from the filename: the
+  // file could have been written by a different version, hand-edited, or moved.
+  // The filename is an index; this is the assertion.
+  if (typeof entry.select?.labels !== "boolean" || typeof entry.select?.blockers !== "boolean")
+    return null;
+  if (!selectCovers(entry.select, want)) return null;
+  // A meter-less entry would report a zero-volume board to `board-volume` and
+  // to prune's dry run. Refuse it rather than serve a confident wrong number.
+  if (
+    typeof entry.scan?.nodes !== "number" ||
+    typeof entry.scan?.pages !== "number" ||
+    typeof entry.scan?.archivedOpen !== "number"
+  )
+    return null;
+  const t = Date.parse(entry.fetchedAt);
+  if (!Number.isFinite(t)) return null;
+  const ageSec = (ctx.now().getTime() - t) / 1000;
+  // A future-dated entry (clock step, a file copied between machines) is not
+  // "very fresh" — it is unreadable, so it is refused.
+  if (ageSec < 0 || ageSec > ttl) return null;
+  const marks = readMarks(ctx);
+  // Compared as INSTANTS, not strings. We write canonical toISOString(), but
+  // these files are plain JSON in the user's cache dir — an equivalent instant
+  // written any other way (`+00:00`, a different fractional precision) would
+  // compare wrong lexically, and comparing wrong here means serving an entry
+  // a guarantee says to refuse.
+  if (atOrBefore(t, marks.epoch)) return null;
+  if (strictlyBefore(t, marks.servedAt)) return null;
+  return entry;
+}
+
+/** An unparseable mark is treated as ABSENT, not as a barrier: a corrupt marks
+ *  file must degrade to today's always-walk behaviour, never wedge every read. */
+function markMs(mark: string | null): number | null {
+  if (!mark) return null;
+  const t = Date.parse(mark);
+  return Number.isFinite(t) ? t : null;
+}
+
+function atOrBefore(t: number, mark: string | null): boolean {
+  const m = markMs(mark);
+  return m !== null && t <= m;
+}
+
+function strictlyBefore(t: number, mark: string | null): boolean {
+  const m = markMs(mark);
+  return m !== null && t < m;
+}
+
+function writeItemCache(ctx: Ctx, kind: ItemCacheKind, entry: ItemCacheEntry): void {
+  if (itemCacheTtlSec(ctx) === 0) return;
+  // A walk that began before a local write of ours carries a pre-write view;
+  // storing it would hand read-your-writes back to the next process.
+  if (atOrBefore(Date.parse(entry.fetchedAt), readMarks(ctx).epoch)) return;
+  try {
+    mkdirSync(ctx.cacheDir, { recursive: true });
+    atomicWrite(itemCachePath(ctx, kind, entry.select), JSON.stringify(entry));
+  } catch {
+    /* a cache we cannot write is a cache miss, never an error */
+  }
+}
+
+/** Every serve — cached OR fresh — advances the high-water mark. Skipping it
+ *  for fresh walks would let the very next command serve an OLDER cached entry
+ *  written by a concurrent process, which is the monotonic-reads violation. */
+function serveWalk<S extends QueueSelect>(
+  ctx: Ctx,
+  entry: ItemCacheEntry,
+  cached: boolean,
+): ItemWalk<S> {
+  try {
+    if (itemCacheTtlSec(ctx) > 0) advanceMarks(ctx, { servedAt: entry.fetchedAt });
+  } catch {
+    /* the high-water mark is an optimisation over an already-safe read */
+  }
+  return {
+    // The one seam where the runtime selection and the static one are asserted
+    // equal — the mirror of walkFull's cast, and sound for the same reason:
+    // readItemCache has already proved selectCovers(entry.select, want).
+    open: entry.open as SelectedQueueItem<S>[],
+    closed: entry.closed as SelectedClosedItem<S>[],
+    scan: entry.scan,
+    fetchedAt: entry.fetchedAt,
+    ageSec: Math.max(0, Math.round((ctx.now().getTime() - Date.parse(entry.fetchedAt)) / 1000)),
+    cached,
+  };
+}
+
+/** fetchedAt is stamped BEFORE the first page, never after the last.
+ *
+ *  The full walk takes ~22 s against this board. An end-stamped entry whose
+ *  walk began before a concurrent write would carry a timestamp AFTER that
+ *  write and sail through the epoch check while holding pre-write data.
+ *  Start-stamping makes the comparison sound, and makes every reported age
+ *  conservative (never younger than the oldest byte in the entry). */
+function startStamp(ctx: Ctx): string {
+  return ctx.now().toISOString();
+}
+
 /** The issue fields a QueueItem is built from. Shared verbatim by the two
  *  read paths (project scan, repo-scoped queue read) so they cannot drift.
  *
@@ -2424,8 +2842,54 @@ export function listOwnOpenItems<S extends QueueSelect = typeof QUEUE_SELECT_FUL
   ctx: Ctx,
   select: S = QUEUE_SELECT_FULL as unknown as S,
 ): SelectedQueueItem<S>[] {
+  return listOwnOpenWalk(ctx, select).open;
+}
+
+/** The own-open read plus its staleness facts (GH-1806).
+ *
+ *  Note the DERIVATION: a fresh full-scan entry can answer an own-open request
+ *  by filtering, because `listOwnOpenItems(ctx)` and `ownRepo(ctx,
+ *  listItems(ctx)).own` are the same set — an identity this file's own suite
+ *  already pins. Not the reverse: own-open cannot see foreign or closed items.
+ *  That asymmetry is what makes `next` → `list` cost 42 + 0 rather than
+ *  42 + 23. A derived answer is NOT written back as an own-open entry; the
+ *  full entry it came from is already the fresher, more general one.
+ *
+ *  The SAME asymmetry now governs the selection (GH-1803): a full-scan entry
+ *  answers this only if its `select` covers what is being asked for. */
+export function listOwnOpenWalk<S extends QueueSelect = typeof QUEUE_SELECT_FULL>(
+  ctx: Ctx,
+  select: S = QUEUE_SELECT_FULL as unknown as S,
+): ItemWalk<S> {
+  const own = readItemCache(ctx, "own-open", select);
+  if (own) return serveWalk<S>(ctx, own, true);
+  const full = readItemCache(ctx, "full", select);
+  if (full) {
+    // `scan` rides through unchanged, describing the FULL project walk that
+    // actually produced these items — the honest provenance. It is not a meter
+    // of the own-repo subset, and no consumer reads it as one: volume and
+    // prune both enter through listItemsFull.
+    return serveWalk<S>(
+      ctx,
+      { ...full, kind: "own-open", open: ownRepo(ctx, full.open).own, closed: [] },
+      true,
+    );
+  }
+  const entry = walkOwnOpen(ctx, select);
+  writeItemCache(ctx, "own-open", entry);
+  return serveWalk<S>(ctx, entry, false);
+}
+
+function walkOwnOpen(ctx: Ctx, select: QueueSelect): ItemCacheEntry {
+  const fetchedAt = startStamp(ctx);
   return withCache(ctx, (cache) => {
     const items: QueueItemAny[] = [];
+    // Metered like the project scan (GH-1788), on this read's own terms: nodes
+    // here are the repo's OPEN issues, not project items, so this meter is not
+    // comparable to the full walk's and is never fed to `board-volume` — which
+    // enters through listItemsFull. It is carried so a cached entry is never
+    // the reason a number is missing.
+    const scan = { nodes: 0, pages: 0, archivedOpen: 0 };
     const self = `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase();
     let after: string | null = null;
     for (;;) {
@@ -2450,6 +2914,10 @@ export function listOwnOpenItems<S extends QueueSelect = typeof QUEUE_SELECT_FUL
       const page = data.repository?.issues;
       if (!page) throw new Error(`could not read open issues for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
       assertPageInfo(page.pageInfo, `open issues for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+      // Metered only once the page is known trustworthy — an unreadable page is
+      // an error, never a page that "cost nothing" (same rule as the full walk).
+      scan.pages++;
+      scan.nodes += (page.nodes ?? []).length;
       for (const c of page.nodes ?? []) {
         if (!c?.number) continue;
         const nodes = c.projectItems?.nodes ?? [];
@@ -2462,7 +2930,10 @@ export function listOwnOpenItems<S extends QueueSelect = typeof QUEUE_SELECT_FUL
           continue; // genuinely off-board
         }
         // Archived items are still returned but cannot be written — skip.
-        if (item.isArchived) continue;
+        if (item.isArchived) {
+          scan.archivedOpen++;
+          continue;
+        }
         items.push(
           toQueueItem(c, fieldValueMap(item.fieldValues), fieldValuesTruncated(item.fieldValues), self, select),
         );
@@ -2470,9 +2941,7 @@ export function listOwnOpenItems<S extends QueueSelect = typeof QUEUE_SELECT_FUL
       if (!page.pageInfo.hasNextPage) break;
       after = page.pageInfo.endCursor;
     }
-    // The shape is decided by `select` at runtime and by SelectedQueueItem at
-    // the type level; this is the one seam where the two are asserted equal.
-    return items as SelectedQueueItem<S>[];
+    return { version: ITEM_CACHE_VERSION, kind: "own-open", select, fetchedAt, open: items, closed: [], scan };
   });
 }
 
@@ -2493,7 +2962,16 @@ export interface ItemPages<S extends QueueSelect = typeof QUEUE_SELECT_FULL> {
 export function listItemsFull<S extends QueueSelect = typeof QUEUE_SELECT_FULL>(
   ctx: Ctx,
   select: S = QUEUE_SELECT_FULL as unknown as S,
-): ItemPages<S> {
+): ItemWalk<S> {
+  const hit = readItemCache(ctx, "full", select);
+  if (hit) return serveWalk<S>(ctx, hit, true);
+  const entry = walkFull(ctx, select);
+  writeItemCache(ctx, "full", entry);
+  return serveWalk<S>(ctx, entry, false);
+}
+
+function walkFull(ctx: Ctx, select: QueueSelect): ItemCacheEntry {
+  const fetchedAt = startStamp(ctx);
   return withCache(ctx, (cache) => {
     const items: QueueItemAny[] = [];
     const closed: ClosedItemAny[] = [];
@@ -2578,13 +3056,14 @@ export function listItemsFull<S extends QueueSelect = typeof QUEUE_SELECT_FULL>(
       if (!page.pageInfo.hasNextPage) break;
       after = page.pageInfo.endCursor;
     }
-    // The shape is decided by `select` at runtime and by SelectedQueueItem at
-    // the type level; this is the one seam where the two are asserted equal.
-    return {
-      open: items as SelectedQueueItem<S>[],
-      closed: closed as SelectedClosedItem<S>[],
-      scan,
-    };
+    // `select` is stored IN the entry — the whole safety of caching a walk
+    // whose SHAPE now varies per caller (GH-1803). `scan` likewise: a cache hit
+    // does no paging, so a freshly-zeroed meter would make `board-volume`
+    // report an empty board. Both belong to the walk that produced the data
+    // and travel with it; the untyped `open`/`closed` here are re-narrowed on
+    // serve, but only after readItemCache has proved the selection covers the
+    // request at RUNTIME — the type-level cast alone cannot cross a JSON file.
+    return { version: ITEM_CACHE_VERSION, kind: "full", select, fetchedAt, open: items, closed, scan };
   });
 }
 
@@ -3689,6 +4168,12 @@ export function applyPrune(ctx: Ctx, candidates: PruneCandidate[]): PruneApplyRe
 }
 
 export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {}): DoctorReport {
+  // The write-guard carve-out (GH-1806), enforced HERE and not only at the CLI
+  // dispatch, so a programmatic caller cannot route around it. --fix selects
+  // its correction targets from the walk and then mutates: a cached walk would
+  // be reconciling a board that no longer looks like that. The report-only
+  // sweep is a read like any other and keeps the cache.
+  if (opts.fix) ctx = { ...ctx, itemCacheTtlSec: 0 };
   const checks: DoctorReport["checks"] = [];
   const add = (name: string, level: DoctorLevel, detail: string) =>
     checks.push({ name, level, detail });
@@ -3749,6 +4234,12 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       const pages = listItemsFull(ctx);
       const { own: items, foreign } = ownRepo(ctx, pages.open);
       const closedOwn = ownRepo(ctx, pages.closed).own;
+      // The report-only sweep may be answered from the item cache (GH-1806) —
+      // --fix never is. A doctor line saying "ok" about a board it read 80 s
+      // ago is a different claim from one it just read, so it says which. CI
+      // runs cold-cache, so this is always "fresh read" there.
+      if (pages.cached)
+        add("board-read", "info", `item sweep ran on a cached board read, ${pages.ageSec}s old (\`--fresh\` forces a walk; \`--fix\` always walks)`);
       add(
         "foreign-items",
         "ok",
@@ -4639,7 +5130,19 @@ contracts (ralph-herdr v2 — the Zod source of truth is contracts.ts)
        ralph.token_vocabulary ralph.escalation
 
 There is no --force flag. A stale claim (TTL 120 min; RALPH_LOCK_TTL_MIN
-overrides) is the only override path.`;
+overrides) is the only override path.
+
+item cache (GH-1806)
+  The board walk is memoized to ~/.ralph/cache for 90 s
+  (RALPH_ITEM_CACHE_TTL_SEC; 0 disables, max 600), so a next → frontier →
+  list chain pays for one walk instead of three. --fresh forces a walk for
+  one command, and a cached answer always says so.
+
+  Reads may be bounded-stale; WRITES SEE TRUTH. Every mutating command, and
+  doctor --fix, runs with the cache off, and every write path re-reads the
+  single item it is about to guard on. What a stale entry can cost is one
+  wasted claim attempt — never a wrong transition — because the claim
+  protocol is read-back verification, not read freshness.`;
 
 interface ParsedArgs {
   positional: string[];
@@ -4656,7 +5159,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state", "all-repos"].includes(key)) {
+      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state", "all-repos", "fresh"].includes(key)) {
         flags[key] = next;
         i++;
       } else {
@@ -4707,6 +5210,27 @@ function emptyQueueLine(blocked: QueueItemWithBlockers[], dx: EmptyQueueReport):
   return `queue empty (${blocked.length} blocked: ${blocked.map((b) => `#${b.number}`).join(" ")}${hint})`;
 }
 
+/** The staleness facts that ride alongside every walk-derived CLI payload
+ *  (GH-1806). A consumer that must not act on a hint can read `ageSec` and
+ *  decide; one that never looks still cannot be harmed, because no write guard
+ *  reads this data. `deliver-queue` and `tend-queue` deliberately do NOT carry
+ *  it: both fetch live per-item detail on top of the walk, so a single age
+ *  number would describe only part of what they returned. */
+function cacheFacts(w: WalkStaleness): { cached: boolean; fetchedAt: string; ageSec: number } {
+  return { cached: w.cached, fetchedAt: w.fetchedAt, ageSec: w.ageSec };
+}
+
+/** Just the staleness half of a walk. These two helpers read nothing that the
+ *  QueueSelect varies, so they must not be pinned to one selection — a `next`
+ *  walk (no labels) reports its age exactly like a `list` walk does. */
+type WalkStaleness = Pick<ItemWalk, "cached" | "fetchedAt" | "ageSec">;
+
+/** One line, only when the answer did not come from the network. Silence on a
+ *  fresh read keeps every existing human-output assertion byte-identical. */
+function cacheNote(w: WalkStaleness): string | null {
+  return w.cached ? `(cached board read, ${w.ageSec}s old — \`--fresh\` forces a walk)` : null;
+}
+
 function requireNumber(p: string | undefined, what = "issue number"): number {
   const n = Number(p);
   if (!p || !Number.isInteger(n) || n <= 0) throw new UsageError(`${what} required`);
@@ -4725,15 +5249,26 @@ export function run(argv: string[], ctx: Ctx): number {
   const out = (s: string) => process.stdout.write(s + "\n");
   const json = (v: unknown) => out(JSON.stringify(v, null, 2));
 
+  // Every command that mutates, by any route. `prune --apply` (GH-1788) is one
+  // of them and matters most to the cache: it picks DELETION targets from the
+  // walk and then removes those project items, so a stale walk here would
+  // delete against a board that no longer looks like that. Its dry run is a
+  // read like any other and may be served from cache.
+  const writes =
+    (MUTATING.has(cmd) && !(cmd === "claim" && positional[0] === "show")) ||
+    (cmd === "doctor" && flags.fix) ||
+    (cmd === "prune" && flags.apply === true);
+
+  // The write-guard carve-out (GH-1806) and its manual override, both applied
+  // before any command body runs. A mutating command reads the board only to
+  // decide what to write, so it pays for truth; a read may be bounded-stale.
+  if (writes || flags.fresh) ctx = { ...ctx, itemCacheTtlSec: 0 };
+
   // Scope gate before ANY command that can write — including doctor --fix,
   // which mutates. Plain reads work from any clone (doctor reports scope);
   // `claim show` is a plain read wearing a mutating command's name, so it
   // gets the read path's carve-out.
-  if (
-    (MUTATING.has(cmd) && !(cmd === "claim" && positional[0] === "show")) ||
-    (cmd === "doctor" && flags.fix) ||
-    (cmd === "prune" && flags.apply)
-  ) {
+  if (writes) {
     const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
     if (remote.code !== 0 || !scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) {
       throw new RefusalError(
@@ -4769,18 +5304,20 @@ export function run(argv: string[], ctx: Ctx): number {
       // board items; `foreignEvaluated` says which read answered, so a caller
       // never mistakes "not looked for" for "none there".
       const allRepos = flags["all-repos"] === true;
+      const walk = allRepos ? listItemsFull(ctx) : listOwnOpenWalk(ctx);
       const { own, foreign } =
-        allRepos ? ownRepo(ctx, listItems(ctx)) : { own: listOwnOpenItems(ctx), foreign: [] as QueueItem[] };
+        allRepos ? ownRepo(ctx, walk.open) : { own: walk.open, foreign: [] as QueueItem[] };
       let items = own;
       if (typeof flags.state === "string") {
         const s = parseStateArg(flags.state);
         items = items.filter((i) => i.state === (s ?? flags.state));
       }
-      if (flags.json) json({ items, foreign, foreignEvaluated: allRepos });
+      if (flags.json) json({ items, foreign, foreignEvaluated: allRepos, cache: cacheFacts(walk) });
       else {
         for (const i of items) out(`#${i.number} [${i.state}]${i.claim ? ` claim=${i.claim.holders.join("+")}` : ""}${i.openBlockers.length ? ` blockedBy=${i.openBlockers.map((n) => `#${n}`).join(",")}` : ""} ${i.title}`);
         for (const f of foreign) out(`${f.repo}#${f.number} [${f.state}] (foreign repo — read-only here) ${f.title}`);
         if (!allRepos) out(`(own-repo open items; foreign board items not read — \`--all-repos\` scans the whole project)`);
+        if (cacheNote(walk)) out(cacheNote(walk)!);
       }
       return 0;
     }
@@ -4795,9 +5332,13 @@ export function run(argv: string[], ctx: Ctx): number {
       const { eligible, blocked, inFlightEpics } = rankNext(own, closedEdges);
       // --json carries the diagnosis as fields, never as the prose line.
       const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics);
-      if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked, ...dx });
-      else if (eligible.length === 0) out(emptyQueueLine(blocked, dx));
-      else {
+      if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked, ...dx, cache: cacheFacts(full) });
+      else if (eligible.length === 0) {
+        // The empty answer is where staleness matters MOST — a loop reads
+        // "queue empty" and spawns nothing. It gets told how old that is.
+        out(emptyQueueLine(blocked, dx));
+        if (cacheNote(full)) out(`  ${cacheNote(full)}`);
+      } else {
         const head = eligible[0];
         out(
           `next: #${head.number} ${head.title}` +
@@ -4805,6 +5346,7 @@ export function run(argv: string[], ctx: Ctx): number {
             (head.childrenBlocked ? ` (children blocked: ${head.childrenBlocked.map((n) => `#${n}`).join(" ")})` : ""),
         );
         for (const i of eligible.slice(1, 6)) out(`  then #${i.number} ${i.title}`);
+        if (cacheNote(full)) out(`  ${cacheNote(full)}`);
         if (blocked.length)
           out(
             `  blocked: ${blocked
@@ -4830,11 +5372,12 @@ export function run(argv: string[], ctx: Ctx): number {
       const own = ownRepo(ctx, full.open).own;
       const closedEdges = ownRepo(ctx, full.closed).own;
       const res = frontierView(rankNext(own, closedEdges));
-      if (flags.json) json(res);
+      if (flags.json) json({ ...res, cache: cacheFacts(full) });
       else if (res.frontier.length === 0) {
         out(
           `frontier empty${res.blocked.length ? ` (${res.blocked.length} blocked: ${res.blocked.map((b) => `#${b.number}`).join(" ")})` : ""}`,
         );
+        if (cacheNote(full)) out(cacheNote(full)!);
       } else {
         for (const f of res.frontier)
           out(
@@ -4843,6 +5386,7 @@ export function run(argv: string[], ctx: Ctx): number {
               (f.blockers.length ? ` [blockers closed: ${f.blockers.map((b) => `#${b.number}`).join(",")}]` : "") +
               ` ${f.title}`,
           );
+        if (cacheNote(full)) out(cacheNote(full)!);
         if (res.blocked.length)
           out(
             `blocked: ${res.blocked
@@ -5313,6 +5857,7 @@ if (isMain) {
       repoRoot,
       cacheDir: join(homedir(), ".ralph", "cache"),
       now: () => new Date(),
+      itemCacheTtlSec: parseItemCacheTtlSec(process.env.RALPH_ITEM_CACHE_TTL_SEC),
     };
     process.exit(run(process.argv.slice(2), ctx));
   } catch (e) {
