@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeRunner records every invocation in order and answers from a table —
@@ -633,5 +634,113 @@ func TestResolveConfigFallsBackToInstalledPluginButNotForExplicitPaths(t *testin
 	}
 	if _, err := resolveConfig(nil, envBad); err == nil {
 		t.Error("explicit broken RALPH_HERDR_BOARD must error, not fall back")
+	}
+}
+
+// ── read-failure classification (GH-1787) ───────────────────────────────────
+
+func TestArgsRateLimitIsRestNotGraphQL(t *testing.T) {
+	got := argsRateLimit()
+	if !reflect.DeepEqual(got, []string{"api", "rate_limit"}) {
+		t.Fatalf("rate probe must be the REST endpoint, got %q", got)
+	}
+}
+
+func TestBoardDeadlineNeverTighterThanPollInterval(t *testing.T) {
+	if d := boardDeadline(Config{Interval: 10 * time.Second}); d != boardTimeout {
+		t.Errorf("fast cadence must keep the cold-start floor, got %s", d)
+	}
+	if d := boardDeadline(Config{Interval: 60 * time.Second}); d != 60*time.Second {
+		t.Errorf("a 60s cadence must not be guarded by a 25s deadline, got %s", d)
+	}
+}
+
+func TestParseRateLimit(t *testing.T) {
+	st := parseRateLimit(`{"resources":{"graphql":{"limit":5000,"remaining":0,"reset":1700000000}}}`)
+	if !st.known || st.limit != 5000 || st.remaining != 0 || st.reset.Unix() != 1700000000 {
+		t.Fatalf("rate limit mis-parsed: %+v", st)
+	}
+	if parseRateLimit("not json").known {
+		t.Error("garbage must be unknown, not a zero budget")
+	}
+	if parseRateLimit(`{"resources":{}}`).known {
+		t.Error("absent graphql resource must be unknown, not a zero budget")
+	}
+}
+
+func TestDescribeRateLimitNamesResetTime(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	st := rateLimitState{known: true, limit: 5000, remaining: 0, reset: now.Add(41 * time.Minute)}
+	got := describeRateLimit(st, now)
+	if !strings.Contains(got, "exhausted (0/5000)") || !strings.Contains(got, "in 41m") {
+		t.Fatalf("must name budget and reset, got %q", got)
+	}
+	if describeRateLimit(rateLimitState{}, now) != "" {
+		t.Error("unknown budget must say nothing rather than guess")
+	}
+}
+
+func TestExplainReadFailure(t *testing.T) {
+	exhausted := func(prog string, args []string) (string, string, error) {
+		return `{"resources":{"graphql":{"limit":5000,"remaining":0,"reset":9999999999}}}`, "", nil
+	}
+	healthy := func(prog string, args []string) (string, string, error) {
+		return `{"resources":{"graphql":{"limit":5000,"remaining":4900,"reset":9999999999}}}`, "", nil
+	}
+	cfg := Config{Gh: "gh"}
+
+	// 1. Deadline miss names the deadline — and never probes.
+	fr := &fakeRunner{respond: exhausted}
+	got := explainReadFailure(&rateProbe{cfg: cfg, r: fr}, 30*time.Second, true, "signal: killed", errors.New("signal: killed"))
+	if !strings.Contains(got, "timed out after 30s") {
+		t.Errorf("deadline miss must name the deadline, got %q", got)
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("a fired deadline needs no rate probe, got %d calls", len(fr.calls))
+	}
+
+	// 2. Masked failure + exhausted budget → renamed with the reset.
+	got = explainReadFailure(&rateProbe{cfg: cfg, r: &fakeRunner{respond: exhausted}},
+		30*time.Second, false, "gh api graphql failed (exit 1)", errors.New("exit status 1"))
+	if !strings.Contains(got, "exhausted (0/5000)") {
+		t.Errorf("exhausted budget must be named, got %q", got)
+	}
+
+	// 3. Genuine failure with a healthy budget stays verbatim.
+	got = explainReadFailure(&rateProbe{cfg: cfg, r: &fakeRunner{respond: healthy}},
+		30*time.Second, false, "board: not authenticated (gh auth login)", errors.New("exit status 1"))
+	if got != "board: not authenticated (gh auth login)" {
+		t.Errorf("healthy budget must leave the message verbatim, got %q", got)
+	}
+
+	// 4. `signal: killed` never reaches the operator as-is.
+	got = explainReadFailure(&rateProbe{cfg: cfg, r: &fakeRunner{respond: healthy}},
+		30*time.Second, false, "signal: killed", errors.New("signal: killed"))
+	if strings.Contains(got, "signal: killed") {
+		t.Errorf("raw signal text must be scrubbed, got %q", got)
+	}
+}
+
+func TestRateProbeConsultsAtMostOncePerPass(t *testing.T) {
+	fr := &fakeRunner{respond: func(prog string, args []string) (string, string, error) {
+		return `{"resources":{"graphql":{"limit":5000,"remaining":10,"reset":1}}}`, "", nil
+	}}
+	p := &rateProbe{cfg: Config{Gh: "gh"}, r: fr}
+	for i := 0; i < 3; i++ {
+		p.get()
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("rate probe must run once per pass, ran %d times", len(fr.calls))
+	}
+}
+
+func TestLooksRateLimited(t *testing.T) {
+	for _, s := range []string{"API rate limit exceeded", "RATE_LIMITED", "was submitted too quickly"} {
+		if !looksRateLimited(s) {
+			t.Errorf("%q must match the rate-limit markers", s)
+		}
+	}
+	if looksRateLimited("board: item is archived") {
+		t.Error("unrelated failure must not be read as a rate limit")
 	}
 }

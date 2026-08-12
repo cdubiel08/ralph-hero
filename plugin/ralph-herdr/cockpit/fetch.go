@@ -89,6 +89,10 @@ func argsAgentPrompt(name, text, timeoutMS string) []string {
 func argsGhComments(n int, repo string) []string {
 	return []string{"issue", "view", strconv.Itoa(n), "--json", "comments", "-R", repo}
 }
+
+// argsRateLimit is a REST read — it does NOT spend GraphQL points, which is
+// why a failed board read can afford to consult it once.
+func argsRateLimit() []string { return []string{"api", "rate_limit"} }
 func argsPaneSplit() []string {
 	return []string{"pane", "split", "--current", "--direction", "down", "--focus"}
 }
@@ -512,6 +516,147 @@ const (
 	promptWaitMS = "15000" // ralph-answer.sh nudge parity
 )
 
+// boardDeadline: a read deadline tighter than the poll cadence it guards is a
+// defect generator — a 60s interval must not kill its own 25s read. Floor at
+// boardTimeout so a fast cadence still gets the cold-start budget.
+func boardDeadline(cfg Config) time.Duration {
+	if cfg.Interval > boardTimeout {
+		return cfg.Interval
+	}
+	return boardTimeout
+}
+
+// ── read-failure classification ─────────────────────────────────────────────
+//
+// Three materially different failures used to render as one word: a fired
+// deadline, an exhausted GraphQL budget, and a genuine board/auth break. The
+// header now names the cause. Advisory only — nothing here suppresses,
+// softens, or retries a failed read; the column still reports as failed.
+
+type rateLimitState struct {
+	known     bool
+	limit     int
+	remaining int
+	reset     time.Time
+}
+
+// rateProbe consults `gh api rate_limit` at most once per read pass.
+type rateProbe struct {
+	cfg  Config
+	r    Runner
+	done bool
+	st   rateLimitState
+}
+
+func (p *rateProbe) get() rateLimitState {
+	if p.done || p.cfg.Gh == "" {
+		return p.st
+	}
+	p.done = true
+	ctx, cancel := context.WithTimeout(context.Background(), ghTimeout)
+	out, _, err := p.r.Run(ctx, p.cfg.Gh, argsRateLimit()...)
+	cancel()
+	if err != nil {
+		return p.st
+	}
+	p.st = parseRateLimit(out)
+	return p.st
+}
+
+func parseRateLimit(out string) rateLimitState {
+	var payload struct {
+		Resources struct {
+			GraphQL struct {
+				Limit     int   `json:"limit"`
+				Remaining int   `json:"remaining"`
+				Reset     int64 `json:"reset"`
+			} `json:"graphql"`
+		} `json:"resources"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return rateLimitState{}
+	}
+	g := payload.Resources.GraphQL
+	if g.Limit == 0 && g.Reset == 0 {
+		return rateLimitState{}
+	}
+	return rateLimitState{known: true, limit: g.Limit, remaining: g.Remaining, reset: time.Unix(g.Reset, 0)}
+}
+
+// describeRateLimit renders the operator's two questions: how much budget is
+// left, and when it comes back.
+func describeRateLimit(st rateLimitState, now time.Time) string {
+	if !st.known {
+		return ""
+	}
+	msg := fmt.Sprintf("GitHub GraphQL budget exhausted (%d/%d)", st.remaining, st.limit)
+	if st.remaining > 0 {
+		msg = fmt.Sprintf("GitHub GraphQL budget low (%d/%d)", st.remaining, st.limit)
+	}
+	if st.reset.IsZero() {
+		return msg
+	}
+	mins := int(st.reset.Sub(now).Round(time.Minute) / time.Minute)
+	if mins < 0 {
+		mins = 0
+	}
+	return fmt.Sprintf("%s — resets %s (in %dm)", msg, st.reset.Local().Format("15:04"), mins)
+}
+
+// rateLimitMarkers: what GitHub says when the budget is the reason. board.ts
+// often masks these behind "gh api graphql failed (exit N)", which is exactly
+// why an unmatched failure still gets a probe.
+var rateLimitMarkers = []string{
+	"rate limit",
+	"rate_limit",
+	"ratelimit",
+	"submitted too quickly",
+	"api rate limit exceeded",
+}
+
+func looksRateLimited(s string) bool {
+	l := strings.ToLower(s)
+	for _, m := range rateLimitMarkers {
+		if strings.Contains(l, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// scrubSignal keeps kernel detail no operator can act on out of the header.
+func scrubSignal(s string) string {
+	if strings.Contains(s, "signal: killed") {
+		return "read killed before completing (deadline or external signal)"
+	}
+	return s
+}
+
+// explainReadFailure is the single naming path for a failed board exec.
+// timedOut = the cockpit's own deadline fired (ctx.Err() said so).
+func explainReadFailure(p *rateProbe, deadline time.Duration, timedOut bool, combined string, err error) string {
+	if timedOut {
+		return fmt.Sprintf("timed out after %s (cockpit board-read deadline)", deadline)
+	}
+	verbatim := scrubSignal(firstLine(combined, err))
+	if p == nil {
+		return verbatim
+	}
+	st := p.get()
+	if looksRateLimited(combined) {
+		if d := describeRateLimit(st, time.Now()); d != "" {
+			return d
+		}
+		return verbatim
+	}
+	// Unmatched failure: the budget is the most common masked cause, so an
+	// exhausted budget renames it. A healthy budget leaves it verbatim.
+	if st.known && st.remaining == 0 {
+		return describeRateLimit(st, time.Now())
+	}
+	return verbatim
+}
+
 // ── tea.Cmds ────────────────────────────────────────────────────────────────
 
 // fetchBoardCmd reads all three columns in ONE board process (GH-1786 — three
@@ -523,11 +668,21 @@ const (
 func fetchBoardCmd(cfg Config, r Runner) tea.Cmd {
 	return func() tea.Msg {
 		var msg boardMsg
-		ctx, cancel := context.WithTimeout(context.Background(), boardTimeout)
+		// One read for all three columns (GH-1786), and when it fails, say WHY
+		// (GH-1787): a bare "exit status 1" hides the budget exhaustion that is
+		// the most common cause. The single read means one explained failure
+		// covers all three columns rather than three identical lines.
+		deadline := boardDeadline(cfg)
+		probe := &rateProbe{cfg: cfg, r: r}
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
 		out, stderr, err := r.Run(ctx, cfg.Board, argsBoardList()...)
+		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		if err != nil {
-			return boardMsg{failed: allColumnsUnknown, err: firstLine(stderr, err)}
+			return boardMsg{
+				failed: allColumnsUnknown,
+				err:    explainReadFailure(probe, deadline, timedOut, stderr+out, err),
+			}
 		}
 		cols, perr := parseBoardColumns(out)
 		if perr != nil {
@@ -620,7 +775,7 @@ func replyCmd(cfg Config, r Runner, who, text string) tea.Cmd {
 // decorative nudge go out to a live agent. Both results surface distinctly.
 func doAnswer(cfg Config, r Runner, issue int, text string, agent string) answerDoneMsg {
 	msg := answerDoneMsg{issue: issue, agentName: agent}
-	ctx, cancel := context.WithTimeout(context.Background(), boardTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), boardDeadline(cfg))
 	out, stderr, err := r.Run(ctx, cfg.Board, argsBoardAnswer(issue, text)...)
 	cancel()
 	if err != nil {
@@ -629,7 +784,7 @@ func doAnswer(cfg Config, r Runner, issue int, text string, agent string) answer
 		// happened, only the move failed — retrying the ANSWER would
 		// duplicate the comment. firstLine alone would drop that guidance.
 		msg.boardPosted = strings.Contains(stderr+out, "answer comment IS on the record")
-		msg.boardDetail = firstLine(stderr+out, err)
+		msg.boardDetail = scrubSignal(firstLine(stderr+out, err))
 		return msg // the move (or the whole verb) failed — nothing to nudge about
 	}
 	msg.boardOK = true
@@ -657,11 +812,13 @@ func answerCmd(cfg Config, r Runner, issue int, text, agent string) tea.Cmd {
 
 func dagCmd(cfg Config, r Runner) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), boardTimeout)
+		deadline := boardDeadline(cfg)
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
 		out, stderr, err := r.Run(ctx, cfg.Board, argsBoardFrontier()...)
+		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		if err != nil {
-			return dagMsg{err: firstLine(stderr, err)}
+			return dagMsg{err: explainReadFailure(&rateProbe{cfg: cfg, r: r}, deadline, timedOut, stderr+out, err)}
 		}
 		text, perr := renderFrontier(out)
 		if perr != nil {
@@ -695,11 +852,14 @@ func spawnCmd(cfg Config, r Runner, issue int) tea.Cmd {
 // hint (chrome lost, verb reachable by hand).
 func prDiffCmd(cfg Config, r Runner, issue int) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), boardTimeout)
+		deadline := boardDeadline(cfg)
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
 		out, stderr, err := r.Run(ctx, cfg.Board, argsBoardGet(issue)...)
+		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		if err != nil {
-			return statusMsg(fmt.Sprintf("board get %d failed: %s", issue, firstLine(stderr, err)))
+			return statusMsg(fmt.Sprintf("board get %d failed: %s", issue,
+				explainReadFailure(&rateProbe{cfg: cfg, r: r}, deadline, timedOut, stderr+out, err)))
 		}
 		pr, ok := pickPR(out)
 		if !ok {
