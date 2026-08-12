@@ -2545,8 +2545,15 @@ function itemMarksPath(ctx: Ctx): string {
  *  tmp name keeps two concurrent writers from clobbering each other's tmp. */
 function atomicWrite(path: string, contents: string): void {
   const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, contents);
-  renameSync(tmp, path);
+  try {
+    writeFileSync(tmp, contents);
+    renameSync(tmp, path);
+  } catch (e) {
+    // A rename that never happened leaves a ~500 KB orphan in the user's
+    // cache dir, once per failure, forever. Clean up rather than accumulate.
+    removeIfPresent(tmp);
+    throw e;
+  }
 }
 
 function readMarks(ctx: Ctx): ItemCacheMarks {
