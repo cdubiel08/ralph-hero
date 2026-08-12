@@ -3,6 +3,7 @@ date: 2026-08-11
 issue: GH-1801
 parent: GH-1800
 status: measured
+routed_to: [GH-1803, GH-1804, GH-1811]
 ---
 
 # Real GraphQL cost per board query (measured, not derived)
@@ -65,13 +66,64 @@ cockpit's 3 walks into 1. That leaves the single largest query in the codebase
 untouched. A board with 30 In Review items pays 300 points for one
 `deliver-queue`, and the deliver lane polls.
 
-The cost lives in the nesting (`board.ts:2582-2592`, `:2650-2661`):
-`statusCheckRollup.contexts(first: 100)` and `reviewThreads(last: 50)` sit under
-two `first: 10` PR connections, under 10 issue aliases.
+The cost lives in the connection count (`board.ts:2582-2592`, `:2650-2661`), not
+the page sizes — see Finding 2. Filed as **GH-1811**.
 
-## Finding 2 — nested `first:` values
+## Finding 2 — nested `first:` saves nothing; dropping connections is the whole lever
 
-> **A/B result pending the rate-limit reset; this section is filled in below.**
+#1800 asserted this as settled. Mid-measurement I suspected it was wrong, because
+`deliver-queue`'s 100 points looked like nested `first:` multiplying. **The A/B
+refutes my suspicion and confirms #1800.** Same hot query, only the nested page
+sizes varied:
+
+| Variant | `labels` / `blockedBy` / `fieldValues` | nodeCount | **cost** |
+|---|---|---|---|
+| production | 100 / 50 / 20 | 17100 | **3** |
+| trimmed | 10 / 10 / 20 | 4100 | **3** |
+| trimmed-all | 10 / 10 / 10 | 3100 | **3** |
+| minimal | 1 / 1 / 5 | 800 | **3** |
+
+`nodeCount` falls 21x. Cost does not move. **Trimming nested `first:` values is
+worth exactly zero points.** Do not spend a PR on it.
+
+Dropping whole connections, on the same query, is worth everything:
+
+| Connections under `items(first: 100)` | **cost** |
+|---|---|
+| items only | **1** |
+| items + fieldValues | **1** |
+| items + labels + fieldValues | **2** |
+| items + labels + blockedBy + fieldValues (**production**) | **3** |
+
+Exactly the documented model, now observed: `1 (items) + 100 (labels) + 100
+(blockedBy) + 100 (fieldValues) = 301 requests → 3 points`. Each nested
+connection over a 100-item page costs 100 requests = 1 point, flat, regardless
+of its page size.
+
+### The concrete lever for #1800
+
+`fieldValues` is not droppable — it carries Workflow State. `labels` and
+`blockedBy` are the two candidates:
+
+- drop **both** → **1 pt/page → 14 pts/walk** (from 42)
+- drop **one** → 2 pt/page → 28 pts/walk
+
+Combined with the parent's 3-walks-to-1 collapse: **126 → 14 points per cockpit
+tick, a 9x reduction** — which clears the budget with room, where the collapse
+alone (126 → 42) does not. Both consumers are real (`labels` feeds apply-kind
+detection, `blockedBy` feeds the ranker's blocked report), so dropping them means
+fetching them another way for the few items that need them, not deleting the
+feature.
+
+### Why `deliver-queue` costs 100
+
+Same rule, applied to its shape: ~10 connections per issue alias (`comments`,
+`closedByPullRequestsReferences`, `projectItems`, nested `fieldValues`, the
+`pullRequests` alias, and inside each PR `commits`, `statusCheckRollup.contexts`,
+`reviews`, `reviewThreads`, nested `comments`) × 10 aliases per chunk ≈ 100
+connections ≈ 100 points. So its fix is **fewer aliases per chunk or fewer
+connections per alias** — chunking by 5 halves the per-call cost but doubles the
+calls, i.e. buys nothing. Removing connections is again the only real lever.
 
 ## Finding 3 — the ETag oracle (#1802) sees almost nothing that matters
 
