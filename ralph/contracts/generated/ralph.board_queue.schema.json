@@ -178,8 +178,6 @@
                     "claim",
                     "claimRaw",
                     "openBlockerLabels",
-                    "labels",
-                    "labelsTruncated",
                     "closedBlockers"
                   ],
                   "additionalProperties": false
@@ -348,8 +346,6 @@
                   "claim",
                   "claimRaw",
                   "openBlockerLabels",
-                  "labels",
-                  "labelsTruncated",
                   "closedBlockers"
                 ],
                 "additionalProperties": false
@@ -514,8 +510,6 @@
                   "claim",
                   "claimRaw",
                   "openBlockerLabels",
-                  "labels",
-                  "labelsTruncated",
                   "closedBlockers"
                 ],
                 "additionalProperties": false
