@@ -178,3 +178,42 @@ The board sat at `699/5000` remaining when this measurement began and was driven
 to `0` completing the inventory — the measurement consumed the same budget the
 problem consumes. Anyone re-running this table should expect to spend ~330
 points, and should check `gh api rate_limit` first.
+
+---
+
+## Addendum, 2026-08-12 (GH-1786) — the `list` row above is stale
+
+Re-measured the same way (`RALPH_GQL_COST=1`, live board) one day later, while
+collapsing the cockpit's three column scans into one:
+
+| Command | GraphQL calls | **Points** | Wall |
+|---|---|---|---|
+| `list --state "In Progress" --json` | **1** | **23** | ~2 s |
+| `list --json` (whole board) | **1** | **23** | ~2 s |
+
+**GH-1785 (#1794) landed between the two measurements** and repointed `list` at
+`listOwnOpenItems` — one bounded `repository.issues(first: 100)` page, because
+this repo has ~47 OPEN own-repo issues, not the 1344 all-time project items the
+`listItemsFull` walk paginated. So the table's `list = 14 calls / 42 points` and
+#1784's `21–23 s per column scan` describe a query `list` no longer runs.
+
+What the collapse is actually worth, then: **69 → 23 points and ~6 s → ~2 s per
+cockpit poll** (3x, as designed), which at the default 30 s interval is
+**8,280 → 2,760 points/hour** against the 5,000/hr budget — the cockpit alone
+was over budget continuously, and now fits. Smaller absolute numbers than the
+issue predicted, same crossing of the line that mattered.
+
+Consequences for the routed children:
+
+- **#1803** (drop `labels` / `blockedBy` per caller) was sized on `3 pts/page ×
+  14 pages → 1 pt/page × 14`. The walk is now one call at 23 points, so the
+  per-connection arithmetic in "The concrete lever for #1800" needs re-measuring
+  against the current query before its 9x claim is assumed. The *rule* it
+  established — cost is per connection, nested `first:` is worth zero — was
+  verified by A/B and still holds.
+- **#1811** (`deliver-queue` at 100 pts/chunk) is untouched by GH-1785: it is a
+  different query, and it remains the most expensive one in the system.
+
+Measuring this cost ~46 points and required waiting out a fully exhausted
+budget. The advice above stands, doubly: check `gh api rate_limit` first, and
+wait for the reset rather than retrying.
