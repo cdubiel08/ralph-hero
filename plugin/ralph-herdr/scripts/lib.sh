@@ -369,8 +369,7 @@ spawn_work_session() {
   RALPH_HERDR_SPAWNED_AGENT=""
   RALPH_HERDR_SPAWNED_REF=""
   # Pane id + worktree checkout path, read back from the live responses
-  # (never predicted; empty in dry runs). spawn_issue_fleet splits sibling
-  # panes inside exactly this workspace — same read-back rule as the name.
+  # (never predicted; empty in dry runs).
   RALPH_HERDR_SPAWNED_PANE=""
   RALPH_HERDR_SPAWNED_WORKTREE=""
   export RALPH_HERDR_SPAWNED_AGENT RALPH_HERDR_SPAWNED_REF
@@ -502,9 +501,8 @@ spawn_work_session() {
   # was swallowed (fail-open). Both are the lost race rc=2 exists for; never
   # improvise a --N sibling here — that would put TWO /ralph:work sessions on
   # one issue, the very thing the pre-check (and the board's claim protocol)
-  # refuse. Shared-claim sibling fleets exist (spawn_issue_fleet), and they
-  # JOIN a claim deliberately, not by collision; the --N generation suffix
-  # belongs to that plane (ralph_agent_name_collide). Liveness is confirmed by a
+  # refuse — and since GH-1774 there is no shared-claim plane to defer to
+  # either: sibling fleets are gone. Liveness is confirmed by a
   # read, never inferred from error prose; every other start failure dies at
   # once, unchanged.
   if ! agent_start_when_ready "$agent" "$pane"; then

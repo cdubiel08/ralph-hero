@@ -35,7 +35,7 @@ Run it first, always. Then:
 
 - **Everything ok** — say so; nothing else to do. Point at the cockpit
   actions (herdr's action menu in the repo workspace): work-next, work-fleet,
-  work-issue-fleet (shared-claim sibling fleet), attend, answer (the Human
+  attend, answer (the Human
   Needed exit, comment-first), cockpit (the board TUI over a degradation
   ladder), dashboard, deliver-pass, tend-pass, doctor, reconcile. Clicked
   issue/PR URLs route through the plugin's link handlers (focus the live

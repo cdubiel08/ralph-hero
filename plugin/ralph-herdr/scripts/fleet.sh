@@ -16,7 +16,7 @@
 #
 #   run_id = UTC compact timestamp + 4 hex (20260811T031500Z-a3f2). The
 #   "current run" is $RALPH_HERDR_RUN_ID — minted once by the entrypoint
-#   (work-fleet.sh / work-issue-fleet.sh) and exported; the watcher never
+#   (work-fleet.sh) and exported; the watcher never
 #   needs it (it scans runs/*/fleet.json).
 #
 # ARMING (refill) — STAYS OPT-IN: the claim-TTL probe (design §3.1/§5) ran
@@ -54,7 +54,7 @@
 #   unknown ev values by construction, so this is additive).
 #
 # Requires naming.sh + ledger.sh sourced first (lib.sh and watch-event.sh
-# both do); spawn_issue_fleet additionally needs lib.sh (spawn_work_session,
+# both do; the removed spawn_issue_fleet needed lib.sh for
 # agent_start_when_ready) and probes for it. All JSON through jq; writes are
 # tmp+mv (atomic rename); bash 3.2 compatible. No top-level side effects,
 # no set/shopt (callers own their shell options).
@@ -63,10 +63,6 @@
 #   RALPH_HERDR_RUN_ID          the current run (minted via ralph_run_id)
 #   RALPH_HERDR_REFILL_TTL_MIN  arming TTL, minutes (default 120)
 #   RALPH_HERDR_REFILL_BUDGET   max total spawns per run (default 8)
-#   RALPH_HERDR_JOIN_WAIT_SEC   how long spawn_issue_fleet waits for the
-#                               issue to reach In Progress before joining
-#                               siblings to the claim (default 180; 0 = one
-#                               immediate check)
 #   RALPH_HERDR_REPLY_TO        FleetBrief reply_to agent name (default
 #                               s0-watch — the watcher is the one durable
 #                               herdr-agent surface; cockpit panes are not
