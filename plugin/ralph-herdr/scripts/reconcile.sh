@@ -26,12 +26,23 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The Herdr boundary (GH-1774): strict transport + session/repository scoping.
+# Sourced here rather than via lib.sh because lib.sh discovers a board CLI
+# relative to a workspace cwd these hooks do not have — but the boundary itself
+# has no such dependency, so both hooks get the same validation the cockpit has.
+# shellcheck source=sanitize.sh
+. "$SCRIPT_DIR/sanitize.sh"
+# shellcheck source=transport.sh
+. "$SCRIPT_DIR/transport.sh"
 # shellcheck source=naming.sh
 . "$SCRIPT_DIR/naming.sh"
 # shellcheck source=ledger.sh
 . "$SCRIPT_DIR/ledger.sh"
 # shellcheck source=tokens.sh
 . "$SCRIPT_DIR/tokens.sh"
+# scope.sh after ledger.sh: repo scope reuses _ralph_ledger_scope.
+# shellcheck source=scope.sh
+. "$SCRIPT_DIR/scope.sh"
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
 
@@ -43,21 +54,22 @@ log() { echo "$(date -u +%FT%TZ) reconcile: $*"; }
 # Ledgers nest as <root>/<owner>/<repo>/ledger.jsonl (see ledger.sh).
 ledger_root() { printf '%s\n' "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"; }
 
-# Live ralph agents as {name, status, pane} JSON lines — mirrors lib.sh's
-# ralph_agents_json (change them together; lib.sh is not sourceable here
-# because it discovers a board CLI relative to a workspace cwd this hook does
-# not have). A FAILED read aborts the whole pass: an empty answer from a sick
-# server must never mark every agent lost.
-if ! raw=$("$HERDR" agent list 2>&1); then
-  log "herdr agent list failed — not reconciling (${raw:0:120})"
+# Live ralph agents, each tagged with the repository its checkout resolves to.
+# This pass walks EVERY ledger under the ledger root, so it is the one caller
+# that legitimately spans repositories — and therefore the one that must never
+# compare a name from repository A against a ledger belonging to repository B.
+# Two repositories in one Herdr session both produce `w42-fix`; matching on the
+# name alone would let A's live worker keep B's dead record open, and B's
+# absence mark A's worker lost.
+#
+# A FAILED read aborts the whole pass: an empty answer from a sick server must
+# never mark every agent lost.
+if ! snapshot=$(ralph_herdr_snapshot 2>&1); then
+  log "herdr snapshot failed — not reconciling (${snapshot:0:120})"
   exit 0
 fi
-live_json=$(jq -c '
-  .result.agents[]?
-  | select(.name != null)
-  | select(.name | test("^gh-[0-9]+$|^ralph-(deliver|tend)$|^[a-z][0-9]+-[a-z].*$"))
-  | {name: .name, status: .agent_status, pane: .pane_id}' <<<"$raw" 2>/dev/null) || live_json=""
-live_names=$(jq -r '.name' <<<"$live_json" 2>/dev/null | tr '\n' ' ') || live_names=""
+live_json=$(ralph_herd_by_scope "$snapshot" 2>/dev/null) || live_json=""
+
 
 ts=$(date -u +%FT%TZ)
 open_all="" # names open in ANY ledger (dedup channel for phase B)
@@ -76,6 +88,7 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
   [ -f "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
   ralph_ledger_lock "$f"
+  live_names=$(ralph_names_for_ledger "$live_json" "$f")
   candidates=""
   while IFS= read -r ref; do
     [ -n "$ref" ] || continue
@@ -89,8 +102,9 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
     candidates="$candidates $ref"
   done < <(ralph_ledger_open_agents || true)
   if [ -n "$candidates" ]; then
-    if fresh_raw=$("$HERDR" agent list 2>&1); then
-      fresh_names=$(jq -r '.result.agents[]? | select(.name != null) | .name' <<<"$fresh_raw" 2>/dev/null | tr '\n' ' ') || fresh_names=""
+    if fresh_snapshot=$(ralph_herdr_snapshot 2>&1); then
+      fresh_names=$(ralph_names_for_ledger \
+        "$(ralph_herd_by_scope "$fresh_snapshot" 2>/dev/null)" "$f") || fresh_names=""
       for ref in $candidates; do
         name=${ref%%#*}
         case " $fresh_names " in
@@ -106,7 +120,7 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
         log "exit $ref (reason lost) [$f]"
       done
     else
-      log "fresh agent list failed — leaving$candidates open for the next reconcile [$f]"
+      log "fresh herd re-probe failed — leaving$candidates open for the next reconcile [$f]"
       for ref in $candidates; do
         open_all="$open_all ${ref%%#*}"
       done
@@ -128,8 +142,11 @@ while IFS= read -r a; do
     log "skip $name (legacy singleton, no ledger identity)"
     continue
   fi
-  cwd=$("$HERDR" pane get "$pane" 2>/dev/null |
-    jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty' 2>/dev/null) || cwd=""
+  # The checkout came out of the snapshot join, which already preferred
+  # server-recorded worktree provenance over a runtime cwd. Re-asking with a
+  # per-agent `pane get` would be both weaker (a bare cwd, no provenance) and a
+  # remote call per agent in a loop over the whole herd.
+  cwd=$(jq -r '.checkout // empty' <<<"$a" 2>/dev/null) || cwd=""
   repo_root=""
   if [ -n "$cwd" ]; then
     repo_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || repo_root="$cwd"
@@ -236,6 +253,10 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
   [ -f "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
   ralph_ledger_lock "$f"
+  # Re-scoped per ledger: phase A's loop variable belongs to phase A's
+  # iteration, and reusing it here would hand this repository's orphan pass
+  # whichever repository happened to be last in that earlier loop.
+  live_names=$(ralph_names_for_ledger "$live_json" "$f")
   open=$(ralph_ledger_open_agents) || open=""
   deads=""
   for ref in $open; do

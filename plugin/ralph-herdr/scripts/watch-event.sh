@@ -36,12 +36,23 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The Herdr boundary (GH-1774): strict transport + session/repository scoping.
+# Sourced here rather than via lib.sh because lib.sh discovers a board CLI
+# relative to a workspace cwd these hooks do not have — but the boundary itself
+# has no such dependency, so both hooks get the same validation the cockpit has.
+# shellcheck source=sanitize.sh
+. "$SCRIPT_DIR/sanitize.sh"
+# shellcheck source=transport.sh
+. "$SCRIPT_DIR/transport.sh"
 # shellcheck source=naming.sh
 . "$SCRIPT_DIR/naming.sh"
 # shellcheck source=ledger.sh
 . "$SCRIPT_DIR/ledger.sh"
 # shellcheck source=tokens.sh
 . "$SCRIPT_DIR/tokens.sh"
+# scope.sh after ledger.sh: repo scope reuses _ralph_ledger_scope.
+# shellcheck source=scope.sh
+. "$SCRIPT_DIR/scope.sh"
 # shellcheck source=fleet.sh
 . "$SCRIPT_DIR/fleet.sh"
 
@@ -84,12 +95,22 @@ ledger_for_agent() {
   return 1
 }
 
-# live_names — space-separated names of ALL live herdr agents (the orphan
-# pass only needs membership). A failed read yields the empty set: adoption
-# then conservatively falls back to orphaned, and the next reconcile heals.
+# live_names — space-separated names of the live herdr agents belonging to the
+# repository this event is about (the orphan pass only needs membership).
+#
+# Scoped, because adoption re-parents a ledger record: an unscoped read would
+# let repository A's live `w42-fix` be adopted as the new parent of repository
+# B's orphan, wiring one repository's lineage into another's. The event's own
+# repository is the boundary — which is why this takes a root rather than
+# reading whatever the process happens to be pointed at.
+#
+# A failed read yields the empty set: adoption then conservatively falls back
+# to orphaned, and the next reconcile heals it. That direction is deliberate
+# here and the opposite of the refill path's — an unnecessary orphan record is
+# repairable, an unnecessary adoption rewrites lineage.
 live_names() {
-  "$HERDR" agent list 2>/dev/null |
-    jq -r '.result.agents[]? | select(.name != null) | .name' 2>/dev/null |
+  ralph_scoped_agents_now "${1:-$PWD}" 2>/dev/null |
+    jq -r 'select(.name != null) | .name' 2>/dev/null |
     tr '\n' ' ' || true
 }
 
@@ -177,7 +198,7 @@ refill_one() (
   # for the orphan pass, and exactly backwards here).
   k=$(jq -r '.k' <<<"$state")
   agents=$(ralph_agents_json 2>/dev/null) || {
-    log "refill $run_id: agent list read failed — leaving armed, not spawning into an unknown herd"
+    log "refill $run_id: herd read failed — leaving armed, not spawning into an unknown herd"
     exit 0
   }
   live_w=$(jq -s 'map(select(.name | test("^w[0-9]+-|^gh-[0-9]+$"))) | length' <<<"$agents")
@@ -386,14 +407,23 @@ handle_status() {
 
 # ── pane.exited / pane.closed ────────────────────────────────────────────────
 handle_gone() {
-  local reason="$1" pane live f refs ref ts w_exited
+  local reason="$1" pane live live_json snapshot f refs ref ts w_exited
   pane=$(pfield '.pane_id // .data.pane_id // empty')
   [ -n "$pane" ] || exit 0
-  live=$(live_names)
+  # ONE snapshot for the whole sweep, scoped per ledger below. A pane death is
+  # a single moment; asking the server again for every ledger would let the
+  # herd shift underneath one event's own handling.
+  snapshot=$(ralph_herdr_snapshot 2>/dev/null) || snapshot=""
+  live_json=""
+  [ -n "$snapshot" ] && live_json=$(ralph_herd_by_scope "$snapshot" 2>/dev/null)
   ts=$(date -u +%FT%TZ)
   for f in "$(ledger_root)"/*/*/ledger.jsonl; do
     [ -f "$f" ] || continue
     export RALPH_HERDR_LEDGER="$f"
+    # Adoption re-parents records, so the candidate parents must come from THIS
+    # ledger's repository. An empty set (unreadable herd, foreign repository)
+    # conservatively orphans rather than adopting — see live_names.
+    live=$(ralph_names_for_ledger "$live_json" "$f")
     # Locked read-decide-append: pane.exited and pane.closed both fire for
     # one pane death and the hooks run concurrently — whichever takes the
     # mutex second re-reads a ledger where the ref is already closed (and

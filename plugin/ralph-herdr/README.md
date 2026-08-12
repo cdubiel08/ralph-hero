@@ -71,7 +71,6 @@ herdr's shapes map onto ralph's without translation:
 |---|---|---|
 | `work-next` | split (down) | `board next` → if empty, says so and exits. Otherwise: fetch, `herdr worktree create --branch feature/GH-N --base origin/main` (`--base` only applies to brand-new branches — an existing `feature/GH-N` branch is silently resumed as-is, possibly behind origin/main, and the session rebases; `worktree open` is the fallback when the *checkout* already exists), start agent `w<N>-<slug>` (grammar B, slug from the issue title — see [Agent names](#agent-names-grammar-b)) in the new workspace's pane, prompt `/ralph:work N`, then the cockpit pane becomes the notification watcher. An issue already owned by a live session (any `w<N>-*`, or legacy `gh-N`) is a skip, not an error: it prints "SKIP <name> already live" and exits 0 with no worktree touched (wrapper authors: exit 0 does not always mean a session was spawned) |
 | `work-fleet` | split (down) | reads the frontier once (`board frontier --json` when the verb exists, else the ranked `board next` queue — already dependency-aware) and spawns up to `RALPH_HERDR_FLEET` (default 2, hard cap 4) work sessions — same spawn path as `work-next`, per issue, plus a C3 FleetBrief per spawn under the run's `briefs/` dir. Already-live agents are skipped, one failed spawn doesn't strand the rest; the pane then watches all spawned agents. With `--refill` / `RALPH_HERDR_REFILL=1` it also ARMS the run for watcher refill — see [Fleet refill](#fleet-refill-opt-in-the-claim-ttl-probe-says-no-go-on-default-arming) |
-| `work-issue-fleet` | split (down) | **shared-claim sibling fleet**: `RALPH_HERDR_SIBLINGS` (default 2, cap 4) sessions on ONE issue, one worktree, one branch. Sibling 1 is a normal `work-next`-style spawn; siblings 2..K are pane splits in the same workspace (names `w<N>-<slug>--2`…), each prompted `/ralph:work N` and briefed with the shared branch. The claim join runs AFTER the spawns: `board claim join` is for In Progress items only, so the script waits (bounded, `RALPH_HERDR_JOIN_WAIT_SEC`) for sibling 1's session to claim, then joins each sibling via `board claim join N --holder <name>` — a timeout or refusal warns and prints the manual join, never blocks the spawn. The pane prompts for the issue number (or set `RALPH_HERDR_ISSUE`) |
 | `attend` | none | no pane, no loop: finds the highest-priority `blocked` ralph agent (issue sessions — `gh-N` / w-lane — before every other lane; within a group, oldest blocked-since first from the ledger's state-record timestamps, agent-list order when the ledger can't say), `herdr agent focus` jumps you to it, and the notification **carries the question**: the pane's last non-empty tail lines (`agent read --source recent-unwrapped`), flattened to one ≤240-char line, with `#N` in the title when the name resolves to an issue. Nothing blocked → "herd calm". Safe to bind to a key |
 | `answer` | popup | walk Human Needed and answer ONE item, **comment-first**: `board list --state "Human Needed" --json` → pick → the issue's latest comments (bounded `gh issue view --comments` tail) → type the answer mail(1)-style (end with a lone `.` line) → `board answer N -m` posts the **Answer** issue comment BEFORE the Human Needed → In Progress move (board.ts owns that ordering — if the pane or herdr vanishes mid-answer, the decision is already on the record). Only then, if a live session owns N, a `herdr agent prompt … --wait` nudge — delivery reported honestly, never assumed. A board CLI predating the verb falls back to `gh issue comment` + `board move`, same ordering |
 | `link-open` | none* | the `[[link_handlers]]` target — click a `github.com/<owner>/<repo>/issues\|pull/N` URL in any pane: in-scope URL with a live session for N → `agent focus`; in-scope with no session → the `link-offer` popup (board state + `[s]` spawn via the same sanctioned `spawn_work_session` path / `[o]` browser / `[q]` close); out-of-scope or unresolvable scope → OS browser. The manifest pattern is generic on purpose; the script owns the scope judgment. *Also listed as a plain action; invoked without a clicked URL it says so in the plugin log and exits |
@@ -121,9 +120,8 @@ of each script:
 | `RALPH_HERDR_REFILL` | unset | `1` → `work-fleet` arms watcher refill for the run (same as `--refill`); **stays opt-in — the 2026-08-11 claim-TTL probe returned NO-GO for default arming** |
 | `RALPH_HERDR_REFILL_TTL_MIN` | `120` | refill arming TTL, minutes — checked at read time, a lapsed arming reads as disarmed |
 | `RALPH_HERDR_REFILL_BUDGET` | `8` | max total spawns per armed run (attempts count, initial spawns included) |
-| `RALPH_HERDR_SIBLINGS` | `2` | `work-issue-fleet` fleet size K; 1..4 |
-| `RALPH_HERDR_ISSUE` | unset | issue number for `work-issue-fleet` (skips the pane's interactive prompt) |
-| `RALPH_HERDR_JOIN_WAIT_SEC` | `180` | how long `work-issue-fleet` waits for the issue to reach In Progress (sibling 1's session claiming it) before joining siblings to the shared claim; `0` = one immediate check. A timeout warns with the manual `board claim join` commands |
+| `RALPH_HERDR_TIMEOUT_SEC` | `30` | per-call wall-clock bound on every herdr invocation; a timeout is reported as "may or may not have been applied", never as a failure |
+| `RALPH_HERDR_MIN_PROTOCOL` | `19` | minimum herdr protocol accepted before any dependent operation runs |
 | `RALPH_HERDR_REPLY_TO` | `s0-watch` | FleetBrief `reply_to` agent name — the watcher is the one durable herdr-agent surface (cockpit panes are not agents) |
 | `RALPH_HERDR_START_TRIES` | `15` | retries (1s apart) for `agent start` on a just-created pane still sourcing rc files (`agent_pane_busy` only, just-created panes only) |
 | `RALPH_HERDR_REPO` | `$PWD` | repo the scripts operate on; the default (the pane's cwd) is almost always right |
@@ -339,28 +337,35 @@ honestly.
                        write reports in Phase 6, and nothing reads this yet
 ```
 
-## Sibling fleets (shared claims)
+## Sibling fleets (shared claims) — removed
 
-`work-issue-fleet` puts several sessions on ONE issue — Claim v2 holds up to
-8 holders, and this action is the cockpit's explicit-join surface (capped at
-4 siblings; attended, same bar as `work-fleet`). One worktree, one shared
-`feature/GH-N` branch: sibling 1 spawns normally and claims inside its
-session; siblings 2..K split panes in the same workspace and get `--2`…`--K`
-generation names. The claim join is DEFERRED to the moment it can succeed:
-`board claim join` accepts In Progress items only (no `--force` anywhere),
-and a fresh fleet's issue stays Backlog until sibling 1's session boots and
-claims it — so the script waits (bounded, `RALPH_HERDR_JOIN_WAIT_SEC`,
-default 180 s) for In Progress, then joins each sibling via `board claim
-join N --holder <name>`. A timeout or refusal warns and prints the manual
-join command per sibling — it never blocks the spawn, and the sessions keep
-working meanwhile (they share the machine's claim-holder identity).
+`work-issue-fleet` put several `/ralph:work` sessions on ONE issue: one
+worktree, one shared `feature/GH-N` branch, joined to a multi-holder Claim v2.
+It was removed in GH-1774.
 
-In the ledger, siblings are **peers, not children**: `parent` stays empty and
-depth stays 0 (the depth cap exists for runaway trees, and a flat fleet is
-not one); `root` points at the first sibling's ref so sidebar views that
-group by root show the fleet as one cluster. Coordinating siblings on one
-branch is the sessions' problem, honestly: the skills have not yet learned
-sibling semantics, so expect to attend these fleets closely.
+The claim protocol was never the problem. The worktree was. Siblings shared the
+index, the checked-out branch, every uncommitted file, and each other's
+cleanup — so they staged each other's half-finished edits into one commit,
+checked out over each other's work, and produced branches none of them
+intended. Claim bookkeeping coordinates access to the *issue*; the damage
+happened to the *tree*.
+
+There is no version of this that gets fixed, because making it safe means
+giving each sibling its own checkout — and a sibling with its own checkout is
+just a normal worker on a normal issue. So that is the replacement:
+
+```bash
+board create --title "…" --body "…"   # decompose into real issues
+board dep NNN --needs MMM             # record the edges
+# then work-fleet: one worker per issue, own worktree, own claim
+```
+
+That yields more real parallelism than the sibling fleet ever safely did, and
+the board can see it.
+
+`board claim join` / `claim leave` remain on the board CLI so existing shared
+claims can be read and cleaned. Nothing creates them any more; a legacy shared
+claim is surfaced by doctor, not extended.
 
 ## Honest limits
 

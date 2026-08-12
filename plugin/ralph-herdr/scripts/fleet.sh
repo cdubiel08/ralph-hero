@@ -366,206 +366,36 @@ ralph_fleet_frontier_json() {
   fi
   "$BOARD" next --json
 }
-
-# _ralph_fleet_wait_in_progress ISSUE — bounded poll for ISSUE reaching In
-# Progress. `board claim join` is for In Progress items only (no --force, by
-# design), and a fresh fleet's issue is still Backlog until sibling 1's
-# session boots and /ralph:work claims it — so the join pass waits here
-# first. Polls `board claim show --json` every 5s until
-# RALPH_HERDR_JOIN_WAIT_SEC (default 180; 0 = one immediate check) elapses.
-# rc 0 once In Progress; rc 1 on timeout or a bad knob (callers warn with
-# the manual join commands, never die). Requires $BOARD (lib.sh).
-_ralph_fleet_wait_in_progress() {
-  local issue="$1" wait="${RALPH_HERDR_JOIN_WAIT_SEC:-180}" deadline st
-  case "$wait" in
-    '' | *[!0-9]* | 0[0-9]*)
-      echo "_ralph_fleet_wait_in_progress: RALPH_HERDR_JOIN_WAIT_SEC must be a non-negative integer, no leading zeros (got '$wait')" >&2
-      return 1
-      ;;
-  esac
-  deadline=$(($(date +%s) + wait))
-  while :; do
-    st=$("$BOARD" claim show "$issue" --json 2>/dev/null |
-      jq -r '.state // empty' 2>/dev/null) || st=""
-    [ "$st" = "In Progress" ] && return 0
-    [ "$(date +%s)" -ge "$deadline" ] && return 1
-    sleep 5
-  done
-}
-
-# spawn_issue_fleet ISSUE K [QUEUE_JSON] — a shared-claim fleet: K sibling
-# sessions on ONE issue, ONE worktree, ONE branch. Claim v2 (contracts.ts)
-# holds up to 8 holders; this is the cockpit's explicit-join surface.
+# spawn_issue_fleet — REMOVED (GH-1774). Hard refusal with a migration path.
 #
-#   sibling 1    the normal spawn path (spawn_work_session): worktree
-#                resolved/created ONCE, normal grammar-B name, /ralph:work
-#                claims inside the session — unchanged.
-#   siblings 2..K  additional panes SPLIT inside that worktree workspace
-#                (no --focus), named via ralph_agent_name_collide (--2..--K —
-#                the generation suffix retained in Phase 1 for exactly this),
-#                each briefed with the SHARED branch, each prompted
-#                "/ralph:work ISSUE".
-#   join pass    AFTER the spawns: `board claim join` refuses anything not
-#                In Progress, and at spawn time the issue is still Backlog —
-#                sibling 1's session claims it only once its pane boots. So
-#                the fleet waits (bounded — _ralph_fleet_wait_in_progress)
-#                for that claim, then joins every started sibling via
-#                `board claim join ISSUE --holder <name>`. Warn-not-die on
-#                timeout or refusal: an unjoined sibling still works (every
-#                session on this machine shares the RALPH_CLAIM_HOLDER
-#                identity, so its own claim is a legal refresh) — it just
-#                isn't visible as a fleet holder until joined by hand.
+# This was a shared-CHECKOUT fleet: K sibling /ralph:work sessions on one
+# issue, one worktree, one branch, joined to a multi-holder Claim v2. The claim
+# protocol was the safe part. The filesystem was not.
 #
-# Ledger records: siblings are PEERS, not children — parent stays empty and
-# depth stays 0 (the depth cap is about runaway trees, and a flat fleet is
-# not one); root is patched to the FIRST sibling's ref so sidebar views that
-# group by root show the fleet as one cluster.
+# Siblings shared a working tree, which means they shared the index, the
+# checked-out branch, every uncommitted file, and each other's cleanup. Two
+# agents editing one worktree race on `git add`, stage each other's half-
+# finished edits into one commit, check out over each other's work, and
+# reconcile into a branch no one of them intended. No amount of claim-holder
+# bookkeeping makes concurrent writes to one checkout safe, because the claim
+# is coordinating access to the ISSUE while the damage happens to the TREE.
 #
-# Requires lib.sh sourced (spawn_work_session et al). Honors
-# RALPH_HERDR_DRY_RUN. On rc 0, RALPH_HERDR_FLEET_AGENTS holds every started
-# agent name (space-separated) for the caller's watcher exec. rc 2 when a
-# session already owns ISSUE (issue fleets start fresh — join a live session
-# by hand via `board claim join`); rc 1 when the FIRST sibling fails (no
-# workspace to split); sibling 2..K failures warn and continue.
+# It is removed rather than fixed because there is nothing here to fix: making
+# it safe means giving each sibling its own checkout, and a sibling with its
+# own checkout is just a separate worker on a separate issue — which the normal
+# spawn path already does, with the board's one-holder claim protecting it.
+#
+# The replacement is decomposition: split the work into real board issues with
+# dependency edges, and let work-fleet spawn one worker per issue in its own
+# worktree. That is more parallelism than this ever safely delivered, and the
+# board can actually see it.
+#
+# Readers and doctor checks may still RECOGNIZE existing Claim v2 values in
+# order to report and clean state that was already written. Nothing creates
+# them any more.
 spawn_issue_fleet() {
-  local issue="${1-}" k="${2-}" queue_json="${3-}"
-  local rc=0 first_agent first_ref first_pane wt branch g name pane out ref
-  local ts record ledger live siblings
-  RALPH_HERDR_FLEET_AGENTS=""
-  export RALPH_HERDR_FLEET_AGENTS
-  command -v spawn_work_session >/dev/null 2>&1 || {
-    echo "spawn_issue_fleet: lib.sh is not sourced (spawn_work_session missing)" >&2
-    return 1
-  }
-  case "$issue" in '' | *[!0-9]*) echo "spawn_issue_fleet: bad issue '$issue'" >&2; return 1 ;; esac
-  case "$k" in [1-4]) : ;; *) echo "spawn_issue_fleet: k must be 1..4 (got '$k') — this is an attended tool" >&2; return 1 ;; esac
-  branch="feature/GH-$issue"
-
-  echo "── GH-$issue sibling 1/$k ──"
-  spawn_work_session "$issue" "$queue_json" || rc=$?
-  case "$rc" in
-    0) : ;;
-    2)
-      echo "spawn_issue_fleet: a session already owns GH-$issue — issue fleets start fresh; add siblings to a live session by hand (board claim join)" >&2
-      return 2
-      ;;
-    *) return 1 ;;
-  esac
-  first_agent="$RALPH_HERDR_SPAWNED_AGENT"
-  first_ref="$RALPH_HERDR_SPAWNED_REF"
-  first_pane="${RALPH_HERDR_SPAWNED_PANE:-}"
-  wt="${RALPH_HERDR_SPAWNED_WORKTREE:-}"
-  RALPH_HERDR_FLEET_AGENTS="$first_agent"
-  ralph_brief_write "$first_ref" "$issue" "$branch" >/dev/null ||
-    echo "spawn_issue_fleet: brief write failed for $first_ref — continuing (briefs are observations)" >&2
-
-  if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
-    for g in $(seq 2 "$k"); do
-      name=$(ralph_agent_name_collide "$first_agent" "$g") || continue
-      echo "DRY RUN — sibling $g/$k would: pane split (no focus) in the GH-$issue worktree,"
-      echo "  agent start $name, brief (shared branch $branch), prompt \"/ralph:work $issue\""
-      RALPH_HERDR_FLEET_AGENTS="$RALPH_HERDR_FLEET_AGENTS $name"
-    done
-    if [ "$k" -gt 1 ]; then
-      echo "DRY RUN — then: wait (bounded, ${RALPH_HERDR_JOIN_WAIT_SEC:-180}s) for GH-$issue to reach In Progress"
-      echo "  (sibling 1's session claims it), then board claim join $issue --holder <each sibling>"
-    fi
-    return 0
-  fi
-  if [ -z "$first_pane" ] || [ -z "$wt" ]; then
-    echo "spawn_issue_fleet: no pane/worktree captured from sibling 1 — cannot split siblings" >&2
-    return 1
-  fi
-
-  ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
-  for g in $(seq 2 "$k"); do
-    echo "── GH-$issue sibling $g/$k ──"
-    name=$(ralph_agent_name_collide "$first_agent" "$g") || {
-      echo "sibling $g: no collide name derivable from $first_agent — skipping" >&2
-      continue
-    }
-    live=$("$HERDR" agent list | jq -r --arg n "$name" \
-      '[.result.agents[]? | select(.name == $n) | .name] | first // empty' 2>/dev/null || true)
-    if [ -n "$live" ]; then
-      echo "SKIP $name already live"
-      continue
-    fi
-    # Split INSIDE the worktree workspace: pane id anchors the split, --cwd
-    # pins the shell to the shared checkout. No --focus — scripted spawns
-    # never steal focus (split's default is unfocused; there is no
-    # --no-focus flag on this verb).
-    out=$("$HERDR" pane split "$first_pane" --direction down --cwd "$wt") || {
-      echo "sibling $g: pane split failed — skipping" >&2
-      continue
-    }
-    pane=$(jq -r '.result.pane.pane_id // .result.pane_id // empty' <<<"$out")
-    if [ -z "$pane" ]; then
-      echo "sibling $g: no pane id in split response — skipping" >&2
-      continue
-    fi
-    agent_start_when_ready "$name" "$pane" || {
-      echo "sibling $g: agent start $name failed — the split pane $pane is left for inspection" >&2
-      continue
-    }
-    ts=$(date -u +%FT%TZ)
-    if ref=$(ralph_agent_ref "$name" 2>/dev/null); then
-      # Peer record: parent empty, depth 0, root = first sibling's ref (the
-      # one patch on the shared C7 builder — root groups the fleet in
-      # sidebar views; a parent edge would lie about authority and feed the
-      # orphan pass a cascade that must not exist for peers).
-      record=$(_ralph_spawn_record "$ref" "$issue" "" "$branch" "" "$pane" "$ts") || record=""
-      [ -n "$record" ] && record=$(jq -c --arg root "$first_ref" '.tokens.root = $root' <<<"$record") || record=""
-      if [ -n "$record" ] && [ -n "$ledger" ]; then
-        RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" ||
-          echo "sibling $g: spawn ledger append failed for $ref — reconcile will discover it" >&2
-      fi
-      if [ -n "$record" ]; then
-        set --
-        while IFS= read -r kv; do
-          [ -n "$kv" ] || continue
-          set -- "$@" "$kv"
-        done < <(jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' <<<"$record" 2>/dev/null || true)
-        [ "$#" -ge 1 ] && ralph_tokens_push "$pane" "$@"
-      fi
-      ralph_brief_write "$ref" "$issue" "$branch" >/dev/null ||
-        echo "sibling $g: brief write failed for $ref — continuing" >&2
-    else
-      echo "sibling $g: no durable ref derivable for $name — spawning unledgered" >&2
-    fi
-    "$HERDR" agent prompt "$name" "/ralph:work $issue" || {
-      echo "sibling $g: prompt delivery failed — $name is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $name \"/ralph:work $issue\"" >&2
-    }
-    RALPH_HERDR_FLEET_AGENTS="$RALPH_HERDR_FLEET_AGENTS $name"
-    echo "sibling $g: $name spawned for GH-$issue on $branch (pane $pane)"
-  done
-
-  # Explicit claim join — the cockpit surface for shared claims, run at the
-  # first moment it CAN succeed: `board claim join` is for In Progress items
-  # only, and the issue stays Backlog until sibling 1's session claims it.
-  # Wait (bounded) for that claim, then register every started sibling as a
-  # holder. Warn-not-die on timeout or refusal — the siblings keep working
-  # either way (see the header); the warning names the manual join.
-  siblings=""
-  for name in $RALPH_HERDR_FLEET_AGENTS; do
-    [ "$name" = "$first_agent" ] || siblings="$siblings $name"
-  done
-  if [ -n "$siblings" ]; then
-    echo "── claim join pass ──"
-    if _ralph_fleet_wait_in_progress "$issue"; then
-      for name in $siblings; do
-        if out=$("$BOARD" claim join "$issue" --holder "$name" 2>&1); then
-          echo "joined: $name now holds GH-$issue"
-        else
-          echo "claim join refused for $name ($(printf '%s' "$out" | head -1)) — not registered as a claim holder; join by hand: board claim join $issue --holder $name" >&2
-        fi
-      done
-    else
-      echo "GH-$issue never reached In Progress within ${RALPH_HERDR_JOIN_WAIT_SEC:-180}s — siblings are NOT registered as claim holders." >&2
-      echo "Once sibling 1's session claims it, join by hand:" >&2
-      for name in $siblings; do
-        echo "  board claim join $issue --holder $name" >&2
-      done
-    fi
-  fi
-  return 0
+  local issue="${1:-<issue>}"
+  echo "spawn_issue_fleet: removed in GH-1774 — shared-checkout fleets put several agents in ONE git worktree, where they race on the index, the branch, and each other's uncommitted files. The claim protocol never protected the tree." >&2
+  echo "Instead: decompose GH-$issue into separate board issues (board create + board dep), then run work-fleet — one worker per issue, each in its own worktree, each holding its own claim." >&2
+  return 1
 }

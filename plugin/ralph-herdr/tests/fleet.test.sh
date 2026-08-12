@@ -63,6 +63,11 @@ mkdir -p "$WT"
 export RALPH_HERDR_REPO="$REPO_DIR"
 export RALPH_HERDR_BOARD="$BIN/board"
 unset ANTHROPIC_API_KEY 2>/dev/null || true
+# Herd fixtures: a scoped read resolves agent -> workspace -> worktree
+# provenance, so the snapshot must carry the join (see herd-fixture.sh).
+# shellcheck source=herd-fixture.sh
+. "$SCRIPT_DIR/herd-fixture.sh"
+
 # shellcheck source=../scripts/lib.sh
 . "$SCRIPTS/lib.sh"
 set +e
@@ -396,7 +401,7 @@ EOF
 # Default fixtures for the refill rows: the dead fleet's pane freed capacity,
 # the frontier offers GH-301, worktrees open on p31 in the fixture checkout.
 refill_fixtures() {
-  printf '{"result":{"agents":[]}}\n' >"$FAKE_HERDR_FIXTURES/agent-list.json"
+  herd_fixture '[]'
   printf '{"result":{"root_pane":{"pane_id":"p31"},"worktree":{"path":"%s"}}}\n' "$WT" \
     >"$FAKE_HERDR_FIXTURES/worktree-create.json"
   printf '{"frontier":[{"number":301,"title":"Add refill support"}],"blocked":[]}\n' \
@@ -447,8 +452,7 @@ is "refill A2: exactly one completion toast" "1" \
 # ── row B: blocked routes attention, NEVER capacity; done refills ────────────
 mk_row b
 refill_fixtures
-printf '{"result":{"agents":[{"name":"w100-first","agent_status":"blocked","pane_id":"p1"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[{"name":"w100-first","agent_status":"blocked","pane_id":"p1"}]'
 : >"$FAKE_HERDR_LOG"
 : >"$FAKE_BOARD_LOG"
 run_event pane.agent_status_changed \
@@ -470,8 +474,7 @@ is "refill B: budget consumed by the done-triggered refill" "6" "$(jqf "$RFF" '.
 # ── row C: at capacity → stays armed, no spawn ───────────────────────────────
 mk_row c
 refill_fixtures
-printf '{"result":{"agents":[{"name":"w100-first","agent_status":"working","pane_id":"p1"},{"name":"w200-other","agent_status":"working","pane_id":"p2"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[{"name":"w100-first","agent_status":"working","pane_id":"p1"},{"name":"w200-other","agent_status":"working","pane_id":"p2"}]'
 : >"$FAKE_HERDR_LOG"
 run_event pane.agent_status_changed \
   '{"pane_id":"p1","agent":"w100-first","agent_status":"done"}' "$ROW"
@@ -541,18 +544,25 @@ is "refill G: nothing spawned" "0" "$(log_count "$FAKE_HERDR_LOG" '^worktree cre
 # refill is the opposite of the orphan pass's empty-on-failure convention.
 mk_row h
 refill_fixtures
-printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-list.rc"
+# The herd read is the session snapshot now, so that is what has to fail.
+printf '1\n' >"$FAKE_HERDR_FIXTURES/api-snapshot.rc"
 : >"$FAKE_HERDR_LOG"
 : >"$FAKE_BOARD_LOG"
 run_event pane.exited '{"pane_id":"p1"}' "$ROW"
 is "refill H: hook exits 0" "0" "$RC"
-is "refill H: a failed agent-list read spawns NOTHING" "0" \
+is "refill H: a failed herd read spawns NOTHING" "0" \
   "$(log_count "$FAKE_HERDR_LOG" '^worktree create ')"
 is "refill H: the frontier is never even read" "0" \
   "$(log_count "$FAKE_BOARD_LOG" '^frontier --json$')"
 is "refill H: stays armed, budget untouched" "true 7" \
   "$(jq -r '"\(.armed) \(.budget_left)"' "$RFF")"
-line_has "refill H: the skip is logged honestly" "$OUT" "agent list read failed — leaving armed"
+line_has "refill H: the skip is logged honestly" "$OUT" "herd read failed — leaving armed"
+# Clear the injection: it is failure for ONE case, not the rest of the file.
+# (Before GH-1774 leaving it set was harmless, because the herd read was a
+# pipeline whose rc came from jq — the failure was swallowed and every later
+# case ran against a "healthy" server. It is detected now, so it must be
+# cleaned up explicitly.)
+rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.rc"
 rm -f "$FAKE_HERDR_FIXTURES/agent-list.rc"
 
 # ── row I: in-flight picks count toward capacity; stale ones never block ─────
@@ -560,8 +570,7 @@ mk_row i
 refill_fixtures
 # One live w-agent + one unexpired in-flight pick = k(2) — at capacity: a
 # racer's consume is visible in fleet.json long before its agent starts.
-printf '{"result":{"agents":[{"name":"w110-second","agent_status":"working","pane_id":"p2"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[{"name":"w110-second","agent_status":"working","pane_id":"p2"}]'
 jq -c --arg ts "$(date -u +%FT%TZ)" '.inflight = [{issue: 302, ts: $ts}]' \
   "$RFF" >"$RFF.t" && mv "$RFF.t" "$RFF"
 : >"$FAKE_HERDR_LOG"
@@ -578,113 +587,33 @@ is "refill I2: a stale in-flight leftover is ignored — the spawn proceeds" "1"
   "$(log_count "$FAKE_HERDR_LOG" '^worktree create ')"
 is "refill I2: budget consumed by the unblocked refill" "6" "$(jqf "$RFF" '.budget_left')"
 
-# ═══ 7. spawn_issue_fleet — shared-claim siblings on ONE issue ═══════════════
-RID4=$(ralph_run_id)
-RALPH_HERDR_LEDGER="$TMP/if/ledger.jsonl"
-RALPH_HERDR_RUN_ID="$RID4"
-IFDIR="$TMP/if/runs/$RID4"
-printf '{"result":{"agents":[]}}\n' >"$FAKE_HERDR_FIXTURES/agent-list.json"
-printf '{"result":{"root_pane":{"pane_id":"p41"},"worktree":{"path":"%s"}}}\n' "$WT" \
-  >"$FAKE_HERDR_FIXTURES/worktree-create.json"
-printf '{"result":{"pane":{"pane_id":"p42"}}}\n' >"$FAKE_HERDR_FIXTURES/pane-split.p41.json"
-QUEUE='{"next":{"number":77,"title":"Shared claim fleet"},"queue":[{"number":77,"title":"Shared claim fleet"}]}'
-
-fails "issue fleet: refuses a bad issue" spawn_issue_fleet 7x 2
-fails "issue fleet: refuses k=0" spawn_issue_fleet 77 0
-fails "issue fleet: refuses k=5 (attended cap is 4)" spawn_issue_fleet 77 5
-
+# ═══ 7. spawn_issue_fleet — REMOVED (GH-1774) ════════════════════════════════
+# Shared-CHECKOUT fleets put K agents in one git worktree, racing on the index,
+# the branch, and each other's uncommitted files. The function is kept as a
+# hard refusal rather than deleted outright so a stale caller (a pinned plugin
+# copy, a user's own script) gets a migration message instead of
+# "command not found" — and so these tests can prove it never spawns again.
 : >"$FAKE_HERDR_LOG"
 : >"$FAKE_BOARD_LOG"
-# Run in THIS shell (not a substitution subshell): the exported read-backs
-# (RALPH_HERDR_FLEET_AGENTS, RALPH_HERDR_SPAWNED_REF) are part of the contract.
 rc=0
-spawn_issue_fleet 77 3 "$QUEUE" >"$TMP/if-out" 2>&1 || rc=$?
-first_ref="$RALPH_HERDR_SPAWNED_REF"
-is "issue fleet: rc 0" "0" "$rc"
-is "issue fleet: first sibling normal name, siblings colliding names" \
-  "w77-shared-claim-fleet w77-shared-claim-fleet--2 w77-shared-claim-fleet--3" \
-  "$RALPH_HERDR_FLEET_AGENTS"
-is "issue fleet: ONE worktree for the whole fleet" "1" \
-  "$(log_count "$FAKE_HERDR_LOG" '^worktree create ')"
-is "issue fleet: siblings split inside it, anchored at the first pane, no focus" "2" \
-  "$(log_count "$FAKE_HERDR_LOG" "^pane split p41 --direction down --cwd $WT$")"
-is "issue fleet: every sibling started" "3" "$(log_count "$FAKE_HERDR_LOG" '^agent start w77-')"
-is "issue fleet: every sibling prompted with the SAME issue" "3" \
-  "$(log_count "$FAKE_HERDR_LOG" '^agent prompt w77-shared-claim-fleet.* /ralph:work 77$')"
-is "issue fleet: siblings 2..K joined to the claim explicitly" "2" \
-  "$(log_count "$FAKE_BOARD_LOG" '^claim join 77 --holder w77-shared-claim-fleet--[23]$')"
-is "issue fleet: the join pass gated on In Progress (claim show polled)" "1" \
-  "$(log_count "$FAKE_BOARD_LOG" '^claim show 77 --json$')"
-is "issue fleet: the first sibling never claim-joins (its session claims)" "0" \
-  "$(log_count "$FAKE_BOARD_LOG" '^claim join 77 --holder w77-shared-claim-fleet$')"
-is "issue fleet: first sibling's record roots at itself" "1" \
-  "$(lcount "$RALPH_HERDR_LEDGER" ".ev==\"spawn\" and .agent_ref==\"$first_ref\" and .tokens.root==\"$first_ref\"")"
-is "issue fleet: sibling records are PEERS — root=first sibling, parent empty, depth 0" "2" \
-  "$(lcount "$RALPH_HERDR_LEDGER" ".ev==\"spawn\" and (.agent_ref | test(\"^w77-shared-claim-fleet--[23]#\")) and .tokens.root==\"$first_ref\" and ((.tokens | has(\"parent\")) | not) and .tokens.depth==\"0\"")"
-is "issue fleet: sibling lineage has no parent_issue edge either" "2" \
-  "$(lcount "$RALPH_HERDR_LEDGER" "(.agent_ref | test(\"^w77-.*--[23]#\")) and ((.lineage | has(\"parent_issue\")) | not)")"
-is "issue fleet: siblings ledger the SHARED branch" "3" \
-  "$(lcount "$RALPH_HERDR_LEDGER" '.ev=="spawn" and .lineage.herdr.worktree_branch=="feature/GH-77"')"
-is "issue fleet: sibling tokens pushed onto the split pane (root)" "2" \
-  "$(log_count "$FAKE_HERDR_LOG" "^pane report-metadata p42 .*--token root=$first_ref")"
-is "issue fleet: one brief per sibling, all on the shared branch" "3 3" \
-  "$(ls "$IFDIR/briefs/"w77-*.json 2>/dev/null | wc -l | tr -d ' ') $(cat "$IFDIR/briefs/"w77-*.json | jq -rs '[.[] | select(.constraints.branch=="feature/GH-77")] | length')"
+out=$(spawn_issue_fleet 77 2 '{"next":null,"queue":[{"number":77,"title":"Shared claim fleet"}]}' 2>&1) || rc=$?
+is "issue fleet: refuses (rc 1)" "1" "$rc"
+line_has "issue fleet: the refusal names the worktree race, not the claim" "$out" "ONE git worktree"
+line_has "issue fleet: the refusal points at decomposition" "$out" "decompose GH-77"
+line_has "issue fleet: the refusal names the replacement verb" "$out" "work-fleet"
 
-# rc 2 when a session already owns the issue — fleets start fresh.
-printf '{"result":{"agents":[{"name":"w77-x","agent_status":"working","pane_id":"p9"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
-rc=0
-out=$(spawn_issue_fleet 77 2 "$QUEUE" 2>&1) || rc=$?
-is "issue fleet: a live session on the issue is rc 2 (join by hand instead)" "2" "$rc"
-line_has "issue fleet: the refusal names the hand-join path" "$out" "board claim join"
-printf '{"result":{"agents":[]}}\n' >"$FAKE_HERDR_FIXTURES/agent-list.json"
+# The whole point of the removal: no topology is created, no claim is joined.
+# Asserted against the transport logs rather than the return code, because a
+# refusal that still mutated would be the exact failure this closes.
+is "issue fleet: reaches herdr not at all" "0" \
+  "$(wc -l <"$FAKE_HERDR_LOG" | tr -d ' ')"
+is "issue fleet: never joins a shared claim" "0" \
+  "$(log_count "$FAKE_BOARD_LOG" '^claim join ')"
 
-# claim join warn-not-die: a board-side refusal (claim vanished, race lost)
-# costs a warning naming the manual join — the sibling still spawns and
-# works; it just isn't visible as a holder.
-printf '1\n' >"$FAKE_BOARD_FIXTURES/claim-join.rc"
-rc=0
-spawn_issue_fleet 78 2 '{"next":null,"queue":[{"number":78,"title":"Join later"}]}' >"$TMP/if-out" 2>&1 || rc=$?
-out=$(cat "$TMP/if-out")
-is "issue fleet: a refused claim join never kills the sibling (rc 0)" "0" "$rc"
-line_has "issue fleet: the refusal is warned honestly" "$out" "claim join refused"
-line_has "issue fleet: the warning names the manual join" "$out" \
-  "board claim join 78 --holder w78-join-later--2"
-is "issue fleet: the sibling still counts in the fleet" \
-  "w78-join-later w78-join-later--2" "$RALPH_HERDR_FLEET_AGENTS"
-rm -f "$FAKE_BOARD_FIXTURES/claim-join.rc"
-
-# Join timing: `board claim join` is for In Progress items only — a fresh
-# fleet's issue is Backlog until sibling 1's session claims, so the join
-# pass WAITS for In Progress and, on timeout, joins nothing and prints the
-# manual commands instead (warn-not-die).
-printf '{"number":88,"state":"Backlog","claim":null,"claimRaw":null,"ageMin":null,"ttlMin":120,"stale":null}\n' \
-  >"$FAKE_BOARD_FIXTURES/claim-show.json"
-: >"$FAKE_BOARD_LOG"
-rc=0
-RALPH_HERDR_JOIN_WAIT_SEC=0 spawn_issue_fleet 88 2 \
-  '{"next":null,"queue":[{"number":88,"title":"Wait out"}]}' >"$TMP/if-out" 2>&1 || rc=$?
-out=$(cat "$TMP/if-out")
-is "issue fleet: a join-wait timeout is rc 0 (warn-not-die)" "0" "$rc"
-is "issue fleet: no join is ever attempted before In Progress" "0" \
-  "$(log_count "$FAKE_BOARD_LOG" '^claim join 88 ')"
-line_has "issue fleet: the timeout names the gate honestly" "$out" "never reached In Progress"
-line_has "issue fleet: the timeout prints the manual join" "$out" \
-  "board claim join 88 --holder w88-wait-out--2"
-rm -f "$FAKE_BOARD_FIXTURES/claim-show.json"
-
-# Dry run: the plan prints, nothing mutates.
-: >"$FAKE_HERDR_LOG"
-rc=0
-RALPH_HERDR_DRY_RUN=true spawn_issue_fleet 99 3 '{"next":null,"queue":[{"number":99,"title":"Plan only"}]}' >"$TMP/if-out" 2>&1 || rc=$?
-out=$(cat "$TMP/if-out")
-is "issue fleet dry run: rc 0" "0" "$rc"
-line_has "issue fleet dry run: sibling plan names the split" "$out" "would: pane split (no focus)"
-line_has "issue fleet dry run: sibling plan names the claim join" "$out" "board claim join 99"
-is "issue fleet dry run: planned collide names exported" \
-  "w99-plan-only w99-plan-only--2 w99-plan-only--3" "$RALPH_HERDR_FLEET_AGENTS"
-is "issue fleet dry run: no mutation reached herdr (reads only)" "0" \
-  "$(grep -cv '^agent list' "$FAKE_HERDR_LOG" || true)"
+# A refusal must not depend on the arguments being well-formed — a stale caller
+# passing anything at all gets the migration message, never a spawn.
+rc=0; spawn_issue_fleet >/dev/null 2>&1 || rc=$?
+is "issue fleet: refuses with no arguments at all" "1" "$rc"
 
 # ═══ 8. work-fleet.sh — refill arming is opt-in plumbing ═════════════════════
 printf '{"frontier":[{"number":501,"title":"One"},{"number":502,"title":"Two"}],"blocked":[]}\n' \

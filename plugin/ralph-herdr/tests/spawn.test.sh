@@ -14,19 +14,16 @@ ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ralph-spawn-test.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT
 
-# Stub herdr: `agent list` answers an empty herd; everything else fails. The
-# spawn path's pre-check reads it; dry-run stops before any other call.
-cat >"$TMP/herdr" <<'EOF'
-#!/bin/bash
-if [ "${1-}" = "agent" ] && [ "${2-}" = "list" ]; then
-  echo '{"result":{"agents":[]}}'
-  exit 0
-fi
-exit 1
-EOF
-chmod +x "$TMP/herdr"
-
-export HERDR_BIN_PATH="$TMP/herdr"
+# The shared fake, not an ad-hoc stub: it composes protocol-19 envelopes (id +
+# result.type + required fields), which the transport adapter now demands. A
+# local stub answering the pre-protocol `{"result":{"agents":[]}}` shape would
+# be asserting against a response the real server cannot produce.
+#
+# The spawn path's ownership pre-check reads the session snapshot (an empty
+# herd by default here); dry-run stops before any other call.
+export HERDR_BIN_PATH="$SCRIPT_DIR/fake-herdr.sh"
+export FAKE_HERDR_FIXTURES="$TMP/fixtures"
+mkdir -p "$FAKE_HERDR_FIXTURES"
 export RALPH_HERDR_REPO="$ROOT"
 export RALPH_HERDR_LEDGER="$TMP/ledger/ledger.jsonl"
 

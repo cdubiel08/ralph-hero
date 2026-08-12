@@ -35,6 +35,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # out-of-scope browser path must survive non-ralph repos.
 # shellcheck source=ledger.sh
 . "$SCRIPT_DIR/ledger.sh"
+# The Herdr boundary (GH-1774): the herd read below must be repository-scoped,
+# and these three have no board-CLI dependency to trip the same wire lib.sh does.
+# shellcheck source=sanitize.sh
+. "$SCRIPT_DIR/sanitize.sh"
+# shellcheck source=transport.sh
+. "$SCRIPT_DIR/transport.sh"
+# shellcheck source=scope.sh
+. "$SCRIPT_DIR/scope.sh"
 
 log() { echo "$(date -u +%FT%TZ) link-open: $*"; }
 
@@ -102,9 +110,13 @@ fi
 
 # In scope. A live session for N gets the focus — same name shapes as
 # spawn_work_session's pre-check (legacy gh-N or any grammar-B w<N>-*).
-live=$("$HERDR" agent list 2>/dev/null | jq -r --arg legacy "gh-$n" --arg pfx "w$n-" '
-  [.result.agents[]? | select(.name != null)
-   | select(.name == $legacy or (.name | startswith($pfx))) | .name]
+# Scoped: in a shared session another repository's GH-N worker carries the
+# identical name, and focusing it would jump the human into someone else's
+# work on an unrelated issue. An unreadable herd degrades to the offer popup —
+# the honest "I could not find a session" branch, which is also what the human
+# gets when there genuinely is none.
+live=$(ralph_scoped_agents_now "${cwd:-$PWD}" 2>/dev/null | jq -rs --arg legacy "gh-$n" --arg pfx "w$n-" '
+  [.[] | select(.name == $legacy or (.name | startswith($pfx))) | .name]
   | first // empty' 2>/dev/null) || live=""
 if [ -n "$live" ]; then
   log "focusing $live for #$n"

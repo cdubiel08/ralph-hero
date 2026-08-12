@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# transport.sh — the strict Herdr protocol-19 boundary. Sourced, never run.
+#
+# Every Ralph-to-Herdr call goes through ralph_herdr_call. Nothing else in this
+# plugin may invoke $HERDR for a response it intends to parse.
+#
+# The rule this file exists to enforce: a zero exit is not evidence of success.
+# Herdr speaks a correlated, discriminated NDJSON protocol — requests carry an
+# `id`, successes echo that `id` and a `result.type`, failures echo the `id`
+# with `error.code`/`error.message`. A response can therefore exit 0 and still
+# be an error envelope, a reply to a different request, the wrong result type,
+# a success missing the array we were about to iterate, or trailing garbage
+# after a valid object. Each of those is a transport failure.
+#
+# The adapter NEVER converts any of them into `[]`, `{}`, `done`, or `exited`.
+# A caller that can proceed without the answer must say so explicitly by
+# checking the return code and choosing its own unavailable branch; a caller
+# that mutates state must fail closed. Turning an unparseable response into an
+# empty herd is exactly how a transport fault becomes "no agents are running,
+# safe to clean up".
+#
+# Return codes (distinguishable so callers can degrade precisely):
+#   0  validated — the result object is on stdout
+#   1  transport failure — malformed, uncorrelated, wrong type, missing fields
+#   2  herdr refused — a well-formed error envelope; the code is in
+#      $RALPH_HERDR_ERR_CODE, the message in $RALPH_HERDR_ERR_MESSAGE
+#   3  herdr unreachable — binary missing, server down, or the call timed out
+#
+# Knobs:
+#   HERDR_BIN_PATH             herdr binary (default: `herdr` on PATH)
+#   RALPH_HERDR_TIMEOUT_SEC    per-call wall clock bound (default 30)
+#   RALPH_HERDR_MIN_PROTOCOL   minimum accepted protocol (default 19)
+
+# The result types this plugin consumes, each mapped to the fields it must
+# carry before any caller is allowed to read it. Taken from the installed
+# `herdr api schema --json` (protocol 19 / schema version 1) — the executable
+# compatibility boundary, not the prose docs.
+#
+# Validation is required-fields-only and deliberately additive-tolerant:
+# unknown keys are ignored so a future Herdr can add fields without breaking
+# this plugin, but a MISSING required field is fatal because every caller
+# downstream assumes it. bash 3.2 has no associative arrays; a case statement
+# is the portable table.
+_ralph_required_fields() {
+  case "$1" in
+    agent_list)        echo "agents" ;;
+    agent_info)        echo "agent" ;;
+    agent_started)     echo "agent argv" ;;
+    agent_prompted)    echo "agent" ;;
+    session_snapshot)  echo "snapshot" ;;
+    workspace_created) echo "workspace tab root_pane" ;;
+    worktree_created)  echo "workspace tab root_pane worktree" ;;
+    worktree_opened)   echo "workspace tab root_pane worktree already_open" ;;
+    tab_created)       echo "tab root_pane" ;;
+    pane_info)         echo "pane" ;;
+    pane_read)         echo "read" ;;
+    plugin_pane_opened) echo "plugin_pane" ;;
+    notification_show) echo "shown reason" ;;
+
+    ok)                echo "" ;;
+    *)                 return 1 ;;
+  esac
+}
+
+# The fields whose absence would leave a JSON array reader silently iterating
+# nothing. Distinguished from the scalar requireds above because "present but
+# not an array" is its own corruption — a caller doing `.agents[]` against an
+# object or a string gets zero iterations and reads it as an empty herd.
+_ralph_array_fields() {
+  case "$1" in
+    agent_list) echo "agents" ;;
+    *) echo "" ;;
+  esac
+}
+
+RALPH_HERDR_ERR_CODE=""
+RALPH_HERDR_ERR_MESSAGE=""
+
+# _ralph_herdr_timeout — echo a timeout command prefix, or nothing.
+# A hung server must not hang a cockpit action forever, but macOS ships no
+# `timeout`; coreutils installs it as `gtimeout`. Where neither exists the call
+# runs unbounded rather than not at all — losing the bound is a degradation,
+# refusing the call would be an outage.
+_ralph_herdr_timeout() {
+  local secs="${RALPH_HERDR_TIMEOUT_SEC:-30}"
+  case "$secs" in '' | *[!0-9]* | 0) secs=30 ;; esac
+  if command -v timeout >/dev/null 2>&1; then
+    echo "timeout $secs"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    echo "gtimeout $secs"
+  fi
+}
+
+# ralph_herdr_call EXPECTED_TYPE ARG... — invoke herdr and validate the reply.
+#
+# On rc 0 the validated `.result` object is printed to stdout; callers read
+# their fields off THAT, never off the raw envelope, so no call site can
+# accidentally consume an unvalidated response.
+#
+# EXPECTED_TYPE is the protocol result discriminant the caller intends to
+# consume ("agent_list", "worktree_created", …). Passing a type this adapter
+# has no field table for is a programming error and fails closed: an unknown
+# type means nobody decided what "valid" means for it.
+ralph_herdr_call() {
+  local want="$1"; shift
+  local bin="${HERDR_BIN_PATH:-herdr}"
+  local required arrays field out rc got_id got_type errc errm tmo
+
+  RALPH_HERDR_ERR_CODE=""
+  RALPH_HERDR_ERR_MESSAGE=""
+
+  if ! required=$(_ralph_required_fields "$want"); then
+    echo "ralph_herdr_call: no validation table for result type '$want' — refusing to consume an unvalidated response" >&2
+    return 1
+  fi
+  arrays=$(_ralph_array_fields "$want")
+
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "ralph_herdr_call: herdr is not installed (looked for '$bin')" >&2
+    return 3
+  fi
+
+  # stderr is deliberately NOT merged into stdout: herdr prints diagnostics
+  # there, and folding them in would turn a valid envelope into trailing
+  # garbage. It is discarded rather than relayed because it is terminal-derived
+  # and reaches the human only through the sanitized messages below.
+  tmo=$(_ralph_herdr_timeout)
+  # shellcheck disable=SC2086  # intentional: $tmo is a command prefix or empty
+  out=$($tmo "$bin" "$@" 2>/dev/null)
+  rc=$?
+
+  # 124 is the documented timeout(1) exit. Distinguished from a refusal because
+  # a timed-out mutation may well have LANDED — the caller must not retry it
+  # blindly, and must not read the silence as "it did not happen".
+  if [ "$rc" -eq 124 ]; then
+    echo "ralph_herdr_call: '$*' timed out after ${RALPH_HERDR_TIMEOUT_SEC:-30}s — the operation may or may not have been applied" >&2
+    return 3
+  fi
+
+  if [ -z "$out" ]; then
+    echo "ralph_herdr_call: '$*' produced no output (exit $rc) — herdr server unreachable" >&2
+    return 3
+  fi
+
+  # Exactly one JSON value, nothing after it. `jq -s` slurps the whole stream
+  # and fails outright on trailing non-JSON, so this single check covers
+  # malformed bodies, truncated writes, banner text printed before the
+  # envelope, and two envelopes concatenated by a confused server.
+  if ! printf '%s' "$out" | jq -e -s 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1; then
+    echo "ralph_herdr_call: '$*' did not return exactly one JSON envelope (exit $rc) — refusing to guess at the response" >&2
+    return 1
+  fi
+
+  # Error envelopes are well-formed protocol, not transport faults: the server
+  # understood us and said no. Surfaced as rc 2 with the code preserved so
+  # callers can branch on a SPECIFIC refusal (agent_pane_busy is a race worth
+  # retrying; agent_name_taken is a real answer). Never branch on the prose.
+  if printf '%s' "$out" | jq -e 'has("error")' >/dev/null 2>&1; then
+    errc=$(printf '%s' "$out" | jq -r '.error.code // "unknown"')
+    errm=$(printf '%s' "$out" | jq -r '.error.message // ""')
+    RALPH_HERDR_ERR_CODE=$(printf '%s' "$errc" | ralph_sanitize)
+    RALPH_HERDR_ERR_MESSAGE=$(printf '%s' "$errm" | ralph_sanitize)
+    return 2
+  fi
+
+  # Protocol 19 requires `id` on every response. Its absence means we are not
+  # talking to a protocol-19 server (or not to Herdr at all), and nothing below
+  # can be trusted to mean what its field names suggest.
+  got_id=$(printf '%s' "$out" | jq -r '.id // empty')
+  if [ -z "$got_id" ]; then
+    echo "ralph_herdr_call: '$*' returned a response with no correlation id — not a protocol-19 envelope" >&2
+    return 1
+  fi
+  # When the caller knows the id it issued, require the reply to be that reply.
+  # The CLI mints deterministic ids (cli:agent:list), so this is usually a
+  # caller-side assertion rather than a live multiplexing concern — but it is
+  # the only thing standing between a delayed reply and a caller that treats it
+  # as the answer to the question it just asked.
+  if [ -n "${RALPH_HERDR_EXPECT_ID:-}" ] && [ "$got_id" != "$RALPH_HERDR_EXPECT_ID" ]; then
+    echo "ralph_herdr_call: '$*' replied to id '$(printf '%s' "$got_id" | ralph_sanitize)', expected '$RALPH_HERDR_EXPECT_ID' — refusing a response to a different request" >&2
+    return 1
+  fi
+
+  # A success envelope that arrived with a nonzero exit is incoherent: the real
+  # CLI pairs a nonzero exit with an ERROR body, so this combination means the
+  # process died partway through writing, or something other than herdr
+  # answered. Trusting the body because it parses would be reading a success
+  # out of a failed command.
+  if [ "$rc" -ne 0 ]; then
+    echo "ralph_herdr_call: '$*' exited $rc but returned a success envelope — refusing a contradictory response" >&2
+    return 1
+  fi
+
+  got_type=$(printf '%s' "$out" | jq -r '.result.type // empty')
+  if [ "$got_type" != "$want" ]; then
+    echo "ralph_herdr_call: '$*' returned result type '$(printf '%s' "${got_type:-<missing>}" | ralph_sanitize)', expected '$want'" >&2
+    return 1
+  fi
+
+  for field in $required; do
+    if ! printf '%s' "$out" | jq -e --arg f "$field" '.result | has($f) and (.[$f] != null)' >/dev/null 2>&1; then
+      echo "ralph_herdr_call: '$*' returned $want without required field '$field'" >&2
+      return 1
+    fi
+  done
+
+  for field in $arrays; do
+    if ! printf '%s' "$out" | jq -e --arg f "$field" '.result[$f] | type == "array"' >/dev/null 2>&1; then
+      echo "ralph_herdr_call: '$*' returned $want whose '$field' is not an array — refusing to read it as an empty list" >&2
+      return 1
+    fi
+  done
+
+  printf '%s' "$out" | jq -c '.result'
+}
+
+# ralph_herdr_snapshot — the one validated `session.snapshot` a reconciliation
+# cycle is built on. Prints the SessionSnapshot object (not the enclosing
+# result) on rc 0; propagates the adapter's codes otherwise.
+#
+# The snapshot is also the capability probe: protocol 19 has no CLI-reachable
+# ping, but SessionSnapshot carries `version` and `protocol` as required
+# fields, so the same call that fetches session state proves the server speaks
+# a dialect this plugin understands. Every snapshot is checked rather than only
+# the first, because the socket can be re-pointed at a different server between
+# calls and a downgrade must not slip through a memoized yes.
+ralph_herdr_snapshot() {
+  local result snapshot proto min="${RALPH_HERDR_MIN_PROTOCOL:-19}" rc
+
+  result=$(ralph_herdr_call session_snapshot api snapshot) || { rc=$?; return "$rc"; }
+  snapshot=$(printf '%s' "$result" | jq -c '.snapshot')
+
+  proto=$(printf '%s' "$snapshot" | jq -r '.protocol // empty')
+  case "$proto" in
+    '' | *[!0-9]*)
+      echo "ralph_herdr_snapshot: snapshot reported no usable protocol version" >&2
+      return 1
+      ;;
+  esac
+  if [ "$proto" -lt "$min" ]; then
+    echo "ralph_herdr_snapshot: server speaks protocol $proto, this plugin requires $min or newer (herdr 0.8.0+)" >&2
+    return 1
+  fi
+
+  # SessionSnapshot's own required arrays. A snapshot missing `agents` or
+  # `workspaces` would join to nothing and read as "this repository has no
+  # workers" — the single most dangerous false negative in the whole plugin.
+  local field
+  for field in workspaces panes agents; do
+    if ! printf '%s' "$snapshot" | jq -e --arg f "$field" '.[$f] | type == "array"' >/dev/null 2>&1; then
+      echo "ralph_herdr_snapshot: snapshot '$field' is missing or not an array — refusing to reconcile against a partial snapshot" >&2
+      return 1
+    fi
+  done
+
+  printf '%s' "$snapshot"
+}

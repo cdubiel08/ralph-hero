@@ -29,6 +29,21 @@ chmod +x "$BIN/herdr"
 export PATH="$BIN:$PATH"
 export HERDR_BIN_PATH="$BIN/herdr"
 export FAKE_HERDR_FIXTURES="$TMP/fixtures"
+
+# herd_fixture scopes agents to this root, and a scoped read resolves that
+# root's BOARD identity — so the fake checkout must carry board config naming
+# the same owner/repo the test ledgers nest under ($ROOT/acme/demo/…). Pointing
+# this at the real repo checkout would scope every fixture agent to ralph-hero
+# and match no test ledger at all.
+REPO_DIR="$TMP/checkout"
+mkdir -p "$REPO_DIR"
+printf '{"owner":"acme","repo":"demo","projectNumber":1}\n' >"$REPO_DIR/.ralph.json"
+
+# Herd fixtures: a scoped herd read resolves agent -> workspace -> worktree
+# provenance, so the snapshot fixture must carry that join (herd-fixture.sh).
+# shellcheck source=herd-fixture.sh
+. "$SCRIPT_DIR/herd-fixture.sh"
+
 export FAKE_HERDR_LOG="$TMP/herdr.log"
 mkdir -p "$FAKE_HERDR_FIXTURES"
 : >"$FAKE_HERDR_LOG"
@@ -235,9 +250,7 @@ cat >"$ALEDGER" <<'EOF'
 {"ts":"t1","ev":"spawn","agent_ref":"o10-orch#0002","pane_id":"p10","tokens":{"role":"o","issue":"10","slug":"orch","depth":"1","state":"spawned","parent":"s0-root#0001","root":"s0-root#0001"}}
 {"ts":"t2","ev":"spawn","agent_ref":"w11-child#0003","pane_id":"p11","tokens":{"role":"w","issue":"11","slug":"child","depth":"2","state":"spawned","parent":"o10-orch#0002","root":"s0-root#0001"}}
 EOF
-cat >"$FAKE_HERDR_FIXTURES/agent-list.json" <<'EOF'
-{"result":{"agents":[{"name":"s0-root","agent_status":"working","pane_id":"p0"},{"name":"w11-child","agent_status":"working","pane_id":"p11"}]}}
-EOF
+herd_fixture '[{"name":"s0-root","agent_status":"working","pane_id":"p0"},{"name":"w11-child","agent_status":"working","pane_id":"p11"}]'
 
 : >"$FAKE_HERDR_LOG"
 run_event pane.exited '{"pane_id":"p10"}' "$AROOT"
@@ -261,9 +274,7 @@ cat >"$OLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"o20-solo#0004","pane_id":"p20","tokens":{"role":"o","issue":"20","slug":"solo","depth":"0","state":"spawned","root":"o20-solo#0004"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w21-kid#0005","pane_id":"p21","tokens":{"role":"w","issue":"21","slug":"kid","depth":"1","state":"spawned","parent":"o20-solo#0004","root":"o20-solo#0004"}}
 EOF
-cat >"$FAKE_HERDR_FIXTURES/agent-list.json" <<'EOF'
-{"result":{"agents":[{"name":"w21-kid","agent_status":"working","pane_id":"p21"}]}}
-EOF
+herd_fixture '[{"name":"w21-kid","agent_status":"working","pane_id":"p21"}]'
 
 : >"$FAKE_HERDR_LOG"
 run_event pane.exited '{"pane_id":"p20"}' "$OROOT"
@@ -298,9 +309,7 @@ cat >"$CLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"o30-dual#0006","pane_id":"p30","tokens":{"role":"o","issue":"30","slug":"dual","depth":"0","state":"spawned","root":"o30-dual#0006"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w31-baby#0007","pane_id":"p31","tokens":{"role":"w","issue":"31","slug":"baby","depth":"1","state":"spawned","parent":"o30-dual#0006","root":"o30-dual#0006"}}
 EOF
-cat >"$FAKE_HERDR_FIXTURES/agent-list.json" <<'EOF'
-{"result":{"agents":[{"name":"w31-baby","agent_status":"working","pane_id":"p31"}]}}
-EOF
+herd_fixture '[{"name":"w31-baby","agent_status":"working","pane_id":"p31"}]'
 : >"$FAKE_HERDR_LOG"
 HERDR_PLUGIN_EVENT=pane.exited HERDR_PLUGIN_EVENT_JSON='{"pane_id":"p30"}' \
   RALPH_HERDR_LEDGER_ROOT="$CROOT" bash "$SCRIPTS/watch-event.sh" >/dev/null 2>&1 &
@@ -328,9 +337,7 @@ cat >"$RLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"role":"w","issue":"123","slug":"fix","root":"w123-fix#aaaa","depth":"0","state":"spawned","branch":"feature/GH-123","harness":"claude","spawn_epoch":"aaaa"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w9-gone#ffff","pane_id":"p9","tokens":{"role":"w","issue":"9","slug":"gone","depth":"0","state":"spawned"}}
 EOF
-cat >"$FAKE_HERDR_FIXTURES/agent-list.json" <<'EOF'
-{"result":{"agents":[{"name":"w123-fix","agent_status":"working","pane_id":"p1"},{"name":"w5-alpha","agent_status":"idle","pane_id":"p5"},{"name":"ralph-deliver","agent_status":"working","pane_id":"p7"},{"name":"random-agent","agent_status":"working","pane_id":"p8"}]}}
-EOF
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"},{"name":"w5-alpha","agent_status":"idle","pane_id":"p5"},{"name":"ralph-deliver","agent_status":"working","pane_id":"p7"},{"name":"random-agent","agent_status":"working","pane_id":"p8"}]'
 printf '{"result":{"pane":{"pane_id":"p5","foreground_cwd":"%s"}}}\n' "$TMP/repo" \
   >"$FAKE_HERDR_FIXTURES/pane-get.p5.json"
 
