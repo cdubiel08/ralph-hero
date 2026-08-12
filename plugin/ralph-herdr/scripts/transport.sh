@@ -76,6 +76,20 @@ _ralph_array_fields() {
 RALPH_HERDR_ERR_CODE=""
 RALPH_HERDR_ERR_MESSAGE=""
 
+# ralph_herdr_err_code BODY — the error code out of an rc-2 body. The reliable
+# way to read it: unlike $RALPH_HERDR_ERR_CODE, this works when the call was
+# made in a command substitution, which is how nearly every caller writes it.
+# Prints nothing for anything that is not an error body.
+ralph_herdr_err_code() {
+  printf '%s' "${1-}" | jq -r '.error.code // empty' 2>/dev/null || true
+}
+
+# ralph_herdr_err_message BODY — the human-readable half, already sanitized by
+# the adapter. For display only; never branch on it (prose is not a contract).
+ralph_herdr_err_message() {
+  printf '%s' "${1-}" | jq -r '.error.message // empty' 2>/dev/null || true
+}
+
 # _ralph_herdr_timeout — echo a timeout command prefix, or nothing.
 # A hung server must not hang a cockpit action forever, but macOS ships no
 # `timeout`; coreutils installs it as `gtimeout`. Where neither exists the call
@@ -158,8 +172,23 @@ ralph_herdr_call() {
   if printf '%s' "$out" | jq -e 'has("error")' >/dev/null 2>&1; then
     errc=$(printf '%s' "$out" | jq -r '.error.code // "unknown"')
     errm=$(printf '%s' "$out" | jq -r '.error.message // ""')
-    RALPH_HERDR_ERR_CODE=$(printf '%s' "$errc" | ralph_sanitize)
-    RALPH_HERDR_ERR_MESSAGE=$(printf '%s' "$errm" | ralph_sanitize)
+    errc=$(printf '%s' "$errc" | ralph_sanitize)
+    errm=$(printf '%s' "$errm" | ralph_sanitize)
+    RALPH_HERDR_ERR_CODE="$errc"
+    RALPH_HERDR_ERR_MESSAGE="$errm"
+    # ALSO on stdout, because the globals do not survive the call shape every
+    # caller actually uses: `out=$(ralph_herdr_call …) || rc=$?` runs the
+    # function in a subshell, and a variable set there dies with it. A caller
+    # that branches on the error code — the agent_pane_busy retry is the whole
+    # reason the code is preserved at all — would silently read an empty
+    # string and treat a retryable race as a hard failure.
+    #
+    # rc 2 means there is no result, so stdout is free and unambiguous: a
+    # caller either got rc 0 and a result, or rc 2 and this.
+    #
+    # ralph_herdr_err_code reads it back.
+    printf '{"error":{"code":%s,"message":%s}}' \
+      "$(printf '%s' "$errc" | jq -R .)" "$(printf '%s' "$errm" | jq -R .)"
     return 2
   fi
 

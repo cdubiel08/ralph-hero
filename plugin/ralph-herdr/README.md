@@ -367,6 +367,53 @@ the board can see it.
 claims can be read and cleaned. Nothing creates them any more; a legacy shared
 claim is surfaced by doctor, not extended.
 
+## The Herdr boundary (GH-1774)
+
+Every call into herdr goes through one validating adapter, and every read of
+the herd is scoped to the repository it is for. Four files, sourced by the
+cockpit scripts and by both event hooks:
+
+| | |
+|---|---|
+| `scripts/transport.sh` | the strict protocol-19 adapter — one envelope, correlated `id`, the expected `result.type`, required fields present and array-shaped, error envelopes surfaced as a distinct code. Four return codes: `0` validated, `1` malformed, `2` herdr refused, `3` unreachable |
+| `scripts/scope.sh` | session key + repository scope, joined to the snapshot through workspace worktree provenance. Decides which of a session's agents are *ours* |
+| `scripts/sanitize.sh` | strips terminal control sequences from anything herdr reports before it is logged or rendered |
+| `scripts/dirty.sh` | the "come look" marker events write instead of mutating durable state |
+
+**A zero exit is not evidence of success.** A response can exit 0 and still be
+an error envelope, a reply to a different request, the wrong result type, a
+success missing the array about to be iterated, or trailing garbage after a
+valid object. The adapter never turns any of those into `[]` — that conversion
+is how a server hiccup becomes "no agents are running, safe to clean up".
+Callers that can proceed without an answer must say so by checking the code.
+
+**A Herdr session is a namespace, not a project.** `agent list` and
+`session.snapshot` return every agent in the session, across every repository.
+Two Ralph-equipped repos in one session both produce `w42-fix`, so filtering by
+issue number or agent name is a containment *illusion*; filtering by `$PWD` is
+no better, since plugin commands run from the plugin directory and a pane's cwd
+is whatever the shell last `cd`'d to. The boundary is the join:
+
+```text
+agent.workspace_id → workspace.worktree.repo_root / .checkout_path   (authoritative)
+agent.pane_id      → pane.cwd, agent.cwd, agent.foreground_cwd       (runtime, weakest)
+```
+
+Snapshot provenance outranks runtime working directories, and the runtime tier
+is reachable *only* when a workspace carries no provenance at all — a workspace
+whose provenance points elsewhere is a definite no, never a fall-through.
+Agents whose provenance resolves to nothing are invisible: an unknown owner is
+not this repository's to touch.
+
+**Events are hints.** Herdr documents no ordering, no deduplication key, no
+replay cursor and no exactly-once delivery for plugin events, and status events
+carry no durable identity. So an event payload can describe a state the agent
+has already left, an agent that has since exited, or a name a newer worker has
+reused. Events therefore never mint an identity and never write a state taken
+from the payload: they confirm the agent against a live snapshot, record *that*
+status, and otherwise mark the scope dirty for reconcile. The marker is a level,
+not a queue — an event storm leaves one marker, not one snapshot per event.
+
 ## Honest limits
 
 - **`blocked` is screen-detected and hint-only.** Claude Code has no lifecycle
@@ -385,7 +432,15 @@ claim is surfaced by doctor, not extended.
   live ones), so the ledger is *eventually* honest, never real-time: its freshness is
   bounded by server uptime plus the last reconcile. A blocked agent whose event was
   missed is caught by the next status change or reconcile, not guaranteed at the
-  moment it blocked.
+  moment it blocked. Since GH-1774 an event's *own* reach is narrower still: it
+  can record a snapshot-confirmed status against an identity the ledger already
+  holds, and otherwise only mark the scope dirty.
+- **Repository containment is only as good as the provenance herdr reports.** A
+  workspace with no worktree provenance falls back to matching cwds, which a
+  session can change under us; a checkout that resolves to no board config is
+  invisible rather than adopted. Both are honest refusals, not guarantees — the
+  boundary keeps repositories from *silently* seeing each other, it does not
+  make a shared session a security boundary.
 - **The ledger (`~/.ralph/<owner>/<repo>/ledger.jsonl`) is an append-only
   observation log, not an authority.** Nothing gates on it; readers are pure jq
   reductions and duplicate events are tolerated by design. The watcher is its sole

@@ -43,6 +43,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # scope.sh after ledger.sh: repo scope reuses _ralph_ledger_scope.
 # shellcheck source=scope.sh
 . "$SCRIPT_DIR/scope.sh"
+# shellcheck source=dirty.sh
+. "$SCRIPT_DIR/dirty.sh"
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
 
@@ -277,6 +279,20 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
   ralph_ledger_unlock "$f"
 done
 unset RALPH_HERDR_LEDGER
+
+# Clear the dirty markers events left behind. LAST, after every phase: a marker
+# dropped earlier would be a promise this pass had already looked, and any
+# event arriving mid-pass would land in the window between the clear and the
+# read that was supposed to answer it. Clearing here instead means such an
+# event re-marks the scope and earns one more pass — a redundant reconcile,
+# never a missed one.
+for f in "$(ledger_root)"/*/*/ledger.jsonl; do
+  [ -f "$f" ] || continue
+  if ralph_dirty_check "$f"; then
+    log "cleared the dirty mark for $(dirname "$f")"
+    ralph_dirty_clear "$f"
+  fi
+done
 
 log "reconcile complete"
 exit 0

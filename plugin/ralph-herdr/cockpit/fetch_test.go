@@ -49,8 +49,8 @@ func TestArgvConstruction(t *testing.T) {
 			[]string{"frontier", "--json"}},
 		{"board answer carries hostile text as ONE element", argsBoardAnswer(7, hostile),
 			[]string{"answer", "7", "-m", hostile}},
-		{"agent list", argsAgentList(),
-			[]string{"agent", "list"}},
+		{"api snapshot", argsApiSnapshot(),
+			[]string{"api", "snapshot"}},
 		{"agent read", argsAgentRead("w7-fix-the-thing"),
 			[]string{"agent", "read", "w7-fix-the-thing", "--source", "recent-unwrapped", "--lines", "40"}},
 		{"agent focus", argsAgentFocus("gh-12"),
@@ -107,15 +107,25 @@ func TestParseBoardList(t *testing.T) {
 	}
 }
 
+// snap builds a protocol-19 session_snapshot envelope whose single workspace
+// has worktree provenance pointing at root — i.e. a herd that belongs to us.
+func snap(root, agents string) string {
+	return `{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":{
+	  "version":1,"protocol":19,"tabs":[],"layouts":[],
+	  "workspaces":[{"workspace_id":"wR","worktree":{"repo_root":"` + root + `","checkout_path":"` + root + `"}}],
+	  "panes":[],
+	  "agents":[` + agents + `]}}}`
+}
+
 func TestParseAgents(t *testing.T) {
-	out := `{"result":{"agents":[
-	  {"name":"w123-fix-the-flaky-test","agent_status":"working","pane_id":"p1"},
-	  {"name":"gh-45","agent_status":"blocked","pane_id":"p2"},
-	  {"name":"random-agent","agent_status":"working","pane_id":"p3"},
-	  {"name":"r45-review-pass--2","agent_status":"idle","pane_id":"p4"},
-	  {"name":null,"agent_status":"working","pane_id":"p5"}
-	]}}`
-	agents, err := parseAgents(out)
+	root := "/repo"
+	out := snap(root, `
+	  {"name":"w123-fix-the-flaky-test","agent_status":"working","pane_id":"p1","workspace_id":"wR"},
+	  {"name":"gh-45","agent_status":"blocked","pane_id":"p2","workspace_id":"wR"},
+	  {"name":"random-agent","agent_status":"working","pane_id":"p3","workspace_id":"wR"},
+	  {"name":"r45-review-pass--2","agent_status":"idle","pane_id":"p4","workspace_id":"wR"},
+	  {"name":null,"agent_status":"working","pane_id":"p5","workspace_id":"wR"}`)
+	agents, err := parseAgents(out, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,6 +144,81 @@ func TestParseAgents(t *testing.T) {
 	}
 	if a := byName["r45-review-pass--2"]; a.Issue != 45 || a.Lane != "r" {
 		t.Errorf("generation-suffix parse wrong: %+v", a)
+	}
+}
+
+// The envelope checks. Each of these decodes without error into a struct whose
+// agents list is empty or nil — which the TUI would render as "no sessions
+// running". A confident lie about a response we failed to parse is worse than
+// the honest "herdr unreachable" the caller falls back to.
+func TestParseAgentsRejectsBadEnvelopes(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"garbage", "not json"},
+		{"no correlation id", `{"result":{"type":"session_snapshot","snapshot":{"agents":[]}}}`},
+		{"wrong result type", `{"id":"x","result":{"type":"agent_list","snapshot":{"agents":[]}}}`},
+		{"no result type", `{"id":"x","result":{"snapshot":{"agents":[]}}}`},
+		{"snapshot with no agents key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"workspaces":[]}}}`},
+	} {
+		if _, err := parseAgents(tc.body, "/repo"); err == nil {
+			t.Errorf("%s must error, not read as an empty herd", tc.name)
+		}
+	}
+}
+
+// One herdr session, two repositories. Both number issues from 1, so both
+// produce `w42-fix` — the collision is structural, not unlucky, and a name
+// match alone would put their agent's status chip on our card.
+func TestParseAgentsScopesToRepository(t *testing.T) {
+	out := `{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":{
+	  "version":1,"protocol":19,"tabs":[],"layouts":[],
+	  "workspaces":[
+	    {"workspace_id":"wR","worktree":{"repo_root":"/ours","checkout_path":"/ours"}},
+	    {"workspace_id":"wF","worktree":{"repo_root":"/theirs","checkout_path":"/theirs"}}],
+	  "panes":[],
+	  "agents":[
+	    {"name":"w42-fix","agent_status":"working","pane_id":"p1","workspace_id":"wR"},
+	    {"name":"w42-fix","agent_status":"blocked","pane_id":"p2","workspace_id":"wF"},
+	    {"name":"w99-theirs","agent_status":"working","pane_id":"p3","workspace_id":"wF"}]}}}`
+	agents, err := parseAgents(out, "/ours")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 {
+		t.Fatalf("want exactly our 1 agent, got %d: %+v", len(agents), agents)
+	}
+	if agents[0].Status != "working" {
+		t.Errorf("got the FOREIGN same-named agent's status: %+v", agents[0])
+	}
+}
+
+// Provenance outranks a runtime cwd, and the cwd tier is reachable only when a
+// workspace has no provenance at all. Otherwise an agent that merely cd'd into
+// our tree would join our herd.
+func TestParseAgentsProvenanceBeatsCwd(t *testing.T) {
+	foreignWorkspaceOurCwd := `{"id":"x","result":{"type":"session_snapshot","snapshot":{
+	  "version":1,"protocol":19,"tabs":[],"layouts":[],
+	  "workspaces":[{"workspace_id":"wF","worktree":{"repo_root":"/theirs","checkout_path":"/theirs"}}],
+	  "panes":[{"pane_id":"pF","cwd":"/ours"}],
+	  "agents":[{"name":"w7-sneaky","agent_status":"working","pane_id":"pF","workspace_id":"wF","cwd":"/ours"}]}}}`
+	agents, err := parseAgents(foreignWorkspaceOurCwd, "/ours")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 0 {
+		t.Errorf("a foreign worktree must beat a matching cwd, got %+v", agents)
+	}
+
+	noProvenance := `{"id":"x","result":{"type":"session_snapshot","snapshot":{
+	  "version":1,"protocol":19,"tabs":[],"layouts":[],
+	  "workspaces":[{"workspace_id":"wR"}],
+	  "panes":[{"pane_id":"pR","cwd":"/ours"}],
+	  "agents":[{"name":"w8-rooted","agent_status":"working","pane_id":"pR","workspace_id":"wR"}]}}}`
+	agents, err = parseAgents(noProvenance, "/ours")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 {
+		t.Errorf("a workspace with no provenance should resolve via the pane cwd, got %+v", agents)
 	}
 }
 

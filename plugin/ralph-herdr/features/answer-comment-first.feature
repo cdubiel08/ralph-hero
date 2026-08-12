@@ -16,7 +16,7 @@ Feature: Answer flows comment-first
     Then the answer run exits 0
     And the board answer verb carried the message for issue 123
     And the board answer preceded the agent nudge in the combined log
-    And the board answer even preceded the agent-list read
+    And the board answer even preceded the herd read
     And the nudge waited for delivery with a bounded timeout
     And delivery was reported as nudged
 

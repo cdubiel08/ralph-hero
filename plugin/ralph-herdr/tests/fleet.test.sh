@@ -464,6 +464,10 @@ is "refill B: blocked NEVER spawns" "0" "$(log_count "$FAKE_HERDR_LOG" '^worktre
 is "refill B: blocked never even reads the frontier" "0" \
   "$(log_count "$FAKE_BOARD_LOG" '^frontier --json$')"
 is "refill B: budget untouched" "7" "$(jqf "$RFF" '.budget_left')"
+# The status now comes from the SNAPSHOT, not the payload (GH-1774) — a done
+# event about an agent the herd still reports blocked is a stale hint, and
+# refill must not act on it. So the herd has to actually reach done.
+herd_fixture '[{"name":"w100-first","agent_status":"done","pane_id":"p1"}]'
 run_event pane.agent_status_changed \
   '{"pane_id":"p1","agent":"w100-first","agent_status":"done"}' "$ROW"
 is "refill B: done exits 0" "0" "$RC"

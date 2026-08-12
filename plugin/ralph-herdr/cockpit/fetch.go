@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -66,7 +67,11 @@ func argsBoardAnswer(n int, msg string) []string {
 	return []string{"answer", strconv.Itoa(n), "-m", msg}
 }
 
-func argsAgentList() []string { return []string{"agent", "list"} }
+// The herd read is the session SNAPSHOT, not `agent list` (GH-1774): the
+// snapshot is the only response carrying the workspace/worktree provenance
+// needed to tell this repository's agents from every other repository's in the
+// same herdr session. `agent list` returns them all, undifferentiated.
+func argsApiSnapshot() []string { return []string{"api", "snapshot"} }
 func argsAgentRead(name string) []string {
 	return []string{"agent", "read", name, "--source", "recent-unwrapped", "--lines", "40"}
 }
@@ -200,21 +205,103 @@ func parseBoardList(out string, state string) ([]Card, error) {
 	return cards, nil
 }
 
-func parseAgents(out string) ([]Agent, error) {
+// parseAgents validates a protocol-19 session_snapshot envelope and returns
+// only the agents belonging to repoRoot.
+//
+// Two rejections that look like pedantry and are not:
+//
+//   - A missing `id` or a `result.type` other than session_snapshot means we
+//     are not looking at the reply we asked for. Reading the body anyway would
+//     be trusting field names over provenance.
+//   - A snapshot whose `agents` key is absent decodes to a nil slice, which is
+//     indistinguishable from an empty herd. The cockpit renders that as "no
+//     sessions running" — a confident lie about a response we failed to parse.
+//     So absence is an error and the caller degrades to herdrOK: false, which
+//     the TUI already shows honestly.
+//
+// Scoping mirrors scripts/scope.sh: server-recorded worktree provenance is
+// authoritative, a pane/agent cwd is the fallback and is consulted ONLY when
+// the workspace carries no provenance at all. A workspace whose provenance
+// points elsewhere is a definite no.
+func parseAgents(out, repoRoot string) ([]Agent, error) {
 	var payload struct {
+		ID     string `json:"id"`
 		Result struct {
-			Agents []struct {
-				Name   string `json:"name"`
-				Status string `json:"agent_status"`
-				Pane   string `json:"pane_id"`
-			} `json:"agents"`
+			Type     string `json:"type"`
+			Snapshot struct {
+				Workspaces []struct {
+					ID       string `json:"workspace_id"`
+					Worktree *struct {
+						RepoRoot     string `json:"repo_root"`
+						CheckoutPath string `json:"checkout_path"`
+					} `json:"worktree"`
+				} `json:"workspaces"`
+				Panes []struct {
+					ID  string `json:"pane_id"`
+					Cwd string `json:"cwd"`
+				} `json:"panes"`
+				Agents *[]struct {
+					Name          string `json:"name"`
+					Status        string `json:"agent_status"`
+					Pane          string `json:"pane_id"`
+					Workspace     string `json:"workspace_id"`
+					Cwd           string `json:"cwd"`
+					ForegroundCwd string `json:"foreground_cwd"`
+				} `json:"agents"`
+			} `json:"snapshot"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
-		return nil, fmt.Errorf("agent list: %w", err)
+		return nil, fmt.Errorf("api snapshot: %w", err)
 	}
+	if payload.ID == "" {
+		return nil, fmt.Errorf("api snapshot: response carries no correlation id")
+	}
+	if payload.Result.Type != "session_snapshot" {
+		return nil, fmt.Errorf("api snapshot: result type %q, want session_snapshot", payload.Result.Type)
+	}
+	if payload.Result.Snapshot.Agents == nil {
+		return nil, fmt.Errorf("api snapshot: snapshot carries no agents array")
+	}
+
+	roots := repoRootSpellings(repoRoot)
+	mine := func(p string) bool {
+		if p == "" {
+			return false
+		}
+		_, ok := roots[strings.TrimRight(p, "/")]
+		return ok
+	}
+
+	type wsInfo struct {
+		hasWorktree bool
+		inScope     bool
+	}
+	workspaces := make(map[string]wsInfo, len(payload.Result.Snapshot.Workspaces))
+	for _, w := range payload.Result.Snapshot.Workspaces {
+		info := wsInfo{hasWorktree: w.Worktree != nil}
+		if w.Worktree != nil {
+			info.inScope = mine(w.Worktree.RepoRoot) || mine(w.Worktree.CheckoutPath)
+		}
+		workspaces[w.ID] = info
+	}
+	paneCwd := make(map[string]string, len(payload.Result.Snapshot.Panes))
+	for _, p := range payload.Result.Snapshot.Panes {
+		paneCwd[p.ID] = p.Cwd
+	}
+
 	var agents []Agent
-	for _, a := range payload.Result.Agents {
+	for _, a := range *payload.Result.Snapshot.Agents {
+		ws := workspaces[a.Workspace]
+		var inScope bool
+		if ws.hasWorktree {
+			inScope = ws.inScope
+		} else {
+			inScope = mine(paneCwd[a.Pane]) || mine(a.Cwd) || mine(a.ForegroundCwd)
+		}
+		if !inScope {
+			continue // another repository's agent — never decorates our cards
+		}
 		lane, issue, ok := parseAgentName(a.Name)
 		if !ok {
 			continue // foreign agent — never decorates a card
@@ -226,6 +313,29 @@ func parseAgents(out string) ([]Agent, error) {
 		agents = append(agents, Agent{Name: a.Name, Status: status, Pane: a.Pane, Issue: issue, Lane: lane})
 	}
 	return agents, nil
+}
+
+// repoRootSpellings returns the set of paths that all name repoRoot.
+//
+// herdr reports paths as the process that opened them saw them; git and the
+// filesystem resolve symlinks. On macOS that difference is routine rather than
+// exotic — /tmp and $TMPDIR both sit under /private — and comparing one
+// spelling against the other scopes out every agent silently.
+func repoRootSpellings(root string) map[string]struct{} {
+	out := make(map[string]struct{}, 3)
+	add := func(p string) {
+		if p != "" {
+			out[strings.TrimRight(p, "/")] = struct{}{}
+		}
+	}
+	add(root)
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		add(resolved)
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		add(abs)
+	}
+	return out
 }
 
 // firstCommentLine extracts the Human Needed contract line from
@@ -383,12 +493,12 @@ func fetchAgentsCmd(cfg Config, r Runner) tea.Cmd {
 			return agentsMsg{herdrOK: false}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), herdrTimeout)
-		out, _, err := r.Run(ctx, cfg.Herdr, argsAgentList()...)
+		out, _, err := r.Run(ctx, cfg.Herdr, argsApiSnapshot()...)
 		cancel()
 		if err != nil {
 			return agentsMsg{herdrOK: false}
 		}
-		agents, perr := parseAgents(out)
+		agents, perr := parseAgents(out, cfg.Repo)
 		if perr != nil {
 			return agentsMsg{herdrOK: false}
 		}

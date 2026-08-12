@@ -148,9 +148,11 @@ jobs:
           # (`npm run test:substrate`), and the Phase-5 cockpit suite
           # cockpit.test.sh (`npm run test:cockpit`; launcher ladder +
           # cockpit-fzf.sh's sourced pure functions — it never drives a real
-          # fzf, so the runner needs none). The fake-herdr.sh and
-          # fake-board.sh PATH shims are helpers, not *.test.sh, so the glob
-          # deliberately skips them.)
+          # fzf, so the runner needs none), and the GH-1774 Herdr-boundary
+          # suite transport.test.sh (`npm run test:transport`: malformed,
+          # uncorrelated and hostile responses, plus multi-repo containment).
+          # The fake-herdr.sh, fake-board.sh and herd-fixture.sh
+          # helpers are not *.test.sh, so the glob deliberately skips them.)
           find scripts/__tests__ plugin/ralph-herdr/tests \
             \( -name '*.test.sh' -o -name 'test-*.sh' \) \
             -type f -print0 \

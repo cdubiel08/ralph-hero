@@ -56,7 +56,7 @@ Given('a replay world with a board-scoped repo', function (this: RalphWorld) {
 });
 
 Given('the herd is empty', function (this: RalphWorld) {
-  this.writeHerdrFixture('agent-list.json', '{"result":{"agents":[]}}\n');
+  this.writeHerd([]);
 });
 
 Given(
@@ -75,10 +75,7 @@ Given(
   'an agent named {string} is already live on pane {string}',
   function (this: RalphWorld, name: string, pane: string) {
     s(this).liveAgent = name;
-    this.writeHerdrFixture(
-      'agent-list.json',
-      JSON.stringify({ result: { agents: [{ name, agent_status: 'working', pane_id: pane }] } }) + '\n',
-    );
+    this.writeHerd([{ name, agent_status: 'working', pane_id: pane }]);
   },
 );
 
@@ -125,40 +122,23 @@ Given(
 Given(
   'the live herd answers {string} on pane {string} and {string} on pane {string}',
   function (this: RalphWorld, n1: string, p1: string, n2: string, p2: string) {
-    this.writeHerdrFixture(
-      'agent-list.json',
-      JSON.stringify({
-        result: {
-          agents: [
-            { name: n1, agent_status: 'working', pane_id: p1 },
-            { name: n2, agent_status: 'working', pane_id: p2 },
-          ],
-        },
-      }) + '\n',
-    );
+    this.writeHerd([
+      { name: n1, agent_status: 'working', pane_id: p1 },
+      { name: n2, agent_status: 'working', pane_id: p2 },
+    ]);
   },
 );
 
 Given(
   'the live herd answers {string} on pane {string} and an unledgered {string} on pane {string} whose pane cwd is the scoped repo',
   function (this: RalphWorld, n1: string, p1: string, n2: string, p2: string) {
-    this.writeHerdrFixture(
-      'agent-list.json',
-      JSON.stringify({
-        result: {
-          agents: [
-            { name: n1, agent_status: 'working', pane_id: p1 },
-            { name: n2, agent_status: 'idle', pane_id: p2 },
-          ],
-        },
-      }) + '\n',
-    );
-    // The discover path resolves the unledgered agent's board scope from its
-    // pane's cwd — point it at this world's scoped repo.
-    this.writeHerdrFixture(
-      `pane-get.${p2}.json`,
-      JSON.stringify({ result: { pane: { pane_id: p2, foreground_cwd: this.repoDir } } }) + '\n',
-    );
+    // Both agents bind to this world's repo through the snapshot's workspace
+    // worktree provenance — which is also how the discover path now resolves
+    // the unledgered one's board scope, so no per-pane `pane get` is needed.
+    this.writeHerd([
+      { name: n1, agent_status: 'working', pane_id: p1 },
+      { name: n2, agent_status: 'idle', pane_id: p2 },
+    ]);
   },
 );
 
@@ -200,6 +180,11 @@ When(
   function (this: RalphWorld, status: string, agent: string, pane: string, title: string, label: string) {
     s(this).title = title;
     s(this).label = label;
+    // The herd must actually hold the agent in that state: a status event is a
+    // hint now (GH-1774), and the durable write is taken from the SNAPSHOT, not
+    // the payload. These scenarios are the agreeing case — the event reports
+    // what the herd already shows.
+    this.writeHerd([{ name: agent, agent_status: status, pane_id: pane }]);
     this.run(`bash "${SCRIPTS_DIR}/watch-event.sh"`, {
       env: {
         HERDR_PLUGIN_EVENT: 'pane.agent_status_changed',
@@ -215,9 +200,36 @@ When(
   },
 );
 
+
+Given(
+  'the live herd reports {string} as {string} on pane {string}',
+  function (this: RalphWorld, agent: string, status: string, pane: string) {
+    this.writeHerd([{ name: agent, agent_status: status, pane_id: pane }]);
+  },
+);
+
+When(
+  'the watcher receives a stale agent status {string} for {string} on pane {string}',
+  function (this: RalphWorld, status: string, agent: string, pane: string) {
+    // Deliberately does NOT touch the herd: the payload and the snapshot
+    // disagree, which is the whole point of the scenario.
+    this.run(`bash "${SCRIPTS_DIR}/watch-event.sh"`, {
+      env: {
+        HERDR_PLUGIN_EVENT: 'pane.agent_status_changed',
+        HERDR_PLUGIN_EVENT_JSON: JSON.stringify({ pane_id: pane, agent, agent_status: status }),
+      },
+    });
+  },
+);
+
 When(
   'the watcher receives agent status {string} for {string} on pane {string}',
   function (this: RalphWorld, status: string, agent: string, pane: string) {
+    // The herd must actually hold the agent in that state: a status event is a
+    // hint now (GH-1774), and the durable write is taken from the SNAPSHOT, not
+    // the payload. These scenarios are the agreeing case — the event reports
+    // what the herd already shows.
+    this.writeHerd([{ name: agent, agent_status: status, pane_id: pane }]);
     this.run(`bash "${SCRIPTS_DIR}/watch-event.sh"`, {
       env: {
         HERDR_PLUGIN_EVENT: 'pane.agent_status_changed',
@@ -349,6 +361,16 @@ Then('the ledger stayed empty', function (this: RalphWorld) {
 Then('the hook exits 0', function (this: RalphWorld) {
   assert.strictEqual(this.last.rc, 0, this.last.out);
 });
+
+Then(
+  'the ledger holds no state event recording status {string} for {string}',
+  function (this: RalphWorld, status: string, ref: string) {
+    const hits = this.ledgerRecords().filter(
+      (r) => r.ev === 'state' && r.agent_status === status && r.agent_ref === ref,
+    );
+    assert.strictEqual(hits.length, 0, `stale payload status reached the ledger: ${JSON.stringify(hits)}`);
+  },
+);
 
 Then(
   'the ledger holds exactly {int} state event recording status {string} for {string}',
@@ -541,11 +563,11 @@ Then('the board answer preceded the agent nudge in the combined log', function (
   assert.ok(a >= 0 && b >= 0 && a < b, `answer at ${a}, nudge at ${b}:\n${log.join('\n')}`);
 });
 
-Then('the board answer even preceded the agent-list read', function (this: RalphWorld) {
+Then('the board answer even preceded the herd read', function (this: RalphWorld) {
   const log = this.combinedLog();
   const a = firstIndex(log, `answer ${s(this).issue} -m`);
-  const b = log.findIndex((l) => l === 'agent list');
-  assert.ok(a >= 0 && b >= 0 && a < b, `answer at ${a}, agent list at ${b}:\n${log.join('\n')}`);
+  const b = log.findIndex((l) => l === 'api snapshot');
+  assert.ok(a >= 0 && b >= 0 && a < b, `answer at ${a}, api snapshot at ${b}:\n${log.join('\n')}`);
 });
 
 Then('the nudge waited for delivery with a bounded timeout', function (this: RalphWorld) {

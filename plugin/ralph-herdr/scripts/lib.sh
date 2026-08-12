@@ -180,7 +180,7 @@ billing_guard() {
 # error (a taken agent name above all) is a real refusal and dies at once.
 #   RALPH_HERDR_START_TRIES   attempts, 1s apart (default 15)
 agent_start_when_ready() {
-  local name="$1" pane="$2" tries="${RALPH_HERDR_START_TRIES:-15}" n=0 out rc
+  local name="$1" pane="$2" tries="${RALPH_HERDR_START_TRIES:-15}" n=0 out rc code
   case "$tries" in '' | *[!0-9]* | 0) die "RALPH_HERDR_START_TRIES must be a positive integer (got '$tries')" ;; esac
   while :; do
     rc=0
@@ -189,6 +189,11 @@ agent_start_when_ready() {
       printf '%s\n' "$out"
       return 0
     fi
+    # From the BODY, not $RALPH_HERDR_ERR_CODE: the call above runs in a
+    # command substitution, so any variable the function set died with that
+    # subshell. Reading the global here would see an empty string forever and
+    # turn every retryable race into a hard failure.
+    code=$(ralph_herdr_err_code "$out")
     n=$((n + 1))
     # Retry ONLY the well-formed agent_pane_busy refusal (rc 2 + that code).
     # A transport failure (rc 1) or an unreachable server (rc 3) is never a
@@ -196,8 +201,8 @@ agent_start_when_ready() {
     # server that may already have started the agent is how one issue ends up
     # with two sessions. The code comes from the parsed envelope, never from
     # matching prose — error text is terminal-derived and not a contract.
-    if [ "$rc" -ne 2 ] || [ "$RALPH_HERDR_ERR_CODE" != "agent_pane_busy" ] || [ "$n" -ge "$tries" ]; then
-      [ "$rc" -eq 2 ] && echo "agent start $name refused: $RALPH_HERDR_ERR_CODE ${RALPH_HERDR_ERR_MESSAGE}" >&2
+    if [ "$rc" -ne 2 ] || [ "$code" != "agent_pane_busy" ] || [ "$n" -ge "$tries" ]; then
+      [ "$rc" -eq 2 ] && echo "agent start $name refused: $code $(ralph_herdr_err_message "$out")" >&2
       return 1
     fi
     [ "$n" -eq 1 ] && echo "waiting for the pane's shell to reach its prompt…"

@@ -45,9 +45,15 @@ ralph_sanitize() {
       s/\e\][^\a\e]*(?:\a|\e\\)//g;         # OSC, terminated by BEL or ST
       s/\e[P_^X][^\e]*(?:\e\\)?//g;         # DCS / APC / PM / SOS
       s/\e\[[0-9;:<=>?]*[ -\/]*[@-~]//g;    # CSI (SGR, cursor, erase)
-      s/\e[@-Z\\-_]//g;                     # two-character escapes incl. ESC c
+      s/\xc2\x9b[0-9;:<=>?]*[ -\/]*[@-~]//g; # the same CSI via UTF-8 8-bit U+009B
+      s/\e[^\[\]P_^X]//g;                   # any other two-char escape: ESC c
+                                            # (full reset), ESC 7/8, charset
+                                            # selects. Defined by exclusion so a
+                                            # sequence nobody enumerated still
+                                            # loses its introducer.
       s/[\x00-\x08\x0a-\x1f\x7f]//g;        # C0 minus tab, plus DEL
-      s/[\x80-\x9f]//g;                     # 8-bit C1 forms
+      s/\xc2[\x80-\x9f]//g;                 # UTF-8-encoded C1
+      s/[\x80-\x9f]//g;                     # raw 8-bit C1
     '
   else
     tr -d '\000-\010\012-\037\177\200-\237'

@@ -193,6 +193,11 @@ cat >"$WLEDGER" <<'EOF'
 {"ts":"2026-08-11T00:00:00Z","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"role":"w","issue":"123","slug":"fix","root":"w123-fix#aaaa","depth":"0","state":"spawned","branch":"feature/GH-123","harness":"claude","spawn_epoch":"aaaa"}}
 EOF
 
+# A status event is a HINT now (GH-1774): the durable write only happens for an
+# agent a live snapshot confirms, with the status read from the SNAPSHOT rather
+# than the payload. So the herd has to actually contain the agent — and the
+# fixture's status is the one that gets recorded.
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
 : >"$FAKE_HERDR_LOG"
 run_event pane.agent_status_changed \
   '{"pane_id":"p1","agent":"w123-fix","agent_status":"working","title":"Fix the flaky test"}' "$WROOT"
@@ -203,6 +208,7 @@ is "status working: state token pushed" "1" \
   "$(log_count '^pane report-metadata p1 --source ralph-herdr --token state=working$')"
 is "status working: no notification" "0" "$(log_count '^notification show')"
 
+herd_fixture '[{"name":"w123-fix","agent_status":"blocked","pane_id":"p1"}]'
 : >"$FAKE_HERDR_LOG"
 run_event pane.agent_status_changed \
   '{"pane_id":"p1","agent":"w123-fix","agent_status":"blocked","title":"Fix the flaky test","state_labels":{"blocked":"needs a decision"}}' "$WROOT"
@@ -216,6 +222,7 @@ is "blocked: title + labels in the body" "1" \
   "$(log_fcount 'notification show w123-fix blocked --body Fix the flaky test')"
 
 # idle carries no honest lifecycle claim: ledgered, but no state token push.
+herd_fixture '[{"name":"w123-fix","agent_status":"idle","pane_id":"p1"}]'
 : >"$FAKE_HERDR_LOG"
 run_event pane.agent_status_changed \
   '{"pane_id":"p1","agent":"w123-fix","agent_status":"idle"}' "$WROOT"
@@ -224,6 +231,7 @@ is "idle: state event still recorded" "1" \
 is "idle: no token push, no notification" "0" "$(log_count '^pane report-metadata\|^notification show')"
 
 # Event-name fallback: no HERDR_PLUGIN_EVENT, payload .type carries it.
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
 run_event "" \
   '{"type":"pane.agent_status_changed","pane_id":"p1","agent":"w123-fix","agent_status":"working"}' "$WROOT"
 is "payload .type fallback: exits 0" "0" "$RC"
@@ -240,6 +248,66 @@ run_event pane.focus_changed '{"pane_id":"p1"}' "$WROOT"
 is "unknown event: exits 0" "0" "$RC"
 is "non-ralph/unknown: ledger untouched" "$lines_before" "$(wc -l <"$WLEDGER" | tr -d ' ')"
 is "non-ralph/unknown: no herdr calls at all" "0" "$(wc -l <"$FAKE_HERDR_LOG" | tr -d ' ')"
+
+before_unconfirmed=$(lcount "$WLEDGER" '.ev=="state"')
+before_working=$(lcount "$WLEDGER" '.ev=="state" and .agent_status=="working"')
+# ── events are hints, not authority (GH-1774) ───────────────────────────────
+# A status event names an agent, a status and a pane, and Herdr documents no
+# ordering, no deduplication and no replay cursor for any of it. So a payload
+# can describe a state the agent already left, an agent that already exited, or
+# a name a NEWER agent has since reused. None of those may write durable state.
+herd_fixture '[]'
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p1","agent":"w123-fix","agent_status":"working"}' "$WROOT"
+is "hint: an unconfirmed agent exits 0 (a hint is never an error)" "0" "$RC"
+line_has "hint: and says it declined to write" "$OUT" "not confirmed in a live snapshot"
+is "hint: no state event is appended for an unconfirmed agent" "$before_unconfirmed" \
+  "$(lcount "$WLEDGER" '.ev=="state"')"
+
+# The payload's status loses to the snapshot's. This is the case that matters
+# for refill: a stale `done` must not free capacity while the agent works on.
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
+run_event pane.agent_status_changed \
+  '{"pane_id":"p1","agent":"w123-fix","agent_status":"done"}' "$WROOT"
+# Counted, not timestamp-matched: binding an assertion to the current second
+# makes it fail whenever the clock ticks mid-test.
+is "hint: the SNAPSHOT status is recorded, not the payload's" "$((before_working + 1))" \
+  "$(lcount "$WLEDGER" '.ev=="state" and .agent_status=="working"')"
+is "hint: the payload's stale 'done' never reached the ledger" "0" \
+  "$(lcount "$WLEDGER" '.ev=="state" and .agent_status=="done"')"
+
+# Minting a durable identity from an event payload is gone: the payload has no
+# durable identity, so the ref could only be derived from the NAME — and names
+# are reusable after exit. Reconcile discovers instead, against a snapshot.
+DROOT="$TMP/dirty"
+DLEDG="$DROOT/acme/demo/ledger.jsonl"
+mkdir -p "$(dirname "$DLEDG")"
+: >"$DLEDG"
+herd_fixture '[{"name":"w777-fresh","agent_status":"working","pane_id":"p9"}]'
+run_event pane.agent_status_changed \
+  '{"pane_id":"p9","agent":"w777-fresh","agent_status":"working"}' "$DROOT"
+is "hint: an unledgered agent is NOT discovered by the event" "0" \
+  "$(lcount "$DLEDG" '.ev=="discover"')"
+is "hint: the scope is marked dirty instead" "1" \
+  "$([ -f "$DROOT/acme/demo/dirty" ] && echo 1 || echo 0)"
+line_has "hint: and says reconcile owns the identity" "$OUT" "reconcile mints the identity"
+
+# The marker is a LEVEL, not a queue: an event storm leaves one marker, which
+# is what keeps it from becoming a snapshot storm.
+run_event pane.agent_status_changed \
+  '{"pane_id":"p9","agent":"w777-fresh","agent_status":"working"}' "$DROOT"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p9","agent":"w777-fresh","agent_status":"blocked"}' "$DROOT"
+is "hint: repeated events coalesce to ONE marker" "1" \
+  "$(ls "$DROOT/acme/demo/" | grep -c '^dirty$' || true)"
+
+# Reconcile does the discovering, then clears the marker.
+run_reconcile "$DROOT"
+is "hint: reconcile discovers what the event would not" "1" \
+  "$(lcount "$DLEDG" '.ev=="discover" and (.agent_ref | startswith("w777-fresh#"))')"
+is "hint: and clears the dirty mark afterwards" "0" \
+  "$([ -f "$DROOT/acme/demo/dirty" ] && echo 1 || echo 0)"
 
 # ═══ 4. pane.exited: orphan pass, adopt-to-grandparent ═══════════════════════
 AROOT="$TMP/aroot"

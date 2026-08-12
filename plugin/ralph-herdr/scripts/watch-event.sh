@@ -53,6 +53,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # scope.sh after ledger.sh: repo scope reuses _ralph_ledger_scope.
 # shellcheck source=scope.sh
 . "$SCRIPT_DIR/scope.sh"
+# shellcheck source=dirty.sh
+. "$SCRIPT_DIR/dirty.sh"
 # shellcheck source=fleet.sh
 . "$SCRIPT_DIR/fleet.sh"
 
@@ -289,12 +291,32 @@ refill_one() (
 # ── pane.agent_status_changed ────────────────────────────────────────────────
 handle_status() {
   local agent status pane parsed legacy entry file ref ts cwd repo_root
-  local lane issue slug gen title labels body
+  local lane issue slug gen title labels body snapshot confirmed
   agent=$(pfield '.agent // .data.agent // empty')
   status=$(pfield '.agent_status // .data.agent_status // empty')
   pane=$(pfield '.pane_id // .data.pane_id // empty')
   [ -n "$agent" ] || exit 0
   [ -n "$status" ] || exit 0
+
+  # Confirmation happens below, AFTER the ralph-name check: an event about
+  # another tool's agent must cost zero herdr calls, and the session emits far
+  # more of those than ours.
+  #
+  # The payload is a HINT. Before anything durable is written, confirm the
+  # agent against one validated snapshot and take the authoritative status and
+  # pane from THAT.
+  #
+  # Events are unordered and undeduplicated, and carry no durable identity. So
+  # a payload can describe a state the agent has already left, an agent that
+  # has since exited, or — worst — a name that has been reused by a newer
+  # worker, in which case the payload's own fields are describing one agent
+  # while naming another. The snapshot is the only thing that can tell those
+  # apart, and it is also what makes the write idempotent: reprocessing the
+  # same event writes the same current state.
+  #
+  # Unconfirmable means unmutated. Attention routing still runs below, because
+  # a notification is chrome — being wrong about it costs a stray toast, while
+  # being wrong in the ledger costs a lie the next session inherits.
 
   # Ralph agents only: grammar-B / gh-N via ralph_agent_parse, plus the two
   # legacy singleton lanes (which have no parseable identity — they get
@@ -307,6 +329,20 @@ handle_status() {
     esac
   fi
 
+  snapshot=$(ralph_herdr_snapshot 2>/dev/null) || snapshot=""
+  confirmed=""
+  if [ -n "$snapshot" ]; then
+    confirmed=$(ralph_all_agents "$snapshot" 2>/dev/null |
+      jq -c --arg n "$agent" 'select(.name == $n)' 2>/dev/null | head -1) || confirmed=""
+  fi
+  if [ -n "$confirmed" ]; then
+    status=$(printf '%s' "$confirmed" | jq -r '.status // empty')
+    pane=$(printf '%s' "$confirmed" | jq -r '.pane // empty')
+    [ -n "$status" ] || exit 0
+  else
+    log "$agent not confirmed in a live snapshot — treating the event as a hint only, no durable write"
+  fi
+
   ts=$(date -u +%FT%TZ)
   file="" ref=""
   if [ -z "$legacy" ]; then
@@ -314,12 +350,13 @@ handle_status() {
       IFS=$'\t' read -r file ref <<<"$entry"
     else
       # First sighting: no ledger holds this agent open (spawned before the
-      # watcher existed, or by hand). Resolve its board scope from the pane's
-      # cwd; the discover append happens under the ledger lock below, after a
-      # re-check — two concurrent status events for one unledgered agent must
-      # mint ONE identity, not two epochs.
-      cwd=$("$HERDR" pane get "$pane" 2>/dev/null |
-        jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty' 2>/dev/null) || cwd=""
+      # watcher existed, or by hand). Minting a durable identity from an event
+      # payload is exactly the mutation events may not perform — the payload
+      # carries no durable identity, the delivery is unordered, and a reused
+      # agent name would bind the record to the wrong worker. Resolve the scope
+      # far enough to mark it dirty, then let reconcile do the discovering
+      # against a snapshot it can actually verify.
+      cwd=$(printf '%s' "$confirmed" | jq -r '.checkout // empty' 2>/dev/null) || cwd=""
       repo_root=""
       if [ -n "$cwd" ]; then
         repo_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || repo_root="$cwd"
@@ -327,45 +364,51 @@ handle_status() {
       if [ -n "$repo_root" ]; then
         file=$(ralph_ledger_path "$repo_root" 2>/dev/null) || file=""
       fi
-      if [ -z "$file" ]; then
+      if [ -n "$file" ]; then
+        ralph_dirty_mark "$file" "unledgered agent $agent seen via event"
+        log "unledgered $agent (pane $pane) — marked $(dirname "$file") dirty; reconcile mints the identity"
+      else
         log "no ledger scope resolvable for $agent (pane $pane) — routing attention without a ledger record"
       fi
+      # No ledger record to append against; attention routing below still runs.
+      file=""
     fi
   fi
 
-  if [ -n "$file" ]; then
+  # A state append, and ONLY against an identity the ledger already holds open
+  # for an agent the snapshot just confirmed. Two writes an event used to make
+  # are gone:
+  #
+  #   discover — minting a durable ref from an event payload. The payload has
+  #     no durable identity, so the ref was derived from the NAME; names are
+  #     reusable after exit, so a delayed event could mint an identity that
+  #     binds a dead agent's record to a live successor. Reconcile discovers
+  #     instead, from a snapshot, which is why the dirty mark above exists.
+  #
+  #   state for an unconfirmed agent — recording a lifecycle transition for
+  #     something that may already be gone.
+  #
+  # What remains is idempotent by construction: the same event reprocessed
+  # writes the same snapshot-derived status against the same existing ref.
+  if [ -n "$file" ] && [ -n "$ref" ] && [ -n "$confirmed" ]; then
     export RALPH_HERDR_LEDGER="$file"
     ralph_ledger_lock "$file"
-    if [ -z "$ref" ]; then
-      # Re-check under the lock: the racing hook that beat us to the mutex
-      # may have discovered this agent already — reuse its ref.
-      ref=$(ralph_ledger_open_agents 2>/dev/null |
-        awk -F'#' -v n="$agent" '$1 == n { print; exit }') || ref=""
-      if [ -n "$ref" ]; then
-        log "discover race: $ref already ledgered — reusing"
-      elif ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
-        # shellcheck disable=SC2086  # intentional: parse output is space-separated
-        set -- $parsed
-        lane="$1" issue="$2" slug="$3" gen="$4"
-        [ "$slug" = "''" ] && slug=""
-        [ "$gen" = "''" ] && gen=""
-        ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg p "$pane" \
-          --arg lane "$lane" --arg issue "$issue" --arg slug "$slug" \
-          '{ts: $ts, ev: "discover", agent_ref: $ref, pane_id: $p, via: "event",
-            tokens: ({role: $lane, issue: $issue} + (if $slug == "" then {} else {slug: $slug} end))}')" ||
-          log "discover append failed for $agent"
-        log "discover $ref (pane $pane) in $file"
-      else
-        ref=""
-        log "no durable ref derivable for $agent — routing attention without a ledger record"
-      fi
-    fi
-    if [ -n "$ref" ]; then
+    # Re-read under the mutex: a concurrent hook may have closed this ref
+    # between the lookup above and here, and appending a state to a closed
+    # agent would resurrect it.
+    if ralph_ledger_open_agents 2>/dev/null |
+      awk -F'#' -v r="$ref" '$0 == r { found = 1 } END { exit !found }'; then
       ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg st "$status" --arg p "$pane" \
         '{ts: $ts, ev: "state", agent_ref: $ref, agent_status: $st, pane_id: $p, via: "event"}')" ||
         log "state append failed for $ref"
+    else
+      log "$ref is no longer open — dropping a late state event rather than reopening it"
     fi
     ralph_ledger_unlock "$file"
+  elif [ -n "$file" ] && [ -n "$ref" ]; then
+    # Ledgered but unconfirmed: the snapshot could not vouch for the agent, so
+    # the scope earns a reconcile rather than a write taken on faith.
+    ralph_dirty_mark "$file" "unconfirmed status event for $agent"
   fi
 
   # State token: only herdr statuses with a clean C8 lifecycle mapping are

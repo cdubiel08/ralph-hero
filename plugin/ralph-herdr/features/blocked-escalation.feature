@@ -31,3 +31,15 @@ Feature: A blocked agent escalates once per transition
     Then the hook exits 0
     And the ledger holds exactly 1 state event recording status "idle" for "w123-fix#aaaa"
     And no state token and no notification went out
+
+  Scenario: A status event whose herd disagrees writes nothing durable
+    Herdr documents no ordering, deduplication or replay for plugin events, so
+    a payload can describe a state the agent has already left. The durable
+    write is taken from the snapshot; the stale payload only routes attention.
+    Given a replay world with a board-scoped repo
+    And a ledgered agent "w123-fix" with epoch "aaaa" on pane "p1" for issue 123
+    And the live herd reports "w123-fix" as "working" on pane "p1"
+    When the watcher receives a stale agent status "done" for "w123-fix" on pane "p1"
+    Then the hook exits 0
+    And the ledger holds exactly 1 state event recording status "working" for "w123-fix#aaaa"
+    And the ledger holds no state event recording status "done" for "w123-fix#aaaa"
