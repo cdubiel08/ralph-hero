@@ -3099,7 +3099,9 @@ import {
   TEND_DEFAULTS,
   TEND_MARKER,
   TEND_PROPOSAL_MARKER,
-  proposalAt,
+  TEND_RESOLUTION_MARKER,
+  pendingProposal,
+  resolveProposal,
   tendQueue,
 } from "./board.js";
 
@@ -3232,14 +3234,112 @@ describe("tend-queue (spec §4.3)", () => {
     ]);
   });
 
-  // GH-1777 — the proposal marker as a two-way cursor.
-  const proposal = (at: string | null) =>
-    `${TEND_PROPOSAL_MARKER}\n\`\`\`json\n{"action":"close-as-delivered","at":${at === null ? '"nonsense"' : `"${at}"`}}\n\`\`\``;
+  // GH-1777 — the proposal marker as a two-way cursor, and its resolution.
+  const proposal = (at: string | null, action = "close-as-delivered") =>
+    `${TEND_PROPOSAL_MARKER}\n\`\`\`json\n{"action":"${action}","at":${at === null ? '"nonsense"' : `"${at}"`}}\n\`\`\``;
+  const resolution = (disposition: "accepted" | "rejected") =>
+    `${TEND_RESOLUTION_MARKER}\n\`\`\`json\n{"disposition":"${disposition}","at":"${days(1)}"}\n\`\`\``;
 
-  it("proposalAt: newest dated marker wins; a garbled payload still counts as pending", () => {
-    expect(proposalAt(["nothing here"])).toBeNull();
-    expect(proposalAt([proposal(days(9)), proposal(days(2))])).toEqual({ at: days(2) });
-    expect(proposalAt([proposal(null)])).toEqual({ at: null });
+  it("pendingProposal: last marker wins; a garbled payload still counts as pending", () => {
+    expect(pendingProposal(["nothing here"])).toBeNull();
+    expect(pendingProposal([proposal(days(9)), proposal(days(2))])).toEqual({ at: days(2) });
+    expect(pendingProposal([proposal(null)])).toEqual({ at: null });
+  });
+
+  it("pendingProposal: a resolution answers the proposal, and a later proposal re-arms it", () => {
+    // The lifecycle in one line each. Trail order is chronological.
+    expect(pendingProposal([proposal(days(9)), resolution("rejected")])).toBeNull();
+    expect(pendingProposal([proposal(days(9)), resolution("accepted")])).toBeNull();
+    // New evidence → a fresh proposal after the resolution is pending again.
+    expect(
+      pendingProposal([proposal(days(9)), resolution("rejected"), proposal(days(2))]),
+    ).toEqual({ at: days(2) });
+    // A resolution that QUOTES the marker it answers still resolves: within one
+    // comment the later marker wins, so the quote cannot re-arm the proposal.
+    expect(
+      pendingProposal([proposal(days(9)), `quoting ${TEND_PROPOSAL_MARKER}\n${resolution("rejected")}`]),
+    ).toBeNull();
+    // A resolution with nothing to answer is inert, not a pending anything.
+    expect(pendingProposal([resolution("rejected")])).toBeNull();
+  });
+
+  it("proposed: a REJECTED Backlog proposal stops surfacing — the item returns to its own category", () => {
+    // Without a durable rejection the human's "no, leave it open" changes
+    // nothing observable, so the item sat in `proposed` forever and the lane's
+    // clean sweep (acted=0) was unreachable.
+    const stale = item(1, { updatedAt: days(31) });
+    const map = new Map<number, string | null>();
+    for (const trail of [[proposal(days(9)), resolution("rejected")]]) {
+      const p = pendingProposal(trail);
+      if (p) map.set(1, p.at);
+    }
+    expect(map.size).toBe(0);
+    expect(classifyTend([stale], [], TEND_DEFAULTS, NOW, map).queue.map((r) => r.category)).toEqual([
+      "stale-body",
+    ]);
+  });
+
+  it("done-audit: a pending reopen proposal surfaces as `proposed`, never as done-audit again", () => {
+    // The reported non-convergence: classifyTend only promoted markers on open
+    // Backlog items, so a `reopen-as-unevidenced` proposal on a CLOSED item
+    // came back as done-audit every pass and was proposed again forever.
+    const closed = [
+      {
+        number: 9,
+        title: "t9",
+        closedAt: days(5),
+        comments: [proposal(days(3), "reopen-as-unevidenced")], // filed AFTER the close
+      },
+    ];
+    const res = classifyTend([], closed, TEND_DEFAULTS, NOW);
+    expect(res.queue.map((r) => [r.number, r.category, r.at])).toEqual([[9, "proposed", days(3)]]);
+  });
+
+  it("done-audit: a proposal the close ANSWERED settles itself; a resolved one does too", () => {
+    // close-as-delivered proposed while open, then the human closed the item:
+    // the close IS the acceptance, so the item flows on to be audited rather
+    // than parking in `proposed` waiting for a disposition already made.
+    const answered = [
+      { number: 9, title: "t9", closedAt: days(3), comments: [proposal(days(5))] }, // filed BEFORE the close
+    ];
+    expect(classifyTend([], answered, TEND_DEFAULTS, NOW).queue.map((r) => r.category)).toEqual([
+      "done-audit",
+    ]);
+    // An explicit resolution settles it regardless of ordering.
+    const resolved = [
+      {
+        number: 9,
+        title: "t9",
+        closedAt: days(5),
+        comments: [proposal(days(3), "reopen-as-unevidenced"), resolution("rejected")],
+      },
+    ];
+    expect(classifyTend([], resolved, TEND_DEFAULTS, NOW).queue.map((r) => r.category)).toEqual([
+      "done-audit",
+    ]);
+    // ...and once audited, the item leaves the queue entirely. Convergence.
+    const audited = [
+      {
+        number: 9,
+        title: "t9",
+        closedAt: days(5),
+        comments: [
+          proposal(days(3), "reopen-as-unevidenced"),
+          resolution("rejected"),
+          `${TEND_MARKER} audited`,
+        ],
+      },
+    ];
+    expect(classifyTend([], audited, TEND_DEFAULTS, NOW).queue).toEqual([]);
+  });
+
+  it("done-audit: an UNDATED proposal on a closed item fails closed to pending", () => {
+    // Cannot compare it to the close, so it stays visible rather than being
+    // swallowed by the audit path — same discipline as the open-item case.
+    const closed = [{ number: 9, title: "t9", closedAt: days(5), comments: [proposal(null)] }];
+    expect(classifyTend([], closed, TEND_DEFAULTS, NOW).queue.map((r) => [r.category, r.at])).toEqual(
+      [["proposed", null]],
+    );
   });
 
   it("proposed: a pending proposal outranks the category that produced it — the do-not-re-propose cursor", () => {
@@ -3279,6 +3379,45 @@ describe("tend-queue (spec §4.3)", () => {
       [1, "proposed"],
       [2, "stale-body"],
     ]);
+  });
+
+  it("tendQueue: a closed item's reopen proposal rides the audit trails already fetched", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(9, {
+      number: 9, issueState: "CLOSED", state: "Done", closedAt: days(5),
+      comments: [proposal(days(3), "reopen-as-unevidenced")],
+    });
+    gh.issues.set(10, {
+      number: 10, issueState: "CLOSED", state: "Done", closedAt: days(5),
+      comments: [proposal(days(3), "reopen-as-unevidenced"), resolution("rejected")],
+    });
+    const res = tendQueue(ctx, TEND_DEFAULTS);
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+      [9, "proposed"],
+      [10, "done-audit"],
+    ]);
+  });
+
+  it("resolveProposal writes the durable marker only when something is pending", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", comments: [proposal(days(4))] });
+    gh.issues.set(2, { number: 2, state: "Backlog", comments: [] });
+
+    expect(resolveProposal(ctx, fetchIssue(ctx, 1), "rejected", "still real work")).toEqual({
+      at: days(4),
+    });
+    const posted = gh.comments.at(-1)!.body;
+    expect(posted).toContain(TEND_RESOLUTION_MARKER);
+    expect(posted).toContain(`"disposition":"rejected"`);
+    expect(posted).toContain(`"proposed_at":"${days(4)}"`); // binds the proposal it answers
+    expect(posted).toContain("still real work");
+
+    // Nothing pending → no comment, and the caller decides what that means.
+    const before = gh.comments.length;
+    expect(resolveProposal(ctx, fetchIssue(ctx, 2), "rejected", "n/a")).toBeNull();
+    expect(gh.comments.length).toBe(before);
   });
 
   it("parseTendOpts: defaults and env overrides", () => {

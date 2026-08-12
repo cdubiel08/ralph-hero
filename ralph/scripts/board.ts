@@ -3603,29 +3603,52 @@ export function deliverQueue(
 
 export const TEND_MARKER = "<!-- ralph-tend:v1 audited -->";
 
-/** The proposal marker (GH-1777). A closure proposal against a Backlog item is
- *  an ANNOTATION, not a state: the item stays in Backlog while a human decides.
- *  The marker is the cursor in both directions — it re-surfaces the proposal
- *  under the `proposed` category, and its presence stops the lane proposing the
- *  same thing twice. Same shape discipline as TEND_MARKER: the line, then a
- *  fenced JSON payload. */
+/** The proposal marker (GH-1777). A closure proposal is an ANNOTATION, not a
+ *  state: the item stays where it is while a human decides. The marker is the
+ *  cursor in both directions — it re-surfaces the proposal under the `proposed`
+ *  category, and its presence stops the lane proposing the same thing twice.
+ *  Same shape discipline as TEND_MARKER: the line, then a fenced JSON payload.
+ *
+ *  It is filed against Backlog items (`close-as-delivered`) AND against closed
+ *  ones (`reopen-as-unevidenced`), so pending-ness is decided per item, by
+ *  `pendingProposal` plus the resolution rules below — never by presence. */
 export const TEND_PROPOSAL_MARKER = "<!-- ralph-tend:v1 proposed -->";
 
-/** The `at` of the newest proposal marker in a comment trail, or null when the
- *  marker is present but its payload is unreadable (still a pending proposal —
- *  a garbled timestamp must not un-file it, it only costs the age line). */
-export function proposalAt(comments: string[]): { at: string | null } | null {
-  let found = false;
-  let newest: string | null = null;
+/** The disposition marker (GH-1777) — the other half of the lifecycle. A
+ *  proposal with no way to say "answered" is unresolvable: the item comes back
+ *  under `proposed` forever and the lane's goal state (a sweep with `acted=0`)
+ *  becomes unreachable. This marker is that answer, and it is DURABLE — a
+ *  comment, like the proposal, so the trail carries the whole exchange.
+ *  Payload: `{"disposition": "accepted"|"rejected", "at": iso, "note": "…"}`. */
+export const TEND_RESOLUTION_MARKER = "<!-- ralph-tend:v1 resolved -->";
+
+/** The PENDING proposal in a comment trail, or null when there is none — either
+ *  no proposal was ever filed, or the newest one has been disposed of.
+ *
+ *  Last marker wins. `comments(last: N)` returns oldest→newest within its
+ *  window, so trail order IS chronological, and a resolution can only be
+ *  written after the proposal it answers — which also means truncation is safe
+ *  in the direction that matters: if the proposal is inside the window, so is
+ *  everything filed after it. Within a single comment the later marker wins, so
+ *  a resolution that quotes the proposal it answers still resolves it.
+ *
+ *  `at` is null when the payload is unreadable — still a PENDING proposal, a
+ *  garbled timestamp must not un-file it; it only costs the age line. */
+export function pendingProposal(comments: string[]): { at: string | null } | null {
+  let pending: { at: string | null } | null = null;
   for (const body of comments) {
-    if (!body.includes(TEND_PROPOSAL_MARKER)) continue;
-    found = true;
+    const proposed = body.lastIndexOf(TEND_PROPOSAL_MARKER);
+    const resolved = body.lastIndexOf(TEND_RESOLUTION_MARKER);
+    if (proposed < 0 && resolved < 0) continue;
+    if (resolved > proposed) {
+      pending = null;
+      continue;
+    }
     const m = /"at"\s*:\s*"([^"]+)"/.exec(body);
     const t = m ? new Date(m[1]).getTime() : NaN;
-    if (!Number.isFinite(t)) continue;
-    if (newest === null || t > new Date(newest).getTime()) newest = m![1];
+    pending = { at: Number.isFinite(t) ? m![1] : null };
   }
-  return found ? { at: newest } : null;
+  return pending;
 }
 
 export interface TendOpts {
@@ -3752,6 +3775,23 @@ export function classifyTend(
   for (const c of closed) {
     const t = ms(c.closedAt);
     if (t === null || now.getTime() - t > opts.auditDays * dayMs) continue;
+    // A pending proposal outranks the audit for the same reason it outranks
+    // stale-body above: it is the do-not-re-propose cursor. Without this a
+    // `reopen-as-unevidenced` proposal is invisible to the classifier (the
+    // proposals map covers Backlog only), so the item returns as `done-audit`
+    // every pass and gets proposed again forever.
+    //
+    // A proposal filed at or before the close was ANSWERED BY THE CLOSE — that
+    // is what accepting a `close-as-delivered` proposal looks like — so it
+    // settles without a marker and the item flows on to be audited. Only a
+    // proposal filed AFTER the close (the `reopen-as-unevidenced` shape) is
+    // still awaiting a human. An undated proposal fails closed to pending: it
+    // stays visible rather than being silently swallowed by the audit path.
+    const p = pendingProposal(c.comments);
+    if (p && (p.at === null || (ms(p.at) ?? 0) > t)) {
+      push("proposed", c, p.at);
+      continue;
+    }
     if (c.comments.some((b) => b.includes(TEND_MARKER))) continue;
     push("done-audit", c, c.closedAt);
   }
@@ -3802,12 +3842,53 @@ export function tendQueue(ctx: Ctx, opts: TendOpts = parseTendOpts()): TendQueue
   if (numbers.length > 0) {
     const trails = fetchHistories(ctx, numbers);
     for (const n of numbers) {
-      const p = proposalAt(trails.get(n)?.comments ?? []);
+      const p = pendingProposal(trails.get(n)?.comments ?? []);
       if (p) proposals.set(n, p.at);
     }
   }
   if (proposals.size === 0) return first;
   return classifyTend(open, closed, opts, ctx.now(), proposals);
+}
+
+/** Dispose of a pending closure proposal by writing the durable resolution
+ *  marker (GH-1777). This is the ONLY way to record a **rejection**: the other
+ *  dispositions are state moves the board can already observe (a close answers
+ *  a `close-as-delivered` proposal by outcome — see classifyTend — and `reopen`
+ *  calls this itself), but "no, leave it open" changes nothing observable, so
+ *  without a written record the item would re-surface as `proposed` forever.
+ *
+ *  Returns the proposal it answered, or null when nothing was pending — the
+ *  caller decides whether that is an error (the CLI verb refuses; `reopen`
+ *  moves on), so this never invents a disposition for a proposal that does not
+ *  exist. Throws when the trail could not be READ: silently reporting "nothing
+ *  pending" on a failed fetch would be the one wrong answer here. */
+export function resolveProposal(
+  ctx: Ctx,
+  issue: Issue,
+  disposition: "accepted" | "rejected",
+  note?: string,
+): { at: string | null } | null {
+  const trail = fetchHistories(ctx, [issue.number]).get(issue.number);
+  if (!trail)
+    throw new Error(
+      `could not read #${issue.number}'s comment trail — cannot tell whether a proposal is pending`,
+    );
+  const pending = pendingProposal(trail.comments);
+  if (!pending) return null;
+  const payload = JSON.stringify({
+    disposition,
+    at: ctx.now().toISOString(),
+    ...(pending.at ? { proposed_at: pending.at } : {}),
+    ...(note ? { note } : {}),
+  });
+  addComment(
+    ctx,
+    issue.nodeId,
+    `**Tend proposal ${disposition}** (\`board\` by \`${ctx.cfg.holder}\`)` +
+      (note ? `:\n\n${note}` : "") +
+      `\n\n${TEND_RESOLUTION_MARKER}\n\`\`\`json\n${payload}\n\`\`\``,
+  );
+  return pending;
 }
 
 // ---------------------------------------------------------------------------
@@ -4504,7 +4585,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
             const s = reviewStall(h, ctx.now(), ctx.cfg.smells.reviewDays);
             if (s) stalled.push(`#${i.number}(${s.days}d, ${s.prs === 0 ? "no linked PR" : "PR quiet"})`);
           }
-          const p = proposalAt(h.comments);
+          const p = pendingProposal(h.comments);
           if (p) {
             const t = p.at ? new Date(p.at).getTime() : NaN;
             const days = Number.isFinite(t) ? (ctx.now().getTime() - t) / 86_400_000 : null;
@@ -4542,7 +4623,8 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
           proposals.length === 0
             ? "none"
             : `tend closure proposals unanswered ≥${ctx.cfg.smells.proposalDays}d — dispose of them ` +
-              `(\`board cancel N -m\`, \`board move N done --why\`, or reject by removing nothing): ${proposals.join(" ")}`,
+              `(\`board cancel N -m\`, \`board move N done --why\`, \`board reopen N\`, or ` +
+              `\`board resolve N --reject -m "why not"\`): ${proposals.join(" ")}`,
         );
       } catch (e) {
         for (const n of SMELL_CHECKS) add(n, "info", `not evaluated: ${(e as Error).message}`);
@@ -5170,7 +5252,18 @@ mutations
                               shape is checked by \`board contract validate
                               ralph.escalation\`, never by this verb
   cancel NNN -m "why"         any open state → Canceled (closes as not-planned)
-  reopen NNN                  Done/Canceled → Backlog (reopens the issue)
+  reopen NNN                  Done/Canceled → Backlog (reopens the issue); also
+                              resolves a pending tend proposal, since reopening
+                              is what accepting "reopen-as-unevidenced" means
+  resolve NNN --accept|--reject -m "why"
+                              dispose of a pending \`ralph-tend:v1 proposed\`
+                              closure proposal by writing the durable
+                              resolution marker. The other dispositions are
+                              state moves the board already observes (a close
+                              answers the proposal by outcome, reopen resolves
+                              itself); this verb exists for the one that is not
+                              observable — REJECTION, "leave it open". Exits 1
+                              when nothing is pending; -m required to reject
   link PARENT CHILD           add sub-issue edge
   dep NNN --on MMM [--rm]     NNN is blocked by MMM (--rm removes)
   comment NNN -m "body"
@@ -5336,7 +5429,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 const MUTATING = new Set([
   "create", "claim", "release", "move", "cancel", "reopen", "answer",
   "link", "dep", "comment", "adopt", "reconcile", "parent-check",
-  "setup",
+  "resolve", "setup",
 ]);
 
 export function run(argv: string[], ctx: Ctx): number {
@@ -5668,7 +5761,41 @@ export function run(argv: string[], ctx: Ctx): number {
     case "reopen": {
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
       const after = transition(ctx, issue, "Backlog", { isReopen: true });
+      // Reopening IS the acceptance of a `reopen-as-unevidenced` proposal, and
+      // it is the one disposition the classifier cannot infer afterwards: the
+      // item is open again, so the "answered by the close" rule no longer
+      // applies and the marker would read as pending forever. Record it.
+      // Best-effort by construction — the reopen already happened, and a
+      // failure to annotate it must not report the reopen as failed.
+      try {
+        const p = resolveProposal(ctx, issue, "accepted", "Resolved by `board reopen`.");
+        if (p) out(`resolved the pending tend proposal on #${issue.number} (accepted)`);
+      } catch (e) {
+        process.stderr.write(
+          `warn: reopened #${issue.number}, but could not resolve its tend proposal: ${(e as Error).message}\n`,
+        );
+      }
       out(issueLine(after));
+      return 0;
+    }
+
+    case "resolve": {
+      // Validate the intent before spending a read: exactly one disposition,
+      // and a rejection must say why (it is the disposition nothing else on the
+      // board records, so the comment IS the record).
+      const number = requireNumber(positional[0]);
+      const reject = !!flags.reject;
+      if (reject === !!flags.accept)
+        throw new UsageError(`resolve requires exactly one of --accept / --reject`);
+      const note = typeof flags.m === "string" && flags.m ? flags.m : undefined;
+      if (reject && !note)
+        throw new UsageError(`resolve --reject requires -m "<why not>" — a rejection with no reason reads as a bug`);
+      const p = resolveProposal(ctx, fetchIssue(ctx, number), reject ? "rejected" : "accepted", note);
+      if (!p) {
+        out(`#${number} has no pending tend proposal — nothing to resolve`);
+        return 1;
+      }
+      out(`#${number}: tend proposal ${reject ? "rejected" : "accepted"}${p.at ? ` (proposed ${p.at})` : ""}`);
       return 0;
     }
 
