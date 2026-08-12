@@ -340,6 +340,7 @@ export const DELIVER_REASONS = [
 /** THE tend-lane category list (same single-declaration rule): board.ts
  *  derives its TendCategory type from this tuple. */
 export const TEND_CATEGORIES = [
+  "proposed", // a PENDING `<!-- ralph-tend:v1 proposed -->` marker on an open OR a closed item (`reopen-as-unevidenced`) — awaiting a human disposition, do not re-propose. Pending = not answered by a `<!-- ralph-tend:v1 resolved -->` marker, and, on a closed item, filed after the close (a close answers a close-as-delivered proposal by outcome)
   "stale-body", // Backlog, no updates in staleDays — grep the live tree before trusting it
   "deps-cleared", // Backlog, every blocker closed — the wait is over (or the edge is stale)
   "deps-truncated", // Backlog, blocker list truncated — the board cannot see its own edges

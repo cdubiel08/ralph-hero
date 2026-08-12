@@ -1,5 +1,5 @@
 ---
-description: Backlog shape and Done audit — one bounded hygiene pass. Dedups and dependency-wires issues, detects stale bodies against the live tree, forms observations into tracked issues with provenance, audits recent closes. Metadata-only; every closure is a proposal via Human Needed, never executed. Triggers on "tend", "tend the backlog", "groom the board", "backlog hygiene", "audit the done column".
+description: Backlog shape and Done audit — one bounded hygiene pass. Dedups and dependency-wires issues, detects stale bodies against the live tree, forms observations into tracked issues with provenance, audits recent closes. Metadata-only; every closure is PROPOSED via a tracked marker comment, never executed. Triggers on "tend", "tend the backlog", "groom the board", "backlog hygiene", "audit the done column".
 argument-hint: "[<issue-number> | (empty = take the tend queue in order)]"
 context: inline
 model: sonnet
@@ -24,16 +24,40 @@ Inherited from /ralph:work, verbatim: board truthful at all times; findings outl
 
 Per category:
 
+- **proposed** — a closure proposal is on file and still **pending** (marker below), awaiting a human. It may be an open item's `close-as-delivered` or a closed one's `reopen-as-unevidenced` — either way, do not re-propose. Re-state it only if you found *new* evidence that changes the recommendation, and say what changed.
 - **stale-body** — *grep the live tree before trusting any issue body* (this repo's documented failure mode: deliverables already landed, or the target architecture was deleted by a cutover). Body still accurate → freshen a line, note the check in a comment. Deliverables landed or superseded → that is a **closure proposal**, below.
 - **deps-cleared** — every blocker closed: either the wait is genuinely over (comment that it is now actionable) or the edge was stale (`board dep NNN --on MMM --rm`, with a comment naming why).
 - **deps-truncated** — the board cannot see its own edges; prune or restructure the blocker list so it fits, journaling what moved.
 - **unformed** — likely raw intake: give it an outcome-shaped body, an estimate, and parent/dep wiring where it obviously belongs (`board link`, `board dep`). If it duplicates existing work: comment on both, wire the survivor, and propose the duplicate's closure.
-- **done-audit** — verify the close is real (merged PR, evidence comment, artifacts named). Sound → post the audit marker (below). Not sound → closure-proposal machinery in reverse: propose reopening via Human Needed with the evidence gap named.
+- **done-audit** — verify the close is real (merged PR, evidence comment, artifacts named). Sound → post the audit marker (below). Not sound → the same proposal marker with `"action": "reopen-as-unevidenced"` and the evidence gap named; the item then surfaces as **proposed**, not done-audit, until a human answers it. An item whose proposal was already answered arrives here for its audit — audit it, don't re-litigate the disposition.
 - **Observations** (the `observationSlot`) — your judgment whether to pull surfaced observations (dream-loop reflections, doctor smells, your own findings while grepping) into tracked issues this pass: `board create` with a **provenance comment** — what was observed, where, when. Counting toward the batch budget.
 
 ## Closures are proposals — the contract rule
 
-Close-as-stale / cancel-as-superseded / reopen-as-unevidenced are **never executed by this lane**. Post the evidence (what you grepped, what landed where, what supersedes it) and `board move NNN human-needed --why "<proposed action + evidence + your recommendation>"`. The human's answer is the execution path. This is the trust ratchet's deliberate starting position — promoting tend to direct closure is a future loosening someone must choose, not a default you drift into.
+Close-as-stale / cancel-as-superseded / reopen-as-unevidenced are **never executed by this lane**. This is the trust ratchet's deliberate starting position — promoting tend to direct closure is a future loosening someone must choose, not a default you drift into.
+
+A proposal **files as a marker comment, not as a state move** (GH-1777). Post the evidence (what you grepped, what landed where, what supersedes it) plus your recommendation, and stamp it:
+
+````text
+<!-- ralph-tend:v1 proposed -->
+```json
+{"action": "close-as-delivered", "at": "<iso8601>", "recommendation": "<one line>"}
+```
+````
+
+The marker is the cursor in both directions: `board tend-queue` re-surfaces the item under the **proposed** category while the proposal is *pending*, and that is why you must not re-propose the same closure next pass. `board doctor` names proposals left unanswered past `RALPH_SMELL_PROPOSAL_DAYS` (7) as an advisory `i` line.
+
+Do **not** use `board move NNN human-needed` for this. Human Needed is a pause on in-flight work — `answer` resumes it into In Progress — and `Backlog → Human Needed` is illegal by design.
+
+### Pending until answered — the other half of the marker
+
+A proposal you cannot answer is a proposal the lane re-surfaces forever, and the clean sweep (`acted=0`) never arrives. So *pending* is computed, not assumed:
+
+- A **`<!-- ralph-tend:v1 resolved -->`** marker answers the newest proposal above it. `board resolve NNN --accept|--reject -m "why"` writes it; `board reopen NNN` writes one itself, because reopening **is** the acceptance of `reopen-as-unevidenced`.
+- On a **closed** item, a proposal filed at or before the close was answered *by the close* — that is what accepting `close-as-delivered` looks like — and the item flows on to the Done audit. Only a proposal filed after the close is still pending.
+
+Both are the human's business, not yours: this lane files proposals and reads their disposition, it never writes a resolution marker. A rejected proposal returns the item to its ordinary category — treat that as a decision, not an invitation. Re-propose only with **new** evidence, and say what changed. (An `unformed` item whose duplicate-closure proposal was rejected still wants forming; form it.)
+
 
 ## Exit — every pass, even a clean sweep
 
