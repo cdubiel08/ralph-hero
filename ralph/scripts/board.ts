@@ -2364,7 +2364,22 @@ function toQueueItem(
   self: string,
   select: QueueSelect,
 ): QueueItemAny {
-  const openBlockerNodes = (c.blockedBy?.nodes ?? []).filter((b: any) => b.state === "OPEN");
+  // Only read the connection the query actually asked for: `c.blockedBy` is
+  // undefined on a lean read, and treating that as "no blockers" is the exact
+  // conflation these types exist to prevent.
+  const blockerParts = (): QueueItemBlockerParts => {
+    const nodes = c.blockedBy?.nodes ?? [];
+    const open = nodes.filter((b: any) => b.state === "OPEN");
+    return {
+      openBlockers: open.map((b: any) => b.number),
+      openBlockerLabels: open.map((b: any) => {
+        const r = b.repository?.nameWithOwner;
+        return r && r.toLowerCase() !== self ? `${r}#${b.number}` : `#${b.number}`;
+      }),
+      blockersTruncated: c.blockedBy?.pageInfo?.hasNextPage ?? false,
+      closedBlockers: nodes.filter((b: any) => b.state !== "OPEN").map((b: any) => b.number),
+    };
+  };
   return {
     number: c.number,
     repo: c.repository?.nameWithOwner ?? "",
@@ -2379,19 +2394,7 @@ function toQueueItem(
     fieldValuesTruncated: fvTruncated,
     claim: parseClaim(fv[CLAIM_FIELD]),
     claimRaw: fv[CLAIM_FIELD] ?? null,
-    ...(select.blockers
-      ? {
-          openBlockers: openBlockerNodes.map((b: any) => b.number),
-          openBlockerLabels: openBlockerNodes.map((b: any) => {
-            const r = b.repository?.nameWithOwner;
-            return r && r.toLowerCase() !== self ? `${r}#${b.number}` : `#${b.number}`;
-          }),
-          blockersTruncated: c.blockedBy?.pageInfo?.hasNextPage ?? false,
-          closedBlockers: (c.blockedBy?.nodes ?? [])
-            .filter((b: any) => b.state !== "OPEN")
-            .map((b: any) => b.number),
-        }
-      : {}),
+    ...(select.blockers ? blockerParts() : {}),
     ...(select.labels
       ? {
           labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
