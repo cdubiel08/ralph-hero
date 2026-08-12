@@ -17,6 +17,7 @@ import {
   LEGACY_STATES,
   RefusalError,
   SMELL_DEFAULTS,
+  VOLUME_DEFAULTS,
   STATES,
 } from "./board.js";
 
@@ -600,6 +601,7 @@ export function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo"): Ctx
     holder,
     apply: { enabled: false, label: APPLY_LABEL_DEFAULT, infraPaths: [] },
     smells: { ...SMELL_DEFAULTS },
+    volume: { ...VOLUME_DEFAULTS },
   };
   return {
     // Delegate per-call so tests may overlay gh.exec after ctx construction.
