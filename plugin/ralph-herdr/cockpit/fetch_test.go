@@ -124,6 +124,43 @@ func TestParseBoardColumns(t *testing.T) {
 	}
 }
 
+// TestParseBoardColumnsNeedsOnlyCoreFields pins the cockpit's half of the
+// board contract after GH-1803 made nested connections a per-caller choice.
+//
+// `labels`/`labelsTruncated` and `openBlockers`/`blockersTruncated` are now
+// OPTIONAL GROUPS — a read that did not select them omits the keys entirely
+// rather than sending `[]` with `truncated: false`. `list` selects both today
+// (QUEUE_SELECT_FULL, "contract kept"), so this is not a bug being fixed; it
+// is the guarantee that leaning `list` later cannot silently blank the board.
+//
+// Everything the partition reads lives in QueueItemCore, which every selection
+// carries. This payload proves it by omitting both groups outright.
+func TestParseBoardColumnsNeedsOnlyCoreFields(t *testing.T) {
+	lean := `{"items":[
+	  {"number":10,"repo":"o/r","title":"Ten","state":"In Progress","priority":"P1","hasParent":true,"parentNumber":3,"fieldValuesTruncated":false,"claim":null,"claimRaw":null},
+	  {"number":13,"repo":"o/r","title":"Thirteen","state":"In Review","priority":null,"hasParent":false,"parentNumber":null,"fieldValuesTruncated":false,"claim":null,"claimRaw":null},
+	  {"number":12,"repo":"o/r","title":"Twelve","state":"Human Needed","priority":"P0","hasParent":false,"parentNumber":null,"fieldValuesTruncated":false,"claim":null,"claimRaw":null}
+	],"foreign":[],"foreignEvaluated":false}`
+	cols, err := parseBoardColumns(lean)
+	if err != nil {
+		t.Fatalf("a lean selection must still parse — the cockpit reads no optional group: %v", err)
+	}
+	for i, want := range [3]int{10, 13, 12} {
+		if len(cols[i]) != 1 || cols[i][0].Number != want {
+			t.Fatalf("column %d (%s) mis-partitioned under a lean read: %+v", i, columnStates[i], cols[i])
+		}
+	}
+	// The fields the TUI actually renders survive; estimate is legitimately
+	// absent here and must read as empty, not break the parse.
+	c := cols[0][0]
+	if c.Title != "Ten" || c.Priority != "P1" || c.ParentNumber != 3 || c.Repo != "o/r" {
+		t.Errorf("core fields lost under a lean read: %+v", c)
+	}
+	if c.Estimate != "" {
+		t.Errorf("an unselected estimate must read as empty, got %q", c.Estimate)
+	}
+}
+
 // snap builds a protocol-19 session_snapshot envelope whose single workspace
 // has worktree provenance pointing at root — i.e. a herd that belongs to us.
 func snap(root, agents string) string {
