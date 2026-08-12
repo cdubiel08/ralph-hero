@@ -34,6 +34,7 @@ export interface FakeIssue {
   issueState?: "OPEN" | "CLOSED";
   stateReason?: string | null;
   onBoard?: boolean; // default true
+  projectItemsTruncated?: boolean; // issue's projectItems page reports hasNextPage
   parent?: number;
   parentRepo?: string; // nameWithOwner of the parent's repo; defaults to own
   children?: Array<{
@@ -76,6 +77,7 @@ export interface FakeIssue {
  *  records every mutation, so clear-then-set ordering is observable. */
 export class FakeGh {
   mutations: string[] = [];
+  graphqlCalls = 0; // GraphQL round trips — the cost the bounded read reduces
   comments: Array<{ body: string }> = [];
   issues = new Map<number, FakeIssue>();
   failNextStateWrite = false; // transport-failure injection
@@ -245,7 +247,50 @@ export class FakeGh {
     };
   }
 
+  /** The QUEUE_CONTENT_FRAGMENT shape — served identically by the project
+   *  scan and the repo-scoped open-issue read, as board.ts requests it. */
+  private queueContent(fi: FakeIssue) {
+    return {
+      number: fi.number,
+      title: `Issue ${fi.number}`,
+      state: fi.issueState ?? "OPEN",
+      stateReason: fi.stateReason ?? null,
+      closedAt: fi.closedAt ?? null,
+      createdAt: fi.createdAt ?? null,
+      updatedAt: fi.updatedAt ?? null,
+      labels: {
+        pageInfo: { hasNextPage: fi.labelsTruncated ?? false },
+        nodes: (fi.labels ?? []).map((name) => ({ name })),
+      },
+      repository: { nameWithOwner: fi.repo ?? "cdubiel08/ralph-hero" },
+      parent: fi.parent
+        ? { number: fi.parent, repository: { nameWithOwner: fi.parentRepo ?? "cdubiel08/ralph-hero" } }
+        : null,
+      blockedBy: {
+        pageInfo: { hasNextPage: fi.blockersTruncated ?? false },
+        nodes: (fi.blockedBy ?? []).map((b) => ({
+          number: b.number,
+          state: b.state,
+          repository: { nameWithOwner: b.repo ?? "cdubiel08/ralph-hero" },
+        })),
+      },
+    };
+  }
+
+  private queueFieldValues(fi: FakeIssue) {
+    return {
+      pageInfo: { hasNextPage: fi.fieldValuesTruncated ?? false },
+      nodes: [
+        ...(fi.state ? [{ name: fi.state, field: { name: "Workflow State" } }] : []),
+        ...(fi.claim ? [{ text: fi.claim, field: { name: "Claim" } }] : []),
+        ...(fi.priority ? [{ name: fi.priority, field: { name: "Priority" } }] : []),
+        ...(fi.estimate ? [{ name: fi.estimate, field: { name: "Estimate" } }] : []),
+      ],
+    };
+  }
+
   private graphql(payload: { query: string; variables: any }): ExecResult {
+    this.graphqlCalls++;
     const { query, variables } = payload;
 
     // Deliver-lane detail fetch (GH-1712): dK/bK alias pairs. Matched before
@@ -369,6 +414,39 @@ export class FakeGh {
       this.mutations.push(`createField(${variables.name})`);
       return data({ createProjectV2Field: { projectV2Field: { id: `F_${variables.name}` } } });
     }
+    // Repo-scoped queue read (GH-1785). Must precede the generic
+    // `repository(owner … { id }` branch — `project { id }` matches it too.
+    if (query.includes("issues(states: OPEN")) {
+      const all = [...this.issues.values()].filter(
+        (fi) => (fi.issueState ?? "OPEN") === "OPEN" && (fi.repo ?? "cdubiel08/ralph-hero") === "cdubiel08/ralph-hero",
+      );
+      const start = variables.after ? Number(variables.after) : 0;
+      const page = Number.isFinite(this.itemsPageSize) ? all.slice(start, start + this.itemsPageSize) : all;
+      const end = start + page.length;
+      return data({
+        repository: {
+          issues: {
+            pageInfo: { hasNextPage: end < all.length, endCursor: String(end) },
+            nodes: page.map((fi) => ({
+              ...this.queueContent(fi),
+              projectItems: {
+                pageInfo: { hasNextPage: fi.projectItemsTruncated ?? false },
+                nodes:
+                  fi.onBoard === false
+                    ? []
+                    : [
+                        {
+                          isArchived: fi.archived ?? false,
+                          project: { id: PROJECT_ID },
+                          fieldValues: this.queueFieldValues(fi),
+                        },
+                      ],
+              },
+            })),
+          },
+        },
+      });
+    }
     if (query.includes("repositories(first")) {
       return data({
         node: { repositories: { nodes: this.linkedRepos.map((r) => ({ nameWithOwner: r })) } },
@@ -411,41 +489,8 @@ export class FakeGh {
             pageInfo: { hasNextPage: end < all.length, endCursor: String(end) },
             nodes: page.map((fi) => ({
               isArchived: fi.archived ?? false,
-              content: {
-                number: fi.number, title: `Issue ${fi.number}`, state: fi.issueState ?? "OPEN",
-                stateReason: fi.stateReason ?? null,
-                closedAt: fi.closedAt ?? null,
-                createdAt: fi.createdAt ?? null,
-                updatedAt: fi.updatedAt ?? null,
-                labels: {
-                  pageInfo: { hasNextPage: fi.labelsTruncated ?? false },
-                  nodes: (fi.labels ?? []).map((name) => ({ name })),
-                },
-                repository: { nameWithOwner: fi.repo ?? "cdubiel08/ralph-hero" },
-                parent: fi.parent
-                  ? {
-                      number: fi.parent,
-                      repository: { nameWithOwner: fi.parentRepo ?? "cdubiel08/ralph-hero" },
-                    }
-                  : null,
-                blockedBy: {
-                  pageInfo: { hasNextPage: fi.blockersTruncated ?? false },
-                  nodes: (fi.blockedBy ?? []).map((b) => ({
-                    number: b.number,
-                    state: b.state,
-                    repository: { nameWithOwner: b.repo ?? "cdubiel08/ralph-hero" },
-                  })),
-                },
-              },
-              fieldValues: {
-                pageInfo: { hasNextPage: fi.fieldValuesTruncated ?? false },
-                nodes: [
-                  ...(fi.state ? [{ name: fi.state, field: { name: "Workflow State" } }] : []),
-                  ...(fi.claim ? [{ text: fi.claim, field: { name: "Claim" } }] : []),
-                  ...(fi.priority ? [{ name: fi.priority, field: { name: "Priority" } }] : []),
-                  ...(fi.estimate ? [{ name: fi.estimate, field: { name: "Estimate" } }] : []),
-                ],
-              },
+              content: this.queueContent(fi),
+              fieldValues: this.queueFieldValues(fi),
             })),
           },
         },

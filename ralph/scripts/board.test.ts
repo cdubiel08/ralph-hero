@@ -39,6 +39,8 @@ import {
   LEGACY_STATES,
   listItems,
   listItemsFull,
+  listOwnOpenItems,
+  ownRepo,
   isState,
   MACHINE,
   parentCheck,
@@ -1106,6 +1108,62 @@ describe("doctor (legacy states, archived items)", () => {
     expect(reconcile(ctx, 1)).toMatch(/archived — skipped/);
   });
 
+});
+
+describe("bounded queue read (GH-1785) — listOwnOpenItems", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("agrees with the project scan on every own-repo open item", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1", estimate: "S", labels: ["x"] });
+    gh.issues.set(2, {
+      number: 2, state: "In Progress", claim: encodeClaim("a@h", NOW), parent: 1,
+      blockedBy: [{ number: 3, state: "OPEN" }, { number: 4, state: "CLOSED" }],
+    });
+    gh.issues.set(3, { number: 3, state: "Backlog" });
+
+    expect(listOwnOpenItems(ctx)).toEqual(ownRepo(ctx, listItems(ctx)).own);
+  });
+
+  it("excludes closed, archived, off-board, and foreign items", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(2, { number: 2, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED" });
+    gh.issues.set(3, { number: 3, state: "Backlog", archived: true });
+    gh.issues.set(4, { number: 4, state: null, onBoard: false });
+    gh.issues.set(5, { number: 5, state: "Backlog", repo: "other/repo" });
+
+    expect(listOwnOpenItems(ctx).map((i) => i.number)).toEqual([1]);
+  });
+
+  it("costs one page per 100 open issues, not one per 100 project items", () => {
+    for (let n = 1; n <= 5; n++) gh.issues.set(n, { number: n, state: "Backlog" });
+    for (let n = 6; n <= 60; n++)
+      gh.issues.set(n, { number: n, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED" });
+    gh.itemsPageSize = 10;
+
+    // 5 open issues → a single page; the project scan walks all 60 items.
+    const before = gh.graphqlCalls;
+    expect(listOwnOpenItems(ctx).map((i) => i.number)).toEqual([1, 2, 3, 4, 5]);
+    const bounded = gh.graphqlCalls - before;
+    const scanStart = gh.graphqlCalls;
+    listItemsFull(ctx);
+    expect(bounded).toBeLessThan(gh.graphqlCalls - scanStart);
+  });
+
+  it("walks the cursor when open issues exceed one page", () => {
+    for (let n = 1; n <= 25; n++) gh.issues.set(n, { number: n, state: "Backlog" });
+    gh.itemsPageSize = 10;
+    expect(listOwnOpenItems(ctx)).toHaveLength(25);
+  });
+
+  it("fails closed when an issue's project membership is truncated", () => {
+    gh.issues.set(1, { number: 1, state: null, onBoard: false, projectItemsTruncated: true });
+    expect(() => listOwnOpenItems(ctx)).toThrow(/#1.*project membership truncated/);
+  });
 });
 
 describe("doctor hardening (closed drift, fix gating, resilience, garbled claims)", () => {
