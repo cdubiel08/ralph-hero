@@ -41,8 +41,8 @@ func TestArgvConstruction(t *testing.T) {
 		got  []string
 		want []string
 	}{
-		{"board list", argsBoardList("Human Needed"),
-			[]string{"list", "--state", "Human Needed", "--json"}},
+		{"board list is the whole-board read — no --state (GH-1786)", argsBoardList(),
+			[]string{"list", "--json"}},
 		{"board get", argsBoardGet(1234),
 			[]string{"get", "1234", "--json"}},
 		{"board frontier", argsBoardFrontier(),
@@ -86,23 +86,40 @@ func TestSpawnScriptIsConstant(t *testing.T) {
 	}
 }
 
-func TestParseBoardList(t *testing.T) {
+func TestParseBoardColumns(t *testing.T) {
+	// One cross-state payload — exactly what `board list --json` returns —
+	// partitioned into the three columns. Deliberately NOT grouped by state
+	// in the payload: board order is per-column, not per-block.
 	out := `{"items":[
 	  {"number":10,"repo":"o/r","title":"Ten","state":"In Progress","priority":"P1","estimate":"M","parentNumber":3},
-	  {"number":11,"repo":"o/r","title":"Wrong column","state":"Backlog","priority":null,"estimate":null,"parentNumber":null}
+	  {"number":11,"repo":"o/r","title":"Backlog item","state":"Backlog","priority":null,"estimate":null,"parentNumber":null},
+	  {"number":12,"repo":"o/r","title":"Twelve","state":"Human Needed","priority":"P0","estimate":null,"parentNumber":null},
+	  {"number":13,"repo":"o/r","title":"Thirteen","state":"In Review","priority":null,"estimate":null,"parentNumber":null},
+	  {"number":14,"repo":"o/r","title":"Fourteen","state":"In Progress","priority":null,"estimate":null,"parentNumber":null},
+	  {"number":15,"repo":"o/r","title":"Off-cockpit","state":"Done","priority":null,"estimate":null,"parentNumber":null}
 	],"foreign":[]}`
-	cards, err := parseBoardList(out, "In Progress")
+	cols, err := parseBoardColumns(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cards) != 1 {
-		t.Fatalf("want 1 card (state filter must hold), got %d", len(cards))
+	got := [3][]int{}
+	for i := range cols {
+		for _, c := range cols[i] {
+			got[i] = append(got[i], c.Number)
+			if c.State != columnStates[i] {
+				t.Errorf("column %d holds a %q card: %+v", i, c.State, c)
+			}
+		}
 	}
-	c := cards[0]
-	if c.Number != 10 || c.Title != "Ten" || c.State != "In Progress" || c.ParentNumber != 3 || c.Priority != "P1" {
+	want := [3][]int{{10, 14}, {13}, {12}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("partition mismatch (order within a column is board order)\n got: %v\nwant: %v", got, want)
+	}
+	c := cols[0][0]
+	if c.Number != 10 || c.Title != "Ten" || c.ParentNumber != 3 || c.Priority != "P1" || c.Estimate != "M" {
 		t.Errorf("card mis-parsed: %+v", c)
 	}
-	if _, err := parseBoardList("not json", "In Review"); err == nil {
+	if _, err := parseBoardColumns("not json"); err == nil {
 		t.Error("garbage must error, not read as an empty board")
 	}
 }
@@ -115,6 +132,79 @@ func snap(root, agents string) string {
 	  "workspaces":[{"workspace_id":"wR","worktree":{"repo_root":"` + root + `","checkout_path":"` + root + `"}}],
 	  "panes":[],
 	  "agents":[` + agents + `]}}}`
+}
+
+// TestFetchBoardIsOneRead is GH-1786's invariant, pinned: one poll costs ONE
+// board process. Three `--state` reads were three full board walks (board.ts's
+// withCache is per-process, so they shared nothing) — ~3x the GraphQL points
+// and ~3x the wall time for one refresh.
+func TestFetchBoardIsOneRead(t *testing.T) {
+	payload := `{"items":[
+	  {"number":10,"repo":"o/r","title":"Ten","state":"In Progress"},
+	  {"number":12,"repo":"o/r","title":"Twelve","state":"Human Needed"},
+	  {"number":13,"repo":"o/r","title":"Thirteen","state":"In Review"}
+	],"foreign":[]}`
+	r := &fakeRunner{respond: func(prog string, args []string) (string, string, error) {
+		return payload, "", nil
+	}}
+	// Gh empty: the bounded question reads are separate chrome, not the scan.
+	msg, ok := fetchBoardCmd(Config{Board: "board"}, r)().(boardMsg)
+	if !ok {
+		t.Fatal("fetchBoardCmd must return a boardMsg")
+	}
+	boardCalls := 0
+	for _, c := range r.calls {
+		if c.prog == "board" {
+			boardCalls++
+		}
+	}
+	if boardCalls != 1 {
+		t.Fatalf("one poll must be ONE board read (GH-1786), got %d: %+v", boardCalls, r.calls)
+	}
+	if !reflect.DeepEqual(r.calls[0].args, []string{"list", "--json"}) {
+		t.Errorf("the single read must be the whole-board list, got %q", r.calls[0].args)
+	}
+	for i, want := range [3]int{10, 13, 12} {
+		if len(msg.cols[i]) != 1 || msg.cols[i][0].Number != want {
+			t.Errorf("column %d (%s) mis-partitioned: %+v", i, columnStates[i], msg.cols[i])
+		}
+		if msg.failed[i] {
+			t.Errorf("column %d must not be marked unknown on a clean read", i)
+		}
+	}
+}
+
+// A whole-board read covers all three columns, so its failure leaves all three
+// UNKNOWN — never a falsely calm board. update.go then keeps each column's
+// last good cards (TestBoardMsgKeepsLastGoodOnTotalFailure).
+func TestFetchBoardFailureMarksEveryColumnUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		resp func(string, []string) (string, string, error)
+		want string
+	}{
+		{"nonzero exit", func(string, []string) (string, string, error) {
+			return "", "board: could not read open issues\n", errors.New("exit status 1")
+		}, "could not read open issues"},
+		{"0-exit garbage stdout", func(string, []string) (string, string, error) {
+			return "npm WARN this is not json\n", "", nil
+		}, "list --json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := fetchBoardCmd(Config{Board: "board"}, &fakeRunner{respond: tc.resp})().(boardMsg)
+			if msg.failed != allColumnsUnknown {
+				t.Errorf("every column must read as unknown, got %v", msg.failed)
+			}
+			for i := range msg.cols {
+				if msg.cols[i] != nil {
+					t.Errorf("a failed read must carry NO cards for column %d", i)
+				}
+			}
+			if !strings.Contains(msg.err, tc.want) {
+				t.Errorf("the failure must be surfaced (%q), got %q", tc.want, msg.err)
+			}
+		})
+	}
 }
 
 func TestParseAgents(t *testing.T) {

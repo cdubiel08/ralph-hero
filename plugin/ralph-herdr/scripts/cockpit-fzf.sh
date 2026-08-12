@@ -4,13 +4,14 @@
 # (board / herdr / gh); what this rung loses is chrome — side-by-side
 # columns, live glyph refresh, mouse — never a verb.
 #
-# Board state is authoritative: a card's column comes ONLY from
-# `board list --state` over the three cockpit columns (In Progress /
-# In Review / Human Needed, board states verbatim). The herdr agent state
-# is a decoration overlay joined by parsing agent names (grammar-B w<N>-*,
-# legacy gh-N): a failed herdr read costs the glyph, never the list.
+# Board state is authoritative: a card's column comes ONLY from the item's
+# own Workflow State in ONE `board list --json` read, partitioned here into
+# the three cockpit columns (In Progress / In Review / Human Needed, board
+# states verbatim). The herdr agent state is a decoration overlay joined by
+# parsing agent names (grammar-B w<N>-*, legacy gh-N): a failed herdr read
+# costs the glyph, never the list.
 #
-# Loop: read the three columns (stdout-only into the parse, fail-closed on
+# Loop: read the board once (stdout-only into the parse, fail-closed on
 # unparseable — the ralph-answer.sh precedent) → one fzf pick with an
 # agent-tail / latest-comment preview → a second fzf menu of verbs
 # (observe / peek / reply / answer / spawn / diff / browser / quit) → back
@@ -69,25 +70,41 @@ hold() {
   read -r _ || true
 }
 
-# read_column STATE — `board list --state STATE --json`, stdout-only into the
-# parse (the board shim's stderr can carry harmless noise on a SUCCESSFUL
-# read: npx cold-cache chatter, node ExperimentalWarning lines), FAIL-CLOSED:
-# a 0-exit with unparseable stdout is a failed read, never an empty column —
-# an empty column and a failed query are different facts. Prints one TSV row
-# per card: STATE \t #N \t TITLE (agent decoration joined later); rc 1 on
-# any failure, with the diagnostics on stderr.
-read_column() {
-  local state="$1" err json
+# read_board — ONE `board list --json` covering all three cockpit columns
+# (GH-1786). `--state` never saved a request: board.ts walks the whole board
+# and filters in-process, and its cache is per-process, so three --state reads
+# were three identical full walks — ~3x the GraphQL points and ~3x the wall
+# time for one refresh. The partition is jq's, over a single payload.
+#
+# stdout-only into the parse (the board shim's stderr can carry harmless noise
+# on a SUCCESSFUL read: npx cold-cache chatter, node ExperimentalWarning
+# lines), FAIL-CLOSED: a 0-exit with unparseable stdout is a failed read, never
+# an empty board — an empty column and a failed query are different facts.
+# Prints one TSV row per card: STATE \t #N \t TITLE (agent decoration joined
+# later), the three columns in the LOCKED order and board order within each;
+# rc 1 on any failure, with the diagnostics on stderr. Items in any other state
+# are not cockpit cards and are dropped. STATE is emitted from the locked list,
+# not from the payload, so a board CLI returning odd rows still cannot
+# mis-column a card — the same guarantee the per-state read gave.
+read_board() {
+  local err json
   err=$(mktemp "${TMPDIR:-/tmp}/ralph-cockpit-err.XXXXXX")
-  if ! json=$("$BOARD" list --state "$state" --json 2>"$err"); then
-    echo "board list --state \"$state\" failed:" >&2
+  if ! json=$("$BOARD" list --json 2>"$err"); then
+    echo "board list --json failed:" >&2
     head -5 "$err" >&2
     rm -f "$err"
     return 1
   fi
   rm -f "$err"
-  jq -r --arg s "$state" '.items[] | [$s, "#\(.number)", .title] | @tsv' <<<"$json" 2>/dev/null || {
-    echo "board list --state \"$state\" printed unparseable JSON — refusing to render it as an empty column" >&2
+  jq -r '
+    .items as $items
+    | ("In Progress", "In Review", "Human Needed") as $s
+    | $items[]
+    | select(.state == $s)
+    | [$s, "#\(.number)", .title]
+    | @tsv
+  ' <<<"$json" 2>/dev/null || {
+    echo "board list --json printed unparseable JSON — refusing to render it as an empty board" >&2
     return 1
   }
 }
@@ -132,18 +149,13 @@ decorate() {
 
 # cockpit_cards OVERLAY — the three cockpit columns flattened, in the locked
 # order, decorated with OVERLAY. rc 1 (diagnostics already on stderr from
-# read_column) on any failed/unparseable read — never a silently thinner
-# board. Prints nothing (rc 0) on a genuinely calm board.
+# read_board) on a failed/unparseable read — never a silently thinner board.
+# Prints nothing (rc 0) on a genuinely calm board.
 cockpit_cards() {
-  local overlay="$1" cards="" st col
-  for st in "In Progress" "In Review" "Human Needed"; do
-    col=$(read_column "$st") || return 1
-    [ -n "$col" ] || continue
-    col=$(decorate "$overlay" <<<"$col")
-    cards="${cards}${cards:+$NL}${col}"
-  done
-  [ -n "$cards" ] && printf '%s\n' "$cards"
-  return 0
+  local overlay="$1" cards
+  cards=$(read_board) || return 1
+  [ -n "$cards" ] || return 0
+  decorate "$overlay" <<<"$cards"
 }
 
 # run_verb VERB N AGENT — dispatch one picked verb for card #N (AGENT = the
@@ -321,7 +333,7 @@ run_verb() {
 }
 
 # ── Sourced mode ends here ───────────────────────────────────────────────────
-# cockpit.test.sh sources this file for the pure functions above (read_column,
+# cockpit.test.sh sources this file for the pure functions above (read_board,
 # decorate, cockpit_cards, run_verb) — the fleet.test.sh pattern. The fzf
 # requirement and the UI loop below belong to the executed script only: a
 # test host without fzf still tests every verb.
