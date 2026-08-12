@@ -2094,6 +2094,123 @@ export interface ClosedItem {
   parentNumber: number | null; // own-repo parent — closed nodes pass tree topology through
 }
 
+/** Fail closed on pagination metadata itself (CodeRabbit, PR #1794).
+ *
+ *  Absent `pageInfo` would read as "last page" and silently return a partial
+ *  board; `hasNextPage: true` with no `endCursor` would re-request the first
+ *  page forever. Both are corrupt-read shapes, and this file's rule is that a
+ *  read it cannot trust is an error, never a thin result. */
+function assertPageInfo(pageInfo: any, what: string): void {
+  if (!pageInfo || typeof pageInfo.hasNextPage !== "boolean")
+    throw new Error(`${what}: pagination metadata missing — cannot tell if the read is complete`);
+  if (pageInfo.hasNextPage && !pageInfo.endCursor)
+    throw new Error(`${what}: more pages reported but no cursor to fetch them`);
+}
+
+/** The issue fields a QueueItem is built from. Shared verbatim by the two
+ *  read paths (project scan, repo-scoped queue read) so they cannot drift. */
+const QUEUE_CONTENT_FRAGMENT = `
+  number title state stateReason closedAt createdAt updatedAt
+  labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
+  repository { nameWithOwner }
+  parent { number repository { nameWithOwner } }
+  blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }`;
+
+function toQueueItem(c: any, fv: Record<string, string>, fvTruncated: boolean, self: string): QueueItem {
+  const openBlockerNodes = (c.blockedBy?.nodes ?? []).filter((b: any) => b.state === "OPEN");
+  return {
+    number: c.number,
+    repo: c.repository?.nameWithOwner ?? "",
+    title: c.title,
+    state: fv[STATE_FIELD] ?? "(none)",
+    priority: fv[PRIORITY_FIELD] ?? null,
+    hasParent: !!c.parent,
+    // Own-repo parents only: a foreign parent's #N must never rebuild
+    // a tree edge onto this repo's #N (fail-closed, like blocker labels).
+    parentNumber:
+      c.parent && c.parent.repository?.nameWithOwner?.toLowerCase() === self ? c.parent.number : null,
+    openBlockers: openBlockerNodes.map((b: any) => b.number),
+    openBlockerLabels: openBlockerNodes.map((b: any) => {
+      const r = b.repository?.nameWithOwner;
+      return r && r.toLowerCase() !== self ? `${r}#${b.number}` : `#${b.number}`;
+    }),
+    blockersTruncated: c.blockedBy?.pageInfo?.hasNextPage ?? false,
+    fieldValuesTruncated: fvTruncated,
+    claim: parseClaim(fv[CLAIM_FIELD]),
+    claimRaw: fv[CLAIM_FIELD] ?? null,
+    labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
+    labelsTruncated: c.labels?.pageInfo?.hasNextPage ?? false,
+    closedBlockers: (c.blockedBy?.nodes ?? [])
+      .filter((b: any) => b.state !== "OPEN")
+      .map((b: any) => b.number),
+    updatedAt: c.updatedAt ?? null,
+    createdAt: c.createdAt ?? null,
+    estimate: fv[ESTIMATE_FIELD] ?? null,
+  };
+}
+
+/** Queue read scoped to the OWN repo's OPEN issues (GH-1785).
+ *
+ *  The project scan below walks every item the board has ever held — here,
+ *  1344 items over 14 pages, ~22 s — because the items connection has no
+ *  server-side filter. A queue read does not need the closed ones: entering
+ *  from `repository.issues(states: OPEN)` costs pages proportional to open
+ *  work instead (26 issues, one page).
+ *
+ *  What it deliberately cannot see: board items from OTHER repos. Those are
+ *  read-only here anyway (ownRepo partitions them out of every write path)
+ *  and doctor's `foreign-items` check still runs off the full scan — but a
+ *  caller that must ENUMERATE them has to use listItemsFull, so callers say
+ *  which they need rather than inheriting the wrong one silently. */
+export function listOwnOpenItems(ctx: Ctx): QueueItem[] {
+  return withCache(ctx, (cache) => {
+    const items: QueueItem[] = [];
+    const self = `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase();
+    let after: string | null = null;
+    for (;;) {
+      const data: any = ghGraphQL(
+        ctx,
+        `query($owner: String!, $repo: String!, $after: String) {
+          repository(owner: $owner, name: $repo) {
+            issues(states: OPEN, first: 100, after: $after) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                ${QUEUE_CONTENT_FRAGMENT}
+                projectItems(first: 20) {
+                  pageInfo { hasNextPage }
+                  nodes { isArchived project { id } ${FIELD_VALUES_FRAGMENT} }
+                }
+              }
+            }
+          }
+        }`,
+        { owner: ctx.cfg.owner, repo: ctx.cfg.repo, after },
+      );
+      const page = data.repository?.issues;
+      if (!page) throw new Error(`could not read open issues for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+      assertPageInfo(page.pageInfo, `open issues for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+      for (const c of page.nodes ?? []) {
+        if (!c?.number) continue;
+        const nodes = c.projectItems?.nodes ?? [];
+        const item = nodes.find((n: any) => n.project?.id === cache.projectId);
+        if (!item) {
+          // Fail closed: an issue on 20+ projects whose board membership fell
+          // past the page would silently read as off-board.
+          if (c.projectItems?.pageInfo?.hasNextPage)
+            throw new Error(`issue #${c.number}: project membership truncated — cannot tell if it is on the board`);
+          continue; // genuinely off-board
+        }
+        // Archived items are still returned but cannot be written — skip.
+        if (item.isArchived) continue;
+        items.push(toQueueItem(c, fieldValueMap(item.fieldValues), fieldValuesTruncated(item.fieldValues), self));
+      }
+      if (!page.pageInfo.hasNextPage) break;
+      after = page.pageInfo.endCursor;
+    }
+    return items;
+  });
+}
+
 /** One page walk, two views: open items for the queue, closed items for
  *  doctor's drift sweep. Every existing caller goes through listItems and
  *  keeps the OPEN-only contract — closed items must never reach the ranker. */
@@ -2115,13 +2232,7 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
                 nodes {
                   isArchived
                   content {
-                    ... on Issue {
-                      number title state stateReason closedAt createdAt updatedAt
-                      labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
-                      repository { nameWithOwner }
-                      parent { number repository { nameWithOwner } }
-                      blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }
-                    }
+                    ... on Issue { ${QUEUE_CONTENT_FRAGMENT} }
                   }
                   ${FIELD_VALUES_FRAGMENT}
                 }
@@ -2132,7 +2243,9 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
         { projectId: cache.projectId, after },
       );
       const page = data.node?.items;
-      for (const n of page?.nodes ?? []) {
+      if (!page) throw new Error(`could not read project items for project ${ctx.cfg.projectNumber}`);
+      assertPageInfo(page.pageInfo, `project items for project ${ctx.cfg.projectNumber}`);
+      for (const n of page.nodes ?? []) {
         const c = n.content;
         if (!c?.number) continue;
         const fv = fieldValueMap(n.fieldValues);
@@ -2158,40 +2271,9 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
         // Archived items are still returned by the items connection but
         // cannot be written ("The item is archived") — skip them everywhere.
         if (n.isArchived) continue;
-        const openBlockerNodes = (c.blockedBy?.nodes ?? []).filter((b: any) => b.state === "OPEN");
-        items.push({
-          number: c.number,
-          repo: c.repository?.nameWithOwner ?? "",
-          title: c.title,
-          state: fv[STATE_FIELD] ?? "(none)",
-          priority: fv[PRIORITY_FIELD] ?? null,
-          hasParent: !!c.parent,
-          // Own-repo parents only: a foreign parent's #N must never rebuild
-          // a tree edge onto this repo's #N (fail-closed, like blocker labels).
-          parentNumber:
-            c.parent && c.parent.repository?.nameWithOwner?.toLowerCase() === self
-              ? c.parent.number
-              : null,
-          openBlockers: openBlockerNodes.map((b: any) => b.number),
-          openBlockerLabels: openBlockerNodes.map((b: any) => {
-            const r = b.repository?.nameWithOwner;
-            return r && r.toLowerCase() !== self ? `${r}#${b.number}` : `#${b.number}`;
-          }),
-          blockersTruncated: c.blockedBy?.pageInfo?.hasNextPage ?? false,
-          fieldValuesTruncated: fieldValuesTruncated(n.fieldValues),
-          claim: parseClaim(fv[CLAIM_FIELD]),
-          claimRaw: fv[CLAIM_FIELD] ?? null,
-          labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
-          labelsTruncated: c.labels?.pageInfo?.hasNextPage ?? false,
-          closedBlockers: (c.blockedBy?.nodes ?? [])
-            .filter((b: any) => b.state !== "OPEN")
-            .map((b: any) => b.number),
-          updatedAt: c.updatedAt ?? null,
-          createdAt: c.createdAt ?? null,
-          estimate: fv[ESTIMATE_FIELD] ?? null,
-        });
+        items.push(toQueueItem(c, fv, fieldValuesTruncated(n.fieldValues), self));
       }
-      if (!page?.pageInfo?.hasNextPage) break;
+      if (!page.pageInfo.hasNextPage) break;
       after = page.pageInfo.endCursor;
     }
     return { open: items, closed };
@@ -3869,7 +3951,12 @@ const HELP = `board — the ralph v2 board CLI (sole sanctioned mutation path)
 
 reads
   get NNN [--json]            issue: state, claim, parent/children, blockers, PRs
-  list [--state S] [--json]   open items on the board
+  list [--state S] [--json]   open items on the board — a bounded own-repo
+                              read (open issues only), not a full project
+       [--all-repos]          scan the whole project instead: the only read
+                              that enumerates foreign board items. --json
+                              carries foreignEvaluated so "not read" never
+                              reads as "none there"
   next [--json]               top-ranked actionable Backlog item (+ blocked report).
                               Epic-aware: an epic root yields to its best open
                               leaf (leaf inherits the root's priority, carries
@@ -3991,7 +4078,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state"].includes(key)) {
+      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state", "all-repos"].includes(key)) {
         flags[key] = next;
         i++;
       } else {
@@ -4095,16 +4182,23 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "list": {
-      const { own, foreign } = ownRepo(ctx, listItems(ctx));
+      // Default is the bounded own-repo queue read (GH-1785). --all-repos pays
+      // for the full project scan, the only read that can enumerate foreign
+      // board items; `foreignEvaluated` says which read answered, so a caller
+      // never mistakes "not looked for" for "none there".
+      const allRepos = flags["all-repos"] === true;
+      const { own, foreign } =
+        allRepos ? ownRepo(ctx, listItems(ctx)) : { own: listOwnOpenItems(ctx), foreign: [] as QueueItem[] };
       let items = own;
       if (typeof flags.state === "string") {
         const s = parseStateArg(flags.state);
         items = items.filter((i) => i.state === (s ?? flags.state));
       }
-      if (flags.json) json({ items, foreign });
+      if (flags.json) json({ items, foreign, foreignEvaluated: allRepos });
       else {
         for (const i of items) out(`#${i.number} [${i.state}]${i.claim ? ` claim=${i.claim.holders.join("+")}` : ""}${i.openBlockers.length ? ` blockedBy=${i.openBlockers.map((n) => `#${n}`).join(",")}` : ""} ${i.title}`);
         for (const f of foreign) out(`${f.repo}#${f.number} [${f.state}] (foreign repo — read-only here) ${f.title}`);
+        if (!allRepos) out(`(own-repo open items; foreign board items not read — \`--all-repos\` scans the whole project)`);
       }
       return 0;
     }

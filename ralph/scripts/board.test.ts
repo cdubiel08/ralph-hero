@@ -39,6 +39,8 @@ import {
   LEGACY_STATES,
   listItems,
   listItemsFull,
+  listOwnOpenItems,
+  ownRepo,
   isState,
   MACHINE,
   parentCheck,
@@ -1106,6 +1108,126 @@ describe("doctor (legacy states, archived items)", () => {
     expect(reconcile(ctx, 1)).toMatch(/archived — skipped/);
   });
 
+});
+
+describe("bounded queue read (GH-1785) — listOwnOpenItems", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("agrees with the project scan on every own-repo open item", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1", estimate: "S", labels: ["x"] });
+    gh.issues.set(2, {
+      number: 2, state: "In Progress", claim: encodeClaim("a@h", NOW), parent: 1,
+      blockedBy: [{ number: 3, state: "OPEN" }, { number: 4, state: "CLOSED" }],
+    });
+    gh.issues.set(3, { number: 3, state: "Backlog" });
+
+    expect(listOwnOpenItems(ctx)).toEqual(ownRepo(ctx, listItems(ctx)).own);
+  });
+
+  it("excludes closed, archived, off-board, and foreign items", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(2, { number: 2, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED" });
+    gh.issues.set(3, { number: 3, state: "Backlog", archived: true });
+    gh.issues.set(4, { number: 4, state: null, onBoard: false });
+    gh.issues.set(5, { number: 5, state: "Backlog", repo: "other/repo" });
+
+    expect(listOwnOpenItems(ctx).map((i) => i.number)).toEqual([1]);
+  });
+
+  it("costs one page per 100 open issues, not one per 100 project items", () => {
+    for (let n = 1; n <= 5; n++) gh.issues.set(n, { number: n, state: "Backlog" });
+    for (let n = 6; n <= 60; n++)
+      gh.issues.set(n, { number: n, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED" });
+    gh.itemsPageSize = 10;
+
+    // 5 open issues → a single page; the project scan walks all 60 items.
+    const before = gh.graphqlCalls;
+    expect(listOwnOpenItems(ctx).map((i) => i.number)).toEqual([1, 2, 3, 4, 5]);
+    const bounded = gh.graphqlCalls - before;
+    const scanStart = gh.graphqlCalls;
+    listItemsFull(ctx);
+    expect(bounded).toBeLessThan(gh.graphqlCalls - scanStart);
+  });
+
+  it("walks the cursor when open issues exceed one page", () => {
+    for (let n = 1; n <= 25; n++) gh.issues.set(n, { number: n, state: "Backlog" });
+    gh.itemsPageSize = 10;
+    expect(listOwnOpenItems(ctx)).toHaveLength(25);
+  });
+
+  it("fails closed when an issue's project membership is truncated", () => {
+    gh.issues.set(1, { number: 1, state: null, onBoard: false, projectItemsTruncated: true });
+    expect(() => listOwnOpenItems(ctx)).toThrow(/#1.*project membership truncated/);
+  });
+
+  it("fails closed on corrupt pagination metadata rather than returning a partial board", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+
+    gh.dropPageInfo = true; // absent pageInfo would read as "last page"
+    expect(() => listOwnOpenItems(ctx)).toThrow(/pagination metadata missing/);
+    expect(() => listItemsFull(ctx)).toThrow(/pagination metadata missing/);
+
+    gh.dropPageInfo = false;
+    gh.dropEndCursor = true; // hasNextPage with no cursor would loop forever
+    expect(() => listOwnOpenItems(ctx)).toThrow(/no cursor to fetch them/);
+    expect(() => listItemsFull(ctx)).toThrow(/no cursor to fetch them/);
+  });
+
+  describe("through the CLI", () => {
+    const capture = (argv: string[]) => {
+      const said: string[] = [];
+      const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+        said.push(String(s));
+        return true;
+      });
+      try {
+        run(argv, ctx);
+      } finally {
+        spy.mockRestore();
+      }
+      return said.join("");
+    };
+
+    beforeEach(() => {
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+      gh.issues.set(2, { number: 2, state: "In Review" });
+      gh.issues.set(3, { number: 3, state: "Backlog", repo: "other/repo" });
+    });
+
+    it("default mode lists own-repo items, filters by state, and says foreign items went unread", () => {
+      const text = capture(["list"]);
+      expect(text).toContain("#1 [Backlog]");
+      expect(text).toContain("#2 [In Review]");
+      expect(text).not.toContain("other/repo#3");
+      expect(text).toContain("foreign board items not read");
+
+      expect(capture(["list", "--state", "backlog"])).toContain("#1 [Backlog]");
+      expect(capture(["list", "--state", "backlog"])).not.toContain("#2 [In Review]");
+    });
+
+    it("--json reports foreignEvaluated so \"not read\" cannot be mistaken for \"none there\"", () => {
+      const bounded = JSON.parse(capture(["list", "--json"]));
+      expect(bounded.foreignEvaluated).toBe(false);
+      expect(bounded.foreign).toEqual([]);
+      expect(bounded.items.map((i: any) => i.number)).toEqual([1, 2]);
+
+      const full = JSON.parse(capture(["list", "--all-repos", "--json"]));
+      expect(full.foreignEvaluated).toBe(true);
+      expect(full.foreign.map((f: any) => f.number)).toEqual([3]);
+      expect(full.items.map((i: any) => i.number)).toEqual([1, 2]);
+    });
+
+    it("--all-repos enumerates foreign items and drops the limitation notice", () => {
+      const text = capture(["list", "--all-repos"]);
+      expect(text).toContain("other/repo#3 [Backlog] (foreign repo — read-only here)");
+      expect(text).not.toContain("foreign board items not read");
+    });
+  });
 });
 
 describe("doctor hardening (closed drift, fix gating, resilience, garbled claims)", () => {
