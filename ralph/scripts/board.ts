@@ -168,7 +168,8 @@ export function formatLocalHm(d: Date): string {
 // Queue ranking
 // ---------------------------------------------------------------------------
 
-export interface QueueItem {
+/** Fields every queue read returns, whatever it selected (GH-1803). */
+export interface QueueItemCore {
   number: number;
   repo: string; // nameWithOwner — the board is cross-repo capable
   title: string;
@@ -185,21 +186,79 @@ export interface QueueItem {
   /** Set by rankNext on an epic root whose children are all blocked: the
    *  blockage to clear instead of implementing the root wholesale. */
   childrenBlocked?: number[];
-  openBlockers: number[];
-  blockersTruncated: boolean; // fail closed: truncated blocker list = blocked
   fieldValuesTruncated: boolean; // fail closed: state/claim reads unreliable = not eligible
   claim: Claim | null;
   claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited)
-  openBlockerLabels: string[]; // display form of openBlockers: "#N" own-repo, "owner/repo#N" cross-repo
-  labels: string[]; // issue labels — apply-kind detection without a second round trip
-  labelsTruncated: boolean; // fail closed: a truncated label list counts as apply-kind
-  closedBlockers: number[]; // CLOSED blockers: "the work this waited on has landed"
   // Tend-lane inputs (GH-1712) — optional so pure-ranking fixtures stay terse;
   // listItemsFull always populates them.
   updatedAt?: string | null;
   createdAt?: string | null;
   estimate?: string | null;
 }
+
+/** Everything the `labels` connection carries. Omitted as a GROUP: a read
+ *  that skipped the connection has no label list AND no truncation verdict. */
+export interface QueueItemLabelParts {
+  labels: string[]; // issue labels — apply-kind detection without a second round trip
+  labelsTruncated: boolean; // fail closed: a truncated label list counts as apply-kind
+}
+
+/** Everything the `blockedBy` connection carries — same group rule. */
+export interface QueueItemBlockerParts {
+  openBlockers: number[];
+  blockersTruncated: boolean; // fail closed: truncated blocker list = blocked
+  openBlockerLabels: string[]; // display form of openBlockers: "#N" own-repo, "owner/repo#N" cross-repo
+  closedBlockers: number[]; // CLOSED blockers: "the work this waited on has landed"
+}
+
+/** A full read: both nested connections fetched. The default everywhere. */
+export type QueueItem = QueueItemCore & QueueItemLabelParts & QueueItemBlockerParts;
+
+/** A read that fetched `blockedBy` but may have skipped `labels` — what the
+ *  ranker and the tend classifier actually need. A full QueueItem satisfies
+ *  it, so fixtures and full-read callers pass unchanged. */
+export type QueueItemWithBlockers = QueueItemCore &
+  QueueItemBlockerParts &
+  Partial<QueueItemLabelParts>;
+
+/** Any selection at all — only the core fields are guaranteed present. */
+export type QueueItemAny = QueueItemCore &
+  Partial<QueueItemLabelParts> &
+  Partial<QueueItemBlockerParts>;
+
+/** Which nested connections a queue read asks GitHub for (GH-1803).
+ *
+ *  Cost is charged per unique CONNECTION per page, not per field and not per
+ *  node: over a 100-item page, `items` is 1 request and each nested connection
+ *  is 100 more, so 1 + 100·3 = 301 requests = 3 points, and dropping one
+ *  connection is worth exactly 1 point/page. Trimming a nested `first:` is
+ *  worth ZERO — measured, both halves:
+ *  `thoughts/shared/research/2026-08-11-graphql-cost-measurement.md`.
+ *
+ *  An unselected group is ABSENT from the item, never `[]`/`false`. That is
+ *  the whole safety argument: `blockersTruncated: false` means "GitHub told us
+ *  the blocker list was complete", and a read that never asked must not be
+ *  able to say that. The lean item types above make the group optional, so
+ *  `tsc` refuses the unguarded read rather than trusting a fabricated flag. */
+export interface QueueSelect {
+  readonly labels: boolean;
+  readonly blockers: boolean;
+}
+
+/** Both connections — the historical shape, and the default for every caller
+ *  that does not say otherwise (`doctor`, `list`). */
+export const QUEUE_SELECT_FULL = { labels: true, blockers: true } as const;
+/** Dependency edges without issue labels: the ranker's shape (`next`,
+ *  `frontier`, `tend-queue`). 2 pts/page instead of 3. */
+export const QUEUE_SELECT_NO_LABELS = { labels: false, blockers: true } as const;
+/** Neither — board state and claim only (`deliver-queue`, which filters on
+ *  state and hands `{number, title}` onward). The 1-point floor. */
+export const QUEUE_SELECT_MINIMAL = { labels: false, blockers: false } as const;
+
+/** The item shape a given selection yields. */
+export type SelectedQueueItem<S extends QueueSelect> = QueueItemCore &
+  (S["labels"] extends true ? QueueItemLabelParts : Partial<QueueItemLabelParts>) &
+  (S["blockers"] extends true ? QueueItemBlockerParts : Partial<QueueItemBlockerParts>);
 
 /** Numeric rank of a priority option ("P0" → 0, "P10" → 10). A lexicographic
  *  compare would order "P10" before "P2"; missing/unparseable ranks last. */
@@ -246,16 +305,19 @@ export interface ClosedEdge {
   parentNumber: number | null;
 }
 
+/** Eligibility is a function of dependency edges and field values — never of
+ *  labels — so the ranker declares the leaner input (GH-1803) and `next` can
+ *  skip the `labels` connection for a point per page. */
 export function rankNext(
-  items: QueueItem[],
+  items: QueueItemWithBlockers[],
   closedEdges: ClosedEdge[] = [],
 ): {
-  eligible: QueueItem[];
-  blocked: QueueItem[];
+  eligible: QueueItemWithBlockers[];
+  blocked: QueueItemWithBlockers[];
   inFlightEpics: InFlightEpic[];
 } {
   const backlog = items.filter((i) => i.state === "Backlog" && !i.claim);
-  const ineligible = (i: QueueItem) =>
+  const ineligible = (i: QueueItemWithBlockers) =>
     i.openBlockers.length > 0 || i.blockersTruncated || i.fieldValuesTruncated;
   const blocked = backlog.filter(ineligible);
 
@@ -274,7 +336,7 @@ export function rankNext(
     childrenOf.set(p, list);
   }
 
-  const effRank = (i: QueueItem): number => {
+  const effRank = (i: QueueItemWithBlockers): number => {
     let r = priorityRank(i.priority);
     const seen = new Set<number>([i.number]);
     for (let p = i.parentNumber; p != null && !seen.has(p); ) {
@@ -286,7 +348,7 @@ export function rankNext(
     return r;
   };
 
-  const cmp = (a: QueueItem, b: QueueItem): number => {
+  const cmp = (a: QueueItemWithBlockers, b: QueueItemWithBlockers): number => {
     const pa = effRank(a);
     const pb = effRank(b);
     if (pa !== pb) return pa - pb;
@@ -295,8 +357,8 @@ export function rankNext(
   };
 
   /** OPEN descendants, walking through closed pass-through nodes. */
-  const descendants = (root: QueueItem): QueueItem[] => {
-    const out: QueueItem[] = [];
+  const descendants = (root: QueueItemWithBlockers): QueueItemWithBlockers[] => {
+    const out: QueueItemWithBlockers[] = [];
     const seen = new Set<number>([root.number]);
     const stack = [...(childrenOf.get(root.number) ?? [])];
     while (stack.length) {
@@ -353,7 +415,7 @@ export function rankNext(
     if (blockedDesc.length) childrenBlockedOf.set(i.number, blockedDesc);
   }
 
-  const nearestDemotedRoot = (i: QueueItem): number | undefined => {
+  const nearestDemotedRoot = (i: QueueItemWithBlockers): number | undefined => {
     const seen = new Set<number>([i.number]);
     for (let p = i.parentNumber; p != null && !seen.has(p); ) {
       if (demoted.has(p)) return p;
@@ -404,9 +466,9 @@ const TERMINAL_BOARD_STATES = new Set(["Done", "Canceled"]);
  *  terminal state while the issue stayed open. A truncated blocker list hides
  *  blockers, so it counts as live — the same fail-closed rule the ranker uses. */
 export function diagnoseEmptyQueue(
-  items: QueueItem[],
-  eligible: QueueItem[],
-  blocked: QueueItem[],
+  items: QueueItemWithBlockers[],
+  eligible: QueueItemWithBlockers[],
+  blocked: QueueItemWithBlockers[],
   inFlightEpics: InFlightEpic[] = [],
 ): EmptyQueueReport {
   const humanNeededCount = items.filter((i) => i.state === "Human Needed").length;
@@ -475,8 +537,8 @@ export interface FrontierResult {
 }
 
 export function frontierView(ranked: {
-  eligible: QueueItem[];
-  blocked: QueueItem[];
+  eligible: QueueItemWithBlockers[];
+  blocked: QueueItemWithBlockers[];
 }): FrontierResult {
   return {
     frontier: ranked.eligible.map((i) => ({
@@ -2237,18 +2299,27 @@ export function ownRepo<T extends { repo: string }>(ctx: Ctx, items: T[]): { own
 
 /** CLOSED issue still on the board — invisible to the queue, but its board
  *  state can drift (closed while the board says In Review). Doctor's food. */
-export interface ClosedItem {
+export interface ClosedItemCore {
   number: number;
   repo: string;
   itemId: string; // ProjectV2Item node id — the only handle prune can remove by
   state: string; // board Workflow State, "(none)" if unset
   archived: boolean;
-  labels: string[]; // apply-kind detection without a second round trip
-  labelsTruncated: boolean; // fail closed: a truncated label list counts as apply-kind
   stateReason: string | null; // COMPLETED vs NOT_PLANNED — only the former is a claim of success
   closedAt: string | null; // ISO; how long an unevidenced close has been standing
   parentNumber: number | null; // own-repo parent — closed nodes pass tree topology through
 }
+
+/** A closed item from a full read — labels present (doctor's apply sweep). */
+export type ClosedItem = ClosedItemCore & QueueItemLabelParts;
+
+/** A closed item from any read: the label group is present only if selected. */
+export type ClosedItemAny = ClosedItemCore & Partial<QueueItemLabelParts>;
+
+/** The closed-item shape a given selection yields (blockedBy is never read for
+ *  closed items, so only the label group varies). */
+export type SelectedClosedItem<S extends QueueSelect> = ClosedItemCore &
+  (S["labels"] extends true ? QueueItemLabelParts : Partial<QueueItemLabelParts>);
 
 /** Fail closed on pagination metadata itself (CodeRabbit, PR #1794).
  *
@@ -2264,16 +2335,51 @@ function assertPageInfo(pageInfo: any, what: string): void {
 }
 
 /** The issue fields a QueueItem is built from. Shared verbatim by the two
- *  read paths (project scan, repo-scoped queue read) so they cannot drift. */
-const QUEUE_CONTENT_FRAGMENT = `
+ *  read paths (project scan, repo-scoped queue read) so they cannot drift.
+ *
+ *  The two nested connections are emitted only when selected (GH-1803) —
+ *  each one costs 1 point per 100-item page, and an unselected one must be
+ *  absent from the DOCUMENT, not merely unread: a connection that ships in
+ *  the query is charged whether or not anything looks at the result. */
+function queueContentFragment(select: QueueSelect): string {
+  return `
   number title state stateReason closedAt createdAt updatedAt
-  labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
   repository { nameWithOwner }
-  parent { number repository { nameWithOwner } }
-  blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }`;
+  parent { number repository { nameWithOwner } }${
+    select.labels ? `
+  labels(first: 100) { pageInfo { hasNextPage } nodes { name } }` : ""
+  }${
+    select.blockers ? `
+  blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }` : ""
+  }`;
+}
 
-function toQueueItem(c: any, fv: Record<string, string>, fvTruncated: boolean, self: string): QueueItem {
-  const openBlockerNodes = (c.blockedBy?.nodes ?? []).filter((b: any) => b.state === "OPEN");
+/** Build the item. An unselected connection contributes NO keys at all —
+ *  never `[]` and never `truncated: false`, which a downstream fail-closed
+ *  check would read as GitHub's own "the list was complete" (GH-1803). */
+function toQueueItem(
+  c: any,
+  fv: Record<string, string>,
+  fvTruncated: boolean,
+  self: string,
+  select: QueueSelect,
+): QueueItemAny {
+  // Only read the connection the query actually asked for: `c.blockedBy` is
+  // undefined on a lean read, and treating that as "no blockers" is the exact
+  // conflation these types exist to prevent.
+  const blockerParts = (): QueueItemBlockerParts => {
+    const nodes = c.blockedBy?.nodes ?? [];
+    const open = nodes.filter((b: any) => b.state === "OPEN");
+    return {
+      openBlockers: open.map((b: any) => b.number),
+      openBlockerLabels: open.map((b: any) => {
+        const r = b.repository?.nameWithOwner;
+        return r && r.toLowerCase() !== self ? `${r}#${b.number}` : `#${b.number}`;
+      }),
+      blockersTruncated: c.blockedBy?.pageInfo?.hasNextPage ?? false,
+      closedBlockers: nodes.filter((b: any) => b.state !== "OPEN").map((b: any) => b.number),
+    };
+  };
   return {
     number: c.number,
     repo: c.repository?.nameWithOwner ?? "",
@@ -2285,20 +2391,16 @@ function toQueueItem(c: any, fv: Record<string, string>, fvTruncated: boolean, s
     // a tree edge onto this repo's #N (fail-closed, like blocker labels).
     parentNumber:
       c.parent && c.parent.repository?.nameWithOwner?.toLowerCase() === self ? c.parent.number : null,
-    openBlockers: openBlockerNodes.map((b: any) => b.number),
-    openBlockerLabels: openBlockerNodes.map((b: any) => {
-      const r = b.repository?.nameWithOwner;
-      return r && r.toLowerCase() !== self ? `${r}#${b.number}` : `#${b.number}`;
-    }),
-    blockersTruncated: c.blockedBy?.pageInfo?.hasNextPage ?? false,
     fieldValuesTruncated: fvTruncated,
     claim: parseClaim(fv[CLAIM_FIELD]),
     claimRaw: fv[CLAIM_FIELD] ?? null,
-    labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
-    labelsTruncated: c.labels?.pageInfo?.hasNextPage ?? false,
-    closedBlockers: (c.blockedBy?.nodes ?? [])
-      .filter((b: any) => b.state !== "OPEN")
-      .map((b: any) => b.number),
+    ...(select.blockers ? blockerParts() : {}),
+    ...(select.labels
+      ? {
+          labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
+          labelsTruncated: c.labels?.pageInfo?.hasNextPage ?? false,
+        }
+      : {}),
     updatedAt: c.updatedAt ?? null,
     createdAt: c.createdAt ?? null,
     estimate: fv[ESTIMATE_FIELD] ?? null,
@@ -2318,9 +2420,12 @@ function toQueueItem(c: any, fv: Record<string, string>, fvTruncated: boolean, s
  *  and doctor's `foreign-items` check still runs off the full scan — but a
  *  caller that must ENUMERATE them has to use listItemsFull, so callers say
  *  which they need rather than inheriting the wrong one silently. */
-export function listOwnOpenItems(ctx: Ctx): QueueItem[] {
+export function listOwnOpenItems<S extends QueueSelect = typeof QUEUE_SELECT_FULL>(
+  ctx: Ctx,
+  select: S = QUEUE_SELECT_FULL as unknown as S,
+): SelectedQueueItem<S>[] {
   return withCache(ctx, (cache) => {
-    const items: QueueItem[] = [];
+    const items: QueueItemAny[] = [];
     const self = `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase();
     let after: string | null = null;
     for (;;) {
@@ -2331,7 +2436,7 @@ export function listOwnOpenItems(ctx: Ctx): QueueItem[] {
             issues(states: OPEN, first: 100, after: $after) {
               pageInfo { hasNextPage endCursor }
               nodes {
-                ${QUEUE_CONTENT_FRAGMENT}
+                ${queueContentFragment(select)}
                 projectItems(first: 20) {
                   pageInfo { hasNextPage }
                   nodes { isArchived project { id } ${FIELD_VALUES_FRAGMENT} }
@@ -2358,21 +2463,25 @@ export function listOwnOpenItems(ctx: Ctx): QueueItem[] {
         }
         // Archived items are still returned but cannot be written — skip.
         if (item.isArchived) continue;
-        items.push(toQueueItem(c, fieldValueMap(item.fieldValues), fieldValuesTruncated(item.fieldValues), self));
+        items.push(
+          toQueueItem(c, fieldValueMap(item.fieldValues), fieldValuesTruncated(item.fieldValues), self, select),
+        );
       }
       if (!page.pageInfo.hasNextPage) break;
       after = page.pageInfo.endCursor;
     }
-    return items;
+    // The shape is decided by `select` at runtime and by SelectedQueueItem at
+    // the type level; this is the one seam where the two are asserted equal.
+    return items as SelectedQueueItem<S>[];
   });
 }
 
 /** Items fetched per round trip. */
 export const ITEMS_PAGE = 100;
 
-export interface ItemPages {
-  open: QueueItem[];
-  closed: ClosedItem[];
+export interface ItemPages<S extends QueueSelect = typeof QUEUE_SELECT_FULL> {
+  open: SelectedQueueItem<S>[];
+  closed: SelectedClosedItem<S>[];
   /** The walk's own meter: nodes paged through, round trips spent, and the
    *  archived OPEN items dropped en route (they never reach `open`). */
   scan: { nodes: number; pages: number; archivedOpen: number };
@@ -2381,10 +2490,13 @@ export interface ItemPages {
 /** One page walk, two views: open items for the queue, closed items for
  *  doctor's drift sweep. Every existing caller goes through listItems and
  *  keeps the OPEN-only contract — closed items must never reach the ranker. */
-export function listItemsFull(ctx: Ctx): ItemPages {
+export function listItemsFull<S extends QueueSelect = typeof QUEUE_SELECT_FULL>(
+  ctx: Ctx,
+  select: S = QUEUE_SELECT_FULL as unknown as S,
+): ItemPages<S> {
   return withCache(ctx, (cache) => {
-    const items: QueueItem[] = [];
-    const closed: ClosedItem[] = [];
+    const items: QueueItemAny[] = [];
+    const closed: ClosedItemAny[] = [];
     // What the walk actually PAID FOR, counted as it pages. Not derivable from
     // items.length + closed.length: the `... on Issue` fragment silently drops
     // every node that is not an issue (pull requests, draft items), and those
@@ -2410,7 +2522,7 @@ export function listItemsFull(ctx: Ctx): ItemPages {
                   id
                   isArchived
                   content {
-                    ... on Issue { ${QUEUE_CONTENT_FRAGMENT} }
+                    ... on Issue { ${queueContentFragment(select)} }
                   }
                   ${FIELD_VALUES_FRAGMENT}
                 }
@@ -2440,8 +2552,12 @@ export function listItemsFull(ctx: Ctx): ItemPages {
             itemId: n.id ?? "",
             state: fv[STATE_FIELD] ?? "(none)",
             archived: n.isArchived ?? false,
-            labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
-            labelsTruncated: c.labels?.pageInfo?.hasNextPage ?? false,
+            ...(select.labels
+              ? {
+                  labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
+                  labelsTruncated: c.labels?.pageInfo?.hasNextPage ?? false,
+                }
+              : {}),
             stateReason: c.stateReason ?? null,
             closedAt: c.closedAt ?? null,
             parentNumber:
@@ -2457,17 +2573,26 @@ export function listItemsFull(ctx: Ctx): ItemPages {
           scan.archivedOpen++;
           continue;
         }
-        items.push(toQueueItem(c, fv, fieldValuesTruncated(n.fieldValues), self));
+        items.push(toQueueItem(c, fv, fieldValuesTruncated(n.fieldValues), self, select));
       }
       if (!page.pageInfo.hasNextPage) break;
       after = page.pageInfo.endCursor;
     }
-    return { open: items, closed, scan };
+    // The shape is decided by `select` at runtime and by SelectedQueueItem at
+    // the type level; this is the one seam where the two are asserted equal.
+    return {
+      open: items as SelectedQueueItem<S>[],
+      closed: closed as SelectedClosedItem<S>[],
+      scan,
+    };
   });
 }
 
-export function listItems(ctx: Ctx): QueueItem[] {
-  return listItemsFull(ctx).open;
+export function listItems<S extends QueueSelect = typeof QUEUE_SELECT_FULL>(
+  ctx: Ctx,
+  select: S = QUEUE_SELECT_FULL as unknown as S,
+): SelectedQueueItem<S>[] {
+  return listItemsFull(ctx, select).open;
 }
 
 // ---------------------------------------------------------------------------
@@ -2949,7 +3074,10 @@ export function deliverQueue(
   opts: DeliverOpts = parseDeliverOpts(),
   probeOverride?: DeliverProbe | null,
 ): DeliverQueueResult {
-  const inReview = ownRepo(ctx, listItems(ctx))
+  // The lane filters on board state and hands {number, title} to the
+  // candidate fetch — neither labels nor dependency edges are ever read, so
+  // the walk runs at the 1-point floor (GH-1803).
+  const inReview = ownRepo(ctx, listItems(ctx, QUEUE_SELECT_MINIMAL))
     .own.filter((i) => i.state === "In Review");
   const cands = fetchDeliverCandidates(ctx, inReview);
   let probe: DeliverProbe | null;
@@ -3033,7 +3161,7 @@ const UNFORMED_DAYS = 7;
 /** Pure classification per spec §4.3. `auditCandidates` carries the recent
  *  closed items with their comment trails already fetched (batched upstream). */
 export function classifyTend(
-  open: QueueItem[],
+  open: QueueItemWithBlockers[],
   closed: Array<{ number: number; title?: string; closedAt: string | null; comments: string[] }>,
   opts: TendOpts,
   now: Date,
@@ -3109,7 +3237,9 @@ export function classifyTend(
 /** The tend lane's typed selector. Done-audit comment trails ride the same
  *  batched history fetch doctor uses — no per-item round trips, no MCP. */
 export function tendQueue(ctx: Ctx, opts: TendOpts = parseTendOpts()): TendQueueResult {
-  const full = listItemsFull(ctx);
+  // classifyTend reads dependency edges (deps-cleared / deps-truncated) and
+  // never labels — 2 pts/page instead of 3 (GH-1803).
+  const full = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
   const open = ownRepo(ctx, full.open).own;
   const closedOwn = ownRepo(ctx, full.closed).own.filter((c) => !c.archived);
   const dayMs = 86_400_000;
@@ -4559,7 +4689,7 @@ function issueLine(i: Issue): string {
 
 /** Exactly one line, whatever the tier. With no diagnosis it is byte-identical
  *  to what an empty queue has always printed. */
-function emptyQueueLine(blocked: QueueItem[], dx: EmptyQueueReport): string {
+function emptyQueueLine(blocked: QueueItemWithBlockers[], dx: EmptyQueueReport): string {
   if (dx.diagnosis === "no-items")
     return `queue empty — nothing on the board; intake via /ralph:board or board create --title ...`;
   if (dx.diagnosis === "human-needed")
@@ -4656,7 +4786,9 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "next": {
-      const full = listItemsFull(ctx);
+      // Ranking is blockers + field values; labels are never consulted, so the
+      // walk skips that connection (GH-1803).
+      const full = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
       const own = ownRepo(ctx, full.open).own;
       // Closed own-repo items ride along as pass-through tree edges only.
       const closedEdges = ownRepo(ctx, full.closed).own;
@@ -4692,8 +4824,9 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "frontier": {
-      // EXACTLY next's inputs and ranking — frontier is a re-projection.
-      const full = listItemsFull(ctx);
+      // EXACTLY next's inputs and ranking — frontier is a re-projection,
+      // down to the query selection.
+      const full = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
       const own = ownRepo(ctx, full.open).own;
       const closedEdges = ownRepo(ctx, full.closed).own;
       const res = frontierView(rankNext(own, closedEdges));

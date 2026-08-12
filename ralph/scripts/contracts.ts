@@ -540,8 +540,13 @@ function zQueueItem(mode: Mode) {
     claim: zClaimJson(mode).nullable(),
     claimRaw: z.string().nullable(),
     openBlockerLabels: z.array(z.string()),
-    labels: z.array(z.string()),
-    labelsTruncated: z.boolean(),
+    // GH-1803: `next` runs the lean walk (no `labels` connection — 1 GraphQL
+    // point per page saved), so both label fields are ABSENT from its rows.
+    // Optional, never nullable and never defaulted: a consumer must be able to
+    // tell "this read did not fetch labels" from "this issue has none", and
+    // `labelsTruncated` is a fail-closed flag no unfetched read may assert.
+    labels: z.array(z.string()).optional(),
+    labelsTruncated: z.boolean().optional(),
     closedBlockers: z.array(z.number().int()),
     updatedAt: zIsoUtc.nullable().optional(),
     createdAt: zIsoUtc.nullable().optional(),

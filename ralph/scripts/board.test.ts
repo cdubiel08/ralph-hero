@@ -52,6 +52,8 @@ import {
   parseStateArg,
   parseTtlMin,
   type QueueItem,
+  QUEUE_SELECT_MINIMAL,
+  QUEUE_SELECT_NO_LABELS,
   rankNext,
   readiness,
   realExec,
@@ -1324,6 +1326,149 @@ describe("bounded queue read (GH-1785) — listOwnOpenItems", () => {
       expect(text).toContain("other/repo#3 [Backlog] (foreign repo — read-only here)");
       expect(text).not.toContain("foreign board items not read");
     });
+  });
+});
+
+describe("lean query selection (GH-1803)", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  /** The walk's own documents — the deliver lane's per-issue detail fetch has
+   *  its own shape and is not what this issue is about. */
+  const walkQueries = () => gh.queries.filter((q) => q.includes("items(first: 100"));
+  const capture = (argv: string[]) => {
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(argv, ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    return said.join("");
+  };
+
+  const seed = () => {
+    gh.issues.set(1, {
+      number: 1,
+      state: "Backlog",
+      labels: ["ralph:apply"],
+      blockedBy: [{ number: 9, state: "OPEN" }],
+    });
+    gh.issues.set(2, { number: 2, state: "Backlog" });
+  };
+
+  it("the default read is unchanged: both connections in the document, both groups on the item", () => {
+    seed();
+    const [item] = listItemsFull(ctx).open;
+    expect(walkQueries().every((q) => q.includes("labels(first:") && q.includes("blockedBy(first:"))).toBe(true);
+    expect(item.labels).toEqual(["ralph:apply"]);
+    expect(item.labelsTruncated).toBe(false);
+    expect(item.openBlockers).toEqual([9]);
+    expect(item.blockersTruncated).toBe(false);
+  });
+
+  it("QUEUE_SELECT_NO_LABELS drops `labels` from the DOCUMENT — where the point is charged", () => {
+    seed();
+    listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
+    expect(walkQueries()).not.toHaveLength(0);
+    for (const q of walkQueries()) {
+      expect(q).not.toContain("labels(first:");
+      expect(q).toContain("blockedBy(first:"); // still charged, still needed
+    }
+  });
+
+  it("QUEUE_SELECT_MINIMAL drops both — the 1-point floor", () => {
+    seed();
+    listItemsFull(ctx, QUEUE_SELECT_MINIMAL);
+    for (const q of walkQueries()) {
+      expect(q).not.toContain("labels(first:");
+      expect(q).not.toContain("blockedBy(first:");
+    }
+  });
+
+  it("an unselected group is ABSENT, never an empty list with a false truncation flag", () => {
+    seed();
+    const [item] = listItemsFull(ctx, QUEUE_SELECT_MINIMAL).open;
+    // The whole safety argument: `blockersTruncated: false` is GitHub saying
+    // "the list was complete". A read that never asked must not say it.
+    expect("labels" in item).toBe(false);
+    expect("labelsTruncated" in item).toBe(false);
+    expect("openBlockers" in item).toBe(false);
+    expect("blockersTruncated" in item).toBe(false);
+    expect("closedBlockers" in item).toBe(false);
+    expect("openBlockerLabels" in item).toBe(false);
+    // …and it survives the JSON boundary as absence, not as a fabricated false.
+    const wire = JSON.parse(JSON.stringify(item));
+    expect(Object.keys(wire)).not.toContain("labelsTruncated");
+    expect(Object.keys(wire)).not.toContain("blockersTruncated");
+    // Core facts are untouched — this is a cost change, not a data change.
+    expect(wire.number).toBe(1);
+    expect(wire.state).toBe("Backlog");
+  });
+
+  it("closed items lose the label group too when it was not selected", () => {
+    gh.issues.set(1, {
+      number: 1, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED", labels: ["ralph:apply"],
+    });
+    const [full] = listItemsFull(ctx).closed;
+    expect(full.labels).toEqual(["ralph:apply"]);
+    const [lean] = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS).closed;
+    expect("labels" in lean).toBe(false);
+    expect("labelsTruncated" in lean).toBe(false);
+    expect(lean.stateReason).toBe("COMPLETED"); // core facts intact
+  });
+
+  it("ranking is identical either way — dropping labels changes cost, not answers", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1", labels: ["x"] });
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "P0" });
+    gh.issues.set(3, { number: 3, state: "Backlog", blockedBy: [{ number: 1, state: "OPEN" }] });
+    const rankOf = (sel?: typeof QUEUE_SELECT_NO_LABELS) => {
+      const full = sel ? listItemsFull(ctx, sel) : listItemsFull(ctx);
+      const r = rankNext(ownRepo(ctx, full.open).own, ownRepo(ctx, full.closed).own);
+      return { eligible: r.eligible.map((i) => i.number), blocked: r.blocked.map((i) => i.number) };
+    };
+    expect(rankOf(QUEUE_SELECT_NO_LABELS)).toEqual(rankOf());
+  });
+
+  it("each lane asks for exactly what it reads", () => {
+    seed();
+    const walkFor = (argv: string[]) => {
+      gh.queries.length = 0;
+      capture(argv);
+      const qs = walkQueries();
+      expect(qs).not.toHaveLength(0);
+      return {
+        labels: qs.some((q) => q.includes("labels(first:")),
+        blockers: qs.some((q) => q.includes("blockedBy(first:")),
+      };
+    };
+    // ranking lanes: dependency edges yes, labels no
+    expect(walkFor(["next", "--json"])).toEqual({ labels: false, blockers: true });
+    expect(walkFor(["frontier", "--json"])).toEqual({ labels: false, blockers: true });
+    expect(walkFor(["tend-queue", "--json"])).toEqual({ labels: false, blockers: true });
+    // deliver filters on board state alone
+    expect(walkFor(["deliver-queue", "--json"])).toEqual({ labels: false, blockers: false });
+    // doctor's apply sweep reads both; `list --json` publishes both
+    expect(walkFor(["doctor"])).toEqual({ labels: true, blockers: true });
+    expect(walkFor(["list", "--all-repos", "--json"])).toEqual({ labels: true, blockers: true });
+  });
+
+  it("`next --json` rows omit the label fields rather than publishing empty ones", () => {
+    seed();
+    const parsed = JSON.parse(capture(["next", "--json"]));
+    expect(parsed.queue.length).toBeGreaterThan(0);
+    for (const row of parsed.queue) {
+      expect(Object.keys(row)).not.toContain("labels");
+      expect(Object.keys(row)).not.toContain("labelsTruncated");
+      expect(Array.isArray(row.openBlockers)).toBe(true);
+    }
   });
 });
 

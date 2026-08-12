@@ -114,6 +114,7 @@ Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OW
 - **A full scan pays for more than issues.** ~47% of this board's paged nodes are pull requests and drafts: the `... on Issue` fragment never matches them, so they are invisible to `board.ts` and unprunable by it, yet cost a slot on every page. Volume is therefore *measured by the walk*, never inferred from survivors.
 - **Legacy field options** (the 5 v1 states) can only be deleted from the Workflow State field in the board UI — the API cannot edit an existing field's option set.
 - **Editing an existing field's options / creating fields**: `board setup` is idempotent and prints exactly which steps are manual.
+- **GraphQL cost is per nested CONNECTION in the document** (not per field, not per node): each one over a 100-item page is +1 pt/page, so the item walk carries a `QueueSelect` and each caller asks only for what it reads (GH-1803 — `next`/`frontier`/`tend-queue` skip `labels`, `deliver-queue` skips both and runs at the 1-pt floor; `doctor` and `list` need both). An unselected group is **absent** from the item, never `[]` with `truncated: false` — the lean item types make `tsc` refuse the unguarded read, because a fail-closed flag is GitHub's assertion and a read that never asked may not make it. Trimming a nested `first:` is worth exactly zero (measured, twice).
 
 ## History
 

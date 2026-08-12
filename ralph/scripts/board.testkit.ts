@@ -79,6 +79,10 @@ export interface FakeIssue {
 export class FakeGh {
   mutations: string[] = [];
   graphqlCalls = 0; // GraphQL round trips — the cost the bounded read reduces
+  /** Every GraphQL document sent, verbatim. GitHub charges per CONNECTION in
+   *  the DOCUMENT (GH-1803), so the query text — not what board.ts reads back
+   *  from it — is what a cost test has to assert on. */
+  queries: string[] = [];
   comments: Array<{ body: string }> = [];
   issues = new Map<number, FakeIssue>();
   failNextStateWrite = false; // transport-failure injection
@@ -304,6 +308,7 @@ export class FakeGh {
   private graphql(payload: { query: string; variables: any }): ExecResult {
     this.graphqlCalls++;
     const { query, variables } = payload;
+    this.queries.push(query);
 
     // Deliver-lane detail fetch (GH-1712): dK/bK alias pairs. Matched before
     // every other issue branch — its selection set contains their needles.
