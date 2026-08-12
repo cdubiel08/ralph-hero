@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type Ctx,
+  doctor,
   ITEM_CACHE_TTL_DEFAULT_SEC,
   ITEM_CACHE_TTL_MAX_SEC,
   isMutationOp,
@@ -273,6 +274,20 @@ describe("item cache (GH-1806) — cross-process bounded staleness", () => {
       expect(gh.graphqlCalls).toBeGreaterThan(c2);
     });
 
+    it("doctor SAYS its report-only sweep was cached; --fix has nothing to say", () => {
+      // "ok" about a board read 80 s ago is a different claim from "ok" about
+      // one just read. CI runs cold-cache, so this line never appears there.
+      doctor(proc());
+      const warm = doctor(proc({ at: later(80) }));
+      const note = warm.checks.find((c) => c.name === "board-read");
+      expect(note).toMatchObject({ level: "info", detail: expect.stringContaining("80s old") });
+      // Advisory by construction: an info line never moves the exit code.
+      expect(warm.checks.filter((c) => c.level === "fail")).toEqual(
+        doctor(proc({ at: later(81) })).checks.filter((c) => c.level === "fail"),
+      );
+      expect(doctor(proc({ at: later(82) }), { fix: true }).checks.some((c) => c.name === "board-read")).toBe(false);
+    });
+
     it("a stale claim is still verified against a fresh single-item read", () => {
       // The guard doctor --fix applies is `claimIsStale` on a FRESH fetchIssue,
       // not on the walk. Pinned here because it is the specific place a cached
@@ -296,6 +311,26 @@ describe("item cache (GH-1806) — cross-process bounded staleness", () => {
       // The very next read must not serve the pre-write walk.
       const after = listItemsFull(proc({ at: later(11) }));
       expect(after.cached).toBe(false);
+    });
+
+    it("read-your-writes survives a mutation that lands but fails to report back", () => {
+      // The write happened server-side; only the RESPONSE was lost. Marking
+      // solely on success would leave the pre-write walk servable, which is
+      // the one case where a cache hands an agent its own stale view.
+      listItemsFull(proc());
+      expect(listItemsFull(proc({ at: later(5) })).cached).toBe(true);
+
+      const doomed = proc({ at: later(10) });
+      const real = doomed.exec;
+      doomed.exec = (argv, stdin) => {
+        const cmd = argv.join(" ");
+        if (cmd.startsWith("gh api graphql") && stdin?.includes("mutation"))
+          return { code: 1, stdout: "", stderr: "connection reset after the write landed" };
+        return real(argv, stdin);
+      };
+      expect(() => run(["comment", "1", "-m", "x"], doomed)).toThrow();
+
+      expect(listItemsFull(proc({ at: later(11) })).cached).toBe(false);
     });
 
     it("read-your-writes survives a walk that was already in flight", () => {
@@ -475,6 +510,11 @@ describe("item cache (GH-1806) — cross-process bounded staleness", () => {
         expect(parseItemCacheTtlSec("900000")).toBe(ITEM_CACHE_TTL_DEFAULT_SEC);
         expect(parseItemCacheTtlSec("90s")).toBe(ITEM_CACHE_TTL_DEFAULT_SEC);
         expect(parseItemCacheTtlSec("-1")).toBe(ITEM_CACHE_TTL_DEFAULT_SEC);
+        // An empty export (this shell profile exports RALPH_* vars) reads as
+        // unset, NOT as Number("") === 0 — which would silently switch the
+        // cache off and leave someone measuring a fix that is not running.
+        expect(parseItemCacheTtlSec("")).toBe(ITEM_CACHE_TTL_DEFAULT_SEC);
+        expect(parseItemCacheTtlSec("  ")).toBe(ITEM_CACHE_TTL_DEFAULT_SEC);
       } finally {
         warn.mockRestore();
       }

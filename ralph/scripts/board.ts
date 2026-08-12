@@ -951,7 +951,10 @@ export const ITEM_CACHE_TTL_DEFAULT_SEC = 90;
 export const ITEM_CACHE_TTL_MAX_SEC = 600;
 
 export function parseItemCacheTtlSec(raw: string | undefined): number {
-  if (raw === undefined) return ITEM_CACHE_TTL_DEFAULT_SEC;
+  // `RALPH_ITEM_CACHE_TTL_SEC=` (exported empty by a shell profile) must read
+  // as unset, not as Number("") === 0 — which would silently switch the cache
+  // off and leave someone measuring a "fix" that is not running.
+  if (raw === undefined || raw.trim() === "") return ITEM_CACHE_TTL_DEFAULT_SEC;
   const n = Number(raw);
   if (Number.isFinite(n) && n >= 0 && n <= ITEM_CACHE_TTL_MAX_SEC) return n;
   process.stderr.write(
@@ -1104,6 +1107,12 @@ export function ghGraphQL<T = any>(
 ): T {
   const measuring = process.env.RALPH_GQL_COST === "1";
   const sent = measuring ? instrumentQuery(query) : { query, instrumented: false };
+  // Read-your-writes, half one (GH-1806): mark BEFORE the wire, because a
+  // mutation that lands and then fails to report back (non-zero exit,
+  // unparseable body, dropped connection) has still happened. Marking only on
+  // success would leave exactly that case serving a pre-write view.
+  const mutating = isMutationOp(query);
+  if (mutating) markLocalWrite(ctx);
   // --hostname keeps API traffic on the same host the scope gate verified —
   // a GHE config must not silently query github.com.
   const r = ctx.exec(
@@ -1142,10 +1151,13 @@ export function ghGraphQL<T = any>(
     // a caller that selected `rateLimit` itself keeps its value.
     if (body.data && typeof body.data === "object") delete body.data[COST_ALIAS];
   }
-  // Read-your-writes (GH-1806), enforced at the ONE path every write takes.
-  // Doing this per-mutation-helper would be a rule a future writer can forget;
-  // here it is structural — a new mutation cannot be added without passing it.
-  if (isMutationOp(query)) markLocalWrite(ctx);
+  // Half two: mark AFTER the write lands as well. The pre-mark refuses every
+  // entry that existed when we started; this one also refuses an entry from a
+  // walk that ran DURING the write. Together they close both windows.
+  //
+  // Both halves live in ghGraphQL because it is the one path every write
+  // takes — a per-mutation-helper rule is one a future writer can forget.
+  if (mutating) markLocalWrite(ctx);
   return body.data as T;
 }
 
@@ -4185,6 +4197,12 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       const pages = listItemsFull(ctx);
       const { own: items, foreign } = ownRepo(ctx, pages.open);
       const closedOwn = ownRepo(ctx, pages.closed).own;
+      // The report-only sweep may be answered from the item cache (GH-1806) —
+      // --fix never is. A doctor line saying "ok" about a board it read 80 s
+      // ago is a different claim from one it just read, so it says which. CI
+      // runs cold-cache, so this is always "fresh read" there.
+      if (pages.cached)
+        add("board-read", "info", `item sweep ran on a cached board read, ${pages.ageSec}s old (\`--fresh\` forces a walk; \`--fix\` always walks)`);
       add(
         "foreign-items",
         "ok",
