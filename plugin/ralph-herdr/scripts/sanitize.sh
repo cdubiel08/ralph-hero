@@ -19,7 +19,7 @@
 #   two-char  ESC <single char>   charset selects, RIS (ESC c) full reset
 #   C0        0x00-0x1f minus \t  BEL, backspace-overstrike, and the newline
 #                                 that would forge a second log line
-#   C1 8-bit  0x80-0x9f           the single-byte CSI/OSC forms
+#   C1        ESC-encoded + UTF-8 U+0080-U+009F forms of the above
 #
 # Tabs survive: they carry column meaning in the table output and cannot move
 # the cursor backward. Newlines do NOT — a display value is one line by
@@ -53,10 +53,9 @@ ralph_sanitize() {
                                             # loses its introducer.
       s/[\x00-\x08\x0a-\x1f\x7f]//g;        # C0 minus tab, plus DEL
       s/\xc2[\x80-\x9f]//g;                 # UTF-8-encoded C1
-      s/[\x80-\x9f]//g;                     # raw 8-bit C1
     '
   else
-    tr -d '\000-\010\012-\037\177\200-\237'
+    tr -d '\000-\010\012-\037\177'
   fi
 }
 

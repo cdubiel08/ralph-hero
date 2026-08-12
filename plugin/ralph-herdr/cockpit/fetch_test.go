@@ -157,7 +157,9 @@ func TestParseAgentsRejectsBadEnvelopes(t *testing.T) {
 		{"no correlation id", `{"result":{"type":"session_snapshot","snapshot":{"agents":[]}}}`},
 		{"wrong result type", `{"id":"x","result":{"type":"agent_list","snapshot":{"agents":[]}}}`},
 		{"no result type", `{"id":"x","result":{"snapshot":{"agents":[]}}}`},
-		{"snapshot with no agents key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"workspaces":[]}}}`},
+		{"snapshot with no agents key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"workspaces":[],"panes":[]}}}`},
+		{"snapshot with no workspaces key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"agents":[],"panes":[]}}}`},
+		{"snapshot with no panes key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"agents":[],"workspaces":[]}}}`},
 	} {
 		if _, err := parseAgents(tc.body, "/repo"); err == nil {
 			t.Errorf("%s must error, not read as an empty herd", tc.name)
@@ -219,6 +221,33 @@ func TestParseAgentsProvenanceBeatsCwd(t *testing.T) {
 	}
 	if len(agents) != 1 {
 		t.Errorf("a workspace with no provenance should resolve via the pane cwd, got %+v", agents)
+	}
+}
+
+// The cwd tier matches a root or anything beneath it, on a separator boundary.
+// A worker that cd'd into a subdirectory is still ours; a sibling sharing a
+// path prefix never is. Mirrors the scope.sh cases.
+func TestParseAgentsCwdBoundary(t *testing.T) {
+	snapCwd := func(cwd string) string {
+		return `{"id":"x","result":{"type":"session_snapshot","snapshot":{
+		  "version":1,"protocol":19,"tabs":[],"layouts":[],
+		  "workspaces":[{"workspace_id":"wR"}],
+		  "panes":[{"pane_id":"pR","cwd":"` + cwd + `"}],
+		  "agents":[{"name":"w8-deep","agent_status":"working","pane_id":"pR","workspace_id":"wR"}]}}}`
+	}
+	agents, err := parseAgents(snapCwd("/ours/src"), "/ours")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 {
+		t.Errorf("a pane cwd beneath the root should resolve to us, got %+v", agents)
+	}
+	agents, err = parseAgents(snapCwd("/ours-other"), "/ours")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 0 {
+		t.Errorf("a prefix-sharing sibling must not resolve to us, got %+v", agents)
 	}
 }
 

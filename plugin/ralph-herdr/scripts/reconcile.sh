@@ -56,6 +56,17 @@ log() { echo "$(date -u +%FT%TZ) reconcile: $*"; }
 # Ledgers nest as <root>/<owner>/<repo>/ledger.jsonl (see ledger.sh).
 ledger_root() { printf '%s\n' "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"; }
 
+# scope_key LEDGER_FILE — the "owner/repo" a ledger path encodes. Used to key
+# the cross-phase `open_all` set, because a bare NAME is not a unique key
+# across repositories: two repos in one session both hold a `w42-fix`, and a
+# name-keyed set would let one repository's live agent suppress the other's
+# discovery — the very cross-repo leak this pass is supposed to prevent.
+scope_key() {
+  local dir
+  dir=$(dirname "$1")
+  printf '%s/%s' "$(basename "$(dirname "$dir")")" "$(basename "$dir")"
+}
+
 # Live ralph agents, each tagged with the repository its checkout resolves to.
 # This pass walks EVERY ledger under the ledger root, so it is the one caller
 # that legitimately spans repositories — and therefore the one that must never
@@ -97,7 +108,7 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
     name=${ref%%#*}
     case " $live_names " in
       *" $name "*)
-        open_all="$open_all $name"
+        open_all="$open_all $(scope_key "$f")|$name"
         continue
         ;;
     esac
@@ -112,7 +123,7 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
         case " $fresh_names " in
           *" $name "*)
             log "spared $ref — went live mid-pass (fresh re-probe) [$f]"
-            open_all="$open_all $name"
+            open_all="$open_all $(scope_key "$f")|$name"
             continue
             ;;
         esac
@@ -124,7 +135,7 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
     else
       log "fresh herd re-probe failed — leaving$candidates open for the next reconcile [$f]"
       for ref in $candidates; do
-        open_all="$open_all ${ref%%#*}"
+        open_all="$open_all $(scope_key "$f")|${ref%%#*}"
       done
     fi
   fi
@@ -137,7 +148,12 @@ while IFS= read -r a; do
   [ -n "$a" ] || continue
   name=$(jq -r '.name' <<<"$a")
   pane=$(jq -r '.pane // empty' <<<"$a")
-  case " $open_all " in *" $name "*) continue ;; esac
+  # Keyed by scope|name: a live `w42-fix` already ledgered in repo A must not
+  # suppress the discovery of repo B's genuinely different `w42-fix`.
+  agent_scope=$(jq -r '.scope // empty' <<<"$a" 2>/dev/null) || agent_scope=""
+  agent_key="${agent_scope##*/}"
+  [ -n "$agent_scope" ] && agent_key="$(printf '%s' "$agent_scope" | awk -F/ '{print $(NF-1)"/"$NF}')"
+  case " $open_all " in *" $agent_key|$name "*) continue ;; esac
   if ! parsed=$(ralph_agent_parse "$name"); then
     # ralph-deliver / ralph-tend: legacy singleton lanes with no parseable
     # identity — watched live (lib.sh regex) but never ledgered.
@@ -176,7 +192,7 @@ while IFS= read -r a; do
   if ralph_ledger_open_agents 2>/dev/null |
     awk -F'#' -v n="$name" '$1 == n { found = 1 } END { exit !found }'; then
     log "skip $name — already ledgered (an event hook won the race)"
-    open_all="$open_all $name"
+    open_all="$open_all $(scope_key "$file")|$name"
     ralph_ledger_unlock "$file"
     continue
   fi
@@ -187,7 +203,7 @@ while IFS= read -r a; do
     { log "discover append failed for $name"; ralph_ledger_unlock "$file"; continue; }
   ralph_ledger_unlock "$file"
   log "discover $ref (pane $pane) in $file"
-  open_all="$open_all $name"
+  open_all="$open_all $(scope_key "$file")|$name"
 done < <(printf '%s\n' "$live_json")
 unset RALPH_HERDR_LEDGER
 
@@ -202,12 +218,21 @@ unset RALPH_HERDR_LEDGER
 for f in "$(ledger_root)"/*/*/ledger.jsonl; do
   [ -f "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
+  # Scoped like phases A and D. A token push is a WRITE onto a pane, so an
+  # unscoped name lookup here does not merely mis-read — it stamps this
+  # repository's role/issue/branch metadata onto another repository's agent,
+  # and makes our own record look live because THEIR agent is.
+  scope_tail=$(basename "$(dirname "$(dirname "$f")")")/$(basename "$(dirname "$f")")
   while IFS= read -r ref; do
     [ -n "$ref" ] || continue
     name=${ref%%#*}
-    pane=$(jq -r --arg n "$name" 'select(.name == $n) | .pane // empty' <<<"$live_json" 2>/dev/null | head -1) || pane=""
+    agent_row=$(jq -c --arg n "$name" --arg tail "$scope_tail" \
+      'select(.name == $n and .scope != null and (.scope | endswith($tail)))' \
+      <<<"$live_json" 2>/dev/null | head -1) || agent_row=""
+    [ -n "$agent_row" ] || continue
+    pane=$(jq -r '.pane // empty' <<<"$agent_row" 2>/dev/null) || pane=""
     [ -n "$pane" ] || continue
-    status=$(jq -r --arg n "$name" 'select(.name == $n) | .status // empty' <<<"$live_json" 2>/dev/null | head -1) || status=""
+    status=$(jq -r '.status // empty' <<<"$agent_row" 2>/dev/null) || status=""
     statekv=""
     case "$status" in
       working | blocked) statekv="state=$status" ;;

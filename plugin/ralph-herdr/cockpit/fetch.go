@@ -229,14 +229,14 @@ func parseAgents(out, repoRoot string) ([]Agent, error) {
 		Result struct {
 			Type     string `json:"type"`
 			Snapshot struct {
-				Workspaces []struct {
+				Workspaces *[]struct {
 					ID       string `json:"workspace_id"`
 					Worktree *struct {
 						RepoRoot     string `json:"repo_root"`
 						CheckoutPath string `json:"checkout_path"`
 					} `json:"worktree"`
 				} `json:"workspaces"`
-				Panes []struct {
+				Panes *[]struct {
 					ID  string `json:"pane_id"`
 					Cwd string `json:"cwd"`
 				} `json:"panes"`
@@ -260,33 +260,52 @@ func parseAgents(out, repoRoot string) ([]Agent, error) {
 	if payload.Result.Type != "session_snapshot" {
 		return nil, fmt.Errorf("api snapshot: result type %q, want session_snapshot", payload.Result.Type)
 	}
+	// All three arrays, matching ralph_herdr_snapshot in transport.sh. A
+	// snapshot missing `workspaces` is the nastiest of the three: every agent
+	// would fall through to the weakest cwd tier, so a foreign agent whose cwd
+	// happens to equal our root gets adopted — containment lost precisely when
+	// the response was too broken to trust.
 	if payload.Result.Snapshot.Agents == nil {
 		return nil, fmt.Errorf("api snapshot: snapshot carries no agents array")
 	}
+	if payload.Result.Snapshot.Workspaces == nil {
+		return nil, fmt.Errorf("api snapshot: snapshot carries no workspaces array")
+	}
+	if payload.Result.Snapshot.Panes == nil {
+		return nil, fmt.Errorf("api snapshot: snapshot carries no panes array")
+	}
 
 	roots := repoRootSpellings(repoRoot)
+	// A root itself, or anything beneath it on a path-separator boundary — a
+	// worker that cd'd into a subdirectory is still ours, while /repo-other is
+	// never /repo. Mirrors the `mine` predicate in scripts/scope.sh.
 	mine := func(p string) bool {
 		if p == "" {
 			return false
 		}
-		_, ok := roots[strings.TrimRight(p, "/")]
-		return ok
+		p = strings.TrimRight(p, "/")
+		for r := range roots {
+			if p == r || strings.HasPrefix(p, r+"/") {
+				return true
+			}
+		}
+		return false
 	}
 
 	type wsInfo struct {
 		hasWorktree bool
 		inScope     bool
 	}
-	workspaces := make(map[string]wsInfo, len(payload.Result.Snapshot.Workspaces))
-	for _, w := range payload.Result.Snapshot.Workspaces {
+	workspaces := make(map[string]wsInfo, len(*payload.Result.Snapshot.Workspaces))
+	for _, w := range *payload.Result.Snapshot.Workspaces {
 		info := wsInfo{hasWorktree: w.Worktree != nil}
 		if w.Worktree != nil {
 			info.inScope = mine(w.Worktree.RepoRoot) || mine(w.Worktree.CheckoutPath)
 		}
 		workspaces[w.ID] = info
 	}
-	paneCwd := make(map[string]string, len(payload.Result.Snapshot.Panes))
-	for _, p := range payload.Result.Snapshot.Panes {
+	paneCwd := make(map[string]string, len(*payload.Result.Snapshot.Panes))
+	for _, p := range *payload.Result.Snapshot.Panes {
 		paneCwd[p.ID] = p.Cwd
 	}
 

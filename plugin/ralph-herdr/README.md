@@ -411,8 +411,15 @@ carry no durable identity. So an event payload can describe a state the agent
 has already left, an agent that has since exited, or a name a newer worker has
 reused. Events therefore never mint an identity and never write a state taken
 from the payload: they confirm the agent against a live snapshot, record *that*
-status, and otherwise mark the scope dirty for reconcile. The marker is a level,
-not a queue — an event storm leaves one marker, not one snapshot per event.
+status, and otherwise mark the scope dirty for reconcile.
+
+The marker is a level, not a queue: ten events between two reconciles leave one
+marker, because the reconciler re-reads everything either way. **What is not yet
+implemented is the debounce/singleflight in front of the snapshot** — each
+ralph-named event still takes its own `api snapshot` to confirm the agent, so a
+fleet flipping working/blocked/idle costs one snapshot per transition. The
+coalescing that bounds that is design §6 and lands with the reconciliation work,
+not here.
 
 ## Honest limits
 

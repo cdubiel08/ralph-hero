@@ -115,7 +115,28 @@ fi
 # work on an unrelated issue. An unreadable herd degrades to the offer popup —
 # the honest "I could not find a session" branch, which is also what the human
 # gets when there genuinely is none.
-live=$(ralph_scoped_agents_now "${cwd:-$PWD}" 2>/dev/null | jq -rs --arg legacy "gh-$n" --arg pfx "w$n-" '
+# Scope from the COMMON repo root, not the clicked pane's cwd. In a worker's
+# worktree pane that cwd resolves to the linked worktree, which matches only
+# agents in that same worktree — so clicking an issue link from inside one
+# worker's pane would miss the live session for a different issue and offer to
+# spawn a duplicate. --git-common-dir points at the parent checkout's .git for
+# a linked worktree and at our own otherwise; its parent is the root both share.
+# Derived TEXTUALLY by stripping the trailing /.git, never by cd + pwd: pwd
+# resolves symlinks, and on macOS that alone renames /var/... to /private/var/...
+# — a different spelling of the same directory, which then matches nothing the
+# server reported.
+link_scope_root() {
+  local d common
+  d="${cwd:-$PWD}"
+  common=$(git -C "$d" rev-parse --git-common-dir 2>/dev/null) || { printf '%s' "$d"; return 0; }
+  case "$common" in
+    .git) printf '%s' "$d"; return 0 ;;
+    /*) : ;;
+    *) common="$d/$common" ;;
+  esac
+  printf '%s' "${common%/.git}"
+}
+live=$(ralph_scoped_agents_now "$(link_scope_root)" 2>/dev/null | jq -rs --arg legacy "gh-$n" --arg pfx "w$n-" '
   [.[] | select(.name == $legacy or (.name | startswith($pfx))) | .name]
   | first // empty' 2>/dev/null) || live=""
 if [ -n "$live" ]; then

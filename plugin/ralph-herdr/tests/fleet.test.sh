@@ -402,7 +402,12 @@ EOF
 # the frontier offers GH-301, worktrees open on p31 in the fixture checkout.
 refill_fixtures() {
   herd_fixture '[]'
-  printf '{"result":{"root_pane":{"pane_id":"p31"},"worktree":{"path":"%s"}}}\n' "$WT" \
+  # Payload only — the fake composes the protocol envelope (id + result.type).
+  # Wrapping this in its own "result" would nest one inside the other, drop the
+  # required `workspace` field, and get the whole response REJECTED — after
+  # which the spawn silently falls through to the `worktree open` default and
+  # these assertions pass without ever exercising p31/$WT.
+  printf '{"workspace":{"workspace_id":"wR"},"tab":{"tab_id":"wR:t1"},"root_pane":{"pane_id":"p31"},"worktree":{"path":"%s"}}\n' "$WT" \
     >"$FAKE_HERDR_FIXTURES/worktree-create.json"
   printf '{"frontier":[{"number":301,"title":"Add refill support"}],"blocked":[]}\n' \
     >"$FAKE_BOARD_FIXTURES/frontier.json"
@@ -415,6 +420,12 @@ refill_fixtures
 : >"$FAKE_BOARD_LOG"
 run_event pane.exited '{"pane_id":"p1"}' "$ROW"
 is "refill A: hook exits 0" "0" "$RC"
+# Pins the worktree-create fixture as load-bearing: if it ever stops validating,
+# the spawn falls through to the `worktree open` default and every assertion
+# below still passes while testing nothing. Asserting the CREATE path's pane
+# makes that failure visible instead of silent.
+is "refill A: the spawn used the created worktree's pane (create path, not the open fallback)" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" '^agent start w301-[a-z-]* --kind claude --pane p31$')"
 is "refill A: the dead w-lane exit is ledgered" "1" \
   "$(lcount "$RLEDGER" '.ev=="exit" and .agent_ref=="w100-first#aaaa"')"
 is "refill A: one frontier spawn ledgered (grammar-B name from the title)" "1" \

@@ -114,11 +114,17 @@ ralph_repo_root() {
 # thereby become that repository's worker, and one that cd's out of its own
 # must not vanish from it.
 #
-# The weakest tier gets a second gate: a bare cwd match is accepted only when
-# `git rev-parse --show-toplevel` on that path resolves to a root this
-# repository owns. That is what stops `/repo-b/src` from matching `/repo-a`
-# on a shared path prefix, and what stops an agent in a directory that no
-# longer exists from being adopted at all.
+# The weakest tier matches a root or any path beneath it, on a path-separator
+# boundary — so `/repo-other` never matches `/repo`, while `/repo/src` (a
+# worker that cd'd into a subdirectory) still does. It is deliberately NOT a
+# `git rev-parse` on the reported path: that would be a fork per agent per
+# refresh on the cockpit's hot path, and it would consult the filesystem about
+# a directory the reporting process may already have left.
+#
+# The looseness is bounded by where this tier applies at all — only to
+# workspaces carrying no worktree provenance. A nested checkout inside our tree
+# has its own provenance and is matched (or excluded) by the authoritative tier
+# above, before this one is ever consulted.
 #
 # Agents whose provenance resolves to nothing are omitted. That is the fail-
 # closed half of the contract and the reason this returns "the agents I can
@@ -148,7 +154,15 @@ ralph_scoped_agents() {
   # cockpit refresh path calls this on every tick.
   printf '%s' "$snapshot" | jq -c --argjson roots "$roots" '
     def norm: if . == null then null else sub("/+$"; "") end;
-    def mine: . != null and (norm as $p | $roots | index($p) != null);
+    # A root itself, or anything BENEATH it. A pane cwd is wherever the shell
+    # last moved to, so a worker sitting in $REPO/src is still in $REPO —
+    # exact equality would make it invisible, and the spawn pre-check that
+    # reads this would then miss a live owner and attempt a duplicate spawn.
+    # The boundary slash is what stops /repo from swallowing /repo-other.
+    # Each root is bound to $r before use: inside startswith(...) the implicit
+    # dot would rebind to the piped-in path, silently comparing it to itself.
+    def mine: . != null and (norm as $p
+      | $roots | map(. as $r | $p == $r or ($p | startswith($r + "/"))) | any);
     (.workspaces // [] | map({key: .workspace_id, value: .}) | from_entries) as $ws
     | (.panes // [] | map({key: .pane_id, value: .}) | from_entries) as $panes
     | .agents // []

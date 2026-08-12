@@ -308,6 +308,37 @@ jq -nc --arg root "$REPO_DIR" '
 is "provenance: a root workspace with no worktree resolves through the pane cwd" "cwd" \
   "$(ralph_scoped_agents_now "$REPO_DIR" 2>/dev/null | jq -r '.via')"
 
+# A worker that cd'd into a subdirectory is still ours. Exact equality would
+# hide it — and the spawn pre-check reads this, so hiding a live owner means
+# attempting a duplicate spawn on an issue someone already holds.
+reset
+jq -nc --arg sub "$REPO_DIR/src" '
+  {snapshot: {version: 1, protocol: 19, tabs: [], layouts: [],
+    workspaces: [{workspace_id: "wR"}],
+    panes: [{pane_id: "pR", terminal_id: "t", workspace_id: "wR", tab_id: "wR:t1",
+             focused: false, agent_status: "unknown", revision: 1, cwd: $sub}],
+    agents: [{name: "w8-deep", agent_status: "working", workspace_id: "wR",
+              pane_id: "pR", tab_id: "wR:t1", terminal_id: "t", focused: false,
+              revision: 1}]}}' \
+  >"$FAKE_HERDR_FIXTURES/api-snapshot.json"
+is "provenance: a pane cwd BENEATH the root still resolves to us" "w8-deep" \
+  "$(ralph_scoped_agents_now "$REPO_DIR" 2>/dev/null | jq -r '.name')"
+
+# ...but a sibling sharing a path prefix is not ours. This is what the boundary
+# slash buys: /repo must never swallow /repo-other.
+reset
+jq -nc --arg sib "${REPO_DIR}-other" '
+  {snapshot: {version: 1, protocol: 19, tabs: [], layouts: [],
+    workspaces: [{workspace_id: "wR"}],
+    panes: [{pane_id: "pR", terminal_id: "t", workspace_id: "wR", tab_id: "wR:t1",
+             focused: false, agent_status: "unknown", revision: 1, cwd: $sib}],
+    agents: [{name: "w9-sibling", agent_status: "working", workspace_id: "wR",
+              pane_id: "pR", tab_id: "wR:t1", terminal_id: "t", focused: false,
+              revision: 1}]}}' \
+  >"$FAKE_HERDR_FIXTURES/api-snapshot.json"
+is "provenance: a prefix-sharing sibling directory is NOT ours" "0" \
+  "$(ralph_scoped_agents_now "$REPO_DIR" 2>/dev/null | grep -c . || true)"
+
 # ═══ 11. null names and unresolvable provenance ══════════════════════════════
 # On the dev machine 6 of 11 live agents have no name at all — this is routine.
 reset

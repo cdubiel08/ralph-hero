@@ -332,8 +332,15 @@ handle_status() {
   snapshot=$(ralph_herdr_snapshot 2>/dev/null) || snapshot=""
   confirmed=""
   if [ -n "$snapshot" ]; then
+    # Matched on name AND the event's own pane, not name alone. A name is
+    # unique only among live agents in ONE repository, so a bare name match in
+    # a shared session can resolve to another repository's agent — and then
+    # both the recorded status and the pane the state token is pushed to would
+    # be theirs. The pane comes from the event, which is correct by
+    # construction: the server sent this event ABOUT that pane.
     confirmed=$(ralph_all_agents "$snapshot" 2>/dev/null |
-      jq -c --arg n "$agent" 'select(.name == $n)' 2>/dev/null | head -1) || confirmed=""
+      jq -c --arg n "$agent" --arg p "$pane" \
+        'select(.name == $n and (($p == "") or (.pane == $p)))' 2>/dev/null | head -1) || confirmed=""
   fi
   if [ -n "$confirmed" ]; then
     status=$(printf '%s' "$confirmed" | jq -r '.status // empty')
@@ -441,7 +448,11 @@ handle_status() {
   # armed fleet back up from the frontier. done ONLY: blocked is attention,
   # not capacity (handled above, never refilled); idle carries no completion
   # claim. Runs after every lock above is released.
-  if [ "$status" = "done" ] && [ -n "$file" ] && [ -z "$legacy" ]; then
+  # Gated on $confirmed: refill SPAWNS, which is the one durable mutation the
+  # "events are hints" contract forbids an unverified payload from causing. An
+  # unconfirmed `done` is exactly the stale hint that would free capacity for
+  # an agent still working.
+  if [ "$status" = "done" ] && [ -n "$confirmed" ] && [ -n "$file" ] && [ -z "$legacy" ]; then
     case "${parsed%% *}" in
       w) maybe_refill "$file" ;;
     esac
