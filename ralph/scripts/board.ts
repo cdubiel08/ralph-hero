@@ -2373,8 +2373,9 @@ export const ITEMS_PAGE = 100;
 export interface ItemPages {
   open: QueueItem[];
   closed: ClosedItem[];
-  /** The walk's own meter: nodes paged through and round trips spent. */
-  scan: { nodes: number; pages: number };
+  /** The walk's own meter: nodes paged through, round trips spent, and the
+   *  archived OPEN items dropped en route (they never reach `open`). */
+  scan: { nodes: number; pages: number; archivedOpen: number };
 }
 
 /** One page walk, two views: open items for the queue, closed items for
@@ -2388,7 +2389,12 @@ export function listItemsFull(ctx: Ctx): ItemPages {
     // items.length + closed.length: the `... on Issue` fragment silently drops
     // every node that is not an issue (pull requests, draft items), and those
     // nodes still cost a slot on a page. Volume must report the real cost.
-    const scan = { nodes: 0, pages: 0 };
+    // archivedOpen is metered separately for the same reason `closed` carries
+    // `archived`: archived is a DISTINCT class everywhere in this file, and an
+    // archived open item is dropped before it reaches `items`. Without its own
+    // counter it would be invisible here and get swept into the non-issue
+    // residual, making doctor report a PR where an archived issue stands.
+    const scan = { nodes: 0, pages: 0, archivedOpen: 0 };
     // A bare "#N" reads as this repo — a cross-repo blocker must say whose #N.
     const self = `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase();
     let after: string | null = null;
@@ -2447,7 +2453,10 @@ export function listItemsFull(ctx: Ctx): ItemPages {
         }
         // Archived items are still returned by the items connection but
         // cannot be written ("The item is archived") — skip them everywhere.
-        if (n.isArchived) continue;
+        if (n.isArchived) {
+          scan.archivedOpen++;
+          continue;
+        }
         items.push(toQueueItem(c, fv, fieldValuesTruncated(n.fieldValues), self));
       }
       if (!page.pageInfo.hasNextPage) break;
@@ -3345,7 +3354,9 @@ export interface VolumeReport {
   /** Nodes the walk paid for and board.ts cannot use: pull requests and draft
    *  items (the `... on Issue` fragment matches neither). Called out because
    *  on a real board this is a large share of the bill, and no amount of issue
-   *  hygiene touches it. */
+   *  hygiene touches it. Archived issues are NOT counted here — they are
+   *  issues, they are reported as `archived`, and labelling them "PRs/drafts"
+   *  would make the doctor line state something untrue. */
   nonIssue: number;
   maxItems: number;
   over: boolean;
@@ -3356,7 +3367,10 @@ export interface VolumeReport {
  *  (foreign repos) and nodes that never matched the issue fragment (PRs,
  *  drafts) still occupied a slot on a page that had to be fetched. */
 export function volumeReport(pages: ItemPages, thresholds: VolumeThresholds): VolumeReport {
-  const archived = pages.closed.filter((c) => c.archived).length;
+  // Archived items land in two places: closed ones ride along in `closed`
+  // (carrying their flag), open ones are dropped by the walk and survive only
+  // as a counter. Both were scanned, so both are reported.
+  const archived = pages.closed.filter((c) => c.archived).length + pages.scan.archivedOpen;
   const items = pages.scan.nodes;
   return {
     items,
@@ -3364,7 +3378,12 @@ export function volumeReport(pages: ItemPages, thresholds: VolumeThresholds): Vo
     open: pages.open.length,
     closed: pages.closed.length,
     archived,
-    nonIssue: Math.max(0, items - pages.open.length - pages.closed.length),
+    // A residual, so every accounted class must be subtracted — archived open
+    // items included, or they masquerade as PRs.
+    nonIssue: Math.max(
+      0,
+      items - pages.open.length - pages.closed.length - pages.scan.archivedOpen,
+    ),
     maxItems: thresholds.maxItems,
     over: items > thresholds.maxItems,
   };
@@ -3470,6 +3489,73 @@ export function classifyPrune(
   }
   candidates.sort((a, b) => b.ageDays - a.ageDays);
   return { candidates, retained, scanned: closed.length };
+}
+
+/** Consecutive mutation failures that stop a sweep. A prune that keeps firing
+ *  mutations after this many failures in a row is not making progress — it is
+ *  burning the GraphQL budget this whole line of work exists to protect.
+ *  Consecutive rather than total: isolated per-item failures (one archived or
+ *  concurrently-removed item) are expected and must not abort a healthy sweep,
+ *  while a rate limit or a revoked scope fails EVERY call from that point on. */
+export const PRUNE_MAX_CONSECUTIVE_FAILURES = 5;
+
+/** Hard ceiling on one sweep, so a first --apply on a huge board cannot spend
+ *  thousands of mutation points in a single unattended command. */
+export const PRUNE_DEFAULT_LIMIT = 200;
+
+export function pruneLimit(raw: string | boolean | undefined): number {
+  if (raw === undefined) return PRUNE_DEFAULT_LIMIT;
+  // A bare `--limit` is a dropped value, not a request for the default.
+  if (typeof raw === "boolean") throw new UsageError("--limit needs a positive integer value");
+  const n = Number(raw);
+  // Unlike the advisory thresholds, this one bounds a DESTRUCTIVE loop: a
+  // typo'd --limit must not silently widen the blast radius, so it is refused
+  // rather than defaulted.
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new UsageError(`--limit must be a positive integer, got "${raw}"`);
+  }
+  return n;
+}
+
+export interface PruneApplyResult {
+  attempted: number;
+  removed: number;
+  failed: string[];
+  aborted: boolean; // stopped early on consecutive failures
+}
+
+/** The removal loop, bounded twice: by the caller's slice (--limit) and by a
+ *  consecutive-failure circuit breaker. Extracted from the CLI case so it can
+ *  be tested directly — the two bugs this replaces were both reachable only
+ *  through the dispatch, which had no test. */
+export function applyPrune(ctx: Ctx, candidates: PruneCandidate[]): PruneApplyResult {
+  const failed: string[] = [];
+  let removed = 0;
+  let attempted = 0;
+  let consecutive = 0;
+  const projectId = refreshCache(ctx).projectId;
+  for (const c of candidates) {
+    attempted++;
+    try {
+      ghGraphQL(
+        ctx,
+        `mutation($projectId: ID!, $itemId: ID!) {
+          deleteProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) { deletedItemId }
+        }`,
+        { projectId, itemId: c.itemId },
+      );
+      removed++;
+      consecutive = 0; // progress resets the breaker
+    } catch (e) {
+      // Per-item fault isolation, like doctor's fix loops: one unremovable
+      // item must not abort a sweep that is otherwise working.
+      failed.push(`#${c.number} (${(e as Error).message})`);
+      if (++consecutive >= PRUNE_MAX_CONSECUTIVE_FAILURES) {
+        return { attempted, removed, failed, aborted: true };
+      }
+    }
+  }
+  return { attempted, removed, failed, aborted: false };
 }
 
 export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {}): DoctorReport {
@@ -4383,7 +4469,8 @@ maintenance
                               fixed; thresholds via RALPH_SMELL_CLAIM_EXPIRIES
                               (2), RALPH_SMELL_ESCALATIONS (3),
                               RALPH_SMELL_REVIEW_DAYS (7)
-  prune [--apply] [--json]    list closed items removable from the PROJECT (the
+  prune [--apply] [--json] [--limit N]
+                              list closed items removable from the PROJECT (the
                               issues are untouched) — closed ≥180 days
                               (RALPH_PRUNE_AFTER_DAYS), board state already
                               terminal, not an apply unit, and no open item's
@@ -4392,7 +4479,10 @@ maintenance
                               full scan: archiving does not, because archived
                               items are still returned by the items API.
                               Doctor's "board-volume" line says when it matters
-                              (RALPH_VOLUME_MAX_ITEMS, 800)
+                              (RALPH_VOLUME_MAX_ITEMS, 800). --json reports the
+                              same run --apply performs (never a dry run under
+                              --apply). One sweep removes at most --limit items
+                              (200) and stops after 5 consecutive failures.
   setup                       create Workflow State / Claim / Estimate / Priority
                               fields (idempotent; never edits existing fields)
   readiness [--json]          agent-readiness report — 3 levels (interactive,
@@ -4900,74 +4990,108 @@ export function run(argv: string[], ctx: Ctx): number {
       const closedOwn = ownRepo(ctx, full.closed).own;
       const vol = volumeReport(full, ctx.cfg.volume);
       const report = classifyPrune(own, closedOwn, ctx.cfg, ctx.now());
+      const applying = !!flags.apply;
+      const limit = pruneLimit(flags.limit);
+      const selected = applying ? report.candidates.slice(0, limit) : report.candidates;
+      const text = !flags.json;
 
-      if (flags.json) {
-        json({ volume: vol, ...report, applied: false });
-        return 0;
-      }
-
-      out(
-        `board volume: ${vol.items} items = ${vol.pages} page(s) per full scan ` +
-          `(${vol.open} open, ${vol.closed} closed` +
-          `${vol.nonIssue ? `, ${vol.nonIssue} non-issue` : ""}) — threshold ${vol.maxItems}`,
-      );
-      if (vol.nonIssue) {
+      // Deciding WHAT to do and choosing HOW to render it are orthogonal, and
+      // the two must never interleave: the first cut returned early on --json
+      // and so silently no-opped `--apply --json`, reporting `applied: false`
+      // with exit 0 to exactly the caller least able to notice — automation.
+      // The apply decision is made once, below, on every rendering path.
+      if (text) {
         out(
-          `  note: ${vol.nonIssue} scanned node(s) are pull requests or drafts — paged for on every ` +
-            `scan, never read by board.ts, and NOT prunable here (prune only removes closed issues).`,
+          `board volume: ${vol.items} items = ${vol.pages} page(s) per full scan ` +
+            `(${vol.open} open, ${vol.closed} closed` +
+            `${vol.archived ? `, ${vol.archived} archived` : ""}` +
+            `${vol.nonIssue ? `, ${vol.nonIssue} non-issue` : ""}) — threshold ${vol.maxItems}`,
         );
-      }
-      if (report.candidates.length === 0) {
-        const counts = new Map<PruneRetention, number>();
-        for (const r of report.retained) counts.set(r.reason, (counts.get(r.reason) ?? 0) + 1);
-        out(
-          `nothing to prune: ${report.scanned} closed item(s) all still read by something — ` +
-            [...counts].map(([r, n]) => `${r} ${n}`).join(", "),
-        );
-        return 0;
-      }
-      for (const c of report.candidates.slice(0, 20)) {
-        out(`  #${c.number} ${c.state} closed ${c.closedAt.slice(0, 10)} (${c.ageDays}d)`);
-      }
-      if (report.candidates.length > 20) out(`  … and ${report.candidates.length - 20} more`);
-      out(
-        `\n${report.candidates.length} of ${report.scanned} closed item(s) are removable: closed ≥${ctx.cfg.volume.pruneAfterDays}d, ` +
-          `board state already terminal, no open item's tree passes through them.`,
-      );
-
-      if (!flags.apply) {
-        out(
-          `\nDRY RUN. \`board prune --apply\` removes them FROM THE PROJECT ONLY — ` +
-            `the GitHub issues are untouched and keep their comments, labels and closed state.\n` +
-            `One-way for board metadata: a removed item loses its Workflow State and Claim field ` +
-            `values. If such an issue is ever reopened it comes back off-board, and doctor's ` +
-            `reconcile re-adopts it to Backlog.`,
-        );
-        return 0;
-      }
-
-      let removed = 0;
-      const failed: string[] = [];
-      const projectId = refreshCache(ctx).projectId;
-      for (const c of report.candidates) {
-        try {
-          ghGraphQL(
-            ctx,
-            `mutation($projectId: ID!, $itemId: ID!) {
-              deleteProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) { deletedItemId }
-            }`,
-            { projectId, itemId: c.itemId },
+        if (vol.nonIssue) {
+          out(
+            `  note: ${vol.nonIssue} scanned node(s) are pull requests or drafts — paged for on every ` +
+              `scan, never read by board.ts, and NOT prunable here (prune only removes closed issues).`,
           );
-          removed++;
-        } catch (e) {
-          // Per-item fault isolation, like doctor's fix loops: one unremovable
-          // item must not abort a sweep that is otherwise working.
-          failed.push(`#${c.number} (${(e as Error).message})`);
         }
       }
-      out(`\nremoved ${removed} item(s) from the project; the issues are untouched`);
-      if (failed.length) {
-        out(`failed: ${failed.join("; ")}`);
+
+      if (report.candidates.length === 0) {
+        if (text) {
+          const counts = new Map<PruneRetention, number>();
+          for (const r of report.retained) counts.set(r.reason, (counts.get(r.reason) ?? 0) + 1);
+          out(
+            `nothing to prune: ${report.scanned} closed item(s) all still read by something — ` +
+              [...counts].map(([r, n]) => `${r} ${n}`).join(", "),
+          );
+        } else {
+          json({ volume: vol, ...report, applied: applying, limit, attempted: 0, removed: 0, failed: [], abortedAfterConsecutiveFailures: false });
+        }
+        return 0;
+      }
+
+      // A destructive command shows its work: the same listing appears whether
+      // this run is a rehearsal or the real thing.
+      if (text) {
+        for (const c of selected.slice(0, 20)) {
+          out(`  #${c.number} ${c.state} closed ${c.closedAt.slice(0, 10)} (${c.ageDays}d)`);
+        }
+        if (selected.length > 20) out(`  … and ${selected.length - 20} more`);
+        out(
+          `\n${report.candidates.length} of ${report.scanned} closed item(s) are removable: closed ≥${ctx.cfg.volume.pruneAfterDays}d, ` +
+            `board state already terminal, no open item's tree passes through them.`,
+        );
+      }
+
+      if (!applying) {
+        if (text) {
+          out(
+            `\nDRY RUN. \`board prune --apply\` removes them FROM THE PROJECT ONLY — ` +
+              `the GitHub issue keeps everything of its own: title, body, comments, labels, closed state.\n` +
+              `What a removal destroys is the BOARD ITEM: its Workflow State and Claim field values go with ` +
+              `it, and re-adding the issue to the project later does not bring them back. If such an issue ` +
+              `is ever reopened it comes back off-board, and doctor's reconcile re-adopts it to Backlog.` +
+              (report.candidates.length > limit
+                ? `\nOne sweep removes at most ${limit} (--limit); the rest need another run.`
+                : ""),
+          );
+        } else {
+          json({ volume: vol, ...report, applied: false, limit });
+        }
+        return 0;
+      }
+
+      const result = applyPrune(ctx, selected);
+      if (!text) {
+        json({
+          volume: vol,
+          ...report,
+          applied: true,
+          limit,
+          attempted: result.attempted,
+          removed: result.removed,
+          failed: result.failed,
+          abortedAfterConsecutiveFailures: result.aborted,
+        });
+        return result.failed.length ? 1 : 0;
+      }
+      out(
+        `\nremoved ${result.removed} of ${result.attempted} attempted item(s) from the project; ` +
+          `the issues are untouched`,
+      );
+      if (report.candidates.length > selected.length) {
+        out(
+          `${report.candidates.length - selected.length} candidate(s) left for the next run (--limit ${limit})`,
+        );
+      }
+      if (result.aborted) {
+        out(
+          `ABORTED after ${PRUNE_MAX_CONSECUTIVE_FAILURES} consecutive failures — ` +
+            `refusing to keep spending mutations against a wall (rate limit? revoked scope?).`,
+        );
+      }
+      if (result.failed.length) {
+        for (const f of result.failed.slice(0, 10)) out(`  failed: ${f}`);
+        if (result.failed.length > 10) out(`  … and ${result.failed.length - 10} more failures`);
         return 1;
       }
       return 0;
