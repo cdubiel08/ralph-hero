@@ -24,12 +24,14 @@
 #   get N …              get.<N>.json, then get.json, else a one-line issue
 #                        view (the human `board get` text — link-offer and
 #                        ralph-answer print it verbatim, so text is honest)
+#   list --json          list.json — the WHOLE-BOARD cross-state payload the
+#                        cockpit reads once (GH-1786); items carry their own
+#                        "state" and the caller partitions. rc via list.rc
 #   list --state …       list.<state-slug>.json (the state lowercased,
-#                        spaces → dashes: list.in-progress.json — the cockpit
-#                        tests model three DIFFERENT columns), then list.json,
-#                        else an empty {items, foreign} envelope (board.ts's
-#                        list --json shape); rc via list.<state-slug>.rc then
-#                        list.rc
+#                        spaces → dashes: list.in-progress.json), then
+#                        list.json, else an empty {items, foreign} envelope
+#                        (board.ts's list --json shape); rc via
+#                        list.<state-slug>.rc then list.rc
 #   answer N …           answer.<N>.json, then answer.json, else board.ts's
 #                        "answer commented; Human Needed → In Progress" line
 #   move N STATE         move.json, else a bare success line
@@ -105,6 +107,12 @@ case "${1-} ${2-}" in
     emit_fixture "get.${2-}" get ||
       printf '#%s [Backlog] Fake issue (canned board get)\n' "${2-}"
     key="get"
+    ;;
+  "list --json")
+    # The WHOLE-BOARD read (GH-1786): one cross-state payload, so the fixture
+    # carries each item's own "state" and the caller partitions locally.
+    emit_fixture list || echo '{"items":[],"foreign":[]}'
+    key="list"
     ;;
   "list --state")
     # Per-state fixture first (list.in-progress.json), so one fixtures dir can

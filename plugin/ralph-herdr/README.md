@@ -238,10 +238,10 @@ reaches the TUI untouched. (fzf on rung 3 inherits the same guarantee.)
 
 ### The fzf rung, honestly
 
-Rung 3 is verb-complete, chrome-minimal: a loop of `board list --state`
-over the three columns (stdout-only into the parse, fail-closed on
-unparseable output — the ralph-answer.sh precedent: an empty column and a
-failed query are different facts) → one fzf pick with a preview (live
+Rung 3 is verb-complete, chrome-minimal: a loop of one `board list --json`
+partitioned locally into the three columns (stdout-only into the parse,
+fail-closed on unparseable output — the ralph-answer.sh precedent: an empty
+column and a failed query are different facts) → one fzf pick with a preview (live
 agent's pane tail, else the issue's latest comments) → a second fzf menu of
 the verbs. Reply and answer read one line (`read -r`); answer is
 comment-first through `board answer`; delivered is claimed only on

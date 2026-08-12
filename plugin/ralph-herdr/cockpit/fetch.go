@@ -60,9 +60,15 @@ func (e execRunner) Run(ctx context.Context, prog string, args ...string) (strin
 
 // ── argv builders (pure — the fetch arg-construction tests pin these) ───────
 
-func argsBoardList(state string) []string { return []string{"list", "--state", state, "--json"} }
-func argsBoardGet(n int) []string         { return []string{"get", strconv.Itoa(n), "--json"} }
-func argsBoardFrontier() []string         { return []string{"frontier", "--json"} }
+// argsBoardList is the WHOLE-BOARD read: no --state, so ONE process answers
+// all three columns (GH-1786). `board list --json` already returns every
+// own-repo open item cross-state; --state only filtered that same walk
+// client-side inside board.ts, so three --state reads paid for three
+// identical walks — board.ts's withCache is per-process and shares nothing
+// across them. The partition moved here; the walk happens once.
+func argsBoardList() []string     { return []string{"list", "--json"} }
+func argsBoardGet(n int) []string { return []string{"get", strconv.Itoa(n), "--json"} }
+func argsBoardFrontier() []string { return []string{"frontier", "--json"} }
 func argsBoardAnswer(n int, msg string) []string {
 	return []string{"answer", strconv.Itoa(n), "-m", msg}
 }
@@ -116,6 +122,14 @@ type boardMsg struct {
 	failed [3]bool // per-column: read errored — cols[i] is NOT "empty", it is unknown
 	err    string
 }
+
+// allColumnsUnknown — the failure shape of a single whole-board read. The
+// per-column array survives the collapse to one process deliberately: it is
+// what update.go merges on, and it keeps "this column is stale" expressible
+// rather than "the board is empty". One read failing means all three columns
+// are unknown; nothing about that is all-or-nothing about the RENDER, which
+// still shows each column's last good cards.
+var allColumnsUnknown = [3]bool{true, true, true}
 
 type agentsMsg struct {
 	agents  []Agent
@@ -175,18 +189,41 @@ type listItemJSON struct {
 	ParentNumber *int   `json:"parentNumber"`
 }
 
-func parseBoardList(out string, state string) ([]Card, error) {
+// parseBoardColumns partitions ONE cross-state `board list --json` payload
+// into the three cockpit columns. Membership is decided by the item's own
+// State matched against columnStates — the same verbatim comparison the
+// per-state parse used to make, so a board CLI that returned the wrong rows
+// still cannot mis-column a card; items in any other state (Backlog, and
+// anything the board grows later) are simply not cockpit cards. Board order
+// is preserved within each column.
+//
+// `items` is a POINTER so absence survives decoding: `{}`, `null` and
+// `{"items":null}` all leave a plain slice nil, which is indistinguishable
+// from a board with no cards. Rendering those as an empty board is exactly the
+// "no items" / "I could not find out" collapse this whole change exists to
+// prevent — a schema-invalid payload is a FAILED read, and the caller maps a
+// failed read to all three columns UNKNOWN. Same rule, and the same pointer
+// idiom, as the snapshot envelope's arrays in parseAgents (GH-1774).
+func parseBoardColumns(out string) ([3][]Card, error) {
+	var cols [3][]Card
 	var payload struct {
-		Items []listItemJSON `json:"items"`
+		Items *[]listItemJSON `json:"items"`
 	}
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
-		return nil, fmt.Errorf("list --state %q: %w", state, err)
+		return cols, fmt.Errorf("list --json: %w", err)
 	}
-	cards := make([]Card, 0, len(payload.Items))
-	for _, it := range payload.Items {
-		// The board's list is cross-state; keep only this column's state so
-		// a board CLI ignoring --state can never mis-column a card.
-		if it.State != state {
+	if payload.Items == nil {
+		return cols, fmt.Errorf("list --json: payload carries no items array — a malformed read is not an empty board")
+	}
+	for _, it := range *payload.Items {
+		idx := -1
+		for i, state := range columnStates {
+			if it.State == state {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
 			continue
 		}
 		c := Card{
@@ -200,9 +237,9 @@ func parseBoardList(out string, state string) ([]Card, error) {
 		if it.ParentNumber != nil {
 			c.ParentNumber = *it.ParentNumber
 		}
-		cards = append(cards, c)
+		cols[idx] = append(cols[idx], c)
 	}
-	return cards, nil
+	return cols, nil
 }
 
 // parseAgents validates a protocol-19 session_snapshot envelope and returns
@@ -477,29 +514,26 @@ const (
 
 // ── tea.Cmds ────────────────────────────────────────────────────────────────
 
-// fetchBoardCmd reads all three columns, then the Human Needed question
-// lines (bounded). A failed column read reports as an error, never as empty.
+// fetchBoardCmd reads all three columns in ONE board process (GH-1786 — three
+// --state reads were three full board walks sharing no cache), then the Human
+// Needed question lines (bounded). A failed read reports as an error, never as
+// empty: one read covers all three columns, so its failure marks all three
+// UNKNOWN — update.go's per-column merge then keeps each column's last good
+// cards rather than rendering a falsely calm board.
 func fetchBoardCmd(cfg Config, r Runner) tea.Cmd {
 	return func() tea.Msg {
 		var msg boardMsg
-		var errs []string
-		for i, state := range columnStates {
-			ctx, cancel := context.WithTimeout(context.Background(), boardTimeout)
-			out, stderr, err := r.Run(ctx, cfg.Board, argsBoardList(state)...)
-			cancel()
-			if err != nil {
-				errs = append(errs, fmt.Sprintf("%s: %s", state, firstLine(stderr, err)))
-				msg.failed[i] = true
-				continue
-			}
-			cards, perr := parseBoardList(out, state)
-			if perr != nil {
-				errs = append(errs, perr.Error())
-				msg.failed[i] = true
-				continue
-			}
-			msg.cols[i] = cards
+		ctx, cancel := context.WithTimeout(context.Background(), boardTimeout)
+		out, stderr, err := r.Run(ctx, cfg.Board, argsBoardList()...)
+		cancel()
+		if err != nil {
+			return boardMsg{failed: allColumnsUnknown, err: firstLine(stderr, err)}
 		}
+		cols, perr := parseBoardColumns(out)
+		if perr != nil {
+			return boardMsg{failed: allColumnsUnknown, err: perr.Error()}
+		}
+		msg.cols = cols
 		// Human Needed contract line — one bounded gh read per card. Chrome:
 		// a failed read leaves the question empty, never blocks the column.
 		if cfg.Gh != "" {
@@ -516,7 +550,6 @@ func fetchBoardCmd(cfg Config, r Runner) tea.Cmd {
 				}
 			}
 		}
-		msg.err = strings.Join(errs, " · ")
 		return msg
 	}
 }

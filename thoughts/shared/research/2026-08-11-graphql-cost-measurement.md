@@ -178,3 +178,65 @@ The board sat at `699/5000` remaining when this measurement began and was driven
 to `0` completing the inventory — the measurement consumed the same budget the
 problem consumes. Anyone re-running this table should expect to spend ~330
 points, and should check `gh api rate_limit` first.
+
+---
+
+## Addendum, 2026-08-12 (GH-1786) — the `list` row above is stale
+
+Re-measured the same way (`RALPH_GQL_COST=1`, live board) one day later, while
+collapsing the cockpit's three column scans into one:
+
+| Command | GraphQL calls | **Points** | Wall |
+|---|---|---|---|
+| `list --state "In Progress" --json` | **1** | **23** | ~2 s |
+| `list --json` (whole board) | **1** | **23** | ~2 s |
+
+**GH-1785 (#1794) landed between the two measurements** and repointed `list` at
+`listOwnOpenItems` — one bounded `repository.issues(first: 100)` page, because
+this repo has ~47 OPEN own-repo issues, not the 1344 all-time project items the
+`listItemsFull` walk paginated. So the table's `list = 14 calls / 42 points` and
+#1784's `21–23 s per column scan` describe a query `list` no longer runs.
+
+What the collapse is actually worth, then: **69 → 23 points and ~6 s → ~2 s per
+cockpit poll** (3x, as designed), which at the default 30 s interval is
+**8,280 → 2,760 points/hour** against the 5,000/hr budget — the cockpit alone
+was over budget continuously, and now fits. Smaller absolute numbers than the
+issue predicted, same crossing of the line that mattered.
+
+Consequences for the routed children:
+
+- **#1803** (drop `labels` / `blockedBy` per caller): its arithmetic stands
+  unchanged. See the correction below.
+- **#1811** (`deliver-queue` at 100 pts/chunk) is untouched by GH-1785: it is a
+  different query, and it remains the most expensive one in the system.
+
+Measuring this cost ~46 points and required waiting out a fully exhausted
+budget. The advice above stands, doubly: check `gh api rate_limit` first, and
+wait for the reset rather than retrying.
+
+### Correction to the addendum above, same day (GH-1786)
+
+The first version of this addendum claimed #1803's per-connection arithmetic
+needed re-measuring because "the walk is now one call at 23 points". **That was
+wrong, and it conflated two different walks.**
+
+GH-1785 changed **only `list`**, repointing it at `listOwnOpenItems` (the
+repo's OPEN issues — one page here). Every caller #1803 is about — `next`,
+`frontier`, `tend-queue`, `deliver-queue` — goes through `listItemsFull` /
+`listItems`, which still paginates the whole **project** at 14 pages. GH-1785
+never touched that walk, so nothing invalidated the `3 → 2 → 1 pt/page` model
+those callers were sized on.
+
+#1803 then measured it directly and it held exactly:
+`next` 42 → 28, `frontier` 42 → 28, `tend-queue` 53 → 39, `deliver-queue`
+120 → 70 (`thoughts/shared/research/2026-08-12-GH-1803-lean-query-measured.md`).
+
+Both readings of "the walk" are true at once, which is what made the mistake
+easy: `list` is one bounded call at 23 points, and the project walk is 14 pages
+at 1–3 points each. **Name which walk before quoting a number from this
+document.** `list` is the odd one out; everything else in the table above is
+the project walk.
+
+Unaffected by the correction: `list` keeps BOTH connections under #1803's
+`QUEUE_SELECT_FULL` ("contract kept"), so the cockpit's one-read poll continues
+to receive every field it partitions on.

@@ -10,8 +10,9 @@
 # chosen; both absent → dashboard.sh, rung 4 — fzf "removal" is pure PATH
 # control, the real fzf is never consulted), and cockpit-fzf.sh's pure
 # functions SOURCED directly (the fleet.test.sh pattern — the real fzf UI is
-# never driven): read_column's fail-closed board read (rc-nonzero AND
-# 0-exit-with-garbage-stdout both refuse to render an empty column),
+# never driven): read_board's fail-closed WHOLE-BOARD read (one process for
+# all three columns, GH-1786 — rc-nonzero AND 0-exit-with-garbage-stdout both
+# refuse to render an empty board),
 # cockpit_cards' three-column flatten in the locked order with the agent
 # glyph join by name parse (grammar-B w<N>-* and legacy gh-N, exact-issue
 # boundaries — w421 never decorates #42), run_verb's reply
@@ -205,41 +206,70 @@ set +e
 set +o pipefail
 
 is "sourcing defines the pure functions, runs no UI" "4" \
-  "$(type read_column decorate cockpit_cards run_verb 2>/dev/null | grep -c 'is a function')"
+  "$(type read_board decorate cockpit_cards run_verb 2>/dev/null | grep -c 'is a function')"
 
-# ── read_column: board truth in, TSV rows out, FAIL-CLOSED ───────────────────
-cat >"$FAKE_BOARD_FIXTURES/list.in-progress.json" <<'EOF'
-{"items":[{"number":42,"title":"Fix the flux"},{"number":4,"title":"Small one"}],"foreign":[]}
+# ── read_board: ONE whole-board read in, TSV rows out, FAIL-CLOSED ───────────
+# GH-1786: one `board list --json` answers all three columns; the partition is
+# local. The payload is deliberately NOT grouped by state — the locked column
+# order is the reader's, not the board's.
+cat >"$FAKE_BOARD_FIXTURES/list.json" <<'EOF'
+{"items":[
+  {"number":42,"title":"Fix the flux","state":"In Progress"},
+  {"number":13,"title":"Which way?","state":"Human Needed"},
+  {"number":99,"title":"Not a cockpit column","state":"Backlog"},
+  {"number":7,"title":"Review me","state":"In Review"},
+  {"number":4,"title":"Small one","state":"In Progress"}
+],"foreign":[]}
 EOF
-out=$(read_column "In Progress" 2>/dev/null)
+clear_logs
+out=$(read_board 2>/dev/null)
 rc=$?
-is "read_column: rc 0 on a parseable read" "0" "$rc"
-is "read_column: one TSV row per card, state verbatim in field 1" \
+is "read_board: rc 0 on a parseable read" "0" "$rc"
+is "read_board: the three columns in the LOCKED order, board order within each" \
   "In Progress	#42	Fix the flux
-In Progress	#4	Small one" "$out"
+In Progress	#4	Small one
+In Review	#7	Review me
+Human Needed	#13	Which way?" "$out"
+is "read_board: exactly ONE board read for all three columns (GH-1786)" "1" \
+  "$(grep -c '^list ' "$FAKE_BOARD_LOG")"
+is "read_board: the read carries no --state — the whole board, once" "1" \
+  "$(log_count "$FAKE_BOARD_LOG" 'list --json')"
 
-out=$(read_column "In Review" 2>/dev/null)
+printf '{"items":[],"foreign":[]}\n' >"$FAKE_BOARD_FIXTURES/list.json"
+out=$(read_board 2>/dev/null)
 rc=$?
-is "read_column: an EMPTY column is rc 0 + no rows (a real fact)" "0 " "$rc $out"
+is "read_board: an EMPTY board is rc 0 + no rows (a real fact)" "0 " "$rc $out"
 
-printf '1\n' >"$FAKE_BOARD_FIXTURES/list.in-review.rc"
-out=$(read_column "In Review" 2>/dev/null)
+printf '1\n' >"$FAKE_BOARD_FIXTURES/list.rc"
+out=$(read_board 2>/dev/null)
 rc=$?
-err=$(read_column "In Review" 2>&1 >/dev/null)
-is "read_column: a failed board read is rc 1 — never an empty column" "1 " "$rc $out"
-line_has "read_column: the failure is said on stderr" "$err" 'board list --state "In Review" failed'
-rm -f "$FAKE_BOARD_FIXTURES/list.in-review.rc"
+err=$(read_board 2>&1 >/dev/null)
+is "read_board: a failed board read is rc 1 — never an empty board" "1 " "$rc $out"
+line_has "read_board: the failure is said on stderr" "$err" 'board list --json failed'
+rm -f "$FAKE_BOARD_FIXTURES/list.rc"
 
 # Fail-closed on GARBAGE: rc 0 + unparseable stdout is a failed read too
-# (the ralph-answer.sh precedent) — an empty column and a failed query are
+# (the ralph-answer.sh precedent) — an empty board and a failed query are
 # different facts.
-printf 'npm WARN this is not json\n' >"$FAKE_BOARD_FIXTURES/list.human-needed.json"
-out=$(read_column "Human Needed" 2>/dev/null)
+printf 'npm WARN this is not json\n' >"$FAKE_BOARD_FIXTURES/list.json"
+out=$(read_board 2>/dev/null)
 rc=$?
-err=$(read_column "Human Needed" 2>&1 >/dev/null)
-is "read_column: 0-exit garbage stdout is rc 1 (no false empty)" "1 " "$rc $out"
-line_has "read_column: the refusal names the reason" "$err" "unparseable JSON"
-rm -f "$FAKE_BOARD_FIXTURES/list.human-needed.json"
+err=$(read_board 2>&1 >/dev/null)
+is "read_board: 0-exit garbage stdout is rc 1 (no false empty)" "1 " "$rc $out"
+line_has "read_board: the refusal names the reason" "$err" "unparseable JSON"
+
+# Fail-closed on SCHEMA-INVALID JSON: parseable, but carrying no items array.
+# The Go rung had this hole (CodeRabbit on #1820); this rung fails closed only
+# because iterating a null errors in jq. Pinned so a later `.items[]?` — which
+# reads like a harmless robustness tweak — cannot silently turn a malformed
+# payload back into a calm empty board.
+for bad in '{}' 'null' '{"items":null}'; do
+  printf '%s\n' "$bad" >"$FAKE_BOARD_FIXTURES/list.json"
+  out=$(read_board 2>/dev/null)
+  rc=$?
+  is "read_board: $bad is a FAILED read, never an empty board" "1 " "$rc $out"
+done
+rm -f "$FAKE_BOARD_FIXTURES/list.json"
 
 # ── decorate: the glyph join by NAME PARSE, board rows stay authoritative ────
 OVERLAY="$(printf 'w42-fix-the-flux\tworking\ngh-7\tblocked\nw9-quiet\tidle\nw13-weird\tmystery\nw421-boundary\tworking')"
@@ -261,14 +291,12 @@ is "decorate: an empty overlay (herdr down) costs glyphs, never rows" "5" \
   "$(printf '%s\n' "$out" | grep -c .)"
 
 # ── cockpit_cards: the three-column flatten, locked order, fail-closed ───────
-cat >"$FAKE_BOARD_FIXTURES/list.in-progress.json" <<'EOF'
-{"items":[{"number":42,"title":"Fix the flux"}],"foreign":[]}
-EOF
-cat >"$FAKE_BOARD_FIXTURES/list.in-review.json" <<'EOF'
-{"items":[{"number":7,"title":"Review me"}],"foreign":[]}
-EOF
-cat >"$FAKE_BOARD_FIXTURES/list.human-needed.json" <<'EOF'
-{"items":[{"number":13,"title":"Which way?"}],"foreign":[]}
+cat >"$FAKE_BOARD_FIXTURES/list.json" <<'EOF'
+{"items":[
+  {"number":42,"title":"Fix the flux","state":"In Progress"},
+  {"number":7,"title":"Review me","state":"In Review"},
+  {"number":13,"title":"Which way?","state":"Human Needed"}
+],"foreign":[]}
 EOF
 clear_logs
 out=$(cockpit_cards "$OVERLAY" 2>/dev/null)
@@ -279,24 +307,28 @@ is "flatten: columns land in the locked order (In Progress / In Review / Human N
   "In Progress In Review Human Needed" \
   "$(printf '%s\n' "$out" | cut -f1 | tr '\n' ' ' | sed 's/ $//')"
 line_has "flatten: the glyph overlay rode along" "$out" "[> w42-fix-the-flux]"
-is "flatten: exactly three board list reads, states verbatim" "3" \
+is "flatten: ONE board read for the whole render, not one per column (GH-1786)" "1" \
+  "$(grep -c '^list ' "$FAKE_BOARD_LOG")"
+is "flatten: no --state ever leaves the cockpit — the board is walked once" "0" \
   "$(grep -c '^list --state ' "$FAKE_BOARD_LOG")"
-is "flatten: board state queried verbatim (Human Needed)" "1" \
-  "$(log_count "$FAKE_BOARD_LOG" 'list --state Human Needed --json')"
 
 # An empty middle column thins nothing else.
-printf '{"items":[],"foreign":[]}\n' >"$FAKE_BOARD_FIXTURES/list.in-review.json"
+cat >"$FAKE_BOARD_FIXTURES/list.json" <<'EOF'
+{"items":[
+  {"number":42,"title":"Fix the flux","state":"In Progress"},
+  {"number":13,"title":"Which way?","state":"Human Needed"}
+],"foreign":[]}
+EOF
 out=$(cockpit_cards "" 2>/dev/null)
 is "flatten: an empty middle column skips itself, keeps its neighbors" "#42 #13" \
   "$(printf '%s\n' "$out" | cut -f2 | tr '\n' ' ' | sed 's/ $//')"
 
-# One garbage column aborts the WHOLE render — never a silently thinner board.
-printf 'ExperimentalWarning: not json\n' >"$FAKE_BOARD_FIXTURES/list.in-review.json"
+# Garbage aborts the WHOLE render — never a silently thinner board.
+printf 'ExperimentalWarning: not json\n' >"$FAKE_BOARD_FIXTURES/list.json"
 out=$(cockpit_cards "" 2>/dev/null)
 rc=$?
-is "flatten: one unparseable column fails the whole render (rc 1, no rows)" "1 " "$rc $out"
-rm -f "$FAKE_BOARD_FIXTURES/list.in-progress.json" \
-  "$FAKE_BOARD_FIXTURES/list.in-review.json" "$FAKE_BOARD_FIXTURES/list.human-needed.json"
+is "flatten: an unparseable read fails the whole render (rc 1, no rows)" "1 " "$rc $out"
+rm -f "$FAKE_BOARD_FIXTURES/list.json"
 
 # ── run_verb reply: delivered-checkmark ONLY on herdr rc 0 ───────────────────
 clear_logs

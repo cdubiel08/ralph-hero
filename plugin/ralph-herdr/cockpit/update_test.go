@@ -456,6 +456,11 @@ func TestBoardMsgPartialFailureKeepsOnlyTheFailedColumn(t *testing.T) {
 	// One state's read failing while another returns cards must never render
 	// the failed column as "(none)" — per-column, a failed read keeps the
 	// last good cards under the error banner.
+	//
+	// Since GH-1786 one poll is ONE read, so fetchBoardCmd emits all-or-none
+	// (TestFetchBoardFailureMarksEveryColumnUnknown). This pins the MERGE
+	// contract, which stays per-column deliberately: "which column is stale"
+	// remains expressible, and a future partial source needs no update here.
 	m := testModel(&fakeRunner{})
 	beforeIP := len(m.cols[0])
 	m, _ = updateModel(m, boardMsg{

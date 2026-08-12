@@ -1,6 +1,8 @@
 // model.go — cockpit state: the board columns, the agent overlay, the cursor,
 // and the mode machine. Board state is AUTHORITATIVE: a card's column derives
-// only from `board list --state S --json`; herdr agent state (the live/blocked
+// only from the item's own Workflow State in ONE `board list --json` read
+// (GH-1786 — three --state reads were three full board walks); herdr agent
+// state (the live/blocked
 // glyphs) is a decoration overlay joined by parsing agent names (grammar-B
 // w<N>-*, legacy gh-N) — losing the overlay loses chrome, never a column.
 package main
