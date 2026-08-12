@@ -63,6 +63,7 @@ import {
   run,
   scopeMatches,
   setDependency,
+  setPriority,
   setup,
   SMELL_DEFAULTS,
   STATES,
@@ -2560,6 +2561,69 @@ describe("applyEvidenceFailure", () => {
     const ctx = makeCtx(gh);
     gh.issues.set(1, { number: 1, state: "Backlog", comments: [] });
     expect(applyEvidenceFailure(ctx, 1)).toMatch(/no <!-- ralph-apply-evidence:v1 -->/);
+  });
+});
+
+describe("priority is writable through the CLI (GH-1789)", () => {
+  it("create --priority sets it, so a filed issue is reachable by next", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const issue = createIssue(ctx, { title: "urgent", priority: "P0" });
+    expect(issue.priority).toBe("P0");
+    expect(gh.mutations).toContain(`setPriority(#${issue.number}, P0)`);
+  });
+
+  it("an unknown priority is refused BEFORE the issue exists", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(() => createIssue(ctx, { title: "x", priority: "P9" })).toThrow(UsageError);
+    expect(gh.mutations.filter((m) => m.startsWith("createIssue"))).toEqual([]);
+    expect(gh.issues.size).toBe(0);
+  });
+
+  it("validates against the LIVE options, not a hardcoded P0..P3", () => {
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
+    const ctx = makeCtx(gh);
+    createIssue(ctx, { title: "x", priority: "Now" }); // a scheme setup never seeded is accepted
+    expect(gh.mutations).toContain("setField(F_Priority)");
+    expect(() => createIssue(ctx, { title: "y", priority: "P0" })).toThrow(/Now, Later/);
+  });
+
+  it("the setter corrects a mis-filed backlog item, and --clear removes it", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: null });
+    expect(setPriority(ctx, 1, "P1").priority).toBe("P1");
+    expect(setPriority(ctx, 1, null).priority).toBeNull();
+    expect(gh.mutations).toContain("clearField(#1, F_priority)");
+  });
+
+  it("the setter refuses an unknown option and an archived item", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(2, { number: 2, state: "Backlog", archived: true });
+    expect(() => setPriority(ctx, 1, "URGENT")).toThrow(UsageError);
+    expect(() => setPriority(ctx, 2, "P0")).toThrow(RefusalError);
+    expect(gh.mutations.filter((m) => m.startsWith("setPriority"))).toEqual([]);
+  });
+
+  it("`priority` is scope-gated like every other mutation", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.exec = (argv, stdin) => {
+      if (argv.join(" ").includes("remote get-url"))
+        return { code: 0, stdout: "git@github.com:someone-else/other.git\n", stderr: "" };
+      return gh.exec(argv, stdin);
+    };
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(() => run(["priority", "1", "P0"], ctx)).toThrow(RefusalError);
+  });
+
+  it("--clear never swallows the issue number", () => {
+    expect(parseArgs(["--clear", "1789"]).positional).toEqual(["1789"]);
   });
 });
 

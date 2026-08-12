@@ -3900,8 +3900,37 @@ export interface CreateOpts {
   body?: string;
   parent?: number;
   estimate?: string;
+  priority?: string;
   state?: State;
   labels?: string[];
+}
+
+/** Validate a priority against the board's LIVE options rather than a hardcoded
+ *  P0..P3: `setup` seeds that set but never edits an existing field, so a host
+ *  repo's own scheme is the truth here — exactly as `next`'s ranking reads it. */
+function assertPriorityOption(cache: BoardCache, value: string): void {
+  const options = Object.keys(cache.fields[PRIORITY_FIELD]?.options ?? {});
+  if (!options.includes(value)) {
+    throw new UsageError(
+      `unknown ${PRIORITY_FIELD} "${value}" — this board's options are: ${options.join(", ") || "(none)"}`,
+    );
+  }
+}
+
+/** The setter `next` needed all along: an item filed without a priority ranks
+ *  dead last, and until now the only fix was the Projects V2 UI — i.e. off the
+ *  sanctioned path. `null` clears the field. */
+export function setPriority(ctx: Ctx, number: number, value: string | null): Issue {
+  const issue = fetchIssue(ctx, number);
+  const itemId = requireItem(issue);
+  const cache = mutationCache(ctx, [[PRIORITY_FIELD]]);
+  if (value === null) {
+    clearField(ctx, cache, itemId, PRIORITY_FIELD);
+  } else {
+    assertPriorityOption(cache, value);
+    setSingleSelect(ctx, cache, itemId, PRIORITY_FIELD, value);
+  }
+  return fetchIssue(ctx, number);
 }
 
 export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
@@ -3910,7 +3939,12 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
       `cannot create an issue in terminal state "${opts.state}" — create it open, then move/cancel it`,
     );
   }
-  const cache = mutationCache(ctx, [[STATE_FIELD, opts.state ?? "Backlog"]]);
+  // Priority is validated BEFORE the issue exists — a bad option must cost a
+  // usage error, not an orphaned issue nobody's selector will ever surface.
+  const needs: Array<[string, string?]> = [[STATE_FIELD, opts.state ?? "Backlog"]];
+  if (opts.priority) needs.push([PRIORITY_FIELD]);
+  const cache = mutationCache(ctx, needs);
+  if (opts.priority) assertPriorityOption(cache, opts.priority);
   {
     const created = ghGraphQL(
       ctx,
@@ -3934,6 +3968,18 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
 
     setSingleSelect(ctx, cache, itemId, STATE_FIELD, opts.state ?? "Backlog");
     syncStatus(ctx, cache, itemId, opts.state ?? "Backlog");
+    // Unlike estimate, a failed priority write is FATAL-loud: a null priority
+    // is what makes an issue invisible to `next`, so it may not pass as a warn.
+    if (opts.priority) {
+      try {
+        setSingleSelect(ctx, cache, itemId, PRIORITY_FIELD, opts.priority);
+      } catch (e) {
+        throw new Error(
+          `#${issue.number} was created (${issue.url}) but ${PRIORITY_FIELD} was NOT set: ` +
+            `${(e as Error).message} — set it with \`board priority ${issue.number} ${opts.priority}\``,
+        );
+      }
+    }
     if (opts.estimate) {
       try {
         setSingleSelect(ctx, cache, itemId, ESTIMATE_FIELD, opts.estimate);
@@ -5220,10 +5266,16 @@ reads
 
 mutations
   create --title T [--body B] [--parent NNN] [--estimate XS..XL] [--state S]
-                              [--label L[,L2]] [--apply]
+                              [--priority P0..P3] [--label L[,L2]] [--apply]
                               --apply files an APPLY unit under the configured
                               label: it closes only on deployed-and-verified
-                              evidence, never on a merge
+                              evidence, never on a merge.
+                              --priority is validated against the board's live
+                              Priority options; omitting it ranks the item LAST
+                              in \`next\` (null sorts after P3)
+  priority NNN <option>       set Priority on an existing item (--clear removes
+                              it). Options come from the live field, not a
+                              hardcoded P0..P3 — a host repo owns its scheme
   claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
   claim join NNN --holder H   add a fleet sibling to an In Progress item's
                               shared claim (ClaimV2, max 8 holders; H must be
@@ -5348,7 +5400,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state", "all-repos", "fresh"].includes(key)) {
+      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state", "all-repos", "fresh", "clear"].includes(key)) {
         flags[key] = next;
         i++;
       } else {
@@ -5427,7 +5479,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 }
 
 const MUTATING = new Set([
-  "create", "claim", "release", "move", "cancel", "reopen", "answer",
+  "create", "claim", "release", "move", "cancel", "reopen", "answer", "priority",
   "link", "dep", "comment", "adopt", "reconcile", "parent-check",
   "resolve", "setup",
 ]);
@@ -5641,6 +5693,7 @@ export function run(argv: string[], ctx: Ctx): number {
         body: typeof flags.body === "string" ? flags.body : undefined,
         parent: typeof flags.parent === "string" ? requireNumber(flags.parent, "--parent") : undefined,
         estimate: typeof flags.estimate === "string" ? flags.estimate : undefined,
+        priority: typeof flags.priority === "string" ? flags.priority : undefined,
         state: state ?? undefined,
         // --apply resolves the CONFIGURED label rather than a literal, so a
         // repo that renamed it (apply.label) cannot end up with apply units
@@ -5664,6 +5717,18 @@ export function run(argv: string[], ctx: Ctx): number {
       });
       out(issueLine(issue));
       out(issue.url);
+      return 0;
+    }
+
+    case "priority": {
+      const number = requireNumber(positional[0]);
+      const value = positional[1];
+      if (!flags.clear && !value)
+        throw new UsageError("priority NNN <option> (or --clear) required");
+      if (flags.clear && value)
+        throw new UsageError("--clear takes no priority value");
+      const issue = setPriority(ctx, number, flags.clear ? null : value!);
+      out(`#${issue.number} priority=${issue.priority ?? "(none)"} ${issue.title}`);
       return 0;
     }
 

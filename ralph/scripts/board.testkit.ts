@@ -537,6 +537,9 @@ export class FakeGh {
             ? `${this.raceClaimTo}|${new Date().toISOString()}`
             : variables.text;
         this.mutations.push(`setClaim(#${itemNum})`);
+      } else if (variables.optionId && variables.fieldId === "F_priority" && fi) {
+        fi.priority = String(variables.optionId).replace("P_", "");
+        this.mutations.push(`setPriority(#${itemNum}, ${fi.priority})`);
       } else {
         this.mutations.push(`setField(${variables.fieldId})`);
       }
@@ -546,6 +549,7 @@ export class FakeGh {
       const itemNum = Number(String(variables.itemId).replace("ITEM_", ""));
       const fi = this.issues.get(itemNum);
       if (fi && variables.fieldId === "F_claim" && !this.stickyClaim) fi.claim = null;
+      if (fi && variables.fieldId === "F_priority") fi.priority = null;
       this.mutations.push(`clearField(#${itemNum}, ${variables.fieldId})`);
       return data({ clearProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
     }
