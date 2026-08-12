@@ -15,12 +15,18 @@ actually sends it, against the live ralph-hero board (~14 pages of items) on
 ## How it was measured
 
 `RALPH_GQL_COST=1` (added to `ghGraphQL`, `ralph/scripts/board.ts`) injects
-`rateLimit { cost remaining limit used resetAt nodeCount }` at the operation's
-selection set, logs cost + a running session total to stderr, and deletes the
-probe from the returned data so no `--json` path re-emits it. Injection happens
-at the first `{`, which closes the operation header — GraphQL variable
-declarations never contain one. Queries only: `rateLimit` is a field on the
-Query root, so mutations are skipped by construction.
+`__ralphGqlCost: rateLimit { cost remaining limit used resetAt nodeCount }` into
+the operation's selection set, logs cost + a running session total to stderr,
+and deletes only that alias from the returned data — so no `--json` path
+re-emits the probe, and a caller that selects `rateLimit` itself keeps its own
+value. Queries only: `rateLimit` is a field on the Query root, so mutations and
+subscriptions are skipped by construction.
+
+The insertion point is found by scanning for the first `{` at paren depth zero,
+outside strings and comments — not `indexOf("{")`, which a variable default
+value (`query($f: Input = { state: OPEN })`) would capture, producing an invalid
+document. Aliasing costs nothing: cost is charged per connection and `rateLimit`
+is not one, which the measurements confirm (`get` = 6 points before and after).
 
 ```bash
 RALPH_GQL_COST=1 ./ralph/scripts/board deliver-queue 2>&1 >/dev/null | grep gql-cost
