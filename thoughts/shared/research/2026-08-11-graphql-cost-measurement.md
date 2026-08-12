@@ -205,15 +205,38 @@ issue predicted, same crossing of the line that mattered.
 
 Consequences for the routed children:
 
-- **#1803** (drop `labels` / `blockedBy` per caller) was sized on `3 pts/page ×
-  14 pages → 1 pt/page × 14`. The walk is now one call at 23 points, so the
-  per-connection arithmetic in "The concrete lever for #1800" needs re-measuring
-  against the current query before its 9x claim is assumed. The *rule* it
-  established — cost is per connection, nested `first:` is worth zero — was
-  verified by A/B and still holds.
+- **#1803** (drop `labels` / `blockedBy` per caller): its arithmetic stands
+  unchanged. See the correction below.
 - **#1811** (`deliver-queue` at 100 pts/chunk) is untouched by GH-1785: it is a
   different query, and it remains the most expensive one in the system.
 
 Measuring this cost ~46 points and required waiting out a fully exhausted
 budget. The advice above stands, doubly: check `gh api rate_limit` first, and
 wait for the reset rather than retrying.
+
+### Correction to the addendum above, same day (GH-1786)
+
+The first version of this addendum claimed #1803's per-connection arithmetic
+needed re-measuring because "the walk is now one call at 23 points". **That was
+wrong, and it conflated two different walks.**
+
+GH-1785 changed **only `list`**, repointing it at `listOwnOpenItems` (the
+repo's OPEN issues — one page here). Every caller #1803 is about — `next`,
+`frontier`, `tend-queue`, `deliver-queue` — goes through `listItemsFull` /
+`listItems`, which still paginates the whole **project** at 14 pages. GH-1785
+never touched that walk, so nothing invalidated the `3 → 2 → 1 pt/page` model
+those callers were sized on.
+
+#1803 then measured it directly and it held exactly:
+`next` 42 → 28, `frontier` 42 → 28, `tend-queue` 53 → 39, `deliver-queue`
+120 → 70 (`thoughts/shared/research/2026-08-12-GH-1803-lean-query-measured.md`).
+
+Both readings of "the walk" are true at once, which is what made the mistake
+easy: `list` is one bounded call at 23 points, and the project walk is 14 pages
+at 1–3 points each. **Name which walk before quoting a number from this
+document.** `list` is the odd one out; everything else in the table above is
+the project walk.
+
+Unaffected by the correction: `list` keeps BOTH connections under #1803's
+`QUEUE_SELECT_FULL` ("contract kept"), so the cockpit's one-read poll continues
+to receive every field it partitions on.
