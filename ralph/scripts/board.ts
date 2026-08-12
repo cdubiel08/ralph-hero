@@ -869,16 +869,42 @@ export interface Ctx {
   now: () => Date;
 }
 
+const RATE_LIMIT_SELECTION = "rateLimit { cost remaining limit used resetAt nodeCount }";
+
+/** RALPH_GQL_COST=1 measurement mode (GH-1801). `rateLimit` is a field on the
+ *  Query root only, so mutations are left alone. Injection is at the first `{`,
+ *  which closes the operation header — variable declarations never contain one. */
+export function instrumentQuery(query: string): { query: string; instrumented: boolean } {
+  if (!/^\s*query\b/.test(query)) return { query, instrumented: false };
+  const brace = query.indexOf("{");
+  if (brace < 0) return { query, instrumented: false };
+  return {
+    query: `${query.slice(0, brace + 1)}\n  ${RATE_LIMIT_SELECTION}${query.slice(brace + 1)}`,
+    instrumented: true,
+  };
+}
+
+/** Cumulative points observed this process, for the per-command totals line. */
+export const gqlCost = { calls: 0, points: 0 };
+
+function costLabel(query: string): string {
+  const brace = query.indexOf("{");
+  const first = query.slice(brace + 1).match(/[A-Za-z_][A-Za-z0-9_]*/);
+  return first ? first[0] : "query";
+}
+
 export function ghGraphQL<T = any>(
   ctx: Ctx,
   query: string,
   variables: Record<string, unknown>,
 ): T {
+  const measuring = process.env.RALPH_GQL_COST === "1";
+  const sent = measuring ? instrumentQuery(query) : { query, instrumented: false };
   // --hostname keeps API traffic on the same host the scope gate verified —
   // a GHE config must not silently query github.com.
   const r = ctx.exec(
     ["gh", "api", "graphql", "--hostname", ctx.cfg.host, "--input", "-"],
-    JSON.stringify({ query, variables }),
+    JSON.stringify({ query: sent.query, variables }),
   );
   if (r.code !== 0) {
     throw new Error(`gh api graphql failed (exit ${r.code}): ${r.stderr.trim() || r.stdout.trim()}`);
@@ -895,6 +921,21 @@ export function ghGraphQL<T = any>(
       `GraphQL: ${body.errors.map((e: any) => e.message).join("; ")}`,
       body.errors.map((e: any) => e?.type).filter((t: unknown): t is string => typeof t === "string"),
     );
+  }
+  if (sent.instrumented) {
+    const rl = body.data?.rateLimit;
+    if (rl) {
+      gqlCost.calls += 1;
+      gqlCost.points += rl.cost;
+      process.stderr.write(
+        `[gql-cost] ${costLabel(query)} cost=${rl.cost} nodes=${rl.nodeCount} ` +
+          `used=${rl.used}/${rl.limit} remaining=${rl.remaining} resetAt=${rl.resetAt} ` +
+          `| session calls=${gqlCost.calls} points=${gqlCost.points}\n`,
+      );
+    }
+    // Callers destructure known keys, but leaving the probe in would leak into
+    // --json output paths that re-emit whole nodes.
+    if (body.data && typeof body.data === "object") delete body.data.rateLimit;
   }
   return body.data as T;
 }

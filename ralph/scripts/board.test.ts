@@ -34,6 +34,7 @@ import {
   fetchIssue,
   formatLocalHm,
   ghGraphQL,
+  instrumentQuery,
   legalTransition,
   loadConfig,
   LEGACY_STATES,
@@ -432,6 +433,38 @@ describe("failure diagnostics carry their context", () => {
     const ctx = makeCtx(gh);
     ctx.exec = () => ok("<!DOCTYPE html><html>proxy says hi</html>");
     expect(() => ghGraphQL(ctx, "query { x }", {})).toThrow(/unparseable output.*DOCTYPE/);
+  });
+
+  it("RALPH_GQL_COST instruments queries, spares mutations, and strips the probe (GH-1801)", () => {
+    expect(instrumentQuery("mutation($id: ID!) { updateX(id: $id) { ok } }").instrumented).toBe(
+      false,
+    );
+
+    const q = instrumentQuery("query($n: Int!) {\n  repository(number: $n) { id }\n}");
+    expect(q.instrumented).toBe(true);
+    expect(q.query).toContain("rateLimit { cost remaining limit used resetAt nodeCount }");
+    // Injected INSIDE the operation's selection set, after the header brace.
+    expect(q.query.indexOf("rateLimit")).toBeGreaterThan(q.query.indexOf("$n: Int!"));
+    expect(q.query).toContain("repository(number: $n)");
+
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.exec = () =>
+      ok(
+        JSON.stringify({
+          data: { repository: { id: "R1" }, rateLimit: { cost: 3, nodeCount: 301, used: 10, limit: 5000, remaining: 4990, resetAt: "2026-08-11T00:00:00Z" } },
+        }),
+      );
+    vi.stubEnv("RALPH_GQL_COST", "1");
+    const err = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const data = ghGraphQL(ctx, "query($n: Int!) { repository(number: $n) { id } }", { n: 1 });
+      expect(data).toEqual({ repository: { id: "R1" } }); // probe stripped
+      expect(err.mock.calls[0][0]).toMatch(/\[gql-cost\] repository cost=3 nodes=301/);
+    } finally {
+      err.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("loadConfig names the malformed config file as a UsageError (exit 64, not an anonymous crash)", () => {
