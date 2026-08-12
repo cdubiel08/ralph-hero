@@ -77,7 +77,7 @@ import {
 describe("state machine", () => {
   it("encodes exactly the designed transition table — terminal states have no move edges", () => {
     expect(MACHINE).toEqual({
-      Backlog: ["In Progress", "Canceled"],
+      Backlog: ["In Progress", "Done", "Canceled"],
       "In Progress": ["In Review", "Human Needed", "Backlog", "Canceled"],
       "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
       "Human Needed": ["In Progress", "Backlog", "Canceled"],
@@ -89,7 +89,6 @@ describe("state machine", () => {
   it("refuses everything not in the table", () => {
     const illegal: Array<[string, string]> = [
       ["Backlog", "In Review"],
-      ["Backlog", "Done"],
       ["Backlog", "Human Needed"],
       ["In Progress", "Done"],
       ["Human Needed", "In Review"],
@@ -102,6 +101,22 @@ describe("state machine", () => {
     for (const [from, to] of illegal) {
       expect(legalTransition(from as any, to as any), `${from} → ${to}`).toBe(false);
     }
+  });
+
+  // GH-1777. Both halves are load-bearing and pull in opposite directions, so
+  // they are asserted together with the reasoning attached.
+  it("Backlog closes as delivered but never escalates: Done is legal, Human Needed is not", () => {
+    // Legal: the Done GATES key on the destination (merged linked PR or an
+    // explicit --why; apply evidence with no escape), so the edge adds a gated
+    // path rather than a hole. Without it, close-as-already-delivered had to
+    // detour through reconcile(), which writes the state field directly and
+    // runs no gate at all.
+    expect(legalTransition("Backlog", "Done")).toBe(true);
+    // Illegal, deliberately: `answer` moves Human Needed → In Progress and owns
+    // that edge alone. A closure proposal against an unstarted item is
+    // terminal-answered, not resumed — answering it must not start work. It
+    // files as a TEND_PROPOSAL_MARKER comment instead.
+    expect(legalTransition("Backlog", "Human Needed")).toBe(false);
   });
 
   it("parses human-friendly state aliases", () => {
@@ -713,7 +728,9 @@ describe("transition engine", () => {
 
   it("illegal transitions are refused with the legal set named", () => {
     gh.issues.set(1, { number: 1, state: "Backlog" });
-    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(/Legal: In Progress, Canceled/);
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Review")).toThrow(
+      /Legal: In Progress, Done, Canceled/,
+    );
     expect(gh.mutations).toEqual([]);
   });
 
@@ -2324,6 +2341,26 @@ describe("doctor — state smells (GH-1715)", () => {
     expect(ESCALATION_EVIDENCE.test("**Canceled** (`board` by `me@test`):\n\nno")).toBe(false);
   });
 
+  it("tend-proposal-stale: fires only past the threshold, counts undated proposals, stays advisory", () => {
+    const gh = new FakeGh();
+    const at = (n: number) =>
+      `${TEND_PROPOSAL_MARKER}\n\`\`\`json\n{"action":"close-as-delivered","at":"${new Date(NOW.getTime() - n * 86_400_000).toISOString()}"}\n\`\`\``;
+    gh.issues.set(1, { number: 1, state: "Backlog", comments: [at(9)] }); // past 7d
+    gh.issues.set(2, { number: 2, state: "Backlog", comments: [at(2)] }); // still fresh
+    gh.issues.set(3, { number: 3, state: "Backlog", comments: [`${TEND_PROPOSAL_MARKER}\nno payload`] });
+    gh.issues.set(4, { number: 4, state: "Backlog", comments: ["unrelated"] });
+    const r = doctor(makeCtx(gh));
+    const c = smell(r, "tend-proposal-stale");
+    expect(c.level).toBe("info"); // advisory by construction — never a warn, never a fail
+    expect(c.detail).toContain("#1(9d)");
+    expect(c.detail).toContain("#3(undated)");
+    expect(c.detail).not.toContain("#2");
+    expect(c.detail).not.toContain("#4");
+    expect(doctor(makeCtx(gh), { strict: true }).checks.find((x) => x.name === "tend-proposal-stale")!.level).toBe(
+      "info",
+    );
+  });
+
   it("counts repeated claim expiry, and holds fire below the threshold", () => {
     const gh = new FakeGh();
     gh.issues.set(1, { number: 1, state: "Backlog", comments: [evicted(), released()] }); // 2
@@ -2461,14 +2498,20 @@ describe("doctor — state smells (GH-1715)", () => {
 
 describe("state-smell thresholds", () => {
   it("defaults are conservative and every one is env-tunable", () => {
-    expect(parseSmellThresholds({})).toEqual({ claimExpiries: 2, escalations: 3, reviewDays: 7 });
+    expect(parseSmellThresholds({})).toEqual({
+      claimExpiries: 2,
+      escalations: 3,
+      reviewDays: 7,
+      proposalDays: 7,
+    });
     expect(
       parseSmellThresholds({
         RALPH_SMELL_CLAIM_EXPIRIES: "4",
         RALPH_SMELL_ESCALATIONS: "5",
         RALPH_SMELL_REVIEW_DAYS: "14",
+        RALPH_SMELL_PROPOSAL_DAYS: "3",
       }),
-    ).toEqual({ claimExpiries: 4, escalations: 5, reviewDays: 14 });
+    ).toEqual({ claimExpiries: 4, escalations: 5, reviewDays: 14, proposalDays: 3 });
   });
 
   it("a bad value warns and falls back — an advisory threshold never fails the sweep", () => {
@@ -3055,6 +3098,8 @@ import {
   parseTendOpts,
   TEND_DEFAULTS,
   TEND_MARKER,
+  TEND_PROPOSAL_MARKER,
+  proposalAt,
   tendQueue,
 } from "./board.js";
 
@@ -3184,6 +3229,55 @@ describe("tend-queue (spec §4.3)", () => {
     expect(res.queue.map((r) => [r.number, r.category])).toEqual([
       [1, "stale-body"],
       [3, "done-audit"],
+    ]);
+  });
+
+  // GH-1777 — the proposal marker as a two-way cursor.
+  const proposal = (at: string | null) =>
+    `${TEND_PROPOSAL_MARKER}\n\`\`\`json\n{"action":"close-as-delivered","at":${at === null ? '"nonsense"' : `"${at}"`}}\n\`\`\``;
+
+  it("proposalAt: newest dated marker wins; a garbled payload still counts as pending", () => {
+    expect(proposalAt(["nothing here"])).toBeNull();
+    expect(proposalAt([proposal(days(9)), proposal(days(2))])).toEqual({ at: days(2) });
+    expect(proposalAt([proposal(null)])).toEqual({ at: null });
+  });
+
+  it("proposed: a pending proposal outranks the category that produced it — the do-not-re-propose cursor", () => {
+    const stale = item(1, { updatedAt: days(31) });
+    const withProposal = classifyTend([stale], [], TEND_DEFAULTS, NOW, new Map([[1, days(3)]]));
+    expect(withProposal.queue.map((r) => [r.number, r.category, r.at])).toEqual([[1, "proposed", days(3)]]);
+    // No proposal on file: the item is proposable material again.
+    const without = classifyTend([stale], [], TEND_DEFAULTS, NOW);
+    expect(without.queue.map((r) => [r.number, r.category])).toEqual([[1, "stale-body"]]);
+  });
+
+  it("proposed sorts first across categories and tolerates an undated proposal", () => {
+    const res = classifyTend(
+      [item(1, { updatedAt: days(60) }), item(2, { updatedAt: days(31) })],
+      [],
+      TEND_DEFAULTS,
+      NOW,
+      new Map([[2, null]]),
+    );
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+      [2, "proposed"],
+      [1, "stale-body"],
+    ]);
+    expect(res.next?.number).toBe(2);
+  });
+
+  it("tendQueue reads proposal markers off queued open items only", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1, state: "Backlog", updatedAt: days(45), createdAt: days(60), estimate: "M",
+      comments: [proposal(days(4))],
+    });
+    gh.issues.set(2, { number: 2, state: "Backlog", updatedAt: days(45), createdAt: days(60), estimate: "M" });
+    const res = tendQueue(ctx, TEND_DEFAULTS);
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+      [1, "proposed"],
+      [2, "stale-body"],
     ]);
   });
 

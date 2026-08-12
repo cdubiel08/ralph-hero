@@ -56,9 +56,23 @@ export type State = (typeof STATES)[number];
 
 /** Legal transitions. Done/Canceled have NO move edges — the only exit is
  *  `reopen`, which also reopens the GitHub issue (a bare move would leave a
- *  closed issue sitting in Backlog, invisible to list/next). */
+ *  closed issue sitting in Backlog, invisible to list/next).
+ *
+ *  `Backlog → Done` is legal (GH-1777): work already delivered by some other
+ *  path needs a *gated* close. Its absence never guarded anything — the Done
+ *  gates below key on the destination, not on `from`, so the mover still owes
+ *  a merged linked PR or an explicit `--why`, and an apply unit still owes
+ *  `ralph-apply-evidence:v1` with no escape. All it did was divert that
+ *  traffic to `reconcile`, which writes the state field directly and runs no
+ *  gate at all.
+ *
+ *  `Backlog → Human Needed` is deliberately NOT legal. Human Needed is a pause
+ *  on in-flight work: `answer` moves it back to In Progress and owns that edge
+ *  alone. A proposal about an unstarted item is terminal-answered, not
+ *  resumed — it files as a `<!-- ralph-tend:v1 proposed -->` marker comment
+ *  (surfaced by `tend-queue`), not as a state. */
 export const MACHINE: Record<State, readonly State[]> = {
-  Backlog: ["In Progress", "Canceled"],
+  Backlog: ["In Progress", "Done", "Canceled"],
   "In Progress": ["In Review", "Human Needed", "Backlog", "Canceled"],
   "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
   "Human Needed": ["In Progress", "Backlog", "Canceled"],
@@ -849,12 +863,14 @@ export interface SmellThresholds {
   claimExpiries: number; // repeated claim loss on ONE issue = empirically too big
   escalations: number; // Human Needed re-entries = the question is not converging
   reviewDays: number; // days In Review with a quiet PR
+  proposalDays: number; // GH-1777: days a tend closure proposal has gone unanswered
 }
 
 export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
   claimExpiries: 2,
   escalations: 3,
   reviewDays: 7,
+  proposalDays: 7,
 });
 
 export function parseSmellThresholds(
@@ -872,6 +888,7 @@ export function parseSmellThresholds(
     claimExpiries: positive("RALPH_SMELL_CLAIM_EXPIRIES", SMELL_DEFAULTS.claimExpiries),
     escalations: positive("RALPH_SMELL_ESCALATIONS", SMELL_DEFAULTS.escalations),
     reviewDays: positive("RALPH_SMELL_REVIEW_DAYS", SMELL_DEFAULTS.reviewDays),
+    proposalDays: positive("RALPH_SMELL_PROPOSAL_DAYS", SMELL_DEFAULTS.proposalDays),
   };
 }
 
@@ -3580,11 +3597,36 @@ export function deliverQueue(
 //
 // Deterministic hygiene queue over own-repo items. The selector CLASSIFIES;
 // all judgment (is this actually stale? is the dup real? should it close?)
-// belongs to the tend skill — and closures are proposals via Human Needed,
-// never selector or skill executions.
+// belongs to the tend skill — and closures are proposals filed as marker
+// comments (GH-1777), never selector or skill executions.
 // ---------------------------------------------------------------------------
 
 export const TEND_MARKER = "<!-- ralph-tend:v1 audited -->";
+
+/** The proposal marker (GH-1777). A closure proposal against a Backlog item is
+ *  an ANNOTATION, not a state: the item stays in Backlog while a human decides.
+ *  The marker is the cursor in both directions — it re-surfaces the proposal
+ *  under the `proposed` category, and its presence stops the lane proposing the
+ *  same thing twice. Same shape discipline as TEND_MARKER: the line, then a
+ *  fenced JSON payload. */
+export const TEND_PROPOSAL_MARKER = "<!-- ralph-tend:v1 proposed -->";
+
+/** The `at` of the newest proposal marker in a comment trail, or null when the
+ *  marker is present but its payload is unreadable (still a pending proposal —
+ *  a garbled timestamp must not un-file it, it only costs the age line). */
+export function proposalAt(comments: string[]): { at: string | null } | null {
+  let found = false;
+  let newest: string | null = null;
+  for (const body of comments) {
+    if (!body.includes(TEND_PROPOSAL_MARKER)) continue;
+    found = true;
+    const m = /"at"\s*:\s*"([^"]+)"/.exec(body);
+    const t = m ? new Date(m[1]).getTime() : NaN;
+    if (!Number.isFinite(t)) continue;
+    if (newest === null || t > new Date(newest).getTime()) newest = m![1];
+  }
+  return found ? { at: newest } : null;
+}
 
 export interface TendOpts {
   staleDays: number; // RALPH_STALE_DAYS — Backlog items with no updates
@@ -3644,6 +3686,9 @@ export function classifyTend(
   closed: Array<{ number: number; title?: string; closedAt: string | null; comments: string[] }>,
   opts: TendOpts,
   now: Date,
+  /** number → the proposal's `at` (null when the payload was unreadable), for
+   *  the open items whose trails were read. Absent = no proposal on file. */
+  proposals: Map<number, string | null> = new Map(),
 ): TendQueueResult {
   const ms = (iso: string | null | undefined): number | null => {
     if (!iso) return null;
@@ -3654,6 +3699,7 @@ export function classifyTend(
   const backlog = open.filter((i) => i.state === "Backlog");
   const seen = new Set<number>(); // one row per issue — first category (spec order) wins
   const rows: { [K in TendCategory]: TendRow[] } = {
+    proposed: [],
     "stale-body": [],
     "deps-cleared": [],
     "deps-truncated": [],
@@ -3666,6 +3712,14 @@ export function classifyTend(
     rows[cat].push({ number: i.number, title: i.title ?? "", category: cat, at });
   };
 
+  // 0. Pending proposals (GH-1777). FIRST in spec order deliberately: an item
+  //    with a proposal on file surfaces as `proposed` instead of whatever
+  //    category produced the proposal, which is what stops the lane proposing
+  //    the same closure every pass. `seen` does the rest.
+  for (const i of backlog) {
+    if (!proposals.has(i.number)) continue;
+    push("proposed", i, proposals.get(i.number) ?? null);
+  }
   // 1. Stale bodies: the repo's documented failure mode is trusting these.
   for (const i of backlog) {
     const t = ms(i.updatedAt);
@@ -3708,7 +3762,7 @@ export function classifyTend(
     return ta - tb || a.number - b.number;
   };
   const queue = (
-    ["stale-body", "deps-cleared", "deps-truncated", "unformed", "done-audit"] as const
+    ["proposed", "stale-body", "deps-cleared", "deps-truncated", "unformed", "done-audit"] as const
   ).flatMap((cat) => rows[cat].sort(oldestFirst));
   return { next: queue[0] ?? null, queue, blocked: [], observationSlot: true };
 }
@@ -3733,7 +3787,27 @@ export function tendQueue(ctx: Ctx, opts: TendOpts = parseTendOpts()): TendQueue
     closedAt: c.closedAt,
     comments: histories.get(c.number)?.comments ?? [],
   }));
-  return classifyTend(open, closed, opts, ctx.now());
+  // Proposal markers live in the comment trails of OPEN items, which this
+  // selector does not fetch. Bound that cost by classifying first and reading
+  // only the trails of items already in the queue — the only items a tend pass
+  // could have proposed against — then re-classifying with the cursor. Both
+  // calls are pure; the fetch is what costs. Honest limit: a proposal whose
+  // item no longer qualifies for any category (it was formed or updated since)
+  // drops out of this queue — doctor's `tend-proposal-stale` line, which reads
+  // every open item's trail, is the backstop that keeps it visible.
+  const first = classifyTend(open, closed, opts, ctx.now());
+  const candidates = new Set(open.map((i) => i.number));
+  const numbers = first.queue.map((r) => r.number).filter((n) => candidates.has(n));
+  const proposals = new Map<number, string | null>();
+  if (numbers.length > 0) {
+    const trails = fetchHistories(ctx, numbers);
+    for (const n of numbers) {
+      const p = proposalAt(trails.get(n)?.comments ?? []);
+      if (p) proposals.set(n, p.at);
+    }
+  }
+  if (proposals.size === 0) return first;
+  return classifyTend(open, closed, opts, ctx.now(), proposals);
 }
 
 // ---------------------------------------------------------------------------
@@ -3935,7 +4009,12 @@ export function reviewStall(
 
 /** Named once so the failure path can mark every smell check "not evaluated"
  *  rather than leaving a reader to wonder which ones ran. */
-export const SMELL_CHECKS = ["repeated-claim-expiry", "escalation-ping-pong", "review-stalled"] as const;
+export const SMELL_CHECKS = [
+  "repeated-claim-expiry",
+  "escalation-ping-pong",
+  "review-stalled",
+  "tend-proposal-stale",
+] as const;
 
 /** "info" is advisory-only by construction (GH-1715): it is not an invariant
  *  breach, `--strict` never escalates it, `--fix` never touches it, and the
@@ -4413,6 +4492,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         const expiries: string[] = [];
         const pingPong: string[] = [];
         const stalled: string[] = [];
+        const proposals: string[] = [];
         for (const i of items) {
           const h = histories.get(i.number);
           if (!h) continue; // no history read = nothing observed = nothing to say
@@ -4423,6 +4503,13 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
           if (i.state === "In Review") {
             const s = reviewStall(h, ctx.now(), ctx.cfg.smells.reviewDays);
             if (s) stalled.push(`#${i.number}(${s.days}d, ${s.prs === 0 ? "no linked PR" : "PR quiet"})`);
+          }
+          const p = proposalAt(h.comments);
+          if (p) {
+            const t = p.at ? new Date(p.at).getTime() : NaN;
+            const days = Number.isFinite(t) ? (ctx.now().getTime() - t) / 86_400_000 : null;
+            if (days === null) proposals.push(`#${i.number}(undated)`);
+            else if (days >= ctx.cfg.smells.proposalDays) proposals.push(`#${i.number}(${Math.floor(days)}d)`);
           }
         }
         add(
@@ -4448,6 +4535,14 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
             ? "none"
             : `In Review ≥${ctx.cfg.smells.reviewDays}d with no linked-PR activity since — ` +
               `merge gate or reviewer stuck? ${stalled.join(" ")}`,
+        );
+        add(
+          "tend-proposal-stale",
+          proposals.length === 0 ? "ok" : "info",
+          proposals.length === 0
+            ? "none"
+            : `tend closure proposals unanswered ≥${ctx.cfg.smells.proposalDays}d — dispose of them ` +
+              `(\`board cancel N -m\`, \`board move N done --why\`, or reject by removing nothing): ${proposals.join(" ")}`,
         );
       } catch (e) {
         for (const n of SMELL_CHECKS) add(n, "info", `not evaluated: ${(e as Error).message}`);
@@ -5034,9 +5129,10 @@ reads
                               contract). Knobs: RALPH_SETTLE_MIN (5),
                               RALPH_RETRY_MIN (60), RALPH_DELIVER_DRYRUN_MAX (3)
   tend-queue [--json]         tend lane (GH-1712): Backlog hygiene + Done audit
-                              — stale bodies, cleared/truncated deps, unformed
-                              intake, unaudited closes. Classification only;
-                              judgment (and every closure, via Human Needed
+                              — pending closure proposals, stale bodies,
+                              cleared/truncated deps, unformed intake,
+                              unaudited closes. Classification only;
+                              judgment (and every closure, as a marker-comment
                               proposal) belongs to /ralph:tend. Knobs:
                               RALPH_STALE_DAYS (30), RALPH_AUDIT_DAYS (14)
 

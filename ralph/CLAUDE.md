@@ -29,7 +29,7 @@ ralph/
 
 ## Lanes (GH-1712)
 
-A lane is a **typed selector + a judgment skill + a goal** — cadence is derived per pass from what the queue is blocked on, never configured. Three exist: **work** (`board next` → `/ralph:work`), **deliver** (`board deliver-queue` → `/ralph:deliver` — quiescent In Review items, marker-gated per PR, gate truth from `merge-pr.sh --dry-run`), **tend** (`board tend-queue` → `/ralph:tend` — Backlog hygiene + Done audit, metadata-only, closures only ever proposed). Skills are single-pass operators; pacing vocabulary lives only in `examples/README.md`.
+A lane is a **typed selector + a judgment skill + a goal** — cadence is derived per pass from what the queue is blocked on, never configured. Three exist: **work** (`board next` → `/ralph:work`), **deliver** (`board deliver-queue` → `/ralph:deliver` — quiescent In Review items, marker-gated per PR, gate truth from `merge-pr.sh --dry-run`), **tend** (`board tend-queue` → `/ralph:tend` — Backlog hygiene + Done audit, metadata-only, closures only ever proposed via a marker comment the selector reads back). Skills are single-pass operators; pacing vocabulary lives only in `examples/README.md`.
 
 **The four-dimension lane test** (gates every future lane proposal; stated once, here): a new lane is justified only when **signal source, write lane, pacing signal, and permission set all four differ simultaneously** from every existing lane. The pacing signal is the observable a lane derives its next wake from (work: queue depth; deliver: check conclusions, review deltas, retry/settle windows; tend: accumulation age) — a proposal that differs only in derived cadence numbers fails the test.
 
