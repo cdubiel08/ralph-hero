@@ -73,6 +73,28 @@ describe("item cache (GH-1806) — cross-process bounded staleness", () => {
       expect(gh.graphqlCalls).toBe(cost); // not one extra round trip
     });
 
+    it("carries GH-1788's scan meter through a cache hit", () => {
+      // A cache hit does no paging, so a meter recomputed on serve would be
+      // zero and `board-volume` would report an empty board. The meter belongs
+      // to the walk that produced the data and must travel with it.
+      gh.itemsPageSize = 1; // force a multi-page walk so the meter is non-trivial
+      const fresh = listItemsFull(proc());
+      expect(fresh.scan.pages).toBeGreaterThan(1);
+
+      const hit = listItemsFull(proc({ at: later(30) }));
+      expect(hit.cached).toBe(true);
+      expect(hit.scan).toEqual(fresh.scan);
+    });
+
+    it("refuses an entry whose meter is missing rather than reporting a zero-volume board", () => {
+      listItemsFull(proc());
+      const path = join(dir, "items-full-github.com-cdubiel08-ralph-hero-13.json");
+      const entry = JSON.parse(readFileSync(path, "utf8"));
+      delete entry.scan; // a v1-shaped entry, or a hand-truncated one
+      writeFileSync(path, JSON.stringify(entry));
+      expect(listItemsFull(proc({ at: later(5) })).cached).toBe(false);
+    });
+
     it("walks again once Δ has passed", () => {
       listItemsFull(proc());
       const cost = gh.graphqlCalls;
@@ -240,6 +262,30 @@ describe("item cache (GH-1806) — cross-process bounded staleness", () => {
   });
 
   describe("carve-out 1 — the cache never drives a write-guard evaluation", () => {
+    it("prune --apply walks fresh; its dry run may be cached", () => {
+      // GH-1788 landed while this was in review. prune --apply picks DELETION
+      // targets from the walk and then removes those project items — the most
+      // consequential write-guard evaluation in the file, and the one where a
+      // stale walk would delete against a board that no longer looks like that.
+      for (let n = 10; n <= 12; n++)
+        gh.issues.set(n, {
+          number: n,
+          state: "Done",
+          issueState: "CLOSED",
+          stateReason: "COMPLETED",
+          closedAt: new Date(NOW.getTime() - 400 * 86_400_000).toISOString(),
+        });
+      listItemsFull(proc()); // warm
+
+      const beforeDry = gh.graphqlCalls;
+      run(["prune"], proc({ at: later(5) })); // dry run — served from disk
+      const dryCost = gh.graphqlCalls - beforeDry;
+
+      const beforeApply = gh.graphqlCalls;
+      run(["prune", "--apply"], proc({ at: later(10) }));
+      expect(gh.graphqlCalls - beforeApply).toBeGreaterThan(dryCost);
+    });
+
     it("doctor --fix walks fresh even with a warm entry", () => {
       listItemsFull(proc()); // warm
       const cost = gh.graphqlCalls;
