@@ -90,6 +90,8 @@ export class FakeGh {
   createdFields: Array<{ name: string; dataType: string; options?: string[] }> = [];
   linkedRepos = ["cdubiel08/ralph-hero"]; // projectV2 → repositories linkage
   runListJson = "[]"; // gh run list payload for doctor's state-guard check
+  dropPageInfo = false; // corrupt-read injection: connection returns no pageInfo
+  dropEndCursor = false; // corrupt-read injection: hasNextPage true, cursor absent
   itemsPageSize = Infinity; // items-per-page for the bulk view — finite exercises the cursor walk
 
   expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
@@ -249,6 +251,11 @@ export class FakeGh {
 
   /** The QUEUE_CONTENT_FRAGMENT shape — served identically by the project
    *  scan and the repo-scoped open-issue read, as board.ts requests it. */
+  private pageInfo(hasNextPage: boolean, endCursor: string) {
+    if (this.dropPageInfo) return undefined;
+    return { hasNextPage: this.dropEndCursor ? true : hasNextPage, endCursor: this.dropEndCursor ? null : endCursor };
+  }
+
   private queueContent(fi: FakeIssue) {
     return {
       number: fi.number,
@@ -426,7 +433,7 @@ export class FakeGh {
       return data({
         repository: {
           issues: {
-            pageInfo: { hasNextPage: end < all.length, endCursor: String(end) },
+            pageInfo: this.pageInfo(end < all.length, String(end)),
             nodes: page.map((fi) => ({
               ...this.queueContent(fi),
               projectItems: {
@@ -486,7 +493,7 @@ export class FakeGh {
       return data({
         node: {
           items: {
-            pageInfo: { hasNextPage: end < all.length, endCursor: String(end) },
+            pageInfo: this.pageInfo(end < all.length, String(end)),
             nodes: page.map((fi) => ({
               isArchived: fi.archived ?? false,
               content: this.queueContent(fi),

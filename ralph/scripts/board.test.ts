@@ -1164,6 +1164,70 @@ describe("bounded queue read (GH-1785) — listOwnOpenItems", () => {
     gh.issues.set(1, { number: 1, state: null, onBoard: false, projectItemsTruncated: true });
     expect(() => listOwnOpenItems(ctx)).toThrow(/#1.*project membership truncated/);
   });
+
+  it("fails closed on corrupt pagination metadata rather than returning a partial board", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+
+    gh.dropPageInfo = true; // absent pageInfo would read as "last page"
+    expect(() => listOwnOpenItems(ctx)).toThrow(/pagination metadata missing/);
+    expect(() => listItemsFull(ctx)).toThrow(/pagination metadata missing/);
+
+    gh.dropPageInfo = false;
+    gh.dropEndCursor = true; // hasNextPage with no cursor would loop forever
+    expect(() => listOwnOpenItems(ctx)).toThrow(/no cursor to fetch them/);
+    expect(() => listItemsFull(ctx)).toThrow(/no cursor to fetch them/);
+  });
+
+  describe("through the CLI", () => {
+    const capture = (argv: string[]) => {
+      const said: string[] = [];
+      const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+        said.push(String(s));
+        return true;
+      });
+      try {
+        run(argv, ctx);
+      } finally {
+        spy.mockRestore();
+      }
+      return said.join("");
+    };
+
+    beforeEach(() => {
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+      gh.issues.set(2, { number: 2, state: "In Review" });
+      gh.issues.set(3, { number: 3, state: "Backlog", repo: "other/repo" });
+    });
+
+    it("default mode lists own-repo items, filters by state, and says foreign items went unread", () => {
+      const text = capture(["list"]);
+      expect(text).toContain("#1 [Backlog]");
+      expect(text).toContain("#2 [In Review]");
+      expect(text).not.toContain("other/repo#3");
+      expect(text).toContain("foreign board items not read");
+
+      expect(capture(["list", "--state", "backlog"])).toContain("#1 [Backlog]");
+      expect(capture(["list", "--state", "backlog"])).not.toContain("#2 [In Review]");
+    });
+
+    it("--json reports foreignEvaluated so \"not read\" cannot be mistaken for \"none there\"", () => {
+      const bounded = JSON.parse(capture(["list", "--json"]));
+      expect(bounded.foreignEvaluated).toBe(false);
+      expect(bounded.foreign).toEqual([]);
+      expect(bounded.items.map((i: any) => i.number)).toEqual([1, 2]);
+
+      const full = JSON.parse(capture(["list", "--all-repos", "--json"]));
+      expect(full.foreignEvaluated).toBe(true);
+      expect(full.foreign.map((f: any) => f.number)).toEqual([3]);
+      expect(full.items.map((i: any) => i.number)).toEqual([1, 2]);
+    });
+
+    it("--all-repos enumerates foreign items and drops the limitation notice", () => {
+      const text = capture(["list", "--all-repos"]);
+      expect(text).toContain("other/repo#3 [Backlog] (foreign repo — read-only here)");
+      expect(text).not.toContain("foreign board items not read");
+    });
+  });
 });
 
 describe("doctor hardening (closed drift, fix gating, resilience, garbled claims)", () => {

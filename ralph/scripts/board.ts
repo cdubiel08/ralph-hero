@@ -2094,6 +2094,19 @@ export interface ClosedItem {
   parentNumber: number | null; // own-repo parent — closed nodes pass tree topology through
 }
 
+/** Fail closed on pagination metadata itself (CodeRabbit, PR #1794).
+ *
+ *  Absent `pageInfo` would read as "last page" and silently return a partial
+ *  board; `hasNextPage: true` with no `endCursor` would re-request the first
+ *  page forever. Both are corrupt-read shapes, and this file's rule is that a
+ *  read it cannot trust is an error, never a thin result. */
+function assertPageInfo(pageInfo: any, what: string): void {
+  if (!pageInfo || typeof pageInfo.hasNextPage !== "boolean")
+    throw new Error(`${what}: pagination metadata missing — cannot tell if the read is complete`);
+  if (pageInfo.hasNextPage && !pageInfo.endCursor)
+    throw new Error(`${what}: more pages reported but no cursor to fetch them`);
+}
+
 /** The issue fields a QueueItem is built from. Shared verbatim by the two
  *  read paths (project scan, repo-scoped queue read) so they cannot drift. */
 const QUEUE_CONTENT_FRAGMENT = `
@@ -2175,6 +2188,7 @@ export function listOwnOpenItems(ctx: Ctx): QueueItem[] {
       );
       const page = data.repository?.issues;
       if (!page) throw new Error(`could not read open issues for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+      assertPageInfo(page.pageInfo, `open issues for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
       for (const c of page.nodes ?? []) {
         if (!c?.number) continue;
         const nodes = c.projectItems?.nodes ?? [];
@@ -2190,7 +2204,7 @@ export function listOwnOpenItems(ctx: Ctx): QueueItem[] {
         if (item.isArchived) continue;
         items.push(toQueueItem(c, fieldValueMap(item.fieldValues), fieldValuesTruncated(item.fieldValues), self));
       }
-      if (!page.pageInfo?.hasNextPage) break;
+      if (!page.pageInfo.hasNextPage) break;
       after = page.pageInfo.endCursor;
     }
     return items;
@@ -2229,7 +2243,9 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
         { projectId: cache.projectId, after },
       );
       const page = data.node?.items;
-      for (const n of page?.nodes ?? []) {
+      if (!page) throw new Error(`could not read project items for project ${ctx.cfg.projectNumber}`);
+      assertPageInfo(page.pageInfo, `project items for project ${ctx.cfg.projectNumber}`);
+      for (const n of page.nodes ?? []) {
         const c = n.content;
         if (!c?.number) continue;
         const fv = fieldValueMap(n.fieldValues);
@@ -2257,7 +2273,7 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
         if (n.isArchived) continue;
         items.push(toQueueItem(c, fv, fieldValuesTruncated(n.fieldValues), self));
       }
-      if (!page?.pageInfo?.hasNextPage) break;
+      if (!page.pageInfo.hasNextPage) break;
       after = page.pageInfo.endCursor;
     }
     return { open: items, closed };
