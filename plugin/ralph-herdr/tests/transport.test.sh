@@ -217,6 +217,39 @@ call agent_started agent start w1-x --kind claude --pane p1
 is "refusal: a different code is still rc 2" "2" "$RC"
 is "refusal: and carries ITS code, not the last one" "agent_name_taken" "$(ralph_herdr_err_code "$OUT")"
 
+# A refusal is only a refusal if it is SHAPED like one. These use .raw because
+# the fake supplies a correlation id automatically, which is exactly why the
+# missing-id case had no coverage before.
+reset
+printf '{"error":{"code":"nope","message":"no"}}\n' >"$FAKE_HERDR_FIXTURES/agent-start.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-start.rc"
+call agent_started agent start w1-x --kind claude --pane p1
+is "refusal: an error envelope with NO correlation id is rc 1, not rc 2" "1" "$RC"
+
+reset
+printf '{"id":"cli:agent:start","error":{"message":"no code here"}}\n' >"$FAKE_HERDR_FIXTURES/agent-start.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-start.rc"
+call agent_started agent start w1-x --kind claude --pane p1
+is "refusal: an error with no code is rc 1 — nothing to branch on" "1" "$RC"
+
+reset
+printf '{"id":"cli:agent:start","error":{"code":"","message":"empty"}}\n' >"$FAKE_HERDR_FIXTURES/agent-start.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-start.rc"
+call agent_started agent start w1-x --kind claude --pane p1
+is "refusal: an EMPTY error code is rc 1" "1" "$RC"
+
+# The regression that motivated the shape check: an empty message used to
+# compose invalid JSON (`"message":` with no value), which silently emptied
+# every downstream error-code read and turned a retryable refusal into a fatal.
+reset
+printf '{"error":{"code":"agent_pane_busy","message":""}}\n' >"$FAKE_HERDR_FIXTURES/agent-start.json"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-start.rc"
+call agent_started agent start w1-x --kind claude --pane p1
+is "refusal: an empty MESSAGE still yields a parseable body" "agent_pane_busy" \
+  "$(ralph_herdr_err_code "$OUT")"
+is "refusal: and the body is valid JSON" "0" \
+  "$(printf '%s' "$OUT" | jq -e . >/dev/null 2>&1; echo $?)"
+
 # ═══ 7. incoherent exit status ═══════════════════════════════════════════════
 # A valid success body that arrived with a nonzero exit. The real CLI pairs a
 # nonzero exit with an ERROR body, so this means the process died partway

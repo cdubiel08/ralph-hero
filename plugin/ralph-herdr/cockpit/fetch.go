@@ -223,12 +223,17 @@ func parseBoardList(out string, state string) ([]Card, error) {
 // authoritative, a pane/agent cwd is the fallback and is consulted ONLY when
 // the workspace carries no provenance at all. A workspace whose provenance
 // points elsewhere is a definite no.
+// minProtocol mirrors RALPH_HERDR_MIN_PROTOCOL's default in transport.sh.
+const minProtocol = 19
+
 func parseAgents(out, repoRoot string) ([]Agent, error) {
 	var payload struct {
 		ID     string `json:"id"`
 		Result struct {
 			Type     string `json:"type"`
 			Snapshot struct {
+				Version    *int `json:"version"`
+				Protocol   *int `json:"protocol"`
 				Workspaces *[]struct {
 					ID       string `json:"workspace_id"`
 					Worktree *struct {
@@ -273,6 +278,18 @@ func parseAgents(out, repoRoot string) ([]Agent, error) {
 	}
 	if payload.Result.Snapshot.Panes == nil {
 		return nil, fmt.Errorf("api snapshot: snapshot carries no panes array")
+	}
+	// The protocol floor, matching ralph_herdr_snapshot. Without it a pre-19
+	// server passes: its workspaces carry no `worktree` object, so every agent
+	// falls through to the cwd tier and a foreign agent whose cwd equals our
+	// root is adopted — containment lost exactly where the checks above claim
+	// to preserve it.
+	if payload.Result.Snapshot.Protocol == nil {
+		return nil, fmt.Errorf("api snapshot: snapshot reports no protocol version")
+	}
+	if *payload.Result.Snapshot.Protocol < minProtocol {
+		return nil, fmt.Errorf("api snapshot: server speaks protocol %d, need %d or newer",
+			*payload.Result.Snapshot.Protocol, minProtocol)
 	}
 
 	roots := repoRootSpellings(repoRoot)

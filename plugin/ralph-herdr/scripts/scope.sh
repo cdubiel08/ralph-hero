@@ -84,7 +84,16 @@ ralph_repo_scope() {
   # GHE installs set a host; github.com is the default and is spelled out
   # rather than left empty so the scope string is always three components and
   # can never accidentally compare equal across hosts by absence.
-  host=$(jq -r '.host // empty' "$root/.ralph.json" 2>/dev/null) || host=""
+  #
+  # Read from the SAME file the owner/repo came from, mirroring board.ts's
+  # wholesale-per-file rule: .ralph.json when present, else the settings env
+  # block. Defaulting the host to github.com while owner/repo came from
+  # settings would silently mis-scope every GHE board.
+  if [ -f "$root/.ralph.json" ]; then
+    host=$(jq -r '.host // empty' "$root/.ralph.json" 2>/dev/null) || host=""
+  else
+    host=$(jq -r '.env.RALPH_GH_HOST // empty' "$root/.claude/settings.json" 2>/dev/null) || host=""
+  fi
   [ -n "$host" ] || host="github.com"
 
   printf '%s/%s/%s' "$host" "${scope%% *}" "${scope#* }"

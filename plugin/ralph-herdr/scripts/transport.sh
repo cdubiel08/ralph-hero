@@ -118,7 +118,14 @@ _ralph_herdr_timeout() {
 ralph_herdr_call() {
   local want="$1"; shift
   local bin="${HERDR_BIN_PATH:-herdr}"
-  local required arrays field out rc got_id got_type errc errm tmo
+  local required arrays field out rc got_id got_type errc errm tmo op
+
+  # A fixed, sanitized operation label for every diagnostic below. The raw "$*"
+  # carries caller-supplied argv — notification titles and prompt bodies among
+  # them — straight into stderr, which is the one place these messages are
+  # rendered for a human. Terminal-derived text does not get to paint the log
+  # that reports on it.
+  op="'$(ralph_sanitize "$1 $2")'"
 
   RALPH_HERDR_ERR_CODE=""
   RALPH_HERDR_ERR_MESSAGE=""
@@ -147,12 +154,12 @@ ralph_herdr_call() {
   # a timed-out mutation may well have LANDED — the caller must not retry it
   # blindly, and must not read the silence as "it did not happen".
   if [ "$rc" -eq 124 ]; then
-    echo "ralph_herdr_call: '$*' timed out after ${RALPH_HERDR_TIMEOUT_SEC:-30}s — the operation may or may not have been applied" >&2
+    echo "ralph_herdr_call: $op timed out after ${RALPH_HERDR_TIMEOUT_SEC:-30}s — the operation may or may not have been applied" >&2
     return 3
   fi
 
   if [ -z "$out" ]; then
-    echo "ralph_herdr_call: '$*' produced no output (exit $rc) — herdr server unreachable" >&2
+    echo "ralph_herdr_call: $op produced no output (exit $rc) — herdr server unreachable" >&2
     return 3
   fi
 
@@ -161,7 +168,7 @@ ralph_herdr_call() {
   # malformed bodies, truncated writes, banner text printed before the
   # envelope, and two envelopes concatenated by a confused server.
   if ! printf '%s' "$out" | jq -e -s 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1; then
-    echo "ralph_herdr_call: '$*' did not return exactly one JSON envelope (exit $rc) — refusing to guess at the response" >&2
+    echo "ralph_herdr_call: $op did not return exactly one JSON envelope (exit $rc) — refusing to guess at the response" >&2
     return 1
   fi
 
@@ -170,6 +177,23 @@ ralph_herdr_call() {
   # callers can branch on a SPECIFIC refusal (agent_pane_busy is a race worth
   # retrying; agent_name_taken is a real answer). Never branch on the prose.
   if printf '%s' "$out" | jq -e 'has("error")' >/dev/null 2>&1; then
+    # A refusal is only a refusal if it is SHAPED like one. Protocol 19 requires
+    # a correlated id plus a non-empty string code and message; anything less is
+    # a malformed response wearing an error's clothes, and letting it through as
+    # rc 2 would hand callers an empty code to branch on. Fail it as rc 1 —
+    # which is also the honest answer, since we cannot tell what the server did.
+    if ! printf '%s' "$out" | jq -e '
+      (.id | type == "string" and length > 0)
+      and (.error.code | type == "string" and length > 0)
+      and (.error.message | type == "string")' >/dev/null 2>&1; then
+      echo "ralph_herdr_call: $op returned a malformed error envelope (needs id + error.code + error.message)" >&2
+      return 1
+    fi
+    if [ -n "${RALPH_HERDR_EXPECT_ID:-}" ] &&
+      [ "$(printf '%s' "$out" | jq -r '.id')" != "$RALPH_HERDR_EXPECT_ID" ]; then
+      echo "ralph_herdr_call: $op returned an error correlated to a different request" >&2
+      return 1
+    fi
     errc=$(printf '%s' "$out" | jq -r '.error.code // "unknown"')
     errm=$(printf '%s' "$out" | jq -r '.error.message // ""')
     errc=$(printf '%s' "$errc" | ralph_sanitize)
@@ -187,8 +211,13 @@ ralph_herdr_call() {
     # caller either got rc 0 and a result, or rc 2 and this.
     #
     # ralph_herdr_err_code reads it back.
-    printf '{"error":{"code":%s,"message":%s}}' \
-      "$(printf '%s' "$errc" | jq -R .)" "$(printf '%s' "$errm" | jq -R .)"
+    # jq -n --arg, NOT a printf of `jq -R .` outputs: `jq -R .` emits NOTHING
+    # for empty input, so an error whose message is empty (the `// ""` default
+    # above, or one that sanitizes to empty) produced
+    # `{"error":{"code":"unknown","message":}}` — invalid JSON, which makes
+    # every downstream error-code read come back empty and turns a retryable
+    # refusal into a fatal one.
+    jq -nc --arg code "$errc" --arg message "$errm" '{error: {code: $code, message: $message}}'
     return 2
   fi
 
@@ -197,7 +226,7 @@ ralph_herdr_call() {
   # can be trusted to mean what its field names suggest.
   got_id=$(printf '%s' "$out" | jq -r '.id // empty')
   if [ -z "$got_id" ]; then
-    echo "ralph_herdr_call: '$*' returned a response with no correlation id — not a protocol-19 envelope" >&2
+    echo "ralph_herdr_call: $op returned a response with no correlation id — not a protocol-19 envelope" >&2
     return 1
   fi
   # When the caller knows the id it issued, require the reply to be that reply.
@@ -206,7 +235,7 @@ ralph_herdr_call() {
   # the only thing standing between a delayed reply and a caller that treats it
   # as the answer to the question it just asked.
   if [ -n "${RALPH_HERDR_EXPECT_ID:-}" ] && [ "$got_id" != "$RALPH_HERDR_EXPECT_ID" ]; then
-    echo "ralph_herdr_call: '$*' replied to id '$(printf '%s' "$got_id" | ralph_sanitize)', expected '$RALPH_HERDR_EXPECT_ID' — refusing a response to a different request" >&2
+    echo "ralph_herdr_call: $op replied to id '$(printf '%s' "$got_id" | ralph_sanitize)', expected '$RALPH_HERDR_EXPECT_ID' — refusing a response to a different request" >&2
     return 1
   fi
 
@@ -216,26 +245,26 @@ ralph_herdr_call() {
   # answered. Trusting the body because it parses would be reading a success
   # out of a failed command.
   if [ "$rc" -ne 0 ]; then
-    echo "ralph_herdr_call: '$*' exited $rc but returned a success envelope — refusing a contradictory response" >&2
+    echo "ralph_herdr_call: $op exited $rc but returned a success envelope — refusing a contradictory response" >&2
     return 1
   fi
 
   got_type=$(printf '%s' "$out" | jq -r '.result.type // empty')
   if [ "$got_type" != "$want" ]; then
-    echo "ralph_herdr_call: '$*' returned result type '$(printf '%s' "${got_type:-<missing>}" | ralph_sanitize)', expected '$want'" >&2
+    echo "ralph_herdr_call: $op returned result type '$(printf '%s' "${got_type:-<missing>}" | ralph_sanitize)', expected '$want'" >&2
     return 1
   fi
 
   for field in $required; do
     if ! printf '%s' "$out" | jq -e --arg f "$field" '.result | has($f) and (.[$f] != null)' >/dev/null 2>&1; then
-      echo "ralph_herdr_call: '$*' returned $want without required field '$field'" >&2
+      echo "ralph_herdr_call: $op returned $want without required field '$field'" >&2
       return 1
     fi
   done
 
   for field in $arrays; do
     if ! printf '%s' "$out" | jq -e --arg f "$field" '.result[$f] | type == "array"' >/dev/null 2>&1; then
-      echo "ralph_herdr_call: '$*' returned $want whose '$field' is not an array — refusing to read it as an empty list" >&2
+      echo "ralph_herdr_call: $op returned $want whose '$field' is not an array — refusing to read it as an empty list" >&2
       return 1
     fi
   done

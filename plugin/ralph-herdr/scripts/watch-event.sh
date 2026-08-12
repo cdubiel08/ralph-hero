@@ -338,9 +338,16 @@ handle_status() {
     # both the recorded status and the pane the state token is pushed to would
     # be theirs. The pane comes from the event, which is correct by
     # construction: the server sent this event ABOUT that pane.
-    confirmed=$(ralph_all_agents "$snapshot" 2>/dev/null |
-      jq -c --arg n "$agent" --arg p "$pane" \
-        'select(.name == $n and (($p == "") or (.pane == $p)))' 2>/dev/null | head -1) || confirmed=""
+    # The pane predicate is REQUIRED, never optional. Making it conditional on
+    # a non-empty $p left a hole: an event that omits pane_id fell back to a
+    # bare name match against the whole session — exactly the cross-repository
+    # resolution the pane binding exists to prevent. An event with no pane
+    # cannot be bound to an agent, so it confirms nothing and stays a hint.
+    if [ -n "$pane" ]; then
+      confirmed=$(ralph_all_agents "$snapshot" 2>/dev/null |
+        jq -c --arg n "$agent" --arg p "$pane" \
+          'select(.name == $n and .pane == $p)' 2>/dev/null | head -1) || confirmed=""
+    fi
   fi
   if [ -n "$confirmed" ]; then
     status=$(printf '%s' "$confirmed" | jq -r '.status // empty')
@@ -467,9 +474,17 @@ handle_gone() {
   # ONE snapshot for the whole sweep, scoped per ledger below. A pane death is
   # a single moment; asking the server again for every ledger would let the
   # herd shift underneath one event's own handling.
+  # An unreadable herd yields an EMPTY candidate set, which the orphan pass
+  # reads as "no live parent" and acts on. That is tolerable only because the
+  # orphan record is repairable by the next reconcile — but it must be logged,
+  # not silent, or a transport outage looks like a genuine mass orphaning.
   snapshot=$(ralph_herdr_snapshot 2>/dev/null) || snapshot=""
   live_json=""
-  [ -n "$snapshot" ] && live_json=$(ralph_herd_by_scope "$snapshot" 2>/dev/null)
+  if [ -n "$snapshot" ]; then
+    live_json=$(ralph_herd_by_scope "$snapshot" 2>/dev/null) || live_json=""
+  fi
+  [ -n "$live_json" ] ||
+    log "herd unreadable for the $reason sweep — children adopt conservatively (orphaned); reconcile heals"
   ts=$(date -u +%FT%TZ)
   for f in "$(ledger_root)"/*/*/ledger.jsonl; do
     [ -f "$f" ] || continue

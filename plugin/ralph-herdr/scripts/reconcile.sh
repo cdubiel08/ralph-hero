@@ -77,11 +77,24 @@ scope_key() {
 #
 # A FAILED read aborts the whole pass: an empty answer from a sick server must
 # never mark every agent lost.
-if ! snapshot=$(ralph_herdr_snapshot 2>&1); then
-  log "herdr snapshot failed — not reconciling (${snapshot:0:120})"
+# stderr to a FILE, never merged into the capture: on success `2>&1` prepends
+# any stray diagnostic line to the JSON, jq rejects the whole value, and the
+# scoped herd collapses to an empty list — re-erasing the "no agents" vs
+# "could not find out" distinction the transport layer works to preserve.
+_snap_err=$(mktemp "${TMPDIR:-/tmp}/ralph-reconcile-err.XXXXXX") || _snap_err=/dev/null
+if ! snapshot=$(ralph_herdr_snapshot 2>"$_snap_err"); then
+  log "herdr snapshot failed — not reconciling ($(head -c 120 "$_snap_err" 2>/dev/null))"
+  rm -f "$_snap_err"
   exit 0
 fi
-live_json=$(ralph_herd_by_scope "$snapshot" 2>/dev/null) || live_json=""
+rm -f "$_snap_err"
+# An empty enrichment is NOT an empty herd: phases A and D read absence as
+# "mark lost / orphan the children", so a failure here must stop the pass
+# rather than let it sweep against nothing.
+if ! live_json=$(ralph_herd_by_scope "$snapshot" 2>/dev/null); then
+  log "herd scope resolution failed — not reconciling (refusing to sweep against an unknown herd)"
+  exit 0
+fi
 
 
 ts=$(date -u +%FT%TZ)

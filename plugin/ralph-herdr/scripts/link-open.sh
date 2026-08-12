@@ -132,9 +132,33 @@ link_scope_root() {
   case "$common" in
     .git) printf '%s' "$d"; return 0 ;;
     /*) : ;;
+    # Relative, and NOT just ".git": from a subdirectory git answers
+    # "../../.git". Joining blindly leaves ".." segments in the root, which
+    # then matches nothing the server reported. Collapse them textually —
+    # never with cd+pwd, which would resolve symlinks and reintroduce the
+    # /var vs /private/var mismatch this function exists to avoid.
     *) common="$d/$common" ;;
   esac
-  printf '%s' "${common%/.git}"
+  common="${common%/.git}"
+  # Textual normalization: drop "/./", then fold each "X/../" pair.
+  while :; do
+    case "$common" in
+      */./*) common=$(printf '%s' "$common" | sed 's|/\./|/|g') ;;
+      *) break ;;
+    esac
+  done
+  while :; do
+    case "$common" in
+      */../*|*/..) 
+        local folded
+        folded=$(printf '%s' "$common" | sed 's|/[^/][^/]*/\.\.||')
+        [ "$folded" = "$common" ] && break
+        common="$folded"
+        ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "${common:-/}"
 }
 live=$(ralph_scoped_agents_now "$(link_scope_root)" 2>/dev/null | jq -rs --arg legacy "gh-$n" --arg pfx "w$n-" '
   [.[] | select(.name == $legacy or (.name | startswith($pfx))) | .name]

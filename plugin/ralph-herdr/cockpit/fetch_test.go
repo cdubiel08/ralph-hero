@@ -157,9 +157,11 @@ func TestParseAgentsRejectsBadEnvelopes(t *testing.T) {
 		{"no correlation id", `{"result":{"type":"session_snapshot","snapshot":{"agents":[]}}}`},
 		{"wrong result type", `{"id":"x","result":{"type":"agent_list","snapshot":{"agents":[]}}}`},
 		{"no result type", `{"id":"x","result":{"snapshot":{"agents":[]}}}`},
-		{"snapshot with no agents key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"workspaces":[],"panes":[]}}}`},
-		{"snapshot with no workspaces key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"agents":[],"panes":[]}}}`},
-		{"snapshot with no panes key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"agents":[],"workspaces":[]}}}`},
+		{"snapshot with no agents key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"protocol":19,"workspaces":[],"panes":[]}}}`},
+		{"snapshot with no workspaces key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"protocol":19,"agents":[],"panes":[]}}}`},
+		{"snapshot with no panes key", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"protocol":19,"agents":[],"workspaces":[]}}}`},
+		{"snapshot with no protocol", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"agents":[],"workspaces":[],"panes":[]}}}`},
+		{"snapshot below the protocol floor", `{"id":"x","result":{"type":"session_snapshot","snapshot":{"protocol":18,"agents":[],"workspaces":[],"panes":[]}}}`},
 	} {
 		if _, err := parseAgents(tc.body, "/repo"); err == nil {
 			t.Errorf("%s must error, not read as an empty herd", tc.name)
