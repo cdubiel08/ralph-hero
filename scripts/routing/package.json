@@ -4,7 +4,7 @@
   "private": true,
   "description": "GitHub Actions routing script for issue/PR project assignment",
   "dependencies": {
-    "@octokit/graphql": "^9.0.3",
+    "@octokit/graphql": "^9.0.4",
     "yaml": "^2.9.0"
   }
 }
