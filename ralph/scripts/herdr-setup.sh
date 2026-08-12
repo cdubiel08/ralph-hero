@@ -20,6 +20,10 @@
 #   RALPH_HERDR_BOARD   board CLI path for host repos that install ralph as a
 #                       Claude Code plugin (no ralph/ tree in the repo)
 #   RALPH_HERDR_REPO    repo to check (default: $PWD)
+#   RALPH_HERDR_PLUGINS_JSON  herdr's plugin registry (default:
+#                       ${XDG_CONFIG_HOME:-~/.config}/herdr/plugins.json)
+#   RALPH_HERDR_VERSION_STAMP  file naming the ralph-herdr version this ralph
+#                       release expects (default: alongside this script)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,15 +62,19 @@ fi
 
 # Version: first x.y.z in --version output; unparseable degrades to a note,
 # never a false gap.
+# component-wise compare, bash-3.2-safe: ver_ge A B → true when A >= B.
+ver_ge() {
+  printf '%s\n%s\n' "$2" "$1" | awk -F. '
+    NR==1 { m1=$1+0; m2=$2+0; m3=$3+0 }
+    NR==2 { if ($1+0>m1 || ($1+0==m1 && ($2+0>m2 || ($2+0==m2 && $3+0>=m3)))) print "yes" }' |
+    grep -q yes
+}
+
 ver=$("$HERDR" --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 if [ -z "$ver" ]; then
   note "herdr-version" "could not parse '$HERDR --version'; need >= $MIN_HERDR"
 else
-  # component-wise compare, bash-3.2-safe
-  newer=$(printf '%s\n%s\n' "$MIN_HERDR" "$ver" | awk -F. '
-    NR==1 { m1=$1; m2=$2; m3=$3 }
-    NR==2 { if ($1>m1 || ($1==m1 && ($2>m2 || ($2==m2 && $3>=m3)))) print "yes" }')
-  if [ "$newer" = "yes" ]; then pass "herdr-version" "$ver (>= $MIN_HERDR)"
+  if ver_ge "$ver" "$MIN_HERDR"; then pass "herdr-version" "$ver (>= $MIN_HERDR)"
   else gap "herdr-version" "$ver < $MIN_HERDR — upgrade herdr (https://herdr.dev/)"; fi
 fi
 
@@ -98,6 +106,52 @@ if [ -n "$SERVER_UP" ]; then
   fi
 else
   note "ralph-herdr-plugin" "not checked (server down)"
+fi
+
+# ── herdr plugin state: authoritative root + version ─────────────────────────
+# herdr registers every installed/linked plugin in plugins.json, recording the
+# real on-disk root (`plugin_root`) for all three source kinds. That is the
+# only reliable way to find files that ship inside the herdr plugin: the ralph
+# plugin's own SCRIPT_DIR is a Claude Code cache path with no plugin/ sibling.
+# One read, no network — this stays cheap enough for doctor's info line.
+HERDR_PLUGINS_JSON="${RALPH_HERDR_PLUGINS_JSON:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins.json}"
+PLUGIN_ROOT=""
+plugin_entry=""
+if command -v jq >/dev/null 2>&1 && [ -f "$HERDR_PLUGINS_JSON" ]; then
+  plugin_entry=$(jq -c 'map(select(.plugin_id == "ralph-herdr")) | .[0] // empty' \
+    "$HERDR_PLUGINS_JSON" 2>/dev/null || true)
+  [ -n "$plugin_entry" ] && PLUGIN_ROOT=$(jq -r '.plugin_root // empty' <<<"$plugin_entry")
+fi
+
+# ── ralph-herdr plugin currency ──────────────────────────────────────────────
+# herdr has no `plugin update` and no refresh-on-launch, while the ralph plugin
+# IS auto-updated by Claude Code — so the two halves of the cockpit drift apart
+# silently. Compare herdr's registered version against the stamp this ralph
+# release ships. Every unknown degrades to a note: an older ralph plugin
+# against a newer herdr plugin must never manufacture a false gap.
+STAMP_FILE="${RALPH_HERDR_VERSION_STAMP:-$SCRIPT_DIR/herdr-plugin-version}"
+stamp_ver=$(grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' "$STAMP_FILE" 2>/dev/null | head -1 || true)
+plugin_ver=""
+[ -n "$plugin_entry" ] && plugin_ver=$(jq -r '.version // empty' <<<"$plugin_entry" |
+  grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+if ! command -v jq >/dev/null 2>&1; then
+  note "ralph-herdr-version" "not evaluated (jq unavailable)"
+elif [ -z "$plugin_entry" ]; then
+  note "ralph-herdr-version" "not evaluated (no ralph-herdr entry in $HERDR_PLUGINS_JSON)"
+elif [ -z "$stamp_ver" ]; then
+  note "ralph-herdr-version" "not evaluated (no version stamp in this ralph plugin copy)"
+elif [ -z "$plugin_ver" ]; then
+  note "ralph-herdr-version" "not evaluated (herdr records no parseable version for ralph-herdr)"
+elif ver_ge "$plugin_ver" "$stamp_ver"; then
+  pass "ralph-herdr-version" "$plugin_ver (this ralph expects >= $stamp_ver)"
+else
+  src_kind=$(jq -r '.source.kind // empty' <<<"$plugin_entry")
+  if [ "$src_kind" = "github" ]; then
+    reinstall=$(jq -r '"herdr plugin install \(.source.owner)/\(.source.repo)/\(.source.subdir) --ref \(.source.requested_ref // "main") -y"' <<<"$plugin_entry")
+    gap "ralph-herdr-version" "$plugin_ver < $stamp_ver expected by this ralph — herdr has no auto-update; reinstall: $reinstall"
+  else
+    note "ralph-herdr-version" "$plugin_ver < $stamp_ver expected by this ralph — local source at ${PLUGIN_ROOT:-unknown}; update that checkout"
+  fi
 fi
 
 # ── claude integration (optional but recommended) ────────────────────────────
@@ -156,9 +210,16 @@ fi
 # script's verdict as its info-level herdr-cockpit line, and a lineage
 # finding is watcher telemetry (a missed reconcile), never a cockpit wiring
 # gap — it must move neither the exit code nor the --oneline gap count. The
-# check itself lives with the watcher (the herdr plugin), so plugin-install
-# layouts without a repo plugin/ tree degrade to "not evaluated".
-lineage_sh="${RALPH_HERDR_LINEAGE_SH:-$SCRIPT_DIR/../../plugin/ralph-herdr/scripts/doctor-lineage.sh}"
+# check itself lives with the watcher (the herdr plugin), so it is found via
+# herdr's registered plugin_root (correct for github installs, local links and
+# checkouts alike); the repo-relative guess remains as the last fallback for a
+# vendored checkout whose plugin herdr does not know about.
+lineage_sh="${RALPH_HERDR_LINEAGE_SH:-}"
+if [ -z "$lineage_sh" ]; then
+  lineage_sh="$SCRIPT_DIR/../../plugin/ralph-herdr/scripts/doctor-lineage.sh"
+  [ -n "$PLUGIN_ROOT" ] && [ -f "$PLUGIN_ROOT/scripts/doctor-lineage.sh" ] &&
+    lineage_sh="$PLUGIN_ROOT/scripts/doctor-lineage.sh"
+fi
 if [ ! -f "$lineage_sh" ]; then
   note "watcher-lineage" "not evaluated (doctor-lineage.sh not found — it ships inside the ralph-herdr herdr plugin)"
 elif [ -z "$SERVER_UP" ]; then
