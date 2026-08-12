@@ -1,0 +1,19 @@
+{
+  "contract": "ralph.completion_report",
+  "contract_version": 1,
+  "agent": "w1743-claim-v2-multi-holder",
+  "agent_ref": "w1743-claim-v2-multi-holder#a3f2",
+  "issue": 1743,
+  "outcome": "completed",
+  "pr": 1760,
+  "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+  "board_state_claimed": "In Review",
+  "tests": ["npx vitest run ralph/scripts/ — 208 passed", "npx tsc --noEmit — clean"],
+  "blockers": [],
+  "started_at": "2026-08-10T14:00:00Z",
+  "finished_at": "2026-08-10T15:12:33Z",
+  "lineage": {
+    "spawned_by": "o1700-herdr-v2-rollout#a3f2",
+    "parent_issue": 1700
+  }
+}

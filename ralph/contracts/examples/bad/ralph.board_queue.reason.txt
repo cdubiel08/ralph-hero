@@ -1,0 +1,2 @@
+queue contains issue number 1601 twice — queue numbers must be unique (the
+classifier's one-row-per-issue rule, guarded by the C6 refinement and lint L9).

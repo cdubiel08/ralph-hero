@@ -1,0 +1,1067 @@
+{
+  "$id": "ralph:contracts/ralph.board_queue",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "type": "string",
+          "const": "ralph.board_queue"
+        },
+        "contract_version": {
+          "type": "number",
+          "const": 1
+        },
+        "selector": {
+          "type": "string",
+          "const": "next"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "next": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "repo": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "priority": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "hasParent": {
+                      "type": "boolean"
+                    },
+                    "parentNumber": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "via": {
+                      "type": "integer"
+                    },
+                    "childrenBlocked": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      }
+                    },
+                    "openBlockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      }
+                    },
+                    "blockersTruncated": {
+                      "type": "boolean"
+                    },
+                    "fieldValuesTruncated": {
+                      "type": "boolean"
+                    },
+                    "claim": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "holders": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "minItems": 1,
+                              "maxItems": 8
+                            },
+                            "since": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          },
+                          "required": [
+                            "holders",
+                            "since"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "claimRaw": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "openBlockerLabels": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "labels": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "labelsTruncated": {
+                      "type": "boolean"
+                    },
+                    "closedBlockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      }
+                    },
+                    "updatedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "createdAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "estimate": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "repo",
+                    "title",
+                    "state",
+                    "priority",
+                    "hasParent",
+                    "parentNumber",
+                    "openBlockers",
+                    "blockersTruncated",
+                    "fieldValuesTruncated",
+                    "claim",
+                    "claimRaw",
+                    "openBlockerLabels",
+                    "labels",
+                    "labelsTruncated",
+                    "closedBlockers"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "queue": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "repo": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "priority": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "hasParent": {
+                    "type": "boolean"
+                  },
+                  "parentNumber": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "via": {
+                    "type": "integer"
+                  },
+                  "childrenBlocked": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "openBlockers": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "blockersTruncated": {
+                    "type": "boolean"
+                  },
+                  "fieldValuesTruncated": {
+                    "type": "boolean"
+                  },
+                  "claim": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "holders": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1,
+                            "maxItems": 8
+                          },
+                          "since": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "holders",
+                          "since"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "claimRaw": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "openBlockerLabels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "labels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "labelsTruncated": {
+                    "type": "boolean"
+                  },
+                  "closedBlockers": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "updatedAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "createdAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "estimate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "number",
+                  "repo",
+                  "title",
+                  "state",
+                  "priority",
+                  "hasParent",
+                  "parentNumber",
+                  "openBlockers",
+                  "blockersTruncated",
+                  "fieldValuesTruncated",
+                  "claim",
+                  "claimRaw",
+                  "openBlockerLabels",
+                  "labels",
+                  "labelsTruncated",
+                  "closedBlockers"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "blocked": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "repo": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "priority": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "hasParent": {
+                    "type": "boolean"
+                  },
+                  "parentNumber": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "via": {
+                    "type": "integer"
+                  },
+                  "childrenBlocked": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "openBlockers": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "blockersTruncated": {
+                    "type": "boolean"
+                  },
+                  "fieldValuesTruncated": {
+                    "type": "boolean"
+                  },
+                  "claim": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "holders": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1,
+                            "maxItems": 8
+                          },
+                          "since": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "holders",
+                          "since"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "claimRaw": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "openBlockerLabels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "labels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "labelsTruncated": {
+                    "type": "boolean"
+                  },
+                  "closedBlockers": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "updatedAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "createdAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "estimate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "number",
+                  "repo",
+                  "title",
+                  "state",
+                  "priority",
+                  "hasParent",
+                  "parentNumber",
+                  "openBlockers",
+                  "blockersTruncated",
+                  "fieldValuesTruncated",
+                  "claim",
+                  "claimRaw",
+                  "openBlockerLabels",
+                  "labels",
+                  "labelsTruncated",
+                  "closedBlockers"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "diagnosis": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "no-items",
+                    "human-needed",
+                    "epic-in-flight",
+                    "stale-blocked"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "humanNeededCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "staleBlockedEdges": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "blockers": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "required": [
+                  "number",
+                  "blockers"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "inFlightEpics": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "root": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "child": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "holder": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "root",
+                  "child",
+                  "holder"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "next",
+            "queue",
+            "blocked",
+            "diagnosis",
+            "humanNeededCount",
+            "staleBlockedEdges",
+            "inFlightEpics"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract",
+        "contract_version",
+        "selector",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "type": "string",
+          "const": "ralph.board_queue"
+        },
+        "contract_version": {
+          "type": "number",
+          "const": 1
+        },
+        "selector": {
+          "type": "string",
+          "const": "deliver-queue"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "next": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "pr": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "actionable",
+                        "retry",
+                        "no-open-pr",
+                        "settling",
+                        "no-pr",
+                        "marker-current",
+                        "retry-window",
+                        "deferred"
+                      ]
+                    },
+                    "verdict": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "gate": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "deltaAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "windowExpiresAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "title",
+                    "pr",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "queue": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "pr": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "actionable",
+                      "retry",
+                      "no-open-pr",
+                      "settling",
+                      "no-pr",
+                      "marker-current",
+                      "retry-window",
+                      "deferred"
+                    ]
+                  },
+                  "verdict": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "gate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "deltaAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "windowExpiresAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "pr",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "blocked": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "pr": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "actionable",
+                      "retry",
+                      "no-open-pr",
+                      "settling",
+                      "no-pr",
+                      "marker-current",
+                      "retry-window",
+                      "deferred"
+                    ]
+                  },
+                  "verdict": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "gate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "deltaAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "windowExpiresAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "pr",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "next",
+            "queue",
+            "blocked"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract",
+        "contract_version",
+        "selector",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "type": "string",
+          "const": "ralph.board_queue"
+        },
+        "contract_version": {
+          "type": "number",
+          "const": 1
+        },
+        "selector": {
+          "type": "string",
+          "const": "tend-queue"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "next": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "category": {
+                      "type": "string",
+                      "enum": [
+                        "stale-body",
+                        "deps-cleared",
+                        "deps-truncated",
+                        "unformed",
+                        "done-audit"
+                      ]
+                    },
+                    "at": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "title",
+                    "category",
+                    "at"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "queue": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "stale-body",
+                      "deps-cleared",
+                      "deps-truncated",
+                      "unformed",
+                      "done-audit"
+                    ]
+                  },
+                  "at": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "category",
+                  "at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "blocked": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "stale-body",
+                      "deps-cleared",
+                      "deps-truncated",
+                      "unformed",
+                      "done-audit"
+                    ]
+                  },
+                  "at": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "category",
+                  "at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "observationSlot": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "next",
+            "queue",
+            "blocked",
+            "observationSlot"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract",
+        "contract_version",
+        "selector",
+        "result"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

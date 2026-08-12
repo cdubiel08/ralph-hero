@@ -1,0 +1,3 @@
+tokens.state is "sleeping" — the state token's value must be one of the agent
+lifecycle states: spawned|briefed|working|blocked|reporting|orphaned|adopted
+(per-token validator on the vocabulary).

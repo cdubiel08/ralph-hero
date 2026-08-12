@@ -1,0 +1,23 @@
+# naming-golden.tsv — the TS/bash naming mirror, executable.
+#
+# Columns (TAB-separated): lane	issue	title	expected-name
+# Read by BOTH contracts.test.ts (formatAgentName) and
+# plugin/ralph-herdr/tests/naming.test.sh (ralph_agent_name): every row must
+# produce the same name in both planes, or the Phase-2 watcher (TS) will
+# re-derive names that never match the panes bash spawned. Titles must not
+# contain tabs. Add a row whenever slugify/truncation behavior is touched.
+w	1743	Fix the flaky test	w1743-fix-the-flaky-test
+w	1743	Claim V2: multi-holder!	w1743-claim-v2-multi-holder
+r	12	review-sweep	r12-review-sweep
+s	0	watch	s0-watch
+x	0	relay	x0-relay
+w	5	123 Fix the thing	w5-fix-the-thing
+w	5	4x speedup	w5-x-speedup
+w	1743	2026 planning sync	w1743-planning-sync
+w	1743	🎉🎉🎉	w1743-task
+w	1	!!!	w1-task
+w	1743	Refactor the board claim protocol handling	w1743-refactor-the-board
+w	1743	Implement the claim v2 multi holder wire format for herdr	w1743-implement-the-claim
+o	1712	Loop agent lanes: deliver + tend	o1712-loop-agent-lanes
+w	1743	fix a b cdefghijklmnopqrstuvwxyz	w1743-fix
+w	1	abcdefghijklmnopqrstuvwxyzabcdef	w1-abcdefghijklmnopqrstuvwxyz

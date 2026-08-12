@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# tokens.sh — best-effort pane metadata tokens for the ralph-herdr watcher.
+# Sourced, never run.
+#
+# Tokens are DECORATION: cockpit chrome on a pane's sidebar entry. Nothing may
+# ever gate on them — the board is authoritative, the ledger is the record,
+# and every failure path here warns (once) and returns 0 so degradation loses
+# chrome, never verbs.
+#
+# DISCOVERED CLI (herdr 0.8.0, probed 2026-08-10 against a NONEXISTENT pane —
+# read-only: the server answered pane_not_found, proving the parse):
+#
+#   herdr pane report-metadata <PANE_ID> --source <ID> --token NAME=VALUE [--token NAME=VALUE ...]
+#
+# Argument ORDER matters: the pane id must come FIRST. `--help` prints
+# "[OPTIONS] --source <ID> <PANE_ID>", but the installed parser rejects
+# space-separated option values before the positional ("unknown option:
+# <value>") and rejects --opt=value entirely — positional first, then
+# space-separated options, is the one form that parses. Sibling flags that
+# exist but are unused here: --agent, --applies-to-source, --title,
+# --state-label STATUS=TEXT, --clear-token NAME, --seq N, --ttl-ms N (TTL is
+# deliberately omitted — tokens should persist until overwritten; reconcile.sh
+# re-pushes them after a server restart anyway). Tokens merge per-name on the
+# server: last write wins, other names survive.
+#
+# On a server refusal the CLI prints an .error JSON body AND exits nonzero
+# (re-probed 2026-08-10: report-metadata against a nonexistent pane →
+# pane_not_found body, rc 1). Failure detection below checks BOTH — the rc
+# for transport failures, the body in case a future CLI version reports a
+# refusal with rc 0.
+#
+# Token vocabulary (names, value shapes) is C8 in ralph/scripts/contracts.ts —
+# semantic validation belongs to producers and `board contract` lints; this
+# wrapper only enforces the wire shape (NAME=VALUE, name <=32 [A-Za-z0-9_-],
+# value <=80, no newlines).
+#
+# No top-level side effects, no set/shopt (callers own their shell options).
+# bash 3.2 compatible.
+
+_RALPH_TOKENS_WARNED=""
+
+_ralph_tokens_warn_once() {
+  if [ -z "$_RALPH_TOKENS_WARNED" ]; then
+    _RALPH_TOKENS_WARNED=1
+    echo "ralph_tokens_push: $* — tokens are decorative; continuing without them (further token warnings suppressed)" >&2
+  fi
+}
+
+# ralph_tokens_push PANE_ID NAME=VALUE... — push metadata tokens onto a pane.
+# Always returns 0: a bad argument, a missing CLI, or a server refusal costs
+# the chrome, never the caller.
+ralph_tokens_push() {
+  local pane="${1-}" kv name value n herdr src out
+  if [ -z "$pane" ]; then
+    _ralph_tokens_warn_once "called with no pane id"
+    return 0
+  fi
+  shift || true
+  [ "$#" -ge 1 ] || return 0
+  for kv in "$@"; do
+    case "$kv" in
+      *$'\n'* | *$'\r'*)
+        _ralph_tokens_warn_once "token value contains a newline ('${kv%%=*}')"
+        return 0
+        ;;
+      *=*) : ;;
+      *)
+        _ralph_tokens_warn_once "bad token '$kv' (want NAME=VALUE)"
+        return 0
+        ;;
+    esac
+    name="${kv%%=*}"
+    value="${kv#*=}"
+    case "$name" in
+      '' | *[!A-Za-z0-9_-]*)
+        _ralph_tokens_warn_once "bad token name '$name' (want 1-32 chars of [A-Za-z0-9_-])"
+        return 0
+        ;;
+    esac
+    if [ "${#name}" -gt 32 ] || [ "${#value}" -gt 80 ]; then
+      _ralph_tokens_warn_once "token '$name' out of size budget (name <=32, value <=80)"
+      return 0
+    fi
+  done
+  # Rebuild the positional params as --token pairs: the for-loop list is
+  # snapshotted before the first iteration, so appending via set -- is safe;
+  # the shift then drops the original NAME=VALUE args (bash 3.2, no arrays).
+  n=$#
+  for kv in "$@"; do
+    set -- "$@" --token "$kv"
+  done
+  shift "$n"
+  herdr="${HERDR_BIN_PATH:-herdr}"
+  src="${HERDR_PLUGIN_ID:-ralph-herdr}"
+  if ! out=$("$herdr" pane report-metadata "$pane" --source "$src" "$@" 2>&1); then
+    _ralph_tokens_warn_once "herdr pane report-metadata failed (${out:0:120})"
+    return 0
+  fi
+  if jq -e '.error' <<<"$out" >/dev/null 2>&1; then
+    _ralph_tokens_warn_once "server refused metadata for pane $pane ($(jq -r '.error.code // "unknown"' <<<"$out" 2>/dev/null))"
+  fi
+  return 0
+}

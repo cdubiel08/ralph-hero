@@ -1,0 +1,633 @@
+// fetch.go — every exec the cockpit performs. All arguments travel as argv
+// arrays through exec.CommandContext — NEVER through a shell — so card
+// titles, questions, and typed answers are data, not syntax. The one bash
+// invocation (spawn) passes a CONSTANT script string; the issue number rides
+// as a positional parameter, same rule.
+//
+// Secret gate: pane-tail text rendered into the TUI stays IN the terminal
+// (the sanctioned surface — attend.sh's SECRET_RE gate applies to
+// NOTIFICATION channels, and the cockpit sends none).
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// Config resolves once at startup (main.go) and never changes.
+type Config struct {
+	Board      string        // board CLI path — RALPH_HERDR_BOARD env or argv[1]
+	Herdr      string        // herdr path — HERDR_BIN_PATH else PATH; "" = absent
+	Gh         string        // gh path; "" = absent (questions/diff hints degrade)
+	Repo       string        // working repo (RALPH_HERDR_REPO else cwd)
+	ScriptsDir string        // plugin scripts/ dir for the sanctioned spawn path
+	Interval   time.Duration // board poll cadence (default 30s, min 10s)
+}
+
+// Runner is the exec seam: tests substitute a recorder, production uses
+// execRunner. Args are ALWAYS a slice — there is no string-command variant.
+type Runner interface {
+	Run(ctx context.Context, prog string, args ...string) (stdout string, stderr string, err error)
+}
+
+type execRunner struct{ env []string }
+
+func (e execRunner) Run(ctx context.Context, prog string, args ...string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, prog, args...)
+	if len(e.env) > 0 {
+		cmd.Env = append(os.Environ(), e.env...)
+	}
+	cmd.Stdin = nil // scripts that `read` on failure see EOF, never hang
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
+
+// ── argv builders (pure — the fetch arg-construction tests pin these) ───────
+
+func argsBoardList(state string) []string { return []string{"list", "--state", state, "--json"} }
+func argsBoardGet(n int) []string         { return []string{"get", strconv.Itoa(n), "--json"} }
+func argsBoardFrontier() []string         { return []string{"frontier", "--json"} }
+func argsBoardAnswer(n int, msg string) []string {
+	return []string{"answer", strconv.Itoa(n), "-m", msg}
+}
+
+func argsAgentList() []string { return []string{"agent", "list"} }
+func argsAgentRead(name string) []string {
+	return []string{"agent", "read", name, "--source", "recent-unwrapped", "--lines", "40"}
+}
+func argsAgentFocus(name string) []string { return []string{"agent", "focus", name} }
+func argsAgentPrompt(name, text, timeoutMS string) []string {
+	return []string{"agent", "prompt", name, text, "--wait", "--timeout", timeoutMS}
+}
+
+func argsGhComments(n int, repo string) []string {
+	return []string{"issue", "view", strconv.Itoa(n), "--json", "comments", "-R", repo}
+}
+func argsPaneSplit() []string {
+	return []string{"pane", "split", "--current", "--direction", "down", "--focus"}
+}
+func argsPaneRun(paneID string, pr int) []string {
+	return []string{"pane", "run", paneID, "gh", "pr", "diff", strconv.Itoa(pr)}
+}
+
+// spawnScript is the CONSTANT bash body for `s` — the sanctioned spawn path
+// (lib.sh spawn_work_session), invoked exactly as work-next.sh invokes it.
+// $1 = scripts dir, $2 = issue number; both are positional parameters, so
+// nothing card-derived is ever shell-interpretable. The `|| exit $?` matches
+// the lib.sh caller idiom (rc capture on the RHS disables set -e inside the
+// function body, the mode every existing caller runs it in).
+const spawnScript = `set -euo pipefail
+. "$1/lib.sh"
+billing_guard
+QUEUE_JSON=$("$BOARD" next --json 2>/dev/null) || QUEUE_JSON=""
+spawn_work_session "$2" "$QUEUE_JSON" || exit $?
+`
+
+func argsSpawn(scriptsDir string, n int) []string {
+	return []string{"-c", spawnScript, "ralph-cockpit", scriptsDir, strconv.Itoa(n)}
+}
+
+// ── messages ────────────────────────────────────────────────────────────────
+
+type tickMsg time.Time
+
+type boardMsg struct {
+	cols   [3][]Card
+	failed [3]bool // per-column: read errored — cols[i] is NOT "empty", it is unknown
+	err    string
+}
+
+type agentsMsg struct {
+	agents  []Agent
+	herdrOK bool
+}
+
+type peekMsg struct {
+	who  string
+	text string
+	err  string
+}
+
+type replyDoneMsg struct {
+	who    string
+	ok     bool
+	detail string
+}
+
+// answerDoneMsg surfaces BOTH halves distinctly: the durable board verb and
+// the decorative agent nudge. boardPosted covers board.ts's split failure:
+// answer() posts the **Answer** comment BEFORE the Human Needed → In Progress
+// move, and a post-comment refusal says "The answer comment IS on the record —
+// retry the move, not the answer" — rc≠0 with the comment already durable.
+type answerDoneMsg struct {
+	issue       int
+	boardOK     bool
+	boardPosted bool // rc≠0 but the durable Answer comment IS on the record
+	boardDetail string
+	agentTried  bool
+	agentName   string
+	agentOK     bool
+	agentDetail string
+}
+
+type dagMsg struct {
+	text string
+	err  string
+}
+
+type spawnDoneMsg struct {
+	issue  int
+	rc     int // 0 spawned, 2 skipped (already owned), else failure
+	detail string
+}
+
+type statusMsg string
+
+// ── parsers ─────────────────────────────────────────────────────────────────
+
+type listItemJSON struct {
+	Number       int    `json:"number"`
+	Repo         string `json:"repo"`
+	Title        string `json:"title"`
+	State        string `json:"state"`
+	Priority     string `json:"priority"`
+	Estimate     string `json:"estimate"`
+	ParentNumber *int   `json:"parentNumber"`
+}
+
+func parseBoardList(out string, state string) ([]Card, error) {
+	var payload struct {
+		Items []listItemJSON `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return nil, fmt.Errorf("list --state %q: %w", state, err)
+	}
+	cards := make([]Card, 0, len(payload.Items))
+	for _, it := range payload.Items {
+		// The board's list is cross-state; keep only this column's state so
+		// a board CLI ignoring --state can never mis-column a card.
+		if it.State != state {
+			continue
+		}
+		c := Card{
+			Number:   it.Number,
+			Repo:     it.Repo,
+			Title:    it.Title,
+			State:    it.State,
+			Priority: it.Priority,
+			Estimate: it.Estimate,
+		}
+		if it.ParentNumber != nil {
+			c.ParentNumber = *it.ParentNumber
+		}
+		cards = append(cards, c)
+	}
+	return cards, nil
+}
+
+func parseAgents(out string) ([]Agent, error) {
+	var payload struct {
+		Result struct {
+			Agents []struct {
+				Name   string `json:"name"`
+				Status string `json:"agent_status"`
+				Pane   string `json:"pane_id"`
+			} `json:"agents"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return nil, fmt.Errorf("agent list: %w", err)
+	}
+	var agents []Agent
+	for _, a := range payload.Result.Agents {
+		lane, issue, ok := parseAgentName(a.Name)
+		if !ok {
+			continue // foreign agent — never decorates a card
+		}
+		status := a.Status
+		if status == "" {
+			status = "unknown"
+		}
+		agents = append(agents, Agent{Name: a.Name, Status: status, Pane: a.Pane, Issue: issue, Lane: lane})
+	}
+	return agents, nil
+}
+
+// firstCommentLine extracts the Human Needed contract line from
+// `gh issue view N --json comments`: first line of the LATEST comment.
+func firstCommentLine(out string) string {
+	var payload struct {
+		Comments []struct {
+			Body string `json:"body"`
+		} `json:"comments"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil || len(payload.Comments) == 0 {
+		return ""
+	}
+	body := payload.Comments[len(payload.Comments)-1].Body
+	line := strings.SplitN(strings.ReplaceAll(body, "\r\n", "\n"), "\n", 2)[0]
+	return strings.TrimSpace(line)
+}
+
+type frontierJSON struct {
+	Frontier []struct {
+		Number          int    `json:"number"`
+		Title           string `json:"title"`
+		ParentNumber    *int   `json:"parentNumber"`
+		Via             *int   `json:"via"`
+		ChildrenBlocked []int  `json:"childrenBlocked"`
+		Blockers        []struct {
+			Number int    `json:"number"`
+			State  string `json:"state"`
+		} `json:"blockers"`
+	} `json:"frontier"`
+	Blocked []struct {
+		Number       int   `json:"number"`
+		BlockersOpen []int `json:"blockers_open"`
+		Truncated    bool  `json:"truncated"`
+	} `json:"blocked"`
+}
+
+// renderFrontier turns `board frontier --json` into the DAG text tree:
+// eligible items (with their satisfied edges) then blocked items with the
+// blockers keeping them out.
+func renderFrontier(out string) (string, error) {
+	var f frontierJSON
+	if err := json.Unmarshal([]byte(out), &f); err != nil {
+		return "", fmt.Errorf("frontier --json: %w", err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "FRONTIER — %d eligible, %d blocked\n\n", len(f.Frontier), len(f.Blocked))
+	if len(f.Frontier) == 0 {
+		b.WriteString("  (nothing eligible)\n")
+	}
+	for _, it := range f.Frontier {
+		fmt.Fprintf(&b, "  ▸ #%d %s", it.Number, it.Title)
+		if it.Via != nil {
+			fmt.Fprintf(&b, "  (via epic #%d)", *it.Via)
+		} else if it.ParentNumber != nil {
+			fmt.Fprintf(&b, "  (parent #%d)", *it.ParentNumber)
+		}
+		b.WriteString("\n")
+		for _, bl := range it.Blockers {
+			glyph := "✓"
+			if bl.State == "OPEN" {
+				glyph = "○"
+			}
+			fmt.Fprintf(&b, "      %s #%d %s\n", glyph, bl.Number, strings.ToLower(bl.State))
+		}
+		if len(it.ChildrenBlocked) > 0 {
+			fmt.Fprintf(&b, "      children blocked: %s\n", numList(it.ChildrenBlocked))
+		}
+	}
+	if len(f.Blocked) > 0 {
+		b.WriteString("\nBLOCKED\n")
+		sort.Slice(f.Blocked, func(i, j int) bool { return f.Blocked[i].Number < f.Blocked[j].Number })
+		for _, it := range f.Blocked {
+			fmt.Fprintf(&b, "  ⊘ #%d ← waiting on %s", it.Number, numList(it.BlockersOpen))
+			if it.Truncated {
+				b.WriteString("  (truncated read — fail-closed)")
+			}
+			b.WriteString("\n")
+		}
+	}
+	return b.String(), nil
+}
+
+func numList(ns []int) string {
+	if len(ns) == 0 {
+		return "(none listed)"
+	}
+	parts := make([]string, len(ns))
+	for i, n := range ns {
+		parts[i] = "#" + strconv.Itoa(n)
+	}
+	return strings.Join(parts, " ")
+}
+
+// ── timeouts ────────────────────────────────────────────────────────────────
+
+const (
+	boardTimeout = 25 * time.Second // tsx cold start + GitHub round trips
+	herdrTimeout = 8 * time.Second
+	ghTimeout    = 12 * time.Second
+	promptWaitMS = "15000" // ralph-answer.sh nudge parity
+)
+
+// ── tea.Cmds ────────────────────────────────────────────────────────────────
+
+// fetchBoardCmd reads all three columns, then the Human Needed question
+// lines (bounded). A failed column read reports as an error, never as empty.
+func fetchBoardCmd(cfg Config, r Runner) tea.Cmd {
+	return func() tea.Msg {
+		var msg boardMsg
+		var errs []string
+		for i, state := range columnStates {
+			ctx, cancel := context.WithTimeout(context.Background(), boardTimeout)
+			out, stderr, err := r.Run(ctx, cfg.Board, argsBoardList(state)...)
+			cancel()
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %s", state, firstLine(stderr, err)))
+				msg.failed[i] = true
+				continue
+			}
+			cards, perr := parseBoardList(out, state)
+			if perr != nil {
+				errs = append(errs, perr.Error())
+				msg.failed[i] = true
+				continue
+			}
+			msg.cols[i] = cards
+		}
+		// Human Needed contract line — one bounded gh read per card. Chrome:
+		// a failed read leaves the question empty, never blocks the column.
+		if cfg.Gh != "" {
+			hn := msg.cols[2]
+			for i := range hn {
+				if i >= 12 {
+					break // phone-glance budget; deeper queues page via `a`
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), ghTimeout)
+				out, _, err := r.Run(ctx, cfg.Gh, argsGhComments(hn[i].Number, hn[i].Repo)...)
+				cancel()
+				if err == nil {
+					hn[i].Question = firstCommentLine(out)
+				}
+			}
+		}
+		msg.err = strings.Join(errs, " · ")
+		return msg
+	}
+}
+
+// fetchAgentsCmd refreshes the decoration overlay. herdr absent or refusing
+// = overlay off — the banner names the degradation; columns are untouched.
+func fetchAgentsCmd(cfg Config, r Runner) tea.Cmd {
+	return func() tea.Msg {
+		if cfg.Herdr == "" {
+			return agentsMsg{herdrOK: false}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), herdrTimeout)
+		out, _, err := r.Run(ctx, cfg.Herdr, argsAgentList()...)
+		cancel()
+		if err != nil {
+			return agentsMsg{herdrOK: false}
+		}
+		agents, perr := parseAgents(out)
+		if perr != nil {
+			return agentsMsg{herdrOK: false}
+		}
+		return agentsMsg{agents: agents, herdrOK: true}
+	}
+}
+
+func peekCmd(cfg Config, r Runner, who string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), herdrTimeout)
+		out, stderr, err := r.Run(ctx, cfg.Herdr, argsAgentRead(who)...)
+		cancel()
+		if err != nil {
+			return peekMsg{who: who, err: firstLine(stderr, err)}
+		}
+		return peekMsg{who: who, text: out}
+	}
+}
+
+func focusCmd(cfg Config, r Runner, who string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), herdrTimeout)
+		_, stderr, err := r.Run(ctx, cfg.Herdr, argsAgentFocus(who)...)
+		cancel()
+		if err != nil {
+			return statusMsg(fmt.Sprintf("focus %s failed: %s", who, firstLine(stderr, err)))
+		}
+		return statusMsg(fmt.Sprintf("observing %s (herdr focus)", who))
+	}
+}
+
+// doReply delivers one prompt. The delivered checkmark is EARNED: rc 0 from
+// `agent prompt --wait` and nothing else — no optimistic ack, ever.
+func doReply(cfg Config, r Runner, who, text string) replyDoneMsg {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, stderr, err := r.Run(ctx, cfg.Herdr, argsAgentPrompt(who, text, promptWaitMS)...)
+	if err != nil {
+		return replyDoneMsg{who: who, ok: false, detail: firstLine(stderr+out, err)}
+	}
+	return replyDoneMsg{who: who, ok: true}
+}
+
+func replyCmd(cfg Config, r Runner, who, text string) tea.Cmd {
+	return func() tea.Msg { return doReply(cfg, r, who, text) }
+}
+
+// doAnswer is the comment-first flow, board.ts ordering preserved: the
+// DURABLE half (`board answer N -m`) runs FIRST; only on its success does the
+// decorative nudge go out to a live agent. Both results surface distinctly.
+func doAnswer(cfg Config, r Runner, issue int, text string, agent string) answerDoneMsg {
+	msg := answerDoneMsg{issue: issue, agentName: agent}
+	ctx, cancel := context.WithTimeout(context.Background(), boardTimeout)
+	out, stderr, err := r.Run(ctx, cfg.Board, argsBoardAnswer(issue, text)...)
+	cancel()
+	if err != nil {
+		msg.boardOK = false
+		// board.ts's post-comment refusal marker: the durable half already
+		// happened, only the move failed — retrying the ANSWER would
+		// duplicate the comment. firstLine alone would drop that guidance.
+		msg.boardPosted = strings.Contains(stderr+out, "answer comment IS on the record")
+		msg.boardDetail = firstLine(stderr+out, err)
+		return msg // the move (or the whole verb) failed — nothing to nudge about
+	}
+	msg.boardOK = true
+	msg.boardDetail = firstLine(out, nil)
+	if agent == "" || cfg.Herdr == "" {
+		return msg
+	}
+	msg.agentTried = true
+	nudge := fmt.Sprintf("answered on issue — re-read #%d and resume", issue)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+	pout, pstderr, perr := r.Run(ctx2, cfg.Herdr, argsAgentPrompt(agent, nudge, promptWaitMS)...)
+	cancel2()
+	if perr != nil {
+		msg.agentOK = false
+		msg.agentDetail = firstLine(pstderr+pout, perr)
+		return msg
+	}
+	msg.agentOK = true
+	return msg
+}
+
+func answerCmd(cfg Config, r Runner, issue int, text, agent string) tea.Cmd {
+	return func() tea.Msg { return doAnswer(cfg, r, issue, text, agent) }
+}
+
+func dagCmd(cfg Config, r Runner) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), boardTimeout)
+		out, stderr, err := r.Run(ctx, cfg.Board, argsBoardFrontier()...)
+		cancel()
+		if err != nil {
+			return dagMsg{err: firstLine(stderr, err)}
+		}
+		text, perr := renderFrontier(out)
+		if perr != nil {
+			return dagMsg{err: perr.Error()}
+		}
+		return dagMsg{text: text}
+	}
+}
+
+// spawnCmd runs the sanctioned spawn path in the background; stdin is closed
+// so hold_pane's read degrades to EOF instead of hanging the Cmd.
+func spawnCmd(cfg Config, r Runner, issue int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		out, stderr, err := r.Run(ctx, "bash", argsSpawn(cfg.ScriptsDir, issue)...)
+		rc := 0
+		if err != nil {
+			rc = exitCode(err)
+		}
+		detail := lastNonEmptyLine(out)
+		if rc != 0 && rc != 2 {
+			detail = firstLine(stderr+out, err)
+		}
+		return spawnDoneMsg{issue: issue, rc: rc, detail: detail}
+	}
+}
+
+// prDiffCmd: `board get N --json` for the PR, then a herdr pane running
+// `gh pr diff`. Degradation: no herdr → print the exact gh command as the
+// hint (chrome lost, verb reachable by hand).
+func prDiffCmd(cfg Config, r Runner, issue int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), boardTimeout)
+		out, stderr, err := r.Run(ctx, cfg.Board, argsBoardGet(issue)...)
+		cancel()
+		if err != nil {
+			return statusMsg(fmt.Sprintf("board get %d failed: %s", issue, firstLine(stderr, err)))
+		}
+		pr, ok := pickPR(out)
+		if !ok {
+			return statusMsg(fmt.Sprintf("#%d has no PR yet", issue))
+		}
+		if cfg.Herdr == "" {
+			return statusMsg(fmt.Sprintf("no multiplexer — by hand: gh pr diff %d", pr))
+		}
+		ctx2, cancel2 := context.WithTimeout(context.Background(), herdrTimeout)
+		sout, sstderr, serr := r.Run(ctx2, cfg.Herdr, argsPaneSplit()...)
+		cancel2()
+		if serr != nil {
+			return statusMsg(fmt.Sprintf("pane split failed (%s) — by hand: gh pr diff %d", firstLine(sstderr, serr), pr))
+		}
+		paneID := panePaneID(sout)
+		if paneID == "" {
+			return statusMsg(fmt.Sprintf("pane split gave no pane id — by hand: gh pr diff %d", pr))
+		}
+		ctx3, cancel3 := context.WithTimeout(context.Background(), herdrTimeout)
+		_, rstderr, rerr := r.Run(ctx3, cfg.Herdr, argsPaneRun(paneID, pr)...)
+		cancel3()
+		if rerr != nil {
+			return statusMsg(fmt.Sprintf("pane run failed (%s) — by hand: gh pr diff %d", firstLine(rstderr, rerr), pr))
+		}
+		return statusMsg(fmt.Sprintf("PR #%d diff open in pane %s", pr, paneID))
+	}
+}
+
+// openBrowserCmd opens the issue on GitHub — works on every rung.
+func openBrowserCmd(card Card) tea.Cmd {
+	return func() tea.Msg {
+		url := fmt.Sprintf("https://github.com/%s/issues/%d", card.Repo, card.Number)
+		opener := "open" // darwin
+		if runtime.GOOS != "darwin" {
+			opener = "xdg-open"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := exec.CommandContext(ctx, opener, url).Run(); err != nil {
+			return statusMsg(fmt.Sprintf("browser open failed — %s", url))
+		}
+		return statusMsg(fmt.Sprintf("opened %s", url))
+	}
+}
+
+// ── small helpers ───────────────────────────────────────────────────────────
+
+// pickPR chooses the diff target from `board get --json` prs: the first
+// unmerged open PR, else the last PR listed.
+func pickPR(out string) (int, bool) {
+	var payload struct {
+		PRs []struct {
+			Number int    `json:"number"`
+			State  string `json:"state"`
+			Merged bool   `json:"merged"`
+		} `json:"prs"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil || len(payload.PRs) == 0 {
+		return 0, false
+	}
+	for _, p := range payload.PRs {
+		if !p.Merged && strings.EqualFold(p.State, "OPEN") {
+			return p.Number, true
+		}
+	}
+	return payload.PRs[len(payload.PRs)-1].Number, true
+}
+
+func panePaneID(out string) string {
+	var payload struct {
+		Result struct {
+			Pane struct {
+				PaneID string `json:"pane_id"`
+			} `json:"pane"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return ""
+	}
+	return payload.Result.Pane.PaneID
+}
+
+func exitCode(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return 1
+}
+
+func firstLine(s string, err error) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		if err != nil {
+			return err.Error()
+		}
+		return ""
+	}
+	return strings.SplitN(s, "\n", 2)[0]
+}
+
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if t := strings.TrimSpace(lines[i]); t != "" {
+			return t
+		}
+	}
+	return ""
+}

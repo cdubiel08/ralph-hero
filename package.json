@@ -4,9 +4,25 @@
   "type": "module",
   "scripts": {
     "board": "tsx ralph/scripts/board.ts",
-    "test:board": "vitest run ralph/scripts/"
+    "test:board": "vitest run ralph/scripts/",
+    "test:naming": "bash plugin/ralph-herdr/tests/naming.test.sh",
+    "test:spawn": "bash plugin/ralph-herdr/tests/spawn.test.sh",
+    "test:watcher": "bash plugin/ralph-herdr/tests/watcher.test.sh",
+    "test:fleet": "bash plugin/ralph-herdr/tests/fleet.test.sh",
+    "test:lineage": "bash plugin/ralph-herdr/tests/doctor-lineage.test.sh",
+    "test:substrate": "bash plugin/ralph-herdr/tests/substrate.test.sh",
+    "test:cockpit": "bash plugin/ralph-herdr/tests/cockpit.test.sh",
+    "test:bdd": "NODE_OPTIONS=\"--import tsx\" cucumber-js --profile replay",
+    "test:bdd:live": "bash -c '[ \"${RALPH_BDD_LIVE:-}\" = 1 ] || { echo \"test:bdd:live: refusing — set RALPH_BDD_LIVE=1 (live scenarios start a real herdr server in the named test session ralph-bdd)\" >&2; exit 1; }; NODE_OPTIONS=\"--import tsx\" exec cucumber-js --profile live'",
+    "contracts:emit": "tsx ralph/scripts/board.ts contract emit",
+    "contracts:check": "tmp=$(mktemp -d) && tsx ralph/scripts/board.ts contract emit --out \"$tmp\" >/dev/null && diff -r ralph/contracts/generated \"$tmp\""
+  },
+  "dependencies": {
+    "zod": "^3.25.76",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
+    "@cucumber/cucumber": "^13.2.1",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

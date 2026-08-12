@@ -1,0 +1,3 @@
+agent_ref uses the pane_id ("%17") as the epoch — pane_id is opaque and
+server-scoped, NEVER a durable key. A durable ref is name#spawn_epoch where
+the epoch is 4-8 lowercase hex chars.

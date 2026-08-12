@@ -1,0 +1,29 @@
+{
+  "contract": "ralph.board_queue",
+  "contract_version": 1,
+  "selector": "tend-queue",
+  "result": {
+    "next": {
+      "number": 1601,
+      "title": "Stale backlog body",
+      "category": "stale-body",
+      "at": "2026-07-01T09:00:00Z"
+    },
+    "queue": [
+      {
+        "number": 1601,
+        "title": "Stale backlog body",
+        "category": "stale-body",
+        "at": "2026-07-01T09:00:00Z"
+      },
+      {
+        "number": 1601,
+        "title": "Stale backlog body",
+        "category": "deps-cleared",
+        "at": "2026-07-02T09:00:00Z"
+      }
+    ],
+    "blocked": [],
+    "observationSlot": true
+  }
+}

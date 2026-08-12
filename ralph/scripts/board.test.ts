@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   adopt,
+  answer,
   APPLY_EVIDENCE_MARKER,
   APPLY_LABEL_DEFAULT,
   applyEvidenceFailure,
@@ -112,12 +113,12 @@ describe("claims", () => {
 
   it("round-trips encode/parse (parity of the claim wire format)", () => {
     const c = parseClaim(encodeClaim("chad@mbp", t0));
-    expect(c).toEqual({ holder: "chad@mbp", since: t0 });
+    expect(c).toEqual({ holders: ["chad@mbp"], since: t0 });
   });
 
   it("holder may contain | — last separator wins", () => {
     const c = parseClaim(`weird|host|${t0.toISOString()}`);
-    expect(c?.holder).toBe("weird|host");
+    expect(c?.holders).toEqual(["weird|host"]);
   });
 
   it("rejects malformed values instead of guessing", () => {
@@ -128,14 +129,14 @@ describe("claims", () => {
   });
 
   it("staleness is >= TTL, not >", () => {
-    const claim = { holder: "x", since: t0 };
+    const claim = { holders: ["x"], since: t0 };
     const at = (min: number) => new Date(t0.getTime() + min * 60_000);
     expect(claimIsStale(claim, at(119), 120)).toBe(false);
     expect(claimIsStale(claim, at(120), 120)).toBe(true);
   });
 
   it("the expiry hint is due strictly past 75% of TTL and only while fresh", () => {
-    const claim = { holder: "x", since: t0 };
+    const claim = { holders: ["x"], since: t0 };
     const at = (min: number) => new Date(t0.getTime() + min * 60_000);
     expect(claimHintDue(claim, at(0), 120)).toBe(false);
     expect(claimHintDue(claim, at(90), 120)).toBe(false); // exactly 75% — not yet
@@ -145,7 +146,7 @@ describe("claims", () => {
   });
 
   it("expiry is since + TTL, rendered as local HH:MM", () => {
-    const claim = { holder: "x", since: t0 };
+    const claim = { holders: ["x"], since: t0 };
     const exp = claimExpiry(claim, 120);
     expect(exp.getTime() - t0.getTime()).toBe(120 * 60_000);
     expect(formatLocalHm(exp)).toBe(
@@ -183,7 +184,7 @@ describe("rankNext", () => {
       item(3, { priority: "P0" }),
       item(4, { hasParent: true }),
       item(5, { openBlockers: [3] }),
-      item(6, { claim: { holder: "other", since: new Date() } }),
+      item(6, { claim: { holders: ["other"], since: new Date() } }),
       item(7, { state: "In Review" }),
       item(8, { blockersTruncated: true }), // truncated blocker list = blocked (fail closed)
     ];
@@ -224,7 +225,7 @@ describe("rankNext", () => {
   it("an epic with a child in flight heads nothing — reported as inFlightEpics, not eligible", () => {
     const items = [
       item(1, { priority: "P0" }),
-      child(5, 1, { state: "In Progress", claim: { holder: "other@host", since: NOW } }),
+      child(5, 1, { state: "In Progress", claim: { holders: ["other@host"], since: NOW } }),
     ];
     const { eligible, inFlightEpics } = rankNext(items);
     expect(eligible).toEqual([]);
@@ -232,7 +233,7 @@ describe("rankNext", () => {
   });
 
   it("a claimed Backlog child also counts as in flight (a claim is work in motion)", () => {
-    const items = [item(1), child(5, 1, { claim: { holder: "w@h", since: NOW } })];
+    const items = [item(1), child(5, 1, { claim: { holders: ["w@h"], since: NOW } })];
     const { eligible, inFlightEpics } = rankNext(items);
     expect(eligible).toEqual([]);
     expect(inFlightEpics).toEqual([{ root: 1, child: 5, holder: "w@h" }]);
@@ -256,7 +257,7 @@ describe("rankNext", () => {
 
   it("a closed intermediate node passes tree topology through — the root still demotes for a live grandchild", () => {
     // epic 10 → phase 11 (closed, off the open list) → task 12 (in flight).
-    const items = [item(10, { priority: "P0" }), child(12, 11, { state: "In Progress", claim: { holder: "a@h", since: NOW } })];
+    const items = [item(10, { priority: "P0" }), child(12, 11, { state: "In Progress", claim: { holders: ["a@h"], since: NOW } })];
     const withEdge = rankNext(items, [{ number: 11, parentNumber: 10 }]);
     expect(withEdge.eligible).toEqual([]);
     expect(withEdge.inFlightEpics).toEqual([{ root: 10, child: 12, holder: "a@h" }]);
@@ -452,6 +453,28 @@ describe("failure diagnostics carry their context", () => {
     expect(() => loadConfig(root3)).toThrow(UsageError);
     expect(() => loadConfig(root3)).toThrow(/expected a JSON object/);
   });
+
+  it("loadConfig refuses a RALPH_CLAIM_HOLDER carrying ClaimV2 wire delimiters ('+' or '|')", () => {
+    // A "build+deploy@ci" holder would serialize as TWO holders and fail its
+    // own read-back membership verify — refuse at the door, naming the var.
+    const root = mkdtempSync(join(tmpdir(), "board-cfg-holder-"));
+    writeFileSync(join(root, ".ralph.json"), JSON.stringify({ owner: "o", repo: "r", projectNumber: 1 }));
+    for (const bad of ["build+deploy@ci", "weird|host", ""]) {
+      vi.stubEnv("RALPH_CLAIM_HOLDER", bad);
+      try {
+        expect(() => loadConfig(root), bad).toThrow(UsageError);
+        expect(() => loadConfig(root), bad).toThrow(/RALPH_CLAIM_HOLDER/);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    }
+    vi.stubEnv("RALPH_CLAIM_HOLDER", "tick@mbp");
+    try {
+      expect(loadConfig(root).holder).toBe("tick@mbp");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -483,7 +506,7 @@ describe("transition engine", () => {
     const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
     expect(gh.mutations.slice(0, 3)).toEqual(["clearField(#1, F_claim)", "setClaim(#1)", "setState(#1, In Progress)"]);
     expect(after.state).toBe("In Progress");
-    expect(after.claim?.holder).toBe("me@test");
+    expect(after.claim?.holders).toEqual(["me@test"]);
     expect(after.claim?.since).toEqual(NOW);
   });
 
@@ -571,7 +594,7 @@ describe("transition engine", () => {
     expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/--steal/);
     const after = transition(ctx, fetchIssue(ctx, 1), "In Progress", { steal: true });
     expect(gh.comments.some((c) => c.body.includes("evicted"))).toBe(true);
-    expect(after.claim?.holder).toBe("me@test");
+    expect(after.claim?.holders).toEqual(["me@test"]);
   });
 
   it("leaving In Progress requires holder-or-stale; clears the claim", () => {
@@ -693,7 +716,7 @@ describe("transition engine", () => {
   it("claim from In Progress is (re)acquisition: adopts claimless WIP, refuses a live foreign claim", () => {
     gh.issues.set(1, { number: 1, state: "In Progress" }); // claimless WIP (pre-v2 or UI-driven)
     const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
-    expect(after.claim?.holder).toBe("me@test");
+    expect(after.claim?.holders).toEqual(["me@test"]);
 
     gh.issues.set(2, {
       number: 2, state: "In Progress",
@@ -727,7 +750,7 @@ describe("transition engine", () => {
       }),
     );
     const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
-    expect(after.claim?.holder).toBe("me@test");
+    expect(after.claim?.holders).toEqual(["me@test"]);
     expect(gh.mutations).toContain("setClaim(#1)");
   });
 });
@@ -2858,5 +2881,127 @@ describe("readiness — lane rows (GH-1712)", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("answer verb (ralph-herdr v2) — comment-first", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("refuses outside Human Needed before ANY write — no comment, no state", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(() => answer(ctx, 1, { message: "ship it" })).toThrow(RefusalError);
+    expect(() => answer(ctx, 1, { message: "ship it" })).toThrow(/--any-state/);
+    expect(gh.mutations).toEqual([]); // refused before any write
+    expect(gh.comments).toEqual([]);
+  });
+
+  it("a truncated fieldValues page refuses before the comment — the state gate would judge fiction", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed", fieldValuesTruncated: true });
+    expect(() => answer(ctx, 1, { message: "ship it" })).toThrow(/field values/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("Human Needed: the **Answer** comment lands BEFORE the state write (durable half first)", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const res = answer(ctx, 1, { message: "use option B" });
+    expect(res).toEqual({ commented: true, transitioned: true, state: "In Progress" });
+    const comment = gh.comments.find((c) => c.body.startsWith("**Answer**"));
+    expect(comment?.body).toContain("use option B");
+    expect(comment?.body).toContain("`me@test`");
+    // The ordering guarantee, on the recorded mutation stream: comment first.
+    expect(gh.mutations.indexOf("addComment")).toBeLessThan(gh.mutations.indexOf("setState(#1, In Progress)"));
+    // The move rode the transition engine: claim acquired by the answerer.
+    expect(gh.issues.get(1)!.claim).toContain("me@test");
+  });
+
+  it("--comment-only posts the durable half and skips the transition", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const res = answer(ctx, 1, { message: "use option B", commentOnly: true });
+    expect(res).toEqual({ commented: true, transitioned: false, state: "Human Needed" });
+    expect(gh.mutations).toEqual(["addComment"]); // no state, no claim writes
+  });
+
+  it("--any-state answers an item outside Human Needed: comment only, never a move", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const res = answer(ctx, 1, { message: "context for later", anyState: true });
+    expect(res).toEqual({ commented: true, transitioned: false, state: "Backlog" });
+    expect(gh.mutations).toEqual(["addComment"]);
+  });
+
+  it("transition guards stay intact AFTER the comment: a live fleet co-holder refuses the move, not the answer", () => {
+    // Leaving In Progress for Human Needed removes only the mover — a fleet
+    // sibling can remain on the claim. The answer's comment must land anyway.
+    gh.issues.set(1, {
+      number: 1, state: "Human Needed",
+      claim: encodeClaim("w1-other", new Date(NOW.getTime() - 10 * 60_000)),
+    });
+    const msg = refusalMessage(() => answer(ctx, 1, { message: "use option B" }));
+    expect(msg).toContain("w1-other");
+    expect(msg).toContain("The answer comment IS on the record");
+    expect(gh.comments.some((c) => c.body.startsWith("**Answer**"))).toBe(true);
+    expect(gh.mutations.filter((m) => m.startsWith("setState"))).toEqual([]);
+  });
+
+  it("run(): --message aliases -m; a missing message is a usage error", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    expect(() => run(["answer", "1"], ctx)).toThrow(UsageError);
+    expect(run(["answer", "1", "--message", "use option B"], ctx)).toBe(0);
+    expect(gh.comments[0]!.body).toContain("use option B");
+  });
+
+  it("run(): --json reports exactly {commented, transitioned, state}", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["answer", "1", "-m", "use option B", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(JSON.parse(said.join(""))).toEqual({
+      commented: true,
+      transitioned: true,
+      state: "In Progress",
+    });
+  });
+
+  it("run(): --comment-only followed by -m parses as booleans, not a flag value", () => {
+    // parseArgs must not eat "-m" as --comment-only's value.
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["answer", "1", "--comment-only", "-m", "use option B", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(JSON.parse(said.join(""))).toEqual({
+      commented: true,
+      transitioned: false,
+      state: "Human Needed",
+    });
+  });
+
+  it("run(): answer is scope-gated like every mutation", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const base = gh.exec;
+    gh.exec = (argv, stdin) => {
+      if (argv.join(" ").startsWith("git") && argv.includes("remote"))
+        return { code: 0, stdout: "git@github.com:someone-else/other.git\n", stderr: "" };
+      return base(argv, stdin);
+    };
+    expect(() => run(["answer", "1", "-m", "x"], ctx)).toThrow(RefusalError);
+    expect(gh.comments).toEqual([]);
   });
 });

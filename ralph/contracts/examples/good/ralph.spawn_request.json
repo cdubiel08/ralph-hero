@@ -1,0 +1,13 @@
+{
+  "contract": "ralph.spawn_request",
+  "contract_version": 1,
+  "issue": 1743,
+  "lane": "w",
+  "slug": "claim-v2-multi-holder",
+  "harness": "claude",
+  "branch": "feature/GH-1743",
+  "base": "main",
+  "parent_ref": "o1700-herdr-v2-rollout#a3f2",
+  "depth": 1,
+  "invoked_by": "agent"
+}

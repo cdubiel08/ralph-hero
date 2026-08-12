@@ -6,8 +6,10 @@
  *
  * Invariants carried here, not in prose:
  *   - transition legality checked against live state in the same invocation
- *   - claim = "{holder}|{iso8601}" in the Claim text field; TTL is the only side
- *     door — there is deliberately NO --force flag anywhere in this CLI
+ *   - claim = "{holder}[+{holder2}...]|{iso8601}" in the Claim text field
+ *     (ClaimV2, contracts.ts — one holder is byte-identical to the v1 wire
+ *     format); TTL is the only side door — there is deliberately NO --force
+ *     flag anywhere in this CLI
  *   - scope check: the configured owner/repo must match `git remote get-url origin`
  *   - every mutation echoes the resulting state (per-write proof-of-fire)
  *   - `get` reads exactly the fields `move`/`claim` write (parity)
@@ -20,19 +22,36 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSyn
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  addHolder,
+  BOARD_STATES,
+  CLAIM_MAX_HOLDERS,
+  type ClaimV2,
+  CONTRACT_IDS,
+  type ContractId,
+  DELIVER_REASONS,
+  emitJsonSchemas,
+  formatClaim,
+  heartbeat,
+  isContractId,
+  isMember,
+  isValidHolder,
+  type LiveLintDeps,
+  parseClaim,
+  removeHolder,
+  runLints,
+  TEND_CATEGORIES,
+  validateContract,
+} from "./contracts.js";
 
 // ---------------------------------------------------------------------------
 // State machine
 // ---------------------------------------------------------------------------
 
-export const STATES = [
-  "Backlog",
-  "In Progress",
-  "In Review",
-  "Human Needed",
-  "Done",
-  "Canceled",
-] as const;
+/** Aliased from contracts.ts — the single declaration (the C2/C6 schemas use
+ *  the same tuple, so the machine and the contracts cannot drift). Declared
+ *  there rather than here only because this file imports contracts.ts. */
+export const STATES = BOARD_STATES;
 export type State = (typeof STATES)[number];
 
 /** Legal transitions. Done/Canceled have NO move edges — the only exit is
@@ -96,25 +115,21 @@ export function parseStateArg(raw: string): State | null {
 }
 
 // ---------------------------------------------------------------------------
-// Claims
+// Claims — ClaimV2 (contracts.ts): wire = "h1+h2+...|iso8601", 1..8 holders,
+// ONE shared since. A single holder serializes byte-identically to the v1
+// "{holder}|{iso}" format, so existing boards read back unchanged. Parse/
+// format/membership live in contracts.ts (the herdr fleet shares them); TTL
+// and staleness stay HERE — board.ts owns time semantics against that one
+// shared timestamp, and any member's heartbeat refreshes it.
 // ---------------------------------------------------------------------------
 
-export interface Claim {
-  holder: string;
-  since: Date;
-}
+export type Claim = ClaimV2;
+export { addHolder, CLAIM_MAX_HOLDERS, formatClaim, heartbeat, isMember, parseClaim, removeHolder } from "./contracts.js";
 
+/** Single-holder encode — the spawn/steal path's convenience over formatClaim
+ *  (byte-identical to the v1 wire format for one holder). */
 export function encodeClaim(holder: string, since: Date): string {
-  return `${holder}|${since.toISOString()}`;
-}
-
-export function parseClaim(value: string | null | undefined): Claim | null {
-  if (!value) return null;
-  const idx = value.lastIndexOf("|");
-  if (idx < 1) return null;
-  const since = new Date(value.slice(idx + 1));
-  if (Number.isNaN(since.getTime())) return null;
-  return { holder: value.slice(0, idx), since };
+  return formatClaim({ holders: [holder], since });
 }
 
 export function claimAgeMin(claim: Claim, now: Date): number {
@@ -324,7 +339,7 @@ export function rankNext(
       inFlightEpics.push({
         root: i.number,
         child: inFlight.number,
-        holder: inFlight.claim?.holder ?? null,
+        holder: inFlight.claim ? inFlight.claim.holders.join("+") : null,
       });
       continue;
     }
@@ -419,6 +434,69 @@ export function diagnoseEmptyQueue(
     : staleBlockedEdges.length > 0 ? "stale-blocked"
     : null;
   return { diagnosis, humanNeededCount, staleBlockedEdges, inFlightEpics };
+}
+
+// ---------------------------------------------------------------------------
+// Frontier (ralph-herdr v2 Phase 3, D4) — the work-stealing frontier is
+// next's eligible queue, item for item and in the same order. This section is
+// a RE-PROJECTION of rankNext's output with a per-item explanation attached;
+// it never computes eligibility itself, so the fleet controller and any DAG
+// viz reading this shape cannot drift from what `next` would hand a driver.
+// ---------------------------------------------------------------------------
+
+export interface FrontierItem {
+  number: number;
+  title: string;
+  /** Own-repo parent, when the item has one (cross-repo parents are null in
+   *  QueueItem by construction and stay absent here). */
+  parentNumber?: number;
+  /** Epic context carried through from rankNext: the demoted root this leaf
+   *  serves / the blocked children keeping a root eligible. */
+  via?: number;
+  childrenBlocked?: number[];
+  /** WHY it is eligible: every dependency edge with its issue state. For an
+   *  eligible item these are all CLOSED (an open blocker is what ineligible
+   *  means) — the state field exists so blocked/eligible share one shape. */
+  blockers: Array<{ number: number; state: "OPEN" | "CLOSED" }>;
+  eligible: true;
+}
+
+export interface FrontierBlockedItem {
+  number: number;
+  blockers_open: number[];
+  /** The blockage is (at least partly) a truncated read, not a listed edge —
+   *  the same fail-closed rule the ranker applies. */
+  truncated?: true;
+}
+
+export interface FrontierResult {
+  frontier: FrontierItem[];
+  blocked: FrontierBlockedItem[];
+}
+
+export function frontierView(ranked: {
+  eligible: QueueItem[];
+  blocked: QueueItem[];
+}): FrontierResult {
+  return {
+    frontier: ranked.eligible.map((i) => ({
+      number: i.number,
+      title: i.title,
+      ...(i.parentNumber !== null ? { parentNumber: i.parentNumber } : {}),
+      ...(i.via !== undefined ? { via: i.via } : {}),
+      ...(i.childrenBlocked !== undefined ? { childrenBlocked: i.childrenBlocked } : {}),
+      blockers: [
+        ...i.openBlockers.map((n) => ({ number: n, state: "OPEN" as const })),
+        ...i.closedBlockers.map((n) => ({ number: n, state: "CLOSED" as const })),
+      ],
+      eligible: true as const,
+    })),
+    blocked: ranked.blocked.map((i) => ({
+      number: i.number,
+      blockers_open: [...i.openBlockers],
+      ...(i.blockersTruncated || i.fieldValuesTruncated ? { truncated: true as const } : {}),
+    })),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -673,15 +751,25 @@ export function loadConfig(repoRoot: string): Config {
     );
   }
 
+  // ClaimV2 wire delimiters: a holder carrying '+' or '|' would serialize as
+  // a DIFFERENT holder set ("a+b" reads back as two members, neither of them
+  // "a+b") and then fail its own read-back membership verify, stranding the
+  // item claimed under names nobody uses. formatClaim refuses at write time
+  // too (defense in depth); refusing HERE lets the message name the env var.
+  const holder = process.env.RALPH_CLAIM_HOLDER ?? `${userInfo().username}@${hostname()}`;
+  if (!holder || holder.includes("+") || holder.includes("|")) {
+    throw new UsageError(
+      `RALPH_CLAIM_HOLDER must be non-empty and free of the claim wire delimiters "+" and "|" (got ${JSON.stringify(holder)})`,
+    );
+  }
+
   return {
     owner,
     repo,
     projectNumber,
     host,
     lockTtlMin: parseTtlMin(process.env.RALPH_LOCK_TTL_MIN),
-    holder:
-      process.env.RALPH_CLAIM_HOLDER ??
-      `${userInfo().username}@${hostname()}`,
+    holder,
     apply: loadApplyConfig(repoRoot),
     smells: parseSmellThresholds(),
   };
@@ -980,6 +1068,7 @@ export interface Issue {
   state: string | null; // Workflow State field (may be legacy pre-migration)
   fieldValuesTruncated: boolean; // >FIELD_VALUE_PAGE values — state/claim reads unreliable, mutations refuse
   claim: Claim | null;
+  claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited); join/leave refuse
   estimate: string | null;
   priority: string | null;
   labels: string[];
@@ -1074,6 +1163,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       state: fv[STATE_FIELD] ?? null,
       fieldValuesTruncated: fieldValuesTruncated(item?.fieldValues),
       claim: parseClaim(fv[CLAIM_FIELD]),
+      claimRaw: fv[CLAIM_FIELD] ?? null,
       estimate: fv[ESTIMATE_FIELD] ?? null,
       priority: fv[PRIORITY_FIELD] ?? null,
       labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
@@ -1361,14 +1451,15 @@ interface MoveOpts {
   isReopen?: boolean;
 }
 
-/** Guard for leaving In Progress: caller must hold the claim, or it is stale. */
+/** Guard for leaving In Progress: caller must be a claim MEMBER (ClaimV2 —
+ *  any holder of a shared fleet claim may move the item), or it is stale. */
 function guardHolder(ctx: Ctx, issue: Issue): void {
   const claim = issue.claim;
   if (!claim) return; // no claim — nothing to guard
-  if (claim.holder === ctx.cfg.holder) return;
+  if (isMember(claim, ctx.cfg.holder)) return;
   if (claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin)) return;
   throw new RefusalError(
-    `#${issue.number} is claimed by ${claim.holder} (${claimAgeMin(claim, ctx.now()).toFixed(0)} min ago, ` +
+    `#${issue.number} is claimed by ${claim.holders.join("+")} (${claimAgeMin(claim, ctx.now()).toFixed(0)} min ago, ` +
       `TTL ${ctx.cfg.lockTtlMin} min). Wait for TTL expiry or have the holder release it.`,
   );
 }
@@ -1447,7 +1538,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     if (leavingInProgress) guardHolder(ctx, issue);
     if (enteringInProgress) {
       const claim = issue.claim;
-      if (claim && claim.holder !== ctx.cfg.holder) {
+      if (claim && !isMember(claim, ctx.cfg.holder)) {
         const stale = claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin);
         if (!stale) {
           // Late in the TTL, append the expiry clock time — the one fact the
@@ -1458,7 +1549,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
               `\`board claim ${issue.number} --steal\` is honest after that.`
             : "";
           throw new RefusalError(
-            `#${issue.number} is claimed by ${claim.holder} ` +
+            `#${issue.number} is claimed by ${claim.holders.join("+")} ` +
               `(${claimAgeMin(claim, ctx.now()).toFixed(0)} min ago, TTL ${ctx.cfg.lockTtlMin} min). ` +
               `Pick other work, or wait for TTL and use \`board claim ${issue.number} --steal\`.` +
               hint,
@@ -1466,14 +1557,14 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         }
         if (!opts.steal) {
           throw new RefusalError(
-            `#${issue.number} has a STALE claim by ${claim.holder}. ` +
+            `#${issue.number} has a STALE claim by ${claim.holders.join("+")}. ` +
               `Re-run with --steal to take it over (posts an eviction comment).`,
           );
         }
         addComment(
           ctx,
           issue.nodeId,
-          `\`board\`: stale claim by \`${claim.holder}\` (since ${claim.since.toISOString()}) ` +
+          `\`board\`: stale claim by \`${claim.holders.join("+")}\` (since ${claim.since.toISOString()}) ` +
             `evicted by \`${ctx.cfg.holder}\` after TTL ${ctx.cfg.lockTtlMin} min.`,
         );
       }
@@ -1494,11 +1585,28 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     let claimWritten = false;
     if (cache.fields[CLAIM_FIELD]) {
       if (enteringInProgress) {
+        // Any-member heartbeat: when the caller already holds (part of) the
+        // claim, refresh the ONE shared since and keep the co-holders — a
+        // fleet sibling's refresh must not evict its siblings. Otherwise
+        // (no claim, or a stale claim the --steal path above adjudicated) a
+        // fresh single-holder claim.
+        const next =
+          (issue.claim && heartbeat(issue.claim, ctx.cfg.holder, ctx.now())) ??
+          { holders: [ctx.cfg.holder], since: ctx.now() };
         clearField(ctx, cache, itemId, CLAIM_FIELD);
-        setText(ctx, cache, itemId, CLAIM_FIELD, encodeClaim(ctx.cfg.holder, ctx.now()));
+        setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(next));
         claimWritten = true;
       } else if (leavingInProgress) {
+        // Release = removeHolder: the leaving member drops out; co-holders
+        // keep the claim (shared since untouched); the LAST one out clears
+        // the field. A non-member mover (the stale-guard path) clears
+        // outright — writing a dead claim back would manufacture an anomaly.
+        const rest =
+          issue.claim && isMember(issue.claim, ctx.cfg.holder)
+            ? removeHolder(issue.claim, ctx.cfg.holder)
+            : null;
         clearField(ctx, cache, itemId, CLAIM_FIELD);
+        if (rest) setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(rest));
       }
     }
 
@@ -1538,19 +1646,20 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
           `claim state unverifiable; check with \`board get ${issue.number}\` or let doctor reconcile`,
       );
     }
-    if (to === "In Progress" && after.claim?.holder !== ctx.cfg.holder) {
+    if (to === "In Progress" && (!after.claim || !isMember(after.claim, ctx.cfg.holder))) {
       // Either a rival's write landed last, or a concurrent clear wiped the
       // claim — in both cases this session does NOT hold the item.
       throw new RefusalError(
         after.claim
-          ? `lost the claim race on #${issue.number} to ${after.claim.holder} — pick other work`
+          ? `lost the claim race on #${issue.number} to ${after.claim.holders.join("+")} — pick other work`
           : `claim on #${issue.number} vanished after the write (concurrent clear) — pick other work`,
       );
     }
-    // Symmetric verify for the leaving side: the same re-read must show the
-    // claim gone (null or not-self) — a surviving self-held claim means the
-    // clear did not stick and this session would silently keep the item.
-    if (leavingInProgress && after.claim?.holder === ctx.cfg.holder) {
+    // Symmetric verify for the leaving side: the same re-read must show this
+    // session OUT of the claim (gone, or co-holders only) — surviving
+    // membership means the clear did not stick and this session would
+    // silently keep the item.
+    if (leavingInProgress && after.claim && isMember(after.claim, ctx.cfg.holder)) {
       throw new RefusalError(
         `claim on #${issue.number} survived the clear (the write did not stick) — ` +
           `state is now "${to}" but the claim remains; re-run the move or let doctor release it`,
@@ -1605,6 +1714,221 @@ export function parentCheck(ctx: Ctx, parentNumber: number): string {
     `\`board\`: all ${parent.children.length} children closed — parent advanced to In Review (rollup lane).`,
   );
   return `#${parentNumber}: advanced to In Review (all ${parent.children.length} children closed)`;
+}
+
+// ---------------------------------------------------------------------------
+// Shared-claim fleet verbs (ralph-herdr v2 Phase 3) — explicit join/leave for
+// multi-sibling issues. ClaimV2 already carries the fleet (1..8 holders, ONE
+// shared since); these verbs give the cockpit the membership edit that
+// transition() only performs as a side effect of moving state. They touch the
+// Claim field ONLY: a last-out leave deliberately strands an In Progress item
+// claimless (doctor's claimless-wip line surfaces it) rather than inventing a
+// fourth state-write lane — board transitions stay the skills' job.
+// ---------------------------------------------------------------------------
+
+/** The guards every claim edit shares: item on the board, field values fully
+ *  readable (a truncated page could hide the live claim), and a parseable
+ *  claim — a hand-edited Claim field is a human's note to self and is never
+ *  rewritten (the same rule doctor's claim-garbled check states). */
+function guardClaimEdit(issue: Issue): string {
+  const itemId = requireItem(issue);
+  if (issue.fieldValuesTruncated) {
+    throw new RefusalError(
+      `#${issue.number} has more than ${FIELD_VALUE_PAGE} project field values — ` +
+        `state/claim reads are unreliable, refusing to mutate`,
+    );
+  }
+  if (issue.claimRaw !== null && !issue.claim) {
+    throw new RefusalError(
+      `#${issue.number}'s Claim text is unparseable (${JSON.stringify(issue.claimRaw)}) — ` +
+        `want "holder[+holder2...]|iso8601"; a hand-edited claim is never rewritten. Fix it in the board UI first.`,
+    );
+  }
+  return itemId;
+}
+
+/** Post-write membership verify, shared by join and leave: GitHub has no CAS,
+ *  so the echo re-read is the only proof the edit stuck (same protocol as
+ *  transition()). `wantMember` is the direction being verified. */
+function verifyClaimEcho(ctx: Ctx, number: number, holder: string, wantMember: boolean): Issue {
+  const after = fetchIssue(ctx, number);
+  if (after.fieldValuesTruncated) {
+    throw new RefusalError(
+      `#${number}: the post-write read came back truncated (>${FIELD_VALUE_PAGE} field values) — ` +
+        `claim state unverifiable; check with \`board get ${number}\` or let doctor reconcile`,
+    );
+  }
+  const member = after.claim !== null && isMember(after.claim, holder);
+  if (wantMember && !member) {
+    throw new RefusalError(
+      after.claim
+        ? `lost the claim race on #${number} to ${after.claim.holders.join("+")} — the join did not stick`
+        : `claim on #${number} vanished after the write (concurrent clear) — the join did not stick`,
+    );
+  }
+  if (!wantMember && member) {
+    throw new RefusalError(
+      `claim on #${number} survived the leave (the write did not stick) — ` +
+        `re-run the leave or let doctor release it`,
+    );
+  }
+  return after;
+}
+
+/** Fleet join: addHolder onto the item's shared claim. In Progress only — a
+ *  sibling joining work nobody started would smuggle in the state transition
+ *  this verb refuses to own (and there is no --force, by design). Joining a
+ *  claimless In Progress item creates the claim, mirroring transition()'s
+ *  acquisition arm; joining refreshes the ONE shared since (any-member
+ *  heartbeat semantics), so a fleet's TTL clock restarts on every arrival.
+ *  That refresh applies to a STALE claim too — deliberately: arrival is
+ *  treated as liveness, so a join resurrects the absent holders' claim with
+ *  no comment trail. A driver waiting out a stale TTL should evict via
+ *  `board claim NNN --steal` (which posts the eviction comment), not join. */
+export function claimJoin(ctx: Ctx, number: number, holder: string): Issue {
+  if (!isValidHolder(holder)) {
+    throw new UsageError(
+      `--holder must be a grammar-B agent name (<lane><issue>-<slug>, lanes ` +
+        `w/r/o/d/s/x) or a legacy name (gh-N, ralph-deliver, ralph-tend) — got ${JSON.stringify(holder)}`,
+    );
+  }
+  // Cache freshness resolved BEFORE any write; the body never retries.
+  const cache = mutationCache(ctx, [[CLAIM_FIELD]]);
+  const issue = fetchIssue(ctx, number);
+  const itemId = guardClaimEdit(issue);
+  if (issue.state !== "In Progress") {
+    throw new RefusalError(
+      `#${number} is "${issue.state ?? "(none)"}" — join is for In Progress items only. ` +
+        `Claim it first (\`board claim ${number}\`); there is no --force.`,
+    );
+  }
+  let next: Claim;
+  try {
+    next = issue.claim
+      ? addHolder(issue.claim, holder, ctx.now())
+      : { holders: [holder], since: ctx.now() };
+  } catch (e) {
+    // addHolder's holder-cap (8) refusal — an invariant, not a usage slip.
+    if (e instanceof RangeError) throw new RefusalError(`#${number}: ${e.message}`);
+    throw e;
+  }
+  // Clear-then-set, like every claim write: the value carries the timestamp,
+  // so we never depend on the field's own updatedAt.
+  clearField(ctx, cache, itemId, CLAIM_FIELD);
+  setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(next));
+  return verifyClaimEcho(ctx, number, holder, true);
+}
+
+/** Fleet leave: removeHolder from the shared claim. A non-member leave is an
+ *  idempotent no-op (`changed: false`, no write); the LAST member out clears
+ *  the field; co-holders keep the claim with its since untouched. No state
+ *  guard: removing oneself from an anomalous claim (claim on a non-In-
+ *  Progress item) is cleanup, and trapping the holder would help nobody. */
+export function claimLeave(
+  ctx: Ctx,
+  number: number,
+  holder: string,
+): { issue: Issue; changed: boolean } {
+  const cache = mutationCache(ctx, [[CLAIM_FIELD]]);
+  const issue = fetchIssue(ctx, number);
+  const itemId = guardClaimEdit(issue);
+  if (!issue.claim || !isMember(issue.claim, holder)) return { issue, changed: false };
+  const rest = removeHolder(issue.claim, holder);
+  clearField(ctx, cache, itemId, CLAIM_FIELD);
+  if (rest) setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(rest));
+  return { issue: verifyClaimEcho(ctx, number, holder, false), changed: true };
+}
+
+/** What `claim show` reports — the claim exactly as the board holds it, plus
+ *  the time semantics board.ts owns (age against the configured TTL). */
+export interface ClaimShow {
+  number: number;
+  state: string | null;
+  claim: Claim | null;
+  claimRaw: string | null; // non-null with claim null = garbled
+  ageMin: number | null;
+  ttlMin: number;
+  stale: boolean | null; // null when there is nothing to age
+}
+
+export function claimShow(ctx: Ctx, number: number): ClaimShow {
+  const issue = fetchIssue(ctx, number);
+  return {
+    number: issue.number,
+    state: issue.state,
+    claim: issue.claim,
+    claimRaw: issue.claimRaw,
+    ageMin: issue.claim ? claimAgeMin(issue.claim, ctx.now()) : null,
+    ttlMin: ctx.cfg.lockTtlMin,
+    stale: issue.claim ? claimIsStale(issue.claim, ctx.now(), ctx.cfg.lockTtlMin) : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Answer — the Human Needed exit verb (ralph-herdr v2), COMMENT-FIRST.
+//
+// The durable half (a GitHub **Answer** comment) lands BEFORE the state write,
+// extending transition()'s comments-before-state rule across the whole verb:
+// if the process — or the multiplexer driving it — vanishes mid-answer, the
+// decision is on the record and the item is still in Human Needed for a clean
+// retry. The herdr prompt half (nudging the paused agent to resume) is
+// deliberately NOT here: the board is authoritative and herdr decorative, so
+// the prompt belongs to plugin/ralph-herdr. Escalation payload shape stays
+// `board contract validate ralph.escalation`'s job — this verb validates
+// nothing about the question, it only answers it.
+// ---------------------------------------------------------------------------
+
+export interface AnswerResult {
+  commented: boolean;
+  transitioned: boolean;
+  state: string | null;
+}
+
+export function answer(
+  ctx: Ctx,
+  number: number,
+  opts: { message: string; anyState?: boolean; commentOnly?: boolean },
+): AnswerResult {
+  const issue = fetchIssue(ctx, number);
+  // Fail closed BEFORE the comment: a truncated field-value page means the
+  // state just read may be fiction, and the Human Needed gate below would be
+  // judging it.
+  if (issue.fieldValuesTruncated) {
+    throw new RefusalError(
+      `#${number} has more than ${FIELD_VALUE_PAGE} project field values — ` +
+        `the state read is unreliable, refusing to answer`,
+    );
+  }
+  if (issue.state !== "Human Needed" && !opts.anyState) {
+    throw new RefusalError(
+      `#${number} is "${issue.state ?? "(none)"}" — answer is for Human Needed items. ` +
+        `Re-run with --any-state to post the answer comment anyway (comment only, no transition), ` +
+        `or use \`board comment ${number} -m\` for a plain comment.`,
+    );
+  }
+  // Durable half FIRST. Whatever happens after this line, the decision exists.
+  addComment(ctx, issue.nodeId, `**Answer** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${opts.message}`);
+  // The Human Needed → In Progress edge is the ONLY move this verb owns:
+  // --comment-only skips it, and an --any-state answer outside Human Needed
+  // has no edge to take — relaxing the refusal never relaxes the MACHINE.
+  if (opts.commentOnly || issue.state !== "Human Needed") {
+    return { commented: true, transitioned: false, state: issue.state };
+  }
+  try {
+    const after = transition(ctx, issue, "In Progress");
+    return { commented: true, transitioned: true, state: after.state };
+  } catch (e) {
+    // The durable half already happened — a refusal here (fleet co-holders
+    // still on the claim, a lost claim race) must say so, or the operator
+    // re-posts the same answer to retry a move.
+    if (e instanceof RefusalError) {
+      throw new RefusalError(
+        `${e.message}\nThe answer comment IS on the record — retry the move ` +
+          `(\`board claim ${number}\`), not the answer.`,
+      );
+    }
+    throw e;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1984,15 +2308,9 @@ export interface DeliverCandidate {
   marker: Record<string, DeliverMarkerEntry> | null;
 }
 
-export type DeliverReason =
-  | "actionable" // confirmed by a dry-run probe (or probe unavailable)
-  | "retry" // marker window expired — the session runs the gates itself
-  | "no-open-pr" // all linked PRs merged/closed — close-out branch (§4.4)
-  | "settling"
-  | "no-pr"
-  | "marker-current"
-  | "retry-window"
-  | "deferred";
+/** Derived from contracts.ts DELIVER_REASONS — the single declaration (the C6
+ *  schema uses the same tuple; per-value docs live on it). */
+export type DeliverReason = (typeof DELIVER_REASONS)[number];
 
 export interface DeliverRow {
   number: number;
@@ -2420,12 +2738,9 @@ export function parseTendOpts(
   };
 }
 
-export type TendCategory =
-  | "stale-body" // Backlog, no updates in staleDays — grep the live tree before trusting it
-  | "deps-cleared" // Backlog, every blocker closed — the wait is over (or the edge is stale)
-  | "deps-truncated" // Backlog, blocker list truncated — the board cannot see its own edges
-  | "unformed" // no estimate, no parent, no dependencies, older than 7 days — likely raw intake
-  | "done-audit"; // closed recently, no audit marker — the cursor is the marker comment
+/** Derived from contracts.ts TEND_CATEGORIES — the single declaration (the C6
+ *  schema uses the same tuple; per-value docs live on it). */
+export type TendCategory = (typeof TEND_CATEGORIES)[number];
 
 export interface TendRow {
   number: number;
@@ -2855,13 +3170,13 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       );
       add("stateless-items", noState.length === 0 ? "ok" : "warn", noState.length === 0 ? "none" : `${noState.length} open items with no ${STATE_FIELD}: ${noState.slice(0, 10).map((i) => `#${i.number}`).join(" ")}`);
       add("claim-anomalies", claimAnomalies.length === 0 ? "ok" : "warn", claimAnomalies.length === 0 ? "none" : claimAnomalies.map((i) => `#${i.number}(${i.state})`).join(" "));
-      add("stale-claims", stale.length === 0 ? "ok" : "warn", stale.length === 0 ? "none" : stale.map((i) => `#${i.number} by ${i.claim!.holder}`).join(" "));
+      add("stale-claims", stale.length === 0 ? "ok" : "warn", stale.length === 0 ? "none" : stale.map((i) => `#${i.number} by ${i.claim!.holders.join("+")}`).join(" "));
       add("terminal-drift", terminalDrift.length === 0 ? "ok" : "warn", terminalDrift.length === 0 ? "none" : `open issues in terminal board states: ${terminalDrift.map((i) => `#${i.number}(${i.state})`).join(" ")}`);
       add("closed-drift", closedDrift.length === 0 ? "ok" : "warn", closedDrift.length === 0 ? "none" : `closed issues in non-terminal board states: ${closedDrift.map((i) => `#${i.number}(${i.state})`).join(" ")}`);
       add("claimless-wip", claimlessWip.length === 0 ? "ok" : "warn", claimlessWip.length === 0 ? "none" : `In Progress without a claim (human WIP or a failed claim write): ${claimlessWip.map((i) => `#${i.number}`).join(" ")}`);
       // Never auto-fixed: a hand-edited Claim field is a human's note to self —
       // surfacing it is enough.
-      add("claim-garbled", garbled.length === 0 ? "ok" : "warn", garbled.length === 0 ? "none" : `unparseable Claim text (want "holder|iso8601"): ${garbled.map((i) => `#${i.number}`).join(" ")}`);
+      add("claim-garbled", garbled.length === 0 ? "ok" : "warn", garbled.length === 0 ? "none" : `unparseable Claim text (want "holder[+holder2...]|iso8601"): ${garbled.map((i) => `#${i.number}`).join(" ")}`);
 
       // Apply-kind sweep (GH-1693). Inert — three `ok` lines — on a repo that
       // has not opted in, and on an opted-in board with no apply issues.
@@ -3041,7 +3356,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
               addComment(
                 ctx,
                 issue.nodeId,
-                `\`board doctor --fix\`: stale claim by \`${issue.claim.holder}\` released; returned to Backlog.`,
+                `\`board doctor --fix\`: stale claim by \`${issue.claim.holders.join("+")}\` released; returned to Backlog.`,
               );
             }
             add("fix", "ok", `#${i.number}: claim cleared`);
@@ -3496,6 +3811,57 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
 }
 
 // ---------------------------------------------------------------------------
+// Contract surface (ralph-herdr v2 Phase 1) — validate / emit / lint over the
+// Zod source of truth in contracts.ts. Read-only against the board; `emit`
+// writes schema artifacts into the repo (drift-checked by `contracts:check`).
+// ---------------------------------------------------------------------------
+
+/** Where `contract emit` lands by default, relative to the repo root. The
+ *  generated *.schema.json files are commit-able artifacts — CI re-emits to a
+ *  temp dir and diffs, so contracts.ts and the artifacts cannot drift apart. */
+export const CONTRACTS_OUT_DEFAULT = join("ralph", "contracts", "generated");
+
+function requireContractId(raw: string | undefined): ContractId {
+  if (!raw || !isContractId(raw)) {
+    throw new UsageError(`contract id required — one of: ${CONTRACT_IDS.join(", ")}`);
+  }
+  return raw;
+}
+
+/** Payload source: a file path, or "-"/absent for stdin (fd 0). */
+function readContractPayload(arg: string | undefined): unknown {
+  const raw = readFileSync(arg === undefined || arg === "-" ? 0 : arg, "utf8");
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    throw new UsageError(`payload is not JSON: ${(e as Error).message}`);
+  }
+}
+
+/** The live-lint effect functions (contracts.ts LiveLintDeps) wired to this
+ *  CLI's own plumbing: L3's commit probe through the exec seam against the
+ *  repo root, L5/L7's board read-back through fetchIssue — the same fetch
+ *  path every other read uses. Built only under `contract lint --live`; a
+ *  plain lint run stays repo- and network-free. */
+export function liveLintDeps(ctx: Ctx): LiveLintDeps {
+  return {
+    execGit: (args) => ({ code: ctx.exec(["git", "-C", ctx.repoRoot, ...args]).code }),
+    readBoardItem: (issue) => {
+      try {
+        const i = fetchIssue(ctx, issue);
+        return { issueState: i.issueState, state: i.state, claim: i.claim };
+      } catch (e) {
+        // fetchIssue's not-found contract is UsageError; anything else
+        // (transport, GraphQL) must propagate — a network failure is not
+        // evidence the issue is missing.
+        if (e instanceof UsageError) return null;
+        throw e;
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -3508,7 +3874,17 @@ reads
                               Epic-aware: an epic root yields to its best open
                               leaf (leaf inherits the root's priority, carries
                               "via"); an epic with a child in flight heads nothing
+  frontier [--json]           the work-stealing frontier (ralph-herdr fleets):
+                              every issue eligible to start NOW — next's queue,
+                              item for item — each with its explanation
+                              {number, title, parentNumber?, blockers:
+                              [{number, state}], eligible}, plus a blocked
+                              section [{number, blockers_open, truncated?}].
+                              A re-projection of next's ranking, never a
+                              second eligibility computation
   tree NNN                    subtree with states
+  claim show NNN [--json]     the claim as the board holds it: holders, shared
+                              since, age vs TTL, raw text when garbled
   deliver-queue [--json]      deliver lane (GH-1712): In Review items whose
                               linked PRs carry an actionable signal, marker-
                               gated per PR. {next, queue, blocked}; empty next
@@ -3529,8 +3905,32 @@ mutations
                               label: it closes only on deployed-and-verified
                               evidence, never on a merge
   claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
+  claim join NNN --holder H   add a fleet sibling to an In Progress item's
+                              shared claim (ClaimV2, max 8 holders; H must be
+                              a grammar-B or legacy agent name). Refreshes the
+                              ONE shared since; refuses when not In Progress
+  claim leave NNN --holder H  remove a sibling from the shared claim; non-
+                              member leave is a no-op; the LAST one out clears
+                              the field. Never transitions state — board moves
+                              stay the skills' job
   release NNN -m "why"        In Progress → Backlog; parking comment required
   move NNN <state> [--why W]  any legal transition; Human Needed requires --why
+  answer NNN -m "decision"    Human Needed → In Progress, COMMENT-FIRST: the
+                              answer lands as an issue comment (**Answer** —
+                              the durable half) BEFORE any state write, so a
+                              session that vanishes mid-answer leaves the
+                              decision on the record, not a bare move.
+                              --message is an alias for -m. --comment-only
+                              posts without the move; --any-state answers an
+                              item outside Human Needed (comment only — the
+                              Human Needed → In Progress edge is the only
+                              move this verb owns). [--json] reports
+                              {commented, transitioned, state}. The herdr
+                              prompt half (nudging the paused agent to
+                              resume) is deliberately NOT here — the
+                              ralph-herdr plugin owns it. Escalation payload
+                              shape is checked by \`board contract validate
+                              ralph.escalation\`, never by this verb
   cancel NNN -m "why"         any open state → Canceled (closes as not-planned)
   reopen NNN                  Done/Canceled → Backlog (reopens the issue)
   link PARENT CHILD           add sub-issue edge
@@ -3553,6 +3953,26 @@ maintenance
   readiness [--json]          agent-readiness report — 3 levels (interactive,
                               unattended, autonomous); recommendations, never gates
 
+contracts (ralph-herdr v2 — the Zod source of truth is contracts.ts)
+  contract validate <id> [file|-]
+                              validate a JSON payload against the producer
+                              (strict) schema; exit 1 with the issues listed
+  contract emit [--out DIR]   write one <id>.schema.json per contract
+                              (default ralph/contracts/generated); CI drift-
+                              checks the artifacts via npm run contracts:check
+  contract lint <id> [file|-] [--live]
+                              run lints L1-L13 against a payload; exit 1 on any
+                              failure. --live also runs L3 (commit_sha exists,
+                              git cat-file against this repo), L5 (claim read-
+                              back: the agent holds the issue's claim) and L7
+                              (parent_issue exists and is not Done/Canceled);
+                              without it they report skipped. L10 (lineage
+                              closure) is ledger-side — see
+                              plugin/ralph-herdr/scripts/doctor-lineage.sh
+  ids: ralph.spawn_request ralph.completion_report ralph.fleet_brief
+       ralph.fleet_reply ralph.board_queue ralph.lineage
+       ralph.token_vocabulary ralph.escalation
+
 There is no --force flag. A stale claim (TTL 120 min; RALPH_LOCK_TTL_MIN
 overrides) is the only override path.`;
 
@@ -3571,7 +3991,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply"].includes(key)) {
+      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state"].includes(key)) {
         flags[key] = next;
         i++;
       } else {
@@ -3595,7 +4015,7 @@ function childStateLabel(c: Issue["children"][number]): string {
 }
 
 function issueLine(i: Issue): string {
-  const claim = i.claim ? ` claim=${i.claim.holder}@${i.claim.since.toISOString()}` : "";
+  const claim = i.claim ? ` claim=${i.claim.holders.join("+")}@${i.claim.since.toISOString()}` : "";
   const parent = i.parent ? ` parent=#${i.parent.number}` : "";
   const blockers = i.blockedBy.filter((b) => b.issueState === "OPEN").map((b) => `#${b.number}`);
   const blocked = blockers.length ? ` blockedBy=${blockers.join(",")}` : "";
@@ -3629,7 +4049,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 }
 
 const MUTATING = new Set([
-  "create", "claim", "release", "move", "cancel", "reopen",
+  "create", "claim", "release", "move", "cancel", "reopen", "answer",
   "link", "dep", "comment", "adopt", "reconcile", "parent-check",
   "setup",
 ]);
@@ -3641,8 +4061,10 @@ export function run(argv: string[], ctx: Ctx): number {
   const json = (v: unknown) => out(JSON.stringify(v, null, 2));
 
   // Scope gate before ANY command that can write — including doctor --fix,
-  // which mutates. Plain reads work from any clone (doctor reports scope).
-  if (MUTATING.has(cmd) || (cmd === "doctor" && flags.fix)) {
+  // which mutates. Plain reads work from any clone (doctor reports scope);
+  // `claim show` is a plain read wearing a mutating command's name, so it
+  // gets the read path's carve-out.
+  if ((MUTATING.has(cmd) && !(cmd === "claim" && positional[0] === "show")) || (cmd === "doctor" && flags.fix)) {
     const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
     if (remote.code !== 0 || !scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) {
       throw new RefusalError(
@@ -3681,7 +4103,7 @@ export function run(argv: string[], ctx: Ctx): number {
       }
       if (flags.json) json({ items, foreign });
       else {
-        for (const i of items) out(`#${i.number} [${i.state}]${i.claim ? ` claim=${i.claim.holder}` : ""}${i.openBlockers.length ? ` blockedBy=${i.openBlockers.map((n) => `#${n}`).join(",")}` : ""} ${i.title}`);
+        for (const i of items) out(`#${i.number} [${i.state}]${i.claim ? ` claim=${i.claim.holders.join("+")}` : ""}${i.openBlockers.length ? ` blockedBy=${i.openBlockers.map((n) => `#${n}`).join(",")}` : ""} ${i.title}`);
         for (const f of foreign) out(`${f.repo}#${f.number} [${f.state}] (foreign repo — read-only here) ${f.title}`);
       }
       return 0;
@@ -3717,6 +4139,35 @@ export function run(argv: string[], ctx: Ctx): number {
                   : "(blockers truncated)";
                 return `#${b.number}←${why}`;
               })
+              .join(" ")}`,
+          );
+      }
+      return 0;
+    }
+
+    case "frontier": {
+      // EXACTLY next's inputs and ranking — frontier is a re-projection.
+      const full = listItemsFull(ctx);
+      const own = ownRepo(ctx, full.open).own;
+      const closedEdges = ownRepo(ctx, full.closed).own;
+      const res = frontierView(rankNext(own, closedEdges));
+      if (flags.json) json(res);
+      else if (res.frontier.length === 0) {
+        out(
+          `frontier empty${res.blocked.length ? ` (${res.blocked.length} blocked: ${res.blocked.map((b) => `#${b.number}`).join(" ")})` : ""}`,
+        );
+      } else {
+        for (const f of res.frontier)
+          out(
+            `#${f.number}` +
+              (f.via !== undefined ? ` (under epic #${f.via})` : "") +
+              (f.blockers.length ? ` [blockers closed: ${f.blockers.map((b) => `#${b.number}`).join(",")}]` : "") +
+              ` ${f.title}`,
+          );
+        if (res.blocked.length)
+          out(
+            `blocked: ${res.blocked
+              .map((b) => `#${b.number}←${b.truncated ? "(truncated)" : b.blockers_open.map((n) => `#${n}`).join("+")}`)
               .join(" ")}`,
           );
       }
@@ -3805,6 +4256,42 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "claim": {
+      // Fleet subverbs (join/leave/show) ride the same command word the
+      // classic single-arg claim uses; a bare number keeps today's behavior.
+      const sub = positional[0];
+      if (sub === "show") {
+        const view = claimShow(ctx, requireNumber(positional[1]));
+        if (flags.json) json(view);
+        else if (view.claim) {
+          out(
+            `#${view.number} claim: ${view.claim.holders.join("+")} since ${view.claim.since.toISOString()} ` +
+              `(${view.ageMin!.toFixed(0)} min ago, TTL ${view.ttlMin} min, ` +
+              `${view.claim.holders.length}/${CLAIM_MAX_HOLDERS} holders${view.stale ? ", STALE" : ""})`,
+          );
+        } else if (view.claimRaw !== null) {
+          out(`#${view.number} claim: GARBLED — raw text ${JSON.stringify(view.claimRaw)} (want "holder[+holder2...]|iso8601")`);
+        } else {
+          out(`#${view.number}: no claim`);
+        }
+        return 0;
+      }
+      if (sub === "join" || sub === "leave") {
+        const number = requireNumber(positional[1]);
+        if (typeof flags.holder !== "string" || !flags.holder) {
+          throw new UsageError(`claim ${sub} requires --holder <agent name>`);
+        }
+        if (sub === "join") {
+          out(issueLine(claimJoin(ctx, number, flags.holder)));
+          return 0;
+        }
+        const { issue: after, changed } = claimLeave(ctx, number, flags.holder);
+        out(
+          changed
+            ? issueLine(after)
+            : `#${number}: ${flags.holder} is not a claim holder — no-op`,
+        );
+        return 0;
+      }
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
       const after = transition(ctx, issue, "In Progress", { steal: !!flags.steal });
       out(issueLine(after));
@@ -3825,6 +4312,29 @@ export function run(argv: string[], ctx: Ctx): number {
       if (!to) throw new UsageError(`move requires a target state (${STATES.join(" | ")})`);
       const after = transition(ctx, issue, to, { why: typeof flags.why === "string" ? flags.why : undefined });
       out(issueLine(after));
+      return 0;
+    }
+
+    case "answer": {
+      const number = requireNumber(positional[0]);
+      const message =
+        typeof flags.m === "string" && flags.m ? flags.m
+        : typeof flags.message === "string" && flags.message ? flags.message
+        : null;
+      if (!message) throw new UsageError(`answer requires -m "<the decision>" (--message also accepted)`);
+      const res = answer(ctx, number, {
+        message,
+        anyState: !!flags["any-state"],
+        commentOnly: !!flags["comment-only"],
+      });
+      if (flags.json) json(res);
+      else {
+        out(
+          res.transitioned
+            ? `#${number}: answer commented; Human Needed → ${res.state}`
+            : `#${number}: answer commented; no transition (state: ${res.state ?? "(none)"})`,
+        );
+      }
       return 0;
     }
 
@@ -3926,6 +4436,59 @@ export function run(argv: string[], ctx: Ctx): number {
       );
       out("recommendations are advisory — adopt what fits this repo; nothing here blocks work");
       return 0; // advisory by design: a gap is a recommendation, not a failure
+    }
+
+    case "contract": {
+      const sub = positional[0];
+      if (sub === "validate") {
+        const id = requireContractId(positional[1]);
+        const res = validateContract(id, readContractPayload(positional[2]));
+        if (res.success) {
+          out(`✓ ${id}: valid (producer schema)`);
+          return 0;
+        }
+        out(`✗ ${id}: INVALID — ${res.error.issues.length} issue(s)`);
+        for (const i of res.error.issues) out(`  ✗ ${i.path.join(".") || "(root)"}: ${i.message}`);
+        return 1;
+      }
+      if (sub === "emit") {
+        const dir =
+          typeof flags.out === "string" ? flags.out : join(ctx.repoRoot, CONTRACTS_OUT_DEFAULT);
+        mkdirSync(dir, { recursive: true });
+        const schemas = emitJsonSchemas();
+        for (const id of CONTRACT_IDS) {
+          const file = join(dir, `${id}.schema.json`);
+          writeFileSync(file, JSON.stringify(schemas[id], null, 2) + "\n");
+          out(file);
+        }
+        return 0;
+      }
+      if (sub === "lint") {
+        const id = requireContractId(positional[1]);
+        const payload = readContractPayload(positional[2]);
+        let failed = 0;
+        // The id is a cross-check, not a router (lints self-select by payload
+        // shape) — but a payload declaring a DIFFERENT contract is already a
+        // finding, whatever the individual rules say.
+        const declared = (payload as Record<string, unknown> | null)?.contract;
+        if (typeof declared === "string" && declared !== id) {
+          failed++;
+          out(`✗ payload declares contract "${declared}", not "${id}"`);
+        }
+        for (const r of runLints(payload, flags.live ? liveLintDeps(ctx) : undefined)) {
+          if ("skipped" in r) {
+            out(`- ${r.rule}: skipped (${r.skipped})`);
+          } else if (r.ok) {
+            out(`✓ ${r.rule}${r.note ? ` (${r.note})` : ""}`);
+          } else {
+            failed++;
+            out(`✗ ${r.rule}: ${r.message}`);
+          }
+        }
+        out(failed === 0 ? "lint: OK" : `lint: FAIL (${failed})`);
+        return failed === 0 ? 0 : 1;
+      }
+      throw new UsageError(`contract requires validate | emit | lint — run \`board help\``);
     }
 
     default:

@@ -1,0 +1,4 @@
+role is "w" (work lane) for issue 1743 but skill_invocation is
+"/ralph:deliver" — the w lane's invocation is derivable and must be exactly
+"/ralph:work 1743". Only lanes with a known skill mapping are enforced; other
+lanes are free-form but nonempty.

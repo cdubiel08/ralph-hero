@@ -11,10 +11,24 @@
 
 id = "ralph-herdr"
 name = "Ralph Herdr"
-version = "0.1.0"
+version = "0.5.0"
 min_herdr_version = "0.8.0"
-description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes."
+description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets; v4 adds the card substrate: issue/PR link handlers (click → focus-or-offer), a comment-first Human Needed answer pane, and attend carrying the blocking question; v5 adds the cockpit pane: a three-column board TUI (Go) over a degradation ladder — fzf fallback, then the dashboard — that loses chrome, never verbs."
 platforms = ["macos", "linux"]
+
+# --- Build -------------------------------------------------------------------
+# One build step: the Go cockpit TUI (rung 1 of scripts/cockpit-launch.sh's
+# degradation ladder). herdr aborts the INSTALL when a build command fails —
+# but the TUI is optional chrome, so the command is a wrapper that always
+# exits 0: no Go on PATH, no cockpit/ source, or a failed compile each warn
+# loudly (visible in `herdr plugin log`) and install anyway; the launcher's
+# run-time probe then lands on rung 3 (cockpit-fzf.sh) or rung 4
+# (dashboard.sh). Blocking every action in this plugin because a TUI didn't
+# compile would invert the ladder's contract — that judgment is documented in
+# the wrapper and the README. HERDR_PLUGIN_ROOT is defaulted to "." because
+# build hooks run in the plugin dir and older herdr builds may not export it.
+[[build]]
+command = ["bash", "-c", '''exec bash "${HERDR_PLUGIN_ROOT:-.}/scripts/build-cockpit.sh"''']
 
 # --- Actions -----------------------------------------------------------------
 # Every action follows the same shape: extract the repo cwd from the plugin
@@ -63,6 +77,21 @@ command = [
   '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint doctor --placement popup --cwd "$cwd" --focus'''
 ]
 
+# cockpit: the board TUI (v5). The pane runs scripts/cockpit-launch.sh — the
+# degradation ladder — so this one action is honest on every host: the built
+# Go TUI when present, the fzf fallback when not, the dashboard when neither.
+# Split right like the dashboard: the cockpit is a persistent side surface,
+# not a transient popup.
+[[actions]]
+id = "cockpit"
+title = "Ralph: cockpit"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint cockpit --placement split --direction right --cwd "$cwd" --focus'''
+]
+
 [[actions]]
 id = "dashboard"
 title = "Ralph: board dashboard"
@@ -83,6 +112,18 @@ command = [
   '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint work-fleet --placement split --direction down --cwd "$cwd" --focus'''
 ]
 
+# Shared-claim sibling fleet on ONE issue (Phase 3): the pane prompts for the
+# issue number (actions carry no arguments — the pane is the input surface).
+[[actions]]
+id = "work-issue-fleet"
+title = "Ralph: sibling fleet on one issue"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint work-issue-fleet --placement split --direction down --cwd "$cwd" --focus'''
+]
+
 # attend needs NO pane: it acts via `agent focus` + a notification and exits.
 # The script runs in the action process itself, cwd'd to the repo.
 [[actions]]
@@ -93,6 +134,50 @@ command = [
   "bash",
   "-c",
   '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); cd "$cwd"; exec bash "$HERDR_PLUGIN_ROOT/scripts/attend.sh"'''
+]
+
+# answer: the Human Needed exit surface (Phase 4). A popup, because answering
+# is a focused interruption, not a workspace layout change; the durable half
+# (the **Answer** issue comment, via `board answer`) lands before any board
+# move or herdr prompt — see scripts/ralph-answer.sh.
+[[actions]]
+id = "answer"
+title = "Ralph: answer Human Needed"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint answer --placement popup --cwd "$cwd" --focus'''
+]
+
+# link-open runs in the ACTION process (attend pattern): focusing a live
+# agent needs no pane, and the no-agent path opens its own link-offer popup.
+# Normally invoked by the [[link_handlers]] entry below (clicked URL in
+# HERDR_PLUGIN_CLICKED_URL); from the plain action menu — where nothing was
+# clicked — it says so in the plugin log and exits 0.
+[[actions]]
+id = "link-open"
+title = "Ralph: open issue/PR link"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''exec bash "$HERDR_PLUGIN_ROOT/scripts/link-open.sh"'''
+]
+
+# reconcile also needs NO pane: the same single pass the [[startup]] hook runs
+# (exit-lost / discover / token re-push / orphan pass), invokable by hand. The
+# script needs no workspace cwd — it scans every board scope's
+# ~/.ralph/<owner>/<repo>/ledger.jsonl and reads scope from pane cwds;
+# output lands in `herdr plugin log`.
+[[actions]]
+id = "reconcile"
+title = "Ralph: reconcile watcher ledger"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; exec bash "$HERDR_PLUGIN_ROOT/scripts/reconcile.sh"'''
 ]
 
 # --- Panes -------------------------------------------------------------------
@@ -126,6 +211,72 @@ title = "Ralph: work fleet"
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-fleet.sh\""]
 
 [[panes]]
+id = "work-issue-fleet"
+title = "Ralph: sibling fleet on one issue"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-issue-fleet.sh\""]
+
+[[panes]]
+id = "cockpit"
+title = "Ralph: cockpit"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/cockpit-launch.sh\""]
+
+[[panes]]
 id = "dashboard"
 title = "Ralph: board dashboard"
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/dashboard.sh\""]
+
+[[panes]]
+id = "answer"
+title = "Ralph: answer Human Needed"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/ralph-answer.sh\""]
+
+# Opened only by scripts/link-open.sh (issue number + URL arrive via --env).
+[[panes]]
+id = "link-offer"
+title = "Ralph: issue link"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/link-offer.sh\""]
+
+# --- Link handlers (Phase 4) -------------------------------------------------
+# A clicked terminal URL matching `pattern` (Rust regex, matched against the
+# full URL) invokes `action` with HERDR_PLUGIN_CLICKED_URL set (the context
+# JSON carries clicked_url + link_handler_id too). The pattern is deliberately
+# GENERIC — any github.com owner/repo — because the manifest cannot know the
+# board scope; scripts/link-open.sh validates the URL against the workspace's
+# configured scope and hands out-of-scope URLs to the OS browser. Verified
+# against the installed herdr 0.8.0 (manifest schema PluginManifestLinkHandler:
+# id/title/pattern/action; env HERDR_PLUGIN_CLICKED_URL/_LINK_HANDLER_ID);
+# older herdr versions may ignore or reject this section — see README.
+
+[[link_handlers]]
+id = "github-issue-or-pr"
+title = "Ralph: issue/PR on the board"
+pattern = '^https://github\.com/[^/]+/[^/]+/(issues|pull)/[0-9]+'
+action = "link-open"
+
+# --- Watcher (Phase 2) -------------------------------------------------------
+# Event hooks are the watcher's steady state: the server runs the command per
+# event with the name in HERDR_PLUGIN_EVENT and the payload in
+# HERDR_PLUGIN_EVENT_JSON (no workspace context — watch-event.sh resolves
+# everything from the payload + the ledger). Event names are the server's
+# dotted EventKind vocabulary (`herdr api schema`); pane.exited fires when the
+# pane's process dies, pane.closed when the pane is removed — both are watched
+# because either can arrive alone, and the ledger correlation makes the
+# duplicate a no-op. The hooks only run while the herdr server does; the
+# [[startup]] reconcile pass heals whatever happened in between.
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["bash", "-c", '''exec bash "$HERDR_PLUGIN_ROOT/scripts/watch-event.sh"''']
+
+[[events]]
+on = "pane.exited"
+command = ["bash", "-c", '''exec bash "$HERDR_PLUGIN_ROOT/scripts/watch-event.sh"''']
+
+[[events]]
+on = "pane.closed"
+command = ["bash", "-c", '''exec bash "$HERDR_PLUGIN_ROOT/scripts/watch-event.sh"''']
+
+# One reconciliation pass after every server (re)start; the script always
+# exits — no daemon. Also exposed as the "reconcile" action above.
+[[startup]]
+command = ["bash", "-c", '''exec bash "$HERDR_PLUGIN_ROOT/scripts/reconcile.sh"''']

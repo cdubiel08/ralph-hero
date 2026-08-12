@@ -36,3 +36,7 @@ plugin/*/*/coverage/
 mcp-server/dist/
 mcp-server/coverage/
 node_modules/
+
+# ralph-herdr cockpit TUI binary (rung 1 of the launcher ladder; rebuilt by
+# the plugin's [[build]] hook / scripts/build-cockpit.sh — never committed).
+plugin/ralph-herdr/cockpit/ralph-cockpit

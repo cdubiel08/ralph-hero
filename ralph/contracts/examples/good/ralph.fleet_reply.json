@@ -1,0 +1,12 @@
+{
+  "contract": "ralph.fleet_reply",
+  "contract_version": 1,
+  "agent_ref": "w1743-claim-v2-multi-holder#a3f2",
+  "issue": 1743,
+  "kind": "question",
+  "body": "Two wire formats are possible for multi-holder claims; which one should land?",
+  "options": [
+    { "id": "plus", "label": "holder1+holder2|iso — back-compatible with today's field", "recommended": true },
+    { "id": "json", "label": "JSON array in the Claim text field" }
+  ]
+}

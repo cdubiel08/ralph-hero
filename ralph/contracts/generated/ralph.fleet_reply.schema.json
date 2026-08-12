@@ -1,0 +1,68 @@
+{
+  "$id": "ralph:contracts/ralph.fleet_reply",
+  "type": "object",
+  "properties": {
+    "contract": {
+      "type": "string",
+      "const": "ralph.fleet_reply"
+    },
+    "contract_version": {
+      "type": "number",
+      "const": 1
+    },
+    "agent_ref": {
+      "type": "string"
+    },
+    "issue": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "progress",
+        "blocked",
+        "done",
+        "question"
+      ]
+    },
+    "body": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recommended": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "contract",
+    "contract_version",
+    "agent_ref",
+    "issue",
+    "kind",
+    "body"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

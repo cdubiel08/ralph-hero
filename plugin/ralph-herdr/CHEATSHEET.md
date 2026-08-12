@@ -1,7 +1,8 @@
 # ralph-herdr cheat sheet
 
 Terminal commands to drive the cockpit, in the order you'll actually need them.
-Distilled from live sessions — every command here has been run for real.
+Distilled from live sessions and the shipped scripts — every command here has
+been run for real or read straight out of the source it invokes.
 
 ## 0. Quick start from zero (one-time)
 
@@ -62,20 +63,28 @@ herdr status     # is the server up, what's attached
 Detach with `ctrl+b q` — everything keeps running. Never launch a nested
 `herdr` inside a pane (`HERDR_ENV=1` means you're already inside).
 
-## 2. The cockpit
+## 2. The actions
 
 Invoke from a shell whose workspace cwd is the ralph-configured repo (or use
 herdr's action menu with that workspace focused).
 
 ```bash
-herdr plugin action invoke dashboard    --plugin ralph-herdr   # herd view, read-only
+herdr plugin action invoke cockpit      --plugin ralph-herdr   # THE board pane: TUI → fzf → dashboard
+herdr plugin action invoke dashboard    --plugin ralph-herdr   # read-only watch loop
 herdr plugin action invoke work-next    --plugin ralph-herdr   # 1 work session, board-next
-herdr plugin action invoke work-fleet   --plugin ralph-herdr   # up to N ranked issues in parallel
+herdr plugin action invoke work-fleet   --plugin ralph-herdr   # up to N frontier issues in parallel
+herdr plugin action invoke work-issue-fleet --plugin ralph-herdr  # sibling fleet on ONE issue
+herdr plugin action invoke answer       --plugin ralph-herdr   # answer a Human Needed item, comment-first
+herdr plugin action invoke attend       --plugin ralph-herdr   # focus whatever is blocked (carries the question)
 herdr plugin action invoke deliver-pass --plugin ralph-herdr   # shepherd In Review PRs
 herdr plugin action invoke tend-pass    --plugin ralph-herdr   # hygiene pass
-herdr plugin action invoke attend       --plugin ralph-herdr   # focus whatever is blocked
-herdr plugin action invoke doctor      --plugin ralph-herdr    # invariant sweep, popup
+herdr plugin action invoke doctor       --plugin ralph-herdr   # invariant sweep, popup
+herdr plugin action invoke reconcile    --plugin ralph-herdr   # heal the watcher ledger (also runs at server start)
 ```
+
+Clicking a `github.com/<owner>/<repo>/issues|pull/N` URL in any pane routes
+through the plugin's link handler: in-scope with a live session → focus; no
+session → an offer to spawn one; out-of-scope → your browser.
 
 Notes that save confusion:
 
@@ -83,11 +92,84 @@ Notes that save confusion:
 - After a spawn, the invoking pane **hangs on purpose** — it became the
   notification watcher. You get a toast the moment the session blocks or ends.
 - Preview any spawn for free: `RALPH_HERDR_DRY_RUN=true` prints the exact plan
-  and exits before any mutation.
+  (branch, agent name, herdr commands, even the ledger record) and exits before
+  any mutation.
 - All knobs (`RALPH_HERDR_FLEET`, `RALPH_HERDR_DASH_INTERVAL`, …) are in the
   README's Knobs table.
 
-## 3. Inspect the herd from any shell
+## 3. The cockpit pane, and its keys
+
+`Ralph: cockpit` opens the best surface the host can serve — the pane's first
+line names the rung it took: the Go TUI when built, the fzf fallback when not,
+the read-only dashboard when neither. Every rung keeps the verbs.
+
+TUI: three columns — In Progress / In Review / Human Needed (board states
+verbatim; Human Needed cards show the blocking question).
+
+| Key | Verb |
+|---|---|
+| `h`/`l`, `←`/`→` · `j`/`k`, `↑`/`↓` | move between columns · cards |
+| `Enter` | observe — `herdr agent focus` on the card's live session |
+| `Space`, `o` | peek — pane-tail overlay, no focus steal |
+| `r` | reply — `herdr agent prompt`; checkmark only after herdr confirms |
+| `a` | answer — comment-first via `board answer` (see §5) |
+| `s` | spawn — a `/ralph:work` session for the card |
+| `v` | DAG view — `board frontier` as a text tree |
+| `d` / `g` / `q` | PR diff popup / open in browser / quit |
+| mouse | click selects, double-click observes |
+
+## 4. Names (grammar B)
+
+Sessions the cockpit spawns are named `<lane><issue>-<slug>[--<gen>]`, ≤32
+chars: `w1743-fix-claim-race` is a work session on #1743. Lanes: `w`=work,
+`r`=review, `o`=orchestrator, `d`=disposable, `s`=watcher, `x`=relay (issue 0
+is infra: `s0-watch`). `--2`..`--9` are sibling generations — issue fleets
+only, never improvised on a collision. The durable handle in the ledger is
+`name#epoch` (4-8 hex); pane ids are server-scoped and die with it. Legacy
+`gh-N` / `ralph-deliver` / `ralph-tend` names still parse everywhere. Names
+are derived from the issue title (`scripts/naming.sh`, mirroring
+`ralph/scripts/contracts.ts` — a shared golden table pins both); read them
+back from `herdr agent list`, never guess a slug.
+
+## 5. Answer a blocked item
+
+The durable half is a GitHub comment, and it lands first:
+
+```bash
+board answer NNN -m "Option B — ship it behind the flag"
+```
+
+`board answer` posts the **Answer** issue comment BEFORE the Human Needed →
+In Progress move, so a pane that dies mid-answer still leaves the decision on
+the record. The `answer` action (and the TUI's `a`) drive the same verb, then
+nudge any live session owning NNN — delivery reported honestly ("sent but not
+confirmed" when `--wait` expires), never assumed. `--comment-only` posts
+without the move; `--any-state` comments on an item outside Human Needed.
+
+## 6. Fleets and shared claims
+
+```bash
+board frontier                                   # every issue eligible to start NOW (+ who's blocked on what)
+board claim show NNN                             # holders, shared since, age vs TTL
+board claim join NNN --holder w1743-fix-thing    # add a sibling (In Progress only, ≤8 holders)
+board claim leave NNN --holder w1743-fix-thing   # last one out clears the field
+```
+
+`work-fleet` spawns from the top of the frontier (`RALPH_HERDR_FLEET`,
+default 2, hard cap 4). `work-issue-fleet` puts `RALPH_HERDR_SIBLINGS`
+(default 2, cap 4) sessions on ONE issue — one worktree, one shared branch;
+set `RALPH_HERDR_ISSUE=NNN` to skip the pane's prompt. The join happens after
+sibling 1's session claims (bounded wait); a timeout prints the manual
+`claim join` commands and never blocks the spawn.
+
+Refill (`work-fleet --refill`, or `RALPH_HERDR_REFILL=1`) is opt-in per run,
+TTL-capped (120 min) and budget-capped (8 spawns), tops up only when a w-lane
+session **exits or finishes** — never on blocked — and disarms itself.
+**Stays opt-in — the 2026-08-11 claim-TTL probe returned NO-GO for default
+arming** (a server restart restores pane topology but kills the process in
+every pane); the default click stays a one-shot fleet.
+
+## 7. Inspect the herd from any shell
 
 Get real agent names from `herdr agent list` first — `<agent>` below is a name
 (or pane ID) copied from that response, never typed from memory:
@@ -102,7 +184,7 @@ herdr agent wait <agent> --until blocked && herdr notification show "<agent> nee
 Agent commands are JSON-native (no `--json` flag). `wait` with no timeout hangs
 on purpose and returns instantly if the state already matches.
 
-## 4. Drive an agent by hand
+## 8. Drive an agent by hand
 
 ```bash
 herdr worktree create --cwd <repo> --branch feature/GH-NNNN --base origin/main --no-focus
@@ -113,18 +195,40 @@ checkout's HEAD, which is whatever branch that checkout happens to be sitting
 on. Read the `pane_id` out of the JSON response, then:
 
 ```bash
-herdr agent start gh-NNNN --kind claude --pane <pane-from-response>
-herdr agent prompt gh-NNNN "/ralph:work NNNN"
+herdr agent start w1743-fix-claim-race --kind claude --pane <pane-from-response>
+herdr agent prompt w1743-fix-claim-race "/ralph:work 1743"
 ```
 
-`agent start` needs the pane sitting at its shell prompt; a fresh pane takes a
-few seconds to get there (the cockpit retries this for you — by hand, just
-retry).
+Any herdr-legal name works, but the cockpit's cards, attend ordering, and
+tokens key off grammar B (§4) — name hand-driven work sessions `w<N>-<slug>`
+so they join the herd instead of haunting it. `agent start` needs the pane
+sitting at its shell prompt; a fresh pane takes a few seconds to get there
+(the cockpit retries this for you — by hand, just retry).
 
-## 5. When something's weird
+## 9. Probe before you trust
 
 ```bash
-herdr agent explain gh-NNNN --json          # WHY herdr believes the state — every
+RALPH_HERDR_DRY_RUN=true bash plugin/ralph-herdr/scripts/work-fleet.sh
+                                             # the exact spawn plan, zero mutations — run the
+                                             # script directly from the repo: an env var on
+                                             # `plugin action invoke` never reaches the pane
+                                             # (panes inherit the SERVER's env; Knobs table)
+bash plugin/ralph-herdr/scripts/doctor-lineage.sh
+                                             # L10: live agents ↔ open ledger records, read-only
+                                             # (0 closed / 1 findings / 2 not evaluable);
+                                             # /ralph:help herdr relays the same verdict
+board contract validate ralph.fleet_brief \
+  ~/.ralph/<owner>/<repo>/runs/<run_id>/briefs/<ref>.json   # typed payloads C1-C9
+board contract lint ralph.completion_report report.json --live  # lints L1-L13
+```
+
+The ledger itself is plain JSONL: `jq . ~/.ralph/<owner>/<repo>/ledger.jsonl`.
+It's an observation log — nothing gates on it, and agents never write it.
+
+## 10. When something's weird
+
+```bash
+herdr agent explain <agent> --json          # WHY herdr believes the state — every
                                             # detection rule with evidence
 herdr plugin log list --plugin ralph-herdr  # what the actions actually ran
 herdr plugin install cdubiel08/ralph-hero/plugin/ralph-herdr --yes   # update (replaces pin)
@@ -138,7 +242,13 @@ that checkout is on. GitHub installs are pinned and branch-proof.
 1. **IDs come from JSON responses** — never typed from memory, never carried
    across machines or servers. (Applies to issue numbers in scripts, too.)
 2. **The chip is a hint.** `working` means alive, not progressing; `blocked` is
-   screen-detected. The board — claims, comments, state — is the truth.
-3. **Reads are free; spawns cost tokens.** dashboard / attend / doctor /
-   `agent read` cost nothing; only `work-*` and `*-pass` start Claude sessions,
-   and `RALPH_HERDR_DRY_RUN=true` previews any of them for free.
+   screen-detected; pane tokens are chrome. The board — claims, comments,
+   state — is the truth.
+3. **Reads are free; spawns cost tokens.** cockpit / dashboard / attend /
+   doctor / `agent read` cost nothing; only `work-*` and `*-pass` start Claude
+   sessions, and `RALPH_HERDR_DRY_RUN=true` previews any of them for free.
+
+Sessions running *inside* a cockpit pane have their own reference — naming,
+self-report tokens, the sanctioned spawn path, fleet claims:
+`ralph/skills/work/references/herdr-api.md` (ships inside the ralph Claude
+Code plugin).

@@ -25,6 +25,20 @@ jobs:
         # Directory, not filename: a new *.test.ts beside board.ts (e.g. the
         # metrics registry) must not be silently skipped by CI.
         run: npx vitest run ralph/scripts/
+      - name: Contract schema drift check
+        # Re-emit the ralph/contracts/generated artifacts to a temp dir and
+        # diff — contracts.ts and the committed schemas cannot drift apart.
+        run: npm run contracts:check
+
+      - name: BDD replay suite (cucumber-js)
+        # plugin/ralph-herdr/features — the replay profile only: cucumber
+        # steps drive the real bash scripts (spawn path, watch-event.sh,
+        # reconcile.sh, ralph-answer.sh, work-fleet.sh) through the
+        # tests/fake-herdr.sh + fake-board.sh shims, same harness as the
+        # *.test.sh suites in the test-hooks job. @live scenarios need a
+        # real herdr server and NEVER run in CI — scripts/nightly-live.sh
+        # runs them from local launchd (see its header for the wiring).
+        run: npm run test:bdd
 
   build-and-test-demo:
     runs-on: ubuntu-latest
@@ -103,6 +117,18 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
+      # fleet.test.sh's brief cases run the REAL board CLI. Without deps the
+      # board shim falls back to `npx tsx@4.19.0` (a network fetch per run) and
+      # `contract validate` refuses for want of zod, so the suite would exercise
+      # only the degraded branch — on a network hiccup it would fail outright.
+      # Installing deps makes CI run the strict branch; the suite's capability
+      # gate stays for hosts that legitimately have no zod.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
       - name: Run hook tests
         shell: bash
         run: |
@@ -111,12 +137,52 @@ jobs:
           # cannot abort the suite. First non-zero rc propagates.
           # (ralph/hooks/scripts/__tests__ deleted in the v2 cutover, GH-1662 —
           # funnel-merge.sh, funnel-board.sh, and tick.sh each have a dedicated
-          # suite here: funnel-merge.test.sh, funnel-board.test.sh, tick.test.sh.)
-          find scripts/__tests__ \
+          # suite here: funnel-merge.test.sh, funnel-board.test.sh, tick.test.sh.
+          # plugin/ralph-herdr/tests carries the bash half of the grammar-B
+          # naming mirror — naming.test.sh, also `npm run test:naming` — plus
+          # the Phase-2 watcher suite watcher.test.sh (`npm run test:watcher`),
+          # the Phase-3 fleet suite fleet.test.sh (`npm run test:fleet`;
+          # its brief-validation cases run the real board CLI offline, so the
+          # runner needs a node/npx — ubuntu-latest ships one), the
+          # Phase-4 card-substrate suite substrate.test.sh
+          # (`npm run test:substrate`), and the Phase-5 cockpit suite
+          # cockpit.test.sh (`npm run test:cockpit`; launcher ladder +
+          # cockpit-fzf.sh's sourced pure functions — it never drives a real
+          # fzf, so the runner needs none). The fake-herdr.sh and
+          # fake-board.sh PATH shims are helpers, not *.test.sh, so the glob
+          # deliberately skips them.)
+          find scripts/__tests__ plugin/ralph-herdr/tests \
             \( -name '*.test.sh' -o -name 'test-*.sh' \) \
             -type f -print0 \
             | sort -z \
             | xargs -0 -n1 bash -c 'echo "=== $0 ==="; bash "$0"; rc=$?; if [ $rc -ne 0 ]; then echo "FAIL: $0 exited $rc"; exit $rc; fi'
+
+      # The cockpit Go TUI (plugin/ralph-herdr/cockpit) — gofmt, vet, and the
+      # table-driven update-loop tests. Gated the same way the host-key
+      # freshness step gates on the network: a runtime probe that degrades to
+      # "not evaluated" instead of failing, because a runner without a Go
+      # toolchain says nothing about the code (ubuntu-latest ships one, so in
+      # practice this runs; the probe keeps the job honest on leaner runners
+      # and local act/self-hosted setups). No setup-go: the ladder's rung-1
+      # binary is built locally by scripts/build-cockpit.sh, never in CI.
+      - name: Cockpit Go suite (only when a Go toolchain is present)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then
+            echo "::notice::Cockpit Go suite not evaluated — no Go toolchain on this runner (build-cockpit.sh documents the local run)."
+            exit 0
+          fi
+          cd plugin/ralph-herdr/cockpit
+          go version
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt required on:"
+            echo "$unformatted"
+            exit 1
+          fi
+          go vet ./...
+          go test -count=1 ./...
 
   # Defense-in-depth guard against the failure mode from GH-#####:
   # `.mcp.json` referencing an npm version that was never published, leaving
@@ -323,5 +389,14 @@ jobs:
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca
         with:
           scandir: scripts
+          severity: error
+          format: gcc
+
+      # ralph-herdr cockpit: naming.sh/lib.sh derive agent names at spawn —
+      # the bash half of the grammar-B mirror deserves the same lint bar.
+      - name: Run ShellCheck on ralph-herdr plugin scripts
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca
+        with:
+          scandir: plugin/ralph-herdr
           severity: error
           format: gcc

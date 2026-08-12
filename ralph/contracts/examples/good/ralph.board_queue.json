@@ -1,0 +1,81 @@
+{
+  "contract": "ralph.board_queue",
+  "contract_version": 1,
+  "selector": "next",
+  "result": {
+    "next": {
+      "number": 1743,
+      "repo": "cdubiel08/ralph-hero",
+      "title": "ClaimV2 multi-holder wire format",
+      "state": "Backlog",
+      "priority": "P1",
+      "hasParent": true,
+      "parentNumber": 1700,
+      "openBlockers": [],
+      "blockersTruncated": false,
+      "fieldValuesTruncated": false,
+      "claim": null,
+      "claimRaw": null,
+      "openBlockerLabels": [],
+      "labels": ["ralph:herdr"],
+      "labelsTruncated": false,
+      "closedBlockers": [1712],
+      "updatedAt": "2026-08-10T12:00:00Z",
+      "createdAt": "2026-08-01T09:30:00Z",
+      "estimate": "M"
+    },
+    "queue": [
+      {
+        "number": 1743,
+        "repo": "cdubiel08/ralph-hero",
+        "title": "ClaimV2 multi-holder wire format",
+        "state": "Backlog",
+        "priority": "P1",
+        "hasParent": true,
+        "parentNumber": 1700,
+        "openBlockers": [],
+        "blockersTruncated": false,
+        "fieldValuesTruncated": false,
+        "claim": null,
+        "claimRaw": null,
+        "openBlockerLabels": [],
+        "labels": ["ralph:herdr"],
+        "labelsTruncated": false,
+        "closedBlockers": [1712],
+        "updatedAt": "2026-08-10T12:00:00Z",
+        "createdAt": "2026-08-01T09:30:00Z",
+        "estimate": "M"
+      }
+    ],
+    "blocked": [
+      {
+        "number": 1745,
+        "repo": "cdubiel08/ralph-hero",
+        "title": "Watcher ledger appender",
+        "state": "Backlog",
+        "priority": "P2",
+        "hasParent": true,
+        "parentNumber": 1700,
+        "openBlockers": [1743],
+        "blockersTruncated": false,
+        "fieldValuesTruncated": false,
+        "claim": {
+          "holders": ["w1743-claim-v2-multi-holder"],
+          "since": "2026-08-10T14:00:00Z"
+        },
+        "claimRaw": "w1743-claim-v2-multi-holder|2026-08-10T14:00:00Z",
+        "openBlockerLabels": ["#1743"],
+        "labels": [],
+        "labelsTruncated": false,
+        "closedBlockers": [],
+        "updatedAt": "2026-08-09T08:15:00Z",
+        "createdAt": "2026-08-02T10:00:00Z",
+        "estimate": null
+      }
+    ],
+    "diagnosis": null,
+    "humanNeededCount": 0,
+    "staleBlockedEdges": [],
+    "inFlightEpics": []
+  }
+}

@@ -33,9 +33,15 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/herdr-setup.sh check
 
 Run it first, always. Then:
 
-- **Everything ok** — say so; nothing else to do. Point at the seven cockpit
-  actions (herdr's action menu in the repo workspace: work-next, work-fleet,
-  attend, deliver-pass, tend-pass, doctor, dashboard).
+- **Everything ok** — say so; nothing else to do. Point at the cockpit
+  actions (herdr's action menu in the repo workspace): work-next, work-fleet,
+  work-issue-fleet (shared-claim sibling fleet), attend, answer (the Human
+  Needed exit, comment-first), cockpit (the board TUI over a degradation
+  ladder), dashboard, deliver-pass, tend-pass, doctor, reconcile. Clicked
+  issue/PR URLs route through the plugin's link handlers (focus the live
+  session, or offer to spawn one). Fleet refill (`work-fleet --refill`) is
+  opt-in per run, TTL- and budget-gated, and **never armed by default** — the
+  2026-08-11 claim-TTL probe returned NO-GO for default arming.
 - **`herdr: not installed` (exit 2)** — herdr itself is a manual install; send the
   user to https://herdr.dev/ and stop. Nothing else is checkable until it exists.
 - **Gaps (exit 1)** — relay each GAP line plainly, then offer to run the fix pass.
@@ -58,4 +64,7 @@ user can re-verify any time without this skill.
 Deeper reference: the cockpit's own docs —
 `plugin/ralph-herdr/README.md` and `plugin/ralph-herdr/CHEATSHEET.md` in
 [cdubiel08/ralph-hero](https://github.com/cdubiel08/ralph-hero/tree/main/plugin/ralph-herdr)
-(actions, knobs, the nesting model, honest limits).
+(actions, knobs, the nesting model, honest limits). What a session running
+*inside* a cockpit pane needs — naming grammar, self-report tokens, the
+sanctioned spawn path, fleet claims, the ledger — is
+`${CLAUDE_PLUGIN_ROOT}/skills/work/references/herdr-api.md`.

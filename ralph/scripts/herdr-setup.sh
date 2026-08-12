@@ -151,6 +151,35 @@ else
   gap "gh-auth" "not authenticated — gh auth login -s repo,project"
 fi
 
+# ── watcher lineage closure (advisory — L10, doctor-lineage.sh) ──────────────
+# Relayed at NOTE level only, on purpose: `board doctor` consumes this
+# script's verdict as its info-level herdr-cockpit line, and a lineage
+# finding is watcher telemetry (a missed reconcile), never a cockpit wiring
+# gap — it must move neither the exit code nor the --oneline gap count. The
+# check itself lives with the watcher (the herdr plugin), so plugin-install
+# layouts without a repo plugin/ tree degrade to "not evaluated".
+lineage_sh="${RALPH_HERDR_LINEAGE_SH:-$SCRIPT_DIR/../../plugin/ralph-herdr/scripts/doctor-lineage.sh}"
+if [ ! -f "$lineage_sh" ]; then
+  note "watcher-lineage" "not evaluated (doctor-lineage.sh not found — it ships inside the ralph-herdr herdr plugin)"
+elif [ -z "$SERVER_UP" ]; then
+  note "watcher-lineage" "not checked (server down)"
+else
+  lineage_rc=0
+  lineage_out=$(bash "$lineage_sh" 2>/dev/null) || lineage_rc=$?
+  case "$lineage_rc" in
+    0) note "watcher-lineage" "closed — every live ralph agent has exactly one open ledger record" ;;
+    1)
+      lineage_gaps=$(grep -c '^  GAP ' <<<"$lineage_out" || true)
+      note "watcher-lineage" "${lineage_gaps:-some} lineage finding(s) — bash $lineage_sh for detail"
+      if [ -z "$ONELINE" ]; then
+        grep '^  GAP ' <<<"$lineage_out" | sed 's/^  GAP  /       · /' || true
+      fi
+      ;;
+    2) note "watcher-lineage" "not evaluable (herdr unreachable mid-check)" ;;
+    *) note "watcher-lineage" "not evaluated (doctor-lineage.sh exited $lineage_rc)" ;;
+  esac
+fi
+
 # ── report / oneline ─────────────────────────────────────────────────────────
 # Note the length guards before every "${GAPS[@]}" expansion: macOS ships
 # bash 3.2, where an empty array trips `set -u` even quoted.

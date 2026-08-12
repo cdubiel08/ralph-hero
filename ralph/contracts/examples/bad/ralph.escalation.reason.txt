@@ -1,0 +1,3 @@
+Both options carry "recommended": true — exactly ONE option must be the
+recommended default, or the escalation stops being phone-answerable (the human
+can no longer just tap the default).
