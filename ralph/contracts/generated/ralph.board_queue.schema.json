@@ -938,6 +938,7 @@
                     "category": {
                       "type": "string",
                       "enum": [
+                        "proposed",
                         "stale-body",
                         "deps-cleared",
                         "deps-truncated",
@@ -985,6 +986,7 @@
                   "category": {
                     "type": "string",
                     "enum": [
+                      "proposed",
                       "stale-body",
                       "deps-cleared",
                       "deps-truncated",
@@ -1028,6 +1030,7 @@
                   "category": {
                     "type": "string",
                     "enum": [
+                      "proposed",
                       "stale-body",
                       "deps-cleared",
                       "deps-truncated",
