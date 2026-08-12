@@ -3224,3 +3224,519 @@ describe("answer verb (ralph-herdr v2) — comment-first", () => {
     expect(gh.comments).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Board volume + prune (GH-1788)
+// ---------------------------------------------------------------------------
+
+import {
+  classifyPrune,
+  parseVolumeThresholds,
+  VOLUME_DEFAULTS,
+  volumeReport,
+  type ApplyConfig,
+  type ClosedItem,
+} from "./board.js";
+
+describe("board volume (GH-1788)", () => {
+  const days = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();
+  const open = (n: number, over: Partial<QueueItem> = {}): QueueItem =>
+    ({
+      number: n,
+      repo: "cdubiel08/ralph-hero",
+      title: `t${n}`,
+      state: "Backlog",
+      priority: null,
+      hasParent: false,
+      parentNumber: null,
+      openBlockers: [],
+      openBlockerLabels: [],
+      blockersTruncated: false,
+      fieldValuesTruncated: false,
+      claim: null,
+      claimRaw: null,
+      labels: [],
+      labelsTruncated: false,
+      closedBlockers: [],
+      updatedAt: days(1),
+      createdAt: days(2),
+      estimate: "S",
+      ...over,
+    }) as QueueItem;
+  const closed = (n: number, over: Partial<ClosedItem> = {}): ClosedItem => ({
+    number: n,
+    repo: "cdubiel08/ralph-hero",
+    itemId: `PVTI_${n}`,
+    state: "Done",
+    archived: false,
+    labels: [],
+    labelsTruncated: false,
+    stateReason: "COMPLETED",
+    closedAt: days(400),
+    parentNumber: null,
+    ...over,
+  });
+  it("reports what the walk measured, not what survived it", () => {
+    const v = volumeReport(
+      {
+        open: [open(1)],
+        closed: Array.from({ length: 250 }, (_, i) => closed(i + 100)),
+        scan: { nodes: 251, pages: 3, archivedOpen: 0 },
+      },
+      { ...VOLUME_DEFAULTS, maxItems: 800 },
+    );
+    expect(v.items).toBe(251);
+    expect(v.pages).toBe(3);
+    expect(v.open).toBe(1);
+    expect(v.closed).toBe(250);
+    expect(v.nonIssue).toBe(0);
+    expect(v.over).toBe(false);
+  });
+
+  // The bug a live dry run caught: PRs and drafts on the board never match the
+  // `... on Issue` fragment, so inferring cost from the survivors understated
+  // it by ~47% on the real board. Cost is measured, never inferred.
+  it("counts nodes the issue fragment dropped — PRs and drafts are paid for too", () => {
+    const v = volumeReport(
+      { open: [open(1)], closed: [closed(2)], scan: { nodes: 1349, pages: 14, archivedOpen: 0 } },
+      { ...VOLUME_DEFAULTS, maxItems: 800 },
+    );
+    expect(v.items).toBe(1349);
+    expect(v.pages).toBe(14);
+    expect(v.nonIssue).toBe(1347);
+    expect(v.over).toBe(true);
+  });
+
+  // Review finding: nonIssue is a RESIDUAL, so any class not subtracted lands
+  // in it. Archived OPEN items are dropped by the walk before reaching `open`,
+  // so without their own counter doctor called archived issues "PRs/drafts".
+  it("archived OPEN items are archived, not non-issue", () => {
+    const v = volumeReport(
+      { open: [open(1)], closed: [], scan: { nodes: 5, pages: 1, archivedOpen: 4 } },
+      VOLUME_DEFAULTS,
+    );
+    expect(v.archived).toBe(4);
+    expect(v.nonIssue).toBe(0); // 5 nodes = 1 open + 4 archived-open, nothing unaccounted
+  });
+
+  it("archived counts both sides: closed-archived rides in `closed`, open-archived in the meter", () => {
+    const v = volumeReport(
+      {
+        open: [],
+        closed: [closed(1, { archived: true }), closed(2)],
+        scan: { nodes: 4, pages: 1, archivedOpen: 2 },
+      },
+      VOLUME_DEFAULTS,
+    );
+    expect(v.archived).toBe(3); // 1 closed-archived + 2 open-archived
+    expect(v.nonIssue).toBe(0);
+  });
+
+  it("a genuine PR/draft still reads as non-issue", () => {
+    const v = volumeReport(
+      { open: [open(1)], closed: [], scan: { nodes: 10, pages: 1, archivedOpen: 0 } },
+      VOLUME_DEFAULTS,
+    );
+    expect(v.nonIssue).toBe(9);
+    expect(v.archived).toBe(0);
+  });
+
+  it("archived items still count toward the scan — hiding an item does not stop paying for it", () => {
+    const v = volumeReport(
+      {
+        open: [],
+        closed: [closed(1, { archived: true }), closed(2, { archived: true })],
+        scan: { nodes: 2, pages: 1, archivedOpen: 0 },
+      },
+      { ...VOLUME_DEFAULTS, maxItems: 1 },
+    );
+    expect(v.archived).toBe(2);
+    expect(v.items).toBe(2);
+    expect(v.over).toBe(true); // the whole point: archiving buys no scan relief
+  });
+
+  it("an empty board still reports one page — a scan always costs at least one round trip", () => {
+    expect(
+      volumeReport({ open: [], closed: [], scan: { nodes: 0, pages: 0, archivedOpen: 0 } }, VOLUME_DEFAULTS).pages,
+    ).toBe(1);
+  });
+
+  it("thresholds: defaults, override, and a bad value degrading to the default", () => {
+    expect(parseVolumeThresholds({})).toEqual(VOLUME_DEFAULTS);
+    expect(parseVolumeThresholds({ RALPH_VOLUME_MAX_ITEMS: "300" }).maxItems).toBe(300);
+    expect(parseVolumeThresholds({ RALPH_PRUNE_AFTER_DAYS: "30" }).pruneAfterDays).toBe(30);
+    // Advisory, so a bad value must not fail the command — it warns and defaults.
+    expect(parseVolumeThresholds({ RALPH_VOLUME_MAX_ITEMS: "soon" }).maxItems).toBe(
+      VOLUME_DEFAULTS.maxItems,
+    );
+    expect(parseVolumeThresholds({ RALPH_VOLUME_MAX_ITEMS: "0" }).maxItems).toBe(
+      VOLUME_DEFAULTS.maxItems,
+    );
+  });
+});
+
+describe("prune candidates (GH-1788)", () => {
+  const days = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();
+  const closed = (n: number, over: Partial<ClosedItem> = {}): ClosedItem => ({
+    number: n,
+    repo: "cdubiel08/ralph-hero",
+    itemId: `PVTI_${n}`,
+    state: "Done",
+    archived: false,
+    labels: [],
+    labelsTruncated: false,
+    stateReason: "COMPLETED",
+    closedAt: days(400),
+    parentNumber: null,
+    ...over,
+  });
+  const openItem = (n: number, parentNumber: number | null = null): QueueItem =>
+    ({
+      number: n,
+      repo: "cdubiel08/ralph-hero",
+      title: `t${n}`,
+      state: "Backlog",
+      priority: null,
+      hasParent: parentNumber !== null,
+      parentNumber,
+      openBlockers: [],
+      openBlockerLabels: [],
+      blockersTruncated: false,
+      fieldValuesTruncated: false,
+      claim: null,
+      claimRaw: null,
+      labels: [],
+      labelsTruncated: false,
+      closedBlockers: [],
+      updatedAt: days(1),
+      createdAt: days(2),
+      estimate: "S",
+    }) as QueueItem;
+  const cfg = (apply: Partial<ApplyConfig> = {}) => ({
+    volume: { ...VOLUME_DEFAULTS },
+    apply: { enabled: false, label: "ralph:apply", infraPaths: [], ...apply },
+  });
+  const reasons = (r: ReturnType<typeof classifyPrune>) =>
+    Object.fromEntries(r.retained.map((x) => [x.number, x.reason]));
+
+  it("a long-closed terminal leaf is removable", () => {
+    const r = classifyPrune([], [closed(1)], cfg(), NOW);
+    expect(r.candidates.map((c) => c.number)).toEqual([1]);
+    expect(r.candidates[0].itemId).toBe("PVTI_1");
+    expect(r.candidates[0].ageDays).toBe(400);
+  });
+
+  it("retains everything another reader still depends on, with the reason named", () => {
+    const r = classifyPrune(
+      [],
+      [
+        closed(1, { state: "In Review" }), // doctor's closedDrift still has work here
+        closed(2, { closedAt: days(10) }), // tend's Done audit still reads it
+        closed(3, { closedAt: null }), // cannot prove it is old
+        closed(4, { archived: true }),
+        closed(5, { itemId: "" }),
+        closed(6, { state: "(none)" }),
+      ],
+      cfg(),
+      NOW,
+    );
+    expect(r.candidates).toEqual([]);
+    expect(reasons(r)).toEqual({
+      1: "not-terminal",
+      2: "too-recent",
+      3: "undated",
+      4: "archived",
+      5: "no-item-id",
+      6: "not-terminal",
+    });
+    expect(r.scanned).toBe(6);
+  });
+
+  it("never severs a tree edge an open item walks through — multi-hop, and only for open descendants", () => {
+    // 3(open) → 2(closed, old) → 1(closed, old): both closed ancestors are
+    // load-bearing for the ranker. 9 is an unrelated closed leaf.
+    const r = classifyPrune(
+      [openItem(3, 2)],
+      [closed(1), closed(2, { parentNumber: 1 }), closed(9)],
+      cfg(),
+      NOW,
+    );
+    expect(r.candidates.map((c) => c.number)).toEqual([9]);
+    expect(reasons(r)).toEqual({ 1: "tree-edge", 2: "tree-edge" });
+  });
+
+  it("a closed parent whose children are all closed is not load-bearing", () => {
+    const r = classifyPrune([], [closed(1), closed(2, { parentNumber: 1 })], cfg(), NOW);
+    expect(r.candidates.map((c) => c.number).sort()).toEqual([1, 2]);
+  });
+
+  it("a parent cycle terminates rather than hanging the sweep", () => {
+    const r = classifyPrune(
+      [openItem(3, 1)],
+      [closed(1, { parentNumber: 2 }), closed(2, { parentNumber: 1 })],
+      cfg(),
+      NOW,
+    );
+    expect(r.candidates).toEqual([]);
+  });
+
+  it("apply units are the evidence sweep's, and a truncated label list fails closed", () => {
+    const armed = cfg({ enabled: true });
+    const r = classifyPrune(
+      [],
+      [
+        closed(1, { labels: ["ralph:apply"] }),
+        closed(2, { labelsTruncated: true }),
+        closed(3, { labels: ["bug"] }),
+      ],
+      armed,
+      NOW,
+    );
+    expect(r.candidates.map((c) => c.number)).toEqual([3]);
+    expect(reasons(r)).toEqual({ 1: "apply-unit", 2: "apply-unit" });
+  });
+
+  it("apply gates are inert when the repo has not opted in", () => {
+    const r = classifyPrune([], [closed(1, { labels: ["ralph:apply"] })], cfg(), NOW);
+    expect(r.candidates.map((c) => c.number)).toEqual([1]);
+  });
+
+  it("honours the configured age window", () => {
+    const c = { volume: { ...VOLUME_DEFAULTS, pruneAfterDays: 30 }, apply: cfg().apply };
+    const r = classifyPrune([], [closed(1, { closedAt: days(31) })], c, NOW);
+    expect(r.candidates.map((x) => x.number)).toEqual([1]);
+    expect(classifyPrune([], [closed(1, { closedAt: days(29) })], c, NOW).candidates).toEqual([]);
+  });
+
+  it("oldest first — a bounded sweep should remove the deadest history", () => {
+    const r = classifyPrune(
+      [],
+      [closed(1, { closedAt: days(200) }), closed(2, { closedAt: days(900) })],
+      cfg(),
+      NOW,
+    );
+    expect(r.candidates.map((c) => c.number)).toEqual([2, 1]);
+  });
+});
+
+describe("doctor board-volume line (GH-1788)", () => {
+  const line = (r: ReturnType<typeof doctor>) =>
+    r.checks.find((c) => c.name === "board-volume")!;
+
+  it("a small board reads ok and names the scan cost", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const c = line(doctor(makeCtx(gh)));
+    expect(c.level).toBe("ok");
+    expect(c.detail).toContain("page(s) per full scan");
+  });
+
+  it("over threshold is INFO and never touches the exit code, --strict included", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const ctx = makeCtx(gh);
+    ctx.cfg.volume = { ...ctx.cfg.volume, maxItems: 0 }; // any board is "over"
+    const baseline = doctor(makeCtx(new FakeGh()), { strict: true }).ok;
+    const r = doctor(ctx, { strict: true });
+    expect(line(r).level).toBe("info");
+    // The remedy removes items from the project — a human's call, never a gate.
+    expect(line(r).detail).toContain("archiving would NOT help");
+    expect(r.ok).toBe(baseline);
+  });
+
+  it("--fix never acts on it: a board over threshold produces no fix line", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const ctx = makeCtx(gh);
+    ctx.cfg.volume = { ...ctx.cfg.volume, maxItems: 0 };
+    const r = doctor(ctx, { fix: true });
+    expect(line(r).level).toBe("info");
+    const fixes = r.checks.filter((c) => c.name === "fix").map((c) => c.detail);
+    expect(fixes.some((d) => /prune|remove|volume/i.test(d))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prune THROUGH THE CLI (GH-1788 rework).
+//
+// The classifier had tests; the dispatch did not, and both shipped bugs lived
+// exactly there: `--apply --json` returned before the apply block (a
+// destructive command silently no-opping under the flag automation uses), and
+// the removal loop was unbounded. Every test here drives run() end to end.
+// ---------------------------------------------------------------------------
+
+import { applyPrune, PRUNE_DEFAULT_LIMIT, PRUNE_MAX_CONSECUTIVE_FAILURES, pruneLimit } from "./board.js";
+
+describe("prune CLI (GH-1788)", () => {
+  const OLD = new Date(NOW.getTime() - 400 * 86_400_000).toISOString();
+
+  /** N long-closed, terminal, prunable issues. */
+  const boardWith = (n: number) => {
+    const gh = new FakeGh();
+    for (let i = 1; i <= n; i++) {
+      gh.issues.set(i, {
+        number: i,
+        state: "Done",
+        issueState: "CLOSED",
+        stateReason: "COMPLETED",
+        closedAt: OLD,
+      });
+    }
+    return gh;
+  };
+
+  const drive = (argv: string[], ctx: Ctx) => {
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    let code: number;
+    try {
+      code = run(argv, ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    return { code, text: said.join("") };
+  };
+
+  it("dry run removes nothing, in text and in JSON alike", () => {
+    const gh = boardWith(3);
+    const ctx = makeCtx(gh);
+
+    const text = drive(["prune"], ctx);
+    expect(text.code).toBe(0);
+    expect(text.text).toContain("DRY RUN");
+    expect(gh.removedItems).toEqual([]);
+
+    const asJson = drive(["prune", "--json"], ctx);
+    const parsed = JSON.parse(asJson.text);
+    expect(parsed.applied).toBe(false);
+    expect(parsed.candidates).toHaveLength(3);
+    expect(gh.removedItems).toEqual([]);
+  });
+
+  // THE BLOCKER: --apply --json used to return `applied: false` with exit 0
+  // having removed nothing at all.
+  it("--apply --json actually applies and reports real counts", () => {
+    const gh = boardWith(3);
+    const res = drive(["prune", "--apply", "--json"], makeCtx(gh));
+
+    expect(gh.removedItems).toHaveLength(3); // the removals REALLY happened
+    const parsed = JSON.parse(res.text);
+    expect(parsed.applied).toBe(true);
+    expect(parsed.removed).toBe(3);
+    expect(parsed.attempted).toBe(3);
+    expect(parsed.failed).toEqual([]);
+    expect(parsed.abortedAfterConsecutiveFailures).toBe(false);
+    expect(res.code).toBe(0);
+  });
+
+  it("--apply in text mode removes and reports", () => {
+    const gh = boardWith(2);
+    const res = drive(["prune", "--apply"], makeCtx(gh));
+    expect(gh.removedItems).toHaveLength(2);
+    expect(res.text).toContain("removed 2 of 2 attempted item(s)");
+    expect(res.code).toBe(0);
+  });
+
+  it("the two flags agree: --apply and --apply --json remove the same items", () => {
+    const a = boardWith(4);
+    drive(["prune", "--apply"], makeCtx(a));
+    const b = boardWith(4);
+    drive(["prune", "--apply", "--json"], makeCtx(b));
+    expect(b.removedItems.sort()).toEqual(a.removedItems.sort());
+  });
+
+  it("a sweep is bounded by --limit; the remainder is reported, not silently dropped", () => {
+    const gh = boardWith(10);
+    const res = drive(["prune", "--apply", "--limit", "4"], makeCtx(gh));
+    expect(gh.removedItems).toHaveLength(4);
+    expect(res.text).toContain("6 candidate(s) left for the next run");
+  });
+
+  it("--limit is reported in the dry run so the operator knows a sweep will be partial", () => {
+    const gh = boardWith(10);
+    const res = drive(["prune", "--limit", "4"], makeCtx(gh));
+    expect(res.text).toContain("One sweep removes at most 4");
+    expect(gh.removedItems).toEqual([]);
+  });
+
+  it("a bad --limit is refused, never silently defaulted — it bounds a destructive loop", () => {
+    expect(pruneLimit(undefined)).toBe(PRUNE_DEFAULT_LIMIT);
+    expect(pruneLimit("5")).toBe(5);
+    for (const bad of ["0", "-3", "2.5", "many", true as const]) {
+      expect(() => pruneLimit(bad)).toThrow(UsageError);
+    }
+  });
+
+  // FINDING 2: an unbounded loop kept firing mutations into a wall, burning
+  // the exact GraphQL budget this work exists to protect.
+  it("stops after consecutive failures instead of spending the budget on a wall", () => {
+    const gh = boardWith(50);
+    gh.failRemovals = "all";
+    const res = drive(["prune", "--apply", "--json"], makeCtx(gh));
+
+    const parsed = JSON.parse(res.text);
+    expect(parsed.attempted).toBe(PRUNE_MAX_CONSECUTIVE_FAILURES); // NOT 50
+    expect(parsed.removed).toBe(0);
+    expect(parsed.abortedAfterConsecutiveFailures).toBe(true);
+    expect(res.code).toBe(1);
+    expect(gh.removedItems).toEqual([]);
+  });
+
+  it("isolated failures do not abort a healthy sweep — the breaker is consecutive", () => {
+    const gh = boardWith(10);
+    gh.failRemovals = 2; // first two fail, the rest succeed
+    const res = drive(["prune", "--apply", "--json"], makeCtx(gh));
+
+    const parsed = JSON.parse(res.text);
+    expect(parsed.attempted).toBe(10);
+    expect(parsed.removed).toBe(8);
+    expect(parsed.failed).toHaveLength(2);
+    expect(parsed.abortedAfterConsecutiveFailures).toBe(false);
+    expect(res.code).toBe(1); // failures still surface in the exit code
+  });
+
+  it("applyPrune's breaker resets on progress", () => {
+    const gh = boardWith(12);
+    gh.failRemovals = PRUNE_MAX_CONSECUTIVE_FAILURES - 1; // one short of the limit
+    const ctx = makeCtx(gh);
+    const candidates = classifyPrune(
+      [],
+      ownRepo(ctx, listItemsFull(ctx).closed).own,
+      ctx.cfg,
+      NOW,
+    ).candidates;
+    const res = applyPrune(ctx, candidates);
+    expect(res.aborted).toBe(false);
+    expect(res.removed).toBe(12 - (PRUNE_MAX_CONSECUTIVE_FAILURES - 1));
+  });
+
+  it("--apply shows what it removed, not just a count — a destructive run shows its work", () => {
+    const gh = boardWith(3);
+    const res = drive(["prune", "--apply"], makeCtx(gh));
+    expect(res.text).toContain("board volume:"); // scan cost still reported
+    expect(res.text).toContain("#1 Done closed"); // the actual items
+    expect(res.text).toContain("removed 3 of 3");
+  });
+
+  it("an --apply run under --json still reports zero candidates honestly", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const res = drive(["prune", "--apply", "--json"], makeCtx(gh));
+    const parsed = JSON.parse(res.text);
+    expect(parsed.applied).toBe(true);
+    expect(parsed.attempted).toBe(0);
+    expect(parsed.removed).toBe(0);
+    expect(res.code).toBe(0);
+  });
+
+  it("nothing to prune stays exit 0 and removes nothing under --apply", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" }); // open, not a candidate
+    const res = drive(["prune", "--apply"], makeCtx(gh));
+    expect(gh.removedItems).toEqual([]);
+    expect(res.code).toBe(0);
+  });
+});

@@ -17,6 +17,7 @@ import {
   LEGACY_STATES,
   RefusalError,
   SMELL_DEFAULTS,
+  VOLUME_DEFAULTS,
   STATES,
 } from "./board.js";
 
@@ -93,6 +94,10 @@ export class FakeGh {
   dropPageInfo = false; // corrupt-read injection: connection returns no pageInfo
   dropEndCursor = false; // corrupt-read injection: hasNextPage true, cursor absent
   itemsPageSize = Infinity; // items-per-page for the bulk view — finite exercises the cursor walk
+  removedItems: string[] = []; // project item ids prune actually removed
+  /** Removal-failure injection: "all" fails every removal (rate limit /
+   *  revoked scope), a number fails only the first N (isolated faults). */
+  failRemovals: number | "all" = 0;
 
   expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
 
@@ -495,6 +500,10 @@ export class FakeGh {
           items: {
             pageInfo: this.pageInfo(end < all.length, String(end)),
             nodes: page.map((fi) => ({
+              // The bulk walk selects the ProjectV2Item id (prune's only
+              // removal handle); a fake that omits it makes every item look
+              // unprunable and hides the whole apply path from tests.
+              id: `ITEM_${fi.number}`,
               isArchived: fi.archived ?? false,
               content: this.queueContent(fi),
               fieldValues: this.queueFieldValues(fi),
@@ -571,6 +580,16 @@ export class FakeGh {
       this.mutations.push(`addToBoard(#${num})`);
       return data({ addProjectV2ItemById: { item: { id: `ITEM_${num}` } } });
     }
+    if (query.includes("deleteProjectV2Item")) {
+      const itemId = String(variables.itemId);
+      if (this.failRemovals === "all" || (typeof this.failRemovals === "number" && this.failRemovals > 0)) {
+        if (typeof this.failRemovals === "number") this.failRemovals--;
+        return { code: 1, stdout: "", stderr: `removal refused for ${itemId}` };
+      }
+      this.removedItems.push(itemId);
+      this.mutations.push(`prune(${itemId})`);
+      return data({ deleteProjectV2Item: { deletedItemId: itemId } });
+    }
     return { code: 1, stdout: "", stderr: `unhandled query: ${query.slice(0, 120)}` };
   }
 }
@@ -600,6 +619,7 @@ export function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo"): Ctx
     holder,
     apply: { enabled: false, label: APPLY_LABEL_DEFAULT, infraPaths: [] },
     smells: { ...SMELL_DEFAULTS },
+    volume: { ...VOLUME_DEFAULTS },
   };
   return {
     // Delegate per-call so tests may overlay gh.exec after ctx construction.
