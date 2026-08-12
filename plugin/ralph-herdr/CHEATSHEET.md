@@ -73,7 +73,6 @@ herdr plugin action invoke cockpit      --plugin ralph-herdr   # THE board pane:
 herdr plugin action invoke dashboard    --plugin ralph-herdr   # read-only watch loop
 herdr plugin action invoke work-next    --plugin ralph-herdr   # 1 work session, board-next
 herdr plugin action invoke work-fleet   --plugin ralph-herdr   # up to N frontier issues in parallel
-herdr plugin action invoke work-issue-fleet --plugin ralph-herdr  # sibling fleet on ONE issue
 herdr plugin action invoke answer       --plugin ralph-herdr   # answer a Human Needed item, comment-first
 herdr plugin action invoke attend       --plugin ralph-herdr   # focus whatever is blocked (carries the question)
 herdr plugin action invoke deliver-pass --plugin ralph-herdr   # shepherd In Review PRs
@@ -156,11 +155,14 @@ board claim leave NNN --holder w1743-fix-thing   # last one out clears the field
 ```
 
 `work-fleet` spawns from the top of the frontier (`RALPH_HERDR_FLEET`,
-default 2, hard cap 4). `work-issue-fleet` puts `RALPH_HERDR_SIBLINGS`
-(default 2, cap 4) sessions on ONE issue — one worktree, one shared branch;
-set `RALPH_HERDR_ISSUE=NNN` to skip the pane's prompt. The join happens after
-sibling 1's session claims (bounded wait); a timeout prints the manual
-`claim join` commands and never blocks the spawn.
+default 2, hard cap 4) — one worker per issue, each in its own worktree.
+
+The shared-claim `work-issue-fleet` (several sessions on ONE issue, one
+worktree) was removed in GH-1774: siblings raced on the index, the branch, and
+each other's uncommitted files, and no amount of claim bookkeeping made that
+tree safe. `claim join` / `claim leave` remain on the board CLI for reading and
+cleaning claims already written; nothing creates shared claims now. To
+parallelize one issue, decompose it into separate issues.
 
 Refill (`work-fleet --refill`, or `RALPH_HERDR_REFILL=1`) is opt-in per run,
 TTL-capped (120 min) and budget-capped (8 spawns), tops up only when a w-lane

@@ -37,10 +37,19 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The Herdr boundary (GH-1774): validated transport + repository scoping. This
+# check compares live agents against ledgers from EVERY board scope, so an
+# unscoped name match is exactly the defect it would otherwise report.
+# shellcheck source=sanitize.sh
+. "$SCRIPT_DIR/sanitize.sh"
+# shellcheck source=transport.sh
+. "$SCRIPT_DIR/transport.sh"
 # shellcheck source=naming.sh
 . "$SCRIPT_DIR/naming.sh"
 # shellcheck source=ledger.sh
 . "$SCRIPT_DIR/ledger.sh"
+# shellcheck source=scope.sh
+. "$SCRIPT_DIR/scope.sh"
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
 TTL_MIN="${RALPH_LOCK_TTL_MIN:-120}"
@@ -68,15 +77,48 @@ if ! command -v "$HERDR" >/dev/null 2>&1; then
   note "lineage" "not evaluable — herdr is not installed (looked for '$HERDR')"
   exit 2
 fi
-if ! raw=$("$HERDR" agent list 2>&1); then
-  note "lineage" "not evaluable — herdr server unreachable (${raw:0:120})"
+# stderr to a file, never merged: on success `2>&1` would prepend a diagnostic
+# line to the JSON, ralph_herd_by_scope would yield nothing, and this check
+# would report every open record as a gap — findings invented by the capture.
+_snap_err=$(ralph_diag_file)
+if ! raw=$(ralph_herdr_snapshot 2>"$_snap_err"); then
+  note "lineage" "not evaluable — herdr snapshot unavailable ($(ralph_diag_read "$_snap_err"))"
+  rm -f "$_snap_err"
   exit 2
 fi
-live_names=$(jq -r '
-  .result.agents[]?
-  | select(.name != null)
-  | select(.name | test("^gh-[0-9]+$|^ralph-(deliver|tend)$|^[a-z][0-9]+-[a-z].*$"))
-  | .name' <<<"$raw" 2>/dev/null) || live_names=""
+rm -f "$_snap_err"
+# Tagged with each agent's repository, because a name is only meaningful
+# WITHIN one: two repositories in one session both produce `w42-fix`, and
+# comparing across them would report one repository's live agent as the other's
+# missing record — a gap invented by the check itself.
+live_json=$(ralph_herd_by_scope "$raw" 2>/dev/null) || live_json=""
+live_names=$(printf '%s\n' "$live_json" | jq -r 'select(.name != null) | .name' 2>/dev/null) || live_names=""
+
+# scope_of NAME — the repository scope of a live agent, or empty.
+scope_of() {
+  printf '%s\n' "$live_json" | jq -r --arg n "$1" 'select(.name == $n) | .scope // empty' 2>/dev/null | head -1
+}
+
+# ledger_scope_tail FILE — the "owner/repo" a ledger path encodes.
+ledger_scope_tail() {
+  local dir
+  dir=$(dirname "$1")
+  printf '%s/%s' "$(basename "$(dirname "$dir")")" "$(basename "$dir")"
+}
+
+# in_ledger_scope NAME FILE — does live agent NAME belong to FILE's repository?
+#
+# When $RALPH_HERDR_LEDGER pins ONE ledger there is no cross-repository
+# ambiguity to resolve — and the pinned path need not follow the
+# <root>/<owner>/<repo>/ layout at all, so its scope tail is not merely unknown
+# but meaningless. Matching by name alone is then exact rather than sloppy.
+in_ledger_scope() {
+  [ -n "${RALPH_HERDR_LEDGER:-}" ] && return 0
+  case "$(scope_of "$1")" in
+    *"/$(ledger_scope_tail "$2")") return 0 ;;
+  esac
+  return 1
+}
 
 # ── open ledger records, as "FILE<TAB>REF" pairs ─────────────────────────────
 # $RALPH_HERDR_LEDGER pins one file (tests); otherwise every board scope's
@@ -114,9 +156,31 @@ while IFS= read -r name; do
       ;;
   esac
   ralph_agent_parse "$name" >/dev/null || continue
+  # Only agents belonging to a repository we actually hold a ledger for. A
+  # herdr session can host repositories Ralph does not manage at all, and
+  # reporting their workers as "live agent with NO open ledger record" would be
+  # inventing findings about someone else's tree — the check would get noisier
+  # the more the human uses herdr for anything but Ralph.
+  scoped=""
+  while IFS= read -r lf; do
+    [ -n "$lf" ] || continue
+    if in_ledger_scope "$name" "$lf"; then scoped=1; break; fi
+  done < <(ledger_files)
+  [ -n "$scoped" ] || continue
   live_checked=$((live_checked + 1))
-  count=$(printf '%s' "$open_pairs" | awk -F'	' -v n="$name" '
-    { split($2, a, "#"); if (a[1] == n) c++ } END { print c + 0 }')
+  # Only records in THIS agent's repository count. An agent whose scope cannot
+  # be resolved matches nothing and is reported as an unledgered gap, which is
+  # the honest answer: we cannot say which ledger should hold it.
+  count=0
+  while IFS='	' read -r pf pref; do
+    [ -n "$pref" ] || continue
+    in_ledger_scope "$name" "$pf" || continue
+    case "${pref%%#*}" in
+      "$name") count=$((count + 1)) ;;
+    esac
+  done <<EOF_PAIRS
+$open_pairs
+EOF_PAIRS
   case "$count" in
     1) pass "lineage-$name" "one open ledger record" ;;
     0) gap "lineage-$name" "live agent with NO open ledger record — run the reconcile action (the [[startup]] pass heals this on server restart)" ;;
@@ -133,9 +197,13 @@ while IFS='	' read -r f ref; do
   [ -n "$ref" ] || continue
   open_checked=$((open_checked + 1))
   name=${ref%%#*}
+  # Alive only if a live agent of that name belongs to THIS ledger's
+  # repository — a same-named worker in another repository is not this
+  # record's agent, and treating it as one would hide a real stale record.
   alive=""
   while IFS= read -r ln; do
-    [ "$ln" = "$name" ] && { alive=1; break; }
+    [ "$ln" = "$name" ] || continue
+    in_ledger_scope "$ln" "$f" && { alive=1; break; }
   done <<EOF2
 $live_names
 EOF2

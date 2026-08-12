@@ -224,6 +224,72 @@ export class RalphWorld extends World {
   writeHerdrFixture(name: string, content: string): void {
     fs.writeFileSync(path.join(this.herdrFixtures, name), content);
   }
+
+  /**
+   * Describe the live herd (GH-1774).
+   *
+   * A scoped herd read resolves agent -> workspace -> worktree provenance and
+   * ignores anything it cannot bind to this repository, so a two-field agent
+   * list no longer describes a herd — it describes an empty one. This writes
+   * the snapshot with the join already built, binding every agent to a
+   * workspace whose worktree provenance points at this world's repo.
+   *
+   * The fake composes the protocol envelope (id + result.type), so only the
+   * payload belongs here.
+   */
+  writeHerd(agents: Array<{ name: string | null; agent_status?: string; pane_id?: string }>): void {
+    const full = agents.map((a, i) => ({
+      name: a.name,
+      agent_status: a.agent_status ?? 'unknown',
+      pane_id: a.pane_id ?? `p${i}`,
+      workspace_id: 'wR',
+      tab_id: 'wR:t1',
+      terminal_id: `term${i}`,
+      focused: false,
+      revision: 1,
+    }));
+    this.writeHerdrFixture(
+      'api-snapshot.json',
+      JSON.stringify({
+        snapshot: {
+          version: 1,
+          protocol: 19,
+          tabs: [{ tab_id: 'wR:t1' }],
+          layouts: [],
+          workspaces: [
+            {
+              workspace_id: 'wR',
+              number: 1,
+              label: 'repo',
+              focused: true,
+              pane_count: full.length,
+              tab_count: 1,
+              active_tab_id: 'wR:t1',
+              agent_status: 'unknown',
+              worktree: {
+                repo_key: 'test/repo',
+                repo_name: 'repo',
+                repo_root: this.repoDir,
+                checkout_path: this.repoDir,
+                is_linked_worktree: false,
+              },
+            },
+          ],
+          panes: full.map((a) => ({
+            pane_id: a.pane_id,
+            terminal_id: a.terminal_id,
+            workspace_id: 'wR',
+            tab_id: 'wR:t1',
+            focused: false,
+            agent_status: a.agent_status,
+            revision: 1,
+            cwd: this.repoDir,
+          })),
+          agents: full,
+        },
+      }) + '\n',
+    );
+  }
   writeBoardFixture(name: string, content: string): void {
     fs.writeFileSync(path.join(this.boardFixtures, name), content);
   }

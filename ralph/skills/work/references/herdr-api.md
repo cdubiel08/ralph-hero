@@ -113,7 +113,6 @@ naming the action:
 |---|---|
 | `work-next` | the queue has an actionable head and no session on it |
 | `work-fleet` | several independent frontier items are ready in parallel |
-| `work-issue-fleet` | one issue genuinely needs sibling sessions (shared claim) |
 | `deliver-pass` / `tend-pass` | the deliver/tend queue is non-empty and quiescent |
 | `attend` | something is blocked and the human should look now |
 | `answer` | Human Needed items are waiting on decisions |
@@ -145,11 +144,15 @@ board claim leave NNN --holder w1743-fix-thing  # last one out clears the field
 ```
 
 `claim join`/`leave` never transition state — board moves stay the skills'
-job. Any member's heartbeat refreshes the ONE shared since. If you are a
-sibling in a `work-issue-fleet` (name carries `--2`..`--K`, shared worktree
-and `feature/GH-N` branch), your join may already have been done for you;
-verify with `claim show`, and coordinate on the shared branch explicitly —
-sibling semantics are yours to manage, honestly.
+job. Any member's heartbeat refreshes the ONE shared since.
+
+Nothing creates shared claims any more. The `work-issue-fleet` action that put
+sibling sessions on one issue was removed in GH-1774: siblings shared a git
+worktree, and so raced on the index, the branch, and each other's uncommitted
+files — the claim coordinated the *issue* while the damage happened to the
+*tree*. `claim join`/`leave` remain for reading and cleaning claims already
+written. To parallelize one issue, decompose it into separate issues with
+dependency edges and let `work-fleet` give each its own worktree.
 
 Refill (`work-fleet --refill`) is watcher-owned and gated: opt-in per run,
 TTL-capped, budget-capped, refills only on *exit/finish* (never on blocked —

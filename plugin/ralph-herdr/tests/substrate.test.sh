@@ -57,6 +57,12 @@ chmod +x "$BIN/herdr" "$BIN/board" "$BIN/open" "$BIN/gh"
 export PATH="$BIN:$PATH"
 export HERDR_BIN_PATH="$BIN/herdr"
 export FAKE_HERDR_FIXTURES="$TMP/fixtures"
+
+# Herd fixtures: a scoped herd read resolves agent -> workspace -> worktree
+# provenance, so the snapshot fixture must carry that join (herd-fixture.sh).
+# shellcheck source=herd-fixture.sh
+. "$SCRIPT_DIR/herd-fixture.sh"
+
 export FAKE_HERDR_LOG="$TMP/herdr.log"
 export FAKE_BOARD_FIXTURES="$TMP/board-fixtures"
 export FAKE_BOARD_LOG="$TMP/board.log"
@@ -136,8 +142,7 @@ run_answer() {
 
 # ═══ 1. link-open — clicked URL becomes attention ════════════════════════════
 # Live session for the issue (grammar B) → focus, nothing else.
-printf '{"result":{"agents":[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
 clear_logs
 run_linkopen "https://github.com/acme/demo/issues/123" "$CTX"
 is "link-open live: exits 0" "0" "$RC"
@@ -148,15 +153,14 @@ is "link-open live: no popup opened" "0" "$(fcount "$FAKE_HERDR_LOG" "plugin pan
 is "link-open live: no browser handoff" "0" "$(wc -l <"$TMP/open.log" | tr -d ' ')"
 
 # Legacy gh-N sessions stay first-class through the transition.
-printf '{"result":{"agents":[{"name":"gh-123","agent_status":"working","pane_id":"p1"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[{"name":"gh-123","agent_status":"working","pane_id":"p1"}]'
 clear_logs
 run_linkopen "https://github.com/acme/demo/issues/123" "$CTX"
 is "link-open live legacy: gh-N is focused too" "1" \
   "$(fcount "$FAKE_HERDR_LOG" "agent focus gh-123")"
 
 # No live session → the link-offer popup, with number/URL/kind via --env.
-printf '{"result":{"agents":[]}}\n' >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[]'
 clear_logs
 run_linkopen "https://github.com/acme/demo/issues/123" "$CTX"
 is "link-open no-agent: exits 0" "0" "$RC"
@@ -235,8 +239,7 @@ is "link-open context fallback: clicked_url from the context JSON works" "0 1" \
 # Deep sub-resource / fragment tails are browser intent even in scope with a
 # live session — a /files or #issuecomment click named a SPECIFIC view no
 # pane can show; hijacking it into focus would swallow it with no escape.
-printf '{"result":{"agents":[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
 clear_logs
 run_linkopen "https://github.com/acme/demo/pull/123/files" "$CTX"
 is "link-open deep /files: exits 0, browser handoff" "0 1" \
@@ -260,7 +263,7 @@ is "link-open trailing slash: still attention — focus, no browser" "1 0" \
   "$(fcount "$FAKE_HERDR_LOG" "agent focus w123-fix") $(wc -l <"$TMP/open.log" | tr -d ' ')"
 
 # ═══ 2. link-offer — the popup pane behind the handler ═══════════════════════
-printf '{"result":{"agents":[]}}\n' >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[]'
 clear_logs
 run_offer "q" 123 "https://github.com/acme/demo/issues/123"
 is "link-offer [q]: clean close, rc 0" "0" "$RC"
@@ -300,7 +303,7 @@ line_has "link-offer by hand: the hold trap caught it" "$OUT" "no session spawne
 
 # ═══ 3. attend — carry the blocking question ═════════════════════════════════
 # Nothing blocked → herd calm.
-printf '{"result":{"agents":[]}}\n' >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[]'
 clear_logs
 run_attend
 is "attend calm: exits 0" "0" "$RC"
@@ -311,8 +314,7 @@ is "attend calm: no focus" "0" "$(fcount "$FAKE_HERDR_LOG" "agent focus")"
 # A blocked w-lane beats a blocked non-issue lane regardless of list order;
 # the pane tail rides the toast — flattened to ONE line, <= 240 bytes, the
 # issue number in the title.
-printf '{"result":{"agents":[{"name":"o55-review","agent_status":"blocked","pane_id":"p5"},{"name":"w42-fix-pipeline","agent_status":"blocked","pane_id":"p4"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[{"name":"o55-review","agent_status":"blocked","pane_id":"p5"},{"name":"w42-fix-pipeline","agent_status":"blocked","pane_id":"p4"}]'
 {
   printf 'setup noise: booting the session\n'
   printf '\n'
@@ -379,8 +381,7 @@ cat >"$TMP/att/ledger.jsonl" <<'EOF'
 {"ts":"2026-08-11T02:00:00Z","ev":"state","agent_ref":"w42-fix-pipeline#cccc","agent_status":"blocked"}
 {"ts":"2026-08-11T01:00:00Z","ev":"state","agent_ref":"w41-older#dddd","agent_status":"blocked"}
 EOF
-printf '{"result":{"agents":[{"name":"w42-fix-pipeline","agent_status":"blocked","pane_id":"p4"},{"name":"w41-older","agent_status":"blocked","pane_id":"p3"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[{"name":"w42-fix-pipeline","agent_status":"blocked","pane_id":"p4"},{"name":"w41-older","agent_status":"blocked","pane_id":"p3"}]'
 clear_logs
 run_attend "$TMP/att/ledger.jsonl"
 is "attend ordering: the longest-blocked w-lane wins" "1" \
@@ -392,7 +393,7 @@ is "attend ordering: no ledger falls back to list order" "1" \
   "$(fcount "$FAKE_HERDR_LOG" "agent focus w42-fix-pipeline")"
 
 # ═══ 4. ralph-answer — comment-first, honestly reported ══════════════════════
-printf '{"result":{"agents":[]}}\n' >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[]'
 
 # Empty queue: herd calm, nothing written.
 : >"$CLOG"
@@ -434,8 +435,7 @@ printf '{"items":[{"number":123,"title":"Choose the path"}]}\n' \
 
 # Live session: the durable half (board answer) lands BEFORE the decorative
 # half (agent prompt) — asserted by line order in the one combined log.
-printf '{"result":{"agents":[{"name":"w123-fix","agent_status":"blocked","pane_id":"p1"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[{"name":"w123-fix","agent_status":"blocked","pane_id":"p1"}]'
 : >"$CLOG"
 run_answer '1
 Use the blue path.
@@ -448,14 +448,14 @@ is "answer live: the answer verb carried the message" "1" \
   "$(fcount "$CLOG" "answer 123 -m Use the blue path.")"
 ordered "answer live: COMMENT-FIRST — board answer precedes the agent nudge" \
   "$CLOG" "answer 123 -m" "agent prompt w123-fix"
-ordered "answer live: the durable half even precedes the agent-list read" \
-  "$CLOG" "answer 123 -m" "agent list"
+ordered "answer live: the durable half even precedes the herd read" \
+  "$CLOG" "answer 123 -m" "api snapshot"
 is "answer live: the nudge waits for delivery (--wait, bounded)" "1" \
   "$(fcount "$CLOG" "agent prompt w123-fix answered on issue — re-read #123 and resume --wait --timeout 15000")"
 line_has "answer live: delivery reported honestly" "$OUT" "nudged w123-fix"
 
 # Absent session: the answer is complete comment-only — no prompt anywhere.
-printf '{"result":{"agents":[]}}\n' >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[]'
 : >"$CLOG"
 run_answer '1
 Go with option B.
@@ -469,8 +469,7 @@ line_has "answer absent: the wait is named" "$OUT" "no live session for #123"
 
 # Nudge refused (agent vanished between list and prompt): the answer stands,
 # the refusal names the manual command.
-printf '{"result":{"agents":[{"name":"w123-fix","agent_status":"blocked","pane_id":"p1"}]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[{"name":"w123-fix","agent_status":"blocked","pane_id":"p1"}]'
 printf '{"error":{"code":"agent_not_found"}}\n' >"$FAKE_HERDR_FIXTURES/agent-prompt.json"
 printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-prompt.rc"
 : >"$CLOG"
@@ -513,7 +512,7 @@ rm -f "$FAKE_BOARD_FIXTURES/answer.rc"
 # A board CLI predating the answer verb: gh comment (durable) FIRST, board
 # move second — the same ordering by hand.
 printf 'mutations:\n  move NNN STATE\n' >"$FAKE_BOARD_FIXTURES/help.txt"
-printf '{"result":{"agents":[]}}\n' >"$FAKE_HERDR_FIXTURES/agent-list.json"
+herd_fixture '[]'
 : >"$CLOG"
 run_answer '1
 Fallback ordering.

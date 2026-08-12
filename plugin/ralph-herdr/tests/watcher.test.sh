@@ -29,6 +29,21 @@ chmod +x "$BIN/herdr"
 export PATH="$BIN:$PATH"
 export HERDR_BIN_PATH="$BIN/herdr"
 export FAKE_HERDR_FIXTURES="$TMP/fixtures"
+
+# herd_fixture scopes agents to this root, and a scoped read resolves that
+# root's BOARD identity — so the fake checkout must carry board config naming
+# the same owner/repo the test ledgers nest under ($ROOT/acme/demo/…). Pointing
+# this at the real repo checkout would scope every fixture agent to ralph-hero
+# and match no test ledger at all.
+REPO_DIR="$TMP/checkout"
+mkdir -p "$REPO_DIR"
+printf '{"owner":"acme","repo":"demo","projectNumber":1}\n' >"$REPO_DIR/.ralph.json"
+
+# Herd fixtures: a scoped herd read resolves agent -> workspace -> worktree
+# provenance, so the snapshot fixture must carry that join (herd-fixture.sh).
+# shellcheck source=herd-fixture.sh
+. "$SCRIPT_DIR/herd-fixture.sh"
+
 export FAKE_HERDR_LOG="$TMP/herdr.log"
 mkdir -p "$FAKE_HERDR_FIXTURES"
 : >"$FAKE_HERDR_LOG"
@@ -178,6 +193,11 @@ cat >"$WLEDGER" <<'EOF'
 {"ts":"2026-08-11T00:00:00Z","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"role":"w","issue":"123","slug":"fix","root":"w123-fix#aaaa","depth":"0","state":"spawned","branch":"feature/GH-123","harness":"claude","spawn_epoch":"aaaa"}}
 EOF
 
+# A status event is a HINT now (GH-1774): the durable write only happens for an
+# agent a live snapshot confirms, with the status read from the SNAPSHOT rather
+# than the payload. So the herd has to actually contain the agent — and the
+# fixture's status is the one that gets recorded.
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
 : >"$FAKE_HERDR_LOG"
 run_event pane.agent_status_changed \
   '{"pane_id":"p1","agent":"w123-fix","agent_status":"working","title":"Fix the flaky test"}' "$WROOT"
@@ -188,6 +208,7 @@ is "status working: state token pushed" "1" \
   "$(log_count '^pane report-metadata p1 --source ralph-herdr --token state=working$')"
 is "status working: no notification" "0" "$(log_count '^notification show')"
 
+herd_fixture '[{"name":"w123-fix","agent_status":"blocked","pane_id":"p1"}]'
 : >"$FAKE_HERDR_LOG"
 run_event pane.agent_status_changed \
   '{"pane_id":"p1","agent":"w123-fix","agent_status":"blocked","title":"Fix the flaky test","state_labels":{"blocked":"needs a decision"}}' "$WROOT"
@@ -201,6 +222,7 @@ is "blocked: title + labels in the body" "1" \
   "$(log_fcount 'notification show w123-fix blocked --body Fix the flaky test')"
 
 # idle carries no honest lifecycle claim: ledgered, but no state token push.
+herd_fixture '[{"name":"w123-fix","agent_status":"idle","pane_id":"p1"}]'
 : >"$FAKE_HERDR_LOG"
 run_event pane.agent_status_changed \
   '{"pane_id":"p1","agent":"w123-fix","agent_status":"idle"}' "$WROOT"
@@ -209,6 +231,7 @@ is "idle: state event still recorded" "1" \
 is "idle: no token push, no notification" "0" "$(log_count '^pane report-metadata\|^notification show')"
 
 # Event-name fallback: no HERDR_PLUGIN_EVENT, payload .type carries it.
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
 run_event "" \
   '{"type":"pane.agent_status_changed","pane_id":"p1","agent":"w123-fix","agent_status":"working"}' "$WROOT"
 is "payload .type fallback: exits 0" "0" "$RC"
@@ -226,6 +249,66 @@ is "unknown event: exits 0" "0" "$RC"
 is "non-ralph/unknown: ledger untouched" "$lines_before" "$(wc -l <"$WLEDGER" | tr -d ' ')"
 is "non-ralph/unknown: no herdr calls at all" "0" "$(wc -l <"$FAKE_HERDR_LOG" | tr -d ' ')"
 
+before_unconfirmed=$(lcount "$WLEDGER" '.ev=="state"')
+before_working=$(lcount "$WLEDGER" '.ev=="state" and .agent_status=="working"')
+# ── events are hints, not authority (GH-1774) ───────────────────────────────
+# A status event names an agent, a status and a pane, and Herdr documents no
+# ordering, no deduplication and no replay cursor for any of it. So a payload
+# can describe a state the agent already left, an agent that already exited, or
+# a name a NEWER agent has since reused. None of those may write durable state.
+herd_fixture '[]'
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p1","agent":"w123-fix","agent_status":"working"}' "$WROOT"
+is "hint: an unconfirmed agent exits 0 (a hint is never an error)" "0" "$RC"
+line_has "hint: and says it declined to write" "$OUT" "not confirmed in a live snapshot"
+is "hint: no state event is appended for an unconfirmed agent" "$before_unconfirmed" \
+  "$(lcount "$WLEDGER" '.ev=="state"')"
+
+# The payload's status loses to the snapshot's. This is the case that matters
+# for refill: a stale `done` must not free capacity while the agent works on.
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
+run_event pane.agent_status_changed \
+  '{"pane_id":"p1","agent":"w123-fix","agent_status":"done"}' "$WROOT"
+# Counted, not timestamp-matched: binding an assertion to the current second
+# makes it fail whenever the clock ticks mid-test.
+is "hint: the SNAPSHOT status is recorded, not the payload's" "$((before_working + 1))" \
+  "$(lcount "$WLEDGER" '.ev=="state" and .agent_status=="working"')"
+is "hint: the payload's stale 'done' never reached the ledger" "0" \
+  "$(lcount "$WLEDGER" '.ev=="state" and .agent_status=="done"')"
+
+# Minting a durable identity from an event payload is gone: the payload has no
+# durable identity, so the ref could only be derived from the NAME — and names
+# are reusable after exit. Reconcile discovers instead, against a snapshot.
+DROOT="$TMP/dirty"
+DLEDG="$DROOT/acme/demo/ledger.jsonl"
+mkdir -p "$(dirname "$DLEDG")"
+: >"$DLEDG"
+herd_fixture '[{"name":"w777-fresh","agent_status":"working","pane_id":"p9"}]'
+run_event pane.agent_status_changed \
+  '{"pane_id":"p9","agent":"w777-fresh","agent_status":"working"}' "$DROOT"
+is "hint: an unledgered agent is NOT discovered by the event" "0" \
+  "$(lcount "$DLEDG" '.ev=="discover"')"
+is "hint: the scope is marked dirty instead" "1" \
+  "$([ -f "$DROOT/acme/demo/dirty" ] && echo 1 || echo 0)"
+line_has "hint: and says reconcile owns the identity" "$OUT" "reconcile mints the identity"
+
+# The marker is a LEVEL, not a queue: an event storm leaves one marker, which
+# is what keeps it from becoming a snapshot storm.
+run_event pane.agent_status_changed \
+  '{"pane_id":"p9","agent":"w777-fresh","agent_status":"working"}' "$DROOT"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p9","agent":"w777-fresh","agent_status":"blocked"}' "$DROOT"
+is "hint: repeated events coalesce to ONE marker" "1" \
+  "$(ls "$DROOT/acme/demo/" | grep -c '^dirty$' || true)"
+
+# Reconcile does the discovering, then clears the marker.
+run_reconcile "$DROOT"
+is "hint: reconcile discovers what the event would not" "1" \
+  "$(lcount "$DLEDG" '.ev=="discover" and (.agent_ref | startswith("w777-fresh#"))')"
+is "hint: and clears the dirty mark afterwards" "0" \
+  "$([ -f "$DROOT/acme/demo/dirty" ] && echo 1 || echo 0)"
+
 # ═══ 4. pane.exited: orphan pass, adopt-to-grandparent ═══════════════════════
 AROOT="$TMP/aroot"
 ALEDGER="$AROOT/acme/demo/ledger.jsonl"
@@ -235,9 +318,7 @@ cat >"$ALEDGER" <<'EOF'
 {"ts":"t1","ev":"spawn","agent_ref":"o10-orch#0002","pane_id":"p10","tokens":{"role":"o","issue":"10","slug":"orch","depth":"1","state":"spawned","parent":"s0-root#0001","root":"s0-root#0001"}}
 {"ts":"t2","ev":"spawn","agent_ref":"w11-child#0003","pane_id":"p11","tokens":{"role":"w","issue":"11","slug":"child","depth":"2","state":"spawned","parent":"o10-orch#0002","root":"s0-root#0001"}}
 EOF
-cat >"$FAKE_HERDR_FIXTURES/agent-list.json" <<'EOF'
-{"result":{"agents":[{"name":"s0-root","agent_status":"working","pane_id":"p0"},{"name":"w11-child","agent_status":"working","pane_id":"p11"}]}}
-EOF
+herd_fixture '[{"name":"s0-root","agent_status":"working","pane_id":"p0"},{"name":"w11-child","agent_status":"working","pane_id":"p11"}]'
 
 : >"$FAKE_HERDR_LOG"
 run_event pane.exited '{"pane_id":"p10"}' "$AROOT"
@@ -261,9 +342,7 @@ cat >"$OLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"o20-solo#0004","pane_id":"p20","tokens":{"role":"o","issue":"20","slug":"solo","depth":"0","state":"spawned","root":"o20-solo#0004"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w21-kid#0005","pane_id":"p21","tokens":{"role":"w","issue":"21","slug":"kid","depth":"1","state":"spawned","parent":"o20-solo#0004","root":"o20-solo#0004"}}
 EOF
-cat >"$FAKE_HERDR_FIXTURES/agent-list.json" <<'EOF'
-{"result":{"agents":[{"name":"w21-kid","agent_status":"working","pane_id":"p21"}]}}
-EOF
+herd_fixture '[{"name":"w21-kid","agent_status":"working","pane_id":"p21"}]'
 
 : >"$FAKE_HERDR_LOG"
 run_event pane.exited '{"pane_id":"p20"}' "$OROOT"
@@ -298,9 +377,7 @@ cat >"$CLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"o30-dual#0006","pane_id":"p30","tokens":{"role":"o","issue":"30","slug":"dual","depth":"0","state":"spawned","root":"o30-dual#0006"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w31-baby#0007","pane_id":"p31","tokens":{"role":"w","issue":"31","slug":"baby","depth":"1","state":"spawned","parent":"o30-dual#0006","root":"o30-dual#0006"}}
 EOF
-cat >"$FAKE_HERDR_FIXTURES/agent-list.json" <<'EOF'
-{"result":{"agents":[{"name":"w31-baby","agent_status":"working","pane_id":"p31"}]}}
-EOF
+herd_fixture '[{"name":"w31-baby","agent_status":"working","pane_id":"p31"}]'
 : >"$FAKE_HERDR_LOG"
 HERDR_PLUGIN_EVENT=pane.exited HERDR_PLUGIN_EVENT_JSON='{"pane_id":"p30"}' \
   RALPH_HERDR_LEDGER_ROOT="$CROOT" bash "$SCRIPTS/watch-event.sh" >/dev/null 2>&1 &
@@ -328,9 +405,7 @@ cat >"$RLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"role":"w","issue":"123","slug":"fix","root":"w123-fix#aaaa","depth":"0","state":"spawned","branch":"feature/GH-123","harness":"claude","spawn_epoch":"aaaa"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w9-gone#ffff","pane_id":"p9","tokens":{"role":"w","issue":"9","slug":"gone","depth":"0","state":"spawned"}}
 EOF
-cat >"$FAKE_HERDR_FIXTURES/agent-list.json" <<'EOF'
-{"result":{"agents":[{"name":"w123-fix","agent_status":"working","pane_id":"p1"},{"name":"w5-alpha","agent_status":"idle","pane_id":"p5"},{"name":"ralph-deliver","agent_status":"working","pane_id":"p7"},{"name":"random-agent","agent_status":"working","pane_id":"p8"}]}}
-EOF
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"},{"name":"w5-alpha","agent_status":"idle","pane_id":"p5"},{"name":"ralph-deliver","agent_status":"working","pane_id":"p7"},{"name":"random-agent","agent_status":"working","pane_id":"p8"}]'
 printf '{"result":{"pane":{"pane_id":"p5","foreground_cwd":"%s"}}}\n' "$TMP/repo" \
   >"$FAKE_HERDR_FIXTURES/pane-get.p5.json"
 

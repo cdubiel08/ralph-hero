@@ -36,6 +36,15 @@ _RALPH_HERDR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=naming.sh
 . "$_RALPH_HERDR_LIB_DIR/naming.sh"
 
+# The Herdr boundary (GH-1774), sourced before anything that talks to the
+# server: sanitize.sh first because transport.sh scrubs error prose through it,
+# then the strict adapter, then the session/repository scoping that decides
+# which of the session's agents are ours at all.
+# shellcheck source=sanitize.sh
+. "$_RALPH_HERDR_LIB_DIR/sanitize.sh"
+# shellcheck source=transport.sh
+. "$_RALPH_HERDR_LIB_DIR/transport.sh"
+
 # Watcher plumbing (Phase 2): the events ledger + pane-token pushers — pure
 # functions and file appends, no side effects at source time. The spawn path
 # needs both for the C7 spawn record and spawn-time tokens (the one documented
@@ -46,6 +55,11 @@ _RALPH_HERDR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_RALPH_HERDR_LIB_DIR/ledger.sh"
 # shellcheck source=tokens.sh
 . "$_RALPH_HERDR_LIB_DIR/tokens.sh"
+# Scoping rides after ledger.sh: repo scope reads the same board config the
+# ledger path derives from, so it reuses _ralph_ledger_scope rather than
+# growing a second, driftable copy of that resolution.
+# shellcheck source=scope.sh
+. "$_RALPH_HERDR_LIB_DIR/scope.sh"
 # Fleet controller (Phase 3): per-run state, FleetBriefs, refill arming,
 # shared-claim issue fleets — pure functions + file writes, no side effects
 # at source time.
@@ -94,18 +108,29 @@ validate_pos_int() {
   esac
 }
 
-# ralph_agents_json — live ralph agents as compact JSON lines
-# {name,status,pane}, filtered to ralph-shaped names: the legacy grammar
-# (^gh-[0-9]+$ / ^ralph-(deliver|tend)$) plus grammar-B <lane><issue>-<slug>
-# names (^[a-z][0-9]+-[a-z].*$) — both accepted through the transition.
-# Read-only; prints nothing when no ralph agent is live. Non-zero only if the
-# herdr read itself fails.
+# ralph_agents_json — THIS REPOSITORY's live ralph agents as compact JSON
+# lines {name,status,pane,workspace,agent_session,cwd,checkout,via}, filtered
+# to ralph-shaped names: the legacy grammar (^gh-[0-9]+$ /
+# ^ralph-(deliver|tend)$) plus grammar-B <lane><issue>-<slug> names
+# (^[a-z][0-9]+-[a-z].*$) — both accepted through the transition.
+#
+# The name filter is a display convention; the CONTAINMENT is the scope join
+# underneath it (scope.sh). Names are unique only among live agents in a
+# session and are reusable after exit, so `w42-fix` in a shared session may
+# belong to another repository entirely — and would pass this regex.
+#
+# Read-only. rc mirrors the transport: 0 with zero lines means "this
+# repository genuinely has no live agents", while 1/2/3 mean the answer is
+# unknown. Callers MUST distinguish them — a swallowed failure here reads as an
+# empty herd, which is how a server hiccup becomes a spurious spawn or a
+# cleanup pass over live workers.
 ralph_agents_json() {
-  "$HERDR" agent list | jq -c '
-    .result.agents[]?
-    | select(.name != null)
-    | select(.name | test("^gh-[0-9]+$|^ralph-(deliver|tend)$|^[a-z][0-9]+-[a-z].*$"))
-    | {name: .name, status: .agent_status, pane: .pane_id}'
+  local rc
+  ralph_scoped_agents_now "$REPO" 2>/dev/null | jq -c '
+    select(.name != null)
+    | select(.name | test("^gh-[0-9]+$|^ralph-(deliver|tend)$|^[a-z][0-9]+-[a-z].*$"))'
+  rc=${PIPESTATUS[0]}
+  return "$rc"
 }
 
 # The board CLI is the only sanctioned board surface. Resolution order
@@ -155,17 +180,29 @@ billing_guard() {
 # error (a taken agent name above all) is a real refusal and dies at once.
 #   RALPH_HERDR_START_TRIES   attempts, 1s apart (default 15)
 agent_start_when_ready() {
-  local name="$1" pane="$2" tries="${RALPH_HERDR_START_TRIES:-15}" n=0 out code
+  local name="$1" pane="$2" tries="${RALPH_HERDR_START_TRIES:-15}" n=0 out rc code
   case "$tries" in '' | *[!0-9]* | 0) die "RALPH_HERDR_START_TRIES must be a positive integer (got '$tries')" ;; esac
   while :; do
-    if out=$("$HERDR" agent start "$name" --kind claude --pane "$pane" 2>&1); then
+    rc=0
+    out=$(ralph_herdr_call agent_started agent start "$name" --kind claude --pane "$pane") || rc=$?
+    if [ "$rc" -eq 0 ]; then
       printf '%s\n' "$out"
       return 0
     fi
-    code=$(jq -r '.error.code // empty' <<<"$out" 2>/dev/null || true)
+    # From the BODY, not $RALPH_HERDR_ERR_CODE: the call above runs in a
+    # command substitution, so any variable the function set died with that
+    # subshell. Reading the global here would see an empty string forever and
+    # turn every retryable race into a hard failure.
+    code=$(ralph_herdr_err_code "$out")
     n=$((n + 1))
-    if [ "$code" != "agent_pane_busy" ] || [ "$n" -ge "$tries" ]; then
-      printf '%s\n' "$out" >&2
+    # Retry ONLY the well-formed agent_pane_busy refusal (rc 2 + that code).
+    # A transport failure (rc 1) or an unreachable server (rc 3) is never a
+    # retryable race: we do not know whether the start landed, and hammering a
+    # server that may already have started the agent is how one issue ends up
+    # with two sessions. The code comes from the parsed envelope, never from
+    # matching prose — error text is terminal-derived and not a contract.
+    if [ "$rc" -ne 2 ] || [ "$code" != "agent_pane_busy" ] || [ "$n" -ge "$tries" ]; then
+      [ "$rc" -eq 2 ] && echo "agent start $name refused: $code $(ralph_herdr_err_message "$out")" >&2
       return 1
     fi
     [ "$n" -eq 1 ] && echo "waiting for the pane's shell to reach its prompt…"
@@ -196,8 +233,11 @@ hold_pane() {
 # delivery failure must never kill a watcher that could re-arm.
 notify() {
   local target="$1" title="$2" body="$3"
-  echo "$(date -u +%FT%TZ) notify [$target] $title — $body"
-  "$HERDR" notification show "$title" --body "$body" || true
+  # The trail line renders sanitized: title and body are assembled from agent
+  # names and pane text, so an escape sequence in either would repaint the
+  # watcher pane it is supposed to be reporting into.
+  echo "$(date -u +%FT%TZ) notify [$(ralph_sanitize "$target")] $(ralph_sanitize "$title") — $(ralph_sanitize "$body")"
+  ralph_herdr_call notification_show notification show "$title" --body "$body" >/dev/null || true
 }
 
 # _ralph_spawn_record REF N PARENT_ISSUE BRANCH LABEL PANE TS — print the
@@ -329,8 +369,7 @@ spawn_work_session() {
   RALPH_HERDR_SPAWNED_AGENT=""
   RALPH_HERDR_SPAWNED_REF=""
   # Pane id + worktree checkout path, read back from the live responses
-  # (never predicted; empty in dry runs). spawn_issue_fleet splits sibling
-  # panes inside exactly this workspace — same read-back rule as the name.
+  # (never predicted; empty in dry runs).
   RALPH_HERDR_SPAWNED_PANE=""
   RALPH_HERDR_SPAWNED_WORKTREE=""
   export RALPH_HERDR_SPAWNED_AGENT RALPH_HERDR_SPAWNED_REF
@@ -364,10 +403,22 @@ spawn_work_session() {
   # Skip, don't die, when a session already owns issue N — under EITHER
   # grammar (legacy gh-N or any w<N>-*): fleet callers must keep going.
   # Checked before any mutation so the skip is side-effect free.
-  live=$("$HERDR" agent list | jq -r --arg legacy "gh-$n" --arg pfx "w$n-" '
-    [.result.agents[]? | select(.name != null)
-     | select(.name == $legacy or (.name | startswith($pfx))) | .name]
-    | first // empty' 2>/dev/null || true)
+  #
+  # Scoped to THIS repository: in a shared session another repository's GH-N
+  # worker carries the identical name, and treating it as ours would refuse a
+  # spawn that should proceed. The failure here is fail-CLOSED in the other
+  # direction — an unreadable herd means we cannot prove nobody owns GH-N, and
+  # spawning a second session onto one issue is worse than not spawning.
+  # Two steps, not one pipeline: in a pipeline the rc belongs to the LAST
+  # command, so a transport failure would arrive as jq's cheerful 0 and read as
+  # an empty herd — the exact fail-open this check exists to close.
+  local herd
+  herd=$(ralph_agents_json 2>/dev/null) || {
+    echo "cannot read the herd — refusing to spawn GH-$n without proving no session already owns it" >&2
+    return 1
+  }
+  live=$(printf '%s\n' "$herd" | jq -r --arg legacy "gh-$n" --arg pfx "w$n-" '
+    select(.name == $legacy or (.name | startswith($pfx))) | .name' 2>/dev/null | head -1)
   if [ -n "$live" ]; then
     echo "SKIP $live already live"
     return 2
@@ -414,29 +465,33 @@ spawn_work_session() {
     echo "git fetch origin main failed for GH-$n — not branching from a stale ref" >&2
     return 1
   }
+  # Both calls go through the strict adapter, so `out` is an already-validated
+  # result object: the right discriminant (worktree_created / worktree_opened)
+  # carrying root_pane and worktree. That validation is what lets the reads
+  # below be plain field accesses instead of defensive guesses — a response
+  # that reached here cannot be an error envelope, a reply to another request,
+  # or a success missing the pane we are about to start an agent in.
   set -- --cwd "$REPO" --branch "$branch" --base origin/main --no-focus
   [ -n "$label" ] && set -- "$@" --label "$label"
-  if ! out=$("$HERDR" worktree create "$@"); then
+  if ! out=$(ralph_herdr_call worktree_created worktree create "$@"); then
     echo "worktree create refused (existing checkout is the usual cause) — opening instead"
     set -- --cwd "$REPO" --branch "$branch" --no-focus
     [ -n "$label" ] && set -- "$@" --label "$label"
-    out=$("$HERDR" worktree open "$@") || {
+    out=$(ralph_herdr_call worktree_opened worktree open "$@") || {
       echo "neither worktree create nor worktree open succeeded for $branch" >&2
       return 1
     }
   fi
 
   # IDs are opaque server-local tokens — captured from the response, never
-  # predicted or derived. The worktree checkout path rides along for callers
-  # that split sibling panes into the same workspace (spawn_issue_fleet);
-  # its absence costs those callers, never this spawn.
-  pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$out")
+  # predicted or derived.
+  pane=$(jq -r '.root_pane.pane_id // empty' <<<"$out")
   if [ -z "$pane" ]; then
     echo "no pane id in worktree response for GH-$n" >&2
     return 1
   fi
   RALPH_HERDR_SPAWNED_PANE="$pane"
-  RALPH_HERDR_SPAWNED_WORKTREE=$(jq -r '.result.worktree.path // .result.workspace.worktree.path // empty' <<<"$out" 2>/dev/null) ||
+  RALPH_HERDR_SPAWNED_WORKTREE=$(jq -r '.worktree.path // .workspace.worktree.checkout_path // empty' <<<"$out" 2>/dev/null) ||
     RALPH_HERDR_SPAWNED_WORKTREE=""
 
   # A confirmed-live name collision at start means a session already owns
@@ -446,14 +501,13 @@ spawn_work_session() {
   # was swallowed (fail-open). Both are the lost race rc=2 exists for; never
   # improvise a --N sibling here — that would put TWO /ralph:work sessions on
   # one issue, the very thing the pre-check (and the board's claim protocol)
-  # refuse. Shared-claim sibling fleets exist (spawn_issue_fleet), and they
-  # JOIN a claim deliberately, not by collision; the --N generation suffix
-  # belongs to that plane (ralph_agent_name_collide). Liveness is confirmed by a
+  # refuse — and since GH-1774 there is no shared-claim plane to defer to
+  # either: sibling fleets are gone. Liveness is confirmed by a
   # read, never inferred from error prose; every other start failure dies at
   # once, unchanged.
   if ! agent_start_when_ready "$agent" "$pane"; then
-    if "$HERDR" agent list | jq -e --arg name "$agent" \
-        '.result.agents[]? | select(.name == $name)' >/dev/null 2>&1; then
+    if printf '%s\n' "$(ralph_agents_json 2>/dev/null)" | jq -e --arg name "$agent" \
+        'select(.name == $name)' >/dev/null 2>&1; then
       echo "SKIP $agent already live (lost the spawn race for GH-$n) — leaving the worktree pane $pane to the winning session"
       return 2
     fi
@@ -494,7 +548,7 @@ spawn_work_session() {
     echo "no durable ref derivable for $agent — spawning unledgered (reconcile will discover it)" >&2
   fi
 
-  "$HERDR" agent prompt "$agent" "/ralph:work $n" || {
+  ralph_herdr_call agent_prompted agent prompt "$agent" "/ralph:work $n" >/dev/null || {
     echo "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:work $n\"" >&2
     return 1
   }
