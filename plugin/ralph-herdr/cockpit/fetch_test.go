@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -227,5 +229,108 @@ func TestDoReplyHonestDelivery(t *testing.T) {
 	}
 	if !strings.Contains(msg.detail, "agent_prompt_stalled") {
 		t.Errorf("failure detail should carry herdr's refusal, got %q", msg.detail)
+	}
+}
+
+// ── installed-plugin board discovery (tier 3, GH-1761) ──────────────────────
+// Mirrors lib.sh installed_board_cli(): rank by the VERSION component, never
+// the whole path, and never fall back for an explicit-but-broken path.
+
+func mkBoard(t *testing.T, home, namespace, version string, executable bool) string {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "plugins", "cache", namespace, "ralph", version, "scripts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "board")
+	mode := os.FileMode(0o644)
+	if executable {
+		mode = 0o755
+	}
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"), mode); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestCompareVersionsNumericPerComponent(t *testing.T) {
+	// 0.10.0 > 0.9.0 is the case a lexical sort gets wrong.
+	for _, c := range []struct {
+		a, b string
+		want int
+	}{
+		{"0.10.0", "0.9.0", 1},
+		{"0.9.0", "0.10.0", -1},
+		{"1.2.3", "1.2.3", 0},
+		{"1.2", "1.2.0", 0},
+		{"2.0.0", "1.99.99", 1},
+		{"0.1.94", "0.1.9", 1},
+		{"1.0.0-rc", "1.0.0", 1}, // non-numeric component: string compare
+	} {
+		if got := compareVersions(c.a, c.b); got != c.want {
+			t.Errorf("compareVersions(%q,%q) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestInstalledBoardCLIPicksNewestVersionNotNewestPath(t *testing.T) {
+	home := t.TempDir()
+	// "aaa" namespace holds the NEWER version: a whole-path sort would pick
+	// zzz/0.9.0 — the exact trap the awk/sort -V in lib.sh avoids.
+	want := mkBoard(t, home, "aaa-marketplace", "0.10.0", true)
+	mkBoard(t, home, "zzz-marketplace", "0.9.0", true)
+	if got := installedBoardCLI(home); got != want {
+		t.Errorf("installedBoardCLI = %q, want %q", got, want)
+	}
+}
+
+func TestInstalledBoardCLISkipsNonExecutableAndEmptyHome(t *testing.T) {
+	home := t.TempDir()
+	mkBoard(t, home, "ns", "9.9.9", false) // newest but not executable
+	want := mkBoard(t, home, "ns", "0.1.0", true)
+	if got := installedBoardCLI(home); got != want {
+		t.Errorf("non-executable newest should be skipped: got %q, want %q", got, want)
+	}
+	if got := installedBoardCLI(""); got != "" {
+		t.Errorf("empty HOME must not glob: got %q", got)
+	}
+	if got := installedBoardCLI(t.TempDir()); got != "" {
+		t.Errorf("no cache dir must yield empty: got %q", got)
+	}
+}
+
+func TestResolveConfigFallsBackToInstalledPluginButNotForExplicitPaths(t *testing.T) {
+	home := t.TempDir()
+	installed := mkBoard(t, home, "ns", "1.0.0", true)
+	repo := t.TempDir() // no ralph/scripts/board inside
+	env := func(k string) string {
+		switch k {
+		case "HOME":
+			return home
+		case "RALPH_HERDR_REPO":
+			return repo
+		}
+		return ""
+	}
+	cfg, err := resolveConfig(nil, env)
+	if err != nil {
+		t.Fatalf("expected tier-3 fallback, got error: %v", err)
+	}
+	if cfg.Board != installed {
+		t.Errorf("Board = %q, want installed %q", cfg.Board, installed)
+	}
+	// An explicit path that is not executable must FAIL, never silently fall
+	// back to the installed copy — the operator named a specific board.
+	if _, err := resolveConfig([]string{filepath.Join(repo, "nope")}, env); err == nil {
+		t.Error("explicit broken argv[1] must error, not fall back")
+	}
+	envBad := func(k string) string {
+		if k == "RALPH_HERDR_BOARD" {
+			return filepath.Join(repo, "nope")
+		}
+		return env(k)
+	}
+	if _, err := resolveConfig(nil, envBad); err == nil {
+		t.Error("explicit broken RALPH_HERDR_BOARD must error, not fall back")
 	}
 }

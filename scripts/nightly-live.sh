@@ -21,7 +21,18 @@
 #     ProgramArguments: ["/bin/bash", "<this repo>/scripts/nightly-live.sh"]
 #     StartCalendarInterval: { Hour = 2; Minute = 30; }
 #     StandardOutPath/StandardErrorPath: ~/.ralph/logs/bdd-nightly.log
-#     EnvironmentVariables: { RALPH_BDD_LIVE = "1"; }
+#     EnvironmentVariables: {
+#       RALPH_BDD_LIVE = "1";
+#       # launchd loads NO shell startup file, so its PATH is roughly
+#       # /usr/bin:/bin:/usr/sbin:/sbin. This script calls herdr, npm, and npx
+#       # BY NAME — including in the EXIT trap that stops and deletes the
+#       # ralph-bdd session, so an unset PATH leaks a test session rather than
+#       # merely failing the run. List the node + herdr bin dirs explicitly;
+#       # print yours with:  dirname "$(command -v npm)"; dirname "$(command -v herdr)"
+#       PATH = "<node bin dir>:<herdr bin dir>:/usr/bin:/bin:/usr/sbin:/sbin";
+#     }
+#     (on this machine those are ~/.local/share/mise/installs/node/<ver>/bin
+#      and ~/.local/bin — expand them, launchd does not glob or expand ~)
 #   load with:   launchctl load ~/Library/LaunchAgents/com.ralph.bdd-nightly.plist
 #   verify with: launchctl list | grep com.ralph.bdd-nightly
 #

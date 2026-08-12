@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -64,10 +65,17 @@ func resolveConfig(args []string, getenv func(string) string) (Config, error) {
 		candidate := filepath.Join(cfg.Repo, "ralph", "scripts", "board")
 		if isExecutable(candidate) {
 			cfg.Board = candidate
+		} else if p := installedBoardCLI(getenv("HOME")); p != "" {
+			// Tier 3, GH-1761: a herdr pane inherits the SERVER's env, so a
+			// cockpit opened outside a ralph checkout has no vendored board.
+			// Order mirrors lib.sh installed_board_cli() and
+			// herdr-setup.sh's board check — change all three together.
+			cfg.Board = p
 		}
 	}
 	if cfg.Board == "" {
-		return cfg, fmt.Errorf("no board CLI — pass its path as argv[1], set RALPH_HERDR_BOARD, or run from a repo with ralph/scripts/board")
+		return cfg, fmt.Errorf("no board CLI — tried argv[1] (unset), RALPH_HERDR_BOARD (unset), %s, and ~/.claude/plugins/cache/*/ralph/*/scripts/board (is the ralph Claude Code plugin installed?)",
+			filepath.Join(cfg.Repo, "ralph", "scripts", "board"))
 	}
 	if !isExecutable(cfg.Board) {
 		return cfg, fmt.Errorf("board CLI %q is not executable", cfg.Board)
@@ -113,6 +121,75 @@ func pollInterval(raw string) time.Duration {
 		n = 10
 	}
 	return time.Duration(n) * time.Second
+}
+
+// installedBoardCLI returns the newest executable board CLI from the installed
+// ralph plugin cache, or "" when none is usable. Ranking is by the VERSION path
+// component (…/ralph/<version>/scripts/board), NOT the whole path — a full-path
+// sort would rank the marketplace namespace above the version, exactly the trap
+// lib.sh's `awk -F/ '{print $(NF-2)}' | sort -V` avoids. Callers must only reach
+// this after an explicit path was absent: an explicit-but-broken path is an
+// error, never a reason to fall back.
+func installedBoardCLI(home string) string {
+	if home == "" {
+		return ""
+	}
+	matches, err := filepath.Glob(filepath.Join(home, ".claude", "plugins", "cache", "*", "ralph", "*", "scripts", "board"))
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+	best, bestVer := "", ""
+	for _, m := range matches {
+		if !isExecutable(m) {
+			continue
+		}
+		// …/ralph/<version>/scripts/board — version is 3 elements up.
+		parts := strings.Split(filepath.ToSlash(m), "/")
+		if len(parts) < 4 {
+			continue
+		}
+		ver := parts[len(parts)-3]
+		if best == "" || compareVersions(ver, bestVer) > 0 {
+			best, bestVer = m, ver
+		}
+	}
+	return best
+}
+
+// compareVersions orders dotted version strings numerically per component
+// (so 0.10.0 > 0.9.0, which a lexical compare gets wrong), falling back to a
+// string compare for non-numeric components.
+func compareVersions(a, b string) int {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		// A missing component is zero, so 1.2 == 1.2.0 rather than sorting
+		// below it (an empty string would otherwise fall to string compare).
+		ap, bp := "0", "0"
+		if i < len(as) && as[i] != "" {
+			ap = as[i]
+		}
+		if i < len(bs) && bs[i] != "" {
+			bp = bs[i]
+		}
+		ai, aerr := strconv.Atoi(ap)
+		bi, berr := strconv.Atoi(bp)
+		if aerr == nil && berr == nil {
+			if ai != bi {
+				if ai > bi {
+					return 1
+				}
+				return -1
+			}
+			continue
+		}
+		if ap != bp {
+			if ap > bp {
+				return 1
+			}
+			return -1
+		}
+	}
+	return 0
 }
 
 func isExecutable(path string) bool {

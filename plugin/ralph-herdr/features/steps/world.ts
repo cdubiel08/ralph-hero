@@ -174,12 +174,15 @@ export class RalphWorld extends World {
 
   env(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
     const e: NodeJS.ProcessEnv = { ...process.env };
-    // The billing guard must see NO stray key; ledger selection must come
-    // from this world alone.
-    delete e.ANTHROPIC_API_KEY;
-    delete e.RALPH_HERDR_LEDGER;
-    delete e.RALPH_HERDR_REPO;
-    delete e.RALPH_HERDR_BOARD;
+    // Scrub EVERY inherited RALPH_*/HERDR_* key (plus the API key the billing
+    // guard must never see) before re-adding this world's own values. A kept
+    // knob — an operator's exported RALPH_HERDR_DRY_RUN=true, _FLEET,
+    // _JOIN_WAIT_SEC, ALLOW_API_BILLING — silently turns spawn scenarios into
+    // no-ops, so the suite's verdict would depend on the host shell. Prefix
+    // scrub, not a name list: knobs added later are isolated by default.
+    for (const k of Object.keys(e)) {
+      if (/^(RALPH_|HERDR_)/.test(k) || k === 'ANTHROPIC_API_KEY') delete e[k];
+    }
     return {
       ...e,
       PATH: `${this.bin}:${process.env.PATH ?? ''}`,
