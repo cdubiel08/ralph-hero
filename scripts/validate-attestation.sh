@@ -71,6 +71,10 @@ fi
 attestation_required=$(jq -r '.attestation.required // false | tostring' "$POLICY_FILE")
 external_required=$(jq -r '.external_review.required // false | tostring' "$POLICY_FILE")
 external_bot=$(jq -r '.external_review.bot // "chatgpt-codex-connector[bot]"' "$POLICY_FILE")
+external_trigger=$(jq -r '.external_review.trigger // "@codex review"' "$POLICY_FILE")
+external_head_marker=$(jq -r '.external_review.head_marker // "ralph-review-head"' "$POLICY_FILE")
+external_clean_marker=$(jq -r '.external_review.clean_comment_marker // "Codex Review: Didn\u0027t find any major issues."' "$POLICY_FILE")
+external_approval_reaction=$(jq -r '.external_review.approval_reaction // "+1"' "$POLICY_FILE")
 
 if [[ "$attestation_required" != "true" ]]; then
   out success "attestation not required by policy"
@@ -125,33 +129,63 @@ fi
 
 # --- external (independent-identity) review --------------------------------
 if [[ "$external_required" == "true" ]]; then
-  # Head-bound, matching scripts/merge-pr.sh gate 5: a review of an earlier sha
-  # is not a review of this head, and a DISMISSED review is not a review. The
-  # sha lives on .commit_id, which `gh pr view --json reviews` does not expose,
-  # so this reads the REST endpoint rather than reusing $pr_json. The
-  # server-side backstop must not be weaker than the client gate it re-validates.
-  # Identical filter to scripts/merge-pr.sh gate 5, including --arg binding
-  # (the bot name is policy-supplied; interpolating it into the filter text
-  # would be jq injection — CodeRabbit finding, PR #1689).
-  ext_count=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null \
-    | jq -s --arg bot "$external_bot" --arg sha "$head_sha" '
+  # Matching scripts/merge-pr.sh gate 5: Codex findings arrive as COMMENTED
+  # reviews and never count as approval. A clean review is the bot-authored
+  # clean-result comment plus its PR-level thumbs-up reaction.
+  external_fetch_ok=true
+  if ! ext_comments=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate 2>/dev/null | jq -s 'add // []'); then
+    ext_comments='[]'
+    external_fetch_ok=false
+  fi
+  if ! ext_reactions=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/reactions" --paginate 2>/dev/null | jq -s 'add // []'); then
+    ext_reactions='[]'
+    external_fetch_ok=false
+  fi
+  if ! ext_reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null | jq -s 'add // []'); then
+    ext_reviews='[]'
+    external_fetch_ok=false
+  fi
+
+  head_marker="<!-- $external_head_marker: $head_sha -->"
+  request_at=$(jq -r --arg trigger "$external_trigger" --arg marker "$head_marker" '
+    [ .[]
+      | select((.body // "") | contains($trigger))
+      | select((.body // "") | contains($marker))
+      | .updated_at // .created_at // empty
+    ] | max // ""' <<<"$ext_comments")
+
+  clean_at=""
+  if [[ -n "$request_at" ]]; then
+    clean_at=$(jq -r --arg bot "$external_bot" --arg clean "$external_clean_marker" --arg request "$request_at" '
+      def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+      [ .[]
+        | select(((.user.login // "") | norm) == ($bot | norm))
+        | select((.body // "") | contains($clean))
+        | select((.created_at // "") > $request)
+        | .created_at
+      ] | max // ""' <<<"$ext_comments")
+  fi
+
+  ext_reaction_count=$(jq -r --arg bot "$external_bot" --arg reaction "$external_approval_reaction" '
         def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-        [ add[]?
+        [ .[]
           | select(((.user.login // "") | norm) == ($bot | norm))
-          | select(.state != "DISMISSED")
-          | select(.commit_id == $sha)
-        ] | length' 2>/dev/null || echo "0")
-  head_short=${head_sha:0:7}
-  ext_comment_count=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate 2>/dev/null \
-    | jq -s --arg bot "$external_bot" --arg short "$head_short" '
-        def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-        [ add[]?
-          | select(((.user.login // "") | norm) == ($bot | norm))
-          # Keep the short-SHA token head-bound even if a longer SHA happens
-          # to share its prefix.
-          | select((.body // "") | test("Reviewed commit " + $short + "([^0-9A-Fa-f]|$)"))
-        ] | length' 2>/dev/null || echo "0")
-  if [[ "${ext_count:-0}" -eq 0 && "${ext_comment_count:-0}" -eq 0 ]]; then
+          | select((.content // "") == $reaction)
+        ] | length' <<<"$ext_reactions")
+
+  findings_after_clean=0
+  if [[ -n "$clean_at" ]]; then
+    findings_after_clean=$(jq -r --arg bot "$external_bot" --arg sha "$head_sha" --arg clean "$clean_at" '
+      def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+      [ .[]
+        | select(((.user.login // "") | norm) == ($bot | norm))
+        | select((.commit_id // "") == $sha)
+        | select((.state // "") != "DISMISSED" and (.state // "") != "APPROVED")
+        | select((.submitted_at // "") == "" or (.submitted_at // "") >= $clean)
+      ] | length' <<<"$ext_reviews")
+  fi
+
+  if [[ "$external_fetch_ok" != "true" || -z "$request_at" || -z "$clean_at" || "${ext_reaction_count:-0}" -eq 0 || "${findings_after_clean:-0}" -ne 0 ]]; then
     out pending "awaiting external review by $external_bot at ${head_sha:0:8}"
   fi
 fi
