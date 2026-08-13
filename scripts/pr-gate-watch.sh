@@ -80,11 +80,9 @@
 #                                            exits on the first terminal verdict
 #
 # Exit codes: 0 terminal verdict, 10 still waiting, 2 usage, 1 gh unreachable.
-# Env: PR_GATE_ATTEST_CHECK (default "ralph-attestation") names the status
-# published by validate-attestation.yml, for repos that renamed it. The name
-# is the ONLY way the attestation status is identified — matching gate 3's
-# exact comparison. An undeclared renamed status is plain CI to this script
-# and to the gate alike.
+#
+# The attestation status is `ralph-attestation`, hardcoded, because gate 3
+# hardcodes it. Renaming it is a change to the gate, not to this script.
 #
 # Honest limit: the attested-at-this-head check reads `gh pr view --json
 # comments`, so on a PR with more comments than that window returns, the
@@ -186,7 +184,18 @@ POLICY_EXTERNAL=$(jq -r '.externalRequired | tostring' <<<"$POLICY")
 # Test-only override, same pattern merge-pr.sh gate 6 uses.
 APPLY_KEYWORDS_SH="${RALPH_APPLY_KEYWORDS_SH:-$PROJECT_ROOT/scripts/apply-keywords.sh}"
 
-ATTEST_CHECK="${PR_GATE_ATTEST_CHECK:-ralph-attestation}"
+# The literal, matching gate 3's hardcoded `ralph-attestation` comparison
+# (merge-pr.sh:287-295) exactly. There WAS a PR_GATE_ATTEST_CHECK override
+# here for repos that renamed the status; it is gone, because it was a
+# capability the gate does not have: with a custom name set, a failed or
+# pending custom check left this script's CI bucket while gate 3 still blocked
+# on it as ordinary CI, and under an attestation waiver it vanished from the
+# ladder entirely (codex P2, PR #1764).
+#
+# Making the name configurable is a fine idea and belongs in the GATE — gate 3,
+# validate-attestation.sh and this script changed together, so all three agree.
+# A watcher-only override cannot be anything but a disagreement.
+ATTEST_CHECK="ralph-attestation"
 # Must stay in sync with MARKER in attest-pr.sh and validate-attestation.sh,
 # which hardcode the same literal.
 ATTEST_MARKER='<!-- ralph-attestation:v1 -->'
@@ -204,8 +213,8 @@ read -r -d '' CLASSIFY_JQ <<'JQ' || true
 # whose description merely MENTIONS attest-pr.sh left the CI bucket here while
 # gate 3 still blocked on it, and under an attestation waiver it then vanished
 # from the ladder entirely and reached GATE-READY (codex P2, PR #1764).
-# Repos that rename the status set PR_GATE_ATTEST_CHECK — a declared name,
-# not an inferred one.
+# Renaming the status is a change to the gate (gate 3 + validate-attestation
+# + this script together), not something this script can absorb alone.
 def is_attest: .name == $attest;
 # Login normalization, identical to gate 5: GitHub spells the same identity
 # "codex[bot]" via REST and "app/codex" in some payloads.
@@ -458,8 +467,14 @@ def fenced_json:
   elif ($review_ok | not) then
     (if ($ratelimited | length) > 0 then
        "GATE-WAIT review: \($rl_names) reports pass but is rate-limited and reviewed nothing; gate 5 is waiting on \($policy.bot) at \($head[0:8]) — comment '\($policy.trigger)'"
+     elif $policy.mode == "comment" and $request_at == "" then
+       # No head-bound request exists, so gate 5 cannot accept ANY clean result
+       # until someone posts one. Nothing arrives by waiting, and polling on is
+       # precisely the never-terminating loop this script exists to replace, so
+       # this hands control back instead (codex P2, PR #1764).
+       "GATE-YOURS review: no \($policy.trigger) request bound to \($head[0:8]) — post it (the trigger, a blank line, then '<!-- \($policy.headMarker): \($head) -->') so a clean result can count"
      elif $policy.mode == "comment" then
-       "GATE-WAIT review: no clean \($policy.bot) result at \($head[0:8]) yet — comment '\($policy.trigger)' with '<!-- \($policy.headMarker): \($head) -->'"
+       "GATE-WAIT review: request is in at \($head[0:8]); no clean \($policy.bot) result yet"
      elif $ext_required then
        "GATE-WAIT review: no \($policy.bot) verdict at \($head[0:8]) yet — comment '\($policy.trigger)' to trigger one"
      else
@@ -643,6 +658,19 @@ snapshot() {
         local apply_out
         if ! apply_out=$("$APPLY_KEYWORDS_SH" "$PR" 2>&1); then
           line="GATE-FAIL apply: $(printf '%s' "$apply_out" | head -1) — fix the closing keywords before merging"
+        fi
+        # Gate 6 makes its OWN GitHub queries, which take time, and it runs
+        # AFTER the head guard above — so a push landing during it would let
+        # every earlier finding (checks, review, attestation) describe the old
+        # head while this returns terminal GATE-READY for the new one. Re-check
+        # (codex P2, PR #1764). Only on this path, because it is the only one
+        # that does work after the guard.
+        local head_final
+        head_final=$(gh pr view "$PR" --json headRefOid 2>/dev/null | jq -r '.headRefOid // ""' 2>/dev/null) || head_final=""
+        if [ -z "$head_final" ] || [ "$head_final" != "$head_before" ]; then
+          printf 'GATE-WAIT ci: head moved or became unreadable while gate 6 ran — re-reading rather than recommending a merge for evidence gathered at %s' \
+            "${head_before:0:8}"
+          return 0
         fi
       fi
       ;;

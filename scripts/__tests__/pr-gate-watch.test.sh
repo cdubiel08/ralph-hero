@@ -341,53 +341,57 @@ for state in MERGED CLOSED; do
 done
 
 echo "=== attestation-check identification ==="
-# By NAME ONLY, matching gate 3's exact `ralph-attestation` comparison. A
-# renamed status is plain CI to both this script and the gate until the repo
-# DECLARES the new name via PR_GATE_ATTEST_CHECK. The description fallback
-# that used to cover this was removed: it made a failed check whose
-# description merely mentions attest-pr.sh leave the CI bucket here while
-# gate 3 still blocked on it (codex P2, PR #1764).
+# By the LITERAL `ralph-attestation`, because gate 3 hardcodes that literal.
+# Two overrides used to live here — a description fallback and a
+# PR_GATE_ATTEST_CHECK env var — and both were removed for the same reason:
+# each let this script disagree with gate 3 about which checks are CI. A
+# renamed status is ordinary CI to the gate, so it is ordinary CI here.
 D="$TMP_ROOT/renamed"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" \
   --argjson a "$(check my-custom-gate pending 'awaiting attestation (scripts/attest-pr.sh)')" '$g + [$a]')" \
   "$APPROVED_PR" "$APPROVAL"
-expect "an undeclared renamed status is CI, exactly as gate 3 sees it" "$D" "GATE-WAIT ci" 10
+expect "a renamed status is CI, exactly as gate 3 sees it" "$D" "GATE-WAIT ci" 10
 
-# The failure this protects: a FAILED check merely mentioning attest-pr.sh in
-# its description, under a policy that waives attestation. It used to leave the
-# CI bucket via the description match and then be ignored by $att_bad because
-# attestation was waived — vanishing from the ladder entirely and reaching
-# GATE-READY, while gate 3 still blocks on it.
-POLICY="$POLICY_NOATT"
-D="$TMP_ROOT/desc-mentions-attest-fail"
-scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" \
-  --argjson a "$(check some-linter fail 'compare against scripts/attest-pr.sh output')" '$g + [$a]')" \
-  "$APPROVED_PR" "$APPROVAL"
-expect "a failed check that merely mentions attest-pr.sh still fails CI" "$D" "GATE-FAIL ci" 0
-run "$D"
-if [[ "$LAST_OUT" == *"some-linter"* ]]; then
-  pass "names the failed check rather than swallowing it as an attestation"
+# The env override must be GONE, not merely unused: with it, a custom-named
+# check under an attestation waiver left the CI bucket here while gate 3 still
+# blocked on it, and then vanished from the ladder entirely.
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" PR_GATE_ATTEST_CHECK=my-custom-gate \
+  RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" bash "$SCRIPT" 1740 2>&1)
+rc=$?
+set -e
+if [[ "$out" == "GATE-WAIT ci"* ]] && [ "$rc" -eq 10 ]; then
+  pass "PR_GATE_ATTEST_CHECK no longer changes the verdict"
 else
-  fail "description-match leak (out=${LAST_OUT:0:150})"
+  fail "attest-name override still honored (rc=$rc out=${out:0:120})"
+fi
+
+# The failure both removals protect: a FAILED check that would have been
+# treated as the attestation, under a policy that waives attestation. It used
+# to leave the CI bucket and then be ignored by $att_bad — vanishing entirely
+# and reaching GATE-READY, while gate 3 still blocks on it.
+POLICY="$POLICY_NOATT"
+D="$TMP_ROOT/custom-name-fail-waived"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" \
+  --argjson a "$(check my-custom-gate fail 'awaiting attestation (scripts/attest-pr.sh)')" '$g + [$a]')" \
+  "$APPROVED_PR" "$APPROVAL"
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" PR_GATE_ATTEST_CHECK=my-custom-gate \
+  RALPH_MERGE_POLICY_FILE="$POLICY_NOATT" bash "$SCRIPT" 1740 2>&1)
+rc=$?
+set -e
+if [[ "$out" == "GATE-FAIL ci"* ]] && [[ "$out" == *"my-custom-gate"* ]]; then
+  pass "a failed custom-named check still fails CI under an attestation waiver"
+else
+  fail "custom-name waiver leak (rc=$rc out=${out:0:140})"
 fi
 POLICY="$POLICY_REVIEW"
 
-D="$TMP_ROOT/env-override"
-scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$(check other-gate pending)" '$g + [$a]')" \
+# The real attestation status is still recognized by its literal name.
+D="$TMP_ROOT/literal-attest"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
   "$APPROVED_PR" "$APPROVAL"
-set +e
-out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" PR_GATE_ATTEST_CHECK=other-gate \
-    RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
-  bash "$SCRIPT" 1740 2>&1)
-rc=$?
-set -e
-if [[ "$out" == "GATE-YOURS attestation"* ]] && [ "$rc" -eq 0 ]; then
-  pass "PR_GATE_ATTEST_CHECK renames the watched status"
-else
-  fail "PR_GATE_ATTEST_CHECK (rc=$rc out=${out:0:110})"
-fi
-# Without the override the same check is just another pending CI job.
-expect "same check is plain CI without the override" "$D" "GATE-WAIT ci" 10
+expect "the literal ralph-attestation is still the attestation" "$D" "GATE-YOURS attestation" 0
 
 echo "=== degenerate inputs ==="
 # A PR with no checks at all, under an attestation-REQUIRED policy, is not
@@ -571,7 +575,9 @@ fi
 D="$TMP_ROOT/clean-comment-stale"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
   "$OPEN_PR" "$NO_REVIEWS" "$(clean_evidence "$OLD_SHA")"
-expect "a clean result requested at an older head is not evidence" "$D" "GATE-WAIT review" 10
+# Terminal, not a wait: with no request bound to THIS head, gate 5 can never
+# accept a clean result, so the next move is the caller's (see P2/25).
+expect "a clean result requested at an older head is not evidence" "$D" "GATE-YOURS review" 0
 run "$D"
 if [[ "$LAST_OUT" == *"ralph-review-head"* ]] && [[ "$LAST_OUT" == *"@codex review"* ]]; then
   pass "names the marker protocol the caller must post to unblock it"
@@ -1305,7 +1311,7 @@ POLICY="$POLICY_COMMENT"
 D="$TMP_ROOT/comment-mode-formal-approval"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
   "$OPEN_PR" "$APPROVAL" '[]'
-expect "a formal APPROVED review is not comment-mode evidence" "$D" "GATE-WAIT review" 10
+expect "a formal APPROVED review is not comment-mode evidence" "$D" "GATE-YOURS review" 0
 run "$D"
 if [[ "$LAST_OUT" == *"ralph-review-head"* ]]; then
   pass "still asks for the marker protocol rather than accepting the approval"
@@ -1329,6 +1335,74 @@ D="$TMP_ROOT/review-mode-formal-approval"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
   "$OPEN_PR" "$APPROVAL" '[]'
 expect "review mode still accepts a formal APPROVED review" "$D" "GATE-YOURS attestation" 0
+
+echo "=== P2/24: gate 6 does work AFTER the head guard, so re-check ==="
+# apply-keywords.sh makes its own GitHub queries, and it runs after the head
+# re-read. A push landing while it works would leave every earlier finding
+# describing the old head while this returns terminal GATE-READY for the new.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/gate6-head-moves"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+# A checker that moves the head while it runs, by installing the third-call
+# fixture mid-flight — which is exactly the race, not a simulation of it.
+MOVING_APPLY="$TMP_ROOT/apply-keywords-moves-head.sh"
+cat >"$MOVING_APPLY" <<AK
+#!/usr/bin/env bash
+printf '%s' '$(jq -nc --arg sha "$OLD_SHA" '{headRefOid: $sha}')' >"\$GH_STUB_DIR/pr_view_second.json"
+echo "APPLY KEYWORDS INERT — no apply block"
+exit 0
+AK
+chmod +x "$MOVING_APPLY"
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  RALPH_APPLY_KEYWORDS_SH="$MOVING_APPLY" bash "$SCRIPT" 1740 2>&1)
+rc=$?
+set -e
+rm -f "$D/pr_view_second.json"
+if [[ "$out" == "GATE-WAIT ci"* ]] && [[ "$out" == *"while gate 6 ran"* ]] && [ "$rc" -eq 10 ]; then
+  pass "a head that moves during gate 6 withholds the merge recommendation"
+else
+  fail "gate 6 head recheck (rc=$rc out=${out:0:170})"
+fi
+# A settled head through gate 6 still reaches READY.
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  RALPH_APPLY_KEYWORDS_SH="$FAKE_APPLY_OK" bash "$SCRIPT" 1740 2>&1)
+rc=$?
+set -e
+if [[ "$out" == "GATE-READY"* ]] && [ "$rc" -eq 0 ]; then
+  pass "a settled head through gate 6 still reaches READY"
+else
+  fail "gate 6 settled (rc=$rc out=${out:0:140})"
+fi
+
+echo "=== P2/25: a missing comment-mode request is the caller's turn ==="
+# With no head-bound request, gate 5 cannot accept ANY clean result until
+# someone posts one. Nothing arrives by waiting, so a non-terminal GATE-WAIT
+# is precisely the never-terminating loop this script exists to replace.
+POLICY="$POLICY_COMMENT"
+D="$TMP_ROOT/comment-mode-no-request"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$NO_REVIEWS" '[]'
+expect "no head-bound request hands control back" "$D" "GATE-YOURS review" 0
+run "$D"
+if [[ "$LAST_OUT" == *"ralph-review-head: $HEAD_SHA"* ]] && [[ "$LAST_OUT" == *"blank line"* ]]; then
+  pass "spells out the marker form the gate can actually read"
+else
+  fail "missing-request remedy (out=${LAST_OUT:0:200})"
+fi
+
+# With the request IN and no clean result yet, waiting is correct — the
+# reviewer genuinely owes an answer, so this stays non-terminal.
+D="$TMP_ROOT/comment-mode-request-in"
+REQUEST_ONLY=$(jq -nc --arg sha "$HEAD_SHA" \
+  '[{user:{login:"cdubiel08"}, body:("@codex review\n\n<!-- ralph-review-head: " + $sha + " -->"),
+     created_at:"2026-08-13T04:00:00Z"}]')
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$NO_REVIEWS" "$REQUEST_ONLY"
+expect "request in, no clean result yet, is a wait" "$D" "GATE-WAIT review" 10
+POLICY="$POLICY_REVIEW"
 
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
