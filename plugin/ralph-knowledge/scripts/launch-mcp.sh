@@ -17,7 +17,8 @@
 #     install and written only after every step succeeds, so an interrupted
 #     or half-updated tree re-bootstraps instead of exec'ing a stale build.
 #   * an inter-process mkdir LOCK, so exactly one process runs the
-#     destructive `npm ci` while the others wait and then re-check.
+#     destructive `npm ci` while the others wait and then re-check. The lock is
+#     never taken from its holder — see the note on reclamation below.
 set -euo pipefail
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -25,11 +26,7 @@ cd "$PLUGIN_ROOT"
 
 MARKER="$PLUGIN_ROOT/.bootstrap-complete"
 LOCK="$PLUGIN_ROOT/.bootstrap.lock"
-LOCK_STALE_MIN="${RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN:-30}"
 LOCK_WAIT_SEC="${RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC:-900}"
-# How long an in-lock reap marker may sit before it is treated as orphaned.
-# The reap critical section is a handful of syscalls, so minutes is generous.
-REAP_STALE_MIN="${RALPH_KNOWLEDGE_REAP_STALE_MIN:-5}"
 # Identity for lock ownership. A PID only means something on the host that
 # issued it, and a plugin directory can live on a shared network home.
 THIS_HOST="$(hostname 2>/dev/null || echo unknown-host)"
@@ -138,207 +135,54 @@ run_bootstrap() {
   echo "[ralph-knowledge] bootstrap complete."
 }
 
-# Age of a directory in whole minutes, on stdout. BSD stat wants -f %m and GNU
-# stat wants -c %Y; try both and fail (non-zero, no output) when neither
-# answers, so an unreadable age can never be mistaken for "old".
-dir_age_min() {
-  local now mtime
-  now=$(date +%s 2>/dev/null) || return 1
-  mtime=$(stat -f %m "$1" 2>/dev/null) || mtime=$(stat -c %Y "$1" 2>/dev/null) || return 1
-  [ -n "$mtime" ] || return 1
-  echo $(( (now - mtime) / 60 ))
-}
-
-lock_age_min() { dir_age_min "$LOCK"; }
-
-# True (0) when the lock may be taken away from whoever holds it.
+# NOTE ON RECLAMATION — deliberately absent (codex P2 x6, PR #1755).
 #
-# Age alone does NOT establish that the owner died (codex P2, PR #1755). An
-# `npm ci` stalled on a slow registry can legitimately outlive LOCK_STALE_MIN,
-# and reclaiming it there starts a second destructive `npm ci` against the same
-# tree — the precise race the lock exists to prevent. So when the owner is a
-# live process on this machine we ask the kernel instead of guessing, and never
-# reclaim; when it is dead we reclaim at once without waiting out the window.
+# Earlier revisions tried to detect and delete an abandoned lock. Four designs
+# were written and MEASURED, and each one failed or spawned the next:
 #
-# Age remains the fallback for the two cases liveness cannot decide: a lock
-# whose owner file is not written yet (the holder is between `mkdir` and the
-# write, so the lock is necessarily new), and a lock from another host — a
-# shared network home — whose PIDs are not ours to probe.
+#   rm by name                — 30 waiters all pass the same check, then all
+#                               delete; whoever already reclaimed loses its
+#                               fresh lock. 4 concurrent installs.
+#   an external reap lock     — moved the same race onto clearing a STALE reap
+#                               lock.
+#   capture by rename(2)      — instance-bound, but leaves the lock absent
+#                               while inspected; a slow box fills that window.
+#                               3 concurrent installs on CI's 2-core runner.
+#   a marker inside the lock  — closed that, then deadlocked the tree when a
+#                               reaper was SIGKILLed holding it; and recovering
+#                               THAT marker is check-then-delete again.
 #
-# PID reuse can make a dead owner look alive. That errs toward waiting and then
-# timing out, never toward a concurrent install, which is the safe direction.
-owner_is_live() {
-  local owner="$1" pid host
-  [ -n "$owner" ] || return 1
-  pid=${owner%% *}
-  host=${owner#* }
-  [ "$host" = "$THIS_HOST" ] || return 1
-  [ -n "$pid" ] || return 1
-  kill -0 "$pid" 2>/dev/null
-}
-
-# The lock's identity record: "pid host born_epoch". Written immediately after
-# mkdir. Carrying the birth time IN the file rather than relying on directory
-# mtime matters — the reap marker below is created inside the lock, which bumps
-# its mtime, and a rename would carry the old one.
+# The recursion is the finding: reclamation is check-then-delete on a shared
+# pathname, and every serialization layer needs its own reclamation, which
+# needs its own serialization. POSIX shell has exactly one atomic primitive
+# here — `mkdir` — and it can create, never safely destroy someone else's.
+#
+# So this launcher NEVER deletes a lock it does not own. `mkdir` alone decides
+# who bootstraps, which is airtight, and a lock is released only by the process
+# that took it: normally, or via its INT/TERM handlers. Nothing else can
+# manufacture a second holder, because nothing else removes the directory.
+#
+# The cost is stated rather than engineered around: a bootstrap killed with
+# SIGKILL (or a machine that dies mid-install) leaves the lock behind, and the
+# next launch waits out LOCK_WAIT_SEC and then FAILS with the directory to
+# remove. That is a one-line manual recovery in a rare case, traded for the
+# removal of an entire class of concurrent-destructive-install bugs. An
+# ordinary kill needs no recovery at all — the handlers release the lock.
+#
+# The owner record is kept, but purely so that message can say WHO holds it.
+# Nothing reads it to decide anything.
 lock_write_owner() {
   printf '%s %s %s\n' "$$" "$THIS_HOST" "$(date +%s 2>/dev/null || echo 0)" \
     >"$LOCK/owner" 2>/dev/null || true
 }
 
-owner_field() { echo "$1" | cut -d' ' -f"$2"; }
-
-# True (0) when the lock at $1 looks abandoned. TWO conditions, both needed:
-#
-#   older than LOCK_STALE_MIN — a young lock is NEVER abandoned, whatever its
-#     owner record says. Every successor is young by construction, so this is
-#     what stops a verdict formed on one instance from condemning its
-#     replacement. It also covers the lock whose owner file is not written yet:
-#     that is a holder milliseconds old, not a corpse, and reading "no owner
-#     recorded" as "no owner alive" measurably produced concurrent installs.
-#
-#   owner not alive — age alone does not establish death (an `npm ci` stalled
-#     on a slow registry outlives the window legitimately). Where the owner is
-#     a process on this host we ask the kernel rather than guess.
-#
-# A foreign host's PIDs are not ours to probe (a shared network home), so there
-# age is all there is. PID reuse can make a dead owner look alive, which errs
-# toward waiting and timing out — never toward a concurrent install.
-dir_reclaimable() {
-  local d="$1" owner pid host born now age
-  owner=$(cat "$d/owner" 2>/dev/null || echo "")
-  if [ -z "$owner" ]; then
-    # No identity recorded: fall back to the directory's own age.
-    age=$(dir_age_min "$d") || return 1
-    [ "$age" -gt "$LOCK_STALE_MIN" ]
-    return
-  fi
-  pid=$(owner_field "$owner" 1)
-  host=$(owner_field "$owner" 2)
-  born=$(owner_field "$owner" 3)
-  case "$born" in
-    ''|*[!0-9]*) age=$(dir_age_min "$d") || return 1 ;;
-    *)
-      now=$(date +%s 2>/dev/null) || return 1
-      age=$(( (now - born) / 60 ))
-      ;;
-  esac
-  [ "$age" -gt "$LOCK_STALE_MIN" ] || return 1
-  if [ "$host" = "$THIS_HOST" ] && [ -n "$pid" ]; then
-    kill -0 "$pid" 2>/dev/null && return 1
-    return 0
-  fi
-  # A FOREIGN host's PIDs are not ours to probe, so death cannot be proven —
-  # and age is no substitute (codex P2, PR #1755). A shared network home with
-  # another machine still bootstrapping past the window would have its LIVE
-  # lock deleted and a second destructive `npm ci` started against the same
-  # tree. Fail closed: never delete a lock we cannot prove is abandoned. The
-  # cost is that a foreign host which truly died wedges this tree until an
-  # operator removes the directory, and the wait timeout says exactly that.
-  return 1
-}
-
-lock_reclaimable() { dir_reclaimable "$LOCK"; }
-
-# Remove an abandoned lock. Three designs were tried; the first two were
-# MEASURED failing, and the reasons are the whole justification for this one
-# (codex P2 x4, PR #1755).
-#
-#   rm by name — 30 waiters all pass the check on the same ancient lock in the
-#     same instant, then all run `rm`, deleting the fresh lock whichever one
-#     already reclaimed and recreated. 4 concurrent installs.
-#
-#   an external "reap" lock — only moved the identical race one level up, onto
-#     whoever cleared a STALE reap lock.
-#
-#   capture by rename(2) — atomic and instance-bound, but it leaves $LOCK
-#     ABSENT while the captured instance is inspected. Other waiters take that
-#     opening, the restore then fails, and a live holder is orphaned. Clean on
-#     a fast 10-core machine; CI's 2-core runner produced 3 concurrent installs.
-#
-# What this does instead: serialize reapers with a marker created INSIDE the
-# lock. That is atomic (mkdir), it is scoped to one lock instance, and — unlike
-# an external reap lock — it cannot outlive what it guards, so there is no
-# stale reaper state to clear and no second race to inherit. The lock is never
-# removed from its path to be examined, so no window is ever opened.
-#
-# The removal is then safe rather than merely narrow: the ONLY way a successor
-# could appear between the verdict and the `rm` is for someone to delete this
-# lock first, and the only deleter is a reaper holding the marker we are
-# holding. The owner record is re-read across the marker to confirm the
-# instance did not change hands underneath us.
-#
-# Returns 0 when this process removed the lock, 1 otherwise.
-reap_abandoned_lock() {
-  local before after age
-  # Sample identity and take the verdict BEFORE the marker exists: creating it
-  # writes into the lock directory and bumps the mtime some verdicts rest on.
-  before=$(cat "$LOCK/owner" 2>/dev/null || echo "__none__")
-  lock_reclaimable || return 1
-
-  # Recover a marker orphaned by a reaper that was SIGKILLed mid-reap (codex
-  # P2, PR #1755). Without this the marker sits inside the abandoned lock
-  # forever, every later `mkdir` below fails, and the bootstrap times out on
-  # every launch until someone deletes the directory by hand — a permanent
-  # wedge introduced by the marker itself.
-  #
-  # Clearing it is safe by the same age argument that protects the lock: a live
-  # reaper's marker is seconds old, and a successor lock's marker is younger
-  # still, so only an ancient marker is ever removed — and an ancient marker
-  # can only sit inside an ancient lock.
-  if [ -d "$LOCK/reaping" ]; then
-    age=$(dir_age_min "$LOCK/reaping" 2>/dev/null || echo "")
-    if [ -n "$age" ] && [ "$age" -ge "$REAP_STALE_MIN" ]; then
-      echo "[ralph-knowledge] clearing an orphaned reap marker ($LOCK/reaping)" >&2
-      rm -rf "$LOCK/reaping" 2>/dev/null || true
-    fi
-  fi
-
-  mkdir "$LOCK/reaping" 2>/dev/null || return 1
-
-  # Release the marker if we are interrupted while holding it, so an ordinary
-  # kill does not cost the next launcher the full REAP_STALE_MIN recovery.
-  # Signal handlers disarm EXIT first: otherwise the handler removes the
-  # marker and then `exit` runs the still-armed EXIT trap, removing the
-  # pathname a SECOND time — which would delete whatever occupies it by then.
-  trap 'rm -rf "$LOCK/reaping" 2>/dev/null || true' EXIT
-  trap 'trap - EXIT; rm -rf "$LOCK/reaping" 2>/dev/null || true; exit 130' INT
-  trap 'trap - EXIT; rm -rf "$LOCK/reaping" 2>/dev/null || true; exit 143' TERM
-
-  # From here no other reaper can delete this lock, and a successor can only
-  # exist if someone deleted it first — so an unchanged owner record proves we
-  # are about to remove the same instance we judged.
-  after=$(cat "$LOCK/owner" 2>/dev/null || echo "__none__")
-  if [ "$after" != "$before" ]; then
-    rmdir "$LOCK/reaping" 2>/dev/null || true
-    trap - EXIT INT TERM
-    return 1
-  fi
-
-  echo "[ralph-knowledge] removing abandoned bootstrap lock ($LOCK)" >&2
-  rm -rf "$LOCK" 2>/dev/null || true
-  trap - EXIT INT TERM
-  return 0
-}
-
 if bootstrap_needed; then
   waited=0
   until mkdir "$LOCK" 2>/dev/null; do
-    # Reclaim a lock whose owner is gone. This verdict is only a CHEAP FILTER
-    # — it reads a pathname, so it can be stale by the next line. The binding
-    # decision is the one reap_abandoned_lock makes on the instance it has
-    # captured and holds exclusively.
-    if lock_reclaimable; then
-      # Only retry immediately if the removal actually worked. Otherwise fall
-      # through to the wait accounting below, so a lock we can never delete
-      # (permissions, read-only mount) times out instead of spinning forever.
-      if reap_abandoned_lock && [ ! -d "$LOCK" ]; then
-        continue
-      fi
-    fi
     if [ "$waited" -ge "$LOCK_WAIT_SEC" ]; then
       echo "[ralph-knowledge] timed out after ${LOCK_WAIT_SEC}s waiting for another process to bootstrap ($LOCK)" >&2
-      echo "[ralph-knowledge] if no other machine is bootstrapping this tree, remove $LOCK and relaunch" >&2
+      echo "[ralph-knowledge] held by: $(cat "$LOCK/owner" 2>/dev/null || echo 'unknown (no owner recorded)')" >&2
+      echo "[ralph-knowledge] if that process is gone, remove $LOCK and relaunch" >&2
       exit 1
     fi
     [ "$waited" -eq 0 ] && echo "[ralph-knowledge] another process is bootstrapping; waiting..." >&2
@@ -362,11 +206,8 @@ if bootstrap_needed; then
   trap 'trap - EXIT; rm -rf "$LOCK"; exit 130' INT
   trap 'trap - EXIT; rm -rf "$LOCK"; exit 143' TERM
 
-  # Record the owner so a later launcher can ask whether we are still alive
-  # rather than inferring it from the lock's age. Written after the trap is
-  # armed, so a kill in this window still releases the lock; a waiter that
-  # arrives before this line sees no owner file and falls back to age, which
-  # is correct because the lock is necessarily new at that point.
+  # Recorded only so a timed-out waiter can name who holds the lock. Nothing
+  # reads it to make a decision — see the note on reclamation above.
   lock_write_owner
 
   # Re-check under the lock: the process we waited on may have finished the

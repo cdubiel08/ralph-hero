@@ -442,163 +442,87 @@ else
   fail "script resumed past the signal and kept bootstrapping" "$(cat "$log")"
 fi
 
-echo "=== lock reclamation asks whether the owner died, not how old it is ==="
+echo "=== the launcher never deletes a lock it does not own ==="
 
-# A live owner must keep its lock however long the install takes. `npm ci`
-# stalling on a slow registry past LOCK_STALE_MIN is a legitimate long
-# bootstrap, and reclaiming there starts a SECOND destructive npm ci against
-# the same tree — the race the lock exists to prevent (codex P2).
-root=$(fake_root livelock)
-rm -f "$root/dist/index.js"          # force the bootstrap path
-mkdir -p "$root/.bootstrap.lock"
-# Owner: this test process, which is very much alive, on this host.
-printf '%s %s\n' "$$" "$(hostname)" >"$root/.bootstrap.lock/owner"
-# Backdate the lock far beyond the stale window.
-touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true
-
-log="$root/calls.log"; : >"$log"
-RC=0
-CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
-
-if grep -q 'npm ci' "$log"; then
-  fail "reclaimed a 25-year-old lock whose owner is ALIVE — concurrent npm ci" "$(cat "$log")"
-else
-  pass "live owner keeps its lock regardless of age (no concurrent npm ci)"
-fi
-if [ "$RC" -ne 0 ] && grep -q "timed out" "$root/stderr.log"; then
-  pass "waiter times out rather than stealing a live lock"
-else
-  fail "expected a wait-timeout against a live owner (rc=$RC)" "$(cat "$root/stderr.log")"
-fi
-
-# A dead owner's lock is reclaimed once it is also older than the stale window.
+# The terminal property, and the reason ~160 lines of reclamation machinery are
+# gone (codex P2 x6). Every scheme for detecting and deleting an abandoned lock
+# is check-then-delete on a shared pathname, and each serialization layer needed
+# its own reclamation in turn. `mkdir` can create atomically but can never
+# safely destroy someone else's directory, so the launcher does not try.
 #
-# The age gate is deliberate and it costs something: a crashed bootstrap is not
-# recovered instantly any more, it waits out LOCK_STALE_MIN. That is the price
-# of the property below it — a lock younger than the window is NEVER judged
-# abandoned, which is what stops a verdict formed on one instance from
-# authorising the deletion of its successor. Instant dead-owner reclaim was
-# measured producing 4 concurrent installs in a 30-waiter run. The INT/TERM
-# traps already release the lock on an ordinary kill, so only a SIGKILL or a
-# crash reaches this path at all.
-root=$(fake_root deadlock)
-rm -f "$root/dist/index.js"
-mkdir -p "$root/.bootstrap.lock"
-# A PID that cannot be running: claim one, then make sure it is gone.
+# Consequence under test: a pre-existing lock is NEVER removed by a waiter,
+# whatever it looks like — live owner, dead owner, ancient, ownerless.
+
+# A PID that cannot be running: claim one, then walk until it is genuinely free.
 DEAD_PID=$( (bash -c 'echo $$') )
 while kill -0 "$DEAD_PID" 2>/dev/null; do DEAD_PID=$((DEAD_PID + 1)); done
-printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
-touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true
-log="$root/calls.log"; : >"$log"
-RC=0
-CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
 
-if grep -q 'npm ci' "$log"; then
-  pass "an aged lock whose owner is dead is reclaimed"
-else
-  fail "an aged lock owned by a DEAD pid was not reclaimed — a crash would never recover" \
-    "$(cat "$root/stderr.log")"
-fi
+for scenario in liveowner deadowner ancient ownerless; do
+  root=$(fake_root "noreclaim-$scenario")
+  rm -f "$root/dist/index.js"
+  mkdir -p "$root/.bootstrap.lock"
+  case "$scenario" in
+    liveowner) printf '%s %s %s\n' "$$" "$(hostname)" "$(date +%s)" >"$root/.bootstrap.lock/owner" ;;
+    deadowner) printf '%s %s %s\n' "$DEAD_PID" "$(hostname)" "$(date +%s)" >"$root/.bootstrap.lock/owner" ;;
+    ancient)
+      printf '%s %s 0\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
+      touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true ;;
+    ownerless)
+      touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true ;;
+  esac
 
-# The other half of the age gate: a YOUNG lock is left alone even when its
-# recorded owner is dead. This is the property that makes a stale verdict
-# harmless, since every successor is young.
-root=$(fake_root youngdead)
+  log="$root/calls.log"; : >"$log"
+  RC=0
+  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+    RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
+    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+
+  if [ -d "$root/.bootstrap.lock" ] && ! grep -q 'npm ci' "$log"; then
+    pass "pre-existing lock ($scenario) is neither deleted nor bypassed"
+  else
+    fail "a waiter destroyed or bypassed a lock it did not own ($scenario)" \
+      "lock_present=$([ -d "$root/.bootstrap.lock" ] && echo yes || echo NO); $(cat "$log")"
+  fi
+done
+
+# Failing closed is only honest if the operator can act on it: the timeout must
+# name the holder and the exact directory to remove.
+root=$(fake_root timeoutmsg)
 rm -f "$root/dist/index.js"
 mkdir -p "$root/.bootstrap.lock"
-printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
-log="$root/calls.log"; : >"$log"
+printf '%s %s %s\n' "$DEAD_PID" "some-other-host" "0" >"$root/.bootstrap.lock/owner"
 RC=0
-CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
+CALL_LOG="$root/calls.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
   bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
-if grep -q 'npm ci' "$log"; then
-  fail "a YOUNG lock was reclaimed on owner-death alone — successors are young, so this is the race" \
-    "$(cat "$log")"
-else
-  pass "a young lock is never reclaimed, even with a dead owner recorded"
-fi
 
-# A foreign host's PID is not ours to probe, so age is the only signal left.
-root=$(fake_root foreignlock)
-rm -f "$root/dist/index.js"
-mkdir -p "$root/.bootstrap.lock"
-printf '%s %s\n' "$$" "some-other-host.example" >"$root/.bootstrap.lock/owner"
-log="$root/calls.log"; : >"$log"
-RC=0
-CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
-if grep -q 'npm ci' "$log"; then
-  fail "reclaimed a FRESH lock held by another host" "$(cat "$log")"
+if [ "$RC" -ne 0 ]; then
+  pass "a wedged lock fails loudly rather than bootstrapping anyway (rc=$RC)"
 else
-  pass "fresh foreign-host lock is left alone (falls back to age)"
+  fail "a wedged lock exited 0 — the caller would think the server started"
 fi
-
-touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true
-log="$root/calls.log"; : >"$log"
-RC=0
-CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
-# Age is NOT a substitute for proof of death across hosts (codex P2). Another
-# machine on a shared home may still be bootstrapping past the window; deleting
-# its live lock starts a second destructive install. Fail closed.
-if grep -q 'npm ci' "$log"; then
-  fail "an aged FOREIGN lock was reclaimed on age alone — a live remote bootstrap would be stolen" \
-    "$(cat "$log")"
-else
-  pass "aged foreign-host lock is NOT reclaimed (death cannot be proven across hosts)"
-fi
-# Failing closed is only acceptable if the operator is told how to recover.
 if grep -q "remove .*\.bootstrap\.lock and relaunch" "$root/stderr.log"; then
-  pass "the timeout names the manual remedy for a wedged foreign lock"
+  pass "the timeout names the directory to remove"
 else
-  fail "failed closed without telling the operator how to recover" "$(cat "$root/stderr.log")"
+  fail "no recovery instruction on timeout" "$(cat "$root/stderr.log")"
+fi
+if grep -q "held by: .*some-other-host" "$root/stderr.log"; then
+  pass "the timeout names who holds the lock"
+else
+  fail "the timeout does not say who holds the lock" "$(cat "$root/stderr.log")"
 fi
 
-echo "=== an orphaned reap marker must not wedge the tree forever ==="
-
-# A reaper SIGKILLed between creating the marker and removing the lock leaves
-# the marker inside the abandoned lock. Without recovery every later reaper's
-# mkdir fails and the bootstrap times out on EVERY launch, permanently.
-root=$(fake_root orphanmarker)
-rm -f "$root/dist/index.js"
-mkdir -p "$root/.bootstrap.lock/reaping"
-printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
-touch -t 200001010000 "$root/.bootstrap.lock" "$root/.bootstrap.lock/reaping" 2>/dev/null || true
-log="$root/calls.log"; : >"$log"
-RC=0
-CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
-if grep -q 'npm ci' "$log"; then
-  pass "an orphaned reap marker is cleared and the tree recovers"
+# And no reclamation machinery may creep back in.
+if grep -qE 'reap_abandoned_lock|lock_reclaimable|dir_reclaimable|LOCK_STALE_MIN' "$SRC"; then
+  fail "reclamation logic is back — every version of it raced" \
+    "$(grep -nE 'reap_abandoned_lock|lock_reclaimable|dir_reclaimable|LOCK_STALE_MIN' "$SRC")"
 else
-  fail "an orphaned reap marker wedged the tree permanently" "$(cat "$root/stderr.log")"
+  pass "no lock-reclamation machinery remains"
 fi
-
-# ...but a marker held by a LIVE reaper must still block: that is its job.
-root=$(fake_root freshmarker)
-rm -f "$root/dist/index.js"
-mkdir -p "$root/.bootstrap.lock/reaping"
-printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
-touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true
-log="$root/calls.log"; : >"$log"
-RC=0
-CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
-  RALPH_KNOWLEDGE_REAP_STALE_MIN=60 \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
-if grep -q 'npm ci' "$log"; then
-  fail "a FRESH reap marker did not serialize — two reapers could delete concurrently" \
-    "$(cat "$log")"
+if grep -qE 'mv "\$LOCK"|rm -rf "\$LOCK/reaping"|\.bootstrap\.reap' "$SRC"; then
+  fail "a lock-stealing primitive is back" "$(grep -nE 'mv \"\$LOCK\"|reaping|bootstrap.reap' "$SRC")"
 else
-  pass "a fresh reap marker still serializes reapers"
+  pass "the lock is never moved, and no reap marker exists"
 fi
 
 echo "=== signal handlers disarm EXIT before removing their own lock ==="
@@ -618,19 +542,10 @@ if grep -qE "trap 'rm -rf \"\\\$LOCK\"; exit [0-9]+'" "$SRC"; then
 else
   pass "no signal handler removes the lock with EXIT armed"
 fi
-
-# The age check must not depend on GNU-only find flags. stat is tried in both
-# BSD (-f %m) and GNU (-c %Y) spellings; assert the portable route is present
-# and that no find(1) age probe remains.
-if grep -q 'stat -f %m' "$SRC" && grep -q 'stat -c %Y' "$SRC"; then
-  pass "lock age uses both BSD and GNU stat spellings"
-else
-  fail "lock age is not portable across BSD/GNU stat" "$(grep -n 'stat ' "$SRC")"
-fi
 if grep -q 'find "\$LOCK"' "$SRC"; then
   fail "a find(1)-based lock-age probe is still present" "$(grep -n 'find "\$LOCK"' "$SRC")"
 else
-  pass "no find(1) lock-age probe remains"
+  pass "no find(1) probe of the lock remains"
 fi
 
 # The owner file must actually be written, or every reclaim decision silently
@@ -641,22 +556,6 @@ if grep -q 'lock_write_owner' "$SRC"; then
   pass "the lock holder records an owner identity"
 else
   fail "no owner file is written — liveness could never be checked" "$(grep -n 'owner' "$SRC")"
-fi
-
-# The record must carry a BIRTH TIME rather than lean on directory mtime: the
-# reap marker is created inside the lock and bumps it.
-if grep -q 'born' "$SRC"; then
-  pass "the owner record carries a birth timestamp"
-else
-  fail "the lock's age still rests only on directory mtime, which the marker bumps"
-fi
-
-# The reaper mutex must live INSIDE the lock, so it cannot outlive what it
-# guards and become stale state of its own — the flaw in an external reap lock.
-if grep -q 'mkdir "$LOCK/reaping"' "$SRC"; then
-  pass "reaper serialization is scoped to the lock instance"
-else
-  fail "reaper serialization is not scoped to the lock instance" "$(grep -n 'reaping' "$SRC")"
 fi
 
 # ...and the lock is never taken out of its path to be inspected. That absence
@@ -696,25 +595,15 @@ else
     "$(grep '^npm ' "$log")"
 fi
 
-echo "=== concurrent waiters on one abandoned lock: exactly one bootstrap ==="
+echo "=== concurrent launchers on a cold tree: exactly one bootstrap ==="
 
-# Codex's reproduction, as a test. Many launchers meet the SAME lock left by a
-# dead owner. Each can validate "owner is dead" before any removal happens, so
-# an unserialized reap lets waiter B's stale verdict delete the fresh lock that
-# waiter A just reclaimed — and both run a destructive `npm ci` on one tree.
-#
-# The invariant is not "one winner eventually" but "npm ci ran exactly once".
+# The property that actually matters, now resting on `mkdir` alone. Several
+# Claude Code sessions starting at once must produce ONE destructive install,
+# not one-per-session. Counting total `npm ci` runs (not "a winner emerged")
+# is deliberate: sequential duplicates are a failure too.
 root=$(fake_root concurrent)
-rm -f "$root/dist/index.js"                   # force the bootstrap path
-mkdir -p "$root/.bootstrap.lock"
-DEAD_PID=$( (bash -c 'echo $$') )
-while kill -0 "$DEAD_PID" 2>/dev/null; do DEAD_PID=$((DEAD_PID + 1)); done
-printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
-# Aged, because a young lock is never reclaimable by design — see the age gate.
-touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true
+rm -f "$root/dist/index.js"
 
-# A slow `npm ci` widens the window a broken reaper would fall into. Each line
-# is short, so appends from concurrent writers stay atomic in practice.
 CC_BIN="$TMP_ROOT/concurrent-bin"
 sanitized_bin "$CC_BIN" shasum
 cat >"$CC_BIN/npm" <<'STUB'
@@ -723,12 +612,10 @@ case "${1:-} ${2:-}" in
   "ci "*|"ci")
     echo "npm-ci pid=$$ t=$(date +%s)" >>"$CALL_LOG"
     sleep 2
-    echo "npm-ci-end pid=$$ t=$(date +%s)" >>"$CALL_LOG"
     ;;
   "run build")
-    # Produce the artifact a real build would. Without this the tree stays
-    # unbootstrapped, every waiter in turn sees work to do, and the test
-    # measures its own stub rather than the lock.
+    # Produce what a real build would; without it the tree stays unbootstrapped
+    # and the test measures its own stub rather than the lock.
     echo 'console.log("server")' >dist/index.js
     ;;
 esac
@@ -741,109 +628,40 @@ CC_LOG="$root/concurrent.log"
 WAITERS=30
 for _ in $(seq 1 "$WAITERS"); do
   CALL_LOG="$CC_LOG" CLAUDE_PLUGIN_ROOT="$root" PATH="$CC_BIN" \
-    RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=30 \
+    RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=60 \
     bash "$root/scripts/launch-mcp.sh" >/dev/null 2>>"$root/concurrent.stderr" &
 done
 wait
 
-# grep -c prints 0 AND exits 1 on no match, so `|| echo 0` would emit two
-# lines and break the arithmetic below. Take grep's own count and default only
-# when the variable is genuinely empty.
 ci_runs=$(grep -c '^npm-ci ' "$CC_LOG" 2>/dev/null) || true
 ci_runs=${ci_runs:-0}
 if [ "$ci_runs" -eq 1 ]; then
-  pass "$WAITERS concurrent waiters on an abandoned lock produced exactly 1 npm ci"
+  pass "$WAITERS concurrent launchers produced exactly 1 npm ci"
 else
-  fail "$WAITERS concurrent waiters produced $ci_runs concurrent npm ci runs (want exactly 1)" \
-    "$(sort "$CC_LOG" | uniq -c)"
+  fail "$WAITERS concurrent launchers produced $ci_runs npm ci runs (want exactly 1)" \
+    "$(sort "$CC_LOG")"
 fi
 
-# No grave may survive the run — reclamation must not litter the plugin root.
-if [ -z "$(ls -d "$root"/.bootstrap.lock.dead.* 2>/dev/null)" ]; then
-  pass "no reclamation graves leaked"
-else
-  fail "grave directories survived the run" "$(ls -d "$root"/.bootstrap.lock.dead.* 2>/dev/null)"
-fi
-
-# ...and the tree really did get bootstrapped by the one winner.
 if [ -f "$root/.bootstrap-complete" ]; then
   pass "the single winner completed the bootstrap"
 else
   fail "no winner completed the bootstrap" "$(tail -5 "$root/concurrent.stderr" 2>/dev/null)"
 fi
 
-echo "=== deletion is bound to the instance that was verified ==="
-
-# The whole point of the rename-capture: a lock is destroyed only after the
-# process holding it exclusively has read ITS owner. A live owner must survive
-# a reclaim attempt intact — this is the property whose absence let a stale
-# verdict delete a successor's lock.
-root=$(fake_root instancebound)
-rm -f "$root/dist/index.js"
-mkdir -p "$root/.bootstrap.lock"
-printf '%s %s\n' "$$" "$(hostname)" >"$root/.bootstrap.lock/owner"
-touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true
-log="$root/calls.log"; : >"$log"
-RC=0
-CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
-
-if [ -d "$root/.bootstrap.lock" ] && [ -s "$root/.bootstrap.lock/owner" ]; then
-  pass "a live owner's lock survives a reclaim attempt (restored, not destroyed)"
+# The lock must be gone afterwards, or the next cold start wedges for nothing.
+if [ ! -d "$root/.bootstrap.lock" ]; then
+  pass "the lock is released after a successful bootstrap"
 else
-  fail "a live owner's lock was destroyed by a reclaim attempt"
-fi
-if [ -z "$(ls -d "$root"/.bootstrap.lock.dead.* 2>/dev/null)" ]; then
-  pass "the borrowed lock was put back, leaving no grave"
-else
-  fail "a live owner's lock was left in a grave" "$(ls -d "$root"/.bootstrap.lock.dead.* 2>/dev/null)"
+  fail "the lock survived a clean run — every later launch would time out"
 fi
 
-# There is no second lock to go stale any more. A leftover .bootstrap.reap from
-# an older build must not be consulted, and above all must not gate recovery.
-if grep -q 'bootstrap.reap' "$SRC"; then
-  fail "a reap lock is still present — its stale-clearing was the same race one level up" \
-    "$(grep -n 'bootstrap.reap' "$SRC")"
+# Everyone else must have gone on to serve, not failed.
+served=$(grep -c 'node dist/index.js' "$CC_LOG" 2>/dev/null) || true
+if [ "${served:-0}" -ge $((WAITERS - 1)) ]; then
+  pass "the other $((WAITERS - 1)) launchers went on to exec the server"
 else
-  pass "no secondary reap lock exists to race over"
-fi
-
-echo "=== codex's uncovered combination: contention WITH stale lock state ==="
-
-# The gap codex named: the concurrency case started clean, and the stale-state
-# case used a single waiter, so nothing exercised many waiters meeting stale
-# reclamation state at once. Run it directly — including a leftover reap dir
-# from an older build and pre-existing graves, none of which may wedge or
-# duplicate anything.
-root=$(fake_root combo)
-rm -f "$root/dist/index.js"
-mkdir -p "$root/.bootstrap.lock" "$root/.bootstrap.reap"
-mkdir -p "$root/.bootstrap.lock.dead.99999.1" "$root/.bootstrap.lock.dead.99998.2"
-printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
-touch -t 200001010000 "$root/.bootstrap.lock" "$root/.bootstrap.reap" 2>/dev/null || true
-
-COMBO_LOG="$root/combo.log"
-: >"$COMBO_LOG"
-for _ in $(seq 1 "$WAITERS"); do
-  CALL_LOG="$COMBO_LOG" CLAUDE_PLUGIN_ROOT="$root" PATH="$CC_BIN" \
-    RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=30 \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>>"$root/combo.stderr" &
-done
-wait
-
-combo_runs=$(grep -c '^npm-ci ' "$COMBO_LOG" 2>/dev/null) || true
-combo_runs=${combo_runs:-0}
-if [ "$combo_runs" -eq 1 ]; then
-  pass "$WAITERS waiters + stale lock + leftover reap dir + graves => exactly 1 npm ci"
-else
-  fail "$WAITERS waiters against stale state produced $combo_runs npm ci runs (want exactly 1)" \
-    "$(sort "$COMBO_LOG" | grep npm-ci)$(echo; echo "--- stderr:"; sort "$root/combo.stderr" | uniq -c | sort -rn | head -8)"
-fi
-if [ -f "$root/.bootstrap-complete" ]; then
-  pass "stale state did not wedge recovery (bootstrap completed)"
-else
-  fail "stale reclamation state wedged recovery" "$(tail -5 "$root/combo.stderr" 2>/dev/null)"
+  fail "only ${served:-0} of $WAITERS launchers reached the server" \
+    "$(sort "$root/concurrent.stderr" | uniq -c | head -5)"
 fi
 
 echo
