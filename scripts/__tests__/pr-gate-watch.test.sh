@@ -199,6 +199,28 @@ GREEN_CHECKS=$(jq -n --argjson a "$(check ci pass)" --argjson b "$(check lint pa
 ATT_PENDING=$(check ralph-attestation pending 'awaiting attestation (scripts/attest-pr.sh)')
 ATT_PASS=$(check ralph-attestation pass 'ATTESTATION PASS')
 
+# --- fixture helpers used across sections ---------------------------------
+# All of these live here, above every case, deliberately: a helper defined next
+# to the section that uses it most is a helper an EARLIER section can expand to
+# the empty string, and the case then passes for the wrong reason instead of
+# failing (codex P2, PR #1764 — that is exactly what happened to confirm_view).
+READY_CHECKS=$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')
+setup_ready() {
+  scenario "$1" "$READY_CHECKS" \
+    "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+}
+# confirm_view <decision> <mergeable> [head] -> the FULL PR view served to the
+# confirming pass. Full, not partial: that pass re-classifies everything, so a
+# fixture missing state/comments/author would test a broken read rather than a
+# changed world.
+confirm_view() {
+  jq -nc --arg sha "${3:-$HEAD_SHA}" --arg d "$1" --arg m "$2" \
+    --argjson comments "[$(attestation_comment "$HEAD_SHA")]" \
+    '{state: "OPEN", headRefOid: $sha,
+      reviewDecision: (if $d == "" then null else $d end),
+      mergeable: $m, comments: $comments, author: {login: "cdubiel08"}}'
+}
+
 # run <stub-dir> [extra args...] -> sets LAST_OUT, LAST_RC
 run() {
   local dir="$1"
@@ -1307,6 +1329,16 @@ out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_R
   RALPH_APPLY_KEYWORDS_SH="$MOVING_APPLY" bash "$SCRIPT" 1740 2>&1)
 rc=$?
 set -e
+# Assert the FIXTURE is real BEFORE removing it and before trusting the
+# verdict: an empty
+# pr_view_second.json also produces a non-READY line, which is how this case
+# passed while confirm_view was undefined (codex P2, PR #1764).
+if [[ -s "$D/pr_view_second.json" ]] \
+   && [[ "$(jq -r '.headRefOid' "$D/pr_view_second.json" 2>/dev/null)" == "$OLD_SHA" ]]; then
+  pass "the moved-head fixture is well-formed, so the verdict below means something"
+else
+  fail "gate-6 moved-head fixture is empty or malformed"
+fi
 rm -f "$D/pr_view_second.json"
 if [[ "$out" != "GATE-READY"* ]]; then
   pass "a head that moves during gate 6 never reaches GATE-READY"
@@ -1359,22 +1391,6 @@ echo "=== P2/26: readiness must survive a SECOND, INDEPENDENT pass ==="
 # the head, so no single-field re-check can see them. Readiness therefore
 # requires the whole classification to come out READY twice.
 POLICY="$POLICY_REVIEW"
-READY_CHECKS=$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')
-setup_ready() {
-  scenario "$1" "$READY_CHECKS" \
-    "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
-}
-# confirm_view <decision> <mergeable> [head] -> the FULL PR view served to the
-# confirming pass. Full, not partial: that pass re-classifies everything, so a
-# fixture missing state/comments/author would test a broken read rather than a
-# changed world.
-confirm_view() {
-  jq -nc --arg sha "${3:-$HEAD_SHA}" --arg d "$1" --arg m "$2" \
-    --argjson comments "[$(attestation_comment "$HEAD_SHA")]" \
-    '{state: "OPEN", headRefOid: $sha,
-      reviewDecision: (if $d == "" then null else $d end),
-      mergeable: $m, comments: $comments, author: {login: "cdubiel08"}}'
-}
 
 # The control first: two passes that agree still reach GATE-READY. Without
 # this, every case below could pass on a confirmation that never succeeds.
