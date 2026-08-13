@@ -200,12 +200,15 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
 | ($att  | map(select(.bucket == "fail" or .bucket == "cancel"))) as $att_bad
 | ($rest | map(select(.bucket == "pending")))           as $running
 | ($att  | map(select(.bucket == "pending")))           as $att_pending
-# A rate-limited CodeRabbit check PASSES but reviews nothing — the one case
-# where an all-green board still needs a human nudge to make progress.
+# A rate-limited reviewer check PASSES but reviews nothing — the one case
+# where an all-green board still needs a human nudge to make progress. Only
+# CodeRabbit is known to publish its rate-limit in the check DESCRIPTION,
+# which is why the name test is literal rather than policy-derived.
 | ($all | map(select(
     ((.name // "") | test("coderabbit"; "i")) and
     ((.description // "") | test("rate limit"; "i"))
   )))                                                   as $ratelimited
+| ($ratelimited | map(.name) | join(", "))              as $rl_names
 # --- review evidence, exactly as merge-pr.sh gate 5 counts it ---------------
 # Head binding is the whole point. REST KEEPS review objects across a push
 # (only reviewDecision resets), so an unfiltered `.state == "APPROVED"` counts
@@ -217,6 +220,18 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
 | (($pr.author.login // "") | norm)                     as $author
 | (($policy.exemptAuthors // []) | map(norm) | index($author) != null) as $exempt
 | ($policy.externalRequired == true)                    as $ext_required
+# Is the rate-limited reviewer the one GATE 5 is waiting for? Nudging
+# CodeRabbit on a repo whose configured reviewer is Codex answers "whose turn
+# is it" with the wrong name and the wrong command — observed on this PR's own
+# dogfood run. Substring either way, because a check name ("Codex") and a bot
+# login ("chatgpt-codex-connector[bot]") are never equal but do contain each
+# other. A heuristic, and labelled as one: getting it wrong only picks which
+# of two true remedies is named first.
+| (($ext_required | not) or ($ratelimited | map(
+     ((.name // "") | ascii_downcase) as $n
+     | (($policy.bot // "") | ascii_downcase) as $b
+     | ($n != "" and (($b | contains($n)) or ($n | contains($b))))
+   ) | any))                                             as $rl_is_reviewer
 # When the policy names a reviewer, only that reviewer's verdicts are gate
 # evidence. With no policy (or external review not required) there is no
 # configured identity to filter on, so any approval counts — still head-bound.
@@ -303,6 +318,12 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
 
 | if $policy_error != "" then
     "GATE-FAIL policy: \($policy_error)"
+  # Evidence unavailable is a WAIT, never a verdict: gate 5 treats the same
+  # partial outage as PENDING, and --watch retrying is the correct response to
+  # a transient API failure. Only meaningful when a review is actually
+  # required — with gate 5 off there is no evidence to have failed to read.
+  elif $fetch_ok != "true" and $ext_required and ($pr.state // "OPEN") == "OPEN" then
+    "GATE-WAIT review: could not read review evidence for #\($num) (gh api failed) — verdict withheld rather than guessed"
   elif ($pr.state // "OPEN") != "OPEN" then
     "GATE-DONE \($pr.state | ascii_downcase): PR #\($num) is not open — nothing to wait for"
   elif ($bad | length) > 0 then
@@ -315,12 +336,23 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
     "GATE-FAIL merge: head \($head[0:8]) conflicts with the base — rebase, then re-attest"
   elif ($running | length) > 0 then
     "GATE-WAIT ci: \($running | length) running (\($running | map(.name) | join(", ")))"
-  elif ($review_ok | not) and ($ratelimited | length) > 0 then
-    "GATE-YOURS review: CodeRabbit rate-limited — its check PASSES but it reviewed nothing; post `@coderabbitai review`"
+  elif ($review_ok | not) and ($ratelimited | length) > 0 and $rl_is_reviewer then
+    "GATE-YOURS review: \($rl_names) rate-limited — its check PASSES but it reviewed nothing; post `@coderabbitai review`"
   elif $unanswered_findings and (($review_ok | not) or ($attested_current | not)) then
-    "GATE-YOURS review: \($commented | length) comment-only review(s) at this head, no verdict — adjudicate threads, then attest with the real verdict"
-  elif ($review_ok | not) then
     (if $policy.mode == "comment" then
+       # Adjudicating does not delete the COMMENTED review, and attesting does
+       # not either — so $findings_after_clean stays nonzero and gate 5 keeps
+       # rejecting the old clean marker. Attesting here is work that cannot
+       # unblock the merge; the evidence gate 5 wants is a NEWER clean result,
+       # which only a fresh head-bound request can produce (codex P2, #1764).
+       "GATE-YOURS review: \($commented | length) findings review(s) at \($head[0:8]) — adjudicate the threads, then re-request: comment '\($policy.trigger)' with '<!-- \($policy.headMarker): \($head) -->' and wait for a clean result BEFORE attesting"
+     else
+       "GATE-YOURS review: \($commented | length) comment-only review(s) at this head, no verdict — adjudicate threads, then attest with the real verdict"
+     end)
+  elif ($review_ok | not) then
+    (if ($ratelimited | length) > 0 then
+       "GATE-WAIT review: \($rl_names) reports pass but is rate-limited and reviewed nothing; gate 5 is waiting on \($policy.bot) at \($head[0:8]) — comment '\($policy.trigger)'"
+     elif $policy.mode == "comment" then
        "GATE-WAIT review: no clean \($policy.bot) result at \($head[0:8]) yet — comment '\($policy.trigger)' with '<!-- \($policy.headMarker): \($head) -->'"
      elif $ext_required then
        "GATE-WAIT review: no \($policy.bot) verdict at \($head[0:8]) yet — comment '\($policy.trigger)' to trigger one"
@@ -364,6 +396,7 @@ classify() {
     --argjson pr "$2" \
     --argjson reviews "$3" \
     --argjson comments "$4" \
+    --arg fetch_ok "$5" \
     --argjson policy "$POLICY" \
     --arg policy_error "$POLICY_ERROR" \
     --arg attest "$ATTEST_CHECK" \
@@ -383,7 +416,7 @@ json_array_or_empty() {
 
 # snapshot -> one verdict line, or non-zero if gh could not be reached.
 snapshot() {
-  local checks pr_json reviews comments
+  local checks pr_json reviews comments fetch_ok
   # `gh pr checks` exits non-zero whenever any check is pending or failing,
   # and errors outright when a PR has no checks at all. Neither is an error
   # here, so the exit status is deliberately ignored; only an unparseable
@@ -395,8 +428,16 @@ snapshot() {
   # than one page of reviews the current-head review is frequently on the LAST
   # page, and an unpaginated read would report "no review yet" for evidence
   # that exists. `-s ... add // []` flattens the pages and tolerates zero.
+  # A FAILED fetch is not an empty review list, and the difference decides a
+  # merge: with the reviews request failing and the comments request
+  # succeeding, a stale clean comment plus a green attestation would produce
+  # GATE-READY while the findings that invalidate it were simply invisible.
+  # merge-pr.sh tracks exactly this with external_fetch_ok; `set -o pipefail`
+  # at the top is what makes the guard real, since jq would otherwise supply a
+  # zero status for a failed `gh api` (codex P2, PR #1764).
+  fetch_ok=true
   reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR/reviews" --paginate 2>/dev/null \
-    | jq -s 'add // []' 2>/dev/null) || true
+    | jq -s 'add // []' 2>/dev/null) || { reviews='[]'; fetch_ok=false; }
   reviews=$(json_array_or_empty "$reviews")
 
   # Issue comments carry comment-mode evidence: the head-bound request and the
@@ -407,7 +448,7 @@ snapshot() {
   comments='[]'
   if [ "$POLICY_MODE" = "comment" ] && [ "$POLICY_EXTERNAL" = "true" ]; then
     comments=$(gh api "repos/{owner}/{repo}/issues/$PR/comments" --paginate 2>/dev/null \
-      | jq -s 'add // []' 2>/dev/null) || true
+      | jq -s 'add // []' 2>/dev/null) || { comments='[]'; fetch_ok=false; }
     comments=$(json_array_or_empty "$comments")
   fi
 
@@ -419,7 +460,7 @@ snapshot() {
     --json state,reviewDecision,headRefOid,comments,author,mergeable 2>/dev/null) || return 1
   [ -n "$pr_json" ] || return 1
 
-  classify "$checks" "$pr_json" "$reviews" "$comments"
+  classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok"
 }
 
 is_terminal() {

@@ -199,6 +199,14 @@ scenario "$D" "$ATT_CHECKS" \
 expect "unparseable attestation comment is not treated as attested" "$D" "GATE-YOURS attestation" 0
 
 echo "=== the other false signal: green board, no actual review ==="
+# The rate-limit nudge is only the right answer when the rate-limited reviewer
+# is the one gate 5 waits for, so this fixture runs under a policy that names
+# CodeRabbit. See "the rate-limit nudge names the right reviewer" below for
+# the mismatch case, which is what this repo's own dogfood run hit.
+POLICY_CODERABBIT="$TMP_ROOT/policy-coderabbit.json"
+jq '.external_review.bot = "coderabbitai[bot]" | .external_review.trigger = "@coderabbitai review"' \
+  "$POLICY_REVIEW" >"$POLICY_CODERABBIT"
+POLICY="$POLICY_CODERABBIT"
 D="$TMP_ROOT/yours-review-ratelimit"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" \
   --argjson c "$(check CodeRabbit pass 'Review rate limited')" '$g + [$a, $c]')" \
@@ -211,6 +219,21 @@ else
   fail "nudge hint (out=${LAST_OUT:0:120})"
 fi
 
+echo "=== the rate-limit nudge names the right reviewer ==="
+# Found by running this script against its own PR: with CodeRabbit rate-limited
+# and Codex as the policy reviewer, it answered "whose turn is it" with the
+# wrong name AND the wrong command — nudging a reviewer whose verdict gate 5
+# does not require, while the reviewer it does require went unmentioned.
+POLICY="$POLICY_REVIEW"   # bot = chatgpt-codex-connector[bot]
+run "$TMP_ROOT/yours-review-ratelimit"
+if [[ "$LAST_OUT" == "GATE-WAIT review"* ]] && [[ "$LAST_OUT" == *"CodeRabbit"* ]] \
+   && [[ "$LAST_OUT" == *"chatgpt-codex-connector[bot]"* ]] && [ "$LAST_RC" -eq 10 ]; then
+  pass "a rate-limited non-reviewer is reported, but gate 5's reviewer is the ask"
+else
+  fail "rate-limit reviewer mismatch (rc=$LAST_RC out=${LAST_OUT:0:170})"
+fi
+POLICY="$POLICY_CODERABBIT"
+
 echo "=== precedence: review outranks attestation ==="
 # Same fixture as above: attestation IS pending, but no review exists, so
 # attest-pr.sh would refuse. Reporting attestation here would be a dead end.
@@ -220,6 +243,7 @@ if [[ "$LAST_OUT" != *attestation* ]]; then
 else
   fail "precedence: attestation reported before a review exists"
 fi
+POLICY="$POLICY_REVIEW"
 
 D="$TMP_ROOT/commented-only"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
@@ -700,6 +724,101 @@ expect "a current-head review on page 2 is found" "$D" "GATE-YOURS attestation" 
 # And the harness is discriminating: drop page 2 and the same fixture waits.
 rm "$D/pr_reviews_page2.json"
 expect "without the second page the same fixture waits" "$D" "GATE-WAIT review" 10
+
+########################################################################
+# codex P2 regressions, third pass on PR #1764 (against the merged #1839
+# gate). Both are about verdicts that cannot be walked back: one invents
+# evidence out of an outage, the other names an action that can never
+# clear the gate.
+########################################################################
+
+echo "=== P2/10: a failed evidence fetch is not an empty review list ==="
+# The dangerous asymmetry is partial: comments succeed, reviews fail. A stale
+# clean marker plus a green attestation then reads as GATE-READY because the
+# findings that invalidate the marker were simply invisible. merge-pr.sh
+# tracks the same partial outage with external_fetch_ok and stays PENDING.
+cat >"$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+serve() {
+  local f="$GH_STUB_DIR/$1"
+  if [[ -f "$f" ]]; then cat "$f"; else echo "$2"; fi
+}
+case "${1:-} ${2:-}" in
+  "pr checks")
+    serve pr_checks.json '[]'
+    exit "${GH_STUB_CHECKS_EXIT:-0}"
+    ;;
+  "pr view") serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}' ;;
+  "api repos/"*)
+    if [[ "$2" == */issues/*/comments ]]; then
+      serve issue_comments.json '[]'
+      # `[[ ... ]] && exit 1` would make the ABSENT case the branch's exit
+      # status under `set -e`, failing every healthy call. Use an if.
+      if [[ -f "$GH_STUB_DIR/fail_comments" ]]; then exit 1; fi
+    else
+      serve pr_reviews.json '[]'
+      # Emit the payload FIRST, then fail: a stub that printed nothing would
+      # pass with or without the guard, so this is what makes it discriminating.
+      if [[ -f "$GH_STUB_DIR/fail_reviews" ]]; then exit 1; fi
+    fi
+    ;;
+  *) echo "stub: unhandled gh $*" >&2; exit 64 ;;
+esac
+STUB
+chmod +x "$STUB_BIN/gh"
+
+POLICY="$POLICY_COMMENT"
+D="$TMP_ROOT/fetch-fail-reviews"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$NO_REVIEWS" \
+  "$(clean_evidence "$HEAD_SHA")"
+# Control: with both fetches healthy this fixture IS ready. That is what makes
+# the failure case below a real difference and not a fixture that never passed.
+expect "control: clean evidence + attestation is READY" "$D" "GATE-READY" 0
+touch "$D/fail_reviews"
+expect "a failed reviews fetch withholds the verdict" "$D" "GATE-WAIT review" 10
+rm "$D/fail_reviews"; touch "$D/fail_comments"
+expect "a failed comments fetch withholds it too" "$D" "GATE-WAIT review" 10
+rm "$D/fail_comments"
+
+# With gate 5 off there is no evidence to have failed to read, so the outage
+# must not manufacture a wait on a repo that requires no review at all.
+POLICY="$POLICY_OFF"
+touch "$D/fail_reviews"
+expect "no external review required: an outage is not a review wait" "$D" "GATE-READY" 0
+rm "$D/fail_reviews"
+POLICY="$POLICY_REVIEW"
+
+echo "=== P2/11: findings in comment mode need a NEW clean result ==="
+# Adjudicating threads does not delete the COMMENTED review, and neither does
+# attesting — so findings_after_clean stays nonzero, gate 5 keeps rejecting the
+# old clean marker, and "adjudicate, then attest" is an instruction that can be
+# followed perfectly and still never clear the gate.
+POLICY="$POLICY_COMMENT"
+D="$TMP_ROOT/comment-mode-findings"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$LATER_FINDINGS" "$(clean_evidence "$HEAD_SHA")"
+expect "findings at this head are still GATE-YOURS review" "$D" "GATE-YOURS review" 0
+run "$D"
+if [[ "$LAST_OUT" == *"ralph-review-head: $HEAD_SHA"* ]] && [[ "$LAST_OUT" == *"@codex review"* ]] \
+   && [[ "$LAST_OUT" == *"BEFORE attesting"* ]]; then
+  pass "names the re-request that can actually clear gate 5, not a doomed attest"
+else
+  fail "comment-mode findings remedy (out=${LAST_OUT:0:220})"
+fi
+# Review mode keeps the original wording: there, adjudicating and attesting
+# with the real verdict IS the path, because gate 5 wants an APPROVED review.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/review-mode-findings"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$COMMENTED_AT_HEAD"
+run "$D"
+if [[ "$LAST_OUT" == *"attest with the real verdict"* ]] && [[ "$LAST_OUT" != *"BEFORE attesting"* ]]; then
+  pass "review mode still says adjudicate-then-attest"
+else
+  fail "review-mode findings wording (out=${LAST_OUT:0:180})"
+fi
 
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
