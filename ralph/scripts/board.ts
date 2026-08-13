@@ -4466,6 +4466,158 @@ export interface DoctorReport {
 }
 
 // ---------------------------------------------------------------------------
+// Installed-plugin floor (GH-1825). The gates in this file ship as a VERSIONED
+// INSTALL, so a merge is not the moment one becomes true: agents call the copy
+// recorded in installed_plugins.json, which can sit releases behind the tree
+// the gate merged into. Observed three times in one session (#1705 ran the
+// apply gate at 0.1.74, six releases before it existed).
+//
+// Advisory by construction, like every other info line: doctor cannot install
+// a plugin, the operator's local install is not a repo invariant, and the
+// weekly doctor.yml runs in an environment with no plugin install at all.
+// ---------------------------------------------------------------------------
+
+/** One row per gate that lives in the installed plugin. `since` is a fact about
+ *  ralph's own release history — not a repo's to pick — and `reliedOn` is the
+ *  opt-in the repo already declares once, in the merge policy. A new gate adds
+ *  a row here, beside the gate itself; the version exists in no second place,
+ *  so there is nothing to drift, and a repo that never enabled a capability
+ *  never hears about its floor. */
+export const CAPABILITY_FLOORS: ReadonlyArray<{
+  capability: string;
+  since: string;
+  reliedOn: (cfg: Config) => boolean;
+}> = [
+  { capability: "the apply close gate", since: "0.1.81", reliedOn: (cfg) => cfg.apply.enabled },
+];
+
+export interface InstalledPluginCopy {
+  installPath: string;
+  version: string;
+  /** "installed" = the copy's own .claude-plugin/plugin.json (the code that is
+   *  actually there); "registry" = the installed_plugins.json record, used only
+   *  when that manifest cannot be read, and always labelled as such. */
+  source: "installed" | "registry";
+}
+
+/** Where Claude Code records what is installed. Resolved, never hardcoded to a
+ *  cache directory: the whole bug class is that a directory which happens to
+ *  exist is not the one being executed (this machine holds 29 ralph version
+ *  dirs under the cache; exactly one is called). */
+export function installedPluginsFile(): string {
+  return (
+    process.env.RALPH_INSTALLED_PLUGINS_FILE ??
+    join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "plugins", "installed_plugins.json")
+  );
+}
+
+/** Every installed copy of `name`, across marketplaces and scopes. Returns null
+ *  when the question cannot be asked at all — no registry, unreadable registry,
+ *  no such plugin — because absence of an install is never a breach. */
+export function resolveInstalledPlugin(name: string): InstalledPluginCopy[] | null {
+  const file = installedPluginsFile();
+  if (!existsSync(file)) return null;
+  let registry: any;
+  try {
+    registry = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+  const plugins = registry?.plugins;
+  if (!plugins || typeof plugins !== "object") return null;
+  const copies: InstalledPluginCopy[] = [];
+  for (const [key, entries] of Object.entries(plugins)) {
+    if (key.split("@")[0] !== name) continue; // keys are "<name>@<marketplace>"
+    for (const e of Array.isArray(entries) ? entries : []) {
+      const installPath = typeof e?.installPath === "string" ? e.installPath : "";
+      if (!installPath) continue;
+      let version = "";
+      let source: InstalledPluginCopy["source"] = "installed";
+      try {
+        const v = JSON.parse(
+          readFileSync(join(installPath, ".claude-plugin", "plugin.json"), "utf8"),
+        )?.version;
+        if (typeof v === "string") version = v;
+      } catch {
+        /* the copy is gone or unreadable — fall back to the registry record */
+      }
+      if (!version) {
+        source = "registry";
+        version = typeof e?.version === "string" ? e.version : "";
+      }
+      if (version) copies.push({ installPath, version, source });
+    }
+  }
+  return copies.length ? copies : null;
+}
+
+/** Numeric dot-compare. Null when either side is not a plain numeric version —
+ *  "unknown" is a real value in installed_plugins.json, and an unparseable
+ *  version is NOT evaluated rather than assumed stale. */
+export function compareVersions(a: string, b: string): number | null {
+  const parts = (v: string) => v.split(".").map((p) => (/^\d+$/.test(p) ? Number(p) : NaN));
+  const [x, y] = [parts(a), parts(b)];
+  if ([...x, ...y].some((n) => Number.isNaN(n))) return null;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/** Doctor's `installed-plugin` line. Only ever "ok" or "info" — the type says
+ *  so, so no future edit can make an operator's local install fail a repo's
+ *  --strict sweep. */
+export function installedPluginReport(cfg: Config): { level: "ok" | "info"; detail: string } {
+  const copies = resolveInstalledPlugin("ralph");
+  if (!copies)
+    return {
+      level: "info",
+      detail:
+        `not evaluated: no installed ralph plugin recorded in ${installedPluginsFile()} ` +
+        `(a repo that vendors the CLI instead of installing the plugin has none)`,
+    };
+  const floors = CAPABILITY_FLOORS.filter((f) => f.reliedOn(cfg));
+  // The LOWEST copy is the one to judge: any of them may be the one a session
+  // resolved, and the risk is one-sided — a gate that isn't running.
+  const ranked = copies.filter((c) => compareVersions(c.version, "0.0.0") !== null);
+  const lowest = ranked.sort((a, b) => compareVersions(a.version, b.version)!)[0];
+  const others = copies.length > 1 ? ` (${copies.length} installed copies; judging the lowest)` : "";
+  if (!lowest)
+    return {
+      level: "info",
+      detail: `not evaluated: installed version unparseable (${copies.map((c) => c.version).join(", ")})`,
+    };
+  const via =
+    lowest.source === "registry"
+      ? ` [version from the installed_plugins.json record — the copy's own manifest is unreadable]`
+      : "";
+  const where = `ralph ${lowest.version} at ${lowest.installPath}${via}${others}`;
+  if (floors.length === 0)
+    return {
+      level: "ok",
+      detail: `${where} — no capability floor applies (this repo enables no gate that lives in the plugin)`,
+    };
+  const below = floors.filter((f) => compareVersions(lowest.version, f.since)! < 0);
+  if (below.length === 0)
+    return {
+      level: "ok",
+      detail: `${where} — at or above every floor this repo relies on (${floors
+        .map((f) => `${f.capability} ≥ ${f.since}`)
+        .join(", ")})`,
+    };
+  return {
+    level: "info",
+    detail:
+      `${where} — ` +
+      below
+        .map((f) => `${lowest.version} < ${f.since}, so ${f.capability} is NOT enforcing in agent sessions`)
+        .join("; ") +
+      `. The merged code is not the copy agents call: update the installed plugin (\`/plugin\`)`,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Volume + prune (GH-1788). Both are PURE over the page walk every caller
 // already does — measuring the board costs nothing extra, and the dry run
 // costs nothing at all.
@@ -5112,6 +5264,16 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     }
   } catch (e) {
     add("herdr-cockpit", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
+  // Installed-plugin floor (GH-1825). INFO level always — see the section
+  // above. Its own try/catch keeps a throwing filesystem read out of the exit
+  // code, exactly as the smells and volume blocks do.
+  try {
+    const r = installedPluginReport(ctx.cfg);
+    add("installed-plugin", r.level, r.detail);
+  } catch (e) {
+    add("installed-plugin", "info", `not evaluated: ${(e as Error).message}`);
   }
 
   const ok = !checks.some((c) => c.level === "fail");
