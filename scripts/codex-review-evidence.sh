@@ -18,8 +18,23 @@
 #
 #   1. a head-bound request comment (the policy trigger + the head marker), so
 #      the review that counts is the one asked for at THIS head, scoped;
-#   2. a review by the policy bot at that head, submitted after the request;
+#   2. the bot ANSWERED that request at this head;
 #   3. zero unresolved P0 threads from that bot.
+#
+# "Answered" is deliberately not "filed a review object". With findings, Codex
+# files a review; with NOTHING to say it files no review at all and leaves a
+# plain comment — observed on this very PR. So a review-object-only predicate
+# is unsatisfiable on exactly the clean PRs it is supposed to pass, which is
+# the same wait-for-a-signal-that-never-comes bug, inverted. Both shapes count:
+#   - a review object at the head, submitted after the request, or
+#   - a bot COMMENT after the request that names the head commit.
+# The comment test binds on the SHA the reviewer itself reports ("**Reviewed
+# commit:** `<10-char>`"), never on its prose. A rate-limit or status comment
+# names no commit and cannot satisfy it, and the verdict still comes from the
+# threads — this is evidence the reviewer LOOKED, not evidence it approved.
+# (A wording match is what broke the previous generation of this gate: the real
+# body writes "**Reviewed commit:** `8430effbdd`", and the parser expected
+# "Reviewed commit <7-sha>".)
 #
 # P1/P2 are advisory by construction — visible on the PR, adjudicated by the
 # driver, never blocking. That is the whole bound: one pass, top severity only.
@@ -104,11 +119,11 @@ if ! reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate
   verdict false reviewer "cannot read PR reviews (gh api failed) — retry"
 fi
 
-# The review that answers THIS request. `>=` rather than `>` on a second-
-# precision timestamp: a review takes minutes, so the same-second case is
-# theoretical, while failing closed on it would strand a real review behind a
-# request that can only be re-posted (moving the bound forward again).
-review=$(jq -c --arg bot "$BOT" --arg sha "$HEAD_SHA" --arg req "$request_at" '
+# The answer to THIS request. `>=` rather than `>` on a second-precision
+# timestamp: a review takes minutes, so the same-second case is theoretical,
+# while failing closed on it would strand a real answer behind a request that
+# can only be re-posted (moving the bound forward again).
+answer=$(jq -c --arg bot "$BOT" --arg sha "$HEAD_SHA" --arg req "$request_at" '
   def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
   [ .[]
     | select(((.user.login // "") | norm) == ($bot | norm))
@@ -116,11 +131,23 @@ review=$(jq -c --arg bot "$BOT" --arg sha "$HEAD_SHA" --arg req "$request_at" '
     | select((.state // "") != "DISMISSED")
     | select((.submitted_at // "") >= $req)
   ] | last // empty' <<<"$reviews")
-if [[ -z "$review" ]]; then
-  verdict false reviewer "$BOT has not reviewed head ${HEAD_SHA:0:8} yet (requested $request_at)"
+if [[ -z "$answer" ]]; then
+  # No review object — look for the bot's own report that it read this commit.
+  # 10 characters is the prefix Codex prints; requiring the full 40 would never
+  # match, and a shorter prefix would start colliding.
+  answer=$(jq -c --arg bot "$BOT" --arg short "${HEAD_SHA:0:10}" --arg req "$request_at" '
+    def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+    [ .[]
+      | select(((.user.login // "") | norm) == ($bot | norm))
+      | select((.body // "") | contains($short))
+      | select((.created_at // "") >= $req)
+    ] | last // empty' <<<"$comments")
 fi
-reviewer=$(jq -r '.user.login // ""' <<<"$review")
-review_url=$(jq -r '.html_url // ""' <<<"$review")
+if [[ -z "$answer" ]]; then
+  verdict false reviewer "$BOT has not answered the request at head ${HEAD_SHA:0:8} yet (requested $request_at)"
+fi
+reviewer=$(jq -r '.user.login // ""' <<<"$answer")
+review_url=$(jq -r '.html_url // ""' <<<"$answer")
 
 # Resolution state is GraphQL-only; REST review comments carry no isResolved.
 # {owner}/{repo} are gh's own placeholders and resolve from the git remote.

@@ -50,7 +50,8 @@ current 40-character head SHA. With the current policy, the body is:
 ```
 
 Post that body **once per head SHA** — one review per head is the bound, not a
-default. The gate then passes when that review exists and no P0 thread is
+default. The gate then passes once the bot has answered at that head — a
+findings review, or its comment naming the reviewed commit — with no P0 thread
 unresolved; P1/P2 are advisory, adjudicated by you, and never block. Clearing a
 P0 has two honest verbs: fix it (the thread goes outdated) or resolve the thread
 once adjudicated. Never substitute another reviewer's trigger. Read

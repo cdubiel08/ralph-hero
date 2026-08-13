@@ -405,6 +405,42 @@ setup_spoofed_review() {
 }
 run_case "a review from the wrong identity does not satisfy gate 5" 75 "$POLICY" setup_spoofed_review
 
+# Codex files a review only when it has FINDINGS. With nothing to say it files
+# no review at all and leaves a plain comment naming the commit it read —
+# observed on PR #1853, this change's own PR. A review-object-only predicate is
+# therefore unsatisfiable on exactly the clean PRs it must pass.
+setup_clean_comment_only() {
+  setup_codex_ext "$1"
+  echo '[]' >"$1/pr_reviews.json"
+  jq --arg short "${SHA:0:10}" '. + [{
+    user:{login:"chatgpt-codex-connector[bot]"},
+    body:("Codex Review: Didn'"'"'t find any major issues.\n\n**Reviewed commit:** `" + $short + "`"),
+    created_at:"2026-08-13T04:00:10Z",
+    html_url:"https://github.com/o/r/pull/123#issuecomment-1"}]' \
+    "$1/issue_comments.json" >"$1/issue_comments.next"
+  mv "$1/issue_comments.next" "$1/issue_comments.json"
+}
+run_case "a bot comment naming the head answers the request" 0 "$POLICY" setup_clean_comment_only
+expect_merged "clean-comment answer with no review object"
+
+# The binding is the SHA the reviewer reports, not its prose. A comment that
+# names no commit — a rate-limit or status note — is not an answer.
+setup_comment_without_head() {
+  setup_clean_comment_only "$1"
+  jq '.[1].body = "Codex is rate limited. Try again later."' \
+    "$1/issue_comments.json" >"$1/issue_comments.next"
+  mv "$1/issue_comments.next" "$1/issue_comments.json"
+}
+run_case "a bot comment naming no commit is not an answer" 75 "$POLICY" setup_comment_without_head
+
+setup_comment_before_request() {
+  setup_clean_comment_only "$1"
+  jq '.[1].created_at = "2026-08-13T03:00:00Z"' \
+    "$1/issue_comments.json" >"$1/issue_comments.next"
+  mv "$1/issue_comments.next" "$1/issue_comments.json"
+}
+run_case "a head-naming comment older than the request is not an answer" 75 "$POLICY" setup_comment_before_request
+
 # --- what blocks, and what is only advisory ---------------------------------
 setup_open_p0() {
   setup_codex_ext "$1"
