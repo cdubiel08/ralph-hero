@@ -1232,6 +1232,13 @@ interface FieldInfo {
   id: string;
   dataType: string;
   options?: Record<string, string>; // name → optionId
+  /** The API's DECLARED option order, kept separately because the map above
+   *  cannot carry it: JS enumerates integer-like keys numerically ahead of
+   *  string keys, so a board declaring `10` before `2` reads back as `2, 10`
+   *  from Object.keys — and no refresh can repair it, since the order is lost
+   *  at the moment the options become object properties. Anything ranking by
+   *  option order must read THIS. */
+  optionOrder?: string[];
 }
 interface BoardCache {
   projectId: string;
@@ -1311,6 +1318,8 @@ export function refreshCache(ctx: Ctx): BoardCache {
       options: f.options
         ? Object.fromEntries(f.options.map((o: any) => [o.name, o.id]))
         : undefined,
+      // Captured from the ARRAY, before the map can lose it (see FieldInfo).
+      optionOrder: f.options ? f.options.map((o: any) => String(o.name)) : undefined,
     };
   }
 
@@ -3956,15 +3965,28 @@ function assertPriorityOption(cache: BoardCache, value: string): void {
  *  writable. An absent Priority field yields `[]`, i.e. exactly the
  *  digit-suffix fallback boards without the field have always had.
  *
- *  The order is AGE-BOUNDED, not merely cached. Nothing in the field cache can
- *  notice a REORDER or a RENAME — `satisfied()` only ever asks whether a name
- *  is present — so a purely cached read would steer the queue by an obsolete
- *  scheme indefinitely, until some unrelated mutation happened to refresh the
- *  schema. Refreshing on every call is the wrong end of that trade: `next` is
- *  pinned at 2 warm round trips by the metrics registry, and the item cache
- *  exists precisely so a chain of reads pays for one walk. So the ordering read
- *  refreshes only a field cache older than PRIORITY_ORDER_MAX_AGE_MS, which
- *  bounds the obsolete-order window to that Δ and costs a warm board nothing.
+ *  Nothing in the field cache can notice a REORDER or a RENAME — `satisfied()`
+ *  only ever asks whether a name is present — so a purely cached read would
+ *  steer the queue by an obsolete scheme until some unrelated mutation happened
+ *  to refresh the schema. Refreshing on EVERY call is the wrong end of that
+ *  trade: `next` is pinned at 2 warm round trips by the metrics registry, and
+ *  the item cache exists precisely so a chain of reads pays for one walk. So
+ *  the refresh is triggered three ways, cheapest first:
+ *    - EVIDENCE: an item holds a priority value the cached options don't list.
+ *      That is proof the schema moved under us (a rename, or an option added
+ *      elsewhere), and it costs nothing on a healthy board — the common case
+ *      never fires it. This closes the rename half outright rather than
+ *      time-bounding it, and it is the reason the ranker's own input is passed
+ *      in rather than read here.
+ *    - OPERATOR: `--fresh`, the flag that already means "don't serve me a
+ *      snapshot", now forces the schema read too. A deterministic escape hatch
+ *      beats waiting out any Δ.
+ *    - AGE: a ceiling of PRIORITY_ORDER_MAX_AGE_MS for the one case no
+ *        evidence can reveal — a pure REORDER of names that are all still
+ *        present. That case is genuinely undetectable without reading the
+ *        schema (GitHub offers no schema ETag or version), so it is
+ *        bounded staleness by construction, exactly like the item cache's Δ,
+ *        and this comment is the honest label rather than a claim of freshness.
  *
  *  A failed refresh degrades to the cached order, and a total miss to `[]`
  *  (digit-suffix ranking), each with a warning — deliberately fail-soft in that
@@ -3972,8 +3994,18 @@ function assertPriorityOption(cache: BoardCache, value: string): void {
  *  cannot answer at all stops the loop. */
 const PRIORITY_ORDER_MAX_AGE_MS = 60 * 60_000;
 
-export function priorityOptionOrder(ctx: Ctx): string[] {
-  const options = (c: BoardCache) => Object.keys(c.fields[PRIORITY_FIELD]?.options ?? {});
+export function priorityOptionOrder(
+  ctx: Ctx,
+  opts: { values?: Array<string | null>; fresh?: boolean } = {},
+): string[] {
+  // The DECLARED order, never Object.keys of the option map — see FieldInfo.
+  // An older cache file predating optionOrder falls back to the map, which is
+  // correct for every non-integer-like scheme and no worse than before for the
+  // rest; the next refresh repairs it.
+  const order = (c: BoardCache): string[] => {
+    const f = c.fields[PRIORITY_FIELD];
+    return f?.optionOrder ?? Object.keys(f?.options ?? {});
+  };
   let cached: BoardCache;
   try {
     cached = ensureCache(ctx);
@@ -3981,17 +4013,20 @@ export function priorityOptionOrder(ctx: Ctx): string[] {
     process.stderr.write(`warn: ${PRIORITY_FIELD} options unreadable — ranking by digit suffix only\n`);
     return [];
   }
+  const cachedOrder = order(cached);
   // An unparseable stamp counts as stale (NaN fails the comparison either way,
   // so it is asserted, not left to coincidence).
   const age = ctx.now().getTime() - Date.parse(cached.fetchedAt);
-  if (Number.isFinite(age) && age <= PRIORITY_ORDER_MAX_AGE_MS) return options(cached);
+  const unknownValue = (opts.values ?? []).some((v) => v !== null && v !== undefined && !cachedOrder.includes(v));
+  const stale = opts.fresh === true || unknownValue || !(Number.isFinite(age) && age <= PRIORITY_ORDER_MAX_AGE_MS);
+  if (!stale) return cachedOrder;
   try {
-    return options(refreshCache(ctx));
+    return order(refreshCache(ctx));
   } catch (e) {
     process.stderr.write(
       `warn: ${PRIORITY_FIELD} options not refreshed (${(e as Error).message}) — ranking by the cached order\n`,
     );
-    return options(cached);
+    return cachedOrder;
   }
 }
 
@@ -4001,8 +4036,13 @@ export function priorityOptionOrder(ctx: Ctx): string[] {
 export function setPriority(ctx: Ctx, number: number, value: string | null): Issue {
   const issue = fetchIssue(ctx, number);
   const itemId = requireItem(issue);
-  // The option set is what `value` is judged against, so it must be live.
-  const cache = mutationCache(ctx, [[PRIORITY_FIELD]], [], value === null ? [] : [PRIORITY_FIELD]);
+  // Live schema on BOTH branches. The set is what a value is judged against —
+  // and a clear needs it just as much, for the field ID rather than the
+  // options: a field deleted and recreated keeps its name, so the cache stays
+  // `satisfied()` while holding an obsolete id, and every clear would fail
+  // against it until some unrelated op happened to refresh. `--clear`
+  // validating nothing was the wrong reason to skip the read.
+  const cache = mutationCache(ctx, [[PRIORITY_FIELD]], [], [PRIORITY_FIELD]);
   if (value === null) {
     clearField(ctx, cache, itemId, PRIORITY_FIELD);
   } else {
@@ -5653,7 +5693,13 @@ export function run(argv: string[], ctx: Ctx): number {
       const own = ownRepo(ctx, full.open).own;
       // Closed own-repo items ride along as pass-through tree edges only.
       const closedEdges = ownRepo(ctx, full.closed).own;
-      const { eligible, blocked, inFlightEpics } = rankNext(own, closedEdges, priorityOptionOrder(ctx));
+      // The values the ranker will actually rank double as staleness evidence:
+      // one it cannot find in the cached options proves the schema moved.
+      const order = priorityOptionOrder(ctx, {
+        values: own.map((i) => i.priority),
+        fresh: flags.fresh === true,
+      });
+      const { eligible, blocked, inFlightEpics } = rankNext(own, closedEdges, order);
       // --json carries the diagnosis as fields, never as the prose line.
       const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics);
       if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked, ...dx, cache: cacheFacts(full) });
@@ -5695,7 +5741,13 @@ export function run(argv: string[], ctx: Ctx): number {
       const full = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
       const own = ownRepo(ctx, full.open).own;
       const closedEdges = ownRepo(ctx, full.closed).own;
-      const res = frontierView(rankNext(own, closedEdges, priorityOptionOrder(ctx)));
+      const res = frontierView(
+        rankNext(
+          own,
+          closedEdges,
+          priorityOptionOrder(ctx, { values: own.map((i) => i.priority), fresh: flags.fresh === true }),
+        ),
+      );
       if (flags.json) json({ ...res, cache: cacheFacts(full) });
       else if (res.frontier.length === 0) {
         out(

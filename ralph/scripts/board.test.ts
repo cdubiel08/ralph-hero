@@ -54,6 +54,7 @@ import {
   type QueueItem,
   QUEUE_SELECT_MINIMAL,
   QUEUE_SELECT_NO_LABELS,
+  priorityOptionOrder,
   rankNext,
   readiness,
   realExec,
@@ -2819,6 +2820,96 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     }
     expect(warns.join("")).toMatch(/not refreshed/);
     expect(text).toMatch(/^next: #1\b/m); // the cached [Now, Later] order
+  });
+
+  it("integer-like option names keep their DECLARED order, which Object.keys destroys", () => {
+    // A board declaring [10, 2] means 10 first. JS enumerates integer-like keys
+    // numerically ahead of string keys, so reconstructing the order from the
+    // option MAP yields [2, 10] — and no refresh can repair it, because the
+    // order is lost the moment options become object properties.
+    expect(Object.keys(Object.fromEntries([["10", "a"], ["2", "b"], ["P1", "c"]]))).toEqual(["2", "10", "P1"]);
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["10", "2", "P1"] });
+    const ctx = makeCtx(gh);
+    expect(priorityOptionOrder(ctx)).toEqual(["10", "2", "P1"]); // declared, not enumerated
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "2" });
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "10" });
+    // #2 holds the board's FIRST option, so it heads the queue despite the
+    // higher issue number and the lower-looking name.
+    expect(sayNext(ctx)).toMatch(/^next: #2\b/m);
+  });
+
+  it("a priority value absent from the cached options is EVIDENCE of a moved schema, and refreshes", () => {
+    // The rename half of the freshness problem, closed without a timer: the
+    // ranker's own input proves the cache is wrong. The cache here is fresh by
+    // age, so only the evidence can trigger the refresh.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Soon", "Later"] });
+    const ctx = makeCtx(gh);
+    const staleNames = (extra: Record<string, unknown> = {}) =>
+      writeFileSync(
+        join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+        JSON.stringify({
+          projectId: "PVT_test",
+          repositoryId: "R_test",
+          fields: {
+            "Workflow State": {
+              id: "F_state", dataType: "SINGLE_SELECT",
+              options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+            },
+            // Pre-rename snapshot: "Now" has since become "Soon".
+            Priority: {
+              id: "F_Priority", dataType: "SINGLE_SELECT",
+              options: { Now: "Priority_Now", Later: "Priority_Later" },
+              optionOrder: ["Now", "Later"],
+              ...extra,
+            },
+          },
+          fetchedAt: NOW.toISOString(), // fresh by age — evidence is the only trigger
+        }),
+      );
+    staleNames();
+    expect(priorityOptionOrder(ctx, { values: ["Soon"] })).toEqual(["Soon", "Later"]);
+    // Without that evidence, a fresh-by-age cache is served as-is — no refresh,
+    // which is what keeps `next` at its pinned warm round-trip count.
+    staleNames();
+    expect(priorityOptionOrder(ctx, { values: ["Later", null] })).toEqual(["Now", "Later"]);
+    // --fresh is the operator's deterministic override of any Δ.
+    staleNames();
+    expect(priorityOptionOrder(ctx, { values: ["Later"], fresh: true })).toEqual(["Soon", "Later"]);
+  });
+
+  it("--clear forces the live schema too — a recreated field's stale ID would fail every clear", () => {
+    // A field deleted and recreated keeps its NAME, so satisfied() stays happy
+    // while the cached ID is dead. Nothing about clearing validates an option,
+    // which was the wrong reason to skip the refresh.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1" });
+    writeFileSync(
+      join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+      JSON.stringify({
+        projectId: "PVT_test",
+        repositoryId: "R_test",
+        fields: {
+          "Workflow State": {
+            id: "F_state", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+          },
+          Priority: {
+            id: "F_priority_DELETED", dataType: "SINGLE_SELECT",
+            options: { P0: "P_P0", P1: "P_P1" }, optionOrder: ["P0", "P1"],
+          },
+        },
+        fetchedAt: NOW.toISOString(), // fresh by age: only a forced read saves this
+      }),
+    );
+    expect(setPriority(ctx, 1, null).priority).toBeNull();
+    // The live ID, never the dead one the cache was still happy to serve.
+    expect(gh.mutations).toContain("clearField(#1, F_priority)");
+    expect(gh.mutations.join(" ")).not.toContain("F_priority_DELETED");
   });
 
   it("a valueless --priority is a usage error, not a silently unprioritized issue", () => {
