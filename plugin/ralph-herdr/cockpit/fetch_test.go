@@ -222,9 +222,11 @@ func TestParseBoardColumnsNeedsOnlyCoreFields(t *testing.T) {
 
 // snap builds a protocol-19 session_snapshot envelope whose single workspace
 // has worktree provenance pointing at root — i.e. a herd that belongs to us.
+// `version` is the string herdr 0.8.0 actually sends, not the int the earlier
+// fixtures assumed (GH-1829).
 func snap(root, agents string) string {
 	return `{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":{
-	  "version":1,"protocol":19,"tabs":[],"layouts":[],
+	  "version":"0.8.0","protocol":19,"tabs":[],"layouts":[],
 	  "workspaces":[{"workspace_id":"wR","worktree":{"repo_root":"` + root + `","checkout_path":"` + root + `"}}],
 	  "panes":[],
 	  "agents":[` + agents + `]}}}`
@@ -351,6 +353,35 @@ func TestParseAgentsRejectsBadEnvelopes(t *testing.T) {
 	} {
 		if _, err := parseAgents(tc.body, "/repo"); err == nil {
 			t.Errorf("%s must error, not read as an empty herd", tc.name)
+		}
+	}
+}
+
+// GH-1829: `version` is server chrome the cockpit never reads, but typing it
+// `*int` bound the whole parse to the server's choice of scalar — herdr 0.8.0
+// sends `"0.8.0"`, unmarshal failed on the entire document, and fetchAgentsCmd
+// mapped that to herdrOK:false. The overlay just turned off, silently. Both
+// shapes (and an absent field) must parse; `protocol` is the only version gate.
+func TestParseAgentsIgnoresSnapshotVersionShape(t *testing.T) {
+	body := func(version string) string {
+		return `{"id":"x","result":{"type":"session_snapshot","snapshot":{` + version + `
+		  "protocol":19,"tabs":[],"layouts":[],
+		  "workspaces":[{"workspace_id":"wR","worktree":{"repo_root":"/ours","checkout_path":"/ours"}}],
+		  "panes":[],
+		  "agents":[{"name":"w1-x","agent_status":"working","pane_id":"p1","workspace_id":"wR"}]}}}`
+	}
+	for _, tc := range []struct{ name, version string }{
+		{"herdr 0.8.0 string version", `"version":"0.8.0",`},
+		{"legacy int version", `"version":1,`},
+		{"no version at all", ``},
+	} {
+		agents, err := parseAgents(body(tc.version), "/ours")
+		if err != nil {
+			t.Errorf("%s must parse, got %v", tc.name, err)
+			continue
+		}
+		if len(agents) != 1 {
+			t.Errorf("%s: want our 1 agent, got %+v", tc.name, agents)
 		}
 	}
 }

@@ -273,7 +273,10 @@ func parseAgents(out, repoRoot string) ([]Agent, error) {
 		Result struct {
 			Type     string `json:"type"`
 			Snapshot struct {
-				Version    *int `json:"version"`
+				// No `version` field: nothing here consumes it, and typing it
+				// bound the whole parse to the server's choice of scalar —
+				// herdr 0.8.0 switched it to a string and silently killed the
+				// overlay (GH-1829). `protocol` is the only version gate.
 				Protocol   *int `json:"protocol"`
 				Workspaces *[]struct {
 					ID       string `json:"workspace_id"`
