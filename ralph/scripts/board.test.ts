@@ -2932,6 +2932,99 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     expect(rankNext([q(1, "P9"), q(9, "P3")], [], P).eligible.map((i) => i.number)).toEqual([9, 1]);
   });
 
+  it("a cache predating optionOrder is STALE, not usable — the upgrade path integer names would break", () => {
+    // The legacy-migration hole: a cache written by the previous version less
+    // than an hour ago has no optionOrder, so the map fallback reverses a
+    // declared ["10","2"] — and the evidence trigger cannot catch it, because
+    // both values ARE in the map, so nothing looks unexplained. `next` would
+    // pick the wrong work until the age ceiling expired.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["10", "2"] });
+    const ctx = makeCtx(gh);
+    writeFileSync(
+      join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+      JSON.stringify({
+        projectId: "PVT_test",
+        repositoryId: "R_test",
+        fields: {
+          "Workflow State": {
+            id: "F_state", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+          },
+          // Previous version's shape: options map, NO optionOrder.
+          Priority: { id: "F_Priority", dataType: "SINGLE_SELECT", options: { "10": "P_10", "2": "P_2" } },
+        },
+        fetchedAt: NOW.toISOString(), // fresh by age, and no value looks unknown
+      }),
+    );
+    // Declared order, because the legacy shape forced a refresh — not the
+    // map order ["2","10"] that Object.keys would have produced.
+    expect(priorityOptionOrder(ctx, { values: ["10", "2"] })).toEqual(["10", "2"]);
+  });
+
+  it("create applies the REST of the requested setup before reporting a priority failure", () => {
+    // `create --apply --priority …` used to throw the moment the priority write
+    // failed, skipping labels/estimate/parent — so the issue could end up
+    // without its apply label while the error told the operator to fix only
+    // Priority. Following that recovery would not restore the requested shape.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const inner = gh.exec;
+    const edits: string[][] = [];
+    ctx.exec = (argv, stdin) => {
+      if (argv[0] === "gh" && argv[1] === "issue" && argv[2] === "edit") {
+        edits.push(argv);
+        return { code: 0, stdout: "", stderr: "" }; // the label write SUCCEEDS
+      }
+      // Fail ONLY the Priority field write.
+      if (stdin?.includes("updateProjectV2ItemFieldValue") && stdin.includes("P_P0"))
+        return { code: 1, stdout: "", stderr: "simulated priority write failure" };
+      return inner(argv, stdin);
+    };
+    let err: Error | null = null;
+    try {
+      createIssue(ctx, { title: "infra", priority: "P0", estimate: "S", labels: ["ralph:apply"] });
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err).not.toBeNull();
+    expect(err!.message).toMatch(/was created/);
+    expect(err!.message).toMatch(/board priority \d+ P0/); // the repair command
+    // The apply label DID land despite the priority failure — the whole point.
+    expect(edits[0]).toContain("--add-label");
+    expect(edits[0]).toContain("ralph:apply");
+    // …and so did the estimate: the failure no longer aborts remaining setup.
+    expect(gh.mutations).toContain("setField(F_estimate)");
+  });
+
+  it("a create failure names EVERY unapplied write, not just the first", () => {
+    // A recovery hint that repairs one of two failures is worse than none: it
+    // reads as completeness.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      if (argv[0] === "gh" && argv[1] === "issue" && argv[2] === "edit")
+        return { code: 1, stdout: "", stderr: "label not found" };
+      if (stdin?.includes("updateProjectV2ItemFieldValue") && stdin.includes("P_P0"))
+        return { code: 1, stdout: "", stderr: "simulated priority write failure" };
+      return inner(argv, stdin);
+    };
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let err: Error | null = null;
+    try {
+      createIssue(ctx, { title: "infra", priority: "P0", labels: ["ralph:apply"] });
+    } catch (e) {
+      err = e as Error;
+    }
+    warn.mockRestore();
+    expect(err!.message).toMatch(/2 requested writes did NOT land/);
+    expect(err!.message).toMatch(/Priority/);
+    expect(err!.message).toMatch(/labels ralph:apply/);
+    expect(err!.message).toMatch(/label not found/);
+  });
+
   it("the suppression list survives a refresh, and its cap cannot become a refresh loop", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);

@@ -4041,6 +4041,16 @@ export function priorityOptionOrder(
     const f = c.fields[PRIORITY_FIELD];
     return f?.optionOrder ?? Object.keys(f?.options ?? {});
   };
+  // A cache written before `optionOrder` existed is STALE, not usable-as-is.
+  // Falling back to the map is only safe as a last resort, because for
+  // integer-like names it silently reverses the declared order — and the
+  // evidence trigger cannot save us there: every value IS in the map, so
+  // nothing looks unexplained and `next` would pick wrong work until the age
+  // ceiling expired. One refresh on first use after the upgrade closes it.
+  const legacy = (c: BoardCache): boolean => {
+    const f = c.fields[PRIORITY_FIELD];
+    return !!f?.options && f.optionOrder === undefined;
+  };
   let cached: BoardCache;
   try {
     cached = ensureCache(ctx);
@@ -4059,7 +4069,10 @@ export function priorityOptionOrder(
   // to remember (see unresolvedPrioritiesTruncated).
   const unexplained = cached.unresolvedPrioritiesTruncated ? [] : candidates.filter((v) => !known.has(v));
   const stale =
-    opts.fresh === true || unexplained.length > 0 || !(Number.isFinite(age) && age <= PRIORITY_ORDER_MAX_AGE_MS);
+    opts.fresh === true ||
+    unexplained.length > 0 ||
+    legacy(cached) ||
+    !(Number.isFinite(age) && age <= PRIORITY_ORDER_MAX_AGE_MS);
   if (!stale) return cachedOrder;
   let refreshed: BoardCache;
   try {
@@ -4163,14 +4176,19 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
     syncStatus(ctx, cache, itemId, opts.state ?? "Backlog");
     // Unlike estimate, a failed priority write is FATAL-loud: a null priority
     // is what makes an issue invisible to `next`, so it may not pass as a warn.
+    //
+    // DEFERRED, not immediate: throwing here skipped every later write, so
+    // `create --apply --priority …` could leave the issue without its apply
+    // label while the error told the operator to fix only Priority — following
+    // the advertised recovery would not restore the requested shape. The rest of
+    // the requested setup is applied first, and the throw then reports
+    // everything that did not land.
+    let priorityFailure: string | null = null;
     if (wantsPriority) {
       try {
         setSingleSelect(ctx, cache, itemId, PRIORITY_FIELD, opts.priority!);
       } catch (e) {
-        throw new Error(
-          `#${issue.number} was created (${issue.url}) but ${PRIORITY_FIELD} was NOT set: ` +
-            `${(e as Error).message} — set it with \`board priority ${issue.number} ${opts.priority}\``,
-        );
+        priorityFailure = (e as Error).message;
       }
     }
     if (opts.estimate) {
@@ -4185,6 +4203,7 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
     // owner's call, not the CLI's. A label failure is LOUD but non-fatal —
     // the issue exists, and an apply twin missing its label is caught by the
     // merge gate rather than being silently mislabelled here.
+    let labelFailure: string | null = null;
     if (opts.labels?.length) {
       const r = ctx.exec([
         "gh", "issue", "edit", String(issue.number),
@@ -4192,20 +4211,47 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
         ...opts.labels.flatMap((l) => ["--add-label", l]),
       ]);
       if (r.code !== 0) {
+        labelFailure = r.stderr.trim() || r.stdout.trim();
         process.stderr.write(
           `warn: labels ${opts.labels.join(",")} not applied to #${issue.number}: ` +
-            `${r.stderr.trim() || r.stdout.trim()} (create the label first: gh label create)\n`,
+            `${labelFailure} (create the label first: gh label create)\n`,
         );
       }
     }
+    let parentFailure: string | null = null;
     if (opts.parent) {
-      const parent = fetchIssue(ctx, opts.parent);
-      ghGraphQL(
-        ctx,
-        `mutation($parentId: ID!, $childId: ID!) {
-          addSubIssue(input: { issueId: $parentId, subIssueId: $childId }) { issue { id } }
-        }`,
-        { parentId: parent.nodeId, childId: issue.id },
+      try {
+        const parent = fetchIssue(ctx, opts.parent);
+        ghGraphQL(
+          ctx,
+          `mutation($parentId: ID!, $childId: ID!) {
+            addSubIssue(input: { issueId: $parentId, subIssueId: $childId }) { issue { id } }
+          }`,
+          { parentId: parent.nodeId, childId: issue.id },
+        );
+      } catch (e) {
+        // Only reported when priority already failed — otherwise a parenting
+        // failure keeps its previous behavior of surfacing as itself.
+        if (priorityFailure === null) throw e;
+        parentFailure = (e as Error).message;
+      }
+    }
+    // One error naming EVERY operation that did not land, each with the command
+    // that repairs it — a recovery hint that fixes one of three unapplied writes
+    // is worse than none, because it reads as completeness.
+    if (priorityFailure !== null) {
+      const unapplied = [
+        `${PRIORITY_FIELD} (\`board priority ${issue.number} ${opts.priority}\`): ${priorityFailure}`,
+        ...(labelFailure !== null
+          ? [`labels ${opts.labels!.join(",")} (\`gh issue edit ${issue.number} --add-label …\`): ${labelFailure}`]
+          : []),
+        ...(parentFailure !== null
+          ? [`parent #${opts.parent} (\`board link ${opts.parent} ${issue.number}\`): ${parentFailure}`]
+          : []),
+      ];
+      throw new Error(
+        `#${issue.number} was created (${issue.url}) but ${unapplied.length} requested ` +
+          `${unapplied.length === 1 ? "write" : "writes"} did NOT land:\n  - ${unapplied.join("\n  - ")}`,
       );
     }
     return fetchIssue(ctx, issue.number);
