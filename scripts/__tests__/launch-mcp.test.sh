@@ -53,6 +53,9 @@ case "${1:-}" in
   --version) echo "${FAKE_NODE_VERSION:-v22.11.0}" ;;
   -p)
     case "${2:-}" in
+      # The launcher's platform+arch+ABI identity probe. FAKE_NODE_ID drives it
+      # directly; FAKE_NODE_ABI keeps the older ABI-only cases readable.
+      *process.platform*) echo "${FAKE_NODE_ID:-darwin-arm64-abi${FAKE_NODE_ABI:-127}}" ;;
       'process.versions.modules') echo "${FAKE_NODE_ABI:-127}" ;;
       *) exit 1 ;;
     esac
@@ -73,6 +76,35 @@ echo "FATAL: launcher invoked npx" >&2
 exit 90
 STUB
 chmod +x "$BIN/node" "$BIN/npm" "$BIN/npx"
+
+# sanitized_bin <dir> [tool...] — a self-contained PATH holding the node/npm/npx
+# stubs plus the ordinary utilities the launcher shells out to, and NOTHING
+# else. The hashers are deliberately absent unless named in [tool...], which is
+# how the no-hasher and cksum-only branches are reached. Without the coreutils
+# the launcher would simply die at 127 and every assertion would pass or fail
+# for the wrong reason, so each required tool is resolved explicitly and a
+# missing one is a hard error rather than a silent hole.
+# `bash` and `env` are load-bearing: the stubs' `#!/usr/bin/env bash` shebang
+# resolves through this PATH too, and without them every run dies at 127.
+BASE_UTILS="bash env rm cat find mkdir sleep date uname cut kill sed grep ls dirname basename pwd"
+sanitized_bin() {
+  local dir="$1"; shift
+  mkdir -p "$dir"
+  local t src
+  for t in $BASE_UTILS "$@"; do
+    src=$(PATH="/usr/bin:/bin:/usr/sbin:/sbin" command -v "$t" 2>/dev/null) || {
+      echo "FATAL: sanitized_bin cannot resolve '$t'" >&2; exit 1; }
+    ln -sf "$src" "$dir/$t"
+  done
+  for t in node npm npx; do cp "$BIN/$t" "$dir/$t"; done
+  # Guard the premise: the hashers must be absent unless explicitly requested.
+  local h
+  for h in shasum sha256sum cksum; do
+    case " $* " in *" $h "*) continue ;; esac
+    [ -e "$dir/$h" ] && { echo "FATAL: $h leaked into $dir" >&2; exit 1; }
+  done
+  return 0
+}
 
 # fake_root <name> — a plugin root that looks fully bootstrapped: built output
 # plus every dependency bootstrap_needed() checks. No marker is written; each
@@ -102,6 +134,7 @@ run_launcher() {
     PATH="$BIN:$PATH" \
     FAKE_NODE_VERSION="${FAKE_NODE_VERSION:-v22.11.0}" \
     FAKE_NODE_ABI="${FAKE_NODE_ABI:-127}" \
+    FAKE_NODE_ID="${FAKE_NODE_ID:-darwin-arm64-abi${FAKE_NODE_ABI:-127}}" \
     bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
   echo "$log"
 }
@@ -243,6 +276,170 @@ if grep -q 'npm ci' "$log"; then
   pass "absent marker re-bootstraps"
 else
   fail "absent marker did not re-bootstrap" "$(cat "$log")"
+fi
+
+echo "=== fingerprint identity is platform + arch + ABI, not ABI alone ==="
+
+# arm64 and x64 Node of the same major share NODE_MODULE_VERSION, but
+# better-sqlite3 / onnxruntime-node / sqlite-vec binaries are arch-bound. A
+# shared plugin cache reached from both must NOT match the marker.
+root=$(fake_root archswap)
+FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+FAKE_NODE_ID="darwin-x64-abi127" log=$(run_launcher "$root")
+if grep -q 'npm ci' "$log"; then
+  pass "architecture change at a constant ABI re-bootstraps"
+else
+  fail "arm64 -> x64 at ABI 127 reused the marker — arch-bound binaries would misload" \
+    "$(cat "$log")"
+fi
+
+root=$(fake_root platformswap)
+FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+FAKE_NODE_ID="linux-arm64-abi127" log=$(run_launcher "$root")
+if grep -q 'npm ci' "$log"; then
+  pass "platform change at a constant ABI re-bootstraps"
+else
+  fail "darwin -> linux at ABI 127 reused the marker" "$(cat "$log")"
+fi
+
+echo "=== no-hasher fallback never claims a match ==="
+
+# With neither shasum, sha256sum, nor cksum on PATH the marker cannot describe
+# the tree. A CONSTANT sentinel was the bug: the first bootstrap wrote it and
+# every later check matched it, so lockfile and Node changes reused a stale
+# build. The value must differ per call.
+root=$(fake_root nohasher)
+NOHASH_BIN="$TMP_ROOT/nohash-bin"
+sanitized_bin "$NOHASH_BIN"
+
+run_nohasher() {
+  local r="$1" log="$1/calls.log"
+  : >"$log"
+  RC=0
+  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$r" PATH="$NOHASH_BIN" \
+    bash "$r/scripts/launch-mcp.sh" >/dev/null 2>"$r/stderr.log" || RC=$?
+  echo "$log"
+}
+
+log=$(run_nohasher "$root")
+m1=$(cat "$root/.bootstrap-complete" 2>/dev/null || echo MISSING)
+log=$(run_nohasher "$root")
+m2=$(cat "$root/.bootstrap-complete" 2>/dev/null || echo MISSING)
+
+if [ "$m1" = "MISSING" ] || [ "$m2" = "MISSING" ]; then
+  fail "no-hasher run wrote no marker at all" "m1=$m1 m2=$m2"
+elif [ "$m1" != "$m2" ]; then
+  pass "no-hasher fingerprint differs per call (cannot self-match)"
+else
+  fail "no-hasher fingerprint is constant ($m1) — a stale build would be reused forever"
+fi
+
+if grep -q 'npm ci' "$log"; then
+  pass "no-hasher second launch re-bootstraps rather than trusting the marker"
+else
+  fail "no-hasher second launch trusted a marker it could not compute" "$(cat "$log")"
+fi
+
+echo "=== cksum fallback keeps a real fingerprint when shasum is absent ==="
+
+root=$(fake_root cksumonly)
+CK_BIN="$TMP_ROOT/cksum-bin"
+sanitized_bin "$CK_BIN" cksum
+
+run_cksum() {
+  local r="$1" log="$1/calls.log"
+  : >"$log"
+  RC=0
+  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$r" PATH="$CK_BIN" \
+    bash "$r/scripts/launch-mcp.sh" >/dev/null 2>"$r/stderr.log" || RC=$?
+  echo "$log"
+}
+
+log=$(run_cksum "$root")
+c1=$(cat "$root/.bootstrap-complete" 2>/dev/null || echo MISSING)
+log=$(run_cksum "$root")
+c2=$(cat "$root/.bootstrap-complete" 2>/dev/null || echo MISSING)
+if [ "$c1" != "MISSING" ] && [ "$c1" = "$c2" ] && ! grep -q 'npm ci' "$log"; then
+  pass "cksum fallback yields a stable fingerprint (warm tree stays warm)"
+else
+  fail "cksum fallback did not produce a stable warm launch" "c1=$c1 c2=$c2"
+fi
+
+# ...and still tracks the lockfile, or it would be a constant by another name.
+echo '{"lockfileVersion":3,"changed":true}' >"$root/package-lock.json"
+log=$(run_cksum "$root")
+if grep -q 'npm ci' "$log"; then
+  pass "cksum fallback still detects a lockfile change"
+else
+  fail "cksum fingerprint ignored a lockfile change" "$(cat "$log")"
+fi
+
+echo "=== signal traps release the lock AND stop ==="
+
+# Bash resumes after a TERM/INT trap. A handler that only cleaned up would drop
+# the lock and then continue the rest of the bootstrap, letting a second
+# launcher run `npm ci` concurrently against the same tree.
+if grep -qE "trap '.*' INT" "$SRC" && grep -qE "trap '.*' TERM" "$SRC"; then
+  pass "INT and TERM have handlers separate from EXIT"
+else
+  fail "INT/TERM still share the bare EXIT handler" "$(grep -n 'trap' "$SRC")"
+fi
+
+if grep -qE "trap 'rm -rf \"\\\$LOCK\"; exit [0-9]+' INT" "$SRC" \
+  && grep -qE "trap 'rm -rf \"\\\$LOCK\"; exit [0-9]+' TERM" "$SRC"; then
+  pass "signal handlers exit explicitly instead of resuming the script"
+else
+  fail "a signal handler cleans up but does not exit — bash would resume into a second npm ci" \
+    "$(grep -n 'trap' "$SRC")"
+fi
+
+# Behavioral: TERM during `npm ci` must leave no lock, no marker, and a
+# non-zero rc — not a script that ran on to completion.
+root=$(fake_root signal)
+SIG_BIN="$TMP_ROOT/sig-bin"
+sanitized_bin "$SIG_BIN" shasum
+# npm ci kills the launcher mid-install, standing in for Claude Code killing a
+# slow first run. Overwrites the stub sanitized_bin just installed.
+cat >"$SIG_BIN/npm" <<'STUB'
+#!/usr/bin/env bash
+echo "npm $*" >>"$CALL_LOG"
+if [ "${1:-}" = "ci" ]; then
+  kill -TERM "$LAUNCHER_PID"
+  sleep 5
+fi
+exit 0
+STUB
+chmod +x "$SIG_BIN/npm"
+
+log="$root/calls.log"
+: >"$log"
+RC=0
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$SIG_BIN" \
+  bash -c 'LAUNCHER_PID=$$; export LAUNCHER_PID; exec bash "$1"' _ \
+  "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+
+if [ "$RC" -ne 0 ]; then
+  pass "TERM during npm ci exits non-zero (rc=$RC)"
+else
+  fail "TERM during npm ci still exited 0 — the script resumed past the signal"
+fi
+
+if [ ! -d "$root/.bootstrap.lock" ]; then
+  pass "TERM during npm ci leaves no lock behind"
+else
+  fail "lock survived a TERM — later launchers would wait out the stale window"
+fi
+
+if [ ! -f "$root/.bootstrap-complete" ]; then
+  pass "TERM during npm ci writes no completion marker"
+else
+  fail "an interrupted bootstrap claimed completion"
+fi
+
+if ! grep -q 'npm run build' "$log"; then
+  pass "TERM during npm ci stops before the build (no resumed bootstrap)"
+else
+  fail "script resumed past the signal and kept bootstrapping" "$(cat "$log")"
 fi
 
 echo

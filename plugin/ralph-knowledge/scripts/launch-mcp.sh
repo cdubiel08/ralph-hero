@@ -34,10 +34,21 @@ fingerprint() {
     hasher="shasum -a 256"
   elif command -v sha256sum >/dev/null 2>&1; then
     hasher="sha256sum"
+  elif command -v cksum >/dev/null 2>&1; then
+    # POSIX, and present on every host that has a shell at all. A CRC is not
+    # collision-resistant, but nothing here is adversarial — the input is this
+    # machine's own lockfile, and a CRC still detects the accidental edits the
+    # marker exists to catch.
+    hasher="cksum"
   else
-    # No hasher: fall back to a marker that never matches, so bootstrap is
-    # driven purely by the artifact checks below rather than by a false match.
-    echo "no-hasher"
+    # No hasher at all. The marker cannot describe the tree, so it must not
+    # claim to: return a value that differs on every call (codex P2, PR #1755).
+    # A constant here was worse than useless — the first bootstrap wrote it and
+    # every later check matched it, so package.json, lockfile, and Node
+    # compatibility changes silently reused a stale build. Differing per call
+    # means bootstrap is driven purely by the artifact checks in
+    # bootstrap_needed(), which is the documented intent.
+    echo "no-hasher-$$-${RANDOM:-0}-$(date +%s 2>/dev/null || echo 0)"
     return 0
   fi
   {
@@ -52,24 +63,34 @@ fingerprint() {
 # destructive `npm ci` + rebuild: multi-minute startup at best, and at worst a
 # working offline install taken down because the registry is unreachable.
 #
-# The real boundary is the native ABI. better-sqlite3 (and onnxruntime-node)
-# ship compiled binaries keyed to NODE_MODULE_VERSION, which is stable across
-# every minor and patch and changes exactly when a rebuild IS required. Prefer
-# it; fall back to the major version when `node -p` cannot answer, and to a
+# The real boundary is the native ABI *on this platform*. better-sqlite3,
+# onnxruntime-node, and the platform-specific sqlite-vec package ship compiled
+# binaries keyed to NODE_MODULE_VERSION, which is stable across every minor and
+# patch and changes exactly when a rebuild IS required.
+#
+# The ABI alone is not enough: it is identical for an arm64 and an x64 Node of
+# the same major, while the binaries are architecture-bound (codex P2, PR
+# #1755). One plugin cache reached by both — a Rosetta shell, a rebuilt
+# machine, a shared network home — would match the marker and then load
+# binaries for the wrong architecture. So platform and arch are part of the
+# identity too.
+#
+# Fall back to the major version when `node -p` cannot answer, and to a
 # never-matching sentinel when node is missing entirely — an unknown boundary
 # must re-bootstrap, never claim a match.
 node_compat_boundary() {
-  local abi major
-  if abi=$(node -p 'process.versions.modules' 2>/dev/null) && [ -n "$abi" ]; then
-    echo "node-abi-$abi"
+  local id major
+  if id=$(node -p 'process.platform+"-"+process.arch+"-abi"+process.versions.modules' 2>/dev/null) \
+    && [ -n "$id" ]; then
+    echo "node-$id"
     return 0
   fi
   if major=$(node --version 2>/dev/null) && [ -n "$major" ]; then
-    # v22.11.0 -> v22
-    echo "node-major-${major%%.*}"
+    # v22.11.0 -> v22, qualified by whatever uname can tell us about the host.
+    echo "node-major-${major%%.*}-$(uname -s 2>/dev/null || echo unknown-os)-$(uname -m 2>/dev/null || echo unknown-arch)"
     return 0
   fi
-  echo "node-unknown-$$"
+  echo "node-unknown-$$-${RANDOM:-0}"
 }
 
 # True (0) when bootstrap must run. Every dependency the lockfile installs and
@@ -120,7 +141,17 @@ if bootstrap_needed; then
     sleep 2
     waited=$((waited + 2))
   done
-  trap 'rm -rf "$LOCK"' EXIT INT TERM
+  # Release the lock however we leave — but a SIGNAL handler must also STOP
+  # (codex P2, PR #1755). Bash runs a TERM/INT trap and then RESUMES the
+  # script, so a single combined handler would drop the lock and carry on
+  # through the rest of the bootstrap: another launcher could then take the
+  # lock and run a second destructive `npm ci` against the same tree,
+  # concurrently, which is the exact race this lock exists to prevent. Claude
+  # Code killing a slow first run makes that an ordinary event, not a corner
+  # case. So signals clean up and exit; only normal EXIT merely cleans up.
+  trap 'rm -rf "$LOCK"' EXIT
+  trap 'rm -rf "$LOCK"; exit 130' INT
+  trap 'rm -rf "$LOCK"; exit 143' TERM
 
   # Re-check under the lock: the process we waited on may have finished the
   # work, in which case we must not repeat the destructive `npm ci`.
