@@ -342,10 +342,15 @@ jobs:
           # The routing_pat ignore is a false positive — actionlint infers the
           # secrets schema from the first dash-spelled usage and then flags the
           # uppercase fallback. Both spellings are valid GitHub secret names.
+          # pull_request_review_thread is a real GitHub trigger (types
+          # resolved/unresolved) that actionlint 1.7.12 does not know;
+          # validate-attestation.yml needs it because resolving a P0 thread is
+          # exactly what clears findings-mode gate 5 (GH-1847).
           /tmp/actionlint \
             -color \
             -shellcheck= \
-            -ignore 'property "routing_pat" is not defined'
+            -ignore 'property "routing_pat" is not defined' \
+            -ignore 'unknown Webhook event "pull_request_review_thread"'
 
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0

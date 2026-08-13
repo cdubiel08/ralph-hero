@@ -6,9 +6,8 @@
   "external_review": {
     "required": true,
     "bot": "chatgpt-codex-connector[bot]",
-    "trigger": "@codex review",
-    "head_marker": "ralph-review-head",
-    "clean_comment_marker": "Codex Review: Didn't find any major issues."
+    "trigger": "@codex review for P0 issues only",
+    "head_marker": "ralph-review-head"
   },
   "exempt_authors": [
     "dependabot[bot]",

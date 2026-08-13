@@ -24,17 +24,16 @@
 #      verdict present. Skipped for policy-exempt authors (bots).
 #   5. External review evidence by the policy bot, in one of two modes derived
 #      from the policy (never defaulted):
-#        review  — a formal APPROVED review at the current head. Every v1
-#                  policy (CodeRabbit et al.) keeps this behavior.
-#        comment — opted into by naming BOTH head_marker and
-#                  clean_comment_marker: a head-bound review request followed
-#                  by the bot's clean-result comment. For reviewers like Codex
-#                  that signal "clean" by comment and never file APPROVED.
-#      A COMMENTED review object is findings, not approval, and never
-#      satisfies this gate. PR-level reactions are deliberately NOT evidence
-#      (see gate 5). No evidence at this head is
-#      PENDING (exit 75), never FAIL: gate 1 already caught CHANGES_REQUESTED,
-#      so its absence is "not yet", not "no". Skipped for exempt authors.
+#        review   — a formal APPROVED review at the current head. Every policy
+#                   naming no head_marker (CodeRabbit et al.) keeps this.
+#        findings — opted into by naming head_marker: ONE scoped review per
+#                   head, blocking only on unresolved top-severity (P0)
+#                   threads. For reviewers like Codex that have no APPROVED
+#                   verb and emit findings instead
+#                   (scripts/codex-review-evidence.sh holds the predicate).
+#      No evidence at this head is PENDING (exit 75), never FAIL: gate 1
+#      already caught CHANGES_REQUESTED, so its absence is "not yet", not
+#      "no". Skipped for exempt authors.
 #   6. Apply-keyword hygiene (scripts/apply-keywords.sh, GH-1694): no closing
 #      keyword may bind an apply-kind issue, and an infra-touching PR may not
 #      close a ship issue that has no apply twin. Inert unless the repo opted
@@ -172,22 +171,21 @@ EXTERNAL_REQUIRED="false"
 EXTERNAL_BOT="chatgpt-codex-connector[bot]"
 EXTERNAL_TRIGGER="@codex review"
 EXTERNAL_HEAD_MARKER=""
-EXTERNAL_CLEAN_MARKER=""
 # Evidence mode, DERIVED from the policy — never defaulted (codex P2, PR #1839).
 #
-#   review  — the reviewer files formal APPROVED review objects (CodeRabbit and
-#             every other v1 reviewer). The ORIGINAL gate-5 behavior, and the
-#             default, so a v1 policy naming a formal-review bot keeps merging
-#             instead of silently inheriting a protocol its reviewer does not
-#             speak.
-#   comment — the reviewer signals a clean result with a marker COMMENT rather
-#             than an APPROVED review (Codex). Opted into explicitly, by naming
-#             BOTH head_marker and clean_comment_marker.
+#   review   — the reviewer files formal APPROVED review objects (CodeRabbit
+#              and every other v1 reviewer). The ORIGINAL gate-5 behavior, and
+#              the default, so a policy naming a formal-review bot keeps
+#              merging instead of silently inheriting a protocol its reviewer
+#              does not speak.
+#   findings — the reviewer has no APPROVED verb and emits severity-tagged
+#              findings instead (Codex). Opted into by naming head_marker,
+#              which is what binds the one scoped review to this head.
 #
-# Deriving the mode from what the policy DECLARES is what makes this change
-# backward compatible: absent the markers there is no comment protocol to
-# check, so demanding one could only ever produce a permanent pending — the
-# exact failure this PR exists to remove.
+# Deriving the mode from what the policy DECLARES is what keeps this backward
+# compatible: absent the marker there is no request protocol to bind, so
+# demanding one could only ever produce a permanent pending — the exact
+# failure this gate exists to remove.
 EXTERNAL_EVIDENCE_MODE="review"
 if [[ -f "$POLICY_FILE" ]]; then
   # Fail CLOSED on a malformed policy file — a truncated/corrupt policy must
@@ -200,14 +198,8 @@ if [[ -f "$POLICY_FILE" ]]; then
   EXTERNAL_BOT=$(jq -r '.external_review.bot // "chatgpt-codex-connector[bot]"' "$POLICY_FILE")
   EXTERNAL_TRIGGER=$(jq -r '.external_review.trigger // "@codex review"' "$POLICY_FILE")
   EXTERNAL_HEAD_MARKER=$(jq -r '.external_review.head_marker // ""' "$POLICY_FILE")
-  EXTERNAL_CLEAN_MARKER=$(jq -r '.external_review.clean_comment_marker // ""' "$POLICY_FILE")
-  # BOTH markers or neither: a half-configured comment protocol binds the
-  # request without being able to recognize the result (or the reverse), which
-  # is unsatisfiable rather than strict. Name it instead of failing obscurely.
-  if [[ -n "$EXTERNAL_HEAD_MARKER" && -n "$EXTERNAL_CLEAN_MARKER" ]]; then
-    EXTERNAL_EVIDENCE_MODE="comment"
-  elif [[ -n "$EXTERNAL_HEAD_MARKER" || -n "$EXTERNAL_CLEAN_MARKER" ]]; then
-    block "policy" "external_review declares only one of head_marker/clean_comment_marker — comment-evidence mode needs both"
+  if [[ -n "$EXTERNAL_HEAD_MARKER" ]]; then
+    EXTERNAL_EVIDENCE_MODE="findings"
   fi
 fi
 
@@ -342,101 +334,52 @@ fi
 # Gate 5: external (independent-identity) review
 # ---------------------------------------------------------------------------
 if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
-  # Codex emits COMMENTED review objects when it finds issues. A clean review
-  # has no formal APPROVED review; the connector leaves a clean-result comment.
-  # Values are passed with --arg because every policy string is untrusted jq
-  # data.
-  #
-  # The bot's PR-level thumbs-up is NOT evidence here, deliberately (codex P1 +
-  # CodeRabbit, PR #1839). Two independent reasons, either one disqualifying:
-  #   1. Reaction add/remove fires NO workflow event. A clean comment landing
-  #      before the reaction would publish `pending` and never recompute —
-  #      permanently blocking a clean PR. That is the very bug class this PR
-  #      removes, reintroduced one layer up.
-  #   2. GitHub keeps PR-level reactions across pushes and they carry no head
-  #      binding, so a reaction earned at an old head silently satisfies a new
-  #      one. Head-bound evidence that survives a push is not head-bound.
-  # The head-bound request + the bot's clean comment after it are already a
-  # complete, event-backed, push-invalidated proof; the reaction only added a
-  # way to get stuck.
-  #
-  # pipefail (set at the top of this script) is what makes these `if !` guards
-  # real: without it the recorded status would be jq's, so a failed `gh api`
-  # would read as EMPTY EVIDENCE — "no review yet" — instead of an unavailable
-  # API. Pinned by a regression test rather than assumed (CodeRabbit, #1839).
-  external_fetch_ok=true
-  if ! ext_comments=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate 2>/dev/null | jq -s 'add // []'); then
-    ext_comments='[]'
-    external_fetch_ok=false
-  fi
-  if ! ext_reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null | jq -s 'add // []'); then
-    ext_reviews='[]'
-    external_fetch_ok=false
-  fi
-
-  # --- review mode: the reviewer files a formal APPROVED review -------------
-  # Every v1 policy (CodeRabbit et al.) lands here. Head-bound and
-  # DISMISSED-excluded, exactly as gate 5 behaved before comment mode existed.
   evidence_ok=false
-  head_marker=""
+  evidence_detail=""
+
   if [[ "$EXTERNAL_EVIDENCE_MODE" == "review" ]]; then
-    ext_approved=$(jq -r --arg bot "$EXTERNAL_BOT" --arg sha "$head_sha" '
-      def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-      [ .[]
-        | select(((.user.login // "") | norm) == ($bot | norm))
-        | select((.state // "") == "APPROVED")
-        | select((.commit_id // "") == $sha)
-      ] | length' <<<"$ext_reviews")
-    if [[ "$external_fetch_ok" == "true" && "${ext_approved:-0}" -gt 0 ]]; then
-      evidence_ok=true
+    # --- review mode: the reviewer files a formal APPROVED review -----------
+    # Head-bound and DISMISSED-excluded, exactly as gate 5 has always behaved
+    # for reviewers that speak this protocol. Policy strings are passed with
+    # --arg because every one of them is untrusted jq data.
+    #
+    # pipefail (set at the top of this script) is what makes the `if !` guard
+    # real: without it the recorded status would be jq's, so a failed `gh api`
+    # would read as EMPTY EVIDENCE — "no review yet" — instead of an
+    # unavailable API. Pinned by a regression test (CodeRabbit, #1839).
+    if ext_reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null | jq -s 'add // []'); then
+      ext_approved=$(jq -r --arg bot "$EXTERNAL_BOT" --arg sha "$head_sha" '
+        def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+        [ .[]
+          | select(((.user.login // "") | norm) == ($bot | norm))
+          | select((.state // "") == "APPROVED")
+          | select((.commit_id // "") == $sha)
+        ] | length' <<<"$ext_reviews")
+      [[ "${ext_approved:-0}" -gt 0 ]] && evidence_ok=true
     fi
+    evidence_detail="no current APPROVED $EXTERNAL_BOT review at head ${head_sha:0:8} yet — comment '$EXTERNAL_TRIGGER' to trigger one"
   else
-
-  # --- comment mode: clean-result marker comment after a head-bound request --
-  # Bind the request to the complete head SHA. A push cannot inherit an older
-  # clean result, and prefix collisions cannot satisfy an exact HTML marker.
-  head_marker="<!-- $EXTERNAL_HEAD_MARKER: $head_sha -->"
-  request_at=$(jq -r --arg trigger "$EXTERNAL_TRIGGER" --arg marker "$head_marker" '
-    [ .[]
-      | select((.body // "") | contains($trigger))
-      | select((.body // "") | contains($marker))
-      # Editing a request is a new request for ordering purposes. Otherwise an
-      # old comment can be rewritten with the new SHA and inherit later clean
-      # evidence from before that edit.
-      | .updated_at // .created_at // empty
-    ] | max // ""' <<<"$ext_comments")
-
-  clean_at=""
-  if [[ -n "$request_at" ]]; then
-    clean_at=$(jq -r --arg bot "$EXTERNAL_BOT" --arg clean "$EXTERNAL_CLEAN_MARKER" --arg request "$request_at" '
-      def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-      [ .[]
-        | select(((.user.login // "") | norm) == ($bot | norm))
-        | select((.body // "") | contains($clean))
-        # GitHub timestamps have second precision. Equality is ambiguous: the
-        # clean result may have preceded an edited request in the same second.
-        | select((.created_at // "") > $request)
-        | .created_at
-      ] | max // ""' <<<"$ext_comments")
-  fi
-
-  # A later findings review wins over an earlier clean result on the same
-  # head. Missing timestamps are ambiguous and therefore fail closed.
-  findings_after_clean=0
-  if [[ -n "$clean_at" ]]; then
-    findings_after_clean=$(jq -r --arg bot "$EXTERNAL_BOT" --arg sha "$head_sha" --arg clean "$clean_at" '
-      def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-      [ .[]
-        | select(((.user.login // "") | norm) == ($bot | norm))
-        | select((.commit_id // "") == $sha)
-        | select((.state // "") != "DISMISSED" and (.state // "") != "APPROVED")
-        | select((.submitted_at // "") == "" or (.submitted_at // "") >= $clean)
-      ] | length' <<<"$ext_reviews")
-  fi
-
-    if [[ "$external_fetch_ok" == "true" && -n "$request_at" && -n "$clean_at" \
-          && "${findings_after_clean:-0}" -eq 0 ]]; then
-      evidence_ok=true
+    # --- findings mode: one scoped review per head, P0-clean ---------------
+    # The predicate lives in ONE script, which validate-attestation.sh and
+    # pr-gate-watch.sh also run: three readers of the same evidence with three
+    # copies of the rule is how a gate and its watcher come to disagree.
+    CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review-evidence.sh}"
+    if [[ ! -x "$CODEX_EVIDENCE_SH" ]]; then
+      block "policy" "external_review names head_marker (findings mode) but $CODEX_EVIDENCE_SH is missing"
+    fi
+    # Captured, not inherited (same pattern as gate 6): under `set -e` a
+    # crashed predicate would kill this script mid-gate, and a runner would see
+    # no MERGE GATE token at all — indistinguishable from a gate that passed
+    # and then died. An unusable answer is PENDING, never silently ok.
+    set +e
+    ext_evidence=$("$CODEX_EVIDENCE_SH" "$PR_NUMBER" "$head_sha" 2>&1)
+    ext_rc=$?
+    set -e
+    if [[ "$ext_rc" -ne 0 ]] || ! jq -e 'type == "object" and has("ok")' >/dev/null 2>&1 <<<"$ext_evidence"; then
+      evidence_detail="external-review evidence could not be evaluated (${CODEX_EVIDENCE_SH##*/} exit $ext_rc): $(head -1 <<<"$ext_evidence")"
+    else
+      [[ "$(jq -r '.ok' <<<"$ext_evidence")" == "true" ]] && evidence_ok=true
+      evidence_detail=$(jq -r '.detail' <<<"$ext_evidence")
     fi
   fi
 
@@ -462,12 +405,9 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
       if [[ -n "$rl_checks" ]]; then
         pending "external-review" "$EXTERNAL_BOT is rate-limited and filed no review evidence (per its own '$rl_checks' check) — retry after the window, or comment '$EXTERNAL_TRIGGER'"
       fi
-      # Name the remedy for the mode actually in force. Telling a CodeRabbit
-      # repo to post a marker its reviewer never reads would be a dead end.
-      if [[ "$EXTERNAL_EVIDENCE_MODE" == "review" ]]; then
-        pending "external-review" "no current APPROVED $EXTERNAL_BOT review at head ${head_sha:0:8} yet — comment '$EXTERNAL_TRIGGER' to trigger one"
-      fi
-      pending "external-review" "no current clean $EXTERNAL_BOT result at head ${head_sha:0:8} yet — comment '$EXTERNAL_TRIGGER' with '$head_marker'"
+      # The detail comes from the mode actually in force, so the remedy named
+      # is one this repo's reviewer can act on.
+      pending "external-review" "$evidence_detail"
     fi
   fi
 fi
