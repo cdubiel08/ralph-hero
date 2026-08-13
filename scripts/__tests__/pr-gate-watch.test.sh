@@ -1553,10 +1553,24 @@ if [[ "$LAST_OUT" != *"--review-verdict APPROVED"* ]] && [[ "$LAST_OUT" != *unkn
 else
   fail "fabricated verdict in the hint (out=${LAST_OUT:0:220})"
 fi
-if [[ "$LAST_OUT" == *"--carry-review"* ]]; then
-  pass "points at --carry-review, which copies a real prior verdict"
+# Nothing attested yet, so there is nothing to carry: attest-pr.sh refuses
+# --carry-review without a prior attestation carrying a review block, and
+# offering it would be as unrunnable as the bare --run it replaced.
+if [[ "$LAST_OUT" != *"--carry-review"* ]] \
+   && [[ "$LAST_OUT" == *"<VERDICT>"* ]] && [[ "$LAST_OUT" == *"real review"* ]]; then
+  pass "offers placeholders to fill, not a carry that would be refused"
 else
-  fail "no carry-review guidance (out=${LAST_OUT:0:220})"
+  fail "never-attested guidance (out=${LAST_OUT:0:240})"
+fi
+# With a prior attestation present, --carry-review IS offerable and is offered.
+D2="$TMP_ROOT/carryable-hint"
+scenario "$D2" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$(pr_state OPEN "" "[$(attestation_comment "$OLD_SHA")]")" "$NO_REVIEWS" '[]'
+run "$D2"
+if [[ "$LAST_OUT" == *"--carry-review"* ]]; then
+  pass "a prior attestation makes --carry-review the right offer"
+else
+  fail "carryable hint (out=${LAST_OUT:0:240})"
 fi
 # Exempt authors are the other waiver and must behave the same.
 POLICY="$POLICY_REVIEW"
@@ -1592,7 +1606,11 @@ scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$
     '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha, html_url:"https://example.test/r/9"}]')"
 expect "a COMMENTED review still leaves attestation as the next step" "$D" "GATE-YOURS attestation" 0
 run "$D"
-if [[ "$LAST_OUT" != *"--review-verdict APPROVED"* ]] && [[ "$LAST_OUT" == *"--carry-review"* ]]; then
+# The property is that no approval is CITED: with a prior attestation the
+# remedy is --carry-review, without one it is placeholders to fill. Never
+# `--review-verdict APPROVED`, which would assert the findings review approved.
+if [[ "$LAST_OUT" != *"--review-verdict APPROVED"* ]] \
+   && { [[ "$LAST_OUT" == *"--carry-review"* ]] || [[ "$LAST_OUT" == *"<VERDICT>"* ]]; }; then
   pass "a COMMENTED review is never cited as an approval"
 else
   fail "COMMENTED review cited as APPROVED (out=${LAST_OUT:0:230})"

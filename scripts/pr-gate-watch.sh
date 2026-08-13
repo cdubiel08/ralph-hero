@@ -384,11 +384,6 @@ def fenced_json:
    else null end)                                        as $verdict
 # With external review WAIVED (policy off, or an exempt author) there is
 # legitimately no approval to cite, which is the other way $verdict is null.
-| (if $verdict == null then
-     "--carry-review   # no review evidence at this head: carry a real prior verdict, or pass --review-verdict/--reviewer from a review that actually happened"
-   else
-     "--review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
-   end)                                                   as $review_flags
 # Findings at this head that nothing has answered yet. This is a NUDGE, not a
 # gate: gate 5 accepts the review above, so the only thing left to say is
 # "adjudicate before you attest" — and once a current attestation exists that
@@ -442,6 +437,22 @@ def fenced_json:
 # presence alone must not satisfy it).
 | ((($att_json.tests // []) | (length > 0) and all(.exit_code == 0))) as $att_tests_ok
 | (($att_json.review.verdict // ""))                    as $att_verdict
+# --carry-review is only offerable when there is something to carry:
+# attest-pr.sh:173-190 refuses it unless a PRIOR attestation with a review
+# block exists, so on a never-attested PR that hint is as unrunnable as the
+# bare --run it replaced (codex P2, PR #1764).
+| (($att_json != null) and (($att_json.review.verdict // "") != "")) as $carryable
+| (if $verdict != null then
+     "--review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
+   elif $carryable then
+     "--carry-review   # copies the verdict already attested on this PR"
+   else
+     # Placeholders, deliberately: there is no evidence to cite and nothing to
+     # carry, so the caller must supply a verdict from a review that actually
+     # happened. Angle brackets rather than plausible defaults — a hint that
+     # runs as-typed would be this script inventing the verdict again.
+     "--review-verdict <VERDICT> --reviewer <who reviewed>   # no evidence on this PR and no prior attestation to carry: fill these from a real review"
+   end)                                                   as $review_flags
 | (($attested_sha != "") and ($attested_sha == ($pr.headRefOid // ""))
    and $att_tests_ok and ($att_verdict == "APPROVED"))   as $attested_current
 # Attested at this head but otherwise invalid: worth naming precisely, because
