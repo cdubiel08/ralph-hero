@@ -115,12 +115,52 @@ node_compat_boundary() {
 #
 # If node cannot answer, fail closed and rebuild — a node that cannot run a
 # one-liner cannot run the server either.
+# A dependency counts as present only when its INSTALLATION is usable, not when
+# a directory of its name exists (codex P2, PR #1755). Partial cache cleanup
+# leaves empty package directories behind, and a name-only check reports those
+# as complete — so the marker is trusted and the server dies on its static
+# import instead of repairing the tree. The manifest must be readable, and
+# where an entry point can be determined it must exist on disk.
+#
+# Entry resolution is deliberately lenient in one direction: if the manifest
+# declares only conditional `exports` we cannot reduce to a single path, the
+# package is accepted rather than rebuilt. A false "missing" costs a full
+# destructive reinstall on every launch, which is worse than the narrow case it
+# would catch — and the empty-directory case, which is the one that actually
+# occurs, is caught by the manifest check regardless.
 deps_complete() {
   node -e '
     const fs = require("fs"), path = require("path");
     const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-    const missing = Object.keys(pkg.dependencies || {})
-      .filter((d) => !fs.existsSync(path.join("node_modules", d)));
+
+    const entryOf = (m) => {
+      let e = m.main || m.module;
+      if (!e && m.exports) {
+        const x = typeof m.exports === "string" ? m.exports : m.exports["."];
+        if (typeof x === "string") e = x;
+        else if (x && typeof x === "object") {
+          const c = x.node || x.import || x.require || x.default;
+          e = typeof c === "string" ? c : undefined;
+        }
+      }
+      return typeof e === "string" ? e : undefined;
+    };
+
+    const missing = [];
+    for (const d of Object.keys(pkg.dependencies || {})) {
+      const dir = path.join("node_modules", d);
+      const manifest = path.join(dir, "package.json");
+      if (!fs.existsSync(manifest)) { missing.push(d); continue; }
+      let m;
+      try { m = JSON.parse(fs.readFileSync(manifest, "utf8")); }
+      catch { missing.push(d); continue; }
+      // Only a DETERMINABLE entry is enforced; see the note above. A manifest
+      // that declares none (or only a conditional exports map we cannot reduce
+      // to one path) is accepted, because a false "missing" would reinstall on
+      // every single launch.
+      const entry = entryOf(m);
+      if (entry && !fs.existsSync(path.join(dir, entry))) missing.push(d);
+    }
     if (missing.length) { console.error(missing.join(" ")); process.exit(1); }
   ' 2>/dev/null
 }
@@ -336,7 +376,12 @@ if bootstrap_needed; then
           else
             echo "[ralph-knowledge] (this host cannot be probed for running processes)" >&2
           fi
-          echo "[ralph-knowledge] close those sessions, or remove $PLUGIN_ROOT/node_modules, then relaunch." >&2
+          # Deleting node_modules is NOT an alternative to closing sessions
+          # (codex P2, PR #1755) — it destroys exactly the tree the guard just
+          # refused to disrupt. It is only safe once nothing is serving from
+          # this root, so it is presented as the step AFTER, never instead.
+          echo "[ralph-knowledge] close every session using this plugin root, then relaunch." >&2
+          echo "[ralph-knowledge] once they are closed, removing $PLUGIN_ROOT/node_modules forces a clean rebuild." >&2
           exit 1
         fi
       fi

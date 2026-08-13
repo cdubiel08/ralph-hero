@@ -61,14 +61,20 @@ case "${1:-}" in
     esac
     ;;
   -e)
-    # Emulates deps_complete(): every key under "dependencies" in package.json
-    # must exist under node_modules. Hand-listing packages here would defeat
-    # the very finding this covers, so it is derived from the file.
+    # Emulates deps_complete(). A directory of the right NAME is not enough —
+    # that was the defect — so the manifest must exist and its entry file must
+    # be present. Derived from package.json, since hand-listing packages here
+    # would defeat the finding this covers.
     miss=0
     for d in $(sed -n '/"dependencies"/,/}/p' package.json 2>/dev/null \
       | grep -oE '"[^"]+"[[:space:]]*:' | sed 's/"//g; s/[[:space:]]*:$//' \
       | grep -v '^dependencies$'); do
-      [ -d "node_modules/$d" ] || miss=1
+      manifest="node_modules/$d/package.json"
+      if [ ! -f "$manifest" ]; then miss=1; continue; fi
+      entry=$(grep -oE '"main"[[:space:]]*:[[:space:]]*"[^"]+"' "$manifest" \
+        | sed 's/.*"main"[[:space:]]*:[[:space:]]*"//; s/"$//')
+      [ -n "$entry" ] || entry="index.js"
+      [ -f "node_modules/$d/$entry" ] || miss=1
     done
     [ "$miss" -eq 0 ] || exit 1
     ;;
@@ -123,11 +129,17 @@ sanitized_bin() {
 # case decides that itself.
 fake_root() {
   local root="$TMP_ROOT/$1"
-  mkdir -p "$root/scripts" "$root/dist" \
-    "$root/node_modules/@huggingface/transformers" \
-    "$root/node_modules/@modelcontextprotocol/sdk" \
-    "$root/node_modules/better-sqlite3" \
-    "$root/node_modules/zod"
+  mkdir -p "$root/scripts" "$root/dist"
+  # Real installations, not bare directories. Empty dirs were the defect the
+  # entry-point check exists to catch, so a fixture made of them would let a
+  # name-only check pass and prove nothing (codex P2, PR #1755).
+  local d
+  for d in "@huggingface/transformers" "@modelcontextprotocol/sdk" \
+    "better-sqlite3" "zod" "typescript"; do
+    mkdir -p "$root/node_modules/$d"
+    printf '{"name":"%s","main":"index.js"}\n' "$d" >"$root/node_modules/$d/package.json"
+    echo 'module.exports = {}' >"$root/node_modules/$d/index.js"
+  done
   cp "$SRC" "$root/scripts/launch-mcp.sh"
   chmod +x "$root/scripts/launch-mcp.sh"
   echo 'console.log("server")' >"$root/dist/index.js"
@@ -295,6 +307,33 @@ if grep -q 'npm ci' "$log"; then
 else
   fail "missing zod passed as a complete tree — exec would fail instead of repairing" \
     "$(cat "$log")"
+fi
+
+# The sharper half of the finding: a directory of the right NAME is not proof
+# of a usable installation. Partial cleanup leaves the directory and removes
+# its contents, and a name-only check calls that complete — so the marker is
+# trusted and the server dies on its static import.
+root=$(fake_root emptydep)
+log=$(run_launcher "$root")                       # warm it
+rm -rf "$root/node_modules/zod"
+mkdir -p "$root/node_modules/zod"                 # present, but empty
+log=$(run_launcher "$root")
+if grep -q 'npm ci' "$log"; then
+  pass "an empty dependency directory re-bootstraps (name alone is not enough)"
+else
+  fail "an EMPTY node_modules/zod passed as installed — exec would fail on its static import" \
+    "$(cat "$log")"
+fi
+
+# ...and a manifest whose entry point is gone is equally unusable.
+root=$(fake_root gonEntry)
+log=$(run_launcher "$root")                       # warm it
+rm -f "$root/node_modules/zod/index.js"           # manifest stays, entry gone
+log=$(run_launcher "$root")
+if grep -q 'npm ci' "$log"; then
+  pass "a dependency whose entry point is missing re-bootstraps"
+else
+  fail "a package with no entry file passed as installed" "$(cat "$log")"
 fi
 
 # devDependencies are pruned by design; demanding them would rebuild forever.
@@ -647,6 +686,91 @@ else
     "$(grep '^npm ' "$log")"
 fi
 
+echo "=== deps_complete runs the REAL node program, not a stub ==="
+
+# Everything above stubs `node`, so those cases exercise the test's own
+# reimplementation of deps_complete rather than the launcher's. That is enough
+# for the surrounding control flow, but it proves nothing about the check
+# itself — a name-only implementation still passes them. (Verified: mutating
+# the launcher back to `fs.existsSync(dir)` leaves the stubbed cases green.)
+#
+# So this section sources the real function and runs it under the real node,
+# against real fixtures. It is the only place the shipped JavaScript is
+# actually executed.
+if ! command -v node >/dev/null 2>&1; then
+  echo "  SKIP: no node on PATH, cannot exercise the real deps_complete"
+else
+  # eval rather than `. <(...)`: process substitution did not reliably deliver
+  # the function here, and a silently unsourced function would make every case
+  # below fail for the wrong reason.
+  eval "$(sed -n '/^deps_complete() {/,/^}/p' "$SRC")"
+
+  if ! type deps_complete >/dev/null 2>&1; then
+    fail "deps_complete could not be sourced — the cases below would prove nothing"
+  fi
+
+  dep_fixture() {
+    local root="$TMP_ROOT/$1"
+    mkdir -p "$root/node_modules/zod"
+    cat >"$root/package.json" <<'PKG'
+{ "name": "t", "dependencies": { "zod": "1" } }
+PKG
+    printf '{"name":"zod","main":"index.js"}\n' >"$root/node_modules/zod/package.json"
+    echo 'module.exports = {}' >"$root/node_modules/zod/index.js"
+    echo "$root"
+  }
+
+  root=$(dep_fixture real_ok)
+  if ( cd "$root" && deps_complete ); then
+    pass "a real installation satisfies deps_complete"
+  else
+    fail "a complete tree was reported incomplete — this would rebuild on every launch"
+  fi
+
+  # The exact case codex named: the directory survives, its contents do not.
+  root=$(dep_fixture real_empty)
+  rm -rf "$root/node_modules/zod"
+  mkdir -p "$root/node_modules/zod"
+  if ( cd "$root" && deps_complete ); then
+    fail "an EMPTY node_modules/zod satisfied the real deps_complete — name-only check"
+  else
+    pass "an empty dependency directory fails the real deps_complete"
+  fi
+
+  # Manifest present, entry point deleted.
+  root=$(dep_fixture real_noentry)
+  rm -f "$root/node_modules/zod/index.js"
+  if ( cd "$root" && deps_complete ); then
+    fail "a package with no entry file satisfied the real deps_complete"
+  else
+    pass "a missing entry point fails the real deps_complete"
+  fi
+
+  # A package absent altogether.
+  root=$(dep_fixture real_absent)
+  rm -rf "$root/node_modules/zod"
+  if ( cd "$root" && deps_complete ); then
+    fail "an absent dependency satisfied the real deps_complete"
+  else
+    pass "an absent dependency fails the real deps_complete"
+  fi
+
+  # Lenient in the documented direction: a manifest with only a conditional
+  # exports map, whose entry cannot be reduced to one path, must NOT force a
+  # rebuild — a false "missing" costs a destructive reinstall every launch.
+  root=$(dep_fixture real_exports)
+  cat >"$root/node_modules/zod/package.json" <<'PKG'
+{ "name": "zod", "exports": { ".": { "types": "./t.d.ts" } } }
+PKG
+  rm -f "$root/node_modules/zod/index.js"
+  echo 'x' >"$root/node_modules/zod/t.d.ts"
+  if ( cd "$root" && deps_complete ); then
+    pass "an undeterminable exports map is accepted rather than rebuilt forever"
+  else
+    fail "a conditional-exports package forced a rebuild — every launch would reinstall"
+  fi
+fi
+
 echo "=== a rebuild never replaces a tree another runtime may be serving ==="
 
 # One plugin cache can be reached by two Node identities — arm64 native beside
@@ -685,10 +809,25 @@ else
   else
     fail "the refusal exited 0 — the caller would think the server started"
   fi
-  if grep -q 'close those sessions' "$root/stderr.log"; then
-    pass "the refusal tells the operator how to proceed"
+  if grep -q 'close every session using this plugin root' "$root/stderr.log"; then
+    pass "the refusal tells the operator to close sessions"
   else
     fail "the refusal gives no remedy" "$(cat "$root/stderr.log")"
+  fi
+
+  # Deleting node_modules must never be offered as an ALTERNATIVE to closing
+  # sessions — it destroys the tree the guard just refused to disrupt. It may
+  # only appear as the step AFTER they are closed.
+  if grep -qE 'close .*, or remove .*node_modules' "$root/stderr.log"; then
+    fail "deletion is offered instead of closing sessions — that breaks the very session being protected" \
+      "$(cat "$root/stderr.log")"
+  else
+    pass "deletion is not offered as an alternative to closing sessions"
+  fi
+  if grep -q 'once they are closed' "$root/stderr.log"; then
+    pass "deletion is sequenced after closing sessions"
+  else
+    fail "the remedy never says when deletion becomes safe" "$(cat "$root/stderr.log")"
   fi
   # The tree must be left intact, not half-rebuilt.
   if [ -f "$root/.bootstrap-complete" ] && [ -d "$root/node_modules/zod" ]; then
