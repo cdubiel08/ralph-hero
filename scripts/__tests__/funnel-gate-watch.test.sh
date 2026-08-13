@@ -41,7 +41,10 @@ run_hook() {
   payload=$(jq -n --arg cmd "$cmd" --arg cwd "$cwd" \
     '{tool_input: {command: $cmd}, cwd: $cwd}')
   set +e
-  printf '%s' "$payload" | bash "$HOOK" >/dev/null 2>"$TMP_ROOT/stderr"
+  # Invoked DIRECTLY, not via `bash "$HOOK"`: the hook runner execs the
+  # configured path, so running it through an interpreter here would hide a
+  # non-executable mode (which is exactly how one shipped — codex P2, #1764).
+  printf '%s' "$payload" | "$HOOK" >/dev/null 2>"$TMP_ROOT/stderr"
   rc=$?
   set -e
   LAST_ERR=$(<"$TMP_ROOT/stderr")
@@ -118,7 +121,7 @@ echo "=== malformed payloads are inert ==="
 run_hook "$WATCH_REPO" ""
 if [ "$LAST_RC" -eq 0 ]; then pass "empty command"; else fail "empty command (rc=$LAST_RC)"; fi
 set +e
-printf 'not json' | bash "$HOOK" >/dev/null 2>&1
+printf 'not json' | "$HOOK" >/dev/null 2>&1
 rc=$?
 set -e
 if [ "$rc" -eq 0 ]; then pass "non-JSON stdin"; else fail "non-JSON stdin (rc=$rc)"; fi

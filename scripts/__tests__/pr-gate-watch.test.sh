@@ -782,6 +782,18 @@ rm "$D/fail_reviews"; touch "$D/fail_comments"
 expect "a failed comments fetch withholds it too" "$D" "GATE-WAIT review" 10
 rm "$D/fail_comments"
 
+# An exempt author is the other waiver: merge-pr.sh skips gate 5 WITHOUT
+# fetching this evidence at all, so a failed fetch is not a reason to make a
+# Dependabot PR wait. The waiver has to be applied before the fetch question,
+# not after it — which is the ordering bug this pins (codex P2, PR #1764).
+POLICY="$POLICY_COMMENT"
+D2="$TMP_ROOT/fetch-fail-exempt"
+scenario "$D2" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN "" '[]' "dependabot[bot]")" "$NO_REVIEWS"
+touch "$D2/fail_reviews"
+expect "an exempt author does not wait on evidence the gate never fetches" "$D2" "GATE-READY" 0
+rm "$D2/fail_reviews"
+
 # With gate 5 off there is no evidence to have failed to read, so the outage
 # must not manufacture a wait on a repo that requires no review at all.
 POLICY="$POLICY_OFF"
@@ -814,10 +826,59 @@ D="$TMP_ROOT/review-mode-findings"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
   "$OPEN_PR" "$COMMENTED_AT_HEAD"
 run "$D"
-if [[ "$LAST_OUT" == *"attest with the real verdict"* ]] && [[ "$LAST_OUT" != *"BEFORE attesting"* ]]; then
-  pass "review mode still says adjudicate-then-attest"
+# Review mode has the SAME trap, with different evidence: adjudicating does not
+# convert a COMMENTED review into the APPROVED object gate 5 requires, and
+# neither does attesting. Only a fresh approval can. (My first pass at P2/11
+# fixed comment mode and left this wording in place — it was wrong for exactly
+# the reason the comment-mode one was.)
+if [[ "$LAST_OUT" == *"wait for an APPROVED review BEFORE attesting"* ]] \
+   && [[ "$LAST_OUT" == *"@codex review"* ]] \
+   && [[ "$LAST_OUT" != *"ralph-review-head"* ]]; then
+  pass "review mode asks for a fresh approval, not a doomed attest"
 else
   fail "review-mode findings wording (out=${LAST_OUT:0:180})"
+fi
+
+echo "=== P2/12: waivers apply BEFORE the evidence questions ==="
+# merge-pr.sh gate 4 runs only when attestation is required and the author is
+# not exempt, and gate 3 excludes the attestation status from the CI red list
+# outright. Under a waiver there is simply no attestation question to answer.
+POLICY="$POLICY_NOATT"
+D="$TMP_ROOT/waived-att-red"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" \
+  --argjson a "$(check ralph-attestation fail 'ATTESTATION FAIL')" '$g + [$a]')" \
+  "$APPROVED_PR" "$APPROVAL"
+expect "attestation not required: a RED attestation status is not a failure" "$D" "GATE-READY" 0
+D="$TMP_ROOT/waived-att-pending"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$APPROVED_PR" "$APPROVAL"
+expect "attestation not required: a PENDING attestation status is not your turn" "$D" "GATE-READY" 0
+
+# Exempt authors have attestation waived the same way gate 4 waives it.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/exempt-att-red"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" \
+  --argjson a "$(check ralph-attestation fail 'ATTESTATION FAIL')" '$g + [$a]')" \
+  "$(pr_state OPEN "" '[]' "dependabot[bot]")" "$NO_REVIEWS"
+expect "an exempt author's red attestation status is waived too" "$D" "GATE-READY" 0
+# ...and a non-exempt author on the identical fixture still fails, so the
+# waiver cannot leak into the configuration that does gate.
+D="$TMP_ROOT/nonexempt-att-red"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" \
+  --argjson a "$(check ralph-attestation fail 'ATTESTATION FAIL')" '$g + [$a]')" \
+  "$APPROVED_PR" "$APPROVAL"
+expect "a non-exempt author's red attestation still fails" "$D" "GATE-FAIL attestation" 0
+
+echo "=== the hook this PR registers is actually executable ==="
+# The hook runner execs the configured path directly, so a 100644 mode makes
+# every registration return 126 Permission denied — and a test harness that
+# invokes it via `bash` would never notice (codex P2, PR #1764).
+HOOKS_DIR="$(cd "$(dirname "$0")/../.." && pwd)/ralph/hooks"
+mode=$(git -C "$(dirname "$HOOKS_DIR")/.." ls-files -s ralph/hooks/funnel-gate-watch.sh | awk '{print $1}')
+if [[ "$mode" == "100755" ]] && [[ -x "$HOOKS_DIR/funnel-gate-watch.sh" ]]; then
+  pass "funnel-gate-watch.sh is committed executable, like its siblings"
+else
+  fail "funnel-gate-watch.sh mode is ${mode:-unknown} (needs 100755)"
 fi
 
 echo

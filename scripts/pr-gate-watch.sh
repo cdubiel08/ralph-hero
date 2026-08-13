@@ -291,6 +291,12 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
 # `$ext_required | not` is the same waiver for the whole repo: with no policy
 # file, or external_review.required false, gate 5 does not run at all, so
 # demanding a review is a wait for something no gate will ever ask for.
+# merge-pr.sh gate 4 runs only when attestation is required AND the author is
+# not exempt, and gate 3 excludes the attestation status from the CI red list
+# outright. So under a waiver there is no attestation question to answer: a
+# lingering red or pending status is not a verdict about this PR at all
+# (codex P2, PR #1764).
+| ($policy.attestationRequired and ($exempt | not))      as $attest_required
 | (($ext_required | not) or $exempt
    or ($approved | length) > 0 or $clean_ok or $review_mode_ok) as $review_ok
 | (if ($approved | length) > 0 then ($approved | last)
@@ -322,13 +328,14 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
   # partial outage as PENDING, and --watch retrying is the correct response to
   # a transient API failure. Only meaningful when a review is actually
   # required — with gate 5 off there is no evidence to have failed to read.
-  elif $fetch_ok != "true" and $ext_required and ($pr.state // "OPEN") == "OPEN" then
+  elif $fetch_ok != "true" and $ext_required and ($exempt | not)
+       and ($pr.state // "OPEN") == "OPEN" then
     "GATE-WAIT review: could not read review evidence for #\($num) (gh api failed) — verdict withheld rather than guessed"
   elif ($pr.state // "OPEN") != "OPEN" then
     "GATE-DONE \($pr.state | ascii_downcase): PR #\($num) is not open — nothing to wait for"
   elif ($bad | length) > 0 then
     "GATE-FAIL ci: \($bad | map(.name) | join(", ")) — fix before attesting"
-  elif ($att_bad | length) > 0 then
+  elif ($att_bad | length) > 0 and $attest_required then
     "GATE-FAIL attestation: \($att_bad | map(.name) | join(", ")) is red — read the status, fix what it names, then re-run scripts/attest-pr.sh \($num)"
   elif ($pr.reviewDecision // "") == "CHANGES_REQUESTED" then
     "GATE-FAIL review: CHANGES_REQUESTED is live — adjudicate the threads, then re-attest"
@@ -347,7 +354,11 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
        # which only a fresh head-bound request can produce (codex P2, #1764).
        "GATE-YOURS review: \($commented | length) findings review(s) at \($head[0:8]) — adjudicate the threads, then re-request: comment '\($policy.trigger)' with '<!-- \($policy.headMarker): \($head) -->' and wait for a clean result BEFORE attesting"
      else
-       "GATE-YOURS review: \($commented | length) comment-only review(s) at this head, no verdict — adjudicate threads, then attest with the real verdict"
+       # Same trap as comment mode, different evidence: adjudicating threads
+       # does not convert a COMMENTED review into the APPROVED object gate 5
+       # requires, and neither does attesting. Only a fresh approval can, so
+       # that is what this names (codex P2, PR #1764).
+       "GATE-YOURS review: \($commented | length) comment-only review(s) at \($head[0:8]), no approval — adjudicate the threads, then re-request: comment '\($policy.trigger)' and wait for an APPROVED review BEFORE attesting"
      end)
   elif ($review_ok | not) then
     (if ($ratelimited | length) > 0 then
@@ -359,7 +370,7 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
      else
        "GATE-WAIT review: no review verdict posted yet"
      end)
-  elif ($att_pending | length) > 0 and $attested_current then
+  elif ($att_pending | length) > 0 and $attest_required and $attested_current then
     "GATE-WAIT attestation: attested at \($attested_sha[0:8]) — validate-attestation is recomputing \($att_names)"
   # No attestation status AT ALL under an attestation-required policy: the
   # workflow has not published it yet, Actions did not run, or the checks
@@ -368,11 +379,11 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
   # stops at gate 4 (codex P2, second pass on PR #1764). The attestation
   # COMMENT is the tiebreak: if one exists at this head the work is done and
   # only the status is missing, which is a wait.
-  elif $policy.attestationRequired and ($att | length) == 0 and $attested_current then
+  elif $attest_required and ($att | length) == 0 and $attested_current then
     "GATE-WAIT attestation: attested at \($attested_sha[0:8]) — no \($attest) status published yet"
-  elif $policy.attestationRequired and ($att | length) == 0 then
+  elif $attest_required and ($att | length) == 0 then
     "GATE-YOURS attestation: no \($attest) status on this PR and no attestation at \($head[0:8]) — bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
-  elif ($att_pending | length) > 0 then
+  elif ($att_pending | length) > 0 and $attest_required then
     "GATE-YOURS attestation: \($att_names) is the only check left — bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
   # GATE-READY recommends merge-pr.sh, which stops at gate 2 unless GitHub
   # says MERGEABLE. UNKNOWN means the background computation has not settled,
