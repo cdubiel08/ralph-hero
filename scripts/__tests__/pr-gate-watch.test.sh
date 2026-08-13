@@ -1139,13 +1139,25 @@ POLICY="$POLICY_REVIEW"
 inline_fence_comment() { # a VALID payload reachable only via an inline fence
   jq -n --arg sha "$1" '
     {body: ("<!-- ralph-attestation:v1 -->\nSee the payload inline: ```json "
-      + ({version: 1, head_sha: $sha, tests: [{cmd: "t", exit_code: 0},],
+      + ({version: 1, head_sha: $sha, tests: [{cmd: "t", exit_code: 0}],
           review: {verdict: "APPROVED"}} | tojson)
       + " ``` end")}'
 }
+# A trailing comma in this fixture made it invalid jq, so it expanded to
+# NOTHING and the case passed because there was no attestation comment at all
+# rather than because an inline fence was rejected (codex P2, PR #1764).
+# Assert the fixture is a real, otherwise-valid payload before trusting it.
+inline_body=$(inline_fence_comment "$HEAD_SHA")
+if [[ -n "$inline_body" ]] \
+   && [[ "$(jq -r '.body' <<<"$inline_body" | grep -c 'ralph-attestation:v1')" == "1" ]] \
+   && [[ "$(jq -r '.body' <<<"$inline_body" | grep -c 'head_sha')" == "1" ]]; then
+  pass "the inline-fence fixture is a real payload, so the verdict means something"
+else
+  fail "inline-fence fixture is empty or malformed"
+fi
 D="$TMP_ROOT/att-inline-fence"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
-  "$(pr_state OPEN APPROVED "[$(inline_fence_comment "$HEAD_SHA")]")" "$APPROVAL"
+  "$(pr_state OPEN APPROVED "[$inline_body]")" "$APPROVAL"
 expect "an inline fence is not a payload, exactly as gate 4 sees it" "$D" "GATE-YOURS attestation" 0
 # The properly fenced comment still parses — the extractor was tightened, not broken.
 D="$TMP_ROOT/att-proper-fence"
@@ -1482,6 +1494,71 @@ setup_ready "$D"
 printf '%s' "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" \
   --argjson p "$(check board-tests pending)" '$g + [$a, $p]')" >"$D/pr_checks_second.json"
 expect "a check rerun between passes is a wait, not a merge" "$D" "GATE-WAIT ci" 10
+
+echo "=== P1/1: never hand back a verdict no review produced ==="
+# With external review WAIVED (policy off, or an exempt author) there is
+# legitimately no review evidence — and the attest hint pre-filled
+# `--review-verdict APPROVED --reviewer unknown`. attest-pr.sh accepts those
+# strings and gate 4 only checks a verdict is PRESENT, so this script would
+# have walked the caller through fabricating an approval all the way to a
+# merge (codex P1, PR #1764).
+POLICY="$POLICY_OFF"
+D="$TMP_ROOT/no-review-evidence-hint"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$NO_REVIEWS" '[]'
+expect "waived review still asks for the attestation" "$D" "GATE-YOURS attestation" 0
+run "$D"
+if [[ "$LAST_OUT" != *"--review-verdict APPROVED"* ]] && [[ "$LAST_OUT" != *unknown* ]]; then
+  pass "no fabricated APPROVED and no reviewer 'unknown'"
+else
+  fail "fabricated verdict in the hint (out=${LAST_OUT:0:220})"
+fi
+if [[ "$LAST_OUT" == *"--carry-review"* ]]; then
+  pass "points at --carry-review, which copies a real prior verdict"
+else
+  fail "no carry-review guidance (out=${LAST_OUT:0:220})"
+fi
+# Exempt authors are the other waiver and must behave the same.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/exempt-no-review-hint"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$(pr_state OPEN "" '[]' "dependabot[bot]")" "$NO_REVIEWS"
+run "$D"
+if [[ "$LAST_OUT" != *"--review-verdict APPROVED"* ]]; then
+  pass "an exempt author's hint fabricates nothing either"
+else
+  fail "fabricated verdict for exempt author (out=${LAST_OUT:0:200})"
+fi
+# ...and where a REAL verdict exists it is still handed back in full.
+D="$TMP_ROOT/real-verdict-hint"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$APPROVAL"
+run "$D"
+if [[ "$LAST_OUT" == *"--review-verdict APPROVED"* ]] && [[ "$LAST_OUT" == *"$BOT"* ]] \
+   && [[ "$LAST_OUT" == *"example.test/r/1"* ]]; then
+  pass "a real review is still handed back with reviewer and URL"
+else
+  fail "real verdict hint (out=${LAST_OUT:0:220})"
+fi
+
+echo "=== P2/31: the comment-mode rate-limit nudge names the marker ==="
+# Gate 5 cannot bind a request that carries only the trigger, so a nudge
+# without the marker is a command the caller can follow and still not merge.
+POLICY_CR_COMMENT="$TMP_ROOT/policy-cr-comment.json"
+jq '.external_review.bot = "coderabbitai[bot]" | .external_review.trigger = "@coderabbitai review"' \
+  "$POLICY_COMMENT" >"$POLICY_CR_COMMENT"
+POLICY="$POLICY_CR_COMMENT"
+D="$TMP_ROOT/comment-mode-ratelimit"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" \
+  --argjson c "$(check CodeRabbit pass 'Review rate limited')" '$g + [$a, $c]')" \
+  "$OPEN_PR" "$NO_REVIEWS" '[]'
+run "$D"
+if [[ "$LAST_OUT" == *"ralph-review-head: $HEAD_SHA"* ]] && [[ "$LAST_OUT" == *"blank line"* ]]; then
+  pass "the rate-limit nudge names the marker gate 5 needs"
+else
+  fail "comment-mode rate-limit nudge (out=${LAST_OUT:0:240})"
+fi
+POLICY="$POLICY_REVIEW"
 
 echo "=== P2/30: a missing request outranks an unrelated rate limit ==="
 # The rate-limit note fired first, so a rate-limited CodeRabbit — a reviewer

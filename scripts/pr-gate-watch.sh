@@ -370,6 +370,18 @@ def fenced_json:
       else ($at_head | last) end)
    elif ($approved | length) > 0 then ($approved | last)
    else ($at_head | last) end)                           as $verdict
+# The review flags for the attest command, built from EVIDENCE. With external
+# review WAIVED (policy off, or an exempt author) there is legitimately no
+# verdict, and pre-filling `--review-verdict APPROVED --reviewer unknown`
+# would be this script telling the caller to type an approval nobody gave.
+# attest-pr.sh accepts those strings and gate 4 only checks that a verdict is
+# PRESENT, so the fabrication would survive to a merge (codex P1, PR #1764).
+# No evidence, no verdict.
+| (if $verdict == null then
+     "--carry-review   # no review evidence at this head: carry a real prior verdict, or pass --review-verdict/--reviewer from a review that actually happened"
+   else
+     "--review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
+   end)                                                   as $review_flags
 # Findings at this head that nothing has answered yet. This is a NUDGE, not a
 # gate: gate 5 accepts the review above, so the only thing left to say is
 # "adjudicate before you attest" — and once a current attestation exists that
@@ -456,7 +468,7 @@ def fenced_json:
     # reviewer does not read, and the watcher would stop on advice that cannot
     # be followed (codex P2, PR #1764). Every other review branch already
     # interpolates it; this one was the holdout.
-    "GATE-YOURS review: \($rl_names) rate-limited — its check PASSES but it reviewed nothing; post `\($policy.trigger)`"
+    "GATE-YOURS review: \($rl_names) rate-limited — its check PASSES but it reviewed nothing; post `\($policy.trigger)`\(if $policy.mode == "comment" then " followed by a blank line and '<!-- \($policy.headMarker): \($head) -->' — gate 5 cannot bind a request without the marker" else "" end)"
   elif $unanswered_findings and (($review_ok | not) or ($attested_current | not)) then
     (if $policy.mode == "comment" then
        # Adjudicating does not delete the COMMENTED review, and attesting does
@@ -503,9 +515,9 @@ def fenced_json:
   elif $attest_required and ($att | length) == 0 and $attested_current then
     "GATE-WAIT attestation: attested at \($attested_sha[0:8]) — no \($attest) status published yet"
   elif $attest_required and ($att | length) == 0 then
-    "GATE-YOURS attestation: no \($attest) status on this PR and no attestation at \($head[0:8]) — bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
+    "GATE-YOURS attestation: no \($attest) status on this PR and no attestation at \($head[0:8]) — bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" \($review_flags)"
   elif ($att_pending | length) > 0 and $attest_required then
-    "GATE-YOURS attestation: \($att_names) is the only check left — bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
+    "GATE-YOURS attestation: \($att_names) is the only check left — bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" \($review_flags)"
   # GATE-READY recommends merge-pr.sh, which stops at gate 2 unless GitHub
   # says MERGEABLE. UNKNOWN means the background computation has not settled,
   # which is a wait — emitting a terminal verdict here ENDS --watch on a
