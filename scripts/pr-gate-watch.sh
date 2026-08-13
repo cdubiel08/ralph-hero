@@ -640,6 +640,20 @@ gather() {
   [ -n "$pr_json" ] || return 1
   head_before=$(jq -r '.headRefOid // ""' <<<"$pr_json")
 
+  # A PR that is no longer open is FINISHED, and nothing gathered below can
+  # change that — so it short-circuits here, before any other query. Two
+  # reasons, one correctness and one cost (codex P2, PR #1764):
+  #
+  #   * The guards below that withhold a verdict on an unreadable payload are
+  #     state-gated in the ladder, but gather's own head re-read guards are
+  #     not — so during an endpoint outage a MERGED PR could still emit a
+  #     non-terminal GATE-WAIT and --watch would poll a finished PR forever.
+  #   * Every remaining query is wasted on a PR nothing can act on.
+  if [ "$(jq -r '.state // "OPEN"' <<<"$pr_json")" != "OPEN" ]; then
+    classify '[]' "$pr_json" '[]' '[]' true true
+    return 0
+  fi
+
   # `gh pr checks` exits non-zero whenever any check is pending or failing,
   # and errors outright when a PR has no checks at all. Neither is an error
   # here, so the exit status is deliberately ignored; only an unparseable

@@ -394,6 +394,15 @@ for state in MERGED CLOSED; do
   D="$TMP_ROOT/done-$state"
   scenario "$D" "$GREEN_CHECKS" "$(pr_state "$state" "")" "$APPROVAL"
   expect "GATE-DONE when PR is $state" "$D" "GATE-DONE" 0
+  # A finished PR is finished regardless of any outage below the PR read: the
+  # head re-read guards in gather are not state-aware, so without the
+  # short-circuit an unreadable payload could emit a non-terminal GATE-WAIT
+  # and --watch would poll a merged PR forever (codex P2, PR #1764).
+  printf 'gh: could not resolve host' >"$D/pr_checks.json"
+  printf '%s' '{}' >"$D/pr_view_call2.json"
+  touch "$D/fail_reviews"
+  expect "$state stays GATE-DONE through a total evidence outage" "$D" "GATE-DONE" 0
+  rm -f "$D/pr_view_call2.json" "$D/fail_reviews"
 done
 
 echo "=== attestation-check identification ==="
