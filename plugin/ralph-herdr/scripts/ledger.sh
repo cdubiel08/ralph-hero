@@ -303,6 +303,19 @@ _ralph_ledger_latest_state() {
 _ralph_ledger_latest_tokens() {
   _ralph_ledger_latest '((try .tokens catch null) | if . == null then "" else tojson end)' "$@"
 }
+# GH-1809's three: the pane's shell pid at spawn (a rebuilt pane's differs),
+# the worktree path (board scope without needing the pane back), and the issue
+# whose claim this worker holds. All optional — records written before GH-1809,
+# and discover records, carry none.
+_ralph_ledger_latest_shell_pid() {
+  _ralph_ledger_latest '((.shell_pid // "") | tostring)' "$@"
+}
+_ralph_ledger_latest_checkout() {
+  _ralph_ledger_latest '((.checkout // "") | tostring)' "$@"
+}
+_ralph_ledger_latest_issue() {
+  _ralph_ledger_latest '(((try .tokens.issue catch null) // "") | tostring)' "$@"
+}
 
 # ralph_ledger_children REF — open agent_refs whose latest parent edge points
 # at REF (matched as exact ref, bare name, or same name part of another ref —

@@ -54,6 +54,7 @@ _ralph_required_fields() {
     tab_created)       echo "tab root_pane" ;;
     pane_info)         echo "pane" ;;
     pane_read)         echo "read" ;;
+    pane_process_info) echo "process_info" ;;
     plugin_pane_opened) echo "plugin_pane" ;;
     notification_show) echo "shown reason" ;;
 

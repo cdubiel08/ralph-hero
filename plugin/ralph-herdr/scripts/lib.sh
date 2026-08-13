@@ -240,9 +240,26 @@ notify() {
   ralph_herdr_call notification_show notification show "$title" --body "$body" >/dev/null || true
 }
 
-# _ralph_spawn_record REF N PARENT_ISSUE BRANCH LABEL PANE TS — print the
-# ledger spawn event as ONE compact JSON line:
-#   {ts, ev: "spawn", agent_ref, pane_id?, lineage: <C7>, tokens: <C8 map>}
+# _ralph_spawn_record REF N PARENT_ISSUE BRANCH LABEL PANE TS [SHELL_PID] [CHECKOUT]
+# — print the ledger spawn event as ONE compact JSON line:
+#   {ts, ev: "spawn", agent_ref, pane_id?, shell_pid?, checkout?,
+#    lineage: <C7>, tokens: <C8 map>}
+#
+# shell_pid and checkout sit at the EVENT's top level, deliberately outside
+# .lineage: the C7 producer schema is .strict() and refuses unknown keys, and
+# neither field belongs to lineage's question (who spawned whom) anyway. They
+# answer reconcile's question instead — GH-1809:
+#   shell_pid  the pid of the pane's SHELL at spawn. A herdr restart rebuilds
+#              the pane around a fresh shell (probed 3/3 runs), so a shell_pid
+#              that no longer matches is proof the pane was rebuilt and this
+#              worker died with it — true even when `resume_agents_on_restore`
+#              has since relaunched a `claude --resume` into the new pane,
+#              which a process-presence check would misread as a live worker.
+#   checkout   the worktree path, so a claim release can resolve the board
+#              scope from the LEDGER rather than depending on a pane that a
+#              restart may not have brought back.
+# Both are optional: a probe that cannot read them writes the record without,
+# and reconcile degrades to the reasons it can still prove.
 # The C7 LineageRecord mirrors contracts.ts buildLineageRecord: issue and
 # parent_issue are numbers, spawner.script is the invoking script ($0 —
 # lib.sh is sourced, so that is work-next.sh / work-fleet.sh / the watcher's
@@ -257,6 +274,7 @@ notify() {
 # depth-0 roots from a human, so depth=0, root=self, and no parent token.
 _ralph_spawn_record() {
   local ref="$1" n="$2" parent_issue="$3" branch="$4" label="$5" pane="$6" ts="$7"
+  local shell_pid="${8-}" checkout="${9-}"
   local parsed lane slug epoch by
   parsed=$(ralph_agent_parse "${ref%%#*}") || return 1
   # shellcheck disable=SC2086  # intentional: parse output is space-separated
@@ -273,9 +291,11 @@ _ralph_spawn_record() {
     --argjson n "$n" --arg pi "$parent_issue" \
     --arg script "${0##*/}" --arg branch "$branch" --arg label "$label" \
     --arg lane "$lane" --arg slug "$slug" --arg epoch "$epoch" \
-    --arg by "$by" '
+    --arg by "$by" --arg shell "$shell_pid" --arg checkout "$checkout" '
     {ts: $ts, ev: "spawn", agent_ref: $ref}
     + (if $pane == "" then {} else {pane_id: $pane} end)
+    + (if $shell == "" then {} else {shell_pid: $shell} end)
+    + (if $checkout == "" then {} else {checkout: $checkout} end)
     + {lineage:
         ({contract: "ralph.lineage", contract_version: 1,
           agent_ref: $ref, issue: $n}
@@ -526,9 +546,19 @@ spawn_work_session() {
   # are chrome. The pushed tokens are read back off the record so the pane
   # chrome and the ledger can never disagree at spawn.
   ts=$(date -u +%FT%TZ)
+  # The pane's shell pid, read once now: reconcile compares it later to tell a
+  # rebuilt pane (herdr restart) from a worker that died inside a surviving one
+  # (GH-1809). Best-effort like every other observation on this path — a
+  # failure costs the restart/crash distinction, never the spawn.
+  local shell_pid=""
+  shell_pid=$(ralph_herdr_call pane_process_info pane process-info --pane "$pane" 2>/dev/null |
+    jq -r '.process_info.shell_pid // empty' 2>/dev/null) || shell_pid=""
+  case "$shell_pid" in '' | *[!0-9]*) shell_pid="" ;; esac
+  [ -n "$shell_pid" ] || echo "could not read pane $pane's shell pid — reconcile will not be able to tell a restart from a crash for $agent" >&2
   if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
     RALPH_HERDR_SPAWNED_REF="$ref"
-    record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "$pane" "$ts") || record=""
+    record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "$pane" "$ts" \
+      "$shell_pid" "$RALPH_HERDR_SPAWNED_WORKTREE") || record=""
     ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
     if [ -n "$record" ] && [ -n "$ledger" ]; then
       RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" ||

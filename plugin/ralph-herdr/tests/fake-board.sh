@@ -135,6 +135,18 @@ case "${1-} ${2-}" in
     emit_fixture move || printf '#%s moved to %s (fake)\n' "${2-}" "${3-}"
     key="move"
     ;;
+  "release "*)
+    # Per-issue first, so one fixtures dir can model a release that lands for
+    # GH-1 and one board.ts refuses for GH-2 (release.2.rc = 1) — which is how
+    # reconcile's claim recovery gets tested against the guardHolder refusal
+    # without reimplementing the guard here.
+    emit_fixture "release.${2-}" release || printf '#%s [Backlog] released (fake)\n' "${2-}"
+    if [ -n "$FIX" ] && [ -f "$FIX/release.${2-}.rc" ]; then
+      key="release.${2-}"
+    else
+      key="release"
+    fi
+    ;;
   "help "* | "help")
     if [ -n "$FIX" ] && [ -f "$FIX/help.txt" ]; then
       cat "$FIX/help.txt"

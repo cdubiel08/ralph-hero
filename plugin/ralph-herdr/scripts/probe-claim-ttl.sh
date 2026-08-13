@@ -26,6 +26,26 @@
 #   6. experiment C: millisecond timings for stop, restart, snapshot-ready
 #   7. resolves the waiter: clean error, ran-to-timeout, or hard hang (killed)
 #
+# EXPERIMENT D — `--with-agent` (GH-1809, opt-in, NOT part of the default run):
+#   The one question the original probe could not answer without billing:
+#   `[session] resume_agents_on_restore` (default on) claims to re-launch
+#   supported integrations into their native conversation sessions. Does a
+#   restored agent pane hold a WORKER (in-flight work continues) or a
+#   TRANSCRIPT (a relaunched CLI idling at a prompt with history)? The claim
+#   -release design turns on the answer: releasing a claim under a genuinely
+#   resuming worker would be the double-work hazard, not the cure.
+#
+#   With the flag, the probe adds a second pane running a REAL `claude` agent,
+#   sends ONE trivial prompt so there is a conversation to resume, and after
+#   the restart records: the pane's shell_pid before/after, the foreground
+#   process list, whether the agent is still registered, whether the transcript
+#   came back, and whether the pane produces any output UNPROMPTED in a
+#   15s observation window (the "is it working or idling?" test).
+#
+#   Cost: one short prompt on the operator's subscription. Refused outright
+#   when ANTHROPIC_API_KEY is set (lib.sh's billing guard, same rule): that
+#   key would bill API credits.
+#
 # SAFETY (absolute):
 #   - NEVER touches the default session: every mutating call goes through
 #     probe_herdr() which injects `--session "$SESSION"`; a bare `server stop`
@@ -45,12 +65,13 @@
 #     stopped + deleted before starting.
 #
 # Usage:
-#   bash plugin/ralph-herdr/scripts/probe-claim-ttl.sh [--out DIR]
+#   bash plugin/ralph-herdr/scripts/probe-claim-ttl.sh [--out DIR] [--with-agent]
 #
 # Knobs:
 #   RALPH_PROBE_SESSION   session name (default ralph-probe; must be ralph-*)
 #   RALPH_PROBE_OUT       output dir (default: mktemp under $TMPDIR; kept)
 #   RALPH_PROBE_WAIT_MS   waiter --timeout in ms (default 60000)
+#   RALPH_PROBE_WITH_AGENT  "true" is the same opt-in as --with-agent
 #
 # Output dir layout: NN-step.out/.err per raw response, server-N.log,
 # steps.log (rc per step), summary.json + summary.txt (the findings).
@@ -64,6 +85,8 @@ HERDR_REAL="${HERDR_BIN_PATH:-herdr}"
 
 die() { echo "probe-claim-ttl: $*" >&2; exit 1; }
 
+WITH_AGENT=no
+[ "${RALPH_PROBE_WITH_AGENT:-}" = "true" ] && WITH_AGENT=yes
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --out)
@@ -71,7 +94,11 @@ while [ "$#" -gt 0 ]; do
       RALPH_PROBE_OUT="$2"
       shift 2
       ;;
-    *) die "unknown argument: $1 (usage: probe-claim-ttl.sh [--out DIR])" ;;
+    --with-agent)
+      WITH_AGENT=yes
+      shift
+      ;;
+    *) die "unknown argument: $1 (usage: probe-claim-ttl.sh [--out DIR] [--with-agent])" ;;
   esac
 done
 
@@ -84,6 +111,27 @@ esac
 command -v "$HERDR_REAL" >/dev/null 2>&1 || die "herdr not on PATH"
 command -v jq >/dev/null 2>&1 || die "jq required"
 command -v perl >/dev/null 2>&1 || die "perl required (ms timestamps)"
+
+# Experiment D starts a REAL agent. Same billing rule as lib.sh's spawn path:
+# an API key in the environment bills credits rather than the subscription, and
+# a probe is exactly where that would go unnoticed. No RALPH_ALLOW_API_BILLING
+# override here — this experiment is never worth an argument about the bill.
+if [ "$WITH_AGENT" = yes ]; then
+  [ -z "${ANTHROPIC_API_KEY:-}" ] ||
+    die "--with-agent refuses to run with ANTHROPIC_API_KEY set (it would bill API credits, not the subscription)"
+  command -v claude >/dev/null 2>&1 || die "--with-agent needs the claude CLI on PATH"
+  # Measured (run 1, 2026-08-13): launched from inside a Claude Code session,
+  # the probe server inherits CLAUDE_CODE_CHILD_SESSION, the pane's claude runs
+  # with "Transcript saving is off", and the restore's `claude --resume <id>`
+  # then answers "No conversation found". That is an artifact of the launching
+  # shell, not a property of restore — and it would be recorded as the finding.
+  # Refuse instead, and name the fix.
+  for _v in CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID; do
+    eval "_set=\${$_v:-}"
+    [ -z "$_set" ] ||
+      die "--with-agent refuses with $_v set: the pane's claude would run with transcript saving off, and restore's \`claude --resume\` would fail for that reason alone. Re-run from a clean shell, or: env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID bash ${0##*/} --with-agent"
+  done
+fi
 
 # Every herdr call is scoped to the probe session. No exceptions for mutations.
 probe_herdr() { "$HERDR_REAL" --session "$SESSION" "$@"; }
@@ -261,6 +309,106 @@ jq -nc --arg ts "$TS" --arg pane "$PANE" '
   >"$SCRATCH/claim.json"
 note "temp ledger + fake claim written under $SCRATCH (never ~/.ralph)"
 
+# ── step 3b (experiment D arm): a REAL agent pane, only with --with-agent ────
+# Every field below stays "n/a" on a default run, so summary.json has one shape.
+AGENT_NAME="ralph-probe-agent"
+AGENT_PANE=""
+AGENT_WS=""
+AGENT_SHELL_PID_BEFORE=n/a
+AGENT_SHELL_PID_AFTER=n/a
+AGENT_FOREGROUND_BEFORE=n/a
+AGENT_FOREGROUND_AFTER=n/a
+AGENT_SESSION_BEFORE=n/a
+AGENT_SESSION_AFTER=n/a
+AGENT_REGISTERED_AFTER=n/a
+AGENT_STATUS_AFTER=n/a
+AGENT_ACKED=n/a
+AGENT_TRANSCRIPT_AFTER=n/a
+AGENT_UNPROMPTED_OUTPUT=n/a
+AGENT_PID_BEFORE=""
+AGENT_PROC_ALIVE_DOWN=n/a
+
+# pi_shell_pid FILE / pi_foreground FILE — read one `pane process-info` capture.
+# The foreground list is joined on argv0 because herdr reports a claude
+# process's `name` as its VERSION string ("2.1.229"), not "claude" — matching
+# on .name would find no harness where one is plainly running.
+pi_shell_pid() { jq -r '.result.process_info.shell_pid // "n/a"' "$1" 2>/dev/null || echo n/a; }
+pi_foreground() {
+  jq -r '[.result.process_info.foreground_processes[]?.argv0] | join(",") | if . == "" then "none" else . end' \
+    "$1" 2>/dev/null || echo n/a
+}
+
+if [ "$WITH_AGENT" = yes ]; then
+  note "experiment D: starting a REAL claude agent (one prompt, subscription billing)"
+  cap 20-agent-workspace-create probe_herdr workspace create --cwd "$SCRATCH" --no-focus ||
+    die "experiment D: workspace create failed: $(cat "$OUT/20-agent-workspace-create.err")"
+  AGENT_WS=$(jq -r '.result.workspace.workspace_id // .result.workspace.id // empty' "$OUT/20-agent-workspace-create.out")
+  AGENT_PANE=$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // empty' "$OUT/20-agent-workspace-create.out")
+  [ -n "$AGENT_PANE" ] || die "experiment D: could not parse the agent pane id"
+  note "experiment D: agent workspace $AGENT_WS pane $AGENT_PANE"
+
+  # `agent start` needs the pane's shell at its prompt (lib.sh documents the
+  # same race); retry a few times rather than racing rc-file sourcing.
+  i=0
+  while [ "$i" -lt 15 ]; do
+    cap 21-agent-start probe_herdr agent start "$AGENT_NAME" --kind claude --pane "$AGENT_PANE" && break
+    sleep 1
+    i=$((i + 1))
+  done
+  grep -q '"type"' "$OUT/21-agent-start.out" 2>/dev/null ||
+    die "experiment D: agent start never succeeded: $(cat "$OUT/21-agent-start.err")"
+
+  # Wait for a REGISTERED agent_session before prompting. `interactive_ready`
+  # goes true at revision 0, before the CLI has a conversation id — prompting
+  # then submits into a still-booting TUI and the text lands nowhere (run 1:
+  # `agent prompt --wait` returned `timeout`, and the pane held an empty
+  # prompt). The session id is the thing restore will try to resume, so it is
+  # also the honest readiness signal.
+  i=0
+  while [ "$i" -lt 90 ]; do
+    cap 22-agent-list-before probe_herdr agent list || true
+    AGENT_SESSION_BEFORE=$(jq -r --arg n "$AGENT_NAME" \
+      '[.result.agents[]? | select(.name == $n) | .agent_session.value] | first // "n/a"' \
+      "$OUT/22-agent-list-before.out" 2>/dev/null || echo n/a)
+    [ "$AGENT_SESSION_BEFORE" != "n/a" ] && break
+    sleep 1
+    i=$((i + 1))
+  done
+
+  # ONE trivial prompt — the cheapest exchange that still creates a real
+  # conversation for `resume_agents_on_restore` to have something to resume.
+  # No --wait: the ack in the pane is the proof, and it does not depend on how
+  # herdr models a status transition.
+  cap 23-agent-prompt probe_herdr agent prompt "$AGENT_NAME" \
+    'Reply with exactly PROBE_ACK_OK and nothing else. Do not use any tools.' || true
+  if probe_herdr pane wait-output "$AGENT_PANE" --match PROBE_ACK_OK --timeout 180000 \
+    >"$OUT/24-agent-ack.out" 2>"$OUT/24-agent-ack.err"; then
+    AGENT_ACKED=yes
+  else
+    AGENT_ACKED=no
+  fi
+  # Let the CLI flush the turn to its transcript before the server is stopped:
+  # an unwritten conversation is not resumable, and that would look like a
+  # restore finding instead of a race in the probe.
+  sleep 5
+  note "experiment D: agent answered the prompt: $AGENT_ACKED (session ${AGENT_SESSION_BEFORE})"
+
+  # `pane read` defaults to the `recent` source — scrollback, not the screen.
+  # A TUI that is waiting on a modal shows that modal only in `visible`, so
+  # both are captured: run 2 recorded status=blocked with a bare prompt in
+  # `recent`, which cannot distinguish "nothing was typed" from "a dialog is
+  # covering it".
+  cap 24b-agent-visible probe_herdr pane read "$AGENT_PANE" --lines 50 --source visible || true
+  cap 24c-agent-read probe_herdr agent read "$AGENT_NAME" || true
+  cap 25-agent-process-info-before probe_herdr pane process-info --pane "$AGENT_PANE" || true
+  AGENT_SHELL_PID_BEFORE=$(pi_shell_pid "$OUT/25-agent-process-info-before.out")
+  AGENT_FOREGROUND_BEFORE=$(pi_foreground "$OUT/25-agent-process-info-before.out")
+  AGENT_PID_BEFORE=$(jq -r '[.result.process_info.foreground_processes[]? | select(.argv0 == "claude") | .pid] | first // empty' \
+    "$OUT/25-agent-process-info-before.out" 2>/dev/null || echo "")
+  cap 26-agent-pane-read-before probe_herdr pane read "$AGENT_PANE" --lines 40 || true
+  note "experiment D: agent pane shell_pid=$AGENT_SHELL_PID_BEFORE foreground=[$AGENT_FOREGROUND_BEFORE] claude pid=${AGENT_PID_BEFORE:-none}"
+fi
+
 # ── step 4 (experiment B arm): in-flight wait-output across the restart ──────
 (
   echo "start_ms=$(now_ms)" >"$OUT/06-waiter.meta"
@@ -294,6 +442,11 @@ cap 08-session-list-stopped "$HERDR_REAL" session list || true
 # marker survival while the server is DOWN
 MARKER_ALIVE_DOWN=no
 kill -0 "$MARKER_PID" 2>/dev/null && MARKER_ALIVE_DOWN=yes
+if [ "$WITH_AGENT" = yes ] && [ -n "$AGENT_PID_BEFORE" ]; then
+  AGENT_PROC_ALIVE_DOWN=no
+  kill -0 "$AGENT_PID_BEFORE" 2>/dev/null && AGENT_PROC_ALIVE_DOWN=yes
+  note "server down: the agent's claude process (pid $AGENT_PID_BEFORE) alive=$AGENT_PROC_ALIVE_DOWN"
+fi
 sleep 3
 BEATS_DURING_STOP=$(wc -l <"$SCRATCH/marker.beat" 2>/dev/null | tr -d ' ')
 BEAT_GREW_DOWN=no
@@ -334,6 +487,51 @@ BEAT_GREW_AFTER=no
 [ "${BEATS_SETTLED:-0}" -gt "${BEATS_AFTER_RESTART:-0}" ] && BEAT_GREW_AFTER=yes
 note "after restart: workspaces=[$WS_AFTER] marker alive=$MARKER_ALIVE_AFTER heartbeat growing=$BEAT_GREW_AFTER"
 note "pane list after (truncated): $PANE_AFTER"
+
+# ── experiment D observations after restore ─────────────────────────────────
+# The design question is not "did something come back" but "did a WORKER come
+# back". Three separate readings answer it, and they can disagree:
+#   shell_pid   — a DIFFERENT pid proves the pane was rebuilt, whatever now
+#                 runs inside it. This is the signal reconcile keys on.
+#   foreground  — whether a harness process exists in the restored pane at all.
+#   unprompted  — whether the pane produces output on its own over a 15s
+#                 window. A resumed TRANSCRIPT sits silent at a prompt; a
+#                 resumed WORKER would still be talking. Nothing else
+#                 distinguishes them from outside.
+if [ "$WITH_AGENT" = yes ] && [ -n "$AGENT_PANE" ]; then
+  # resume_agents_on_restore relaunches asynchronously — give it room before
+  # reading, so "not back yet" is never recorded as "did not come back".
+  sleep 10
+  cap 27-agent-process-info-after probe_herdr pane process-info --pane "$AGENT_PANE" || true
+  AGENT_SHELL_PID_AFTER=$(pi_shell_pid "$OUT/27-agent-process-info-after.out")
+  AGENT_FOREGROUND_AFTER=$(pi_foreground "$OUT/27-agent-process-info-after.out")
+  cap 28-agent-list-after probe_herdr agent list || true
+  AGENT_REGISTERED_AFTER=$(jq -r --arg n "$AGENT_NAME" \
+    '[.result.agents[]? | select(.name == $n)] | if length > 0 then "yes" else "no" end' \
+    "$OUT/28-agent-list-after.out" 2>/dev/null || echo n/a)
+  AGENT_STATUS_AFTER=$(jq -r --arg n "$AGENT_NAME" \
+    '[.result.agents[]? | select(.name == $n) | .agent_status] | first // "n/a"' \
+    "$OUT/28-agent-list-after.out" 2>/dev/null || echo n/a)
+  AGENT_SESSION_AFTER=$(jq -r --arg n "$AGENT_NAME" \
+    '[.result.agents[]? | select(.name == $n) | .agent_session.value] | first // "n/a"' \
+    "$OUT/28-agent-list-after.out" 2>/dev/null || echo n/a)
+  cap 29-agent-pane-read-after probe_herdr pane read "$AGENT_PANE" --lines 60 || true
+  if grep -q PROBE_ACK_OK "$OUT/29-agent-pane-read-after.out" 2>/dev/null; then
+    AGENT_TRANSCRIPT_AFTER=yes
+  else
+    AGENT_TRANSCRIPT_AFTER=no
+  fi
+  # the silence test
+  cp "$OUT/29-agent-pane-read-after.out" "$SCRATCH/agent-read-t0" 2>/dev/null || true
+  sleep 15
+  cap 30-agent-pane-read-settle probe_herdr pane read "$AGENT_PANE" --lines 60 || true
+  if cmp -s "$SCRATCH/agent-read-t0" "$OUT/30-agent-pane-read-settle.out"; then
+    AGENT_UNPROMPTED_OUTPUT=no
+  else
+    AGENT_UNPROMPTED_OUTPUT=yes
+  fi
+  note "experiment D after restore: registered=$AGENT_REGISTERED_AFTER status=$AGENT_STATUS_AFTER shell_pid $AGENT_SHELL_PID_BEFORE -> $AGENT_SHELL_PID_AFTER foreground=[$AGENT_FOREGROUND_AFTER] transcript=$AGENT_TRANSCRIPT_AFTER unprompted_output=$AGENT_UNPROMPTED_OUTPUT"
+fi
 
 # temp ledger + claim survival (they are plain files — recorded as evidence)
 LEDGER_OK=no
@@ -384,7 +582,32 @@ jq -n \
   --arg waiter_rc "${WAITER_RC:-}" \
   --arg waiter_elapsed_ms "${WAITER_ELAPSED_MS:-}" \
   --arg waiter_timeout_ms "$WAIT_MS" \
+  --arg with_agent "$WITH_AGENT" \
+  --arg a_acked "$AGENT_ACKED" \
+  --arg a_proc_alive_down "$AGENT_PROC_ALIVE_DOWN" \
+  --arg a_registered_after "$AGENT_REGISTERED_AFTER" \
+  --arg a_status_after "$AGENT_STATUS_AFTER" \
+  --arg a_session_before "$AGENT_SESSION_BEFORE" \
+  --arg a_session_after "$AGENT_SESSION_AFTER" \
+  --arg a_shell_before "$AGENT_SHELL_PID_BEFORE" \
+  --arg a_shell_after "$AGENT_SHELL_PID_AFTER" \
+  --arg a_fg_before "$AGENT_FOREGROUND_BEFORE" \
+  --arg a_fg_after "$AGENT_FOREGROUND_AFTER" \
+  --arg a_transcript_after "$AGENT_TRANSCRIPT_AFTER" \
+  --arg a_unprompted "$AGENT_UNPROMPTED_OUTPUT" \
   '{session: $session,
+    agent_resume: {ran: $with_agent, prompt_acked: $a_acked,
+                   process_alive_while_down: $a_proc_alive_down,
+                   registered_after_restore: $a_registered_after,
+                   status_after_restore: $a_status_after,
+                   agent_session_before: $a_session_before,
+                   agent_session_after: $a_session_after,
+                   shell_pid_before: $a_shell_before,
+                   shell_pid_after: $a_shell_after,
+                   foreground_before: $a_fg_before,
+                   foreground_after: $a_fg_after,
+                   transcript_after_restore: $a_transcript_after,
+                   unprompted_output_after_restore: $a_unprompted},
     timings_ms: {server1_ready: $s1_ready_ms, scoped_stop: $stop_ms,
                  server2_restore_ready: $s2_ready_ms},
     marker: {alive_while_server_down: $marker_alive_down,
