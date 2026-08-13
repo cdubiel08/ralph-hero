@@ -147,7 +147,25 @@ elif ver_ge "$plugin_ver" "$stamp_ver"; then
 else
   src_kind=$(jq -r '.source.kind // empty' <<<"$plugin_entry")
   if [ "$src_kind" = "github" ]; then
-    reinstall=$(jq -r '"herdr plugin install \(.source.owner)/\(.source.repo)/\(.source.subdir) --ref \(.source.requested_ref // "main") -y"' <<<"$plugin_entry")
+    # The DRIFT is known here (plugin_ver < stamp_ver) — only the remedy string
+    # depends on herdr's source metadata, so incomplete coordinates downgrade
+    # the command, never the gap. `jq -r` renders a missing field as the string
+    # "null", and `//` does not catch an EMPTY ref, so both are checked
+    # explicitly: a copy-pasteable `install null/null/null --ref  -y` would be
+    # worse than naming the canonical spec.
+    # Read one field at a time: a tab-separated read would collapse empty
+    # fields (tab is IFS whitespace in bash) and silently shift the values.
+    src_field() { jq -r --arg f "$1" '.source[$f] // empty | tostring' <<<"$plugin_entry"; }
+    src_owner=$(src_field owner)
+    src_repo=$(src_field repo)
+    src_subdir=$(src_field subdir)
+    src_ref=$(src_field requested_ref)
+    [ -n "$src_ref" ] || src_ref="main"
+    if [ -n "$src_owner" ] && [ -n "$src_repo" ] && [ -n "$src_subdir" ]; then
+      reinstall="herdr plugin install $src_owner/$src_repo/$src_subdir --ref $src_ref -y"
+    else
+      reinstall="herdr plugin install $PLUGIN_SPEC -y (herdr records incomplete source coordinates for this install — verify the spec before running)"
+    fi
     gap "ralph-herdr-version" "$plugin_ver < $stamp_ver expected by this ralph — herdr has no auto-update; reinstall: $reinstall"
   else
     note "ralph-herdr-version" "$plugin_ver < $stamp_ver expected by this ralph — local source at ${PLUGIN_ROOT:-unknown}; update that checkout"

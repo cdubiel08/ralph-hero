@@ -152,6 +152,26 @@ else
   fail "shipped stamp matches herdr-plugin.toml" "stamp=$shipped manifest=$manifest_ver — bump ralph/scripts/herdr-plugin-version"
 fi
 
+# 12-13. incomplete github source metadata degrades the REMEDY, not the verdict.
+# The drift is known (0.4.0 < 0.5.0), so the gap must stand — but `jq -r` renders
+# a missing field as "null" and `//` does not catch an empty ref, so neither may
+# leak into a command a human is invited to paste.
+partial_json() { # partial_json <jq source object>
+  local out="$TMP_ROOT/partial.json"
+  jq -n --argjson src "$1" '
+    [{ plugin_id: "ralph-herdr", name: "Ralph Herdr", version: "0.4.0",
+       plugin_root: "'"$TMP_ROOT"'/plugin-root", source: $src }]' >"$out"
+  echo "$out"
+}
+
+out=$(run "$(partial_json '{"kind":"github","owner":"cdubiel08"}')")
+expect "incomplete coordinates still gap" "$out" 'GAP  ralph-herdr-version — 0\.4\.0 < 0\.5\.0'
+refute "incomplete coordinates emit no null command" "$out" 'install .*null'
+
+out=$(run "$(partial_json '{"kind":"github","owner":"cdubiel08","repo":"ralph-hero","subdir":"plugin/ralph-herdr","requested_ref":""}')")
+expect "empty ref normalizes to main" "$out" \
+  'GAP  ralph-herdr-version — .*herdr plugin install cdubiel08/ralph-hero/plugin/ralph-herdr --ref main -y'
+
 echo
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
