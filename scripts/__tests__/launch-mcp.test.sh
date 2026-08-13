@@ -600,6 +600,35 @@ else
   pass "the lock is never moved out of its path (no absence window)"
 fi
 
+echo "=== bootstrap installs dev deps even when the env says to omit them ==="
+
+# `tsc` is a devDependency and `npm run build` runs it immediately after the
+# install. Claude Code inheriting NODE_ENV=production (or a user's npm config)
+# makes plain `npm ci` skip it, so the build fails on every first launch and
+# the completion marker is never written — the bootstrap can never finish.
+root=$(fake_root devdeps)
+rm -f "$root/dist/index.js"
+log="$root/calls.log"; : >"$log"
+RC=0
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" NODE_ENV=production \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+
+if grep -qE '^npm ci .*--include=dev' "$log"; then
+  pass "npm ci forces dev dependencies in (survives NODE_ENV=production)"
+else
+  fail "npm ci does not force dev deps — tsc would be missing and the build would fail" \
+    "$(grep '^npm ' "$log")"
+fi
+
+# ...and they are still pruned afterwards, or the disk saving this PR exists
+# for would be given straight back.
+if grep -qE '^npm prune .*--omit=dev' "$log"; then
+  pass "dev dependencies are pruned again after the build"
+else
+  fail "dev deps are installed but never pruned — that is the disk cost back" \
+    "$(grep '^npm ' "$log")"
+fi
+
 echo "=== concurrent waiters on one abandoned lock: exactly one bootstrap ==="
 
 # Codex's reproduction, as a test. Many launchers meet the SAME lock left by a

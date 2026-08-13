@@ -113,7 +113,15 @@ run_bootstrap() {
   # Drop the marker first: if we are interrupted below, the next launch must
   # see an incomplete tree rather than a stale "complete" claim.
   rm -f "$MARKER"
-  npm ci --no-audit --no-fund
+  # --include=dev is NOT redundant (codex P2, PR #1755). `tsc` is declared only
+  # in devDependencies and the very next line runs it. If the environment says
+  # to omit dev — Claude Code inheriting NODE_ENV=production, or a user's own
+  # npm config — this install silently skips typescript and the build then
+  # fails on every first launch, before the completion marker is written.
+  # Verified: `NODE_ENV=production npm config get omit` reports `dev`, and
+  # --include overrides it. The dev deps are pruned again two lines down, so
+  # this costs nothing on disk.
+  npm ci --include=dev --no-audit --no-fund
   npm run build
   npm prune --omit=dev --no-audit --no-fund
   # onnxruntime-web must remain importable (transformers.js imports it
