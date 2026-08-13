@@ -961,10 +961,14 @@ scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g +
   "$APPROVED_PR" "$APPROVAL"
 expect "green status with the attestation comment gone is not READY" "$D" "GATE-YOURS attestation" 0
 run "$D"
-if [[ "$LAST_OUT" == *"--carry-review"* ]]; then
-  pass "names --carry-review, so re-attesting does not retype an unearned verdict"
+# The remedy must be RUNNABLE and must not invent a verdict: with a real
+# approval present it cites that approval; with none it falls back to
+# --carry-review. Either satisfies attest-pr.sh; neither fabricates.
+if [[ "$LAST_OUT" == *"--carry-review"* ]] \
+   || { [[ "$LAST_OUT" == *"--review-verdict"* ]] && [[ "$LAST_OUT" == *"$BOT"* ]]; }; then
+  pass "the re-attest remedy cites real evidence and is runnable"
 else
-  fail "re-attest remedy (out=${LAST_OUT:0:170})"
+  fail "re-attest remedy (out=${LAST_OUT:0:200})"
 fi
 
 # Same, with the comment present but bound to an older head.
@@ -1494,6 +1498,42 @@ setup_ready "$D"
 printf '%s' "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" \
   --argjson p "$(check board-tests pending)" '$g + [$a, $p]')" >"$D/pr_checks_second.json"
 expect "a check rerun between passes is a wait, not a merge" "$D" "GATE-WAIT ci" 10
+
+echo "=== P2/32: every attest command handed back is RUNNABLE ==="
+# attest-pr.sh requires --carry-review, or both --review-verdict and
+# --reviewer. A branch that emitted only --run produced a command the caller
+# could paste and watch fail immediately (codex P2, PR #1764). Assert the
+# property across EVERY attestation verdict rather than the one branch that
+# was reported, since they are four separate strings.
+POLICY="$POLICY_REVIEW"
+assert_runnable_attest() { # assert_runnable_attest <label>
+  if [[ "$LAST_OUT" != *"attest-pr.sh"* ]]; then
+    fail "$1: no attest command in the verdict (out=${LAST_OUT:0:150})"
+  elif [[ "$LAST_OUT" == *"--carry-review"* ]] \
+     || { [[ "$LAST_OUT" == *"--review-verdict"* ]] && [[ "$LAST_OUT" == *"--reviewer"* ]]; }; then
+    pass "$1: the attest command is runnable"
+  else
+    fail "$1: attest command lacks review flags (out=${LAST_OUT:0:220})"
+  fi
+}
+# invalid payload at this head (non-zero exit_code) with a green status
+D="$TMP_ROOT/runnable-invalid-att"
+scenario "$D" "$READY_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA" 1)]")" "$APPROVAL"
+run "$D"; assert_runnable_attest "invalid attestation payload"
+# green status, attestation comment absent
+D="$TMP_ROOT/runnable-missing-att"
+scenario "$D" "$READY_CHECKS" "$APPROVED_PR" "$APPROVAL"
+run "$D"; assert_runnable_attest "green status, no attestation visible"
+# no attestation status at all
+D="$TMP_ROOT/runnable-no-status"
+scenario "$D" "$GREEN_CHECKS" "$APPROVED_PR" "$APPROVAL"
+run "$D"; assert_runnable_attest "no attestation status published"
+# attestation pending — the headline case
+D="$TMP_ROOT/runnable-pending"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$APPROVED_PR" "$APPROVAL"
+run "$D"; assert_runnable_attest "attestation pending"
 
 echo "=== P1/1: never hand back a verdict no review produced ==="
 # With external review WAIVED (policy off, or an exempt author) there is

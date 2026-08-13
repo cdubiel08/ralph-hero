@@ -540,9 +540,9 @@ def fenced_json:
   # verdict degrades to GATE-YOURS attestation, and re-attesting is idempotent
   # because attest-pr.sh updates its existing comment.
   elif $attest_required and $att_invalid_here then
-    "GATE-YOURS attestation: the attestation at \($head[0:8]) is invalid (\(if ($att_tests_ok | not) then "tests[] is empty or records a non-zero exit_code" else "review verdict \($att_verdict | tojson) is not APPROVED" end)) — gate 4 re-reads this live and rejects it; re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\""
+    "GATE-YOURS attestation: the attestation at \($head[0:8]) is invalid (\(if ($att_tests_ok | not) then "tests[] is empty or records a non-zero exit_code" else "review verdict \($att_verdict | tojson) is not APPROVED" end)) — gate 4 re-reads this live and rejects it; re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" \($review_flags)"
   elif $attest_required and ($attested_current | not) then
-    "GATE-YOURS attestation: \($attest) is green but no valid attestation is visible at \($head[0:8]) — re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --carry-review"
+    "GATE-YOURS attestation: \($attest) is green but no valid attestation is visible at \($head[0:8]) — re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" \($review_flags)"
   # Gate 2's shape exactly (merge-pr.sh:256-269): MERGEABLE passes, CONFLICTING
   # blocks, and `*` — EVERY other value — pends. Matching only the literal
   # "UNKNOWN" left an empty or unrecognized value falling through to
