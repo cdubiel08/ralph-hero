@@ -647,7 +647,36 @@ gather() {
   fi
 
 
-  classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok"
+  local verdict
+  verdict=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok") || return 1
+
+  # Gate 6 is the one gate with no status to read, so it is RUN rather than
+  # predicted — and it is run HERE, inside gather, because it is part of what
+  # a READY verdict means. Running it once between the two passes left it as
+  # the single gate the confirming pass did not actually confirm (codex P2,
+  # PR #1764): an apply label, an issue linkage or a closing reference can
+  # change without moving anything else, so it needs the same treatment as
+  # every other input rather than an exemption.
+  #
+  # Only on the READY path, so a repo that has not opted in — or any verdict
+  # that is already blocked for another reason — pays nothing.
+  case "$verdict" in
+    GATE-READY*)
+      if [ -x "$APPLY_KEYWORDS_SH" ]; then
+        local apply_out apply_first
+        if ! apply_out=$("$APPLY_KEYWORDS_SH" "$PR" 2>&1); then
+          # No `| head -1`: pipefail is on, head exits after the first line,
+          # and printf can then take SIGPIPE on a checker with long output —
+          # mangling the very line that says why the merge is blocked
+          # (CodeRabbit, PR #1764).
+          apply_first=${apply_out%%$'\n'*}
+          printf 'GATE-FAIL apply: %s — fix the closing keywords before merging' "$apply_first"
+          return 0
+        fi
+      fi
+      ;;
+  esac
+  printf '%s' "$verdict"
 }
 
 # snapshot -> the verdict to report.
@@ -660,8 +689,10 @@ gather() {
 # that decided (codex P2, PR #1764).
 #
 # So readiness must survive a SECOND, INDEPENDENT pass. Not another bolted-on
-# re-read of one more field: the same complete classification, run again, with
-# the second verdict reported whenever the two disagree.
+# re-read of one more field: the same complete classification — gate 6
+# included, which is why that checker runs inside gather and not between the
+# passes — run again, with the second verdict reported whenever the two
+# disagree.
 #
 # Why two and not a fixed point: there isn't one. Any snapshot classifier
 # races with the world between its last read and its printed line, so a third
@@ -679,21 +710,6 @@ snapshot() {
     GATE-READY*) ;;
     *) printf '%s' "$line"; return 0 ;;
   esac
-
-  # Gate 6 has no status to read, so it is RUN — before the confirming pass,
-  # because it is part of what readiness means and its own queries widen the
-  # window that pass exists to close.
-  if [ -x "$APPLY_KEYWORDS_SH" ]; then
-    local apply_out apply_first
-    if ! apply_out=$("$APPLY_KEYWORDS_SH" "$PR" 2>&1); then
-      # No `| head -1`: pipefail is on, head exits after the first line, and
-      # printf can then take SIGPIPE on a checker with long output — mangling
-      # the very line that says why the merge is blocked (CodeRabbit, #1764).
-      apply_first=${apply_out%%$'\n'*}
-      printf 'GATE-FAIL apply: %s — fix the closing keywords before merging' "$apply_first"
-      return 0
-    fi
-  fi
 
   second=$(gather) || {
     printf 'GATE-WAIT ci: could not confirm #%s is still ready (the confirming read failed) — withholding the merge recommendation rather than acting on a stale pass' "$PR"

@@ -1439,6 +1439,64 @@ printf '%s' "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" \
   --argjson p "$(check board-tests pending)" '$g + [$a, $p]')" >"$D/pr_checks_second.json"
 expect "a check rerun between passes is a wait, not a merge" "$D" "GATE-WAIT ci" 10
 
+echo "=== P2/28: gate 6 is inside the confirmed unit, not between passes ==="
+# Running the checker once BETWEEN the two passes left gate 6 as the single
+# gate the confirming pass did not confirm (codex P2, PR #1764): an apply
+# label, an issue linkage or a closing reference can change without moving
+# anything else. It now runs inside gather, so both passes include it.
+#
+# The checker below PASSES on its first invocation and FAILS on its second,
+# which is precisely a gate-6 state change between the passes — and is
+# unobservable to any design that runs it once.
+POLICY="$POLICY_REVIEW"
+FLIPPING_APPLY="$TMP_ROOT/apply-keywords-flips.sh"
+cat >"$FLIPPING_APPLY" <<'AK'
+#!/usr/bin/env bash
+STAMP="$GH_STUB_DIR/apply_runs"
+n=$(( $(cat "$STAMP" 2>/dev/null || echo 0) + 1 ))
+echo "$n" >"$STAMP"
+if [[ "$n" -ge 2 ]]; then
+  echo "APPLY KEYWORDS FAIL — PR closes apply unit #1763 (ralph:apply)"
+  exit 1
+fi
+echo "APPLY KEYWORDS PASS — no closing keyword binds an apply unit"
+exit 0
+AK
+chmod +x "$FLIPPING_APPLY"
+D="$TMP_ROOT/gate6-flips-between-passes"
+setup_ready "$D"
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  RALPH_APPLY_KEYWORDS_SH="$FLIPPING_APPLY" bash "$SCRIPT" 1740 2>&1)
+rc=$?
+set -e
+if [[ "$out" == "GATE-FAIL apply"* ]] && [[ "$out" == *"#1763"* ]]; then
+  pass "a gate-6 change between passes blocks readiness"
+else
+  fail "gate 6 in the confirming pass (rc=$rc out=${out:0:170})"
+fi
+# It ran on BOTH passes, which is the property under test — a design that runs
+# it once cannot produce this count.
+apply_runs=$(cat "$D/apply_runs" 2>/dev/null || echo 0)
+if [[ "$apply_runs" == "2" ]]; then
+  pass "the checker ran on both passes, not once between them"
+else
+  fail "gate 6 invocation count = $apply_runs (want 2)"
+fi
+# A checker that stays green through both passes still reaches GATE-READY.
+D="$TMP_ROOT/gate6-stable"
+setup_ready "$D"
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  RALPH_APPLY_KEYWORDS_SH="$FAKE_APPLY_OK" bash "$SCRIPT" 1740 2>&1)
+rc=$?
+set -e
+if [[ "$out" == "GATE-READY"* ]] && [ "$rc" -eq 0 ]; then
+  pass "a stable gate 6 still reaches GATE-READY"
+else
+  fail "gate 6 stable (rc=$rc out=${out:0:140})"
+fi
+
 echo "=== P2/27: gate-5 evidence is re-read too, not inferred ==="
 # codex, PR #1764: substituting the aggregate reviewDecision for live gate-5
 # evidence misses the cases that matter. A dismissal is quiet — GitHub moves
