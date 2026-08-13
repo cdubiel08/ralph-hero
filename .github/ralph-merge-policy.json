@@ -4,7 +4,7 @@
     "required": true
   },
   "external_review": {
-    "required": true,
+    "required": false,
     "bot": "coderabbitai"
   },
   "exempt_authors": [

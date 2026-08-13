@@ -256,6 +256,30 @@ expect_out "external gate emits PENDING" "MERGE GATE PENDING — external-review
 expect_out "external gate names the trigger" "@coderabbitai review"
 expect_not_merged "missing external review"
 
+# 9a-bis. The SAME fixture under `external_review.required: false` — the branch
+#         a repo without a review bot actually runs on (GH-1831). Every other
+#         policy fixture in this file pins `required: true`, so without this the
+#         disabled path ships with zero coverage and only inspection behind it.
+#         `--force` and exempt-author skip gate 5 by a different predicate, so
+#         neither one covers this.
+POLICY_NO_EXT="$TMP_ROOT/policy-no-ext.json"
+cat >"$POLICY_NO_EXT" <<'EOF'
+{
+  "version": 1,
+  "attestation": { "required": true },
+  "external_review": { "required": false, "bot": "coderabbitai" },
+  "exempt_authors": ["dependabot[bot]", "app/dependabot", "github-actions[bot]"]
+}
+EOF
+expect_absent() { # expect_absent <desc> <grep-pattern>
+  if grep -qF "$2" <<<"$LAST_OUT"; then fail "$1 — unexpected '$2' in: $LAST_OUT"; else pass "$1"; fi
+}
+run_case "external_review.required=false: no review is not a gate" 0 "$POLICY_NO_EXT" setup_no_ext
+expect_out "no-external policy still reaches PASS" "MERGE GATE PASS"
+expect_absent "no-external policy emits no external-review token" "external-review"
+expect_absent "no-external policy does not name the bot trigger" "@coderabbitai review"
+expect_merged "external_review.required=false"
+
 # 9b. A review of an EARLIER sha does not count (the stale-review hole that
 #     `auto_incremental_review: false` would otherwise open).
 setup_stale_ext() {
@@ -604,6 +628,10 @@ expect_last_gate_line "dry-run no-attestation verdict token" "MERGE GATE FAIL �
 
 run_case "dry-run: missing external review is PENDING 75 (parity)" 75 "$POLICY" setup_no_ext --dry-run
 expect_last_gate_line "dry-run no-external verdict token" "MERGE GATE PENDING — external-review"
+
+run_case "dry-run: external_review.required=false is PASS 0 (parity)" 0 "$POLICY_NO_EXT" setup_no_ext --dry-run
+expect_last_gate_line "dry-run no-external-required verdict token" "MERGE GATE PASS"
+expect_no_mutation "dry-run required=false"
 
 run_case "dry-run: CONFLICTING is FAIL 1 (parity)" 1 "$POLICY" setup_conflicting --dry-run
 expect_last_gate_line "dry-run conflicting verdict token" "MERGE GATE FAIL — mergeable"
