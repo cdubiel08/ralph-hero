@@ -740,6 +740,29 @@ else
     "$(sort "$root/fw.stderr" 2>/dev/null | uniq -c | head -5)"
 fi
 
+
+# The probe must CAPTURE lsof's output before matching it. Piping `lsof` into
+# `grep -q`/`awk` is the obvious spelling and is wrong under `pipefail`: the
+# matcher exits on the first hit, lsof takes SIGPIPE, and the pipeline reports
+# failure — so a positive detection is discarded. It depends on how much lsof
+# has written, so it fails intermittently, and it fails in the direction that
+# calls an in-use cache safe to delete.
+#
+# This is a STRUCTURAL check, deliberately: the behaviour is timing-dependent,
+# so no assertion catches it reliably. Reverting the fix does NOT fail the
+# behavioural cases on a fast machine, which is exactly why the shape is
+# pinned here instead.
+# Comments in the source explain this hazard and would match the pattern, so
+# strip them first. Captured rather than piped, for the same reason the code
+# under test is.
+src_code=$(grep -v '^[[:space:]]*#' "$SRC")
+if grep -qE 'lsof[^|]*\|[[:space:]]*(grep|awk)' <<<"$src_code"; then
+  fail "lsof is piped straight into a matcher — a SIGPIPE under pipefail discards the match" \
+    "$(grep -nE 'lsof[^|]*\|' "$SRC")"
+else
+  pass "lsof output is captured before matching (no pipefail/SIGPIPE hazard)"
+fi
+
 echo "=== concurrent launchers on a cold tree: exactly one bootstrap ==="
 
 # The property that actually matters, now resting on `mkdir` alone. Several

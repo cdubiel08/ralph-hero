@@ -44,6 +44,15 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); [ -n "${2:-}" ] && echo "$2" | s
 
 # fake_home <name> — a $HOME with two plugin cache versions, the older one
 # large enough to cross any sane threshold.
+# fake_npx <home> <name> — a legacy npx cache dir for the pinned package.
+fake_npx() {
+  local dir="$1/.npm/_npx/$2"
+  mkdir -p "$dir/bulk"
+  echo '{"dependencies":{"ralph-hero-knowledge-index":"0.1.59"}}' >"$dir/package.json"
+  dd if=/dev/zero of="$dir/bulk/blob" bs=1024 count=6144 >/dev/null 2>&1
+  echo "$dir"
+}
+
 fake_home() {
   local home="$TMP_ROOT/$1"
   local base="$home/.claude/plugins/cache/ralph-hero/ralph-knowledge"
@@ -159,6 +168,58 @@ else
   fi
 fi
 
+echo "=== an npx cache a live session could relaunch from is not called safe ==="
+
+# The same finding as the plugin roots, on the other half of the guard. A
+# session opened BEFORE the upgrade still holds the previous .mcp.json and can
+# relaunch the pinned server out of one of these directories, so "nothing uses
+# npx any more" is only true of sessions started since.
+#
+# The cwd probe cannot see this: `npx -y pkg` runs the binary out of the cache
+# but leaves cwd wherever the session started. The live signal is argv.
+if ! probe_available; then
+  echo "  SKIP: this host has neither /proc nor lsof"
+else
+  home=$(fake_home npxbusy)
+  mkdir -p "$home/tmp"
+  npx_live=$(fake_npx "$home" deadbeefcafe0001)
+  fake_npx "$home" deadbeefcafe0002 >/dev/null      # idle, so a warning still fires
+
+  # A process whose ARGV references the cache dir — what an npx-launched server
+  # looks like — with a cwd deliberately elsewhere.
+  # `sh -c CMD NAME` puts NAME in argv, so ps shows the cache path while cwd
+  # stays at / — exactly the shape of an npx-launched server. The trailing `:`
+  # is load-bearing: with a single simple command sh exec's it directly and
+  # $0 disappears from argv, so the probe would see nothing and this case would
+  # pass for the wrong reason.
+  ( cd / && exec /bin/sh -c 'sleep 60; :' "$npx_live/node_modules/.bin/server" ) &
+  npx_pid=$!
+  BUSY_PIDS+=("$npx_pid")
+  sleep 0.3
+
+  out=$(run_guard "$home")
+  kill "$npx_pid" 2>/dev/null || true
+
+  if grep -qE '1 legacy npx cache dir' <<<"$out"; then
+    pass "an npx cache referenced by a live process is excluded from the count"
+  else
+    fail "a live npx cache was counted as reclaimable — deleting it can break a pre-upgrade session" \
+      "$out"
+  fi
+
+  if grep -qi 'close other claude code sessions before deleting these too\|close other .* sessions' <<<"$out"; then
+    pass "the npx advice carries the close-sessions qualification"
+  else
+    fail "the npx advice is still unconditional" "$out"
+  fi
+
+  if grep -qi 'nothing launches through npx any more' <<<"$out"; then
+    fail "the guard still asserts nothing uses npx — untrue for a pre-upgrade session"
+  else
+    pass "no unconditional 'nothing uses npx' claim remains"
+  fi
+fi
+
 echo "=== the advice always warns about open sessions ==="
 
 home=$(fake_home advice)
@@ -198,6 +259,29 @@ if grep -q 'USE_PROBE' "$SRC" && grep -q 'cannot be probed' "$SRC"; then
   pass "an unprobeable host degrades to a warning instead of claiming idleness"
 else
   fail "no fallback for a host where use cannot be probed" "$(grep -n 'PROBE' "$SRC")"
+fi
+
+
+# The probe must CAPTURE lsof's output before matching it. Piping `lsof` into
+# `grep -q`/`awk` is the obvious spelling and is wrong under `pipefail`: the
+# matcher exits on the first hit, lsof takes SIGPIPE, and the pipeline reports
+# failure — so a positive detection is discarded. It depends on how much lsof
+# has written, so it fails intermittently, and it fails in the direction that
+# calls an in-use cache safe to delete.
+#
+# This is a STRUCTURAL check, deliberately: the behaviour is timing-dependent,
+# so no assertion catches it reliably. Reverting the fix does NOT fail the
+# behavioural cases on a fast machine, which is exactly why the shape is
+# pinned here instead.
+# Comments in the source explain this hazard and would match the pattern, so
+# strip them first. Captured rather than piped, for the same reason the code
+# under test is.
+src_code=$(grep -v '^[[:space:]]*#' "$SRC")
+if grep -qE 'lsof[^|]*\|[[:space:]]*(grep|awk)' <<<"$src_code"; then
+  fail "lsof is piped straight into a matcher — a SIGPIPE under pipefail discards the match" \
+    "$(grep -nE 'lsof[^|]*\|' "$SRC")"
+else
+  pass "lsof output is captured before matching (no pipefail/SIGPIPE hazard)"
 fi
 
 echo "=== the once-a-day stamp still suppresses repeat runs ==="

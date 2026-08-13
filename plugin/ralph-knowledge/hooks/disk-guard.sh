@@ -44,16 +44,6 @@ npx_dirs=0
 stale_plugin_dirs=0
 in_use_dirs=0
 
-# Legacy npx cache entries.
-for d in "$HOME"/.npm/_npx/*/package.json; do
-  [ -f "$d" ] || continue
-  if grep -q '"ralph-hero-knowledge-index"' "$d" 2>/dev/null; then
-    sz=$(du -sm "$(dirname "$d")" 2>/dev/null | cut -f1)
-    total_mb=$((total_mb + ${sz:-0}))
-    npx_dirs=$((npx_dirs + 1))
-  fi
-done
-
 # Can this host tell us whether a directory is in use? /proc on Linux, lsof on
 # macOS/BSD. When neither answers we must not claim anything is idle.
 if [ -d /proc ] || command -v lsof >/dev/null 2>&1; then
@@ -86,12 +76,61 @@ dir_in_use() {
       exit 1
     fi
     if command -v lsof >/dev/null 2>&1; then
-      lsof -d cwd -Fn 2>/dev/null | grep -q -e "^n${dir}$" -e "^n${dir}/" && exit 0
+      # Capture BEFORE matching. `lsof | grep -q` looks obvious and is wrong
+      # under `pipefail`: grep -q exits on the first hit, lsof takes SIGPIPE,
+      # and the pipeline reports failure — so a match is discarded and the
+      # directory reads as idle. It is timing-dependent, so it fails
+      # intermittently, and it fails in the direction that calls an in-use
+      # cache safe to delete.
+      local snapshot
+      snapshot=$(lsof -d cwd -Fn 2>/dev/null) || snapshot=""
+      grep -q -e "^n${dir}$" -e "^n${dir}/" <<<"$snapshot" && exit 0
       exit 1
     fi
     exit 1
   )
 }
+
+# True (0) when a running process REFERENCES path $1 in its argv.
+#
+# The cwd probe above is the right one for plugin roots, because launch-mcp.sh
+# cd's into them. It is the WRONG one for npx caches: `npx -y pkg` runs the
+# binary out of the cache directory but leaves cwd wherever the session started,
+# so a live npx-launched server would look idle. Its argv does carry the path.
+#
+# ps output is captured BEFORE grep exists, so the grep's own argv — which
+# necessarily contains the path — cannot match itself.
+path_referenced_by_process() {
+  local dir="${1%/}" snapshot
+  snapshot=$(ps -eo args= 2>/dev/null) || return 1
+  grep -Fq -- "$dir" <<<"$snapshot"
+}
+
+# True (0) when a directory is being used by any running process, by either
+# signal. Used for npx caches, where cwd alone would say "idle" about a server
+# that is very much alive.
+dir_or_path_in_use() {
+  dir_in_use "$1" && return 0
+  path_referenced_by_process "$1"
+}
+
+# Legacy npx cache entries.
+for d in "$HOME"/.npm/_npx/*/package.json; do
+  [ -f "$d" ] || continue
+  grep -q '"ralph-hero-knowledge-index"' "$d" 2>/dev/null || continue
+  npx_dir=$(dirname "$d")
+  # An older session still holds the PREVIOUS .mcp.json, which launches the
+  # pinned server through one of these directories — so "nothing uses npx any
+  # more" is only true of sessions started since the upgrade (codex P2, PR
+  # #1755). Same qualification as the plugin roots below.
+  if [ "$USE_PROBE" = yes ] && dir_or_path_in_use "$npx_dir"; then
+    in_use_dirs=$((in_use_dirs + 1))
+    continue
+  fi
+  sz=$(du -sm "$npx_dir" 2>/dev/null | cut -f1)
+  total_mb=$((total_mb + ${sz:-0}))
+  npx_dirs=$((npx_dirs + 1))
+done
 
 # Superseded plugin cache versions (all but the newest per marketplace), minus
 # any that a live session is still serving from.
@@ -126,8 +165,10 @@ EOF
     echo "  - ${in_use_dirs} superseded version(s) EXCLUDED: a running session is still serving from them"
   fi
   cat <<EOF
-The legacy ~/.npm/_npx dirs whose package.json depends on ralph-hero-knowledge-index
-are safe to delete now — nothing launches through npx any more.
+The legacy ~/.npm/_npx dirs counted above are from the old npx-pinned wiring.
+Sessions started since the upgrade do not use them — but a session opened
+BEFORE it still holds the previous .mcp.json and can relaunch the pinned server
+out of one, so close other Claude Code sessions before deleting these too.
 EOF
   if [ "$USE_PROBE" = yes ]; then
     cat <<EOF

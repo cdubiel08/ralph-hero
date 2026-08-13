@@ -146,7 +146,7 @@ dir_use_probe_available() {
 }
 
 dir_in_use() {
-  local dir p cwd
+  local dir p cwd snapshot
   # Compare PHYSICAL paths. macOS symlinks /tmp and /var into /private, and
   # both /proc and lsof report the resolved path — so a literal string compare
   # against the caller's path silently never matches, and every directory would
@@ -171,14 +171,20 @@ dir_in_use() {
       exit 1
     fi
     if command -v lsof >/dev/null 2>&1; then
-      lsof -d cwd -Fpn 2>/dev/null | awk -v self="$$" -v d="$dir" '
+      # Capture BEFORE matching. `lsof | awk` looks obvious and is wrong under
+      # `pipefail`: awk exits on the first hit, lsof takes SIGPIPE, and the
+      # pipeline reports failure — so the detection is discarded exactly when
+      # it SUCCEEDS. It is timing-dependent, so it fails intermittently, and it
+      # fails in the direction that rebuilds a tree someone is still using.
+      snapshot=$(lsof -d cwd -Fpn 2>/dev/null) || snapshot=""
+      awk -v self="$$" -v d="$dir" '
         /^p/ { pid = substr($0, 2); next }
         /^n/ {
           path = substr($0, 2)
           if (pid != self && (path == d || index(path, d "/") == 1)) { found = 1; exit }
         }
         END { exit(found ? 0 : 1) }
-      ' && exit 0
+      ' <<<"$snapshot" && exit 0
       exit 1
     fi
     exit 1
