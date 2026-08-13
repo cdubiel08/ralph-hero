@@ -277,6 +277,14 @@ setup_stale_clean_ext() {
 }
 run_case "clean bot comment for stale head does not satisfy gate 5" 75 "$POLICY" setup_stale_clean_ext
 
+setup_prefix_collision_clean_ext() {
+  setup_no_ext "$1"
+  jq -n --arg sha "${SHA:0:7}b" \
+    '[{user:{login:"chatgpt-codex-connector[bot]"}, body:("Reviewed commit " + $sha + ": stale.")}]' \
+    >"$1/issue_comments.json"
+}
+run_case "longer stale SHA sharing the head prefix does not satisfy gate 5" 75 "$POLICY" setup_prefix_collision_clean_ext
+
 setup_spoofed_clean_ext() {
   setup_no_ext "$1"
   jq -n --arg sha "${SHA:0:7}" '[{user:{login:"cdubiel08"}, body:("Reviewed commit " + $sha)}]' >"$1/issue_comments.json"

@@ -157,6 +157,14 @@ s_cleanext() {
 }
 run_v "clean bot comment at head" success "attested @ ${SHA:0:8}" "$POLICY" s_cleanext
 
+s_prefix_collision_cleanext() {
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "[]"
+  jq -n --arg sha "${SHA:0:7}e" \
+    '[{user:{login:"chatgpt-codex-connector[bot]"}, body:("Reviewed commit " + $sha + ": stale.")}]' \
+    >"$1/issue_comments.json"
+}
+run_v "longer stale SHA sharing the head prefix" pending "awaiting external review" "$POLICY" s_prefix_collision_cleanext
+
 s_spoofed_cleanext() {
   write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "[]"
   jq -n --arg sha "${SHA:0:7}" '[{user:{login:"someone-else"}, body:("Reviewed commit " + $sha)}]' >"$1/issue_comments.json"

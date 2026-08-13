@@ -339,7 +339,9 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
         def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
         [ add[]?
           | select(((.user.login // "") | norm) == ($bot | norm))
-          | select((.body // "") | contains("Reviewed commit \($short)"))
+          # Require the short SHA to end at a non-hex boundary. Without this,
+          # a stale longer SHA sharing the current head prefix could count.
+          | select((.body // "") | test("Reviewed commit " + $short + "([^0-9A-Fa-f]|$)"))
         ] | length' 2>/dev/null || echo "0")
   if [[ "${ext_count:-0}" -eq 0 && "${ext_comment_count:-0}" -eq 0 ]]; then
     if [[ "$FORCE" == "true" ]]; then

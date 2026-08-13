@@ -147,7 +147,9 @@ if [[ "$external_required" == "true" ]]; then
         def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
         [ add[]?
           | select(((.user.login // "") | norm) == ($bot | norm))
-          | select((.body // "") | contains("Reviewed commit \($short)"))
+          # Keep the short-SHA token head-bound even if a longer SHA happens
+          # to share its prefix.
+          | select((.body // "") | test("Reviewed commit " + $short + "([^0-9A-Fa-f]|$)"))
         ] | length' 2>/dev/null || echo "0")
   if [[ "${ext_count:-0}" -eq 0 && "${ext_comment_count:-0}" -eq 0 ]]; then
     out pending "awaiting external review by $external_bot at ${head_sha:0:8}"
