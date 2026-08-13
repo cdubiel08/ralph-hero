@@ -473,6 +473,199 @@ case "$MSG" in
   *) not_ok "depth: refusal names the cap — got '$MSG'" ;;
 esac
 
+# ═══ 8. reconcile: claim recovery for a worker its pane outlived (GH-1809) ═══
+# One pass over five open records that differ ONLY in what their pane says, so
+# each assertion isolates one verdict. The board CLI is fake-board.sh, and its
+# invocation log is the assertion surface: what matters is not just which
+# claims were released but that the others were never even asked about.
+CROOT="$TMP/croot"
+CLEDGER="$CROOT/acme/demo/ledger.jsonl"
+mkdir -p "$CROOT/acme/demo"
+export FAKE_BOARD_FIXTURES="$TMP/board-fixtures"
+export FAKE_BOARD_LOG="$TMP/board.log"
+mkdir -p "$FAKE_BOARD_FIXTURES"
+printf '#!/bin/bash\nexec bash "%s" "$@"\n' "$SCRIPT_DIR/fake-board.sh" >"$BIN/board"
+chmod +x "$BIN/board"
+
+# The checkout every record points at — a real git repo, because the scope
+# guard resolves it through `git rev-parse --show-toplevel` before writing.
+CREPO="$TMP/crepo"
+mkdir -p "$CREPO"
+printf '{"owner":"acme","repo":"demo","projectNumber":1}\n' >"$CREPO/.ralph.json"
+git -C "$CREPO" init -q 2>/dev/null
+git -C "$CREPO" config user.email t@t 2>/dev/null
+git -C "$CREPO" config user.name t 2>/dev/null
+# …and one pointing at a DIFFERENT board, for the cross-repo refusal.
+CFOREIGN="$TMP/cforeign"
+mkdir -p "$CFOREIGN"
+printf '{"owner":"other","repo":"elsewhere","projectNumber":9}\n' >"$CFOREIGN/.ralph.json"
+git -C "$CFOREIGN" init -q 2>/dev/null
+
+cat >"$CLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"w201-restart#a1","pane_id":"pR","shell_pid":"5001","checkout":"$CREPO","tokens":{"role":"w","issue":"201","harness":"claude","state":"spawned"}}
+{"ts":"t0","ev":"spawn","agent_ref":"w202-crash#a2","pane_id":"pC","shell_pid":"5002","checkout":"$CREPO","tokens":{"role":"w","issue":"202","harness":"claude","state":"spawned"}}
+{"ts":"t0","ev":"spawn","agent_ref":"w203-alive#a3","pane_id":"pA","shell_pid":"5003","checkout":"$CREPO","tokens":{"role":"w","issue":"203","harness":"claude","state":"spawned"}}
+{"ts":"t0","ev":"spawn","agent_ref":"w204-unknown#a4","pane_id":"pU","shell_pid":"5004","checkout":"$CREPO","tokens":{"role":"w","issue":"204","harness":"claude","state":"spawned"}}
+{"ts":"t0","ev":"spawn","agent_ref":"w205-foreign#a5","pane_id":"pF","shell_pid":"5005","checkout":"$CFOREIGN","tokens":{"role":"w","issue":"205","harness":"claude","state":"spawned"}}
+EOF
+# Every record's agent is LIVE in the herd — the point of the phase: after a
+# restart the names are all still there, and only the pane tells the truth.
+herd_fixture '[{"name":"w201-restart","agent_status":"idle","pane_id":"pR"},{"name":"w202-crash","agent_status":"idle","pane_id":"pC"},{"name":"w203-alive","agent_status":"working","pane_id":"pA"},{"name":"w204-unknown","agent_status":"idle","pane_id":"pU"},{"name":"w205-foreign","agent_status":"idle","pane_id":"pF"}]' "$CREPO"
+
+# pR: the pane was REBUILT — a different shell, and a `claude --resume` already
+# relaunched into it. The live process is exactly the trap: a presence check
+# would call this alive.
+printf '{"process_info":{"pane_id":"pR","shell_pid":7001,"foreground_processes":[{"argv0":"claude","name":"2.1.229","pid":7100}]}}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-process-info.pR.json"
+# pC: same shell, nothing running — it died in place.
+printf '{"process_info":{"pane_id":"pC","shell_pid":5002,"foreground_processes":[]}}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-process-info.pC.json"
+# pA: same shell, claude still working.
+printf '{"process_info":{"pane_id":"pA","shell_pid":5003,"foreground_processes":[{"argv0":"claude","name":"2.1.229","pid":5300}]}}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-process-info.pA.json"
+# pU: the server cannot answer — a transport failure, not an answer.
+printf 'not json at all\n' >"$FAKE_HERDR_FIXTURES/pane-process-info.pU.raw"
+# pF: dead pane, but its checkout belongs to another board.
+printf '{"process_info":{"pane_id":"pF","shell_pid":9999,"foreground_processes":[]}}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-process-info.pF.json"
+
+for _i in 201 202 205; do
+  printf '{"number":%s,"state":"In Progress","claim":{"holders":["t@h"],"since":"2026-08-13T00:00:00Z"}}\n' "$_i" \
+    >"$FAKE_BOARD_FIXTURES/get.$_i.json"
+done
+
+: >"$FAKE_BOARD_LOG"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$CROOT" RALPH_HERDR_BOARD="$BIN/board" \
+  bash "$SCRIPTS/reconcile.sh" 2>&1) || RC=$?
+is "claim recovery: pass exits 0" "0" "$RC"
+
+is "restart-killed: record closed with the specific reason" "1" \
+  "$(lcount "$CLEDGER" '.ev=="exit" and .agent_ref=="w201-restart#a1" and .reason=="restart_killed"')"
+is "restart-killed: claim released" "1" \
+  "$(grep -c '^release 201 ' "$FAKE_BOARD_LOG" || true)"
+is "crashed-in-place: recorded as crashed, not restart_killed" "1" \
+  "$(lcount "$CLEDGER" '.ev=="exit" and .agent_ref=="w202-crash#a2" and .reason=="crashed"')"
+is "crashed-in-place: claim released" "1" \
+  "$(grep -c '^release 202 ' "$FAKE_BOARD_LOG" || true)"
+is "live worker: record left open" "0" \
+  "$(lcount "$CLEDGER" '.ev=="exit" and .agent_ref=="w203-alive#a3"')"
+is "live worker: board never touched" "0" \
+  "$(grep -c ' 203 ' "$FAKE_BOARD_LOG" || true)"
+is "unreadable pane: record left open (unknown releases nothing)" "0" \
+  "$(lcount "$CLEDGER" '.ev=="exit" and .agent_ref=="w204-unknown#a4"')"
+is "unreadable pane: board never touched" "0" \
+  "$(grep -c ' 204 ' "$FAKE_BOARD_LOG" || true)"
+is "cross-repo: dead worker's record still closed" "1" \
+  "$(lcount "$CLEDGER" '.ev=="exit" and .agent_ref=="w205-foreign#a5"')"
+is "cross-repo: another board is never written" "0" \
+  "$(grep -c ' 205 ' "$FAKE_BOARD_LOG" || true)"
+case "$OUT" in
+  *"refusing to write another board"*) ok "cross-repo: the refusal says why" ;;
+  *) not_ok "cross-repo: the refusal says why — got '$OUT'" ;;
+esac
+
+# The state gate: a worker that got its PR up before dying is In Review, and
+# `release` is neither legal nor wanted there.
+CROOT2="$TMP/croot2"
+mkdir -p "$CROOT2/acme/demo"
+cat >"$CROOT2/acme/demo/ledger.jsonl" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"w206-inreview#a6","pane_id":"pC","shell_pid":"5002","checkout":"$CREPO","tokens":{"role":"w","issue":"206","harness":"claude","state":"spawned"}}
+EOF
+herd_fixture '[{"name":"w206-inreview","agent_status":"idle","pane_id":"pC"}]' "$CREPO"
+printf '{"number":206,"state":"In Review","claim":{"holders":["t@h"],"since":"2026-08-13T00:00:00Z"}}\n' \
+  >"$FAKE_BOARD_FIXTURES/get.206.json"
+: >"$FAKE_BOARD_LOG"
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$CROOT2" RALPH_HERDR_BOARD="$BIN/board" \
+  bash "$SCRIPTS/reconcile.sh" 2>&1) || true
+is "In Review: never released" "0" "$(grep -c '^release 206 ' "$FAKE_BOARD_LOG" || true)"
+is "In Review: the board was still consulted" "1" "$(grep -c '^get 206 ' "$FAKE_BOARD_LOG" || true)"
+
+# A refusal from board.ts (guardHolder: not this machine's claim) is reported,
+# never worked around — there is no --force anywhere in this system.
+CROOT3="$TMP/croot3"
+mkdir -p "$CROOT3/acme/demo"
+cat >"$CROOT3/acme/demo/ledger.jsonl" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"w207-refused#a7","pane_id":"pC","shell_pid":"5002","checkout":"$CREPO","tokens":{"role":"w","issue":"207","harness":"claude","state":"spawned"}}
+EOF
+herd_fixture '[{"name":"w207-refused","agent_status":"idle","pane_id":"pC"}]' "$CREPO"
+printf '{"number":207,"state":"In Progress","claim":{"holders":["someone@else"],"since":"2026-08-13T00:00:00Z"}}\n' \
+  >"$FAKE_BOARD_FIXTURES/get.207.json"
+echo 1 >"$FAKE_BOARD_FIXTURES/release.207.rc"
+printf '#207 is claimed by someone@else — wait for TTL expiry or have the holder release it.\n' \
+  >"$FAKE_BOARD_FIXTURES/release.207.json"
+: >"$FAKE_BOARD_LOG"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$CROOT3" RALPH_HERDR_BOARD="$BIN/board" \
+  bash "$SCRIPTS/reconcile.sh" 2>&1) || RC=$?
+is "board refusal: the pass still exits 0" "0" "$RC"
+is "board refusal: attempted exactly once, never retried" "1" \
+  "$(grep -c '^release 207 ' "$FAKE_BOARD_LOG" || true)"
+case "$OUT" in
+  *"claim NOT released for GH-207"*) ok "board refusal: reported in the log" ;;
+  *) not_ok "board refusal: reported in the log — got '$OUT'" ;;
+esac
+
+# The wrong-server case, end to end — the one that would have been a disaster.
+# herdr fires [[startup]] for EVERY server, so an isolated session's scratch
+# server runs this pass against the real ledgers while knowing none of these
+# panes. Phase A then marks every live worker `lost` (observed live on
+# 2026-08-13, five workers in one sweep). The requirement is absolute: not one
+# board call, from either phase.
+CROOT4="$TMP/croot4"
+mkdir -p "$CROOT4/acme/demo"
+cat >"$CROOT4/acme/demo/ledger.jsonl" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"w208-live#a8","pane_id":"pGONE","shell_pid":"5008","checkout":"$CREPO","tokens":{"role":"w","issue":"208","harness":"claude","state":"spawned"}}
+{"ts":"t0","ev":"spawn","agent_ref":"w209-legacy#a9","pane_id":"pC","checkout":"$CREPO","tokens":{"role":"w","issue":"209","harness":"claude","state":"spawned"}}
+EOF
+# An empty herd is exactly what a foreign server reports about our agents.
+herd_fixture '[]' "$CREPO"
+printf '{"error":{"code":"pane_not_found","message":"pane not found"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-process-info.pGONE.json"
+: >"$FAKE_BOARD_LOG"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$CROOT4" RALPH_HERDR_BOARD="$BIN/board" \
+  bash "$SCRIPTS/reconcile.sh" 2>&1) || RC=$?
+is "wrong server: pass exits 0" "0" "$RC"
+is "wrong server: phase A still closes the records (ledger is recoverable)" "2" \
+  "$(lcount "$CROOT4/acme/demo/ledger.jsonl" '.ev=="exit" and .reason=="lost"')"
+is "wrong server: NOT ONE board call, from either phase" "0" \
+  "$(wc -l <"$FAKE_BOARD_LOG" | tr -d ' ')"
+is "legacy record (no recorded shell pid): empty pane releases nothing" "0" \
+  "$(grep -c ' 209 ' "$FAKE_BOARD_LOG" || true)"
+
+# ═══ 9. worker verdict — the unit table ══════════════════════════════════════
+# shellcheck source=../scripts/sanitize.sh
+. "$SCRIPTS/sanitize.sh"
+# shellcheck source=../scripts/transport.sh
+. "$SCRIPTS/transport.sh"
+# shellcheck source=../scripts/claim-recover.sh
+. "$SCRIPTS/claim-recover.sh"
+is "verdict: rebuilt pane outranks a live process"  "restart_killed" "$(ralph_worker_verdict pR 5001 claude)"
+is "verdict: same shell, no harness → crashed"      "crashed"        "$(ralph_worker_verdict pC 5002 claude)"
+is "verdict: same shell, harness running → alive"   "alive"          "$(ralph_worker_verdict pA 5003 claude)"
+is "verdict: unreadable answer → unknown"           "unknown"        "$(ralph_worker_verdict pU 5004 claude)"
+# No recorded pid = no way to tell this pane from a stranger's, whatever it
+# looks like. The pid is the ticket to a board write; an empty pane without one
+# proves nothing.
+is "verdict: no recorded shell pid → unknown, even for an empty pane" "unknown" \
+  "$(ralph_worker_verdict pC '' claude)"
+is "verdict: no pane at all → unknown"              "unknown"        "$(ralph_worker_verdict '' 5001 claude)"
+# The wrong-server trap, and the reason this is not special-cased as a death:
+# `pane_not_found` is also what a perfectly healthy server says about a pane
+# belonging to a DIFFERENT server — which is the situation a [[startup]] hook
+# fired by an isolated session's server actually creates (observed 2026-08-13).
+printf '{"error":{"code":"pane_not_found","message":"pane not found"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-process-info.pX.json"
+is "verdict: pane_not_found is an absence, not a death" "unknown" \
+  "$(ralph_worker_verdict pX 5001 claude)"
+# The version-string trap: herdr reports a claude process's `name` as its
+# version, so a verdict matching on `.name` would call every live worker dead.
+printf '{"process_info":{"pane_id":"pV","shell_pid":5006,"foreground_processes":[{"argv0":"claude","name":"2.1.229","pid":5600}]}}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-process-info.pV.json"
+is "verdict: matches argv0, not the version-string name" "alive" \
+  "$(ralph_worker_verdict pV 5006 claude)"
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

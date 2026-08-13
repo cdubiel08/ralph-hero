@@ -51,6 +51,9 @@
 #                                 cockpit-view.sh's capability probe)
 #   api snapshot                  api-snapshot.json       payload {snapshot:{…}}
 #   pane get <ID>                 pane-get.<ID>.json, then pane-get.json
+#   pane process-info --pane <ID> pane-process-info.<ID>.json, then
+#                                 pane-process-info.json (default: a live
+#                                 claude in an un-rebuilt shell)
 #   pane split <ID> …             pane-split.<ID>.json, then pane-split.json
 #   pane report-metadata …        pane-report-metadata.json
 #   plugin pane …                 plugin-pane.json
@@ -270,6 +273,33 @@ case "$key" in
     ;;
   pane-report-metadata)
     respond "cli:pane:report-metadata" "ok" '{}' pane-report-metadata
+    ;;
+  pane-process-info)
+    # `pane process-info --pane <ID>` — the id is not positional, so the
+    # per-pane fixture key is scanned out of argv rather than read from $3.
+    #
+    # The DEFAULT is a healthy worker: a shell that was never rebuilt and a
+    # live `claude` in the foreground. That matters — reconcile's claim
+    # recovery treats "no harness process" as evidence of death, so a default
+    # of "nothing running" would make every existing fixture's open agent look
+    # dead and release its claim. argv0 carries the binary name because herdr
+    # reports a claude process's `name` as its VERSION string.
+    _pi_pane=""
+    _pi_prev=""
+    for _pi_arg in "$@"; do
+      [ "$_pi_prev" = "--pane" ] && _pi_pane="$_pi_arg"
+      _pi_prev="$_pi_arg"
+    done
+    # Per-pane .raw, checked here rather than at the top: the global raw hook
+    # keys on "<cmd>-<sub>" and cannot see a pane id that arrives as an option
+    # value. Without this, "this ONE pane is unreadable" is inexpressible —
+    # and that is the case reconcile's fail-closed branch turns on.
+    if raw_body "pane-process-info.$_pi_pane"; then
+      exit "$(rc_for "pane-process-info.$_pi_pane")"
+    fi
+    respond "cli:pane:process_info" "pane_process_info" \
+      "$(printf '{"process_info":{"pane_id":"%s","shell_pid":9000,"foreground_process_group_id":9100,"foreground_processes":[{"argv0":"claude","name":"2.1.229","pid":9100,"cmdline":"claude"}]}}' "$_pi_pane")" \
+      "pane-process-info.$_pi_pane" pane-process-info
     ;;
   worktree-create)
     # The spawn path reads root_pane.pane_id and worktree.path — a default

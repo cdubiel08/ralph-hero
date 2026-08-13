@@ -432,6 +432,14 @@ is "refill A: one frontier spawn ledgered (grammar-B name from the title)" "1" \
   "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w301-add-refill-support#"))')"
 is "refill A: the spawn is honestly machine-initiated" "scheduler" \
   "$(jq -rs '[.[] | select(.ev=="spawn")] | last | .lineage.spawner.invoked_by' <"$RLEDGER")"
+# GH-1809: the live path records what reconcile later needs to tell a herdr
+# restart from a crash — the pane's shell pid, and a checkout to resolve the
+# board scope from. Asserted on the LIVE path specifically: the dry-run plan
+# has no pane to read either from, so only this covers it.
+is "refill A: spawn record carries the pane's shell pid" "9000" \
+  "$(jq -rs '[.[] | select(.ev=="spawn")] | last | .shell_pid' <"$RLEDGER")"
+is "refill A: spawn record carries the worktree checkout" "$WT" \
+  "$(jq -rs '[.[] | select(.ev=="spawn")] | last | .checkout' <"$RLEDGER")"
 is "refill A: the refill_spawn annotation binds run + issue + budget" "1" \
   "$(lcount "$RLEDGER" ".ev==\"refill_spawn\" and .run_id==\"$RRID\" and .issue==301 and .budget_left==6")"
 is "refill A: budget consumed + pick recorded atomically" "6 [100,301]" \

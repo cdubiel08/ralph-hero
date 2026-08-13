@@ -147,9 +147,20 @@ Recorded because they cost the probe a run and will bite other scripts:
 
 ## 5. Follow-ups
 
-- File the restart-aware reconcile extension (§3 path-to-go item 1) as a
-  board issue when this branch lands; it is the cheap half of the flip.
-- The agent-resume verification (item 2) needs a deliberate attended session
-  — pair it with the first real cockpit dogfooding run.
+**Both flip conditions are now settled — see
+[[2026-08-13-agent-pane-resume-probe]] (GH-1809), which also carries the new
+verdict.** In short: item 1 shipped (reconcile releases a dead worker's claim
+on a positive pane reading, cutting the stall from 120 min to one pass), and
+item 2 was verified — restore types `claude --resume <id>` into a fresh shell,
+so a restored agent pane is a transcript at a prompt at best, never a worker.
+The gates still stand, for a smaller reason: nothing **re-arms** after a
+restart. The original items, as filed:
+
+- ~~File the restart-aware reconcile extension (§3 path-to-go item 1) as a
+  board issue when this branch lands; it is the cheap half of the flip.~~ Done
+  — GH-1809.
+- ~~The agent-resume verification (item 2) needs a deliberate attended session
+  — pair it with the first real cockpit dogfooding run.~~ Done — GH-1809 ran it
+  under `probe-claim-ttl.sh --with-agent`.
 - README (`plugin/ralph-herdr/README.md` fleet-refill section) and
   `ralph/examples/tick-herdr.sh` header now cite this probe; gates unchanged.

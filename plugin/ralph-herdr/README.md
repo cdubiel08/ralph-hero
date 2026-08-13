@@ -294,10 +294,20 @@ resuming. An armed-but-unattended run would therefore stall its claims for up
 to the claim TTL (default 120m per issue) with a restored-but-idle pane
 posing as a live session. (The originally feared inverse — a pane *outliving*
 its claim and double-working, design doc §3.1/§5 — was NOT observed for plain
-processes; agent-pane resume is still unverified, no billed agents in the
-probe.) Until a restart-aware reconcile closes that stall window, refill is
-bounded three ways, all recorded in the run's `fleet.json` at arm time and
-enforced at read time — no timers, no daemons, no arming survives them:
+processes.)
+
+**GH-1809 closed the stall window, and the arming gate still stands.** The
+`[[startup]]` reconcile now releases the claim of a worker whose pane proves it
+is gone, so the worst case is one reconcile pass instead of 120 minutes; and
+agent-pane resume was verified live
+(`thoughts/shared/research/2026-08-13-agent-pane-resume-probe.md`) — restore
+types `claude --resume <id>` into a fresh shell, so a restored pane is a
+transcript at a prompt at best, never a worker mid-turn. What is left is that
+**nothing re-arms**: the claims come back to Backlog and no one picks them up.
+Unattended refill is now safe across a restart without being productive across
+one, so it stays bounded three ways, all recorded in the run's `fleet.json` at
+arm time and enforced at read time — no timers, no daemons, no arming survives
+them:
 
 - **opt-in per run** — the flag arms exactly one run; the default click is
   today's one-shot fleet, unchanged;

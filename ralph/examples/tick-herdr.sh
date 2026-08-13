@@ -39,9 +39,18 @@
 # this tick's bounded wait errors, correctly leaving the claim to TTL). So
 # an unattended tick chain across a restart strands one claim per in-flight
 # issue for up to the TTL with a restored-but-idle pane looking alive.
-# Revisit the extra key only once (a) a restart-aware reconcile releases
-# dead-worker claims at watcher startup and (b) agent resume
-# (`resume_agents_on_restore`) is verified live — see the probe doc §3.
+#
+# GH-1809 settled both of that verdict's revisit conditions, and the key still
+# stays — for a different, smaller reason. (a) A restart-aware reconcile now
+# releases a dead worker's claim at watcher startup, so the stall is one
+# reconcile pass rather than 120 minutes. (b) Agent resume was verified live
+# (thoughts/shared/research/2026-08-13-agent-pane-resume-probe.md): restore
+# types `claude --resume <id>` into a fresh shell, so a restored pane holds a
+# transcript at a prompt at best — never a worker mid-turn. What remains is
+# that nothing RE-ARMS: after a restart the claims come back to Backlog
+# correctly and no one picks them up, so an unattended chain is now safe but
+# not productive across a restart. That is the open blocker, and it is the
+# only one.
 #
 # Design record: thoughts/shared/research/2026-08-09-herdr-runtime-ralph-addon.md
 # Cockpit sibling (actions, lane panes, notifications): plugin/ralph-herdr/

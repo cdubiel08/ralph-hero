@@ -6,11 +6,18 @@
 # any pane run the identical pass by hand. It heals the gap event hooks cannot
 # cover — everything that happened while the server was down:
 #
+#   E  claim recovery (GH-1809) every open ledger agent whose PANE proves the
+#                  worker is gone — the pane was rebuilt (herdr restarted) or
+#                  no harness process is left in the same shell — gets
+#                  {ev: exit, reason: restart_killed|crashed} and its board
+#                  claim RELEASED. Runs first, so phase A only sees what it
+#                  does not already explain. The ONLY board write in this file
 #   A  exit lost   every open ledger agent with no live herdr agent of that
 #                  name gets {ev: exit, reason: lost} — after a FRESH
 #                  agent-list re-probe, so a spawn that completed mid-pass
 #                  (ledger-open, absent from the pass-start snapshot) is
-#                  never falsely exited
+#                  never falsely exited. Ledger only: an absence is not
+#                  evidence enough to touch the board (see the phase)
 #   B  discover    every live ralph agent no ledger holds open gets a
 #                  discover record (scope from its pane's cwd; a fresh
 #                  name#epoch ref — the original spawn epoch died with the
@@ -21,8 +28,27 @@
 #                  longer open — same pass watch-event.sh runs on pane death
 #
 # Single pass, then EXIT — no daemon, no sleep loop; the [[events]] hooks own
-# steady-state. Board state is never written; the ledger and tokens are
-# observations, the board stays authoritative.
+# steady-state.
+#
+# THE ONE BOARD WRITE (GH-1809). Every other phase here is an observation: the
+# ledger and tokens describe the world, the board stays authoritative. Phases E
+# and A break that for exactly one verb, `board release`, because the thing
+# being corrected is a board fact no other actor can see — a claim whose holder
+# died without releasing it. A dead worker cannot hand its claim back, and
+# leaving it costs the full TTL (120 min) per issue in flight.
+#
+# The write is bounded to make that carve-out safe:
+#   - only `release`, never a state move, never a claim take;
+#   - only for an issue the LEDGER binds to this agent (tokens.issue);
+#   - only when the PANE proves the worker is gone, by a reading that includes
+#     the shell pid this ledger recorded at spawn — an unreadable answer, an
+#     unknown pane, or a record with no recorded pid all release nothing;
+#   - only when the board itself still reports In Progress WITH a claim, re-read
+#     immediately before the write;
+#   - only in a checkout whose board scope matches the ledger being walked, so
+#     one repository's reconcile can never write another's board;
+#   - and board.ts's own guardHolder still refuses a release by a non-holder,
+#     which is the authority this pass defers to rather than reimplements.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,6 +71,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/scope.sh"
 # shellcheck source=dirty.sh
 . "$SCRIPT_DIR/dirty.sh"
+# shellcheck source=claim-recover.sh
+. "$SCRIPT_DIR/claim-recover.sh"
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
 
@@ -100,6 +128,101 @@ fi
 ts=$(date -u +%FT%TZ)
 open_all="" # names open in ANY ledger (dedup channel for phase B)
 
+# pane_cwd PANE — the pane's cwd from the pass-start snapshot, or empty. Read
+# from `panes`, not `agents`: a restored pane whose agent registration did not
+# come back still has a cwd, and that is precisely the case being recovered.
+pane_cwd() {
+  [ -n "${1-}" ] || return 0
+  printf '%s' "$snapshot" | jq -r --arg p "$1" \
+    '(.panes // [])[] | select(.pane_id == $p) | .cwd // empty' 2>/dev/null | head -1
+}
+
+# recover_claim REF LEDGER_FILE REASON — release REF's board claim, if the
+# ledger binds it to an issue and the checkout it names really is the
+# repository this ledger belongs to. Logs one line either way; never fails the
+# pass. Shared by phases E and A so the two cannot drift on what "gone" earns.
+#
+# The scope check is the load-bearing one. A ledger path names owner/repo but
+# not a checkout, and the checkout is where board.ts reads its own scope from —
+# so a worktree that has since been repointed, or a pane cwd that wandered,
+# could otherwise aim `board release` at a DIFFERENT board than the ledger this
+# loop is walking. Mismatch is refused, not corrected.
+recover_claim() {
+  local ref="${1-}" file="${2-}" reason="${3-}" issue root scope dir owner repo outcome
+  issue=$(_ralph_ledger_latest_issue "$ref" 2>/dev/null) || issue=""
+  case "$issue" in
+    '' | *[!0-9]*)
+      log "claim not evaluated for $ref — the ledger binds it to no issue"
+      return 0
+      ;;
+  esac
+  root=$(_ralph_ledger_latest_checkout "$ref" 2>/dev/null) || root=""
+  if [ -z "$root" ] || [ ! -d "$root" ]; then
+    root=$(pane_cwd "$(_ralph_ledger_latest_pane "$ref" 2>/dev/null || true)")
+  fi
+  if [ -z "$root" ] || [ ! -d "$root" ]; then
+    log "claim NOT released for GH-$issue ($ref) — no checkout resolvable; it will expire at TTL"
+    return 0
+  fi
+  root=$(git -C "$root" rev-parse --show-toplevel 2>/dev/null) || root=""
+  if [ -z "$root" ]; then
+    log "claim NOT released for GH-$issue ($ref) — checkout is not a git repository; it will expire at TTL"
+    return 0
+  fi
+  dir=$(dirname "$file")
+  repo=$(basename "$dir")
+  owner=$(basename "$(dirname "$dir")")
+  scope=$(ralph_repo_scope "$root" 2>/dev/null) || scope=""
+  case "$scope" in
+    *"/$owner/$repo") : ;;
+    *)
+      log "claim NOT released for GH-$issue ($ref) — checkout $root resolves to scope '${scope:-unreadable}', not $owner/$repo; refusing to write another board"
+      return 0
+      ;;
+  esac
+  outcome=$(ralph_claim_release "$root" "$issue" "$ref" "$reason")
+  case "$outcome" in
+    released) log "released the claim on GH-$issue ($ref, $reason)" ;;
+    not-in-progress) log "claim untouched on GH-$issue ($ref) — no longer In Progress; the worker got somewhere before it died" ;;
+    not-claimed) log "claim untouched on GH-$issue ($ref) — already unclaimed" ;;
+    no-board) log "claim NOT released for GH-$issue ($ref) — no board CLI found from $root" ;;
+    *) log "claim NOT released for GH-$issue ($ref) — $outcome" ;;
+  esac
+}
+
+# ── E: claims whose worker the pane proves is gone (GH-1809) ────────────────
+# Before phase A, and looking at a DIFFERENT question. Phase A asks "is this
+# name in the herd?"; a restart answers yes for a pane that was rebuilt around
+# a fresh shell and may hold nothing but a relaunched `claude --resume` sitting
+# at a prompt. So this phase asks the pane instead, and only a positive answer
+# — rebuilt, or no harness process left — closes the record and releases the
+# claim. `alive` and `unknown` are both left entirely to phase A.
+for f in "$(ledger_root)"/*/*/ledger.jsonl; do
+  [ -f "$f" ] || continue
+  export RALPH_HERDR_LEDGER="$f"
+  ralph_ledger_lock "$f"
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    verdict=$(ralph_worker_verdict \
+      "$(_ralph_ledger_latest_pane "$ref" 2>/dev/null || true)" \
+      "$(_ralph_ledger_latest_shell_pid "$ref" 2>/dev/null || true)" \
+      "$(_ralph_ledger_latest '((try .tokens.harness catch null) // "")' "$ref" 2>/dev/null || true)")
+    case "$verdict" in
+      restart_killed | crashed) : ;;
+      *) continue ;;
+    esac
+    ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg r "$verdict" \
+      '{ts: $ts, ev: "exit", agent_ref: $ref, reason: $r, via: "reconcile"}')" || {
+      log "exit-$verdict append failed for $ref — leaving the claim alone"
+      continue
+    }
+    log "exit $ref (reason $verdict) [$f]"
+    recover_claim "$ref" "$f" "$verdict"
+  done < <(ralph_ledger_open_agents || true)
+  ralph_ledger_unlock "$f"
+done
+unset RALPH_HERDR_LEDGER
+
 # ── A: exit reason=lost for open ledger agents with no live counterpart ──────
 # The pass-start snapshot ages while the pass runs, and lib.sh appends a
 # spawn record only AFTER `agent start` succeeded — so an open ref absent
@@ -150,6 +273,16 @@ for f in "$(ledger_root)"/*/*/ledger.jsonl; do
           '{ts: $ts, ev: "exit", agent_ref: $ref, reason: "lost", via: "reconcile"}')" ||
           log "exit-lost append failed for $ref"
         log "exit $ref (reason lost) [$f]"
+        # NO claim release here, deliberately. Phase A's evidence is an
+        # ABSENCE — this name is not in the herd — and an absence does not
+        # survive being asked of the wrong server. herdr runs [[startup]] for
+        # every server that starts, so a scratch server from an isolated
+        # session gets this pass pointed at the real ledgers while answering
+        # about a herd it has never had. Observed live 2026-08-13: exactly
+        # that marked all five running workers `lost` in one sweep. Closing a
+        # ledger record on that basis is recoverable (the next pass rediscovers
+        # a live agent); releasing five working agents' claims is not.
+        # Phase E releases instead, on a positive reading of the pane.
       done
     else
       log "fresh herd re-probe failed ($(ralph_diag_read "$_probe_err")) — leaving$candidates open for the next reconcile [$f]"
