@@ -520,25 +520,6 @@ def fenced_json:
   end
 JQ
 
-# BASIS_JQ answers one question: did a formal APPROVED review carry the review
-# gate on this pass? Only then does a live REVIEW_REQUIRED mean "the thing this
-# verdict rested on was dismissed".
-read -r -d '' BASIS_JQ <<'JQ' || true
-def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-($pr.headRefOid // "")                                   as $head
-| (($pr.author.login // "") | norm)                      as $author
-| (($policy.exemptAuthors // []) | map(norm) | index($author) != null) as $exempt
-| ($policy.externalRequired == true)                     as $ext_required
-| if ($exempt or ($ext_required | not) or $policy.mode == "comment") then "other"
-  else
-    ([ $reviews[]
-       | select(((.user.login // "") | norm) == (($policy.bot // "") | norm))
-       | select((.state // "") == "APPROVED")
-       | select((.commit_id // "") == $head) ] | length) as $n
-    | (if $n > 0 then "approval" else "other" end)
-  end
-JQ
-
 # classify <checks-json> <pr-json> <reviews-json> <comments-json> -> a verdict.
 # Every policy-derived string is BOUND with --arg/--argjson, never interpolated
 # into the filter text: the bot name and the markers come from a repo-supplied
@@ -570,9 +551,12 @@ json_array_or_empty() {
 }
 
 # snapshot -> one verdict line, or non-zero if gh could not be reached.
-snapshot() {
+# gather -> one classified verdict from ONE set of reads, or non-zero if the
+# PR itself could not be read. Everything below `snapshot` is about deciding
+# how much to trust that verdict.
+gather() {
+
   local checks pr_json reviews comments fetch_ok checks_ok head_before head_after
-  local REVIEW_BASIS=unknown
   # The PR read comes FIRST so every other query is collected against a KNOWN
   # head, and the head is re-read at the end to prove it did not move
   # underneath the snapshot (codex P2, PR #1764). `gh pr checks` exposes no
@@ -662,100 +646,69 @@ snapshot() {
     return 0
   fi
 
-  # What satisfied the review question, so the confirmation below knows whether
-  # a live REVIEW_REQUIRED is meaningful. Printed by classify on a second line
-  # rather than recomputed here — one reader of the policy, as ever.
-  local basis
-  basis=$(jq -n -r \
-    --argjson pr "$pr_json" --argjson reviews "$reviews" --argjson comments "$comments" \
-    --argjson policy "$POLICY" "$BASIS_JQ" 2>/dev/null) || basis="unknown"
-  REVIEW_BASIS="$basis"
 
-  local line
-  line=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok") || return 1
+  classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok"
+}
 
-  # Gate 6 is the one gate whose inputs are not visible in any status: a label
-  # added after `ralph-apply-keywords` was computed leaves the status green
-  # while apply-keywords.sh, run live, rejects the closing keyword (codex P2,
-  # PR #1764). So on the READY path only, RUN the same checker merge-pr.sh
-  # runs rather than predicting it from a status — this repo's rule is that
-  # gates are run, not predicted. Costs nothing on every other verdict, and is
-  # inert in repos that do not ship the checker or have not opted in.
+# snapshot -> the verdict to report.
+#
+# Every verdict except GATE-READY is advice the next poll revises, so one pass
+# is the right cost. GATE-READY is different in kind: it says act NOW, and it
+# is computed from reads that necessarily happened BEFORE it was printed. A
+# rerun check going red, a clean-result comment being deleted, an approval
+# dismissed — none of these move the head, so none were visible to the pass
+# that decided (codex P2, PR #1764).
+#
+# So readiness must survive a SECOND, INDEPENDENT pass. Not another bolted-on
+# re-read of one more field: the same complete classification, run again, with
+# the second verdict reported whenever the two disagree.
+#
+# Why two and not a fixed point: there isn't one. Any snapshot classifier
+# races with the world between its last read and its printed line, so a third
+# pass would have the same property as the second. Two passes bound the window
+# to the width of one pass, and the remaining window is closed by the thing
+# that actually IS atomic with the merge — `merge-pr.sh`, which re-runs every
+# gate itself at merge time and refuses if any has changed. This script
+# recommends; the gate decides. A stale GATE-READY therefore costs one refused
+# merge-pr run that prints the real reason, never a bad merge.
+snapshot() {
+  local line second
+  line=$(gather) || return 1
+
   case "$line" in
-    GATE-READY*)
-      if [ -x "$APPLY_KEYWORDS_SH" ]; then
-        local apply_out
-        if ! apply_out=$("$APPLY_KEYWORDS_SH" "$PR" 2>&1); then
-          # No `| head -1`: pipefail is on, head exits after the first line,
-          # and printf can then take SIGPIPE on a checker with long output —
-          # turning a clean GATE-FAIL into a mangled verdict (CodeRabbit,
-          # PR #1764). Parameter expansion does the same job with no pipe.
-          local apply_first
-          apply_first=${apply_out%%$'\n'*}
-          line="GATE-FAIL apply: $apply_first — fix the closing keywords before merging"
-        fi
-      fi
-      # GATE-READY is the only verdict that tells the caller to act NOW, and it
-      # is reached last — after the checks read, the evidence reads, and gate
-      # 6's own queries. Everything above it therefore describes the PR as it
-      # was BEFORE the script waited, which is fine for "your turn" advice and
-      # not fine for "merge now": a CHANGES_REQUESTED can land mid-watch, and
-      # the base branch can advance and make the head conflict, without
-      # anything in this snapshot noticing (codex P2, PR #1764).
-      #
-      # So the three facts that make readiness terminal are re-read together,
-      # once, at the moment of the recommendation: the head it was computed
-      # for, a live review decision, and live mergeability. One extra query on
-      # the one path where staleness costs a failed merge instead of a wasted
-      # poll. Every other verdict is advice the next poll can revise.
-      case "$line" in
-        GATE-READY*)
-          local confirm confirm_head confirm_decision confirm_mergeable
-          confirm=$(gh pr view "$PR" --json headRefOid,reviewDecision,mergeable 2>/dev/null) || confirm=""
-          confirm_head=$(jq -r '.headRefOid // ""' <<<"${confirm:-{\}}" 2>/dev/null) || confirm_head=""
-          confirm_decision=$(jq -r '.reviewDecision // ""' <<<"${confirm:-{\}}" 2>/dev/null) || confirm_decision=""
-          confirm_mergeable=$(jq -r '.mergeable // ""' <<<"${confirm:-{\}}" 2>/dev/null) || confirm_mergeable=""
-          if [ -z "$confirm_head" ]; then
-            printf 'GATE-WAIT ci: could not confirm #%s is still ready (re-read failed) — withholding the merge recommendation rather than acting on a stale snapshot' "$PR"
-            return 0
-          fi
-          if [ "$confirm_head" != "$head_before" ]; then
-            printf 'GATE-WAIT ci: head moved from %s to %s while this snapshot was gathered — the evidence above describes the old head' \
-              "${head_before:0:8}" "${confirm_head:0:8}"
-            return 0
-          fi
-          if [ "$confirm_decision" = "CHANGES_REQUESTED" ]; then
-            printf 'GATE-FAIL review: CHANGES_REQUESTED landed while this snapshot was gathered — adjudicate the threads, then re-attest'
-            return 0
-          fi
-          # A DISMISSED approval is the quiet one: GitHub moves reviewDecision
-          # to REVIEW_REQUIRED, not CHANGES_REQUESTED, so checking only for the
-          # loud value accepts review evidence that no longer exists and gate 5
-          # refuses (codex P2, PR #1764). Only meaningful where a formal
-          # approval was the basis — comment mode and the waivers do not read
-          # reviewDecision at all, and REVIEW_REQUIRED is the normal resting
-          # state of a repo with required reviewers, so narrowing it to the
-          # review-mode case is what keeps this from blocking every PR.
-          if [ "$confirm_decision" = "REVIEW_REQUIRED" ] && [ "$REVIEW_BASIS" = "approval" ]; then
-            printf 'GATE-WAIT review: the approval this verdict rested on was dismissed while the snapshot was gathered — a fresh review is needed at %s' \
-              "${confirm_head:0:8}"
-            return 0
-          fi
-          if [ "$confirm_mergeable" = "CONFLICTING" ]; then
-            printf 'GATE-FAIL merge: head %s now conflicts with the base (it advanced during this snapshot) — rebase, then re-attest' \
-              "${confirm_head:0:8}"
-            return 0
-          fi
-          if [ "$confirm_mergeable" = "UNKNOWN" ]; then
-            printf 'GATE-WAIT merge: GitHub is recomputing mergeability for %s — the base moved during this snapshot' \
-              "${confirm_head:0:8}"
-            return 0
-          fi
-          ;;
-      esac
+    GATE-READY*) ;;
+    *) printf '%s' "$line"; return 0 ;;
+  esac
+
+  # Gate 6 has no status to read, so it is RUN — before the confirming pass,
+  # because it is part of what readiness means and its own queries widen the
+  # window that pass exists to close.
+  if [ -x "$APPLY_KEYWORDS_SH" ]; then
+    local apply_out apply_first
+    if ! apply_out=$("$APPLY_KEYWORDS_SH" "$PR" 2>&1); then
+      # No `| head -1`: pipefail is on, head exits after the first line, and
+      # printf can then take SIGPIPE on a checker with long output — mangling
+      # the very line that says why the merge is blocked (CodeRabbit, #1764).
+      apply_first=${apply_out%%$'\n'*}
+      printf 'GATE-FAIL apply: %s — fix the closing keywords before merging' "$apply_first"
+      return 0
+    fi
+  fi
+
+  second=$(gather) || {
+    printf 'GATE-WAIT ci: could not confirm #%s is still ready (the confirming read failed) — withholding the merge recommendation rather than acting on a stale pass' "$PR"
+    return 0
+  }
+  case "$second" in
+    GATE-READY*) printf '%s' "$second"; return 0 ;;
+    *)
+      # The two passes disagree, so the world moved while this one looked. The
+      # SECOND verdict is reported: it is the newer of the two, and it already
+      # names what changed — a red check, a dismissed approval, a conflict.
+      printf '%s' "$second"
+      return 0
       ;;
   esac
-  printf '%s' "$line"
 }
 
 is_terminal() {

@@ -39,29 +39,60 @@ serve() {
 }
 case "${1:-} ${2:-}" in
   "pr checks")
-    serve pr_checks.json '[]'
+    n=$(cat "$GH_STUB_DIR/view_calls" 2>/dev/null || echo 0)
     # Real `gh pr checks` exits non-zero whenever a check is pending or
     # failing; the script must tolerate that rather than treat it as an error.
+    if [[ "$n" -ge 3 && -f "$GH_STUB_DIR/pr_checks_second.json" ]]; then
+      cat "$GH_STUB_DIR/pr_checks_second.json"
+    else
+      serve pr_checks.json '[]'
+    fi
     exit "${GH_STUB_CHECKS_EXIT:-0}"
     ;;
   "pr view")
     # A second pr_view fixture, when present, is served to the SECOND call —
     # which is what a push landing mid-snapshot looks like to this script.
-    if [[ -f "$GH_STUB_DIR/pr_view_third.json" && -f "$GH_STUB_DIR/pr_view_called2" ]]; then
-      cat "$GH_STUB_DIR/pr_view_third.json"
-    elif [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
-      touch "$GH_STUB_DIR/pr_view_called2"
+    n=$(( $(cat "$GH_STUB_DIR/view_calls" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" >"$GH_STUB_DIR/view_calls"
+    # gather() reads `gh pr view` twice (the snapshot, then the head re-read),
+    # so call 3 begins the CONFIRMING pass. From there the *_second fixtures
+    # are served: that is how a test says "the world changed between passes".
+    if [[ "$n" -eq 2 && -f "$GH_STUB_DIR/pr_view_call2.json" ]]; then
+      # Served to the head RE-READ of pass 1: the head moving inside a single
+      # pass, which is what gather's own guard is for.
+      cat "$GH_STUB_DIR/pr_view_call2.json"
+    elif [[ "$n" -ge 3 && -f "$GH_STUB_DIR/pr_view_second.json" ]]; then
       cat "$GH_STUB_DIR/pr_view_second.json"
     else
-      touch "$GH_STUB_DIR/pr_view_called"
       serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}'
     fi
     ;;
   "api repos/"*)
     # Gate-5-shaped evidence lives on two endpoints: formal review objects and
     # issue comments (comment mode's head-bound request + clean result).
-    if [[ "$2" == */issues/*/comments ]]; then serve issue_comments.json '[]'
-    else serve pr_reviews.json '[]'; fi
+    n=$(cat "$GH_STUB_DIR/view_calls" 2>/dev/null || echo 0)
+    if [[ "$2" == */issues/*/comments ]]; then
+      if [[ "$n" -ge 3 && -f "$GH_STUB_DIR/issue_comments_second.json" ]]; then
+        cat "$GH_STUB_DIR/issue_comments_second.json"
+      else serve issue_comments.json '[]'; fi
+      # Emit the payload FIRST, then fail: a stub that printed nothing would
+      # pass with or without the fetch guard, so this is what makes the
+      # failure cases discriminating.
+      if [[ -f "$GH_STUB_DIR/fail_comments" ]]; then exit 1; fi
+    else
+      if [[ "$n" -ge 3 && -f "$GH_STUB_DIR/pr_reviews_second.json" ]]; then
+        cat "$GH_STUB_DIR/pr_reviews_second.json"
+      else
+        serve pr_reviews.json '[]'
+        # A paginated endpoint emits ONE array PER PAGE; `gh --paginate`
+        # concatenates them, which is why both gates slurp with `-s ... add`.
+        # Page 2 is served only when --paginate was actually passed.
+        if [[ " $* " == *" --paginate "* && -f "$GH_STUB_DIR/pr_reviews_page2.json" ]]; then
+          cat "$GH_STUB_DIR/pr_reviews_page2.json"
+        fi
+      fi
+      if [[ -f "$GH_STUB_DIR/fail_reviews" ]]; then exit 1; fi
+    fi
     ;;
   *) echo "stub: unhandled gh $*" >&2; exit 64 ;;
 esac
@@ -174,7 +205,7 @@ run() {
   shift
   local rc
   set +e
-  rm -f "$dir/pr_view_called" "$dir/pr_view_called2"
+  rm -f "$dir/view_calls"
   LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" \
     RALPH_MERGE_POLICY_FILE="${POLICY:-$POLICY_REVIEW}" \
     GH_STUB_CHECKS_EXIT="${CHECKS_EXIT:-0}" bash "$SCRIPT" 1740 "$@" 2>&1)
@@ -753,46 +784,8 @@ echo "=== P2/9: the reviews snapshot is paginated ==="
 # frequently on the LAST page. An unpaginated read reports "no review yet" for
 # evidence that exists, and the watcher waits for a review already filed.
 # The stub asserts the flag directly: without --paginate it serves page 1 only.
-cat >"$STUB_BIN/gh" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-serve() {
-  local f="$GH_STUB_DIR/$1"
-  if [[ -f "$f" ]]; then cat "$f"; else echo "$2"; fi
-}
-case "${1:-} ${2:-}" in
-  "pr checks")
-    serve pr_checks.json '[]'
-    exit "${GH_STUB_CHECKS_EXIT:-0}"
-    ;;
-  "pr view")
-    # Serves a SECOND, different fixture to the second call when present —
-    # what a push landing mid-snapshot looks like. Every stub in this file
-    # needs it: the script reads the head twice on purpose, so a stub that
-    # cannot express "the head moved" silently cannot test for it.
-    if [[ -f "$GH_STUB_DIR/pr_view_third.json" && -f "$GH_STUB_DIR/pr_view_called2" ]]; then
-      cat "$GH_STUB_DIR/pr_view_third.json"
-    elif [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
-      touch "$GH_STUB_DIR/pr_view_called2"
-      cat "$GH_STUB_DIR/pr_view_second.json"
-    else
-      touch "$GH_STUB_DIR/pr_view_called"
-      serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}'
-    fi
-    ;;
-  "api repos/"*)
-    if [[ "$2" == */issues/*/comments ]]; then serve issue_comments.json '[]'
-    # A paginated endpoint emits ONE JSON array PER PAGE; `gh --paginate`
-    # concatenates them, which is why both gates slurp with `-s ... add`.
-    # Page 2 is served only when --paginate was actually passed.
-    elif [[ " $* " == *" --paginate "* && -f "$GH_STUB_DIR/pr_reviews_page2.json" ]]; then
-      serve pr_reviews.json '[]'; cat "$GH_STUB_DIR/pr_reviews_page2.json"
-    else serve pr_reviews.json '[]'; fi
-    ;;
-  *) echo "stub: unhandled gh $*" >&2; exit 64 ;;
-esac
-STUB
-chmod +x "$STUB_BIN/gh"
+# (single gh stub, defined once at the top of this file — the pass-aware
+#  and failure-injection behavior all cases rely on lives there.)
 
 D="$TMP_ROOT/paginated-reviews"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
@@ -815,50 +808,8 @@ echo "=== P2/10: a failed evidence fetch is not an empty review list ==="
 # clean marker plus a green attestation then reads as GATE-READY because the
 # findings that invalidate the marker were simply invisible. merge-pr.sh
 # tracks the same partial outage with external_fetch_ok and stays PENDING.
-cat >"$STUB_BIN/gh" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-serve() {
-  local f="$GH_STUB_DIR/$1"
-  if [[ -f "$f" ]]; then cat "$f"; else echo "$2"; fi
-}
-case "${1:-} ${2:-}" in
-  "pr checks")
-    serve pr_checks.json '[]'
-    exit "${GH_STUB_CHECKS_EXIT:-0}"
-    ;;
-  "pr view")
-    # Serves a SECOND, different fixture to the second call when present —
-    # what a push landing mid-snapshot looks like. Every stub in this file
-    # needs it: the script reads the head twice on purpose, so a stub that
-    # cannot express "the head moved" silently cannot test for it.
-    if [[ -f "$GH_STUB_DIR/pr_view_third.json" && -f "$GH_STUB_DIR/pr_view_called2" ]]; then
-      cat "$GH_STUB_DIR/pr_view_third.json"
-    elif [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
-      touch "$GH_STUB_DIR/pr_view_called2"
-      cat "$GH_STUB_DIR/pr_view_second.json"
-    else
-      touch "$GH_STUB_DIR/pr_view_called"
-      serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}'
-    fi
-    ;;
-  "api repos/"*)
-    if [[ "$2" == */issues/*/comments ]]; then
-      serve issue_comments.json '[]'
-      # `[[ ... ]] && exit 1` would make the ABSENT case the branch's exit
-      # status under `set -e`, failing every healthy call. Use an if.
-      if [[ -f "$GH_STUB_DIR/fail_comments" ]]; then exit 1; fi
-    else
-      serve pr_reviews.json '[]'
-      # Emit the payload FIRST, then fail: a stub that printed nothing would
-      # pass with or without the guard, so this is what makes it discriminating.
-      if [[ -f "$GH_STUB_DIR/fail_reviews" ]]; then exit 1; fi
-    fi
-    ;;
-  *) echo "stub: unhandled gh $*" >&2; exit 64 ;;
-esac
-STUB
-chmod +x "$STUB_BIN/gh"
+# (single gh stub, defined once at the top of this file — the pass-aware
+#  and failure-injection behavior all cases rely on lives there.)
 
 POLICY="$POLICY_COMMENT"
 D="$TMP_ROOT/fetch-fail-reviews"
@@ -1222,20 +1173,20 @@ POLICY="$POLICY_REVIEW"
 D="$TMP_ROOT/head-moved"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
   "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
-# The stub serves a DIFFERENT head on the second `gh pr view`, which is exactly
-# what a push landing between the two reads looks like.
-printf '%s' "$(jq -n --arg sha "$OLD_SHA" '{headRefOid: $sha}')" >"$D/pr_view_second.json"
-expect "a head that moves mid-snapshot refuses to classify" "$D" "GATE-WAIT ci" 10
+# A DIFFERENT head on the second `gh pr view` of the SAME pass — a push landing
+# between the snapshot read and the head re-read.
+printf '%s' "$(jq -n --arg sha "$OLD_SHA" '{headRefOid: $sha}')" >"$D/pr_view_call2.json"
+expect "a head that moves mid-pass refuses to classify" "$D" "GATE-WAIT ci" 10
 run "$D"
 if [[ "$LAST_OUT" == *"head moved"* ]] && [[ "$LAST_OUT" == *"${HEAD_SHA:0:8}"* ]]; then
   pass "names both heads rather than silently mixing their evidence"
 else
   fail "head-moved message (out=${LAST_OUT:0:170})"
 fi
+rm -f "$D/pr_view_call2.json"
 # A settled head classifies normally. This case also pins the re-read's SHAPE:
 # an implementation whose second read disagrees about form with the first
 # would report a change that never happened, and --watch would never settle.
-rm "$D/pr_view_second.json"
 expect "a settled head classifies normally" "$D" "GATE-READY" 0
 
 echo "=== P2/20: --interval 0 is refused, not accepted ==="
@@ -1346,7 +1297,7 @@ scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g +
 MOVING_APPLY="$TMP_ROOT/apply-keywords-moves-head.sh"
 cat >"$MOVING_APPLY" <<AK
 #!/usr/bin/env bash
-printf '%s' '$(jq -nc --arg sha "$OLD_SHA" '{headRefOid: $sha}')' >"\$GH_STUB_DIR/pr_view_second.json"
+printf '%s' '$(confirm_view APPROVED MERGEABLE "$OLD_SHA")' >"\$GH_STUB_DIR/pr_view_second.json"
 echo "APPLY KEYWORDS INERT — no apply block"
 exit 0
 AK
@@ -1357,8 +1308,8 @@ out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_R
 rc=$?
 set -e
 rm -f "$D/pr_view_second.json"
-if [[ "$out" == "GATE-WAIT ci"* ]] && [[ "$out" == *"while this snapshot was gathered"* ]] && [ "$rc" -eq 10 ]; then
-  pass "a head that moves during gate 6 withholds the merge recommendation"
+if [[ "$out" != "GATE-READY"* ]]; then
+  pass "a head that moves during gate 6 never reaches GATE-READY"
 else
   fail "gate 6 head recheck (rc=$rc out=${out:0:170})"
 fi
@@ -1401,125 +1352,128 @@ scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$
 expect "request in, no clean result yet, is a wait" "$D" "GATE-WAIT review" 10
 POLICY="$POLICY_REVIEW"
 
-echo "=== P2/26: readiness is confirmed LIVE, not from the opening snapshot ==="
-# GATE-READY is the only verdict that says act NOW, and it is reached last —
-# after the checks read, the evidence reads, and gate 6's queries. Everything
-# above it describes the PR as it was BEFORE the script waited. A
-# CHANGES_REQUESTED can land mid-watch, and the base can advance and make the
-# head conflict, with nothing in the snapshot noticing.
+echo "=== P2/26: readiness must survive a SECOND, INDEPENDENT pass ==="
+# GATE-READY is computed from reads that necessarily happened BEFORE it was
+# printed, and the things that invalidate it — a rerun check going red, an
+# approval dismissed, a clean comment deleted, the base advancing — do not move
+# the head, so no single-field re-check can see them. Readiness therefore
+# requires the whole classification to come out READY twice.
 POLICY="$POLICY_REVIEW"
 READY_CHECKS=$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')
 setup_ready() {
   scenario "$1" "$READY_CHECKS" \
     "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
 }
-# confirm_view <decision> <mergeable> -> the LIVE re-read served to the
-# confirmation query, at the SAME head, so this isolates the new facts.
+# confirm_view <decision> <mergeable> [head] -> the FULL PR view served to the
+# confirming pass. Full, not partial: that pass re-classifies everything, so a
+# fixture missing state/comments/author would test a broken read rather than a
+# changed world.
 confirm_view() {
-  jq -nc --arg sha "$HEAD_SHA" --arg d "$1" --arg m "$2" \
-    '{headRefOid: $sha, reviewDecision: (if $d == "" then null else $d end), mergeable: $m}'
+  jq -nc --arg sha "${3:-$HEAD_SHA}" --arg d "$1" --arg m "$2" \
+    --argjson comments "[$(attestation_comment "$HEAD_SHA")]" \
+    '{state: "OPEN", headRefOid: $sha,
+      reviewDecision: (if $d == "" then null else $d end),
+      mergeable: $m, comments: $comments, author: {login: "cdubiel08"}}'
 }
+
+# The control first: two passes that agree still reach GATE-READY. Without
+# this, every case below could pass on a confirmation that never succeeds.
+D="$TMP_ROOT/ready-confirmed"
+setup_ready "$D"
+expect "two agreeing passes reach GATE-READY" "$D" "GATE-READY" 0
 
 D="$TMP_ROOT/ready-then-changes-requested"
 setup_ready "$D"
 printf '%s' "$(confirm_view CHANGES_REQUESTED MERGEABLE)" >"$D/pr_view_second.json"
-expect "a CHANGES_REQUESTED landing mid-snapshot blocks readiness" "$D" "GATE-FAIL review" 0
-run "$D"
-if [[ "$LAST_OUT" == *"landed while this snapshot was gathered"* ]]; then
-  pass "says the verdict arrived mid-snapshot, not that it was there all along"
-else
-  fail "mid-snapshot CHANGES_REQUESTED message (out=${LAST_OUT:0:170})"
-fi
+expect "a CHANGES_REQUESTED landing between passes blocks readiness" "$D" "GATE-FAIL review" 0
 
 D="$TMP_ROOT/ready-then-conflicting"
 setup_ready "$D"
-printf '%s' "$(confirm_view "" CONFLICTING)" >"$D/pr_view_second.json"
+printf '%s' "$(confirm_view APPROVED CONFLICTING)" >"$D/pr_view_second.json"
 expect "a base advance that conflicts blocks readiness" "$D" "GATE-FAIL merge" 0
 run "$D"
 if [[ "$LAST_OUT" == *rebase* ]]; then
   pass "names the rebase rather than recommending the merge"
 else
-  fail "mid-snapshot conflict message (out=${LAST_OUT:0:170})"
+  fail "conflict message (out=${LAST_OUT:0:170})"
 fi
 
 D="$TMP_ROOT/ready-then-unknown"
 setup_ready "$D"
-printf '%s' "$(confirm_view "" UNKNOWN)" >"$D/pr_view_second.json"
-expect "mergeability recomputing after a base advance is a wait" "$D" "GATE-WAIT merge" 10
+printf '%s' "$(confirm_view APPROVED UNKNOWN)" >"$D/pr_view_second.json"
+expect "mergeability recomputing between passes is a wait" "$D" "GATE-WAIT merge" 10
 
-# The stub serves pr_view_second.json to EVERY call after the first, and the
-# READY path reads the head twice (the guard, then the confirmation). A bare
-# `{}` is therefore consumed by the GUARD and never reaches the confirmation
-# query this case is named for (CodeRabbit, PR #1764) — it passed for the
-# wrong reason. A third fixture, served only to the third call, pins the real
-# thing: guard sees a good head, confirmation sees an unusable payload.
+D="$TMP_ROOT/ready-then-head-moved"
+setup_ready "$D"
+printf '%s' "$(confirm_view APPROVED MERGEABLE "$OLD_SHA")" >"$D/pr_view_second.json"
+run "$D"
+if [[ "$LAST_OUT" != "GATE-READY"* ]]; then
+  pass "a head that moves between passes never reaches GATE-READY"
+else
+  fail "head moved between passes (out=${LAST_OUT:0:150})"
+fi
+
 D="$TMP_ROOT/ready-confirm-unreadable"
 setup_ready "$D"
-printf '%s' "$(confirm_view APPROVED MERGEABLE)" >"$D/pr_view_second.json"
-printf '%s' '{}' >"$D/pr_view_third.json"
-expect "an unreadable confirmation withholds the recommendation" "$D" "GATE-WAIT ci" 10
-run "$D"
-if [[ "$LAST_OUT" == *"re-read failed"* ]]; then
-  pass "the CONFIRMATION read is what withheld it, not the earlier guard"
-else
-  fail "confirmation-read attribution (out=${LAST_OUT:0:170})"
-fi
-rm "$D/pr_view_third.json"
+printf '%s' '{}' >"$D/pr_view_second.json"
+expect "an unusable confirming pass withholds the recommendation" "$D" "GATE-WAIT ci" 10
 
-# The control: a live re-read still saying APPROVED and MERGEABLE at the same
-# head reaches GATE-READY — so the four cases above are a real difference, not
-# a confirmation step that can never be satisfied.
-D="$TMP_ROOT/ready-confirmed"
+# codex, PR #1764: a check going red without the head moving. Reruns and
+# late-publishing checks do exactly this, and no head-bound guard can see it.
+D="$TMP_ROOT/ready-then-check-red"
 setup_ready "$D"
-printf '%s' "$(confirm_view APPROVED MERGEABLE)" >"$D/pr_view_second.json"
-expect "a confirmed-live snapshot still reaches GATE-READY" "$D" "GATE-READY" 0
+printf '%s' "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" \
+  --argjson f "$(check board-tests fail)" '$g + [$a, $f]')" >"$D/pr_checks_second.json"
+expect "a check going red between passes blocks readiness" "$D" "GATE-FAIL ci" 0
+run "$D"
+if [[ "$LAST_OUT" == *"board-tests"* ]]; then
+  pass "names the check that went red"
+else
+  fail "red-check naming (out=${LAST_OUT:0:150})"
+fi
 
-# Non-terminal verdicts must NOT be changed by the confirmation read: they are
-# advice the next poll revises, and the confirmation exists only where
-# staleness costs a failed merge instead of a wasted poll.
-D="$TMP_ROOT/wait-ci-no-confirm"
-scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson p "$(check board-tests pending)" \
-  --argjson a "$ATT_PASS" '$g + [$p, $a]')" \
-  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
-printf '%s' "$(confirm_view CHANGES_REQUESTED CONFLICTING)" >"$D/pr_view_second.json"
-expect "a non-READY verdict is unaffected by the confirmation read" "$D" "GATE-WAIT ci" 10
+# ...and the same for a rerun going back to pending, which is a wait.
+D="$TMP_ROOT/ready-then-check-rerun"
+setup_ready "$D"
+printf '%s' "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" \
+  --argjson p "$(check board-tests pending)" '$g + [$a, $p]')" >"$D/pr_checks_second.json"
+expect "a check rerun between passes is a wait, not a merge" "$D" "GATE-WAIT ci" 10
 
-echo "=== P2/27: a dismissed approval is quiet — REVIEW_REQUIRED, not CHANGES_REQUESTED ==="
-# GitHub moves reviewDecision to REVIEW_REQUIRED when an approval is dismissed,
-# so a confirmation that only watches for CHANGES_REQUESTED accepts review
-# evidence that no longer exists while gate 5 refuses it.
+echo "=== P2/27: gate-5 evidence is re-read too, not inferred ==="
+# codex, PR #1764: substituting the aggregate reviewDecision for live gate-5
+# evidence misses the cases that matter. A dismissal is quiet — GitHub moves
+# reviewDecision to REVIEW_REQUIRED, not CHANGES_REQUESTED — and a deleted
+# clean-result comment moves nothing at all. The confirming pass re-reads the
+# evidence itself, so neither needs a special case.
 POLICY="$POLICY_REVIEW"
 D="$TMP_ROOT/ready-then-dismissed"
 setup_ready "$D"
-printf '%s' "$(confirm_view REVIEW_REQUIRED MERGEABLE)" >"$D/pr_view_second.json"
-expect "a dismissed approval blocks readiness" "$D" "GATE-WAIT review" 10
+printf '%s' "$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
+  '[{state:"DISMISSED", user:{login:$bot}, commit_id:$sha}]')" >"$D/pr_reviews_second.json"
 run "$D"
-if [[ "$LAST_OUT" == *"dismissed"* ]]; then
-  pass "names the dismissal rather than reporting a generic wait"
+if [[ "$LAST_OUT" != "GATE-READY"* ]] && [[ "$LAST_OUT" == *review* ]]; then
+  pass "an approval dismissed between passes blocks readiness"
 else
-  fail "dismissed-approval message (out=${LAST_OUT:0:170})"
+  fail "dismissed approval (out=${LAST_OUT:0:150})"
 fi
 
-# Narrow by construction: REVIEW_REQUIRED is the normal resting state of a repo
-# with required reviewers, so it may only block where a formal approval was
-# what carried the review gate. In comment mode the clean marker is the basis
-# and reviewDecision says nothing about it — blocking there would strand every
-# comment-mode PR.
+# Comment mode: the clean-result comment deleted between passes. reviewDecision
+# says nothing about this, which is precisely why it cannot stand in for the
+# evidence.
 POLICY="$POLICY_COMMENT"
-D="$TMP_ROOT/comment-mode-review-required"
+D="$TMP_ROOT/clean-comment-deleted"
 scenario "$D" "$READY_CHECKS" \
   "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$NO_REVIEWS" \
   "$(clean_evidence "$HEAD_SHA")"
-printf '%s' "$(confirm_view REVIEW_REQUIRED MERGEABLE)" >"$D/pr_view_second.json"
-expect "comment mode is not blocked by REVIEW_REQUIRED" "$D" "GATE-READY" 0
-
-# Same for an exempt author, who has the review gate waived entirely.
+expect "control: comment-mode evidence present is READY" "$D" "GATE-READY" 0
+printf '[]' >"$D/issue_comments_second.json"
+run "$D"
+if [[ "$LAST_OUT" != "GATE-READY"* ]] && [[ "$LAST_OUT" == *review* ]]; then
+  pass "a clean result deleted between passes blocks readiness"
+else
+  fail "deleted clean comment (out=${LAST_OUT:0:150})"
+fi
 POLICY="$POLICY_REVIEW"
-D="$TMP_ROOT/exempt-review-required"
-scenario "$D" "$READY_CHECKS" \
-  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]" "dependabot[bot]")" "$NO_REVIEWS"
-printf '%s' "$(confirm_view REVIEW_REQUIRED MERGEABLE)" >"$D/pr_view_second.json"
-expect "an exempt author is not blocked by REVIEW_REQUIRED" "$D" "GATE-READY" 0
 
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
