@@ -128,17 +128,39 @@ if [ -z "$NEXT" ]; then
   exit 0
 fi
 
+# --- Names: derived by the CLI, never re-implemented here (GH-1807). Branch
+# and agent name carry the SAME slug, so the branch panel and `herdr agent
+# list` read as one vocabulary.
+NAMES=$("$BOARD" name "$NEXT" --json) || {
+  echo "tick-herdr: \`board name $NEXT\` failed — cannot derive the branch" >&2; exit 1; }
+BRANCH=$(printf '%s' "$NAMES" | jq -r '.branch // empty')
+LEGACY_BRANCH=$(printf '%s' "$NAMES" | jq -r '.legacyBranch // empty')
+AGENT=$(printf '%s' "$NAMES" | jq -r '.agent // empty')
+if [ -z "$BRANCH" ] || [ -z "$AGENT" ]; then
+  echo "tick-herdr: \`board name $NEXT\` returned no branch/agent" >&2; exit 1
+fi
+
 # --- Worktree as a herdr workspace. ALWAYS fetch + --base origin/main: left
 # to itself herdr branches from the parent checkout's HEAD (design doc §6,
 # finding 3). The fresh base only holds for brand-new branches: an existing
-# feature/GH-N branch is silently checked out as-is (--base ignored) — resumed
-# possibly behind origin/main, and the session is expected to rebase. Create
-# refuses only when the CHECKOUT already exists (e.g. a prior tick's) — reopen
-# it instead; never branch twice, never --force.
+# branch is silently checked out as-is (--base ignored) — resumed possibly
+# behind origin/main, and the session is expected to rebase. Create refuses
+# only when the CHECKOUT already exists (e.g. a prior tick's) — reopen it
+# instead; never branch twice, never --force.
+#
+# Resume beats re-cut: a unit that already has a legacy feature/GH-N branch
+# keeps it, or one unit's work splits across two heads.
 git -C "$REPO_ROOT" fetch -q origin main
-if ! OUT=$(herdr worktree create --cwd "$REPO_ROOT" --branch "feature/GH-$NEXT" --base origin/main --no-focus 2>&1); then
-  OUT=$(herdr worktree open --cwd "$REPO_ROOT" --branch "feature/GH-$NEXT" --no-focus 2>&1) \
-    || { echo "tick-herdr: worktree create refused and open fallback failed for feature/GH-$NEXT:" >&2; echo "$OUT" >&2; exit 1; }
+if ! git -C "$REPO_ROOT" show-ref -q --verify "refs/heads/$BRANCH" \
+  && ! git -C "$REPO_ROOT" show-ref -q --verify "refs/remotes/origin/$BRANCH"; then
+  if git -C "$REPO_ROOT" show-ref -q --verify "refs/heads/$LEGACY_BRANCH" \
+    || git -C "$REPO_ROOT" show-ref -q --verify "refs/remotes/origin/$LEGACY_BRANCH"; then
+    BRANCH="$LEGACY_BRANCH"
+  fi
+fi
+if ! OUT=$(herdr worktree create --cwd "$REPO_ROOT" --branch "$BRANCH" --base origin/main --no-focus 2>&1); then
+  OUT=$(herdr worktree open --cwd "$REPO_ROOT" --branch "$BRANCH" --no-focus 2>&1) \
+    || { echo "tick-herdr: worktree create refused and open fallback failed for $BRANCH:" >&2; echo "$OUT" >&2; exit 1; }
 fi
 
 # IDs are opaque, server-local tokens — captured from the response, never
@@ -180,7 +202,7 @@ case "$START_TRIES" in '' | *[!0-9]* | 0)
 START_N=0
 while :; do
   START_ERR=$(mktemp)
-  if herdr agent start "gh-$NEXT" --kind claude --pane "$PANE" >>"$LOG" 2>"$START_ERR"; then
+  if herdr agent start "$AGENT" --kind claude --pane "$PANE" >>"$LOG" 2>"$START_ERR"; then
     rm -f "$START_ERR"; break
   fi
   START_CODE=$(jq -r '.error.code // empty' "$START_ERR" 2>/dev/null || true)
@@ -188,7 +210,7 @@ while :; do
   rm -f "$START_ERR"
   START_N=$((START_N + 1))
   if [ "$START_CODE" != "agent_pane_busy" ] || [ "$START_N" -ge "$START_TRIES" ]; then
-    echo "tick-herdr: agent start gh-$NEXT refused (${START_CODE:-unknown}) — see $LOG" >&2
+    echo "tick-herdr: agent start $AGENT refused (${START_CODE:-unknown}) — see $LOG" >&2
     exit 1
   fi
   sleep 1
@@ -205,7 +227,7 @@ done
 # claim to the TTL — a transport hiccup proves nothing about the session.
 RC=0
 ERR_TMP=$(mktemp)
-herdr agent prompt "gh-$NEXT" "/ralph:work $NEXT" \
+herdr agent prompt "$AGENT" "/ralph:work $NEXT" \
   --wait --timeout "$WAIT_MS" \
   >>"$LOG" 2>"$ERR_TMP" || RC=$?
 ERR_CODE=$(jq -r '.error.code // empty' "$ERR_TMP" 2>/dev/null || true)
@@ -213,7 +235,7 @@ cat "$ERR_TMP" >>"$LOG" 2>/dev/null || true
 rm -f "$ERR_TMP"
 
 # agent get is JSON-native (no --json flag).
-AGENT_STATE=$(herdr agent get "gh-$NEXT" 2>/dev/null | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || true)
+AGENT_STATE=$(herdr agent get "$AGENT" 2>/dev/null | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || true)
 [ -n "$AGENT_STATE" ] || AGENT_STATE=unknown
 ELAPSED_MIN=$(( ( $(date +%s) - START_EPOCH ) / 60 ))
 
@@ -238,18 +260,18 @@ fi
 # Fire-and-forget (no --wait) — this tick is done waiting either way.
 if [ "$STATUS" = "timeout" ]; then
   if [ "$AGENT_STATE" != "blocked" ]; then
-    herdr agent prompt "gh-$NEXT" \
-      "This tick's bounded wait timed out after ${ELAPSED_MIN}m (claim TTL ${TTL_MIN}m). Wrap up now: commit WIP to feature/GH-$NEXT, push, and note where you stopped on issue #$NEXT — this tick releases the claim itself. Then stop." \
+    herdr agent prompt "$AGENT" \
+      "This tick's bounded wait timed out after ${ELAPSED_MIN}m (claim TTL ${TTL_MIN}m). Wrap up now: commit WIP to $BRANCH, push, and note where you stopped on issue #$NEXT — this tick releases the claim itself. Then stop." \
       >>"$LOG" 2>&1 || true
     NOTIFY_BODY="pane $PANE still live in $(basename "$REPO_ROOT") — wrap-up prompt sent; claim released below only if still this tick's"
   else
     NOTIFY_BODY="pane $PANE blocked on an approval/question UI in $(basename "$REPO_ROOT") — answer it in the pane; no wrap-up prompt sent (its Enter could answer the dialog)"
   fi
-  herdr notification show "ralph: gh-$NEXT timeout" \
+  herdr notification show "ralph: $AGENT timeout" \
     --body "$NOTIFY_BODY" \
     --sound request >>"$LOG" 2>&1 || true
 elif [ "$STATUS" = "blocked" ]; then
-  herdr notification show "ralph: gh-$NEXT blocked" \
+  herdr notification show "ralph: $AGENT blocked" \
     --body "pane $PANE waiting on an approval/question UI in $(basename "$REPO_ROOT") after ${ELAPSED_MIN}m — answer it in the pane; claim left to the live session (TTL is the backstop)" \
     --sound request >>"$LOG" 2>&1 || true
 fi

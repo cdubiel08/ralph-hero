@@ -83,8 +83,14 @@ any hand-driven spawn must also honor:
 - **Billing guard first.** Spawning with `ANTHROPIC_API_KEY` set is refused
   (it would bill API credits, not the subscription) unless
   `RALPH_ALLOW_API_BILLING=true` — tick.sh parity.
-- **IDs from JSON.** `herdr worktree create --cwd <repo> --branch
-  feature/GH-N --base origin/main --no-focus` (always `--base origin/main`;
+- **Names from `board name`, never hand-built.** `board name N --json` returns
+  the derived `{branch, agent, worktree, legacyBranch}` — branch
+  `<kind>/N-<slug>`, agent `w N-<slug>` with the *same* slug (GH-1807). The
+  grammar is declared once in `contracts.ts`; a caller that assembles it
+  itself is a second grammar. Resume beats re-cut: if `legacyBranch`
+  (`feature/GH-N`) already exists, that branch is the unit's branch.
+- **IDs from JSON.** `herdr worktree create --cwd <repo> --branch <that
+  branch> --base origin/main --no-focus` (always `--base origin/main`;
   fetch first), then read `pane_id` out of the response — never predicted.
 - **`--no-focus` throughout.** Only a human-clicked action may steal focus.
 - **Skip, don't collide.** A live agent already owning issue N (any `w<N>-*`

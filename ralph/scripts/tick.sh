@@ -78,12 +78,40 @@ if [ -z "$NEXT" ]; then
   exit 0
 fi
 
+# --- Names: derived by the CLI, never re-implemented here (GH-1807) ---------
+# The grammar lives in contracts.ts. A shell that rebuilt slugify in sed would
+# be a second grammar, and two grammars drift.
+NAMES=$("$BOARD" name "$NEXT" --json) || {
+  echo "tick: \`board name $NEXT\` failed — cannot derive the branch" >&2; exit 1; }
+BRANCH=$(printf '%s' "$NAMES" | jq -r '.branch // empty')
+LEGACY_BRANCH=$(printf '%s' "$NAMES" | jq -r '.legacyBranch // empty')
+WT_LEAF=$(printf '%s' "$NAMES" | jq -r '.worktree // empty')
+if [ -z "$BRANCH" ] || [ -z "$WT_LEAF" ]; then
+  echo "tick: \`board name $NEXT\` returned no branch/worktree" >&2; exit 1
+fi
+
 # --- Worktree per job: never a shared HEAD ----------------------------------
-WT="$REPO_ROOT/.claude/worktrees/GH-$NEXT"
-if [ ! -d "$WT" ]; then
+# Resume beats re-cut, and the legacy layout is a first-class resume target: a
+# unit that already has a feature/GH-N worktree or branch keeps it, or one
+# unit's work splits across two heads. Git is touched only when there is no
+# checkout to resume — an existing worktree needs no decision at all.
+branch_exists() {
+  git -C "$REPO_ROOT" show-ref -q --verify "refs/heads/$1" \
+    || git -C "$REPO_ROOT" show-ref -q --verify "refs/remotes/origin/$1"
+}
+WT="$REPO_ROOT/.claude/worktrees/$WT_LEAF"
+LEGACY_WT="$REPO_ROOT/.claude/worktrees/GH-$NEXT"
+if [ ! -d "$WT" ] && [ -d "$LEGACY_WT" ]; then
+  WT="$LEGACY_WT"
+  BRANCH="$LEGACY_BRANCH"
+elif [ ! -d "$WT" ]; then
   git -C "$REPO_ROOT" fetch -q origin main
-  git -C "$REPO_ROOT" worktree add -q -b "feature/GH-$NEXT" "$WT" origin/main 2>/dev/null \
-    || git -C "$REPO_ROOT" worktree add -q "$WT" "feature/GH-$NEXT"
+  if ! branch_exists "$BRANCH" && branch_exists "$LEGACY_BRANCH"; then
+    BRANCH="$LEGACY_BRANCH"
+    WT="$LEGACY_WT"
+  fi
+  git -C "$REPO_ROOT" worktree add -q -b "$BRANCH" "$WT" origin/main 2>/dev/null \
+    || git -C "$REPO_ROOT" worktree add -q "$WT" "$BRANCH"
 fi
 
 export RALPH_CLAIM_HOLDER="tick@$(hostname -s)"
@@ -119,9 +147,9 @@ if [ "$RC" -ne 0 ]; then
   STATUS="exit=$RC"
   if [ "$RC" -eq 124 ]; then
     STATUS=timeout
-    NOTE="tick timeout after ${TIMEOUT_MIN}m — see $LOG on $(hostname -s); work may be partially committed on feature/GH-$NEXT"
+    NOTE="tick timeout after ${TIMEOUT_MIN}m — see $LOG on $(hostname -s); work may be partially committed on $BRANCH"
   else
-    NOTE="tick runner exited RC=$RC — see $LOG on $(hostname -s); work may be partially committed on feature/GH-$NEXT"
+    NOTE="tick runner exited RC=$RC — see $LOG on $(hostname -s); work may be partially committed on $BRANCH"
   fi
   if AFTER_JSON=$("$BOARD" get "$NEXT" --json 2>>"$LOG"); then
     # ClaimV2: .claim.holders is an ARRAY (a single holder is a one-element

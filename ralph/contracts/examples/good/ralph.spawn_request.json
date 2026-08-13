@@ -5,7 +5,7 @@
   "lane": "w",
   "slug": "claim-v2-multi-holder",
   "harness": "claude",
-  "branch": "feature/GH-1743",
+  "branch": "feat/1743-claim-v2-multi-holder",
   "base": "main",
   "parent_ref": "o1700-herdr-v2-rollout#a3f2",
   "depth": 1,

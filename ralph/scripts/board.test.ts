@@ -3680,6 +3680,63 @@ describe("deliver-queue: marker + verdict parsing", () => {
   });
 });
 
+describe("board name: the one place a transport reads the convention (GH-1807)", () => {
+  const say = (argv: string[], ctx: ReturnType<typeof makeCtx>) => {
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(argv, ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    return said.join("");
+  };
+
+  it("derives branch, agent and worktree from one title — same slug on every surface", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1807, { number: 1807, state: "Backlog", title: "Semantic branch + agent names" });
+    const parsed = JSON.parse(say(["name", "1807", "--json"], makeCtx(gh)));
+    expect(parsed).toMatchObject({
+      number: 1807,
+      kind: "feat", // no labels — the stated default, never free text
+      lane: "w",
+      branch: "feat/1807-semantic-branch-agent",
+      agent: "w1807-semantic-branch-agent",
+      worktree: "feat-1807-semantic-branch-agent",
+      legacyBranch: "feature/GH-1807",
+    });
+  });
+
+  it("kind comes from labels; the apply label outranks them, but only once armed", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog", title: "Broken thing", labels: ["bug"] });
+    gh.issues.set(2, {
+      number: 2,
+      state: "Backlog",
+      title: "Deploy the ruleset",
+      labels: ["bug", APPLY_LABEL_DEFAULT],
+    });
+    const off = makeCtx(gh);
+    expect(JSON.parse(say(["name", "1", "--json"], off)).branch).toBe("fix/1-broken-thing");
+    // apply.enabled=false: the label is just a label, and the branch says so.
+    expect(JSON.parse(say(["name", "2", "--json"], off)).branch).toBe("fix/2-deploy-the-ruleset");
+    const on = makeCtx(gh);
+    on.cfg.apply = { enabled: true, label: APPLY_LABEL_DEFAULT, infraPaths: [] };
+    expect(JSON.parse(say(["name", "2", "--json"], on)).branch).toBe("apply/2-deploy-the-ruleset");
+  });
+
+  it("--lane picks the agent lane and refuses one outside the closed registry", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1807, { number: 1807, state: "Backlog", title: "Review sweep" });
+    const ctx = makeCtx(gh);
+    expect(JSON.parse(say(["name", "1807", "--lane", "r", "--json"], ctx)).agent).toBe("r1807-review-sweep");
+    expect(() => run(["name", "1807", "--lane", "q"], ctx)).toThrow(/--lane must be one of/);
+  });
+});
+
 describe("deliver-queue: fetch + CLI wiring", () => {
   const OLD = "2026-07-31T10:00:00Z"; // settled
 
@@ -3706,6 +3763,47 @@ describe("deliver-queue: fetch + CLI wiring", () => {
       [4, 104],
     ]);
     expect(res.queue.length + res.blocked.length).toBe(2); // #2 foreign, #3 archived: absent entirely
+  });
+
+  it("branch linkage spans BOTH grammars, and rejects the refs GitHub's substring filter throws in (GH-1807)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    // New shape.
+    gh.issues.set(1807, {
+      number: 1807,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      branchRefs: [
+        { name: "fix/1807-semantic-branch", prs: [{ number: 901, merged: false, headSha: "s1", pushedAt: OLD }] },
+      ],
+    });
+    // Legacy shape, mid-deprecation-window — same query, no second lookup.
+    gh.issues.set(1808, {
+      number: 1808,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      branchPrs: [{ number: 902, merged: false, headSha: "s2", pushedAt: OLD }],
+    });
+    // Every ref here CONTAINS "1809" and so comes back from GitHub's filter.
+    // None of them is #1809's branch: two name other issues, two do not parse.
+    gh.issues.set(1809, {
+      number: 1809,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      branchRefs: [
+        { name: "feature/GH-18090", prs: [{ number: 903, merged: false, headSha: "s3", pushedAt: OLD }] },
+        { name: "fix/18091-other-unit", prs: [{ number: 904, merged: false, headSha: "s4", pushedAt: OLD }] },
+        { name: "claude/eager-1809-bun", prs: [{ number: 905, merged: false, headSha: "s5", pushedAt: OLD }] },
+        { name: "spike/1809-closed-registry", prs: [{ number: 906, merged: false, headSha: "s6", pushedAt: OLD }] },
+      ],
+    });
+    const res = deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
+    expect(res.queue.map((r) => [r.number, r.pr]).sort()).toEqual([
+      [1807, 901],
+      [1808, 902],
+    ]);
+    // #1809 is present but PR-less — the coincidences linked nothing.
+    expect(res.blocked.map((r) => [r.number, r.reason])).toContainEqual([1809, "no-pr"]);
   });
 
   it("run(): deliver-queue --json emits {next,queue,blocked} and prose mode names blocked reasons", () => {

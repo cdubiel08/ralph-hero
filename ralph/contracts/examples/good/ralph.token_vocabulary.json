@@ -9,7 +9,7 @@
     "root": "1700",
     "depth": "1",
     "state": "working",
-    "branch": "feature/GH-1743",
+    "branch": "feat/1743-claim-v2-multi-holder",
     "claim": "held since 14:00Z",
     "pr": "1760",
     "spawn_epoch": "a3f2",

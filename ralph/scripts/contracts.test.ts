@@ -13,12 +13,20 @@ import { fileURLToPath } from "node:url";
 import { encodeClaim } from "./board.js";
 import {
   addHolder,
+  BRANCH_KIND_CHARS,
+  type BranchKind,
+  branchIssue,
+  branchKindFor,
   CLAIM_MAX_HOLDERS,
   type ClaimV2,
   collideName,
   CONTRACT_IDS,
   type ContractId,
+  DEFAULT_BRANCH_KIND,
   emitJsonSchemas,
+  formatBranchName,
+  parseBranchName,
+  worktreeLeaf,
   expectedSkillInvocation,
   formatAgentName,
   formatClaim,
@@ -279,6 +287,101 @@ describe("naming: legacy + rejects", () => {
       `w1-${"a".repeat(30)}`, // 33 chars
     ];
     for (const name of rejects) expect(parseAgentName(name), JSON.stringify(name)).toBeNull();
+  });
+});
+
+describe("naming: branches (GH-1807)", () => {
+  it("the branch slug is BYTE-IDENTICAL to the agent slug for the same unit", () => {
+    const title = "Semantic branch + agent names: fix/NNNN-thing-doing";
+    const branch = formatBranchName("fix", 1807, title);
+    const agent = formatAgentName("w", 1807, title);
+    const b = parseBranchName(branch);
+    const a = parseAgentName(agent);
+    expect(b).toMatchObject({ kind: "v2", branchKind: "fix", issue: 1807 });
+    expect(a).toMatchObject({ kind: "v2", lane: "w", issue: 1807 });
+    // The whole point of reusing slugBudget: one vocabulary on both surfaces.
+    expect(b?.kind === "v2" && b.slug).toBe(a?.kind === "v2" && a.slug);
+  });
+
+  it("round-trips every kind, and truncates on the agent budget", () => {
+    for (const kind of BRANCH_KIND_CHARS) {
+      const branch = formatBranchName(kind, 1743, "Claim V2: multi-holder!");
+      expect(branch).toBe(`${kind}/1743-claim-v2-multi-holder`);
+      expect(parseBranchName(branch)).toEqual({
+        kind: "v2",
+        branchKind: kind,
+        issue: 1743,
+        slug: "claim-v2-multi-holder",
+      });
+    }
+    // Same truncation as the agent name: word boundary, no trailing hyphen.
+    const long = formatBranchName("feat", 1743, "Implement the claim v2 multi holder wire format for herdr");
+    expect(long).toBe("feat/1743-implement-the-claim");
+    // Non-ASCII / digit-leading titles fall back exactly as slugify does.
+    expect(formatBranchName("chore", 1, "🎉🎉🎉")).toBe("chore/1-task");
+    expect(formatBranchName("chore", 5, "4x speedup")).toBe("chore/5-x-speedup");
+  });
+
+  it("parses the legacy shape and rejects what neither grammar names", () => {
+    expect(parseBranchName("feature/GH-1743")).toEqual({
+      kind: "legacy",
+      branch: "feature/GH-1743",
+      issue: 1743,
+    });
+    const rejects = [
+      "",
+      "main",
+      "feature/gh-1743", // lowercase GH is not the legacy shape
+      "feature/1743-slug", // `feature` is the LEGACY prefix, never a live kind
+      "Fix/1743-slug", // uppercase kind
+      "fix/1743-Slug", // uppercase slug
+      "spike/1743-slug", // regex-shaped, but the kind registry is closed
+      "fix/1743-slug-", // trailing hyphen
+      "fix/1743-2fast", // slug must start with a letter
+      "fix/1743", // no slug
+      "fix/slug", // no issue digits
+      "fix/1743/slug", // nesting is not the grammar
+    ];
+    for (const b of rejects) expect(parseBranchName(b), JSON.stringify(b)).toBeNull();
+  });
+
+  it("branchIssue rejects the substring coincidences GitHub's ref filter returns", () => {
+    // `refs(query: "1807")` returns all three; only the first is linkage.
+    expect(branchIssue("fix/1807-branch-names")).toBe(1807);
+    expect(branchIssue("feature/GH-18070")).toBe(18070);
+    expect(branchIssue("chore/1807-typo")).toBe(1807);
+    expect(branchIssue("claude/eager-1807-bun")).toBeNull();
+    expect(branchIssue("dependabot/npm_and_yarn/typescript-1807")).toBeNull();
+  });
+
+  it("branchKindFor: apply label wins, labels map, everything else is the default", () => {
+    expect(branchKindFor([])).toBe(DEFAULT_BRANCH_KIND);
+    expect(branchKindFor(["type: bug"])).toBe("fix");
+    expect(branchKindFor(["kind/bug"])).toBe("fix");
+    expect(branchKindFor(["Documentation"])).toBe("docs");
+    expect(branchKindFor(["dependencies"])).toBe("chore");
+    expect(branchKindFor(["enhancement"])).toBe("feat");
+    expect(branchKindFor(["needs-triage"])).toBe(DEFAULT_BRANCH_KIND);
+    // The apply label is configured per repo and outranks every other label.
+    expect(branchKindFor(["bug", "ralph:apply"], { applyLabel: "ralph:apply" })).toBe("apply");
+    expect(branchKindFor(["bug"], { applyLabel: "ralph:apply" })).toBe("fix");
+    // Fails closed exactly like isApplyIssue: a truncated list cannot prove
+    // the apply label absent, so the branch says apply rather than guessing.
+    expect(branchKindFor(["bug"], { applyLabel: "ralph:apply", labelsTruncated: true })).toBe("apply");
+    // No apply label configured — truncation is not evidence of anything.
+    expect(branchKindFor(["bug"], { labelsTruncated: true })).toBe("fix");
+  });
+
+  it("worktreeLeaf flattens the new shape and preserves the legacy one", () => {
+    expect(worktreeLeaf("fix/1807-branch-names")).toBe("fix-1807-branch-names");
+    // An existing .claude/worktrees/GH-N must stay findable across the window.
+    expect(worktreeLeaf("feature/GH-1807")).toBe("GH-1807");
+  });
+
+  it("formatBranchName refuses unknown kinds and non-natural issues", () => {
+    expect(() => formatBranchName("spike" as BranchKind, 1, "x")).toThrow(RangeError);
+    expect(() => formatBranchName("fix", -1, "x")).toThrow(RangeError);
+    expect(() => formatBranchName("fix", 1.5, "x")).toThrow(RangeError);
   });
 });
 
@@ -696,10 +799,21 @@ describe("lints", () => {
     expect(lintL6ContractVersion({})).toMatchObject({ rule: "L6", skipped: expect.any(String) });
   });
 
-  it("L8: the branch is derived, not chosen — feature/GH-<issue>, top-level or in constraints", () => {
+  it("L8: the branch is derived, not chosen — <kind>/<issue>-<slug> or the legacy shape", () => {
+    expect(lintL8BranchConvention({ issue: 1743, branch: "fix/1743-claim-v2" })).toEqual({ rule: "L8", ok: true });
     expect(lintL8BranchConvention({ issue: 1743, branch: "feature/GH-1743" })).toEqual({ rule: "L8", ok: true });
     expect(lintL8BranchConvention(loadExample("good", "ralph.fleet_brief"))).toEqual({ rule: "L8", ok: true });
     expect(lintL8BranchConvention({ issue: 1743, branch: "feature/gh-1743" })).toMatchObject({ ok: false });
+    expect(lintL8BranchConvention({ issue: 1743, branch: "spike/1743-x" })).toMatchObject({ ok: false });
+    // Parses, but names another unit — the failure this rule exists for.
+    expect(lintL8BranchConvention({ issue: 1743, branch: "fix/1744-claim-v2" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("#1744"),
+    });
+    // The message names BOTH live shapes, so a refusal is actionable.
+    const msg = (lintL8BranchConvention({ issue: 1743, branch: "nope" }) as { message: string }).message;
+    expect(msg).toContain("<kind>/1743-<slug>");
+    expect(msg).toContain("feature/GH-1743");
     expect(lintL8BranchConvention({ issue: 1743 })).toMatchObject({ rule: "L8", skipped: expect.any(String) });
     expect(lintL8BranchConvention({ branch: "feature/GH-1743" })).toMatchObject({ rule: "L8", skipped: expect.any(String) });
   });
