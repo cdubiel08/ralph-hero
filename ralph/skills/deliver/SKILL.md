@@ -54,7 +54,9 @@ default. The gate then passes once the bot has answered at that head — a
 findings review, or its comment naming the reviewed commit — with no P0 thread
 unresolved; P1/P2 are advisory, adjudicated by you, and never block. Clearing a
 P0 has two honest verbs: fix it (the thread goes outdated) or resolve the thread
-once adjudicated. Never substitute another reviewer's trigger. Read
+once adjudicated. **Resolving fires no workflow event** GitHub will accept, so
+the `ralph-attestation` status does not recompute on its own — post any PR
+comment after resolving and it does. Never substitute another reviewer's trigger. Read
 rate-limiting from the reviewer's check *description*, never its state. Thread
 replies are evidence-only — commit link, line link, test output link; anything
 argumentative is a rework signal, not a reply.
