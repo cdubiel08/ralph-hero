@@ -81,7 +81,10 @@
 #
 # Exit codes: 0 terminal verdict, 10 still waiting, 2 usage, 1 gh unreachable.
 # Env: PR_GATE_ATTEST_CHECK (default "ralph-attestation") names the status
-# published by validate-attestation.yml, for repos that renamed it.
+# published by validate-attestation.yml, for repos that renamed it. The name
+# is the ONLY way the attestation status is identified — matching gate 3's
+# exact comparison. An undeclared renamed status is plain CI to this script
+# and to the gate alike.
 #
 # Honest limit: the attested-at-this-head check reads `gh pr view --json
 # comments`, so on a PR with more comments than that window returns, the
@@ -193,7 +196,17 @@ ATTEST_MARKER='<!-- ralph-attestation:v1 -->'
 # quoted heredoc: the program contains single quotes, which cannot appear
 # inside a single-quoted shell string.
 read -r -d '' CLASSIFY_JQ <<'JQ' || true
-def is_attest: .name == $attest or ((.description // "") | test("attest-pr\\.sh"));
+# The attestation status is identified by NAME ONLY, which is how gate 3
+# identifies it (an exact `ralph-attestation` comparison, merge-pr.sh:287-295).
+# There used to be a description fallback matching /attest-pr\.sh/ as a
+# convenience for repos that renamed the status. It is gone, because it made
+# this script disagree with gate 3 about which checks are CI: a failed check
+# whose description merely MENTIONS attest-pr.sh left the CI bucket here while
+# gate 3 still blocked on it, and under an attestation waiver it then vanished
+# from the ladder entirely and reached GATE-READY (codex P2, PR #1764).
+# Repos that rename the status set PR_GATE_ATTEST_CHECK — a declared name,
+# not an inferred one.
+def is_attest: .name == $attest;
 # Login normalization, identical to gate 5: GitHub spells the same identity
 # "codex[bot]" via REST and "app/codex" in some payloads.
 def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
@@ -214,7 +227,6 @@ def fenced_json:
 
 ($checks // [])                                        as $all
 | ($all | map(select(is_attest)))                       as $att
-| ($all | map(select(is_attest | not)))                 as $rest
 # The attestation status is separated from CI so its PENDING state can be
 # classified as "your turn" rather than "still running". Its FAILURES belong
 # with everything else that is red: a malformed attestation JSON or a
@@ -222,9 +234,19 @@ def fenced_json:
 # through $rest would have made it neither failed nor pending — invisible,
 # and an approved PR would reach GATE-READY with a red required status
 # (codex P2, PR #1764).
-| ($rest | map(select(.bucket == "fail" or .bucket == "cancel"))) as $bad
+# Gate 3 excludes only the EXACT `ralph-attestation` name from its red and
+# waiting lists. `is_attest` is deliberately broader (it also matches the
+# attest-pr.sh description, which is how a RENAMED status is still recognized
+# as the attestation) — but using the broad match here removed a failed check
+# from the CI bucket that gate 3 still blocks on, and if attestation was
+# waived $att_bad ignored it too, so it vanished entirely and reached
+# GATE-READY (codex P2, PR #1764). The narrow rule belongs to the CI buckets;
+# the broad one stays where it earns its keep, identifying the status to
+# WAIT on.
+| ($all | map(select(.name != $attest)))                as $ci
+| ($ci   | map(select(.bucket == "fail" or .bucket == "cancel"))) as $bad
 | ($att  | map(select(.bucket == "fail" or .bucket == "cancel"))) as $att_bad
-| ($rest | map(select(.bucket == "pending")))           as $running
+| ($ci   | map(select(.bucket == "pending")))           as $running
 | ($att  | map(select(.bucket == "pending")))           as $att_pending
 # A rate-limited reviewer check PASSES but reviews nothing — the one case
 # where an all-green board still needs a human nudge to make progress. Only
@@ -559,8 +581,15 @@ snapshot() {
   # frequently the newest comment on a long PR, and an unpaginated read would
   # silently report "no clean result" on exactly the PRs that have one. Only
   # comment mode reads them, so a review-mode repo pays nothing.
+  # Fetched in BOTH modes whenever external review is required. Gate 5 always
+  # requests comments AND reviews and holds evidence_ok=false if either fails,
+  # review mode included — so skipping this request in review mode meant a
+  # comments-endpoint outage produced GATE-READY here while the recommended
+  # merge returned pending (codex P2, PR #1764). Comment mode is the only
+  # consumer of the payload; review mode consumes the FAILURE, which is
+  # exactly the evidence that was being discarded.
   comments='[]'
-  if [ "$POLICY_MODE" = "comment" ] && [ "$POLICY_EXTERNAL" = "true" ]; then
+  if [ "$POLICY_EXTERNAL" = "true" ]; then
     comments=$(gh api "repos/{owner}/{repo}/issues/$PR/comments" --paginate 2>/dev/null \
       | jq -s 'add // []' 2>/dev/null) || { comments='[]'; fetch_ok=false; }
     comments=$(json_array_or_empty "$comments")

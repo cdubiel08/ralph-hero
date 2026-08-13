@@ -105,6 +105,10 @@ cat >"$POLICY_COMMENT" <<EOF
     "clean_comment_marker": "Codex Review: Didn't find any major issues." },
   "exempt_authors": ["dependabot[bot]", "app/dependabot"] }
 EOF
+POLICY_NOATT="$TMP_ROOT/policy-no-attestation.json"
+jq '.attestation.required = false' "$POLICY_REVIEW" >"$POLICY_NOATT"
+POLICY_OFF="$TMP_ROOT/policy-ext-off.json"
+jq '.external_review.required = false' "$POLICY_REVIEW" >"$POLICY_OFF"
 POLICY_HALF="$TMP_ROOT/policy-half.json"
 jq '.external_review |= del(.clean_comment_marker)' "$POLICY_COMMENT" >"$POLICY_HALF"
 POLICY_BROKEN="$TMP_ROOT/policy-broken.json"
@@ -337,12 +341,36 @@ for state in MERGED CLOSED; do
 done
 
 echo "=== attestation-check identification ==="
-# A repo that renamed the status: identified by its description instead.
+# By NAME ONLY, matching gate 3's exact `ralph-attestation` comparison. A
+# renamed status is plain CI to both this script and the gate until the repo
+# DECLARES the new name via PR_GATE_ATTEST_CHECK. The description fallback
+# that used to cover this was removed: it made a failed check whose
+# description merely mentions attest-pr.sh leave the CI bucket here while
+# gate 3 still blocked on it (codex P2, PR #1764).
 D="$TMP_ROOT/renamed"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" \
   --argjson a "$(check my-custom-gate pending 'awaiting attestation (scripts/attest-pr.sh)')" '$g + [$a]')" \
   "$APPROVED_PR" "$APPROVAL"
-expect "recognised via its attest-pr.sh description" "$D" "GATE-YOURS attestation" 0
+expect "an undeclared renamed status is CI, exactly as gate 3 sees it" "$D" "GATE-WAIT ci" 10
+
+# The failure this protects: a FAILED check merely mentioning attest-pr.sh in
+# its description, under a policy that waives attestation. It used to leave the
+# CI bucket via the description match and then be ignored by $att_bad because
+# attestation was waived — vanishing from the ladder entirely and reaching
+# GATE-READY, while gate 3 still blocks on it.
+POLICY="$POLICY_NOATT"
+D="$TMP_ROOT/desc-mentions-attest-fail"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" \
+  --argjson a "$(check some-linter fail 'compare against scripts/attest-pr.sh output')" '$g + [$a]')" \
+  "$APPROVED_PR" "$APPROVAL"
+expect "a failed check that merely mentions attest-pr.sh still fails CI" "$D" "GATE-FAIL ci" 0
+run "$D"
+if [[ "$LAST_OUT" == *"some-linter"* ]]; then
+  pass "names the failed check rather than swallowing it as an attestation"
+else
+  fail "description-match leak (out=${LAST_OUT:0:150})"
+fi
+POLICY="$POLICY_REVIEW"
 
 D="$TMP_ROOT/env-override"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$(check other-gate pending)" '$g + [$a]')" \
@@ -677,8 +705,6 @@ D="$TMP_ROOT/no-policy-no-reviews"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
   "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$NO_REVIEWS"
 expect "no policy file + zero reviews is READY, not a wait" "$D" "GATE-READY" 0
-POLICY_OFF="$TMP_ROOT/policy-ext-off.json"
-jq '.external_review.required = false' "$POLICY_REVIEW" >"$POLICY_OFF"
 POLICY="$POLICY_OFF"
 expect "external_review.required=false waives the review wait" "$D" "GATE-READY" 0
 POLICY="$POLICY_REVIEW"
@@ -707,8 +733,6 @@ scenario "$D" "$GREEN_CHECKS" \
 expect "attested at this head with no status yet is a wait" "$D" "GATE-WAIT attestation" 10
 
 # A policy that does not require attestation must not acquire the new wait.
-POLICY_NOATT="$TMP_ROOT/policy-no-attestation.json"
-jq '.attestation.required = false' "$POLICY_REVIEW" >"$POLICY_NOATT"
 POLICY="$POLICY_NOATT"
 D="$TMP_ROOT/att-not-required"
 scenario "$D" "$GREEN_CHECKS" "$APPROVED_PR" "$APPROVAL"
@@ -834,6 +858,21 @@ expect "a failed reviews fetch withholds the verdict" "$D" "GATE-WAIT review" 10
 rm "$D/fail_reviews"; touch "$D/fail_comments"
 expect "a failed comments fetch withholds it too" "$D" "GATE-WAIT review" 10
 rm "$D/fail_comments"
+
+# REVIEW mode must fetch the same evidence gate 5 fetches. Gate 5 requests
+# comments AND reviews in both modes and holds evidence_ok=false if either
+# fails — so a comments-endpoint outage under a formal-review policy is a
+# PENDING merge, and skipping that request here produced GATE-READY against it.
+# Review mode never reads the comments payload; it consumes the FAILURE, which
+# is precisely the evidence that was being discarded (codex P2, PR #1764).
+POLICY="$POLICY_REVIEW"
+D3="$TMP_ROOT/fetch-fail-review-mode"
+scenario "$D3" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+expect "control: review mode with both endpoints healthy is READY" "$D3" "GATE-READY" 0
+touch "$D3/fail_comments"
+expect "review mode withholds when the COMMENTS endpoint fails" "$D3" "GATE-WAIT review" 10
+rm "$D3/fail_comments"
 
 # An exempt author is the other waiver: merge-pr.sh skips gate 5 WITHOUT
 # fetching this evidence at all, so a failed fetch is not a reason to make a
