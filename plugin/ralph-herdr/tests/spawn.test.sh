@@ -124,6 +124,127 @@ case "$RALPH_HERDR_SPAWNED_REF" in
     not_ok "dry-run: RALPH_HERDR_SPAWNED_REF exported as name#epoch — got '$RALPH_HERDR_SPAWNED_REF'" ;;
 esac
 
+# ── ralph_worktree_source_dir: the parent workspace (GH-1832) ────────────────
+# herdr refuses `worktree create`/`open` when --cwd is a LINKED worktree, and
+# $REPO defaults to $PWD — which is always a linked worktree when an agent
+# spawns an agent, because that is where /ralph:work runs. A real git fixture
+# (not a stub) because the whole function is one git invocation and the trap it
+# avoids is a git output detail.
+GITREPO="$TMP/gitrepo"
+mkdir -p "$GITREPO"
+(
+  cd "$GITREPO" || exit 1
+  git init -q -b main .
+  git config user.email t@example.com
+  git config user.name t
+  git commit -q --allow-empty -m init
+  git worktree add -q "$TMP/linked" -b feature/GH-1 >/dev/null 2>&1
+) >/dev/null 2>&1
+
+# Resolved paths are compared through `cd -P` because macOS hands out
+# /var/folders TMPDIRs that are symlinks to /private/var — git reports the
+# resolved form, the fixture path carries the symlink, and a raw string compare
+# would fail on a function that is behaving correctly.
+realp() { (cd -P "$1" 2>/dev/null && pwd -P); }
+
+if [ -d "$TMP/linked" ]; then
+  is "source dir: from a LINKED worktree, resolves to the main checkout" \
+    "$(realp "$GITREPO")" "$(realp "$(ralph_worktree_source_dir "$TMP/linked")")"
+  is "source dir: from the main checkout, resolves to itself" \
+    "$(realp "$GITREPO")" "$(realp "$(ralph_worktree_source_dir "$GITREPO")")"
+  # The trap this function exists to avoid: `dirname $(git rev-parse
+  # --git-common-dir)` returns a bare "." from the main checkout, because
+  # --git-common-dir answers relative there. An absolute path is the contract.
+  case "$(ralph_worktree_source_dir "$GITREPO")" in
+    /*) ok "source dir: the result is absolute, never a relative '.'" ;;
+    *)  not_ok "source dir: the result is absolute — got '$(ralph_worktree_source_dir "$GITREPO")'" ;;
+  esac
+else
+  not_ok "source dir: git worktree fixture could not be built"
+fi
+
+# A non-repo has no parent workspace to find. Returning the input unchanged
+# lets herdr issue its own refusal, which beats a path this function invented.
+mkdir -p "$TMP/notgit"
+is "source dir: a non-repo falls back to the directory itself" \
+  "$TMP/notgit" "$(ralph_worktree_source_dir "$TMP/notgit")"
+
+# The dry-run plan must print the cwd the live path would use. A plan naming
+# $REPO while the spawn sends the parent workspace is a plan you cannot debug
+# from — and the misleading plan is half of what made GH-1832 expensive.
+if [ -d "$TMP/linked" ]; then
+  _saved_repo="$REPO"
+  REPO="$TMP/linked"
+  plan=$(RALPH_HERDR_DRY_RUN=true spawn_work_session 123 "$QUEUE" 2>&1)
+  REPO="$_saved_repo"
+  create_line=$(printf '%s\n' "$plan" | grep -- 'worktree create' | head -1)
+  case "$create_line" in
+    *"--cwd $(realp "$GITREPO") "*|*"--cwd $GITREPO "*)
+      ok "dry-run plan: worktree create --cwd is the parent workspace" ;;
+    *)
+      not_ok "dry-run plan: worktree create --cwd is the parent workspace — got '$create_line'" ;;
+  esac
+  case "$create_line" in
+    *"$TMP/linked"*) not_ok "dry-run plan: the linked worktree must not appear as --cwd — got '$create_line'" ;;
+    *)               ok "dry-run plan: the linked worktree is not offered as --cwd" ;;
+  esac
+fi
+
+# ── the create-failure line names the code, not a guess (GH-1832) ────────────
+# The old text asserted "existing checkout is the usual cause" without checking.
+# When the real cause was the linked-worktree cwd, that guess sent the reader
+# hunting for a checkout that did not exist. A live (non-dry-run) spawn against
+# a fake that refuses BOTH calls, so the terminal message is the one under test.
+ORIGIN="$TMP/origin.git"
+SPAWNREPO="$TMP/spawnrepo"
+(
+  git init -q --bare "$ORIGIN"
+  git clone -q "$ORIGIN" "$SPAWNREPO" 2>/dev/null
+  cd "$SPAWNREPO" || exit 1
+  git config user.email t@example.com
+  git config user.name t
+  git commit -q --allow-empty -m init
+  git branch -M main
+  git push -q origin main
+) >/dev/null 2>&1
+
+if git -C "$SPAWNREPO" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+  printf '{"error":{"code":"linked_worktree_source","message":"New and open worktree actions start from the repo parent workspace."}}\n' \
+    >"$FAKE_HERDR_FIXTURES/worktree-create.json"
+  printf '1\n' >"$FAKE_HERDR_FIXTURES/worktree-create.rc"
+  printf '{"error":{"code":"worktree_branch_missing","message":"no such branch"}}\n' \
+    >"$FAKE_HERDR_FIXTURES/worktree-open.json"
+  printf '1\n' >"$FAKE_HERDR_FIXTURES/worktree-open.rc"
+
+  _saved_repo="$REPO"
+  REPO="$SPAWNREPO"
+  spawn_out=$(spawn_work_session 777 '' 2>&1)
+  spawn_rc=$?
+  REPO="$_saved_repo"
+  rm -f "$FAKE_HERDR_FIXTURES/worktree-create.json" "$FAKE_HERDR_FIXTURES/worktree-create.rc" \
+    "$FAKE_HERDR_FIXTURES/worktree-open.json" "$FAKE_HERDR_FIXTURES/worktree-open.rc"
+
+  is "spawn failure: a refused worktree create fails the spawn" "1" "$spawn_rc"
+  case "$spawn_out" in
+    *linked_worktree_source*) ok "spawn failure: the create refusal names the server's code" ;;
+    *) not_ok "spawn failure: the create refusal names the server's code — got '$spawn_out'" ;;
+  esac
+  case "$spawn_out" in
+    *worktree_branch_missing*) ok "spawn failure: the open refusal names ITS code too" ;;
+    *) not_ok "spawn failure: the open refusal names ITS code too — got '$spawn_out'" ;;
+  esac
+  case "$spawn_out" in
+    *"existing checkout"*) not_ok "spawn failure: must not assert a cause it did not check — got '$spawn_out'" ;;
+    *) ok "spawn failure: no unchecked cause is asserted" ;;
+  esac
+  case "$spawn_out" in
+    *unreachable*) not_ok "spawn failure: a refusal is not a reachability claim — got '$spawn_out'" ;;
+    *) ok "spawn failure: a refusal is not reported as an unreachable server" ;;
+  esac
+else
+  not_ok "spawn failure: origin/main fixture could not be built"
+fi
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

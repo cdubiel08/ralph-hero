@@ -324,6 +324,39 @@ ralph_depth_guard() {
   echo $((d + 1))
 }
 
+# ralph_worktree_source_dir [DIR] — the checkout herdr will accept as the
+# source for a `worktree create`/`worktree open`, resolved from DIR (default
+# $REPO).
+#
+# herdr refuses both actions when --cwd is a LINKED worktree:
+#   {"error":{"code":"linked_worktree_source","message":"New and open worktree
+#    actions start from the repo parent workspace."}}
+# and $REPO defaults to $PWD — which, for an agent spawning an agent, is
+# always a linked worktree, because that is where /ralph:work runs. So the
+# spawn path was structurally broken from the only place it actually runs
+# (GH-1832).
+#
+# Resolved from `git worktree list --porcelain`, whose FIRST entry is the main
+# worktree, and NOT from `dirname $(git rev-parse --git-common-dir)`: that
+# returns a cwd-RELATIVE `.git` when run from the main checkout, so the dirname
+# is a bare `.` — a bogus --cwd on the common path, and a silent one. (The same
+# trap is documented at scripts/merge-pr.sh:492.)
+#
+# Falls back to DIR unchanged when git cannot answer — a non-repo, or a git too
+# old for the porcelain form. That is the honest degradation: herdr's own
+# refusal is a better error than a guess this function invented, and DIR is
+# already correct everywhere except a linked worktree.
+ralph_worktree_source_dir() {
+  local dir="${1:-$REPO}" main
+  main=$(git -C "$dir" worktree list --porcelain 2>/dev/null |
+    awk '/^worktree /{print substr($0, 10); exit}') || main=""
+  if [ -n "$main" ] && [ -d "$main" ]; then
+    printf '%s' "$main"
+  else
+    printf '%s' "$dir"
+  fi
+}
+
 # spawn_work_session N [QUEUE_JSON] — spawn one /ralph:work session for issue N.
 #
 # The single sanctioned spawn path (extracted from work-next.sh; work-fleet.sh
@@ -365,7 +398,7 @@ ralph_depth_guard() {
 # ANY herdr mutation.
 spawn_work_session() {
   local n="$1" queue_json="${2:-}" branch label parent title agent live pane out
-  local ref ts record ledger
+  local ref ts record ledger src
   RALPH_HERDR_SPAWNED_AGENT=""
   RALPH_HERDR_SPAWNED_REF=""
   # Pane id + worktree checkout path, read back from the live responses
@@ -424,12 +457,17 @@ spawn_work_session() {
     return 2
   fi
 
+  # The worktree source, resolved before the dry-run branch so the plan prints
+  # the cwd the live path would actually use — a plan that names $REPO while
+  # the spawn sends the parent workspace is a plan you cannot debug from.
+  src=$(ralph_worktree_source_dir)
+
   if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
     echo "DRY RUN — would spawn GH-$n:"
     echo "  branch:  $branch   agent: $agent${label:+   label: $label}"
     echo "  git -C $REPO fetch -q origin main"
-    echo "  $HERDR worktree create --cwd $REPO --branch $branch --base origin/main --no-focus${label:+ --label \"$label\"}"
-    echo "    (fallback: $HERDR worktree open --cwd $REPO --branch $branch --no-focus${label:+ --label \"$label\"})"
+    echo "  $HERDR worktree create --cwd $src --branch $branch --base origin/main --no-focus${label:+ --label \"$label\"}"
+    echo "    (fallback: $HERDR worktree open --cwd $src --branch $branch --no-focus${label:+ --label \"$label\"})"
     echo "  $HERDR agent start $agent --kind claude --pane <captured>"
     echo "  $HERDR agent prompt $agent \"/ralph:work $n\""
     # The exact spawn record the live path would append (pane_id omitted —
@@ -471,16 +509,26 @@ spawn_work_session() {
   # below be plain field accesses instead of defensive guesses — a response
   # that reached here cannot be an error envelope, a reply to another request,
   # or a success missing the pane we are about to start an agent in.
-  set -- --cwd "$REPO" --branch "$branch" --base origin/main --no-focus
+  local create_rc=0 open_rc=0 create_code open_code
+  set -- --cwd "$src" --branch "$branch" --base origin/main --no-focus
   [ -n "$label" ] && set -- "$@" --label "$label"
-  if ! out=$(ralph_herdr_call worktree_created worktree create "$@"); then
-    echo "worktree create refused (existing checkout is the usual cause) — opening instead"
-    set -- --cwd "$REPO" --branch "$branch" --no-focus
+  out=$(ralph_herdr_call worktree_created worktree create "$@") || create_rc=$?
+  if [ "$create_rc" -ne 0 ]; then
+    # Report the refusal the server actually gave. The old line here asserted
+    # "existing checkout is the usual cause" without checking — and when the
+    # real cause was a linked-worktree cwd, that guess sent the reader looking
+    # for a checkout that did not exist. A cause is named only when the code
+    # names it; otherwise this says it does not know.
+    create_code=$(ralph_herdr_err_code "$out")
+    echo "worktree create failed for $branch (${create_code:-no error code — see the diagnostic above}) — trying worktree open"
+    set -- --cwd "$src" --branch "$branch" --no-focus
     [ -n "$label" ] && set -- "$@" --label "$label"
-    out=$(ralph_herdr_call worktree_opened worktree open "$@") || {
-      echo "neither worktree create nor worktree open succeeded for $branch" >&2
+    out=$(ralph_herdr_call worktree_opened worktree open "$@") || open_rc=$?
+    if [ "$open_rc" -ne 0 ]; then
+      open_code=$(ralph_herdr_err_code "$out")
+      echo "neither worktree create (${create_code:-no code}) nor worktree open (${open_code:-no code}) succeeded for $branch from $src" >&2
       return 1
-    }
+    fi
   fi
 
   # IDs are opaque server-local tokens — captured from the response, never
