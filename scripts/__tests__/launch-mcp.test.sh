@@ -60,6 +60,18 @@ case "${1:-}" in
       *) exit 1 ;;
     esac
     ;;
+  -e)
+    # Emulates deps_complete(): every key under "dependencies" in package.json
+    # must exist under node_modules. Hand-listing packages here would defeat
+    # the very finding this covers, so it is derived from the file.
+    miss=0
+    for d in $(sed -n '/"dependencies"/,/}/p' package.json 2>/dev/null \
+      | grep -oE '"[^"]+"[[:space:]]*:' | sed 's/"//g; s/[[:space:]]*:$//' \
+      | grep -v '^dependencies$'); do
+      [ -d "node_modules/$d" ] || miss=1
+    done
+    [ "$miss" -eq 0 ] || exit 1
+    ;;
   *) exit 0 ;;   # stands in for `exec node dist/index.js`
 esac
 STUB
@@ -112,13 +124,27 @@ sanitized_bin() {
 fake_root() {
   local root="$TMP_ROOT/$1"
   mkdir -p "$root/scripts" "$root/dist" \
-    "$root/node_modules/@huggingface" \
+    "$root/node_modules/@huggingface/transformers" \
     "$root/node_modules/@modelcontextprotocol/sdk" \
-    "$root/node_modules/better-sqlite3"
+    "$root/node_modules/better-sqlite3" \
+    "$root/node_modules/zod"
   cp "$SRC" "$root/scripts/launch-mcp.sh"
   chmod +x "$root/scripts/launch-mcp.sh"
   echo 'console.log("server")' >"$root/dist/index.js"
-  echo '{"name":"ralph-hero-knowledge-index"}' >"$root/package.json"
+  # Dependencies are declared, because the completeness check reads them from
+  # here rather than from a hand-maintained list in the launcher.
+  cat >"$root/package.json" <<'PKG'
+{
+  "name": "ralph-hero-knowledge-index",
+  "dependencies": {
+    "@huggingface/transformers": "1",
+    "@modelcontextprotocol/sdk": "1",
+    "better-sqlite3": "1",
+    "zod": "1"
+  },
+  "devDependencies": { "typescript": "5" }
+}
+PKG
   echo '{"lockfileVersion":3}' >"$root/package-lock.json"
   echo "$root"
 }
@@ -249,12 +275,38 @@ echo "=== incomplete tree still re-bootstraps ==="
 
 root=$(fake_root incomplete)
 log=$(run_launcher "$root")                       # warm it
-rm -rf "$root/node_modules/better-sqlite3"        # a dep bootstrap_needed checks
+rm -rf "$root/node_modules/better-sqlite3"
 log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "missing dependency re-bootstraps (skip-work never serves a broken tree)"
 else
   fail "missing better-sqlite3 did not re-bootstrap" "$(cat "$log")"
+fi
+
+# The finding: the check used to name a few packages by hand, and `zod` — which
+# src/index.ts imports immediately — was not among them. A tree missing it
+# passed as complete and the final exec failed instead of repairing itself.
+root=$(fake_root missingzod)
+log=$(run_launcher "$root")                       # warm it
+rm -rf "$root/node_modules/zod"
+log=$(run_launcher "$root")
+if grep -q 'npm ci' "$log"; then
+  pass "a dependency outside any hand-written list still re-bootstraps (zod)"
+else
+  fail "missing zod passed as a complete tree — exec would fail instead of repairing" \
+    "$(cat "$log")"
+fi
+
+# devDependencies are pruned by design; demanding them would rebuild forever.
+root=$(fake_root prunedev)
+log=$(run_launcher "$root")                       # warm it
+rm -rf "$root/node_modules/typescript"
+log=$(run_launcher "$root")
+if grep -q 'npm ci' "$log"; then
+  fail "an absent devDependency forced a rebuild — the prune step guarantees it is absent" \
+    "$(cat "$log")"
+else
+  pass "a pruned devDependency does not trigger a rebuild"
 fi
 
 root=$(fake_root nodist)
@@ -593,6 +645,99 @@ if grep -qE '^npm prune .*--omit=dev' "$log"; then
 else
   fail "dev deps are installed but never pruned — that is the disk cost back" \
     "$(grep '^npm ' "$log")"
+fi
+
+echo "=== a rebuild never replaces a tree another runtime may be serving ==="
+
+# One plugin cache can be reached by two Node identities — arm64 native beside
+# x64 under Rosetta, or two machines on a shared home. The identity whose
+# fingerprint MATCHES skips the lock entirely and execs the server; if the other
+# identity then rebuilds, `npm ci` swaps node_modules underneath a live process
+# and it dies on its next lazy require (codex P2). Full isolation is per-identity
+# trees (#1844); what is enforced here is the other remedy — do not replace a
+# tree something is still using.
+if ! { [ -d /proc ] || command -v lsof >/dev/null 2>&1; }; then
+  echo "  SKIP: no /proc and no lsof, so in-use detection cannot be exercised"
+else
+  root=$(fake_root identity_busy)
+  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")   # build as A
+
+  # A live process sitting in the tree, exactly like a server still serving.
+  ( cd "$root" && exec sleep 60 ) &
+  busy_pid=$!
+  sleep 0.3
+
+  RC=0
+  log="$root/calls.log"; : >"$log"
+  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+    FAKE_NODE_ID="darwin-x64-abi127" \
+    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+  kill "$busy_pid" 2>/dev/null || true
+
+  if grep -q 'npm ci' "$log"; then
+    fail "a second runtime rebuilt a tree with a live process in it — node_modules swapped under a running server" \
+      "$(cat "$log")"
+  else
+    pass "a cross-identity rebuild is refused while the tree is in use"
+  fi
+  if [ "$RC" -ne 0 ]; then
+    pass "the refusal exits non-zero rather than serving a mismatched tree"
+  else
+    fail "the refusal exited 0 — the caller would think the server started"
+  fi
+  if grep -q 'close those sessions' "$root/stderr.log"; then
+    pass "the refusal tells the operator how to proceed"
+  else
+    fail "the refusal gives no remedy" "$(cat "$root/stderr.log")"
+  fi
+  # The tree must be left intact, not half-rebuilt.
+  if [ -f "$root/.bootstrap-complete" ] && [ -d "$root/node_modules/zod" ]; then
+    pass "the refused rebuild left the existing tree untouched"
+  else
+    fail "the refused rebuild damaged the tree it declined to replace"
+  fi
+fi
+
+# ...but an IDLE tree must still rebuild, or a permanent arch switch could
+# never recover on its own. (The arch-swap cases above cover this: they change
+# identity with nothing running and require `npm ci`.)
+
+echo "=== waiters leave as soon as the tree is complete ==="
+
+# Losers used to keep polling after the winner finished, each waking on its own
+# 2s tick to take a lock it no longer needed — roughly one polling interval per
+# waiter on a cold start (codex P2). They must re-check and leave instead.
+root=$(fake_root fastwait)
+rm -f "$root/dist/index.js"
+FW_BIN="$TMP_ROOT/fastwait-bin"
+sanitized_bin "$FW_BIN" shasum
+cat >"$FW_BIN/npm" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "ci "*|"ci") sleep 1 ;;
+  "run build") echo 'console.log("server")' >dist/index.js ;;
+esac
+exit 0
+STUB
+chmod +x "$FW_BIN/npm"
+
+fw_start=$(date +%s)
+for _ in $(seq 1 15); do
+  CALL_LOG="$root/fw.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$FW_BIN" \
+    RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=120 \
+    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>>"$root/fw.stderr" &
+done
+wait
+fw_elapsed=$(( $(date +%s) - fw_start ))
+
+# Serialized, 15 waiters would cost ~15 polling intervals (~30s) on top of the
+# install. Leaving early keeps it near the install itself. The bound is loose
+# so a slow runner does not make this flaky, while still failing the old shape.
+if [ "$fw_elapsed" -le 20 ]; then
+  pass "15 waiters cleared a cold start in ${fw_elapsed}s (no per-waiter polling tax)"
+else
+  fail "15 waiters took ${fw_elapsed}s — waiters are still serializing after the bootstrap" \
+    "$(sort "$root/fw.stderr" 2>/dev/null | uniq -c | head -5)"
 fi
 
 echo "=== concurrent launchers on a cold tree: exactly one bootstrap ==="

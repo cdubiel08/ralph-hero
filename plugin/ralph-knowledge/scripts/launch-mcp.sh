@@ -25,6 +25,10 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$PLUGIN_ROOT"
 
 MARKER="$PLUGIN_ROOT/.bootstrap-complete"
+# Which Node identity built the tree. Kept beside the marker (which is an
+# opaque hash) so a launcher can tell "needs rebuilding" from "belongs to a
+# different runtime that may still be serving from it".
+IDENTITY_FILE="$PLUGIN_ROOT/.bootstrap-identity"
 LOCK="$PLUGIN_ROOT/.bootstrap.lock"
 LOCK_WAIT_SEC="${RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC:-900}"
 # Identity for lock ownership. A PID only means something on the host that
@@ -96,23 +100,96 @@ node_compat_boundary() {
   echo "node-unknown-$$-${RANDOM:-0}"
 }
 
-# True (0) when bootstrap must run. Every dependency the lockfile installs and
-# that startup actually needs is checked, not just one scope.
+# True (0) when EVERY runtime dependency declared in package.json is present.
+#
+# Hand-listing a few packages was not enough (codex P2, PR #1755): `zod` is
+# imported at the top of src/index.ts and was not among them, so a tree missing
+# it — partial cache cleanup, a half-finished delete — passed as complete and
+# the final `exec` failed instead of repairing itself. That contradicts the
+# recovery invariant the check exists to uphold.
+#
+# The list therefore comes from package.json itself, so a dependency added
+# later is covered without anyone remembering to update this. Only
+# `dependencies` are checked: devDependencies are pruned after the build by
+# design, and demanding them would force a rebuild on every launch.
+#
+# If node cannot answer, fail closed and rebuild — a node that cannot run a
+# one-liner cannot run the server either.
+deps_complete() {
+  node -e '
+    const fs = require("fs"), path = require("path");
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+    const missing = Object.keys(pkg.dependencies || {})
+      .filter((d) => !fs.existsSync(path.join("node_modules", d)));
+    if (missing.length) { console.error(missing.join(" ")); process.exit(1); }
+  ' 2>/dev/null
+}
+
+# True (0) when bootstrap must run.
 bootstrap_needed() {
   [ -f dist/index.js ] || return 0
-  [ -d node_modules/@huggingface ] || return 0
-  [ -d node_modules/@modelcontextprotocol/sdk ] || return 0
-  [ -d node_modules/better-sqlite3 ] || return 0
+  deps_complete || return 0
   [ -f "$MARKER" ] || return 0
   [ "$(cat "$MARKER" 2>/dev/null)" = "$(fingerprint)" ] || return 0
   return 1
+}
+
+# True (0) when some running process is working inside directory $1.
+#
+# Used to refuse a rebuild that would pull the tree out from under a server
+# that is still serving from it. Best-effort by nature: /proc on Linux, lsof on
+# macOS/BSD. When NEITHER is available the answer is unknown, and unknown must
+# not read as "nobody is using it" — callers treat a non-zero return from an
+# unprobeable host as "cannot tell" via dir_use_probe_available.
+dir_use_probe_available() {
+  [ -d /proc ] || command -v lsof >/dev/null 2>&1
+}
+
+dir_in_use() {
+  local dir p cwd
+  # Compare PHYSICAL paths. macOS symlinks /tmp and /var into /private, and
+  # both /proc and lsof report the resolved path — so a literal string compare
+  # against the caller's path silently never matches, and every directory would
+  # look idle. That failure is invisible: the guard would simply go back to
+  # calling in-use directories safe to delete.
+  dir=$(cd "$1" 2>/dev/null && pwd -P) || dir="${1%/}"
+  dir="${dir%/}"
+  # The probe must not see ITSELF. The launcher cd's to the plugin root on line
+  # one, so this shell's cwd is $dir — and every helper it spawns (lsof, awk,
+  # readlink) inherits that cwd and shows up as another process "using" the
+  # directory. Both are excluded: the shell by PID, and the helpers by running
+  # the whole probe from / so they are not in $dir at all. Without this every
+  # tree looks permanently in use and no cross-identity rebuild could proceed.
+  (
+    cd / 2>/dev/null || exit 1
+    if [ -d /proc ]; then
+      for p in /proc/[0-9]*; do
+        [ "${p#/proc/}" = "$$" ] && continue
+        cwd=$(readlink "$p/cwd" 2>/dev/null) || continue
+        case "$cwd" in "$dir"|"$dir"/*) exit 0 ;; esac
+      done
+      exit 1
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+      lsof -d cwd -Fpn 2>/dev/null | awk -v self="$$" -v d="$dir" '
+        /^p/ { pid = substr($0, 2); next }
+        /^n/ {
+          path = substr($0, 2)
+          if (pid != self && (path == d || index(path, d "/") == 1)) { found = 1; exit }
+        }
+        END { exit(found ? 0 : 1) }
+      ' && exit 0
+      exit 1
+    fi
+    exit 1
+  )
 }
 
 run_bootstrap() {
   echo "[ralph-knowledge] first run: installing and building (one-time, ~1-2 min)..."
   # Drop the marker first: if we are interrupted below, the next launch must
   # see an incomplete tree rather than a stale "complete" claim.
-  rm -f "$MARKER"
+  rm -f "$MARKER" "$IDENTITY_FILE"
   # --include=dev is NOT redundant (codex P2, PR #1755). `tsc` is declared only
   # in devDependencies and the very next line runs it. If the environment says
   # to omit dev — Claude Code inheriting NODE_ENV=production, or a user's own
@@ -132,6 +209,7 @@ run_bootstrap() {
     find node_modules/onnxruntime-web -name '*.wasm' -delete
   fi
   fingerprint >"$MARKER"
+  node_compat_boundary >"$IDENTITY_FILE" 2>/dev/null || true
   echo "[ralph-knowledge] bootstrap complete."
 }
 
@@ -178,7 +256,20 @@ lock_write_owner() {
 
 if bootstrap_needed; then
   waited=0
-  until mkdir "$LOCK" 2>/dev/null; do
+  acquired=false
+  while :; do
+    if mkdir "$LOCK" 2>/dev/null; then
+      acquired=true
+      break
+    fi
+
+    # The holder may have finished while we were queued. Once the tree is
+    # complete we need nothing from the lock, so leave immediately rather than
+    # waiting a turn (codex P2, PR #1755) — otherwise a cold start with N
+    # sessions costs roughly one polling interval PER session, each waking,
+    # taking a lock it does not need, and dropping it again.
+    bootstrap_needed || break
+
     if [ "$waited" -ge "$LOCK_WAIT_SEC" ]; then
       echo "[ralph-knowledge] timed out after ${LOCK_WAIT_SEC}s waiting for another process to bootstrap ($LOCK)" >&2
       echo "[ralph-knowledge] held by: $(cat "$LOCK/owner" 2>/dev/null || echo 'unknown (no owner recorded)')" >&2
@@ -189,35 +280,66 @@ if bootstrap_needed; then
     sleep 2
     waited=$((waited + 2))
   done
-  # Release the lock however we leave — but a SIGNAL handler must also STOP
-  # (codex P2, PR #1755). Bash runs a TERM/INT trap and then RESUMES the
-  # script, so a single combined handler would drop the lock and carry on
-  # through the rest of the bootstrap: another launcher could then take the
-  # lock and run a second destructive `npm ci` against the same tree,
-  # concurrently, which is the exact race this lock exists to prevent. Claude
-  # Code killing a slow first run makes that an ordinary event, not a corner
-  # case. So signals clean up and exit; only normal EXIT merely cleans up.
-  # Signal handlers disarm EXIT FIRST (codex P2, PR #1755). Otherwise the
-  # handler removes the lock and then `exit` runs the still-armed EXIT trap,
-  # removing the same pathname a second time — and a waiter that acquired the
-  # lock between the two removals has its brand-new lock deleted, letting
-  # another waiter enter the destructive bootstrap concurrently.
-  trap 'rm -rf "$LOCK"' EXIT
-  trap 'trap - EXIT; rm -rf "$LOCK"; exit 130' INT
-  trap 'trap - EXIT; rm -rf "$LOCK"; exit 143' TERM
 
-  # Recorded only so a timed-out waiter can name who holds the lock. Nothing
-  # reads it to make a decision — see the note on reclamation above.
-  lock_write_owner
+  if [ "$acquired" = true ]; then
+    # Release the lock however we leave — but a SIGNAL handler must also STOP.
+    # Bash runs a TERM/INT trap and then RESUMES the script, so a cleanup-only
+    # handler would drop the lock and carry on bootstrapping, letting another
+    # launcher run a second destructive `npm ci` on the same tree. Handlers
+    # also disarm EXIT first: otherwise `exit` runs the still-armed EXIT trap
+    # and removes the pathname a second time, deleting whatever waiter
+    # acquired it in between. Both are codex P2s from this PR.
+    trap 'rm -rf "$LOCK"' EXIT
+    trap 'trap - EXIT; rm -rf "$LOCK"; exit 130' INT
+    trap 'trap - EXIT; rm -rf "$LOCK"; exit 143' TERM
 
-  # Re-check under the lock: the process we waited on may have finished the
-  # work, in which case we must not repeat the destructive `npm ci`.
-  if bootstrap_needed; then
-    run_bootstrap >&2
+    # Recorded only so a timed-out waiter can name who holds the lock. Nothing
+    # reads it to make a decision — see the note on reclamation above.
+    lock_write_owner
+
+    # Re-check under the lock: the process we waited on may have finished the
+    # work, in which case we must not repeat the destructive `npm ci`.
+    if bootstrap_needed; then
+      # Refuse to rebuild a tree another RUNTIME may still be serving from
+      # (codex P2, PR #1755). One plugin cache can be reached by two Node
+      # identities — arm64 native beside x64 under Rosetta, or two machines on
+      # a shared home. The identity whose fingerprint matches skips the lock
+      # entirely and execs the server; if the other identity then rebuilds,
+      # `npm ci` replaces node_modules underneath a live process and it dies on
+      # its next lazy require.
+      #
+      # A full fix is per-identity trees, which is a layout change tracked in
+      # #1844. What is enforced here is the other remedy: never replace a tree
+      # that a different identity may still be using. When nothing is running
+      # in the directory the rebuild proceeds, so an ordinary permanent
+      # arch switch still recovers by itself.
+      #
+      # Unknown must not read as "safe": on a host where neither /proc nor
+      # lsof can answer, we cannot prove the tree is idle, so a cross-identity
+      # rebuild is refused there too and the operator is told why.
+      built_identity=$(cat "$IDENTITY_FILE" 2>/dev/null || echo "")
+      this_identity=$(node_compat_boundary 2>/dev/null || echo "")
+      if [ -n "$built_identity" ] && [ -n "$this_identity" ] \
+        && [ "$built_identity" != "$this_identity" ]; then
+        if ! dir_use_probe_available || dir_in_use "$PLUGIN_ROOT"; then
+          echo "[ralph-knowledge] refusing to rebuild: this tree was built for '$built_identity'" >&2
+          echo "[ralph-knowledge] and this session is '$this_identity'. Rebuilding would replace" >&2
+          echo "[ralph-knowledge] node_modules underneath any session still serving from it." >&2
+          if dir_use_probe_available; then
+            echo "[ralph-knowledge] a process is currently running in $PLUGIN_ROOT." >&2
+          else
+            echo "[ralph-knowledge] (this host cannot be probed for running processes)" >&2
+          fi
+          echo "[ralph-knowledge] close those sessions, or remove $PLUGIN_ROOT/node_modules, then relaunch." >&2
+          exit 1
+        fi
+      fi
+      run_bootstrap >&2
+    fi
+
+    trap - EXIT INT TERM
+    rm -rf "$LOCK"
   fi
-
-  trap - EXIT INT TERM
-  rm -rf "$LOCK"
 fi
 
 exec node dist/index.js "$@"
