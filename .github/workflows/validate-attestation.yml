@@ -5,10 +5,10 @@
 #   ralph-apply-keywords — closing-keyword hygiene for apply-kind work
 #                          (GH-1694): no closing keyword may bind an apply
 #                          unit, and an infra-touching PR may not close a ship
-#                          issue with no apply twin. Runs from the BASE commit
-#                          (it holds statuses: write and the checker lives in
-#                          the tree) and refuses to publish if the PR changed
-#                          under it mid-run.
+#                          issue with no apply twin. Runs from the trusted
+#                          DEFAULT branch (it holds statuses: write and the
+#                          checker lives in the tree) and refuses to publish if
+#                          the PR changed under it mid-run.
 #
 # Publishes the `ralph-attestation` commit status on PR head SHAs — the
 # server-side re-validation of the merge attestation that scripts/merge-pr.sh
@@ -16,11 +16,16 @@
 # can merge unattested work regardless of which tools it runs.
 #
 # Triggers:
-#   pull_request (opened/synchronize/reopened) — a fresh push invalidates any
-#     prior attestation (head_sha binding), so the status recomputes: pending
-#     "awaiting attestation" until a matching attestation lands.
-#   issue_comment (created/edited) — attestation comments are posted by
-#     scripts/attest-pr.sh; validate as soon as one appears. NOTE: GitHub runs
+#   pull_request_target (opened/synchronize/reopened) — a fresh push invalidates
+#     any prior attestation (head_sha binding), so the status recomputes:
+#     pending "awaiting attestation" until matching evidence lands. The target
+#     form keeps this status-writing workflow definition on the trusted default
+#     branch.
+#   issue_comment (created/edited/deleted) — attestation comments, head-bound
+#     review requests, and external-review clean-result comments all affect the
+#     verdict. Deletion must recompute too, or removed evidence leaves a stale
+#     green status. Recompute on every PR issue comment so policy markers can
+#     change without duplicating them in this workflow. NOTE: GitHub runs
 #     issue_comment workflows from the DEFAULT branch, so this half only works
 #     once the workflow is on main (bootstrap gap documented in the plan).
 #   pull_request_review (submitted/dismissed) — the external-review check below
@@ -34,13 +39,15 @@
 # Validation logic lives in scripts/validate-attestation.sh (canonical, also
 # locally runnable); this workflow is a thin caller + status publisher.
 #
-# Fork caveat: on fork PRs the token is read-only and the status post fails —
-# acceptable; agent PRs push branches to origin.
+# Fork PRs are safe on the target lane because no fork or PR-head content is
+# checked out or executed; the trusted workflow publishes only commit statuses.
 
 name: validate-attestation
 
 on:
-  pull_request:
+  # zizmor: ignore[dangerous-triggers] Every job checks out only the repository
+  # default branch; no code or action from the PR head or target base executes.
+  pull_request_target:
     # `edited` is here for the apply-keywords job only (see its `if`): editing
     # a PR body is exactly how a closing keyword gets added AFTER CI went
     # green, so a status computed once at `opened` would be stale where it
@@ -49,7 +56,7 @@ on:
     # would just add runs.
     types: [opened, edited, synchronize, reopened]
   issue_comment:
-    types: [created, edited]
+    types: [created, edited, deleted]
   pull_request_review:
     types: [submitted, dismissed]
 
@@ -73,16 +80,23 @@ concurrency:
 
 jobs:
   validate:
-    # issue_comment also fires on plain issues — gate to PR comments carrying
-    # the attestation marker (expression context; body never reaches a shell).
+    # issue_comment also fires on plain issues — gate to PR comments. Every PR
+    # comment is relevant because external clean-result markers are policy-
+    # configured and must not be duplicated here (comment bodies never reach a
+    # shell).
     if: >-
-      (github.event_name == 'pull_request' && github.event.action != 'edited') ||
+      (github.event_name == 'pull_request_target' && github.event.action != 'edited') ||
       github.event_name == 'pull_request_review' ||
-      (github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, 'ralph-attestation:v1'))
+      github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # PR issue comments (the attestation comment, head-bound review
+      # requests, and clean-result comments) come from the Issues API.
+      issues: read
+      # Resolve PR metadata and reviews.
+      pull-requests: read
+      # Publish the head-bound ralph-attestation commit status.
       statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
@@ -90,6 +104,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          # Commit statuses survive PR retargeting, so even an unprotected PR
+          # base is not trusted. Always execute the default-branch policy and
+          # validator; new gate behavior takes effect only after it merges.
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Validate attestation and publish commit status
@@ -104,8 +122,8 @@ jobs:
           head_sha="${rest%%|*}"
           desc="${rest#*|}"
           echo "PR #$PR_NUMBER @ $head_sha → $state: $desc"
-          if [[ "$head_sha" == "unknown" || -z "$head_sha" ]]; then
-            echo "no resolvable head SHA — skipping status post (PR unreadable)"
+          if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "invalid head SHA — skipping status post (PR unreadable)"
             exit 1
           fi
           gh api "repos/${GITHUB_REPOSITORY}/statuses/$head_sha" \
@@ -117,31 +135,31 @@ jobs:
           echo "commit status published: ralph-attestation=$state"
 
   apply-keywords:
-    # Only the pull_request lane: the verdict is a function of the PR's closing
-    # keywords and its diff, neither of which a comment or a review can change.
-    if: github.event_name == 'pull_request'
+    # Only the pull_request_target lane: the verdict is a function of the PR's
+    # closing keywords and diff, neither of which a comment or review can change.
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # Publish the head-bound ralph-apply-keywords commit status.
       statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
-      # The BASE commit, not the pull_request merge commit. This job holds
-      # `statuses: write`, and the checker + the policy that configures it both
-      # live in the tree — checking out the merge commit would let a PR rewrite
-      # its own gate and publish a green status for the result. Same trust
-      # boundary reasoning as pull_request_target hygiene.
+      # The DEFAULT branch, not the PR target base or merge commit. This job holds
+      # `statuses: write`, and the checker + policy both live in the tree.
+      # A commit status survives PR retargeting, so an unprotected target base
+      # cannot safely grade a head that might later be retargeted to main.
       #
       # The cost is a bootstrap gap: a PR that CHANGES apply-keywords.sh is
-      # graded by the version already on the base branch. That is the correct
-      # direction (the old gate is the trusted one), and merge-pr.sh runs the
+      # graded by the version already on the default branch. That is the
+      # correct direction (the old gate is trusted), and merge-pr.sh runs the
       # PR's own copy client-side, so the new behaviour is still exercised
       # before it lands.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Check apply-keyword hygiene and publish commit status
@@ -157,13 +175,13 @@ jobs:
           # — one implementation, two callers, so the server-side backstop
           # cannot drift from the local gate.
           #
-          # Checking out the base commit means the checker is absent on the very
-          # PR that introduces it, and on any PR whose base predates it. That is
-          # not an error: the gate genuinely is not in effect on that base yet.
+          # Checking out the default branch means the checker is absent on the
+          # PR that introduces it. That is not an error: the gate is not in
+          # effect on the trusted branch yet.
           # Reported as success with a description that says exactly why, the
           # same convention apply-keywords.sh itself uses for INERT.
           if [[ ! -f scripts/apply-keywords.sh ]]; then
-            out="APPLY KEYWORDS INERT — checker not present on the base commit (not in effect for this base)"
+            out="APPLY KEYWORDS INERT — checker not present on the default branch (not in effect yet)"
             rc=0
           else
             out=$(bash scripts/apply-keywords.sh "$PR_NUMBER" 2>&1)

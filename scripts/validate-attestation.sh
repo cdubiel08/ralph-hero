@@ -71,6 +71,20 @@ fi
 attestation_required=$(jq -r '.attestation.required // false | tostring' "$POLICY_FILE")
 external_required=$(jq -r '.external_review.required // false | tostring' "$POLICY_FILE")
 external_bot=$(jq -r '.external_review.bot // "chatgpt-codex-connector[bot]"' "$POLICY_FILE")
+external_trigger=$(jq -r '.external_review.trigger // "@codex review"' "$POLICY_FILE")
+external_head_marker=$(jq -r '.external_review.head_marker // ""' "$POLICY_FILE")
+external_clean_marker=$(jq -r '.external_review.clean_comment_marker // ""' "$POLICY_FILE")
+# Evidence mode, DERIVED — mirrors scripts/merge-pr.sh exactly. `review` (a
+# formal APPROVED review) is the default so v1 policies naming a formal-review
+# bot keep validating; `comment` is opted into by naming BOTH markers.
+# The two scripts MUST agree: this one publishes the required commit status,
+# so a divergence would let one say PASS while the other says PENDING.
+external_evidence_mode="review"
+if [[ -n "$external_head_marker" && -n "$external_clean_marker" ]]; then
+  external_evidence_mode="comment"
+elif [[ -n "$external_head_marker" || -n "$external_clean_marker" ]]; then
+  out failure "external_review declares only one of head_marker/clean_comment_marker — comment-evidence mode needs both"
+fi
 
 if [[ "$attestation_required" != "true" ]]; then
   out success "attestation not required by policy"
@@ -125,33 +139,83 @@ fi
 
 # --- external (independent-identity) review --------------------------------
 if [[ "$external_required" == "true" ]]; then
-  # Head-bound, matching scripts/merge-pr.sh gate 5: a review of an earlier sha
-  # is not a review of this head, and a DISMISSED review is not a review. The
-  # sha lives on .commit_id, which `gh pr view --json reviews` does not expose,
-  # so this reads the REST endpoint rather than reusing $pr_json. The
-  # server-side backstop must not be weaker than the client gate it re-validates.
-  # Identical filter to scripts/merge-pr.sh gate 5, including --arg binding
-  # (the bot name is policy-supplied; interpolating it into the filter text
-  # would be jq injection — CodeRabbit finding, PR #1689).
-  ext_count=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null \
-    | jq -s --arg bot "$external_bot" --arg sha "$head_sha" '
+  # Matching scripts/merge-pr.sh gate 5: Codex findings arrive as COMMENTED
+  # reviews and never count as approval.
+  #
+  # The retry loop that used to live here is GONE, with the reaction
+  # requirement that forced it (codex P1, PR #1839). It existed only because a
+  # PR-level reaction can arrive after the clean comment while firing NO
+  # workflow event — so a run that observed the comment first had to sleep and
+  # re-query, and if the reaction still had not landed it published a `pending`
+  # that nothing would ever recompute. Dropping reaction evidence removes both
+  # the permanent-pending hole and the need to poll: every remaining input
+  # (comments, reviews) has an event that retriggers this workflow.
+  #
+  # pipefail (set at the top) is load-bearing in the `if !` guards below:
+  # without it the status recorded would be jq's, and a failed `gh api` would
+  # read as "no evidence yet" rather than an unavailable API.
+  external_fetch_ok=true
+  if ! ext_comments=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate 2>/dev/null | jq -s 'add // []'); then
+    ext_comments='[]'
+    external_fetch_ok=false
+  fi
+  if ! ext_reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null | jq -s 'add // []'); then
+    ext_reviews='[]'
+    external_fetch_ok=false
+  fi
+
+  evidence_ok=false
+  if [[ "$external_evidence_mode" == "review" ]]; then
+    ext_approved=$(jq -r --arg bot "$external_bot" --arg sha "$head_sha" '
+      def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+      [ .[]
+        | select(((.user.login // "") | norm) == ($bot | norm))
+        | select((.state // "") == "APPROVED")
+        | select((.commit_id // "") == $sha)
+      ] | length' <<<"$ext_reviews")
+    if [[ "$external_fetch_ok" == "true" && "${ext_approved:-0}" -gt 0 ]]; then
+      evidence_ok=true
+    fi
+  else
+    head_marker="<!-- $external_head_marker: $head_sha -->"
+    request_at=$(jq -r --arg trigger "$external_trigger" --arg marker "$head_marker" '
+      [ .[]
+        | select((.body // "") | contains($trigger))
+        | select((.body // "") | contains($marker))
+        | .updated_at // .created_at // empty
+      ] | max // ""' <<<"$ext_comments")
+
+    clean_at=""
+    if [[ -n "$request_at" ]]; then
+      clean_at=$(jq -r --arg bot "$external_bot" --arg clean "$external_clean_marker" --arg request "$request_at" '
         def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-        [ add[]?
+        [ .[]
           | select(((.user.login // "") | norm) == ($bot | norm))
-          | select(.state != "DISMISSED")
-          | select(.commit_id == $sha)
-        ] | length' 2>/dev/null || echo "0")
-  head_short=${head_sha:0:7}
-  ext_comment_count=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate 2>/dev/null \
-    | jq -s --arg bot "$external_bot" --arg short "$head_short" '
+          | select((.body // "") | contains($clean))
+          | select((.created_at // "") > $request)
+          | .created_at
+        ] | max // ""' <<<"$ext_comments")
+    fi
+
+    findings_after_clean=0
+    if [[ -n "$clean_at" ]]; then
+      findings_after_clean=$(jq -r --arg bot "$external_bot" --arg sha "$head_sha" --arg clean "$clean_at" '
         def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-        [ add[]?
+        [ .[]
           | select(((.user.login // "") | norm) == ($bot | norm))
-          # Keep the short-SHA token head-bound even if a longer SHA happens
-          # to share its prefix.
-          | select((.body // "") | test("Reviewed commit " + $short + "([^0-9A-Fa-f]|$)"))
-        ] | length' 2>/dev/null || echo "0")
-  if [[ "${ext_count:-0}" -eq 0 && "${ext_comment_count:-0}" -eq 0 ]]; then
+          | select((.commit_id // "") == $sha)
+          | select((.state // "") != "DISMISSED" and (.state // "") != "APPROVED")
+          | select((.submitted_at // "") == "" or (.submitted_at // "") >= $clean)
+        ] | length' <<<"$ext_reviews")
+    fi
+
+    if [[ "$external_fetch_ok" == "true" && -n "$request_at" && -n "$clean_at" \
+          && "${findings_after_clean:-0}" -eq 0 ]]; then
+      evidence_ok=true
+    fi
+  fi
+
+  if [[ "$evidence_ok" != "true" ]]; then
     out pending "awaiting external review by $external_bot at ${head_sha:0:8}"
   fi
 fi
