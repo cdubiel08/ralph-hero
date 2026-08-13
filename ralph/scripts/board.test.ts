@@ -2932,6 +2932,28 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     expect(rankNext([q(1, "P9"), q(9, "P3")], [], P).eligible.map((i) => i.number)).toEqual([9, 1]);
   });
 
+  it("a host repo's TEXT/NUMBER Priority field is never written and never CLEARED", () => {
+    // `setup` preserves an existing field, so a board can carry a custom
+    // Priority field of another type. The set path merely failed confusingly;
+    // --clear ERASED that field's value and then printed "(none)", because
+    // issue reads only recognise a single-select Priority. Destructive and
+    // invisible — so the guard is on dataType, before either write.
+    for (const dataType of ["TEXT", "NUMBER"]) {
+      const gh = new FakeGh();
+      gh.omitFields = ["Priority"];
+      gh.createdFields.push({ name: "Priority", dataType });
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+
+      expect(() => setPriority(ctx, 1, "P0")).toThrow(new RegExp(`${dataType}, not SINGLE_SELECT`));
+      expect(() => setPriority(ctx, 1, null)).toThrow(new RegExp(`${dataType}, not SINGLE_SELECT`));
+      expect(() => createIssue(ctx, { title: "x", priority: "P0" })).toThrow(UsageError);
+      // Nothing was written, and above all nothing was CLEARED.
+      expect(gh.mutations.filter((m) => m.includes("clearField") || m.startsWith("setPriority"))).toEqual([]);
+      expect(gh.issues.size).toBe(1); // the create never happened
+    }
+  });
+
   it("a suppressed name that becomes an option again stops being suppressed", () => {
     // `Soon` is removed (so it lands in the suppression list), and later an
     // admin renames `Now` to `Soon`. The union would call the now-VALID value

@@ -3986,7 +3986,27 @@ export interface CreateOpts {
 /** Validate a priority against the board's LIVE options rather than a hardcoded
  *  P0..P3: `setup` seeds that set but never edits an existing field, so a host
  *  repo's own scheme is the truth here — exactly as `next`'s ranking reads it. */
+/** `setup` never edits an existing field, so a host board may already carry a
+ *  TEXT or NUMBER field named "Priority" — and the name-only cache check would
+ *  wave both write paths through. The SET path merely failed confusingly
+ *  ("options are: (none)"), but CLEAR erased that field's value outright and
+ *  then reported `(none)`, because issue reads only recognise a single-select
+ *  Priority: destructive, and invisible in the output. Both paths refuse by
+ *  dataType first, naming what the board actually has. */
+function assertPrioritySingleSelect(cache: BoardCache): void {
+  const field = cache.fields[PRIORITY_FIELD];
+  if (field && field.dataType !== "SINGLE_SELECT") {
+    throw new UsageError(
+      `this board's ${PRIORITY_FIELD} field is ${field.dataType}, not SINGLE_SELECT — ralph ranks a ` +
+        `single-select ${PRIORITY_FIELD} and will neither write nor CLEAR a custom ${field.dataType} field ` +
+        `(clearing it would erase data \`board get\` cannot even show you). Convert it in the Projects UI, ` +
+        `or leave ${PRIORITY_FIELD} to the board.`,
+    );
+  }
+}
+
 function assertPriorityOption(cache: BoardCache, value: string): void {
+  assertPrioritySingleSelect(cache);
   const options = Object.keys(cache.fields[PRIORITY_FIELD]?.options ?? {});
   if (!options.includes(value)) {
     throw new UsageError(
@@ -4139,6 +4159,8 @@ export function setPriority(ctx: Ctx, number: number, value: string | null): Iss
   // validating nothing was the wrong reason to skip the read.
   const cache = mutationCache(ctx, [[PRIORITY_FIELD]], [], [PRIORITY_FIELD]);
   if (value === null) {
+    // Refuse BEFORE clearing: this is the destructive direction.
+    assertPrioritySingleSelect(cache);
     clearField(ctx, cache, itemId, PRIORITY_FIELD);
   } else {
     assertPriorityOption(cache, value);
