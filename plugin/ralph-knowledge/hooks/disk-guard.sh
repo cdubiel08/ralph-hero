@@ -15,6 +15,15 @@ set -uo pipefail
 WARN_MB="${RALPH_KNOWLEDGE_DISK_WARN_MB:-2048}"
 STAMP="${TMPDIR:-/tmp}/ralph-knowledge-disk-guard.stamp"
 
+# `sort -V` is GNU coreutils only — BSD/macOS sort rejects it, which would
+# leave `newest` empty and make every version dir look superseded. Probe once
+# and fall back to a numeric field sort on dotted versions.
+if printf '' | sort -V >/dev/null 2>&1; then
+  version_sort() { sort -V; }
+else
+  version_sort() { sort -t. -k1,1n -k2,2n -k3,3n; }
+fi
+
 # At most one scan per day.
 if [ -f "$STAMP" ] && find "$STAMP" -mtime -1 2>/dev/null | grep -q .; then
   exit 0
@@ -38,7 +47,10 @@ done
 # Superseded plugin cache versions (all but the newest per marketplace).
 for base in "$HOME"/.claude/plugins/cache/*/ralph-knowledge; do
   [ -d "$base" ] || continue
-  newest=$(ls -1 "$base" 2>/dev/null | sort -V | tail -1)
+  newest=$(ls -1 "$base" 2>/dev/null | version_sort | tail -1)
+  # Fail closed: with no orderable newest we cannot say which dirs are
+  # superseded, so claim none rather than claiming all of them.
+  [ -n "$newest" ] || continue
   for v in "$base"/*/; do
     [ -d "$v" ] || continue
     sz=$(du -sm "$v" 2>/dev/null | cut -f1)
