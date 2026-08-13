@@ -175,7 +175,7 @@ attestation_comment_no_tests() {
 pr_state() {
   jq -n --arg s "$1" --arg rd "$2" --arg sha "$HEAD_SHA" \
     --argjson comments "${3:-[]}" \
-    --arg author "${4:-cdubiel08}" --arg mergeable "${5:-MERGEABLE}" \
+    --arg author "${4:-cdubiel08}" --arg mergeable "${5-MERGEABLE}" \
     '{state: $s, reviewDecision: (if $rd == "" then null else $rd end),
       headRefOid: $sha, comments: $comments,
       author: {login: $author}, mergeable: $mergeable}'
@@ -1402,6 +1402,34 @@ D="$TMP_ROOT/ready-then-unknown"
 setup_ready "$D"
 printf '%s' "$(confirm_view APPROVED UNKNOWN)" >"$D/pr_view_second.json"
 expect "mergeability recomputing between passes is a wait" "$D" "GATE-WAIT merge" 10
+
+# Gate 2 pends on `*`, not on the single literal UNKNOWN. An empty or
+# unrecognized value used to fall through to GATE-READY here — the one
+# direction that must never happen, since a value this script does not
+# recognize is not permission to merge (codex P2, PR #1764).
+for bad in "" "UNSTABLE" "BEHIND" "unknown"; do
+  D="$TMP_ROOT/mergeable-$RANDOM"
+  scenario "$D" "$READY_CHECKS" \
+    "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]" cdubiel08 "$bad")" "$APPROVAL"
+  expect "mergeable ${bad:-<empty>} is a wait, not READY" "$D" "GATE-WAIT merge" 10
+done
+# ...and the message names the value it actually saw, so the caller can tell
+# "not computed yet" from "this script does not know that value".
+D="$TMP_ROOT/mergeable-named"
+scenario "$D" "$READY_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]" cdubiel08 "UNSTABLE")" "$APPROVAL"
+run "$D"
+if [[ "$LAST_OUT" == *"UNSTABLE"* ]]; then
+  pass "names the unrecognized mergeable value"
+else
+  fail "mergeable value naming (out=${LAST_OUT:0:150})"
+fi
+# CONFLICTING stays TERMINAL: it is a fact, not a missing answer, and gate 2
+# blocks on it rather than pending.
+D="$TMP_ROOT/mergeable-conflicting-terminal"
+scenario "$D" "$READY_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]" cdubiel08 "CONFLICTING")" "$APPROVAL"
+expect "CONFLICTING is still terminal, matching gate 2" "$D" "GATE-FAIL merge" 0
 
 D="$TMP_ROOT/ready-then-head-moved"
 setup_ready "$D"

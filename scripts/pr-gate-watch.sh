@@ -513,8 +513,14 @@ def fenced_json:
     "GATE-YOURS attestation: the attestation at \($head[0:8]) is invalid (\(if ($att_tests_ok | not) then "tests[] is empty or records a non-zero exit_code" else "review verdict \($att_verdict | tojson) is not APPROVED" end)) — gate 4 re-reads this live and rejects it; re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\""
   elif $attest_required and ($attested_current | not) then
     "GATE-YOURS attestation: \($attest) is green but no valid attestation is visible at \($head[0:8]) — re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --carry-review"
-  elif ($pr.mergeable // "") == "UNKNOWN" then
-    "GATE-WAIT merge: GitHub has not computed mergeability for \($head[0:8]) yet"
+  # Gate 2's shape exactly (merge-pr.sh:256-269): MERGEABLE passes, CONFLICTING
+  # blocks, and `*` — EVERY other value — pends. Matching only the literal
+  # "UNKNOWN" left an empty or unrecognized value falling through to
+  # GATE-READY, which is the one direction that must never happen: not-yet-
+  # computed is evidence-not-in, not a verdict, and a value this script does
+  # not recognize is not permission to merge (codex P2, PR #1764).
+  elif ($pr.mergeable // "") != "MERGEABLE" then
+    "GATE-WAIT merge: mergeable is \(if ($pr.mergeable // "") == "" then "empty" else $pr.mergeable end) for \($head[0:8]) — not computed yet, which is not the same as mergeable"
   else
     "GATE-READY: green + reviewed + attested — bash scripts/merge-pr.sh \($num)"
   end
