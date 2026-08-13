@@ -278,7 +278,14 @@ server_running_in() {
 }
 
 run_bootstrap() {
-  echo "[ralph-knowledge] first run: installing and building (one-time, ~1-2 min)..."
+  # Measured, not guessed: ~4.5s on a cold npm cache and ~3.6s warm (macOS,
+  # 155MB fetched). The old "~1-2 min" here was a pessimistic placeholder, and
+  # it read as a defect against Claude Code MCP_TIMEOUT (default 30000ms) —
+  # for comparison the `npx -y ralph-hero-knowledge-index@X` wiring this
+  # replaces took 7.7s cold and fetched 596MB. On a slow link the download can
+  # still dominate; see the follow-up issue on decoupling it from the
+  # handshake.
+  echo "[ralph-knowledge] first run: installing and building (one-time, usually a few seconds)..."
   # Drop the marker first: if we are interrupted below, the next launch must
   # see an incomplete tree rather than a stale "complete" claim.
   rm -f "$MARKER" "$IDENTITY_FILE"
