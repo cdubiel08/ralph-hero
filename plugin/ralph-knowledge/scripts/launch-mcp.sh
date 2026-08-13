@@ -133,17 +133,33 @@ deps_complete() {
     const fs = require("fs"), path = require("path");
     const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
 
+    // `main`/`module` only, NOT the "." export. An exports map may legitimately
+    // point at a file the package does not ship when consumers import subpaths
+    // instead: @modelcontextprotocol/sdk declares "." -> ./dist/esm/index.js,
+    // does not ship it, and imports perfectly well via ./server/index.js.
+    // Enforcing that would report a healthy tree as broken and trigger a
+    // destructive reinstall on EVERY launch — measured against the real
+    // node_modules of this package, which is how it was caught.
     const entryOf = (m) => {
-      let e = m.main || m.module;
-      if (!e && m.exports) {
-        const x = typeof m.exports === "string" ? m.exports : m.exports["."];
-        if (typeof x === "string") e = x;
-        else if (x && typeof x === "object") {
-          const c = x.node || x.import || x.require || x.default;
-          e = typeof c === "string" ? c : undefined;
+      const e = m.main || m.module;
+      return typeof e === "string" ? e : undefined;
+    };
+
+    // Bounded recursive search for a compiled addon. Depth-limited and
+    // short-circuiting, because this runs on the warm path of every launch.
+    const hasAddon = (root, depth) => {
+      depth = depth || 0;
+      if (depth > 4) return false;
+      let entries;
+      try { entries = fs.readdirSync(root, { withFileTypes: true }); }
+      catch { return false; }
+      for (const e of entries) {
+        if (e.isFile() && e.name.endsWith(".node")) return true;
+        if (e.isDirectory() && e.name !== "node_modules" && e.name !== "src") {
+          if (hasAddon(path.join(root, e.name), depth + 1)) return true;
         }
       }
-      return typeof e === "string" ? e : undefined;
+      return false;
     };
 
     const missing = [];
@@ -159,7 +175,16 @@ deps_complete() {
       // to one path) is accepted, because a false "missing" would reinstall on
       // every single launch.
       const entry = entryOf(m);
-      if (entry && !fs.existsSync(path.join(dir, entry))) missing.push(d);
+      if (entry && !fs.existsSync(path.join(dir, entry))) { missing.push(d); continue; }
+
+      // A native package needs its COMPILED ADDON, not just its JavaScript
+      // (codex P2, PR #1755). better-sqlite3 is the case that bites: its JS
+      // entry survives a partial cleanup while build/Release/*.node does not,
+      // and startup then dies constructing the database rather than repairing
+      // the tree. A binding.gyp (or a gypfile flag) is what marks a package as
+      // needing one, so exactly those are required to carry a .node somewhere.
+      const isNative = m.gypfile === true || fs.existsSync(path.join(dir, "binding.gyp"));
+      if (isNative && !hasAddon(dir)) missing.push(d);
     }
     if (missing.length) { console.error(missing.join(" ")); process.exit(1); }
   ' 2>/dev/null
@@ -174,57 +199,62 @@ bootstrap_needed() {
   return 1
 }
 
-# True (0) when some running process is working inside directory $1.
+# True (0) when a running MCP SERVER is serving out of directory $1.
 #
-# Used to refuse a rebuild that would pull the tree out from under a server
-# that is still serving from it. Best-effort by nature: /proc on Linux, lsof on
-# macOS/BSD. When NEITHER is available the answer is unknown, and unknown must
-# not read as "nobody is using it" — callers treat a non-zero return from an
-# unprobeable host as "cannot tell" via dir_use_probe_available.
+# Deliberately narrower than "any process in the directory" (codex P2, PR
+# #1755). The launcher cd's to the plugin root, so every WAITING launcher also
+# has its cwd there — a broad probe would make two simultaneous cold starts
+# refuse each other, turning an ordinary race into a hard failure. What must
+# not be disturbed is a live SERVER, so both signals are required: cwd inside
+# the tree AND `dist/index.js` in the argv, which is exactly how this script
+# execs it.
+#
+# Best-effort by nature: /proc on Linux, lsof + ps on macOS/BSD. It can only
+# speak for THIS machine — see the host check at the guard for why that
+# matters. Callers ask dir_use_probe_available first, so that unknown never
+# reads as "nobody is there".
 dir_use_probe_available() {
-  [ -d /proc ] || command -v lsof >/dev/null 2>&1
+  [ -d /proc ] || { command -v lsof >/dev/null 2>&1 && command -v ps >/dev/null 2>&1; }
 }
 
-dir_in_use() {
-  local dir p cwd snapshot
-  # Compare PHYSICAL paths. macOS symlinks /tmp and /var into /private, and
-  # both /proc and lsof report the resolved path — so a literal string compare
-  # against the caller's path silently never matches, and every directory would
-  # look idle. That failure is invisible: the guard would simply go back to
-  # calling in-use directories safe to delete.
+server_running_in() {
+  local dir
   dir=$(cd "$1" 2>/dev/null && pwd -P) || dir="${1%/}"
   dir="${dir%/}"
-  # The probe must not see ITSELF. The launcher cd's to the plugin root on line
-  # one, so this shell's cwd is $dir — and every helper it spawns (lsof, awk,
-  # readlink) inherits that cwd and shows up as another process "using" the
-  # directory. Both are excluded: the shell by PID, and the helpers by running
-  # the whole probe from / so they are not in $dir at all. Without this every
-  # tree looks permanently in use and no cross-identity rebuild could proceed.
   (
+    # From /, so the helpers spawned below are not themselves inside $dir.
     cd / 2>/dev/null || exit 1
+
     if [ -d /proc ]; then
       for p in /proc/[0-9]*; do
-        [ "${p#/proc/}" = "$$" ] && continue
+        pid=${p#/proc/}
+        [ "$pid" = "$$" ] && continue
         cwd=$(readlink "$p/cwd" 2>/dev/null) || continue
-        case "$cwd" in "$dir"|"$dir"/*) exit 0 ;; esac
+        case "$cwd" in "$dir"|"$dir"/*) ;; *) continue ;; esac
+        cmd=$(tr '\0' ' ' <"$p/cmdline" 2>/dev/null) || continue
+        case "$cmd" in *dist/index.js*) exit 0 ;; esac
       done
       exit 1
     fi
-    if command -v lsof >/dev/null 2>&1; then
-      # Capture BEFORE matching. `lsof | awk` looks obvious and is wrong under
-      # `pipefail`: awk exits on the first hit, lsof takes SIGPIPE, and the
-      # pipeline reports failure — so the detection is discarded exactly when
-      # it SUCCEEDS. It is timing-dependent, so it fails intermittently, and it
-      # fails in the direction that rebuilds a tree someone is still using.
-      snapshot=$(lsof -d cwd -Fpn 2>/dev/null) || snapshot=""
-      awk -v self="$$" -v d="$dir" '
-        /^p/ { pid = substr($0, 2); next }
+
+    if command -v lsof >/dev/null 2>&1 && command -v ps >/dev/null 2>&1; then
+      # Captured before matching — piping into an early-exiting matcher loses
+      # the result to SIGPIPE under pipefail.
+      cwdsnap=$(lsof -d cwd -Fpn 2>/dev/null) || cwdsnap=""
+      pssnap=$(ps -eo pid=,args= 2>/dev/null) || pssnap=""
+      [ -n "$cwdsnap" ] && [ -n "$pssnap" ] || exit 1
+      printf '%s\n===\n%s\n' "$pssnap" "$cwdsnap" | awk -v self="$$" -v d="$dir" '
+        $0 == "===" { second = 1; next }
+        !second { args[$1 + 0] = $0; next }
+        /^p/ { cur = substr($0, 2) + 0; next }
         /^n/ {
           path = substr($0, 2)
-          if (pid != self && (path == d || index(path, d "/") == 1)) { found = 1; exit }
+          if (cur != self && (path == d || index(path, d "/") == 1)) {
+            if (index(args[cur], "dist/index.js") > 0) { found = 1 }
+          }
         }
         END { exit(found ? 0 : 1) }
-      ' <<<"$snapshot" && exit 0
+      ' && exit 0
       exit 1
     fi
     exit 1
@@ -376,11 +406,34 @@ if bootstrap_needed; then
       built_host=$(printf '%s' "$built_line" | cut -d' ' -f2)
       this_identity=$(node_compat_boundary 2>/dev/null || echo "")
 
-      # Is there an existing built tree whose provenance we must respect? A
-      # genuinely empty root has nothing to protect.
+      # Is there an existing built tree at all? A genuinely empty root has
+      # nothing to protect, so a first install is never blocked.
+      tree_exists=false
+      if [ -f "$MARKER" ] || [ -d node_modules ]; then
+        tree_exists=true
+      fi
+
+      # A LIVE SERVER on this tree blocks any rebuild, whatever the identity
+      # (codex P2, PR #1755). The earlier guard only covered missing or
+      # differing identities, but a same-identity rebuild is just as
+      # destructive: a damaged marker, a changed lockfile, or a missing entry
+      # point all reach `npm ci`, and node_modules is replaced underneath a
+      # server that is still serving from it. Failing loudly here is better
+      # than the silent alternative, where that server dies later on a lazy
+      # import with nothing to connect it to this rebuild.
+      if [ "$tree_exists" = true ] && dir_use_probe_available \
+        && server_running_in "$PLUGIN_ROOT"; then
+        echo "[ralph-knowledge] refusing to rebuild: a server is still running in $PLUGIN_ROOT." >&2
+        echo "[ralph-knowledge] Rebuilding would replace node_modules underneath it." >&2
+        echo "[ralph-knowledge] close every session using this plugin root, then relaunch." >&2
+        echo "[ralph-knowledge] once they are closed, removing $PLUGIN_ROOT/node_modules forces a clean rebuild." >&2
+        exit 1
+      fi
+
+      # Beyond that, provenance we cannot verify is also a reason to stop.
       guard_needed=false
       guard_why=""
-      if [ -f "$MARKER" ] || [ -d node_modules ]; then
+      if [ "$tree_exists" = true ]; then
         if [ -z "$built_identity" ]; then
           # Missing identity metadata is UNKNOWN, not "ours" (codex P2, PR
           # #1755). A deleted or never-written identity file previously skipped
@@ -401,7 +454,7 @@ if bootstrap_needed; then
           # globally idle (codex P2, PR #1755) — and there is no cross-host
           # signal to consult. Refuse rather than treat unprovable as safe.
           refuse="it was built on host '$built_host' and this is '$THIS_HOST', whose process table cannot see it"
-        elif dir_use_probe_available && dir_in_use "$PLUGIN_ROOT"; then
+        elif dir_use_probe_available && server_running_in "$PLUGIN_ROOT"; then
           refuse="a process is currently running in $PLUGIN_ROOT"
         elif ! dir_use_probe_available && [ -n "$built_identity" ]; then
           # Two runtimes are positively indicated and we cannot check for a

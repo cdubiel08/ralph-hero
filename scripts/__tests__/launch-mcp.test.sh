@@ -755,6 +755,42 @@ PKG
     pass "an absent dependency fails the real deps_complete"
   fi
 
+  # A native package needs its COMPILED ADDON, not just its JavaScript. This is
+  # the better-sqlite3 case: the JS entry survives a partial cleanup while
+  # build/Release/*.node does not, and startup then dies constructing the
+  # database instead of repairing the tree.
+  root=$(dep_fixture real_native)
+  mkdir -p "$root/node_modules/zod/build/Release"
+  echo '{}' >"$root/node_modules/zod/binding.gyp"
+  : >"$root/node_modules/zod/build/Release/zod.node"
+  if ( cd "$root" && deps_complete ); then
+    pass "a native package with its addon present is complete"
+  else
+    fail "a healthy native package was reported incomplete — this would reinstall every launch"
+  fi
+
+  rm -rf "$root/node_modules/zod/build"
+  if ( cd "$root" && deps_complete ); then
+    fail "a native package with NO compiled addon passed — startup would die on the addon load"
+  else
+    pass "a native package missing its compiled addon fails deps_complete"
+  fi
+
+  # A subpath-only exports map must NOT be enforced. Real packages ship these:
+  # @modelcontextprotocol/sdk declares "." -> ./dist/esm/index.js, does not
+  # ship that file, and imports fine via ./server/index.js. Enforcing it
+  # reported this very repo's tree as broken.
+  root=$(dep_fixture real_subpath)
+  cat >"$root/node_modules/zod/package.json" <<'PKG'
+{ "name": "zod", "exports": { ".": { "import": "./dist/esm/index.js" }, "./sub": "./dist/sub.js" } }
+PKG
+  rm -f "$root/node_modules/zod/index.js"
+  if ( cd "$root" && deps_complete ); then
+    pass "a subpath-only exports map is not enforced (no false rebuild)"
+  else
+    fail "an exports-only package was reported incomplete — a healthy tree would reinstall forever"
+  fi
+
   # Lenient in the documented direction: a manifest with only a conditional
   # exports map, whose entry cannot be reduced to one path, must NOT force a
   # rebuild — a false "missing" costs a destructive reinstall every launch.
@@ -786,8 +822,10 @@ else
   root=$(fake_root identity_busy)
   FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")   # build as A
 
-  # A live process sitting in the tree, exactly like a server still serving.
-  ( cd "$root" && exec sleep 60 ) &
+  # A realistic live SERVER: cwd in the tree AND `dist/index.js` in argv, which
+  # is how launch-mcp.sh execs it. Both signals are required, so a bare `sleep`
+  # would not (and must not) count — see the waiting-launcher case below.
+  ( cd "$root" && exec /bin/sh -c 'sleep 60; :' "node dist/index.js" ) &
   busy_pid=$!
   sleep 0.3
 
@@ -841,6 +879,61 @@ fi
 # never recover on its own. (The arch-swap cases above cover this: they change
 # identity with nothing running and require `npm ci`.)
 
+echo "=== a live server blocks a rebuild even at the SAME identity ==="
+
+if ! { [ -d /proc ] || { command -v lsof >/dev/null 2>&1 && command -v ps >/dev/null 2>&1; }; }; then
+  echo "  SKIP: cannot probe for running servers on this host"
+else
+  # A damaged marker, a changed lockfile or a missing entry point all reach
+  # `npm ci` at the SAME identity — and that replaces node_modules underneath a
+  # server still serving from the tree (codex P2). Identity is not the only
+  # thing worth guarding.
+  root=$(fake_root sameid_live)
+  log=$(run_launcher "$root")                    # build it, same identity
+  rm -f "$root/.bootstrap-complete"              # force the rebuild path
+  ( cd "$root" && exec /bin/sh -c 'sleep 60; :' "node dist/index.js" ) &
+  live_pid=$!
+  sleep 0.3
+  RC=0
+  log="$root/calls.log"; : >"$log"
+  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+  kill "$live_pid" 2>/dev/null || true
+
+  if grep -q 'npm ci' "$log"; then
+    fail "rebuilt at the same identity with a server live in the tree" "$(cat "$log")"
+  else
+    pass "a live server blocks a same-identity rebuild"
+  fi
+  if [ "$RC" -ne 0 ] && grep -q 'a server is still running' "$root/stderr.log"; then
+    pass "the refusal names the live server and exits non-zero"
+  else
+    fail "the same-identity refusal is not reported properly (rc=$RC)" "$(cat "$root/stderr.log")"
+  fi
+
+  # ...but a merely WAITING LAUNCHER must not block. It also has its cwd in the
+  # plugin root, so a probe that matched any process there would turn two
+  # simultaneous cold starts into a hard failure instead of a race.
+  root=$(fake_root waiter_not_server)
+  log=$(run_launcher "$root")
+  rm -f "$root/.bootstrap-complete"
+  ( cd "$root" && exec /bin/sh -c 'sleep 60; :' "bash scripts/launch-mcp.sh" ) &
+  waiter_pid=$!
+  sleep 0.3
+  RC=0
+  log="$root/calls.log"; : >"$log"
+  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+  kill "$waiter_pid" 2>/dev/null || true
+
+  if grep -q 'npm ci' "$log"; then
+    pass "another launcher waiting in the tree does not block the rebuild"
+  else
+    fail "a waiting launcher was mistaken for a live server — concurrent cold starts would deadlock" \
+      "$(cat "$root/stderr.log")"
+  fi
+fi
+
 echo "=== provenance that cannot be verified fails closed ==="
 
 if ! { [ -d /proc ] || command -v lsof >/dev/null 2>&1; }; then
@@ -876,7 +969,7 @@ else
   FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
   rm -f "$root/.bootstrap-identity"
   rm -f "$root/.bootstrap-complete"          # force the rebuild path
-  ( cd "$root" && exec sleep 60 ) &
+  ( cd "$root" && exec /bin/sh -c 'sleep 60; :' "node dist/index.js" ) &
   miss_pid=$!
   sleep 0.3
   RC=0
@@ -889,10 +982,13 @@ else
   else
     pass "a tree with no identity record is not rebuilt while in use"
   fi
-  if grep -q 'no identity record' "$root/stderr.log"; then
-    pass "the refusal names unknown provenance as the reason"
+  # Either refusal is correct here, and the live-server check now fires first —
+  # it is the stronger reason, since it observes an actual server rather than
+  # inferring risk from absent metadata. What must not happen is a rebuild.
+  if grep -qE 'a server is still running|no identity record' "$root/stderr.log"; then
+    pass "the refusal states why the rebuild was declined"
   else
-    fail "the refusal does not mention the missing identity" "$(cat "$root/stderr.log")"
+    fail "the rebuild was declined with no reason given" "$(cat "$root/stderr.log")"
   fi
 
   # ...but an IDLE tree of unknown provenance must still rebuild, or every
