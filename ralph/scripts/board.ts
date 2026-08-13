@@ -4095,12 +4095,19 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
   }
   // Priority is validated BEFORE the issue exists — a bad option must cost a
   // usage error, not an orphaned issue nobody's selector will ever surface.
+  //
+  // ASKED-FOR, not truthy: `--priority ""` (an unset shell variable) arrives as
+  // an empty string, and every truthiness check here used to skip validation
+  // AND the write, filing the unprioritized issue this gate exists to refuse.
+  // `undefined` is the only way to say "no priority"; anything else, empty
+  // string included, is a request that must be validated and can fail.
+  const wantsPriority = opts.priority !== undefined;
   const needs: Array<[string, string?]> = [[STATE_FIELD, opts.state ?? "Backlog"]];
-  if (opts.priority) needs.push([PRIORITY_FIELD]);
+  if (wantsPriority) needs.push([PRIORITY_FIELD]);
   // …and validated against a LIVE option set: a cached option GitHub has since
   // deleted would pass here and fail after createIssue (see mutationCache).
-  const cache = mutationCache(ctx, needs, [], opts.priority ? [PRIORITY_FIELD] : []);
-  if (opts.priority) assertPriorityOption(cache, opts.priority);
+  const cache = mutationCache(ctx, needs, [], wantsPriority ? [PRIORITY_FIELD] : []);
+  if (wantsPriority) assertPriorityOption(cache, opts.priority!);
   {
     const created = ghGraphQL(
       ctx,
@@ -4126,9 +4133,9 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
     syncStatus(ctx, cache, itemId, opts.state ?? "Backlog");
     // Unlike estimate, a failed priority write is FATAL-loud: a null priority
     // is what makes an issue invisible to `next`, so it may not pass as a warn.
-    if (opts.priority) {
+    if (wantsPriority) {
       try {
-        setSingleSelect(ctx, cache, itemId, PRIORITY_FIELD, opts.priority);
+        setSingleSelect(ctx, cache, itemId, PRIORITY_FIELD, opts.priority!);
       } catch (e) {
         throw new Error(
           `#${issue.number} was created (${issue.url}) but ${PRIORITY_FIELD} was NOT set: ` +
@@ -5858,10 +5865,12 @@ export function run(argv: string[], ctx: Ctx): number {
       if (typeof flags.title !== "string" || !flags.title) throw new UsageError("--title required");
       const state = typeof flags.state === "string" ? parseStateArg(flags.state) : null;
       if (typeof flags.state === "string" && !state) throw new UsageError(`unknown state "${flags.state}"`);
-      // A valueless `--priority` parses as boolean true. Silently coercing it
-      // to "no priority" would file the very last-sorting item the flag was
-      // typed to avoid, so it is a usage error, not a default.
-      if (flags.priority === true)
+      // A valueless `--priority` parses as boolean true; `--priority ""` (an
+      // unset shell variable) parses as an empty string. Silently coercing
+      // either to "no priority" would file the very last-sorting item the flag
+      // was typed to avoid, so both are usage errors, not defaults. createIssue
+      // refuses the empty string as well — this is the message, not the gate.
+      if (flags.priority === true || (typeof flags.priority === "string" && flags.priority.trim() === ""))
         throw new UsageError("--priority needs a value (this board's options: `board get` any item, or see `board help`)");
       const issue = createIssue(ctx, {
         title: flags.title,

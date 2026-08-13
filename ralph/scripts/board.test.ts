@@ -2970,6 +2970,27 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     expect(() => run(["create", "--title", "x", "--priority"], ctx)).toThrow(UsageError);
     expect(gh.issues.size).toBe(0);
   });
+
+  it("an EMPTY --priority is refused too — an unset shell variable is not 'no priority'", () => {
+    // `board create --title x --priority "$PRIORITY"` with PRIORITY unset. The
+    // flag parses as "", which the boolean-only guard missed and every
+    // truthiness check downstream then skipped — validation AND the write —
+    // filing exactly the unprioritized issue the guard exists to refuse.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(parseArgs(["create", "--title", "x", "--priority", ""]).flags.priority).toBe("");
+    expect(() => run(["create", "--title", "x", "--priority", ""], ctx)).toThrow(UsageError);
+    expect(() => run(["create", "--title", "x", "--priority", "   "], ctx)).toThrow(UsageError);
+    expect(gh.issues.size).toBe(0);
+
+    // The LIBRARY refuses it too, not just the CLI message: `undefined` is the
+    // only way to say "no priority", so an empty string is a request that must
+    // fail validation before the issue exists.
+    expect(() => createIssue(ctx, { title: "x", priority: "" })).toThrow(UsageError);
+    expect(gh.issues.size).toBe(0);
+    // …while omitting it entirely is still the supported unprioritized path.
+    expect(createIssue(ctx, { title: "ok" }).priority).toBeNull();
+  });
 });
 
 describe("create --label", () => {
