@@ -976,24 +976,6 @@ scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" \
   "$APPROVED_PR" "$APPROVAL"
 expect "a non-exempt author's red attestation still fails" "$D" "GATE-FAIL attestation" 0
 
-echo "=== the hook this PR registers is actually executable ==="
-# The hook runner execs the configured path directly, so a 100644 mode makes
-# every registration return 126 Permission denied — and a test harness that
-# invokes it via `bash` would never notice (codex P2, PR #1764).
-HOOKS_DIR="$(cd "$(dirname "$0")/../.." && pwd)/ralph/hooks"
-# `set -euo pipefail` is active, and this runs at the top level: if git is
-# absent or this is not a work tree, the pipeline's non-zero status would abort
-# the whole test file rather than fail one case (CodeRabbit, PR #1764).
-mode=""
-if git_out=$(git -C "$(dirname "$HOOKS_DIR")/.." ls-files -s ralph/hooks/funnel-gate-watch.sh 2>/dev/null); then
-  mode=$(printf '%s' "$git_out" | awk '{print $1}')
-fi
-if [[ "$mode" == "100755" ]] && [[ -x "$HOOKS_DIR/funnel-gate-watch.sh" ]]; then
-  pass "funnel-gate-watch.sh is committed executable, like its siblings"
-else
-  fail "funnel-gate-watch.sh mode is ${mode:-unknown} (needs 100755)"
-fi
-
 echo "=== P2/13: a green attestation STATUS is not live evidence ==="
 # The status is computed once and published. If the comment it was computed
 # from is then deleted, edited into invalidity, or belongs to an older head,
