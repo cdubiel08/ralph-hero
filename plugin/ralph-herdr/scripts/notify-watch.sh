@@ -16,7 +16,9 @@
 # script never kills an agent and never writes board state.
 #
 # Knobs:
-#   RALPH_HERDR_WATCH_POLL   multi-target poll interval, seconds (default 15)
+#   RALPH_HERDR_WATCH_POLL   multi-target poll interval, and the single-target
+#                            backoff after an unreadable poll, seconds
+#                            (default 15)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,12 +28,41 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ "$#" -ge 1 ] || die "usage: notify-watch.sh <agent-name-or-pane-id>…"
 
 REPO_NAME=$(basename "$REPO")
+POLL="${RALPH_HERDR_WATCH_POLL:-15}"
+validate_pos_int RALPH_HERDR_WATCH_POLL "$POLL"
+
+# agent_status_of TARGET — the target's agent_status, through the transport
+# adapter, with "I could not find out" kept distinct from every real state.
+#
+#   rc 0   the validated status is on stdout
+#   rc 2   herdr says no such agent — it is gone (a real answer)
+#   rc 1   unreadable: transport failure, unreachable server, or a success
+#          envelope carrying no status
+#
+# The rc 1 case is why this exists. Both poll sites used to end in
+# `// "unknown"`, which handed the caller a state string for a response nobody
+# could parse — the "I could not find out" → "here is a fact" collapse the
+# adapter exists to prevent (GH-1855). An unreadable poll now keeps the target
+# on the watch list instead of describing it.
+agent_status_of() {
+  local out rc=0 status
+  out=$(ralph_herdr_call agent_info agent get "$1") || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    status=$(printf '%s' "$out" | jq -r '.agent.agent_status // empty')
+    [ -n "$status" ] || return 1
+    printf '%s' "$status"
+    return 0
+  fi
+  # From the returned BODY, never $RALPH_HERDR_ERR_CODE: the call above runs in
+  # a command substitution, so a global it set died with that subshell.
+  case "$(ralph_herdr_err_code "$out")" in
+    agent_not_found | not_found) return 2 ;;
+  esac
+  return 1
+}
 
 # ── Multi-target: portable poll loop ─────────────────────────────────────────
 if [ "$#" -gt 1 ]; then
-  POLL="${RALPH_HERDR_WATCH_POLL:-15}"
-  validate_pos_int RALPH_HERDR_WATCH_POLL "$POLL"
-
   # bash 3.2: space-separated string lists, membership via case globs.
   watch_list="$*"
   blocked_seen=""   # targets already notified for their current blocked episode
@@ -48,18 +79,19 @@ if [ "$#" -gt 1 ]; then
   while [ -n "$watch_list" ]; do
     for t in $watch_list; do
       # "Gone" and "unreadable" are different facts: the CLI exits non-zero for
-      # server/read hiccups on agents that are still perfectly alive. Only a
-      # SUCCESSFUL response that resolves no live agent drops the target; a
-      # failed read keeps it on the watch list for the next poll.
-      if raw=$("$HERDR" agent get "$t" 2>&1); then
-        state=$(jq -r '.result.agent.agent_status // empty' <<<"$raw" 2>/dev/null) || state=""
-        [ -n "$state" ] || state="unknown"
-      elif jq -e '.error.code == "agent_not_found" or .error.code == "not_found"' <<<"$raw" >/dev/null 2>&1; then
-        state="__gone__"
-      else
-        echo "$(date -u +%FT%TZ) read failed for $t — keeping it on the watch list"
-        continue
-      fi
+      # server/read hiccups on agents that are still perfectly alive. Only
+      # herdr's own no-such-agent refusal drops the target; anything the
+      # adapter could not read keeps it on the watch list for the next poll.
+      rc=0
+      state=$(agent_status_of "$t") || rc=$?
+      case "$rc" in
+        0) ;;
+        2) state="__gone__" ;;
+        *)
+          echo "$(date -u +%FT%TZ) read failed for $t — keeping it on the watch list"
+          continue
+          ;;
+      esac
       case "$state" in
         "__gone__")
           notify "$t" "ralph: $t gone" "agent no longer live in $REPO_NAME — check the board for where it left things"
@@ -108,8 +140,21 @@ while :; do
   # Bare wait: blocked/done/idle are agent wait's default until-set.
   wait_for || gone
 
-  state=$("$HERDR" agent get "$TARGET" 2>/dev/null | jq -r '.result.agent.agent_status // "unknown"') || state=""
-  [ -n "$state" ] || gone
+  rc=0
+  state=$(agent_status_of "$TARGET") || rc=$?
+  case "$rc" in
+    0) ;;
+    2) gone ;;
+    *)
+      # Unreadable, not gone. The wait above returned, so the agent was there a
+      # moment ago; announcing "gone" off a response nobody could parse would
+      # end the watch on a fabricated fact. Back off and re-arm — a genuinely
+      # departed agent fails the wait, which is the branch that says gone.
+      echo "$(date -u +%FT%TZ) read failed for $TARGET — retrying in ${POLL}s"
+      sleep "$POLL"
+      continue
+      ;;
+  esac
 
   notify "$TARGET" "ralph: $TARGET $state" "repo $REPO_NAME — attend the pane"
 

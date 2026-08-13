@@ -666,6 +666,81 @@ printf '{"process_info":{"pane_id":"pV","shell_pid":5006,"foreground_processes":
 is "verdict: matches argv0, not the version-string name" "alive" \
   "$(ralph_worker_verdict pV 5006 claude)"
 
+# ═══ notify-watch.sh: an unreadable poll is not a state (GH-1855) ═══════════
+# Both poll sites parsed `agent get` themselves and ended in `// "unknown"`,
+# which handed the branch table a state string for a response nobody could
+# parse. Routed through the adapter, the three outcomes are distinct: a status,
+# a gone verdict herdr actually gave, and "could not find out".
+#
+# The watcher never exits while a target is unreadable — that is the property
+# under test — so the runs below are bounded by the harness, not by a timeout
+# binary the runner may not ship.
+rm -f "$FAKE_HERDR_FIXTURES"/agent-get.* "$FAKE_HERDR_FIXTURES"/agent-wait.*
+
+# watch_until SUBSTR TARGET… — run notify-watch.sh until it prints SUBSTR or
+# exits; then stop it. Sets WATCH_OUT and WATCH_EXITED (1 if it exited on its
+# own before we stopped it).
+watch_until() {
+  local want="$1" i=0 pid
+  shift
+  : >"$TMP/notify-watch.out"
+  RALPH_HERDR_WATCH_POLL=1 RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+    bash "$SCRIPTS/notify-watch.sh" "$@" >"$TMP/notify-watch.out" 2>&1 &
+  pid=$!
+  WATCH_EXITED=0
+  while [ "$i" -lt 50 ]; do
+    grep -qF -- "$want" "$TMP/notify-watch.out" 2>/dev/null && break
+    if ! kill -0 "$pid" 2>/dev/null; then WATCH_EXITED=1; break; fi
+    sleep 0.2
+    i=$((i + 1))
+  done
+  # The line can land a beat before the process does: gone() notifies and THEN
+  # exits. Give it a poll interval to finish before calling it still-watching.
+  i=0
+  while [ "$WATCH_EXITED" -eq 0 ] && [ "$i" -lt 6 ]; do
+    kill -0 "$pid" 2>/dev/null || { WATCH_EXITED=1; break; }
+    sleep 0.2
+    i=$((i + 1))
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  WATCH_OUT=$(cat "$TMP/notify-watch.out")
+}
+
+printf '{"agent":{"name":"w-done","agent_status":"done","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"t","focused":false,"revision":1}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-get.w-done.json"
+# A refusal: the envelope on stderr, stdout empty, nonzero exit — what 0.8.x
+# does. `agent_not_found` is the code the live binary answers (probed).
+printf '{"error":{"code":"agent_not_found","message":"agent target w-gone not found"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-get.w-gone.json"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-get.w-gone.rc"
+# A well-formed agent_info success carrying no agent_status: the response that
+# used to become the state "unknown".
+printf '{"agent":{"name":"w-mute","pane_id":"p1"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-get.w-mute.json"
+
+watch_until "read failed for w-mute" w-done w-gone w-mute
+line_has  "watch: a done agent notifies and drops" "$WATCH_OUT" "notify [w-done] ralph: w-done done"
+line_has  "watch: herdr's agent_not_found is reported as gone" "$WATCH_OUT" "notify [w-gone] ralph: w-gone gone"
+line_has  "watch: a statusless success is a failed read" "$WATCH_OUT" "read failed for w-mute"
+line_lacks "watch: an unreadable poll never becomes the state 'unknown'" "$WATCH_OUT" "w-mute unknown"
+line_lacks "watch: an unreadable target is never announced gone" "$WATCH_OUT" "w-mute gone"
+is "watch: an unreadable target keeps the watcher alive" "0" "$WATCH_EXITED"
+line_lacks "watch: …so the watcher does not claim the herd finished" "$WATCH_OUT" "all watched agents finished"
+
+# Single target: same three outcomes, through the same helper.
+watch_until "read failed for w-mute" w-mute
+line_has  "watch (single): an unreadable read backs off instead of ending the watch" \
+  "$WATCH_OUT" "read failed for w-mute — retrying"
+line_lacks "watch (single): an unreadable read is not a gone verdict" "$WATCH_OUT" "w-mute gone"
+is "watch (single): the watcher is still watching" "0" "$WATCH_EXITED"
+
+watch_until "notify [w-gone]" w-gone
+line_has "watch (single): a refused get IS a gone verdict" "$WATCH_OUT" "notify [w-gone] ralph: w-gone gone"
+is "watch (single): and the watch ends there" "1" "$WATCH_EXITED"
+
+rm -f "$FAKE_HERDR_FIXTURES"/agent-get.* "$FAKE_HERDR_FIXTURES"/agent-wait.*
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

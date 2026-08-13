@@ -171,6 +171,30 @@ billing_guard() {
   fi
 }
 
+# ralph_herdr_tab_create LABEL — the lane spawns' tab, through the adapter.
+# Prints the validated `tab_created` result (callers read .root_pane.pane_id
+# and .tab.tab_id off it); dies with the reason herdr gave otherwise.
+#
+# The reason is the whole point. Capturing stdout and reading a pane id out of
+# it — what the deliver/tend pair did — turns every refusal into an empty
+# capture and the single message "no pane id in tab response": true, and
+# useless, because the error.code that says WHY landed on stderr and was
+# discarded (GH-1855, the same lost-signal defect as GH-1832). `tab create`
+# is not subject to the linked-worktree refusal that motivated that issue —
+# probed on 0.8.x, it succeeds from a linked worktree — but a busy server, a
+# revoked socket, or a future refusal code all arrive by this path.
+ralph_herdr_tab_create() {
+  local label="$1" out rc=0
+  out=$(ralph_herdr_call tab_created tab create --cwd "$REPO" --label "$label" --no-focus) || rc=$?
+  case "$rc" in
+    0) ;;
+    2) die "herdr refused to create the $label tab: $(ralph_herdr_err_code "$out") — $(ralph_herdr_err_message "$out")" ;;
+    3) die "herdr did not answer the $label tab create (unreachable, or the call timed out — a timed-out create may still have landed; check the cockpit before retrying)" ;;
+    *) die "herdr's answer to the $label tab create was not a response this plugin can read — see the transport error above" ;;
+  esac
+  printf '%s' "$out"
+}
+
 # agent_start_when_ready NAME PANE — `agent start` needs the pane's shell to
 # own the foreground at its prompt. A pane herdr just created is still sourcing
 # rc files for a beat (prompt frameworks, version managers), so herdr answers
