@@ -44,7 +44,16 @@ case "${1:-} ${2:-}" in
     # failing; the script must tolerate that rather than treat it as an error.
     exit "${GH_STUB_CHECKS_EXIT:-0}"
     ;;
-  "pr view") serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}' ;;
+  "pr view")
+    # A second pr_view fixture, when present, is served to the SECOND call —
+    # which is what a push landing mid-snapshot looks like to this script.
+    if [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
+      cat "$GH_STUB_DIR/pr_view_second.json"
+    else
+      touch "$GH_STUB_DIR/pr_view_called"
+      serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}'
+    fi
+    ;;
   "api repos/"*)
     # Gate-5-shaped evidence lives on two endpoints: formal review objects and
     # issue comments (comment mode's head-bound request + clean result).
@@ -158,6 +167,7 @@ run() {
   shift
   local rc
   set +e
+  rm -f "$dir/pr_view_called"
   LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" \
     RALPH_MERGE_POLICY_FILE="${POLICY:-$POLICY_REVIEW}" \
     GH_STUB_CHECKS_EXIT="${CHECKS_EXIT:-0}" bash "$SCRIPT" 1740 "$@" 2>&1)
@@ -722,7 +732,18 @@ case "${1:-} ${2:-}" in
     serve pr_checks.json '[]'
     exit "${GH_STUB_CHECKS_EXIT:-0}"
     ;;
-  "pr view") serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}' ;;
+  "pr view")
+    # Serves a SECOND, different fixture to the second call when present —
+    # what a push landing mid-snapshot looks like. Every stub in this file
+    # needs it: the script reads the head twice on purpose, so a stub that
+    # cannot express "the head moved" silently cannot test for it.
+    if [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
+      cat "$GH_STUB_DIR/pr_view_second.json"
+    else
+      touch "$GH_STUB_DIR/pr_view_called"
+      serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}'
+    fi
+    ;;
   "api repos/"*)
     if [[ "$2" == */issues/*/comments ]]; then serve issue_comments.json '[]'
     # A paginated endpoint emits ONE JSON array PER PAGE; `gh --paginate`
@@ -770,7 +791,18 @@ case "${1:-} ${2:-}" in
     serve pr_checks.json '[]'
     exit "${GH_STUB_CHECKS_EXIT:-0}"
     ;;
-  "pr view") serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}' ;;
+  "pr view")
+    # Serves a SECOND, different fixture to the second call when present —
+    # what a push landing mid-snapshot looks like. Every stub in this file
+    # needs it: the script reads the head twice on purpose, so a stub that
+    # cannot express "the head moved" silently cannot test for it.
+    if [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
+      cat "$GH_STUB_DIR/pr_view_second.json"
+    else
+      touch "$GH_STUB_DIR/pr_view_called"
+      serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}'
+    fi
+    ;;
   "api repos/"*)
     if [[ "$2" == */issues/*/comments ]]; then
       serve issue_comments.json '[]'
@@ -1137,6 +1169,56 @@ if [[ "$LAST_OUT" != *"withheld"* ]]; then
   pass "an empty list is answered, not withheld"
 else
   fail "empty checks list treated as unreadable (out=${LAST_OUT:0:140})"
+fi
+
+echo "=== P2/19: the snapshot is bound to ONE head ==="
+# gh pr checks exposes no SHA, so a push landing mid-snapshot would pair the
+# OLD head's green checks with the NEW head. For an exempt author, or a policy
+# with review and attestation off, nothing else is head-bound — so that pairing
+# would produce GATE-READY for a head nothing has validated.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/head-moved"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+# The stub serves a DIFFERENT head on the second `gh pr view`, which is exactly
+# what a push landing between the two reads looks like.
+printf '%s' "$(jq -n --arg sha "$OLD_SHA" '{headRefOid: $sha}')" >"$D/pr_view_second.json"
+expect "a head that moves mid-snapshot refuses to classify" "$D" "GATE-WAIT ci" 10
+run "$D"
+if [[ "$LAST_OUT" == *"head moved"* ]] && [[ "$LAST_OUT" == *"${HEAD_SHA:0:8}"* ]]; then
+  pass "names both heads rather than silently mixing their evidence"
+else
+  fail "head-moved message (out=${LAST_OUT:0:170})"
+fi
+# A settled head classifies normally. This case also pins the re-read's SHAPE:
+# an implementation whose second read disagrees about form with the first
+# would report a change that never happened, and --watch would never settle.
+rm "$D/pr_view_second.json"
+expect "a settled head classifies normally" "$D" "GATE-READY" 0
+
+echo "=== P2/20: --interval 0 is refused, not accepted ==="
+# `sleep 0` returns immediately, so --interval 0 is an unthrottled loop over
+# every GitHub endpoint until something rate-limits it.
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$TMP_ROOT/ready" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  bash "$SCRIPT" 1740 --watch --interval 0 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 2 ] && [[ "$out" == *"greater than 0"* ]]; then
+  pass "--interval 0 is a usage error naming the reason"
+else
+  fail "--interval 0 (rc=$rc out=${out:0:120})"
+fi
+# 1 is still allowed — the guard rejects zero, it does not impose a floor.
+set +e
+PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$TMP_ROOT/ready" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  timeout 20 bash "$SCRIPT" 1740 --watch --interval 1 >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+  pass "--interval 1 is still accepted"
+else
+  fail "--interval 1 rejected (rc=$rc)"
 fi
 
 echo

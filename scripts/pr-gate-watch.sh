@@ -133,6 +133,14 @@ esac
 case "$INTERVAL" in
   '' | *[!0-9]*) echo "--interval must be a number, got: $INTERVAL" >&2; exit 2 ;;
 esac
+# `sleep 0` returns immediately, so --interval 0 is not a fast poll, it is an
+# unthrottled loop over every GitHub endpoint until something rate-limits it
+# (codex P2, PR #1764). Rejected rather than clamped: a caller who typed 0
+# meant something, and silently substituting 30 would hide that.
+if [ "$INTERVAL" -eq 0 ]; then
+  echo "--interval must be greater than 0 (0 would poll without delay)" >&2
+  exit 2
+fi
 
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # Same resolution and same test-only override as scripts/merge-pr.sh — the
@@ -491,7 +499,24 @@ json_array_or_empty() {
 
 # snapshot -> one verdict line, or non-zero if gh could not be reached.
 snapshot() {
-  local checks pr_json reviews comments fetch_ok checks_ok
+  local checks pr_json reviews comments fetch_ok checks_ok head_before head_after
+  # The PR read comes FIRST so every other query is collected against a KNOWN
+  # head, and the head is re-read at the end to prove it did not move
+  # underneath the snapshot (codex P2, PR #1764). `gh pr checks` exposes no
+  # SHA of its own, so without this a push landing mid-snapshot would pair the
+  # OLD head's green checks with the NEW head — and for an exempt author, or a
+  # policy with review and attestation off, nothing else is head-bound, so it
+  # would produce GATE-READY for a head nothing has validated.
+  #
+  # This query's failure is the one that means we genuinely cannot judge.
+  # `mergeable` is computed asynchronously by GitHub and `author` decides
+  # policy exemption; both are inputs to the ladder, so both are fetched here
+  # rather than assumed.
+  pr_json=$(gh pr view "$PR" \
+    --json state,reviewDecision,headRefOid,comments,author,mergeable 2>/dev/null) || return 1
+  [ -n "$pr_json" ] || return 1
+  head_before=$(jq -r '.headRefOid // ""' <<<"$pr_json")
+
   # `gh pr checks` exits non-zero whenever any check is pending or failing,
   # and errors outright when a PR has no checks at all. Neither is an error
   # here, so the exit status is deliberately ignored; only an unparseable
@@ -536,13 +561,17 @@ snapshot() {
     comments=$(json_array_or_empty "$comments")
   fi
 
-  # PR state is the one query whose failure means we genuinely cannot judge.
-  # `mergeable` is computed asynchronously by GitHub and `author` decides
-  # policy exemption; both are inputs to the ladder, so both are fetched here
-  # rather than assumed.
-  pr_json=$(gh pr view "$PR" \
-    --json state,reviewDecision,headRefOid,comments,author,mergeable 2>/dev/null) || return 1
-  [ -n "$pr_json" ] || return 1
+  # Re-read the head only (a cheap query) and refuse to classify a snapshot
+  # that straddles a push. Non-terminal: the next poll sees a settled head.
+  # Parsed with jq rather than `gh --jq` so the shape of this read matches the
+  # first one exactly; a re-read that can disagree about FORM would report a
+  # head change that never happened, and --watch would never settle.
+  head_after=$(gh pr view "$PR" --json headRefOid 2>/dev/null | jq -r '.headRefOid // ""' 2>/dev/null) || head_after=""
+  if [ -n "$head_after" ] && [ "$head_after" != "$head_before" ]; then
+    printf 'GATE-WAIT ci: head moved from %s to %s during this snapshot — re-reading rather than mixing evidence from two heads' \
+      "${head_before:0:8}" "${head_after:0:8}"
+    return 0
+  fi
 
   local line
   line=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok") || return 1
