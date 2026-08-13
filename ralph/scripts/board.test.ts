@@ -19,6 +19,10 @@ import {
   parseApplyEvidence,
   parseVerifyAfter,
   validateApplyEvidence,
+  CAPABILITY_FLOORS,
+  compareVersions,
+  installedPluginReport,
+  resolveInstalledPlugin,
   claimExpiry,
   claimHintDue,
   claimIsStale,
@@ -1688,6 +1692,169 @@ describe("doctor: herdr-cockpit (GH-1759) — advisory by construction", () => {
     expect(cockpit(r).level).toBe("info");
     expect(cockpit(r).detail).toContain("not evaluated");
     expect(r.ok).toBe(true);
+  });
+});
+
+describe("doctor: installed-plugin floor (GH-1825) — advisory by construction", () => {
+  const saved = process.env.RALPH_INSTALLED_PLUGINS_FILE;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.RALPH_INSTALLED_PLUGINS_FILE;
+    else process.env.RALPH_INSTALLED_PLUGINS_FILE = saved;
+  });
+
+  /** Writes an installed copy on disk (manifest version) unless `manifest` is
+   *  false — the case where only the registry record can be read. */
+  const copyOn = (version: string, manifest: string | false = version) => {
+    const dir = join(mkdtempSync(join(tmpdir(), "board-plugin-")), version);
+    if (manifest !== false) {
+      mkdirSync(join(dir, ".claude-plugin"), { recursive: true });
+      writeFileSync(join(dir, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "ralph", version: manifest }));
+    }
+    return dir;
+  };
+
+  const registry = (content: unknown) => {
+    const file = join(mkdtempSync(join(tmpdir(), "board-registry-")), "installed_plugins.json");
+    writeFileSync(file, typeof content === "string" ? content : JSON.stringify(content));
+    process.env.RALPH_INSTALLED_PLUGINS_FILE = file;
+    return file;
+  };
+  const ralphAt = (installPath: string, version = "0.0.0") => ({
+    plugins: { "ralph@ralph-hero": [{ scope: "user", installPath, version }] },
+  });
+
+  const applyRepo = (): Config => {
+    const cfg = makeCtx(new FakeGh()).cfg;
+    cfg.apply = { ...cfg.apply, enabled: true };
+    return cfg;
+  };
+
+  it("below the floor names the INERT CAPABILITY, not just an old number", () => {
+    const path = copyOn("0.1.74");
+    registry(ralphAt(path));
+    const r = installedPluginReport(applyRepo());
+    expect(r.level).toBe("info");
+    expect(r.detail).toContain(path); // the resolved installPath, not a cache glob
+    expect(r.detail).toContain("0.1.74 < 0.1.81");
+    expect(r.detail).toContain("the apply close gate is NOT enforcing");
+  });
+
+  it("at or above the floor is ok", () => {
+    registry(ralphAt(copyOn("0.1.81")));
+    expect(installedPluginReport(applyRepo()).level).toBe("ok");
+    registry(ralphAt(copyOn("0.1.115")));
+    expect(installedPluginReport(applyRepo()).level).toBe("ok");
+  });
+
+  it("a repo that relies on no plugin-side gate never hears about a floor, however old the install", () => {
+    registry(ralphAt(copyOn("0.1.40")));
+    const r = installedPluginReport(makeCtx(new FakeGh()).cfg); // apply not enabled
+    expect(r.level).toBe("ok");
+    expect(r.detail).toContain("no capability floor applies");
+    expect(r.detail).not.toContain("NOT enforcing");
+  });
+
+  it("absence is not a breach: no registry, garbage registry, or no ralph key all read `not evaluated`", () => {
+    process.env.RALPH_INSTALLED_PLUGINS_FILE = join(tmpdir(), "board-registry-absent", "nope.json");
+    expect(installedPluginReport(applyRepo())).toMatchObject({ level: "info" });
+    expect(installedPluginReport(applyRepo()).detail).toContain("not evaluated");
+
+    registry("{ not json");
+    expect(installedPluginReport(applyRepo()).detail).toContain("not evaluated");
+
+    registry({ plugins: { "other@market": [{ installPath: copyOn("0.0.1"), version: "0.0.1" }] } });
+    expect(installedPluginReport(applyRepo()).detail).toContain("not evaluated");
+    expect(resolveInstalledPlugin("ralph")).toBeNull();
+  });
+
+  it("the installed copy's own manifest wins over the registry record, which is a labelled fallback", () => {
+    // The record claims 0.1.99; the directory actually holds 0.1.74.
+    registry(ralphAt(copyOn("0.1.74"), "0.1.99"));
+    const judged = installedPluginReport(applyRepo());
+    expect(judged.detail).toContain("ralph 0.1.74");
+    expect(judged.level).toBe("info");
+
+    registry(ralphAt(copyOn("gone", false), "0.1.99"));
+    const fallback = installedPluginReport(applyRepo());
+    expect(fallback.detail).toContain("ralph 0.1.99");
+    expect(fallback.detail).toContain("manifest is unreadable");
+    expect(fallback.level).toBe("ok");
+  });
+
+  it("several installed copies are judged by the LOWEST — any of them may be the one a session resolved", () => {
+    registry({
+      plugins: {
+        "ralph@ralph-hero": [
+          { scope: "user", installPath: copyOn("0.1.115") },
+          { scope: "local", projectPath: "/repo", installPath: copyOn("0.1.74") },
+        ],
+      },
+    });
+    const r = installedPluginReport(applyRepo());
+    expect(r.detail).toContain("ralph 0.1.74");
+    expect(r.detail).toContain("2 installed copies");
+    expect(r.level).toBe("info");
+  });
+
+  it("an unparseable version is not evaluated, never assumed stale", () => {
+    registry(ralphAt(copyOn("unknown")));
+    const r = installedPluginReport(applyRepo());
+    expect(r.level).toBe("info");
+    expect(r.detail).toContain("not evaluated");
+    expect(r.detail).toContain("unknown");
+  });
+
+  it("compareVersions orders numerically and refuses non-numeric input", () => {
+    expect(compareVersions("0.1.9", "0.1.10")).toBe(-1);
+    expect(compareVersions("0.1.81", "0.1.81")).toBe(0);
+    expect(compareVersions("0.2", "0.1.99")).toBe(1);
+    expect(compareVersions("1.0", "1.0.0")).toBe(0);
+    expect(compareVersions("unknown", "0.1.81")).toBeNull();
+    expect(compareVersions("0.1.81", "v0.1.81")).toBeNull();
+  });
+
+  it("every floor names a capability and a parseable release", () => {
+    for (const f of CAPABILITY_FLOORS) {
+      expect(f.capability).toBeTruthy();
+      expect(compareVersions(f.since, "0.0.0")).not.toBeNull();
+    }
+  });
+
+  it("--strict never escalates it and --fix never acts on it, stale install included", () => {
+    const path = copyOn("0.1.74");
+    registry(ralphAt(path));
+    const line = (r: ReturnType<typeof doctor>) => r.checks.find((c) => c.name === "installed-plugin")!;
+    const ctx = makeCtx(new FakeGh());
+    ctx.cfg.apply = { ...ctx.cfg.apply, enabled: true };
+
+    // Baselines: the same sweep with a CURRENT install, so the only difference
+    // is this line going stale.
+    registry(ralphAt(copyOn("0.1.115")));
+    const [okPlain, okStrict, okFixed] = [doctor(ctx).ok, doctor(ctx, { strict: true }).ok, doctor(ctx, { fix: true }).ok];
+    registry(ralphAt(path));
+
+    const plain = doctor(ctx);
+    const strict = doctor(ctx, { strict: true });
+    const fixed = doctor(ctx, { fix: true });
+    for (const r of [plain, strict, fixed]) expect(line(r).level).toBe("info");
+    expect(plain.ok).toBe(okPlain);
+    expect(strict.ok).toBe(okStrict); // info is outside the exit code, --strict included
+    expect(fixed.ok).toBe(okFixed);
+    // --fix corrects board state; an install is not board state, so the stale
+    // copy is reported and left byte-for-byte where it was.
+    expect(JSON.parse(readFileSync(join(path, ".claude-plugin", "plugin.json"), "utf8")).version).toBe("0.1.74");
+  });
+
+  it("a throwing read degrades to info rather than touching the exit code", () => {
+    // A directory where the registry file should be: existsSync passes, the
+    // read throws EISDIR.
+    process.env.RALPH_INSTALLED_PLUGINS_FILE = mkdtempSync(join(tmpdir(), "board-registry-dir-"));
+    const baseline = doctor(makeCtx(new FakeGh()), { strict: true }).ok;
+    const r = doctor(makeCtx(new FakeGh()), { strict: true });
+    const c = r.checks.find((x) => x.name === "installed-plugin")!;
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("not evaluated");
+    expect(r.ok).toBe(baseline);
   });
 });
 
