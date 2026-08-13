@@ -54,6 +54,7 @@
 #   pane split <ID> …             pane-split.<ID>.json, then pane-split.json
 #   pane report-metadata …        pane-report-metadata.json
 #   plugin pane …                 plugin-pane.json
+#   worktree list …               worktree-list.json      payload {source:{…},worktrees:[…]}
 #   worktree create …             worktree-create.json
 #   worktree open …               worktree-open.json
 #   notification show …           notification-show.json
@@ -277,6 +278,15 @@ case "$key" in
     respond "cli:worktree:create" "worktree_created" \
       '{"workspace":{"workspace_id":"w1","number":1,"label":"fake","focused":false,"pane_count":1,"tab_count":1,"active_tab_id":"w1:t1","agent_status":"unknown"},"tab":{"tab_id":"w1:t1"},"root_pane":{"pane_id":"pW1"},"worktree":{"path":"/tmp/fake-herdr-wt"}}' \
       worktree-create
+    ;;
+  worktree-list)
+    # The spawn path reads .source.source_checkout_path to find the checkout
+    # herdr will start a worktree action from (GH-1860). The default answers a
+    # parent that differs from any plausible test cwd, so a test asserting the
+    # resolution cannot pass by accident.
+    respond "cli:worktree:list" "worktree_list" \
+      '{"source":{"repo_key":"/tmp/fake-herdr-parent/.git","repo_name":"fake","repo_root":"/tmp/fake-herdr-parent","source_checkout_path":"/tmp/fake-herdr-parent","source_workspace_id":"w1"},"worktrees":[]}' \
+      worktree-list
     ;;
   worktree-open)
     respond "cli:worktree:open" "worktree_opened" \

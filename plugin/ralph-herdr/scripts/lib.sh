@@ -324,34 +324,47 @@ ralph_depth_guard() {
   echo $((d + 1))
 }
 
-# ralph_worktree_source_dir [DIR] — the checkout herdr will accept as the
-# source for a `worktree create`/`worktree open`, resolved from DIR (default
+# ralph_worktree_source_dir [DIR] — the checkout herdr will start a `worktree
+# create`/`worktree open` from, resolved for the repo containing DIR (default
 # $REPO).
 #
 # herdr refuses both actions when --cwd is a LINKED worktree:
 #   {"error":{"code":"linked_worktree_source","message":"New and open worktree
 #    actions start from the repo parent workspace."}}
-# and $REPO defaults to $PWD — which, for an agent spawning an agent, is
-# always a linked worktree, because that is where /ralph:work runs. So the
-# spawn path was structurally broken from the only place it actually runs
-# (GH-1832).
+# and $REPO defaults to $PWD — which, for an agent spawning an agent, is always
+# a linked worktree, because that is where /ralph:work runs. So the spawn path
+# was structurally broken from the only place it actually runs (GH-1832).
 #
-# Resolved from `git worktree list --porcelain`, whose FIRST entry is the main
-# worktree, and NOT from `dirname $(git rev-parse --git-common-dir)`: that
-# returns a cwd-RELATIVE `.git` when run from the main checkout, so the dirname
-# is a bare `.` — a bogus --cwd on the common path, and a silent one. (The same
-# trap is documented at scripts/merge-pr.sh:492.)
+# ASKED, not derived: `worktree list` already reports the source herdr would
+# use, and answers identically from a linked worktree and from the main
+# checkout. GH-1832 first computed this locally with `git worktree list`, whose
+# head is the main GIT worktree — a different concept from the checkout HERDR
+# starts from. They agree today and nothing makes them agree tomorrow, so the
+# local derivation could produce a source herdr refuses: the same bug with a
+# longer fuse. The server owns the rule; this reads it. (GH-1860)
 #
-# Falls back to DIR unchanged when git cannot answer — a non-repo, or a git too
-# old for the porcelain form. That is the honest degradation: herdr's own
-# refusal is a better error than a guess this function invented, and DIR is
-# already correct everywhere except a linked worktree.
+# `source_checkout_path`, not `source_workspace_id` — the schema
+# (WorktreeSourceInfo) marks the path required and the id nullable, so the
+# otherwise-more-native `worktree create --workspace <ID>` form has a hole
+# whenever no workspace is open for the source.
+#
+# --cwd is passed explicitly and is load-bearing: without it herdr answers from
+# its own session context rather than our directory (probed — from /tmp it
+# still reported this repo), which for a background spawn could resolve a
+# source in the WRONG repository.
+#
+# Falls back to DIR unchanged when herdr cannot answer. The caller is about to
+# make a worktree call against the same server, so that call surfaces herdr's
+# own error code — a better failure than a path this function invented.
 ralph_worktree_source_dir() {
-  local dir="${1:-$REPO}" main
-  main=$(git -C "$dir" worktree list --porcelain 2>/dev/null |
-    awk '/^worktree /{print substr($0, 10); exit}') || main=""
-  if [ -n "$main" ] && [ -d "$main" ]; then
-    printf '%s' "$main"
+  local dir="${1:-$REPO}" out src
+  out=$(ralph_herdr_call worktree_list worktree list --cwd "$dir" 2>/dev/null) || {
+    printf '%s' "$dir"
+    return 0
+  }
+  src=$(printf '%s' "$out" | jq -r '.source.source_checkout_path // empty' 2>/dev/null) || src=""
+  if [ -n "$src" ]; then
+    printf '%s' "$src"
   else
     printf '%s' "$dir"
   fi

@@ -61,6 +61,7 @@ _ralph_required_fields() {
     workspace_created) echo "workspace tab root_pane" ;;
     worktree_created)  echo "workspace tab root_pane worktree" ;;
     worktree_opened)   echo "workspace tab root_pane worktree already_open" ;;
+    worktree_list)     echo "source worktrees" ;;
     tab_created)       echo "tab root_pane" ;;
     pane_info)         echo "pane" ;;
     pane_read)         echo "read" ;;
