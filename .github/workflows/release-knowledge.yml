@@ -47,6 +47,12 @@ on:
       - 'plugin/ralph-knowledge/skills/**'
       - 'plugin/ralph-knowledge/agents/**'
       - 'plugin/ralph-knowledge/hooks/**'
+      # Runtime launcher. Now that .mcp.json no longer pins an npm version,
+      # the plugin STARTS through scripts/launch-mcp.sh — that makes it
+      # runtime content, not tooling. Without this path a commit touching only
+      # the launcher would not bump the plugin version, so no installed plugin
+      # would ever pick the fix up (codex P2, PR #1755).
+      - 'plugin/ralph-knowledge/scripts/**'
   workflow_dispatch:
     inputs:
       bump:

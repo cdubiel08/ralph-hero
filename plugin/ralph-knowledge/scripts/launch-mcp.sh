@@ -41,9 +41,35 @@ fingerprint() {
     return 0
   fi
   {
-    node --version 2>/dev/null || echo "node-unknown"
+    node_compat_boundary
     cat package.json package-lock.json
   } | $hasher | cut -d' ' -f1
+}
+
+# The Node identity the built tree is actually bound to — NOT the full
+# version string (codex P2, PR #1755). Hashing `node --version` invalidated
+# the marker on every Node patch bump, and each invalidation costs a
+# destructive `npm ci` + rebuild: multi-minute startup at best, and at worst a
+# working offline install taken down because the registry is unreachable.
+#
+# The real boundary is the native ABI. better-sqlite3 (and onnxruntime-node)
+# ship compiled binaries keyed to NODE_MODULE_VERSION, which is stable across
+# every minor and patch and changes exactly when a rebuild IS required. Prefer
+# it; fall back to the major version when `node -p` cannot answer, and to a
+# never-matching sentinel when node is missing entirely — an unknown boundary
+# must re-bootstrap, never claim a match.
+node_compat_boundary() {
+  local abi major
+  if abi=$(node -p 'process.versions.modules' 2>/dev/null) && [ -n "$abi" ]; then
+    echo "node-abi-$abi"
+    return 0
+  fi
+  if major=$(node --version 2>/dev/null) && [ -n "$major" ]; then
+    # v22.11.0 -> v22
+    echo "node-major-${major%%.*}"
+    return 0
+  fi
+  echo "node-unknown-$$"
 }
 
 # True (0) when bootstrap must run. Every dependency the lockfile installs and
