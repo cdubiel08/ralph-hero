@@ -21,9 +21,9 @@ ralph/
 ├── scripts/tick.sh     # ONE scheduler-transport example of driving the work
 │                       #   lane (+ install-loop.sh) — a recipe, not THE loop
 ├── examples/README.md  # transport recipes: /loop, routines, scheduler — copy and own
-├── hooks/funnel-*.sh   # courtesy redirects to board.ts / merge-pr.sh (merge
-│                       #   redirect only when the host repo ships the gate) —
-│                       #   NOT enforcement; board.ts + state-guard.yml are
+├── hooks/funnel-*.sh   # courtesy redirects to board.ts / merge-pr.sh (each
+│                       #   only when the host repo ships the target) — NOT
+│                       #   enforcement; board.ts + state-guard.yml are
 └── .claude-plugin/     # manifest
 ```
 
