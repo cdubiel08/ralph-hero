@@ -68,6 +68,12 @@ case "${1:-} ${2:-}" in
     fi
     [[ -f "$reviews_file" ]] || echo '[]' >"$reviews_file"
     if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$reviews_file"; else cat "$reviews_file"; fi
+    # Emit the payload FIRST, then fail: this reproduces a partial/failed
+    # paginated fetch, and is what makes the pipefail regression discriminating
+    # (a stub that printed nothing would pass with or without pipefail).
+    if [[ -f "$GH_STUB_DIR/gh_api_repos_exit" ]]; then
+      exit "$(cat "$GH_STUB_DIR/gh_api_repos_exit")"
+    fi
     ;;
   *)
     echo "stub: unhandled gh $*" >&2
@@ -90,8 +96,7 @@ cat >"$POLICY" <<'EOF'
     "bot": "chatgpt-codex-connector[bot]",
     "trigger": "@codex review",
     "head_marker": "ralph-review-head",
-    "clean_comment_marker": "Codex Review: Didn't find any major issues.",
-    "approval_reaction": "+1"
+    "clean_comment_marker": "Codex Review: Didn't find any major issues."
   },
   "exempt_authors": ["dependabot[bot]", "app/dependabot", "github-actions[bot]"]
 }
@@ -142,14 +147,40 @@ write_pr_view() {
   fi
 }
 
+# CODEX_CLEAN_BODY is the VERBATIM body Codex posts on a clean review, copied
+# from the live comment on PR #1830 (2026-08-13). Do not "tidy" it.
+#
+# The previous fixture used an idealized one-line paraphrase, and that is
+# precisely why the original parser bug shipped: the real body carries a
+# "**Reviewed commit:** `<10-char-sha>`" line whose `:** ` separator and
+# 10-char SHA both defeated the `Reviewed commit <7-sha>([^0-9A-Fa-f]|$)`
+# regex on main, so a CLEAN review could never satisfy gate 5 while a review
+# WITH findings could. A fixture that does not match what the server actually
+# sends proves nothing about the gate.
+CODEX_CLEAN_BODY='Codex Review: Didn'"'"'t find any major issues. More of your lovely PRs please.
+
+**Reviewed commit:** `8430effbdd`
+
+<details> <summary>ℹ️ About Codex in GitHub</summary>
+
+[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you
+- Open a pull request for review
+- Mark a draft as ready
+- Comment "@codex review".
+
+If Codex has suggestions, it will comment; otherwise it will react with 👍.
+</details>'
+
 add_clean_codex_evidence() { # add_clean_codex_evidence <dir> <head-sha>
   local dir="$1" sha="$2"
-  jq -n --arg sha "$sha" '[
+  jq -n --arg sha "$sha" --arg clean "$CODEX_CLEAN_BODY" '[
     {user:{login:"cdubiel08"}, body:("@codex review\n<!-- ralph-review-head: " + $sha + " -->"), created_at:"2026-08-13T04:00:00Z"},
-    {user:{login:"chatgpt-codex-connector[bot]"}, body:"Codex Review: Didn\u0027t find any major issues. What shall we delve into next?", created_at:"2026-08-13T04:00:10Z"}
+    {user:{login:"chatgpt-codex-connector[bot]"}, body:$clean, created_at:"2026-08-13T04:00:10Z"}
   ]' >"$dir/issue_comments.json"
-  echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1","created_at":"2026-08-13T04:00:10Z"}]' \
-    >"$dir/pr_reactions.json"
+  # No reaction fixture: PR-level reactions are deliberately NOT evidence
+  # (codex P1 + CodeRabbit, PR #1839). Kept empty so a regression that starts
+  # reading them again fails these tests instead of passing on stale data.
+  echo '[]' >"$dir/pr_reactions.json"
 }
 
 GREEN_CHECKS='[{"name":"test-hooks","bucket":"pass"},{"name":"lint","bucket":"skipping"}]'
@@ -300,15 +331,31 @@ setup_clean_ext() {
   setup_no_ext "$1"
   add_clean_codex_evidence "$1" "$SHA"
 }
-run_case "clean bot comment plus Codex PR thumbs-up satisfies gate 5" 0 "$POLICY" setup_clean_ext
+run_case "clean bot comment at the head satisfies gate 5" 0 "$POLICY" setup_clean_ext
 expect_merged "clean external-review evidence"
 
-setup_clean_without_reaction() {
+# The reaction is NOT evidence (codex P1 + CodeRabbit, PR #1839). Requiring it
+# reintroduced the permanent-pending bug class one layer up: a reaction fires
+# no workflow event, so a clean comment observed before the reaction published
+# a `pending` nothing would recompute. This pins the decision — with the
+# reaction absent entirely, a clean comment still merges.
+setup_clean_no_reaction_at_all() {
   setup_clean_ext "$1"
   echo '[]' >"$1/pr_reactions.json"
 }
-run_case "clean bot comment without Codex PR thumbs-up stays pending" 75 "$POLICY" setup_clean_without_reaction
-expect_not_merged "clean comment without thumbs-up"
+run_case "clean comment merges with NO reaction present at all" 0 "$POLICY" setup_clean_no_reaction_at_all
+expect_merged "clean comment without any reaction"
+
+# The other half of dropping reactions: a stale reaction cannot resurrect
+# missing comment evidence. GitHub keeps PR-level reactions across pushes, so
+# had they stayed evidence, one earned at an old head would satisfy a new one.
+setup_stale_reaction_no_clean() {
+  setup_no_ext "$1"
+  echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1","created_at":"2020-01-01T00:00:00Z"}]' \
+    >"$1/pr_reactions.json"
+}
+run_case "a stale thumbs-up alone never satisfies gate 5" 75 "$POLICY" setup_stale_reaction_no_clean
+expect_not_merged "stale reaction without clean comment"
 
 setup_commented_ext() {
   write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$COMMENTED_REVIEWS"
@@ -391,12 +438,69 @@ setup_findings_before_clean() {
 }
 run_case "a later clean result supersedes earlier current-head findings" 0 "$POLICY" setup_findings_before_clean
 
-setup_wrong_reaction_identity() {
-  setup_clean_ext "$1"
-  jq '.[0].user.login = "someone-else"' "$1/pr_reactions.json" >"$1/pr_reactions.next"
-  mv "$1/pr_reactions.next" "$1/pr_reactions.json"
+# --- v1 policies that name a formal-review bot (codex P2, PR #1839) --------
+# A policy declaring NEITHER marker is in `review` mode: an APPROVED review at
+# the current head satisfies gate 5, exactly as before comment mode existed.
+# Without this, upgrading silently handed CodeRabbit repos Codex's protocol and
+# made them unmergeable.
+POLICY_V1_FORMAL="$TMP_ROOT/policy-v1-formal.json"
+cat >"$POLICY_V1_FORMAL" <<'EOF'
+{
+  "version": 1,
+  "attestation": { "required": true },
+  "external_review": { "required": true, "bot": "coderabbitai", "trigger": "@coderabbitai review" },
+  "exempt_authors": ["dependabot[bot]"]
 }
-run_case "thumbs-up from the wrong identity does not satisfy gate 5" 75 "$POLICY" setup_wrong_reaction_identity
+EOF
+
+setup_v1_formal_approved() {
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" \
+    "$(jq -nc --arg sha "$SHA" '[{user:{login:"coderabbitai"}, state:"APPROVED", commit_id:$sha, submitted_at:"2026-08-13T04:00:00Z"}]')"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "v1 formal-review policy merges on an APPROVED review at head" 0 "$POLICY_V1_FORMAL" setup_v1_formal_approved
+expect_merged "v1 formal-review APPROVED"
+
+setup_v1_formal_stale_approved() {
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" \
+    '[{"user":{"login":"coderabbitai"}, "state":"APPROVED", "commit_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "submitted_at":"2026-08-13T04:00:00Z"}]'
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "v1 formal-review policy stays pending on an APPROVED review at an OLD head" 75 "$POLICY_V1_FORMAL" setup_v1_formal_stale_approved
+expect_not_merged "v1 formal-review stale APPROVED"
+
+setup_v1_formal_none() {
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" '[]'
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "v1 formal-review policy stays pending with no review" 75 "$POLICY_V1_FORMAL" setup_v1_formal_none
+expect_out "review-mode pending names the formal-review remedy" "no current APPROVED"
+
+# A half-configured comment protocol is unsatisfiable, not strict — say so.
+POLICY_HALF_MARKER="$TMP_ROOT/policy-half-marker.json"
+cat >"$POLICY_HALF_MARKER" <<'EOF'
+{
+  "version": 1,
+  "attestation": { "required": true },
+  "external_review": { "required": true, "bot": "coderabbitai", "trigger": "@x", "head_marker": "ralph-review-head" },
+  "exempt_authors": []
+}
+EOF
+run_case "policy declaring only one marker is refused" 1 "$POLICY_HALF_MARKER" setup_clean_ext
+expect_out "half-marker policy names the missing half" "comment-evidence mode needs both"
+
+# --- API outage must not read as "no evidence yet" (CodeRabbit, PR #1839) ---
+# Discriminating fixture: the stub prints VALID clean evidence AND exits 1.
+# Without `set -o pipefail`, `if ! x=$(gh api ... | jq ...)` records jq's exit
+# 0, external_fetch_ok stays true, the good payload is trusted and the PR
+# MERGES on evidence fetched from a failed call. With pipefail the pipeline
+# reports gh's failure and the gate stays retry-able.
+setup_ext_api_outage() {
+  setup_clean_ext "$1"
+  echo "1" >"$1/gh_api_repos_exit"
+}
+run_case "a failing external-evidence fetch is retry-able, never trusted" 75 "$POLICY" setup_ext_api_outage
+expect_not_merged "external evidence fetched from a failing API call"
 
 # 9a-bis. The SAME fixture under `external_review.required: false` — the branch
 #         a repo without a review bot actually runs on (GH-1831). Every other

@@ -91,7 +91,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # PR issue comments and PR-level reactions share the Issues API.
+      # PR issue comments (the attestation comment, head-bound review
+      # requests, and clean-result comments) come from the Issues API.
       issues: read
       # Resolve PR metadata and reviews.
       pull-requests: read
@@ -100,10 +101,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-      # GitHub has no reaction event. Give a clean-result comment up to one
-      # minute to acquire the connector's separately-created thumbs-up.
-      RALPH_EXTERNAL_REVIEW_RETRIES: 12
-      RALPH_EXTERNAL_REVIEW_RETRY_DELAY_SECONDS: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

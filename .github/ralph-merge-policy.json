@@ -8,8 +8,7 @@
     "bot": "chatgpt-codex-connector[bot]",
     "trigger": "@codex review",
     "head_marker": "ralph-review-head",
-    "clean_comment_marker": "Codex Review: Didn't find any major issues.",
-    "approval_reaction": "+1"
+    "clean_comment_marker": "Codex Review: Didn't find any major issues."
   },
   "exempt_authors": [
     "dependabot[bot]",

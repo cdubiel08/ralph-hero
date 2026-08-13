@@ -36,9 +36,13 @@ Merge exclusively through the host repo's own gate: `bash scripts/merge-pr.sh PR
 - **FAIL — attestation** — re-run the attested commands at the current head via `scripts/attest-pr.sh PR --run "<cmd>" --carry-review` — **contract rules: re-attestation only ever through `--run` (observed exit codes, never caller-typed), and the review verdict only ever carried forward, never authored or retyped**. Commands fail → demotion. Refusals key on their tokens, never the shared exit code: `ATTESTATION REFUSED — head moved` is not a test failure (re-check quiescence, retry once, else exit at In Review); `ATTESTATION REFUSED — no prior review` → Human Needed, never a fresh self-approval.
 - Any unclassified FAIL → Human Needed with the gate output quoted.
 
-Reviewer nudges are an exact two-line comment: the merge policy's
-`external_review.trigger`, then `<!-- <head_marker>: <full-head-sha> -->` using
-the policy's `external_review.head_marker` and the current 40-character head
+Reviewer nudges take the shape the merge policy declares. When
+`external_review.head_marker` is absent, the reviewer files formal APPROVED
+reviews and the nudge is just the policy's `external_review.trigger` — do not
+invent a marker it never reads. When the policy declares both `head_marker` and
+`clean_comment_marker` (comment-evidence mode, which is what this repo runs),
+the nudge is an exact two-line comment: the trigger, then
+`<!-- <head_marker>: <full-head-sha> -->` using the current 40-character head
 SHA. With the current policy, the body is:
 
 ```text
