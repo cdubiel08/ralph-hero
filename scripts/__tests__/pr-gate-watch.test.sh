@@ -1221,6 +1221,42 @@ else
   fail "--interval 1 rejected (rc=$rc)"
 fi
 
+echo "=== P2/21: the head re-read fails CLOSED ==="
+# The guard added for P2/19 converted its OWN failure into success: an empty
+# head_after skipped the mismatch check, so a snapshot that straddled a push
+# could still classify. A re-read that did not happen proves nothing.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/head-reread-fails"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+# An empty second read is what a failed `gh pr view` looks like here.
+printf '%s' '{}' >"$D/pr_view_second.json"
+expect "an unusable head re-read withholds the verdict" "$D" "GATE-WAIT ci" 10
+run "$D"
+if [[ "$LAST_OUT" == *"withheld"* ]] && [ "$LAST_RC" -eq 10 ]; then
+  pass "fails closed non-terminally rather than classifying on an unconfirmed head"
+else
+  fail "head re-read failure (rc=$LAST_RC out=${LAST_OUT:0:160})"
+fi
+rm "$D/pr_view_second.json"
+expect "a confirmed head still classifies" "$D" "GATE-READY" 0
+
+echo "=== P2/22: the rate-limit nudge uses the POLICY trigger ==="
+# A host repo naming a different trigger was told to post a command its
+# reviewer does not read — terminal advice that cannot be followed.
+POLICY_RL_CUSTOM="$TMP_ROOT/policy-rl-custom.json"
+jq '.external_review.bot = "coderabbitai[bot]" | .external_review.trigger = "@rabbit please-review"' \
+  "$POLICY_REVIEW" >"$POLICY_RL_CUSTOM"
+POLICY="$POLICY_RL_CUSTOM"
+run "$TMP_ROOT/yours-review-ratelimit"
+if [[ "$LAST_OUT" == "GATE-YOURS review"* ]] && [[ "$LAST_OUT" == *"@rabbit please-review"* ]] \
+   && [[ "$LAST_OUT" != *"@coderabbitai review"* ]]; then
+  pass "the nudge names the configured trigger, not a hardcoded one"
+else
+  fail "rate-limit trigger (out=${LAST_OUT:0:170})"
+fi
+POLICY="$POLICY_REVIEW"
+
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

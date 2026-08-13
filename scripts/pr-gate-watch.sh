@@ -401,7 +401,12 @@ def fenced_json:
   elif ($running | length) > 0 then
     "GATE-WAIT ci: \($running | length) running (\($running | map(.name) | join(", ")))"
   elif ($review_ok | not) and ($ratelimited | length) > 0 and $rl_is_reviewer then
-    "GATE-YOURS review: \($rl_names) rate-limited — its check PASSES but it reviewed nothing; post `@coderabbitai review`"
+    # The trigger comes from the POLICY, never a literal: a host repo that
+    # names a different trigger would otherwise be told to post a command its
+    # reviewer does not read, and the watcher would stop on advice that cannot
+    # be followed (codex P2, PR #1764). Every other review branch already
+    # interpolates it; this one was the holdout.
+    "GATE-YOURS review: \($rl_names) rate-limited — its check PASSES but it reviewed nothing; post `\($policy.trigger)`"
   elif $unanswered_findings and (($review_ok | not) or ($attested_current | not)) then
     (if $policy.mode == "comment" then
        # Adjudicating does not delete the COMMENTED review, and attesting does
@@ -567,7 +572,16 @@ snapshot() {
   # first one exactly; a re-read that can disagree about FORM would report a
   # head change that never happened, and --watch would never settle.
   head_after=$(gh pr view "$PR" --json headRefOid 2>/dev/null | jq -r '.headRefOid // ""' 2>/dev/null) || head_after=""
-  if [ -n "$head_after" ] && [ "$head_after" != "$head_before" ]; then
+  # An EMPTY head_after is a failed re-read, not a matching head. Treating it
+  # as "no mismatch" would make this guard convert its own failure into
+  # success — the check exists precisely because the snapshot might straddle a
+  # push, and a re-read that did not happen proves nothing about that (codex
+  # P2, PR #1764). Both branches are non-terminal, so the next poll recovers.
+  if [ -z "$head_after" ]; then
+    printf 'GATE-WAIT ci: could not re-read the head for #%s to confirm this snapshot is bound to one commit — verdict withheld rather than guessed' "$PR"
+    return 0
+  fi
+  if [ "$head_after" != "$head_before" ]; then
     printf 'GATE-WAIT ci: head moved from %s to %s during this snapshot — re-reading rather than mixing evidence from two heads' \
       "${head_before:0:8}" "${head_after:0:8}"
     return 0
