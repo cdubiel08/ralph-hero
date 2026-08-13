@@ -345,10 +345,21 @@ def fenced_json:
 # lingering red or pending status is not a verdict about this PR at all
 # (codex P2, PR #1764).
 | ($policy.attestationRequired and ($exempt | not))      as $attest_required
+# Evidence is judged by MODE, never pooled. `($approved | length) > 0` used to
+# sit here as an extra disjunct, which leaked formal approvals into comment
+# mode — where gate 5 ignores them entirely and stays pending, so the watcher
+# would move on to attestation and eventually recommend a merge that refuses
+# (codex P2, PR #1764). `$review_mode_ok` already carries the approval for
+# review mode, and `$clean_ok` is comment mode's only evidence; the pooled
+# term could therefore never add anything except the disagreement.
 | (($ext_required | not) or $exempt
-   or ($approved | length) > 0 or $clean_ok or $review_mode_ok) as $review_ok
-| (if ($approved | length) > 0 then ($approved | last)
-   elif ($clean_comments | length) > 0 then ($clean_comments | last)
+   or (if $policy.mode == "comment" then $clean_ok else $review_mode_ok end)) as $review_ok
+# The reviewer handed back for the attest command comes from the evidence the
+# ACTIVE mode accepts, so comment mode never names an approver gate 5 ignored.
+| (if $policy.mode == "comment" then
+     (if ($clean_comments | length) > 0 then ($clean_comments | last)
+      else ($at_head | last) end)
+   elif ($approved | length) > 0 then ($approved | last)
    else ($at_head | last) end)                           as $verdict
 # Findings at this head that nothing has answered yet. This is a NUDGE, not a
 # gate: gate 5 accepts the review above, so the only thing left to say is

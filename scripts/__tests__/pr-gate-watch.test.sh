@@ -1296,6 +1296,40 @@ else
 fi
 POLICY="$POLICY_REVIEW"
 
+echo "=== P2/23: comment mode does not accept formal approvals ==="
+# Gate 5 in comment mode looks ONLY for the head-bound request plus the clean
+# marker; a formal APPROVED review is not evidence there. Pooling it into
+# $review_ok made the watcher looser than the gate: it moved on to attestation
+# and could recommend a merge that gate 5 refuses.
+POLICY="$POLICY_COMMENT"
+D="$TMP_ROOT/comment-mode-formal-approval"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$APPROVAL" '[]'
+expect "a formal APPROVED review is not comment-mode evidence" "$D" "GATE-WAIT review" 10
+run "$D"
+if [[ "$LAST_OUT" == *"ralph-review-head"* ]]; then
+  pass "still asks for the marker protocol rather than accepting the approval"
+else
+  fail "comment-mode approval leak (out=${LAST_OUT:0:170})"
+fi
+# The clean marker IS evidence in the same fixture — so this is a real
+# difference, not a mode that can never be satisfied.
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$APPROVAL" "$(clean_evidence "$HEAD_SHA")"
+expect "the clean marker satisfies comment mode" "$D" "GATE-YOURS attestation" 0
+run "$D"
+if [[ "$LAST_OUT" == *"$BOT"* ]]; then
+  pass "names the clean-comment author, not the formal approver gate 5 ignored"
+else
+  fail "comment-mode verdict identity (out=${LAST_OUT:0:170})"
+fi
+# And review mode still accepts the approval it is supposed to.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/review-mode-formal-approval"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$APPROVAL" '[]'
+expect "review mode still accepts a formal APPROVED review" "$D" "GATE-YOURS attestation" 0
+
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
