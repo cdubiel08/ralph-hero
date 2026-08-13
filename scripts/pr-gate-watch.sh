@@ -404,7 +404,19 @@ def fenced_json:
 # Without this, the nudge stayed terminal after the re-request it asked for,
 # told the caller to re-request again, and ended --watch on the one state where
 # waiting is exactly right (codex P2, PR #1764).
-| ($policy.mode == "comment" and $request_at != "" and $request_at > $findings_at)
+# The request time in the ACTIVE mode. Comment mode binds the request with a
+# head marker; review mode has no marker to bind — its request is simply the
+# trigger comment — so recognizing only the marker form made this false in
+# review mode forever (codex P2, PR #1764). The nudge then kept telling a
+# caller who HAD re-requested to re-request again, which is the same defect
+# already fixed for comment mode, left unfixed in its sibling.
+| (if $policy.mode == "comment" then $request_at
+   elif $ext_required then
+     ([ $comments[]
+        | select((.body // "") | contains($policy.trigger))
+        | .updated_at // .created_at // empty ] | max // "")
+   else "" end)                                          as $any_request_at
+| ($ext_required and $any_request_at != "" and $any_request_at > $findings_at)
                                                          as $rerequested
 | ($ext_required and ($exempt | not)
    and ($commented | length) > 0 and ($approved | length) == 0
@@ -505,6 +517,8 @@ def fenced_json:
        "GATE-WAIT review: \($rl_names) reports pass but is rate-limited and reviewed nothing; gate 5 is waiting on \($policy.bot) at \($head[0:8]) — comment '\($policy.trigger)'"
      elif $policy.mode == "comment" then
        "GATE-WAIT review: request is in at \($head[0:8])\(if ($commented | length) > 0 then " and answers the findings review" else "" end); no clean \($policy.bot) result yet"
+     elif $ext_required and $any_request_at != "" then
+       "GATE-WAIT review: request is in at \($head[0:8])\(if ($commented | length) > 0 then " and answers the findings review" else "" end); no APPROVED \($policy.bot) review yet"
      elif $ext_required then
        "GATE-WAIT review: no \($policy.bot) verdict at \($head[0:8]) yet — comment '\($policy.trigger)' to trigger one"
      else

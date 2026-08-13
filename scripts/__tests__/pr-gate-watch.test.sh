@@ -1637,6 +1637,43 @@ else
 fi
 POLICY="$POLICY_REVIEW"
 
+echo "=== P2/33: re-requests are recognized in BOTH modes ==="
+# The comment-mode version of this was fixed in P2/29 and the review-mode
+# sibling was left broken: $rerequested only recognized the marker form, so in
+# review mode it was false forever and the nudge kept telling a caller who HAD
+# re-requested to re-request again (codex P2, PR #1764).
+POLICY="$POLICY_REVIEW"
+REVIEW_FINDINGS=$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
+  '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha,
+     submitted_at:"2026-08-13T04:00:00Z"}]')
+trigger_comment() { # trigger_comment <created_at> -> a review-mode request
+  jq -nc --arg at "$1" '[{user:{login:"cdubiel08"}, body:"@codex review", created_at:$at}]'
+}
+# Request BEFORE the findings: unanswered, so the caller acts.
+D="$TMP_ROOT/review-mode-not-rerequested"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$REVIEW_FINDINGS" "$(trigger_comment 2026-08-13T03:00:00Z)"
+expect "review mode: findings with no newer request hand control back" "$D" "GATE-YOURS review" 0
+# Request AFTER the findings: the reviewer owes the answer, so wait.
+D="$TMP_ROOT/review-mode-rerequested"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$REVIEW_FINDINGS" "$(trigger_comment 2026-08-13T05:00:00Z)"
+expect "review mode: a re-requested findings review is a wait" "$D" "GATE-WAIT review" 10
+run "$D"
+if [[ "$LAST_OUT" == *"answers the findings review"* ]] && [[ "$LAST_OUT" == *APPROVED* ]]; then
+  pass "names what it is waiting for: an APPROVED review answering the findings"
+else
+  fail "review-mode re-request wait (out=${LAST_OUT:0:200})"
+fi
+# A trigger comment with external review WAIVED must not manufacture a wait.
+POLICY="$POLICY_OFF"
+D="$TMP_ROOT/waived-trigger-comment"
+scenario "$D" "$READY_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$NO_REVIEWS" \
+  "$(trigger_comment 2026-08-13T05:00:00Z)"
+expect "external review waived: a trigger comment changes nothing" "$D" "GATE-READY" 0
+POLICY="$POLICY_REVIEW"
+
 echo "=== P2/30: a missing request outranks an unrelated rate limit ==="
 # The rate-limit note fired first, so a rate-limited CodeRabbit — a reviewer
 # gate 5 is not even waiting on — turned "you have not asked for a review yet"
