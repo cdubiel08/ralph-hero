@@ -159,7 +159,17 @@ if [[ "$external_required" == "true" ]]; then
     if [[ ! -x "$codex_evidence_sh" ]]; then
       out failure "external_review names head_marker (findings mode) but $codex_evidence_sh is missing"
     fi
-    ext_evidence=$("$codex_evidence_sh" "$PR_NUMBER" "$head_sha")
+    # Captured, not inherited: under `set -e` a crashed predicate would exit
+    # this script with no verdict line, and the workflow would publish a bare
+    # "validator error". An unusable answer is pending — retry-able — never a
+    # silent success.
+    set +e
+    ext_evidence=$("$codex_evidence_sh" "$PR_NUMBER" "$head_sha" 2>&1)
+    ext_rc=$?
+    set -e
+    if [[ "$ext_rc" -ne 0 ]] || ! jq -e 'type == "object" and has("ok")' >/dev/null 2>&1 <<<"$ext_evidence"; then
+      out pending "external review evidence could not be evaluated (exit $ext_rc)"
+    fi
     if [[ "$(jq -r '.ok' <<<"$ext_evidence")" != "true" ]]; then
       out pending "$(jq -r '.detail' <<<"$ext_evidence")"
     fi

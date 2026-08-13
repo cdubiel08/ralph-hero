@@ -218,6 +218,14 @@ run_v "an unresolved P0 finding pends, and says so" pending "unresolved P0 findi
 CODEX_EVIDENCE_STUB=/nonexistent-codex-evidence.sh \
   run_v "findings mode with no evidence script" failure "is missing" "$POLICY" s_codexext
 
+# A predicate that CRASHES is pending, never success: under `set -e` an
+# uncaptured failure would exit with no verdict line at all.
+CRASHING_EVIDENCE="$TMP_ROOT/crashing-evidence.sh"
+printf '#!/usr/bin/env bash\necho "boom"\nexit 3\n' >"$CRASHING_EVIDENCE"
+chmod +x "$CRASHING_EVIDENCE"
+CODEX_EVIDENCE_STUB="$CRASHING_EVIDENCE" \
+  run_v "a crashing evidence script" pending "could not be evaluated" "$POLICY" s_codexext
+
 # --- v1 formal-review policies keep working (codex P2, PR #1839) -----------
 POLICY_V1_FORMAL="$TMP_ROOT/policy-v1-formal.json"
 cat >"$POLICY_V1_FORMAL" <<'EOF'

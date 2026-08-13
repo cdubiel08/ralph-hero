@@ -512,6 +512,17 @@ CODEX_EVIDENCE_STUB=/nonexistent-codex-evidence.sh \
   run_case "findings mode with no evidence script is refused" 1 "$POLICY" setup_codex_ext
 expect_out "missing evidence script is named" "is missing"
 
+# A predicate that CRASHES is not a pass. Under `set -e` an uncaptured failure
+# would kill merge-pr.sh mid-gate, and a runner would see no MERGE GATE token
+# at all — indistinguishable from a gate that passed and then died.
+CRASHING_EVIDENCE="$TMP_ROOT/crashing-evidence.sh"
+printf '#!/usr/bin/env bash\necho "boom: unreadable"\nexit 3\n' >"$CRASHING_EVIDENCE"
+chmod +x "$CRASHING_EVIDENCE"
+CODEX_EVIDENCE_STUB="$CRASHING_EVIDENCE" \
+  run_case "a crashing evidence script is PENDING, not a pass" 75 "$POLICY" setup_codex_ext
+expect_out "crash is named, with the exit code" "could not be evaluated"
+expect_not_merged "crashing evidence script"
+
 # --- API outage must not read as "no evidence yet" (CodeRabbit, PR #1839) ---
 # Discriminating fixture: the stub prints VALID evidence AND exits 1.
 # Without `set -o pipefail`, `if ! x=$(gh api ... | jq ...)` records jq's exit

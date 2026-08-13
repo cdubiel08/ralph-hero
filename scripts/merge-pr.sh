@@ -367,9 +367,20 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
     if [[ ! -x "$CODEX_EVIDENCE_SH" ]]; then
       block "policy" "external_review names head_marker (findings mode) but $CODEX_EVIDENCE_SH is missing"
     fi
-    ext_evidence=$("$CODEX_EVIDENCE_SH" "$PR_NUMBER" "$head_sha")
-    [[ "$(jq -r '.ok' <<<"$ext_evidence")" == "true" ]] && evidence_ok=true
-    evidence_detail=$(jq -r '.detail' <<<"$ext_evidence")
+    # Captured, not inherited (same pattern as gate 6): under `set -e` a
+    # crashed predicate would kill this script mid-gate, and a runner would see
+    # no MERGE GATE token at all — indistinguishable from a gate that passed
+    # and then died. An unusable answer is PENDING, never silently ok.
+    set +e
+    ext_evidence=$("$CODEX_EVIDENCE_SH" "$PR_NUMBER" "$head_sha" 2>&1)
+    ext_rc=$?
+    set -e
+    if [[ "$ext_rc" -ne 0 ]] || ! jq -e 'type == "object" and has("ok")' >/dev/null 2>&1 <<<"$ext_evidence"; then
+      evidence_detail="external-review evidence could not be evaluated (${CODEX_EVIDENCE_SH##*/} exit $ext_rc): $(head -1 <<<"$ext_evidence")"
+    else
+      [[ "$(jq -r '.ok' <<<"$ext_evidence")" == "true" ]] && evidence_ok=true
+      evidence_detail=$(jq -r '.detail' <<<"$ext_evidence")
+    fi
   fi
 
   if [[ "$evidence_ok" != "true" ]]; then
