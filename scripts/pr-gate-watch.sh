@@ -189,6 +189,20 @@ def is_attest: .name == $attest or ((.description // "") | test("attest-pr\\.sh"
 # Login normalization, identical to gate 5: GitHub spells the same identity
 # "codex[bot]" via REST and "app/codex" in some payloads.
 def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+# The attestation payload, extracted the way gate 4 extracts it
+# (merge-pr.sh:319-321, an awk with both fences anchored to their own lines).
+# `split("```json")` accepted an INLINE fence anywhere in the body, so a
+# comment gate 4 calls unparseable could read as valid here and produce
+# GATE-READY into a merge that immediately rejects it (codex P2, PR #1764).
+# No closing fence means "to the end", which is what the awk does too.
+def fenced_json:
+  (. / "\n") as $lines
+  | ($lines | map(test("^```json[[:space:]]*$")) | index(true)) as $start
+  | if $start == null then null
+    else ($lines[($start + 1):]) as $rest
+      | ($rest | map(test("^```[[:space:]]*$")) | index(true)) as $end
+      | (if $end == null then $rest else $rest[0:$end] end | join("\n"))
+    end;
 
 ($checks // [])                                        as $all
 | ($all | map(select(is_attest)))                       as $att
@@ -310,7 +324,13 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
 # gate: gate 5 accepts the review above, so the only thing left to say is
 # "adjudicate before you attest" — and once a current attestation exists that
 # advice is spent, which is what keeps it from becoming a permanent verdict.
-| (($commented | length) > 0 and ($approved | length) == 0
+# Subject to the SAME waivers as the review question it is a nudge about: with
+# gate 5 off, or an exempt author, no approval is required, so asking for one
+# terminates --watch on a request the merge will never make. The earlier
+# waiver fixes covered $review_ok; this branch is reached independently of it
+# whenever attestation is also waived (codex P2, PR #1764).
+| ($ext_required and ($exempt | not)
+   and ($commented | length) > 0 and ($approved | length) == 0
    and ($clean_ok | not))                                as $unanswered_findings
 | ($att_pending | map(.name) | join(", "))              as $att_names
 # Is there already an attestation for the CURRENT head? The status stays
@@ -321,8 +341,7 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
 | (($pr.comments // [])
    | map(select(.body | contains($marker)))
    | last | (.body // "")
-   | (try (split("```json") | .[1] | split("```") | .[0] | fromjson)
-      catch null))                                      as $att_json
+   | (try (fenced_json | fromjson) catch null))          as $att_json
 | (($att_json.head_sha // ""))                          as $attested_sha
 # The WHOLE payload, not just the sha. Gate 4 re-reads the live comment and
 # checks three things, and an edit can preserve head_sha while breaking either
@@ -351,6 +370,16 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
   elif $fetch_ok != "true" and $ext_required and ($exempt | not)
        and ($pr.state // "OPEN") == "OPEN" then
     "GATE-WAIT review: could not read review evidence for #\($num) (gh api failed) — verdict withheld rather than guessed"
+  # An unreadable checks payload is the one place this script is DELIBERATELY
+  # stricter than the gate, and it is worth naming rather than hiding: gate 3
+  # treats an empty/unparseable payload as "no checks reported" and continues
+  # with a WARN. That is defensible for a one-shot merge with an operator
+  # reading the warning; it is not defensible for --watch, where emitting a
+  # terminal verdict is a decision to STOP LOOKING. A wait costs one more poll
+  # and self-heals; a wrong GATE-READY recommends a merge over CI nobody read
+  # (codex P2, PR #1764). Non-terminal precisely so it cannot strand anyone.
+  elif $checks_ok != "true" and ($pr.state // "OPEN") == "OPEN" then
+    "GATE-WAIT ci: could not read the checks for #\($num) (gh pr checks returned no usable payload) — verdict withheld rather than guessed"
   elif ($pr.state // "OPEN") != "OPEN" then
     "GATE-DONE \($pr.state | ascii_downcase): PR #\($num) is not open — nothing to wait for"
   elif ($bad | length) > 0 then
@@ -442,6 +471,7 @@ classify() {
     --argjson reviews "$3" \
     --argjson comments "$4" \
     --arg fetch_ok "$5" \
+    --arg checks_ok "$6" \
     --argjson policy "$POLICY" \
     --arg policy_error "$POLICY_ERROR" \
     --arg attest "$ATTEST_CHECK" \
@@ -461,12 +491,21 @@ json_array_or_empty() {
 
 # snapshot -> one verdict line, or non-zero if gh could not be reached.
 snapshot() {
-  local checks pr_json reviews comments fetch_ok
+  local checks pr_json reviews comments fetch_ok checks_ok
   # `gh pr checks` exits non-zero whenever any check is pending or failing,
   # and errors outright when a PR has no checks at all. Neither is an error
   # here, so the exit status is deliberately ignored; only an unparseable
   # payload is treated as "no checks".
+  # `gh pr checks` exits non-zero whenever a check is pending or failing (8 is
+  # documented for pending), and errors outright when a PR has no checks at
+  # all. A status code is therefore NOT the signal — the payload is. What the
+  # exit code cannot tell us apart is "no checks" from "the API was
+  # unreachable", and those differ by a merge.
+  checks_ok=true
   checks=$(gh pr checks "$PR" --json name,bucket,description 2>/dev/null) || true
+  if ! printf '%s' "$checks" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    checks_ok=false
+  fi
   checks=$(json_array_or_empty "$checks")
 
   # --paginate, like gate 5 and validate-attestation.sh: on a PR with more
@@ -506,7 +545,7 @@ snapshot() {
   [ -n "$pr_json" ] || return 1
 
   local line
-  line=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok") || return 1
+  line=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok") || return 1
 
   # Gate 6 is the one gate whose inputs are not visible in any status: a label
   # added after `ralph-apply-keywords` was computed leaves the status green

@@ -365,7 +365,10 @@ printf 'no checks reported on the branch' >"$D/pr_checks.json"
 printf '%s' "$APPROVED_PR" >"$D/pr_view.json"
 printf '%s' "$APPROVAL" >"$D/pr_reviews.json"
 printf '[]' >"$D/issue_comments.json"
-expect "unparseable checks payload degrades to no checks" "$D" "GATE-YOURS attestation" 0
+# An unparseable payload is NOT proof of zero checks — see P2/18 for why this
+# withholds the verdict instead of continuing, and why that is the one place
+# this script is deliberately stricter than gate 3.
+expect "unparseable checks payload withholds the verdict" "$D" "GATE-WAIT ci" 10
 
 echo "=== usage errors ==="
 for bad in "" "abc" "12x"; do
@@ -1056,6 +1059,85 @@ scenario "$D" "$ATT_READY_CHECKS" \
   "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA" 1)]")" "$APPROVAL"
 expect "attestation not required: an invalid payload is not our problem" "$D" "GATE-READY" 0
 POLICY="$POLICY_REVIEW"
+
+echo "=== P2/16: the findings nudge obeys the same waivers ==="
+# Reached independently of $review_ok whenever attestation is ALSO waived, so
+# the earlier waiver fixes did not cover it: an exempt author with a
+# current-head COMMENTED review still terminated --watch asking for an
+# approval that gate 5 never requires.
+COMMENTED_NOW=$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
+  '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha}]')
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/findings-exempt"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN "" '[]' "dependabot[bot]")" "$COMMENTED_NOW"
+expect "an exempt author is not nudged for an approval gate 5 waives" "$D" "GATE-READY" 0
+POLICY="$POLICY_OFF"
+D="$TMP_ROOT/findings-ext-off"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$COMMENTED_NOW"
+expect "external review off: findings are not a blocking nudge" "$D" "GATE-READY" 0
+# The nudge survives where the review IS required.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/findings-required"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$COMMENTED_NOW"
+expect "a required review still gets the findings nudge" "$D" "GATE-YOURS review" 0
+
+echo "=== P2/17: the attestation fence is parsed like gate 4 parses it ==="
+# gate 4 (merge-pr.sh:319-321) is an awk with BOTH fences anchored to their own
+# lines. split("```json") accepted an inline fence anywhere in the body, so a
+# comment the gate calls unparseable could read as valid here.
+POLICY="$POLICY_REVIEW"
+inline_fence_comment() { # a VALID payload reachable only via an inline fence
+  jq -n --arg sha "$1" '
+    {body: ("<!-- ralph-attestation:v1 -->\nSee the payload inline: ```json "
+      + ({version: 1, head_sha: $sha, tests: [{cmd: "t", exit_code: 0},],
+          review: {verdict: "APPROVED"}} | tojson)
+      + " ``` end")}'
+}
+D="$TMP_ROOT/att-inline-fence"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN APPROVED "[$(inline_fence_comment "$HEAD_SHA")]")" "$APPROVAL"
+expect "an inline fence is not a payload, exactly as gate 4 sees it" "$D" "GATE-YOURS attestation" 0
+# The properly fenced comment still parses — the extractor was tightened, not broken.
+D="$TMP_ROOT/att-proper-fence"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+expect "a line-anchored fence still parses" "$D" "GATE-READY" 0
+
+echo "=== P2/18: an unreadable checks payload is not zero checks ==="
+# THE ONE DELIBERATE DIVERGENCE, stated rather than hidden: gate 3 treats an
+# empty/unparseable payload as "no checks reported" and continues with a WARN.
+# That is fine for a one-shot merge with an operator reading the warning. It is
+# not fine for --watch, where a terminal verdict is a decision to stop looking.
+# So this waits — non-terminally, so the next poll recovers on its own.
+D="$TMP_ROOT/checks-unreadable"
+mkdir -p "$D"
+printf 'gh: could not resolve host' >"$D/pr_checks.json"
+printf '%s' "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" >"$D/pr_view.json"
+printf '%s' "$APPROVAL" >"$D/pr_reviews.json"
+printf '[]' >"$D/issue_comments.json"
+expect "an unreadable checks payload never reaches READY" "$D" "GATE-WAIT ci" 10
+run "$D"
+if [[ "$LAST_OUT" == *"withheld"* ]] && [ "$LAST_RC" -eq 10 ]; then
+  pass "withholds non-terminally, so a transient outage cannot strand the watch"
+else
+  fail "checks-unreadable verdict (rc=$LAST_RC out=${LAST_OUT:0:150})"
+fi
+# A genuinely empty but WELL-FORMED payload is a different fact and still
+# classifies — "no checks on this PR" is an answer, not a failure to answer.
+# "No checks on this PR" is an ANSWER, not a failure to answer, so it
+# classifies normally — here as the missing-attestation-status wait, which is
+# what an empty check list under a requiring policy genuinely means.
+printf '[]' >"$D/pr_checks.json"
+expect "a well-formed empty checks list still classifies" "$D" "GATE-WAIT attestation" 10
+run "$D"
+if [[ "$LAST_OUT" != *"withheld"* ]]; then
+  pass "an empty list is answered, not withheld"
+else
+  fail "empty checks list treated as unreadable (out=${LAST_OUT:0:140})"
+fi
 
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
