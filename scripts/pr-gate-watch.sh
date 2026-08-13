@@ -389,7 +389,7 @@ def fenced_json:
 # same comparison covers the other direction: after a new push the recorded
 # sha no longer matches, so re-attesting is correctly demanded.
 | (($pr.comments // [])
-   | map(select(.body | contains($marker)))
+   | map(select((.body // "") | contains($marker)))
    | last | (.body // "")
    | (try (fenced_json | fromjson) catch null))          as $att_json
 | (($att_json.head_sha // ""))                          as $attested_sha
@@ -520,6 +520,25 @@ def fenced_json:
   end
 JQ
 
+# BASIS_JQ answers one question: did a formal APPROVED review carry the review
+# gate on this pass? Only then does a live REVIEW_REQUIRED mean "the thing this
+# verdict rested on was dismissed".
+read -r -d '' BASIS_JQ <<'JQ' || true
+def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+($pr.headRefOid // "")                                   as $head
+| (($pr.author.login // "") | norm)                      as $author
+| (($policy.exemptAuthors // []) | map(norm) | index($author) != null) as $exempt
+| ($policy.externalRequired == true)                     as $ext_required
+| if ($exempt or ($ext_required | not) or $policy.mode == "comment") then "other"
+  else
+    ([ $reviews[]
+       | select(((.user.login // "") | norm) == (($policy.bot // "") | norm))
+       | select((.state // "") == "APPROVED")
+       | select((.commit_id // "") == $head) ] | length) as $n
+    | (if $n > 0 then "approval" else "other" end)
+  end
+JQ
+
 # classify <checks-json> <pr-json> <reviews-json> <comments-json> -> a verdict.
 # Every policy-derived string is BOUND with --arg/--argjson, never interpolated
 # into the filter text: the bot name and the markers come from a repo-supplied
@@ -553,6 +572,7 @@ json_array_or_empty() {
 # snapshot -> one verdict line, or non-zero if gh could not be reached.
 snapshot() {
   local checks pr_json reviews comments fetch_ok checks_ok head_before head_after
+  local REVIEW_BASIS=unknown
   # The PR read comes FIRST so every other query is collected against a KNOWN
   # head, and the head is re-read at the end to prove it did not move
   # underneath the snapshot (codex P2, PR #1764). `gh pr checks` exposes no
@@ -642,6 +662,15 @@ snapshot() {
     return 0
   fi
 
+  # What satisfied the review question, so the confirmation below knows whether
+  # a live REVIEW_REQUIRED is meaningful. Printed by classify on a second line
+  # rather than recomputed here — one reader of the policy, as ever.
+  local basis
+  basis=$(jq -n -r \
+    --argjson pr "$pr_json" --argjson reviews "$reviews" --argjson comments "$comments" \
+    --argjson policy "$POLICY" "$BASIS_JQ" 2>/dev/null) || basis="unknown"
+  REVIEW_BASIS="$basis"
+
   local line
   line=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok") || return 1
 
@@ -657,7 +686,13 @@ snapshot() {
       if [ -x "$APPLY_KEYWORDS_SH" ]; then
         local apply_out
         if ! apply_out=$("$APPLY_KEYWORDS_SH" "$PR" 2>&1); then
-          line="GATE-FAIL apply: $(printf '%s' "$apply_out" | head -1) — fix the closing keywords before merging"
+          # No `| head -1`: pipefail is on, head exits after the first line,
+          # and printf can then take SIGPIPE on a checker with long output —
+          # turning a clean GATE-FAIL into a mangled verdict (CodeRabbit,
+          # PR #1764). Parameter expansion does the same job with no pipe.
+          local apply_first
+          apply_first=${apply_out%%$'\n'*}
+          line="GATE-FAIL apply: $apply_first — fix the closing keywords before merging"
         fi
       fi
       # GATE-READY is the only verdict that tells the caller to act NOW, and it
@@ -691,6 +726,19 @@ snapshot() {
           fi
           if [ "$confirm_decision" = "CHANGES_REQUESTED" ]; then
             printf 'GATE-FAIL review: CHANGES_REQUESTED landed while this snapshot was gathered — adjudicate the threads, then re-attest'
+            return 0
+          fi
+          # A DISMISSED approval is the quiet one: GitHub moves reviewDecision
+          # to REVIEW_REQUIRED, not CHANGES_REQUESTED, so checking only for the
+          # loud value accepts review evidence that no longer exists and gate 5
+          # refuses (codex P2, PR #1764). Only meaningful where a formal
+          # approval was the basis — comment mode and the waivers do not read
+          # reviewDecision at all, and REVIEW_REQUIRED is the normal resting
+          # state of a repo with required reviewers, so narrowing it to the
+          # review-mode case is what keeps this from blocking every PR.
+          if [ "$confirm_decision" = "REVIEW_REQUIRED" ] && [ "$REVIEW_BASIS" = "approval" ]; then
+            printf 'GATE-WAIT review: the approval this verdict rested on was dismissed while the snapshot was gathered — a fresh review is needed at %s' \
+              "${confirm_head:0:8}"
             return 0
           fi
           if [ "$confirm_mergeable" = "CONFLICTING" ]; then

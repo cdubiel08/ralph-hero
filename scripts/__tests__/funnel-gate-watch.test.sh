@@ -117,6 +117,29 @@ expect_silent "attached -Rowner/repo (GH-1684 shape)" "$WATCH_REPO" \
 expect_redirect "-R substring inside a quoted string is not a bypass" "$WATCH_REPO" \
   'until ! gh pr checks 12 | grep -q pending; do sleep 30; echo "note -Rebuilding"; done'
 
+# The string appearing inside an unrelated command is NOT an invocation. A
+# substring test redirected these (CodeRabbit, PR #1764), which means the rail
+# fires on loops that never call gh at all.
+expect_silent "the literal string echoed inside a loop is not an invocation" "$WATCH_REPO" \
+  'while true; do echo "gh pr checks"; sleep 30; done'
+expect_silent "a heredoc/comment mentioning the command is not an invocation" "$WATCH_REPO" \
+  'while true; do sleep 30; done  # replaces: gh pr checks 1740'
+# ...but the real thing, in every command position it can occupy, still trips.
+expect_redirect "negated form (until ! gh pr checks)" "$WATCH_REPO" \
+  'until ! gh pr checks 1740 | grep -q pending; do sleep 30; done'
+expect_redirect "after a separator" "$WATCH_REPO" \
+  'while true; do gh pr checks 1740; sleep 30; done'
+expect_redirect "inside a command substitution" "$WATCH_REPO" \
+  'while [ -n "$(gh pr checks 1740 | grep pending)" ]; do sleep 30; done'
+
+# An unrelated flag that merely starts with -R must not silence the rail on a
+# loop that does target this repo (CodeRabbit, PR #1764).
+expect_redirect "an unrelated --repo-like flag is not a repo target" "$WATCH_REPO" \
+  'until ! gh pr checks 12 | grep --repo-mode -q pending; do sleep 30; done'
+# A real -R/--repo target still bypasses: another repo is not this rail's job.
+expect_silent "an explicit --repo target still bypasses" "$WATCH_REPO" \
+  'until ! gh pr checks 12 --repo owner/other | grep -q pending; do sleep 30; done'
+
 echo "=== malformed payloads are inert ==="
 run_hook "$WATCH_REPO" ""
 if [ "$LAST_RC" -eq 0 ]; then pass "empty command"; else fail "empty command (rc=$LAST_RC)"; fi

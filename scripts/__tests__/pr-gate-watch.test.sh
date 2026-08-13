@@ -47,7 +47,10 @@ case "${1:-} ${2:-}" in
   "pr view")
     # A second pr_view fixture, when present, is served to the SECOND call —
     # which is what a push landing mid-snapshot looks like to this script.
-    if [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
+    if [[ -f "$GH_STUB_DIR/pr_view_third.json" && -f "$GH_STUB_DIR/pr_view_called2" ]]; then
+      cat "$GH_STUB_DIR/pr_view_third.json"
+    elif [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
+      touch "$GH_STUB_DIR/pr_view_called2"
       cat "$GH_STUB_DIR/pr_view_second.json"
     else
       touch "$GH_STUB_DIR/pr_view_called"
@@ -171,7 +174,7 @@ run() {
   shift
   local rc
   set +e
-  rm -f "$dir/pr_view_called"
+  rm -f "$dir/pr_view_called" "$dir/pr_view_called2"
   LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" \
     RALPH_MERGE_POLICY_FILE="${POLICY:-$POLICY_REVIEW}" \
     GH_STUB_CHECKS_EXIT="${CHECKS_EXIT:-0}" bash "$SCRIPT" 1740 "$@" 2>&1)
@@ -767,7 +770,10 @@ case "${1:-} ${2:-}" in
     # what a push landing mid-snapshot looks like. Every stub in this file
     # needs it: the script reads the head twice on purpose, so a stub that
     # cannot express "the head moved" silently cannot test for it.
-    if [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
+    if [[ -f "$GH_STUB_DIR/pr_view_third.json" && -f "$GH_STUB_DIR/pr_view_called2" ]]; then
+      cat "$GH_STUB_DIR/pr_view_third.json"
+    elif [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
+      touch "$GH_STUB_DIR/pr_view_called2"
       cat "$GH_STUB_DIR/pr_view_second.json"
     else
       touch "$GH_STUB_DIR/pr_view_called"
@@ -826,7 +832,10 @@ case "${1:-} ${2:-}" in
     # what a push landing mid-snapshot looks like. Every stub in this file
     # needs it: the script reads the head twice on purpose, so a stub that
     # cannot express "the head moved" silently cannot test for it.
-    if [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
+    if [[ -f "$GH_STUB_DIR/pr_view_third.json" && -f "$GH_STUB_DIR/pr_view_called2" ]]; then
+      cat "$GH_STUB_DIR/pr_view_third.json"
+    elif [[ -f "$GH_STUB_DIR/pr_view_second.json" && -f "$GH_STUB_DIR/pr_view_called" ]]; then
+      touch "$GH_STUB_DIR/pr_view_called2"
       cat "$GH_STUB_DIR/pr_view_second.json"
     else
       touch "$GH_STUB_DIR/pr_view_called"
@@ -972,7 +981,13 @@ echo "=== the hook this PR registers is actually executable ==="
 # every registration return 126 Permission denied — and a test harness that
 # invokes it via `bash` would never notice (codex P2, PR #1764).
 HOOKS_DIR="$(cd "$(dirname "$0")/../.." && pwd)/ralph/hooks"
-mode=$(git -C "$(dirname "$HOOKS_DIR")/.." ls-files -s ralph/hooks/funnel-gate-watch.sh | awk '{print $1}')
+# `set -euo pipefail` is active, and this runs at the top level: if git is
+# absent or this is not a work tree, the pipeline's non-zero status would abort
+# the whole test file rather than fail one case (CodeRabbit, PR #1764).
+mode=""
+if git_out=$(git -C "$(dirname "$HOOKS_DIR")/.." ls-files -s ralph/hooks/funnel-gate-watch.sh 2>/dev/null); then
+  mode=$(printf '%s' "$git_out" | awk '{print $1}')
+fi
 if [[ "$mode" == "100755" ]] && [[ -x "$HOOKS_DIR/funnel-gate-watch.sh" ]]; then
   pass "funnel-gate-watch.sh is committed executable, like its siblings"
 else
@@ -1450,10 +1465,24 @@ setup_ready "$D"
 printf '%s' "$(confirm_view "" UNKNOWN)" >"$D/pr_view_second.json"
 expect "mergeability recomputing after a base advance is a wait" "$D" "GATE-WAIT merge" 10
 
+# The stub serves pr_view_second.json to EVERY call after the first, and the
+# READY path reads the head twice (the guard, then the confirmation). A bare
+# `{}` is therefore consumed by the GUARD and never reaches the confirmation
+# query this case is named for (CodeRabbit, PR #1764) — it passed for the
+# wrong reason. A third fixture, served only to the third call, pins the real
+# thing: guard sees a good head, confirmation sees an unusable payload.
 D="$TMP_ROOT/ready-confirm-unreadable"
 setup_ready "$D"
-printf '%s' '{}' >"$D/pr_view_second.json"
+printf '%s' "$(confirm_view APPROVED MERGEABLE)" >"$D/pr_view_second.json"
+printf '%s' '{}' >"$D/pr_view_third.json"
 expect "an unreadable confirmation withholds the recommendation" "$D" "GATE-WAIT ci" 10
+run "$D"
+if [[ "$LAST_OUT" == *"re-read failed"* ]]; then
+  pass "the CONFIRMATION read is what withheld it, not the earlier guard"
+else
+  fail "confirmation-read attribution (out=${LAST_OUT:0:170})"
+fi
+rm "$D/pr_view_third.json"
 
 # The control: a live re-read still saying APPROVED and MERGEABLE at the same
 # head reaches GATE-READY — so the four cases above are a real difference, not
@@ -1472,6 +1501,43 @@ scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson p "$(check board-te
   "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
 printf '%s' "$(confirm_view CHANGES_REQUESTED CONFLICTING)" >"$D/pr_view_second.json"
 expect "a non-READY verdict is unaffected by the confirmation read" "$D" "GATE-WAIT ci" 10
+
+echo "=== P2/27: a dismissed approval is quiet — REVIEW_REQUIRED, not CHANGES_REQUESTED ==="
+# GitHub moves reviewDecision to REVIEW_REQUIRED when an approval is dismissed,
+# so a confirmation that only watches for CHANGES_REQUESTED accepts review
+# evidence that no longer exists while gate 5 refuses it.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/ready-then-dismissed"
+setup_ready "$D"
+printf '%s' "$(confirm_view REVIEW_REQUIRED MERGEABLE)" >"$D/pr_view_second.json"
+expect "a dismissed approval blocks readiness" "$D" "GATE-WAIT review" 10
+run "$D"
+if [[ "$LAST_OUT" == *"dismissed"* ]]; then
+  pass "names the dismissal rather than reporting a generic wait"
+else
+  fail "dismissed-approval message (out=${LAST_OUT:0:170})"
+fi
+
+# Narrow by construction: REVIEW_REQUIRED is the normal resting state of a repo
+# with required reviewers, so it may only block where a formal approval was
+# what carried the review gate. In comment mode the clean marker is the basis
+# and reviewDecision says nothing about it — blocking there would strand every
+# comment-mode PR.
+POLICY="$POLICY_COMMENT"
+D="$TMP_ROOT/comment-mode-review-required"
+scenario "$D" "$READY_CHECKS" \
+  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$NO_REVIEWS" \
+  "$(clean_evidence "$HEAD_SHA")"
+printf '%s' "$(confirm_view REVIEW_REQUIRED MERGEABLE)" >"$D/pr_view_second.json"
+expect "comment mode is not blocked by REVIEW_REQUIRED" "$D" "GATE-READY" 0
+
+# Same for an exempt author, who has the review gate waived entirely.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/exempt-review-required"
+scenario "$D" "$READY_CHECKS" \
+  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]" "dependabot[bot]")" "$NO_REVIEWS"
+printf '%s' "$(confirm_view REVIEW_REQUIRED MERGEABLE)" >"$D/pr_view_second.json"
+expect "an exempt author is not blocked by REVIEW_REQUIRED" "$D" "GATE-READY" 0
 
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
