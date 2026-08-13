@@ -33,8 +33,12 @@ case "${1:-} ${2:-}" in
     if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$GH_STUB_DIR/pr_view.json"; else cat "$GH_STUB_DIR/pr_view.json"; fi
     ;;
   "api repos/"*)
-    # External-review check reads REST reviews for .commit_id.
-    f="$GH_STUB_DIR/pr_reviews.json"
+    # External-review check accepts REST reviews and clean-result comments.
+    if [[ "$2" == */issues/*/comments ]]; then
+      f="$GH_STUB_DIR/issue_comments.json"
+    else
+      f="$GH_STUB_DIR/pr_reviews.json"
+    fi
     [[ -f "$f" ]] || echo '[]' >"$f"
     if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$f"; else cat "$f"; fi
     ;;
@@ -62,7 +66,7 @@ cat >"$POLICY" <<'EOF'
 {
   "version": 1,
   "attestation": { "required": true },
-  "external_review": { "required": true, "bot": "coderabbitai" },
+  "external_review": { "required": true, "bot": "chatgpt-codex-connector[bot]", "trigger": "@codex review" },
   "exempt_authors": ["dependabot[bot]", "app/dependabot"]
 }
 EOF
@@ -95,13 +99,14 @@ write_pr() {
   jq -n --argjson r "$reviews" --arg sha "$SHA" \
     '[$r[] | {user: {login: (.author.login // "")}, state: (.state // "APPROVED"),
               commit_id: (.commit_id // $sha)}]' >"$dir/pr_reviews.json"
+  echo '[]' >"$dir/issue_comments.json"
   jq -n --arg sha "$SHA" --arg author "$author" \
     --argjson comments "$comments" --argjson reviews "$reviews" --argjson files "$files" \
     '{headRefOid: $sha, author: {login: $author}, comments: $comments, reviews: $reviews, files: $files}' \
     >"$dir/pr_view.json"
 }
 
-CODERABBIT='[{"author":{"login":"app/coderabbitai"}}]'
+CODEX='[{"author":{"login":"app/chatgpt-codex-connector"}}]'
 
 # run_v <desc> <expected_state> <expected_desc_grep> <policy|""> <setup> ...
 run_v() {
@@ -126,35 +131,57 @@ run_v() {
 
 echo "=== validate-attestation.sh verdict states ==="
 
-s_valid() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "$CODERABBIT"; }
+s_valid() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "$CODEX"; }
 run_v "fully attested" success "attested @ ${SHA:0:8}" "$POLICY" s_valid
 
-s_missing() { write_pr "$1" "cdubiel08" "" "$CODERABBIT"; }
+s_missing() { write_pr "$1" "cdubiel08" "" "$CODEX"; }
 run_v "no attestation yet" pending "awaiting attestation" "$POLICY" s_missing
 
-s_stale() { write_pr "$1" "cdubiel08" "$(attestation_body "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")" "$CODERABBIT"; }
+s_stale() { write_pr "$1" "cdubiel08" "$(attestation_body "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")" "$CODEX"; }
 run_v "stale head_sha" pending "re-attest" "$POLICY" s_stale
 
-s_badtests() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 1)" "$CODERABBIT"; }
+s_badtests() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 1)" "$CODEX"; }
 run_v "failing test evidence" failure "test evidence" "$POLICY" s_badtests
 
-s_undercov() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 0 "scripts-shell")" "$CODERABBIT"; }
+s_undercov() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 0 "scripts-shell")" "$CODEX"; }
 run_v "class under-coverage (mcp-ts undeclared)" failure "not covered" "$POLICY" s_undercov
 
 s_noext() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "[]"; }
-run_v "external review absent" pending "awaiting external review by coderabbitai" "$POLICY" s_noext
+run_v "external review absent" pending "awaiting external review by chatgpt-codex-connector[bot]" "$POLICY" s_noext
+
+s_cleanext() {
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "[]"
+  jq -n --arg sha "${SHA:0:7}" \
+    '[{user:{login:"chatgpt-codex-connector[bot]"}, body:("Reviewed commit " + $sha + ": clean.")}]' \
+    >"$1/issue_comments.json"
+}
+run_v "clean bot comment at head" success "attested @ ${SHA:0:8}" "$POLICY" s_cleanext
+
+s_prefix_collision_cleanext() {
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "[]"
+  jq -n --arg sha "${SHA:0:7}e" \
+    '[{user:{login:"chatgpt-codex-connector[bot]"}, body:("Reviewed commit " + $sha + ": stale.")}]' \
+    >"$1/issue_comments.json"
+}
+run_v "longer stale SHA sharing the head prefix" pending "awaiting external review" "$POLICY" s_prefix_collision_cleanext
+
+s_spoofed_cleanext() {
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "[]"
+  jq -n --arg sha "${SHA:0:7}" '[{user:{login:"someone-else"}, body:("Reviewed commit " + $sha)}]' >"$1/issue_comments.json"
+}
+run_v "clean comment from wrong identity" pending "awaiting external review" "$POLICY" s_spoofed_cleanext
 
 # The backstop must be head-bound too, or `auto_incremental_review: false`
 # lets a review of an older sha publish a green ralph-attestation status.
 s_staleext() {
   write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" \
-    '[{"author":{"login":"app/coderabbitai"},"commit_id":"cccccccccccccccccccccccccccccccccccccccc"}]'
+    '[{"author":{"login":"app/chatgpt-codex-connector"},"commit_id":"cccccccccccccccccccccccccccccccccccccccc"}]'
 }
 run_v "external review at a stale sha" pending "awaiting external review" "$POLICY" s_staleext
 
 s_dismissedext() {
   write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" \
-    '[{"author":{"login":"app/coderabbitai"},"state":"DISMISSED"}]'
+    '[{"author":{"login":"app/chatgpt-codex-connector"},"state":"DISMISSED"}]'
 }
 run_v "DISMISSED external review" pending "awaiting external review" "$POLICY" s_dismissedext
 
@@ -168,7 +195,7 @@ s_garbage() {
   write_pr "$1" "cdubiel08" '<!-- ralph-attestation:v1 -->
 ```json
 {not json
-```' "$CODERABBIT"
+```' "$CODEX"
 }
 run_v "unparseable payload" failure "unparseable" "$POLICY" s_garbage
 
@@ -179,7 +206,7 @@ s_rejected() {
   local att
   att=$(attestation_body "$SHA")
   att="${att/APPROVED/REJECTED}"
-  write_pr "$1" "cdubiel08" "$att" "$CODERABBIT"
+  write_pr "$1" "cdubiel08" "$att" "$CODEX"
 }
 run_v "REJECTED verdict fails (presence is not approval)" failure "not APPROVED" "$POLICY" s_rejected
 

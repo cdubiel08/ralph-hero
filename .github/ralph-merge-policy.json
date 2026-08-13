@@ -4,8 +4,9 @@
     "required": true
   },
   "external_review": {
-    "required": false,
-    "bot": "coderabbitai"
+    "required": true,
+    "bot": "chatgpt-codex-connector[bot]",
+    "trigger": "@codex review"
   },
   "exempt_authors": [
     "dependabot[bot]",
