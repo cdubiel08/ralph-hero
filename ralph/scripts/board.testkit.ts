@@ -537,8 +537,13 @@ export class FakeGh {
             ? `${this.raceClaimTo}|${new Date().toISOString()}`
             : variables.text;
         this.mutations.push(`setClaim(#${itemNum})`);
-      } else if (variables.optionId && variables.fieldId === "F_priority" && fi) {
-        fi.priority = String(variables.optionId).replace("P_", "");
+        // "F_Priority" is the id a createdFields Priority gets — a host repo's
+        // own scheme (Now/Later) writes through here, so it must be reflected
+        // back like the seeded field, or a custom-scheme read-back can't be
+        // asserted at all. Option ids are `<prefix>_<name>` on both paths
+        // ("P_P0", "Priority_Now").
+      } else if (variables.optionId && (variables.fieldId === "F_priority" || variables.fieldId === "F_Priority") && fi) {
+        fi.priority = String(variables.optionId).replace(/^[^_]*_/, "");
         this.mutations.push(`setPriority(#${itemNum}, ${fi.priority})`);
       } else {
         this.mutations.push(`setField(${variables.fieldId})`);
@@ -549,7 +554,7 @@ export class FakeGh {
       const itemNum = Number(String(variables.itemId).replace("ITEM_", ""));
       const fi = this.issues.get(itemNum);
       if (fi && variables.fieldId === "F_claim" && !this.stickyClaim) fi.claim = null;
-      if (fi && variables.fieldId === "F_priority") fi.priority = null;
+      if (fi && (variables.fieldId === "F_priority" || variables.fieldId === "F_Priority")) fi.priority = null;
       this.mutations.push(`clearField(#${itemNum}, ${variables.fieldId})`);
       return data({ clearProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
     }

@@ -274,10 +274,25 @@ export type SelectedQueueItem<S extends QueueSelect> = QueueItemCore &
   (S["labels"] extends true ? QueueItemLabelParts : Partial<QueueItemLabelParts>) &
   (S["blockers"] extends true ? QueueItemBlockerParts : Partial<QueueItemBlockerParts>);
 
-/** Numeric rank of a priority option ("P0" → 0, "P10" → 10). A lexicographic
- *  compare would order "P10" before "P2"; missing/unparseable ranks last. */
-function priorityRank(p: string | null): number {
-  const m = p?.match(/(\d+)\s*$/);
+/** Numeric rank of a priority option; lower sorts first, missing ranks last.
+ *
+ *  Two ranking sources, in this order:
+ *    1. `order` — the field's LIVE single-select option order, when the caller
+ *       supplied it. A single-select's option order is the one ordering the
+ *       host repo actually declared, so it is the only thing that can rank a
+ *       custom scheme (`Now`/`Later`) at all — and GH-1789 accepts custom
+ *       schemes on write, so `next` has to be able to order them.
+ *    2. A trailing-digit suffix, for a value that is NOT (or no longer) an
+ *       option — a renamed/removed option still stamped on an item, or a
+ *       caller with no live schema to hand. "P0" → 0, "P10" → 10 (lexicographic
+ *       would put "P10" before "P2").
+ *  A seeded P0..P3 board ranks identically under both, so the default board's
+ *  behavior is unchanged either way. */
+function priorityRank(p: string | null, order: readonly string[] = []): number {
+  if (p === null) return Number.MAX_SAFE_INTEGER;
+  const idx = order.indexOf(p);
+  if (idx !== -1) return idx;
+  const m = p.match(/(\d+)\s*$/);
   return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
 }
 
@@ -309,7 +324,10 @@ export interface InFlightEpic {
  *  Priority inheritance: an item's effective rank is the best priority on its
  *  own-repo parent chain (visited-set bounded, so a malformed cycle degrades
  *  to own priority). A tree the board doesn't hold is invisible by
- *  construction: an off-board parent leaves an item ranking as a plain leaf. */
+ *  construction: an off-board parent leaves an item ranking as a plain leaf.
+ *  `priorityOrder` is the Priority field's live option order — the only way a
+ *  host repo's custom scheme (`Now`/`Later`) can be ordered at all; see
+ *  priorityRank. Omitting it falls back to digit-suffix ranking. */
 /** A closed board item's tree edge: closed nodes are PASS-THROUGH topology —
  *  a Done phase between an epic root and its live grandchildren must not sever
  *  the tree — but contribute nothing else (no eligibility, no in-flight
@@ -325,6 +343,7 @@ export interface ClosedEdge {
 export function rankNext(
   items: QueueItemWithBlockers[],
   closedEdges: ClosedEdge[] = [],
+  priorityOrder: readonly string[] = [],
 ): {
   eligible: QueueItemWithBlockers[];
   blocked: QueueItemWithBlockers[];
@@ -351,12 +370,12 @@ export function rankNext(
   }
 
   const effRank = (i: QueueItemWithBlockers): number => {
-    let r = priorityRank(i.priority);
+    let r = priorityRank(i.priority, priorityOrder);
     const seen = new Set<number>([i.number]);
     for (let p = i.parentNumber; p != null && !seen.has(p); ) {
       seen.add(p);
       const parent = byNumber.get(p); // closed ancestors pass through, rankless
-      if (parent) r = Math.min(r, priorityRank(parent.priority));
+      if (parent) r = Math.min(r, priorityRank(parent.priority, priorityOrder));
       p = parentOf.get(p) ?? null;
     }
     return r;
@@ -1333,17 +1352,27 @@ function withCache<T>(ctx: Ctx, op: (cache: BoardCache) => T): T {
  *  `optionalFields` are fields the op will use IF they exist (the Claim field
  *  before `board setup` runs). Their absence from the cache also triggers the
  *  one refresh — so a skip-if-absent decision is made against live schema,
- *  never a stale snapshot — but confirmed absence is not an error. */
+ *  never a stale snapshot — but confirmed absence is not an error.
+ *
+ *  `liveOptionFields` are fields whose whole option SET the op validates a
+ *  caller's value against. They force the refresh unconditionally, because
+ *  `satisfied()` can only detect an option GitHub GAINED, never one it LOST:
+ *  a cached-but-deleted option pre-validates clean and then fails at the field
+ *  write — for `create`, after the issue exists, leaving exactly the
+ *  unprioritized orphan the pre-validation was added to prevent. One extra
+ *  schema read per priority write is the price of validating against truth. */
 function mutationCache(
   ctx: Ctx,
   needs: Array<[field: string, option?: string]>,
   optionalFields: string[] = [],
+  liveOptionFields: string[] = [],
 ): BoardCache {
   const satisfied = (c: BoardCache) =>
     needs.every(([f, o]) => c.fields[f] && (o === undefined || c.fields[f].options?.[o]));
   const optionalKnown = (c: BoardCache) => optionalFields.every((f) => c.fields[f]);
   let cache = ensureCache(ctx);
-  if (!satisfied(cache) || !optionalKnown(cache)) cache = refreshCache(ctx);
+  if (liveOptionFields.length > 0 || !satisfied(cache) || !optionalKnown(cache))
+    cache = refreshCache(ctx);
   if (!satisfied(cache)) {
     const missing = needs.filter(([f, o]) => !cache.fields[f] || (o !== undefined && !cache.fields[f].options?.[o]));
     throw new Error(
@@ -3917,13 +3946,25 @@ function assertPriorityOption(cache: BoardCache, value: string): void {
   }
 }
 
+/** The Priority field's live option order — what `next`/`frontier` hand the
+ *  ranker so a host repo's accepted custom scheme is orderable, not just
+ *  writable. An absent Priority field yields `[]`, i.e. exactly the
+ *  digit-suffix fallback boards without the field have always had. This is a
+ *  READ path: the persistent field cache is fine here (a stale option order
+ *  can only mis-sort a queue the next refresh corrects), unlike the write
+ *  paths, which validate against a refreshed option SET. */
+export function priorityOptionOrder(ctx: Ctx): string[] {
+  return Object.keys(ensureCache(ctx).fields[PRIORITY_FIELD]?.options ?? {});
+}
+
 /** The setter `next` needed all along: an item filed without a priority ranks
  *  dead last, and until now the only fix was the Projects V2 UI — i.e. off the
  *  sanctioned path. `null` clears the field. */
 export function setPriority(ctx: Ctx, number: number, value: string | null): Issue {
   const issue = fetchIssue(ctx, number);
   const itemId = requireItem(issue);
-  const cache = mutationCache(ctx, [[PRIORITY_FIELD]]);
+  // The option set is what `value` is judged against, so it must be live.
+  const cache = mutationCache(ctx, [[PRIORITY_FIELD]], [], value === null ? [] : [PRIORITY_FIELD]);
   if (value === null) {
     clearField(ctx, cache, itemId, PRIORITY_FIELD);
   } else {
@@ -3943,7 +3984,9 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
   // usage error, not an orphaned issue nobody's selector will ever surface.
   const needs: Array<[string, string?]> = [[STATE_FIELD, opts.state ?? "Backlog"]];
   if (opts.priority) needs.push([PRIORITY_FIELD]);
-  const cache = mutationCache(ctx, needs);
+  // …and validated against a LIVE option set: a cached option GitHub has since
+  // deleted would pass here and fail after createIssue (see mutationCache).
+  const cache = mutationCache(ctx, needs, [], opts.priority ? [PRIORITY_FIELD] : []);
   if (opts.priority) assertPriorityOption(cache, opts.priority);
   {
     const created = ghGraphQL(
@@ -5275,7 +5318,9 @@ mutations
                               in \`next\` (null sorts after P3)
   priority NNN <option>       set Priority on an existing item (--clear removes
                               it). Options come from the live field, not a
-                              hardcoded P0..P3 — a host repo owns its scheme
+                              hardcoded P0..P3 — a host repo owns its scheme,
+                              and \`next\` orders a custom one by the field's
+                              option ORDER (a trailing digit is the fallback)
   claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
   claim join NNN --holder H   add a fleet sibling to an In Progress item's
                               shared claim (ClaimV2, max 8 holders; H must be
@@ -5570,7 +5615,7 @@ export function run(argv: string[], ctx: Ctx): number {
       const own = ownRepo(ctx, full.open).own;
       // Closed own-repo items ride along as pass-through tree edges only.
       const closedEdges = ownRepo(ctx, full.closed).own;
-      const { eligible, blocked, inFlightEpics } = rankNext(own, closedEdges);
+      const { eligible, blocked, inFlightEpics } = rankNext(own, closedEdges, priorityOptionOrder(ctx));
       // --json carries the diagnosis as fields, never as the prose line.
       const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics);
       if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked, ...dx, cache: cacheFacts(full) });
@@ -5612,7 +5657,7 @@ export function run(argv: string[], ctx: Ctx): number {
       const full = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
       const own = ownRepo(ctx, full.open).own;
       const closedEdges = ownRepo(ctx, full.closed).own;
-      const res = frontierView(rankNext(own, closedEdges));
+      const res = frontierView(rankNext(own, closedEdges, priorityOptionOrder(ctx)));
       if (flags.json) json({ ...res, cache: cacheFacts(full) });
       else if (res.frontier.length === 0) {
         out(
@@ -5688,6 +5733,11 @@ export function run(argv: string[], ctx: Ctx): number {
       if (typeof flags.title !== "string" || !flags.title) throw new UsageError("--title required");
       const state = typeof flags.state === "string" ? parseStateArg(flags.state) : null;
       if (typeof flags.state === "string" && !state) throw new UsageError(`unknown state "${flags.state}"`);
+      // A valueless `--priority` parses as boolean true. Silently coercing it
+      // to "no priority" would file the very last-sorting item the flag was
+      // typed to avoid, so it is a usage error, not a default.
+      if (flags.priority === true)
+        throw new UsageError("--priority needs a value (this board's options: `board get` any item, or see `board help`)");
       const issue = createIssue(ctx, {
         title: flags.title,
         body: typeof flags.body === "string" ? flags.body : undefined,

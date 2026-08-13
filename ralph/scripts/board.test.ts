@@ -220,6 +220,35 @@ describe("rankNext", () => {
     expect(rankNext(items).eligible.map((i) => i.number)).toEqual([3, 2, 1]);
   });
 
+  it("a host repo's custom scheme is ordered by the field's live option order (GH-1789)", () => {
+    // Digit-suffix ranking alone gives "Now" and "Later" the same last place as
+    // null — so `next` would hand back an older unprioritized item ahead of the
+    // Now work the operator just filed. The option order is the ordering.
+    const order = ["Now", "Later"];
+    const items = [item(1), item(2, { priority: "Later" }), item(3, { priority: "Now" })];
+    expect(rankNext(items, [], order).eligible.map((i) => i.number)).toEqual([3, 2, 1]);
+    // Unprioritized still sorts last, the guarantee the ranking always made.
+    expect(rankNext([item(9), item(4, { priority: "Later" })], [], order).eligible.map((i) => i.number)).toEqual([4, 9]);
+    // Inheritance runs through the same ranker, so it speaks the scheme too.
+    const tree = [item(1, { priority: "Now" }), item(2, { priority: "Later" }), child(5, 1)];
+    expect(rankNext(tree, [], order).eligible[0].number).toBe(5);
+  });
+
+  it("a value the live options no longer hold falls back to digits, never ahead of a real option", () => {
+    // A renamed/removed option still stamped on an item: rankable by its digit
+    // suffix if it has one, last if it doesn't — but it cannot outrank Now.
+    const order = ["Now", "Later"];
+    const items = [item(1, { priority: "Now" }), item(2, { priority: "P3" }), item(3, { priority: "URGENT" })];
+    expect(rankNext(items, [], order).eligible.map((i) => i.number)).toEqual([1, 2, 3]);
+  });
+
+  it("a seeded P0..P3 board ranks identically with and without the live order", () => {
+    const items = [item(1, { priority: "P10" }), item(2, { priority: "P2" }), item(3), item(4, { priority: "P0" })];
+    const expected = [4, 2, 1, 3];
+    expect(rankNext(items).eligible.map((i) => i.number)).toEqual(expected);
+    expect(rankNext(items, [], ["P0", "P1", "P2", "P3"]).eligible.map((i) => i.number)).toEqual(expected);
+  });
+
   // -------------------------------------------------------------------------
   // Epic directionality: root→leaf resolution from board-resident parent edges
   // -------------------------------------------------------------------------
@@ -2586,8 +2615,9 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     gh.omitFields = ["Priority"];
     gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
     const ctx = makeCtx(gh);
-    createIssue(ctx, { title: "x", priority: "Now" }); // a scheme setup never seeded is accepted
-    expect(gh.mutations).toContain("setField(F_Priority)");
+    const issue = createIssue(ctx, { title: "x", priority: "Now" }); // a scheme setup never seeded is accepted
+    expect(issue.priority).toBe("Now");
+    expect(gh.mutations).toContain(`setPriority(#${issue.number}, Now)`);
     expect(() => createIssue(ctx, { title: "y", priority: "P0" })).toThrow(/Now, Later/);
   });
 
@@ -2624,6 +2654,86 @@ describe("priority is writable through the CLI (GH-1789)", () => {
 
   it("--clear never swallows the issue number", () => {
     expect(parseArgs(["--clear", "1789"]).positional).toEqual(["1789"]);
+  });
+
+  /** A board whose LIVE Priority options are Now/Later, with a persistent field
+   *  cache still holding the seeded P0..P3 — the stale-schema shape. */
+  const staleP0P3Cache = (ctx: Ctx) =>
+    writeFileSync(
+      join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+      JSON.stringify({
+        projectId: "PVT_test",
+        repositoryId: "R_test",
+        fields: {
+          "Workflow State": {
+            id: "F_state", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+          },
+          Priority: {
+            id: "F_Priority", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries(["P0", "P1", "P2", "P3"].map((p) => [p, `P_${p}`])),
+          },
+        },
+        fetchedAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+  it("an option the cache holds but GitHub has REMOVED is caught before the issue exists", () => {
+    // The hole a cache-satisfied check cannot see: `satisfied()` only detects a
+    // GAINED option. Without the forced refresh, "P0" pre-validates clean and
+    // the field write fails after createIssue — the orphan this gate prevents.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
+    const ctx = makeCtx(gh);
+    staleP0P3Cache(ctx);
+    expect(() => createIssue(ctx, { title: "x", priority: "P0" })).toThrow(/Now, Later/);
+    expect(gh.issues.size).toBe(0);
+    expect(gh.mutations.filter((m) => m.startsWith("createIssue"))).toEqual([]);
+  });
+
+  it("the setter refuses a removed option too, and writes nothing", () => {
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    staleP0P3Cache(ctx);
+    expect(() => setPriority(ctx, 1, "P0")).toThrow(/Now, Later/);
+    expect(gh.mutations.filter((m) => m.startsWith("setPriority"))).toEqual([]);
+    staleP0P3Cache(ctx);
+    expect(setPriority(ctx, 1, "Now").priority).toBe("Now"); // the live option is accepted
+  });
+
+  it("an accepted custom priority is ORDERABLE by next, not just writable", () => {
+    // End-to-end on the very scheme the write path accepts: if `next` couldn't
+    // rank it, accepting it would be a trap.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: null }); // oldest, unprioritized
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "Later" });
+    gh.issues.set(3, { number: 3, state: "Backlog", priority: "Now" });
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["next"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(said.join("")).toMatch(/^next: #3\b/m);
+  });
+
+  it("a valueless --priority is a usage error, not a silently unprioritized issue", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(parseArgs(["create", "--title", "x", "--priority"]).flags.priority).toBe(true);
+    expect(() => run(["create", "--title", "x", "--priority"], ctx)).toThrow(UsageError);
+    expect(gh.issues.size).toBe(0);
   });
 });
 
