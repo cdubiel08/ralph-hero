@@ -274,11 +274,31 @@ export type SelectedQueueItem<S extends QueueSelect> = QueueItemCore &
   (S["labels"] extends true ? QueueItemLabelParts : Partial<QueueItemLabelParts>) &
   (S["blockers"] extends true ? QueueItemBlockerParts : Partial<QueueItemBlockerParts>);
 
-/** Numeric rank of a priority option ("P0" → 0, "P10" → 10). A lexicographic
- *  compare would order "P10" before "P2"; missing/unparseable ranks last. */
-function priorityRank(p: string | null): number {
-  const m = p?.match(/(\d+)\s*$/);
-  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+/** Numeric rank of a priority option; lower sorts first, missing ranks last.
+ *
+ *  Two ranking sources, in this order:
+ *    1. `order` — the field's LIVE single-select option order, when the caller
+ *       supplied it. A single-select's option order is the one ordering the
+ *       host repo actually declared, so it is the only thing that can rank a
+ *       custom scheme (`Now`/`Later`) at all — and GH-1789 accepts custom
+ *       schemes on write, so `next` has to be able to order them.
+ *    2. A trailing-digit suffix, for a value that is NOT (or no longer) an
+ *       option — a renamed/removed option still stamped on an item, or a
+ *       caller with no live schema to hand. "P0" → 0, "P10" → 10 (lexicographic
+ *       would put "P10" before "P2").
+ *  The fallback is OFFSET past the live option range, never sharing its rank
+ *  space: otherwise a stale "P0" would tie `Now` at 0 and the issue-number
+ *  tie-break could hand the obsolete item the queue head. A value the board no
+ *  longer offers must sort behind every value it does, while keeping its
+ *  relative order against other stale values.
+ *  A seeded P0..P3 board ranks identically under both sources, so the default
+ *  board's behavior is unchanged either way. */
+function priorityRank(p: string | null, order: readonly string[] = []): number {
+  if (p === null) return Number.MAX_SAFE_INTEGER;
+  const idx = order.indexOf(p);
+  if (idx !== -1) return idx;
+  const m = p.match(/(\d+)\s*$/);
+  return m ? order.length + Number(m[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 /** An epic root the ranker demoted because its subtree is already being
@@ -309,7 +329,10 @@ export interface InFlightEpic {
  *  Priority inheritance: an item's effective rank is the best priority on its
  *  own-repo parent chain (visited-set bounded, so a malformed cycle degrades
  *  to own priority). A tree the board doesn't hold is invisible by
- *  construction: an off-board parent leaves an item ranking as a plain leaf. */
+ *  construction: an off-board parent leaves an item ranking as a plain leaf.
+ *  `priorityOrder` is the Priority field's live option order — the only way a
+ *  host repo's custom scheme (`Now`/`Later`) can be ordered at all; see
+ *  priorityRank. Omitting it falls back to digit-suffix ranking. */
 /** A closed board item's tree edge: closed nodes are PASS-THROUGH topology —
  *  a Done phase between an epic root and its live grandchildren must not sever
  *  the tree — but contribute nothing else (no eligibility, no in-flight
@@ -325,6 +348,7 @@ export interface ClosedEdge {
 export function rankNext(
   items: QueueItemWithBlockers[],
   closedEdges: ClosedEdge[] = [],
+  priorityOrder: readonly string[] = [],
 ): {
   eligible: QueueItemWithBlockers[];
   blocked: QueueItemWithBlockers[];
@@ -351,12 +375,12 @@ export function rankNext(
   }
 
   const effRank = (i: QueueItemWithBlockers): number => {
-    let r = priorityRank(i.priority);
+    let r = priorityRank(i.priority, priorityOrder);
     const seen = new Set<number>([i.number]);
     for (let p = i.parentNumber; p != null && !seen.has(p); ) {
       seen.add(p);
       const parent = byNumber.get(p); // closed ancestors pass through, rankless
-      if (parent) r = Math.min(r, priorityRank(parent.priority));
+      if (parent) r = Math.min(r, priorityRank(parent.priority, priorityOrder));
       p = parentOf.get(p) ?? null;
     }
     return r;
@@ -1208,12 +1232,33 @@ interface FieldInfo {
   id: string;
   dataType: string;
   options?: Record<string, string>; // name → optionId
+  /** The API's DECLARED option order, kept separately because the map above
+   *  cannot carry it: JS enumerates integer-like keys numerically ahead of
+   *  string keys, so a board declaring `10` before `2` reads back as `2, 10`
+   *  from Object.keys — and no refresh can repair it, since the order is lost
+   *  at the moment the options become object properties. Anything ranking by
+   *  option order must read THIS. */
+  optionOrder?: string[];
 }
 interface BoardCache {
   projectId: string;
   repositoryId: string;
   fields: Record<string, FieldInfo>; // field name → info
   fetchedAt: string;
+  /** Priority values a LIVE read has already confirmed are not options — an
+   *  item holding a removed/renamed value, which is a case the ranker supports
+   *  on purpose (historical record). Without this, "value absent from options"
+   *  is permanent evidence of staleness and every warm read pays a schema
+   *  query forever; a confirmed-obsolete value must stop being news. */
+  unresolvedPriorities?: string[];
+  /** Set when the list above hit its cap and had to evict. A bare cap would
+   *  RECREATE the loop it was meant to prevent: past the cap, eviction
+   *  guarantees some observed value is always missing, so evidence fires, the
+   *  refresh drops the same value again, and every warm read pays a query
+   *  forever. Once truncated, unexplained values stop counting as evidence —
+   *  `--fresh` and the age ceiling still bound staleness, so the degradation is
+   *  a slower reaction to a rename, never an unbounded cost. */
+  unresolvedPrioritiesTruncated?: boolean;
 }
 
 const STATE_FIELD = "Workflow State";
@@ -1287,14 +1332,37 @@ export function refreshCache(ctx: Ctx): BoardCache {
       options: f.options
         ? Object.fromEntries(f.options.map((o: any) => [o.name, o.id]))
         : undefined,
+      // Captured from the ARRAY, before the map can lose it (see FieldInfo).
+      optionOrder: f.options ? f.options.map((o: any) => String(o.name)) : undefined,
     };
   }
 
+  // The suppression list is evidence a LIVE read already spent, so a schema
+  // refresh must not make a confirmed-obsolete value news again. Without this
+  // carry-over every priority mutation (each of which force-refreshes) would
+  // reset it, and the repeated-refresh cost this field exists to bound would
+  // come straight back on the next `next`.
+  let prior: BoardCache | undefined;
+  try {
+    prior = JSON.parse(readFileSync(cachePath(ctx), "utf8")) as BoardCache;
+  } catch {
+    /* no usable prior cache — nothing to carry */
+  }
+  // Carried, but PRUNED against the schema just read: a suppressed name that is
+  // live again (an option removed, then a later rename reusing the name) must
+  // stop being suppressed, or the union in priorityOptionOrder would treat the
+  // now-valid value as known-obsolete and rank it as stale. Every refresh is a
+  // chance to learn that, so the pruning lives here rather than only on the
+  // ordering path.
+  const liveNames = new Set(fields[PRIORITY_FIELD]?.optionOrder ?? []);
+  const carried = (prior?.unresolvedPriorities ?? []).filter((v) => !liveNames.has(v));
   const cache: BoardCache = {
     projectId: project.id,
     repositoryId: repoData.repository.id,
     fields,
     fetchedAt: ctx.now().toISOString(),
+    ...(carried.length ? { unresolvedPriorities: carried } : {}),
+    ...(prior?.unresolvedPrioritiesTruncated ? { unresolvedPrioritiesTruncated: true } : {}),
   };
   mkdirSync(ctx.cacheDir, { recursive: true });
   writeFileSync(cachePath(ctx), JSON.stringify(cache, null, 2));
@@ -1333,17 +1401,27 @@ function withCache<T>(ctx: Ctx, op: (cache: BoardCache) => T): T {
  *  `optionalFields` are fields the op will use IF they exist (the Claim field
  *  before `board setup` runs). Their absence from the cache also triggers the
  *  one refresh — so a skip-if-absent decision is made against live schema,
- *  never a stale snapshot — but confirmed absence is not an error. */
+ *  never a stale snapshot — but confirmed absence is not an error.
+ *
+ *  `liveOptionFields` are fields whose whole option SET the op validates a
+ *  caller's value against. They force the refresh unconditionally, because
+ *  `satisfied()` can only detect an option GitHub GAINED, never one it LOST:
+ *  a cached-but-deleted option pre-validates clean and then fails at the field
+ *  write — for `create`, after the issue exists, leaving exactly the
+ *  unprioritized orphan the pre-validation was added to prevent. One extra
+ *  schema read per priority write is the price of validating against truth. */
 function mutationCache(
   ctx: Ctx,
   needs: Array<[field: string, option?: string]>,
   optionalFields: string[] = [],
+  liveOptionFields: string[] = [],
 ): BoardCache {
   const satisfied = (c: BoardCache) =>
     needs.every(([f, o]) => c.fields[f] && (o === undefined || c.fields[f].options?.[o]));
   const optionalKnown = (c: BoardCache) => optionalFields.every((f) => c.fields[f]);
   let cache = ensureCache(ctx);
-  if (!satisfied(cache) || !optionalKnown(cache)) cache = refreshCache(ctx);
+  if (liveOptionFields.length > 0 || !satisfied(cache) || !optionalKnown(cache))
+    cache = refreshCache(ctx);
   if (!satisfied(cache)) {
     const missing = needs.filter(([f, o]) => !cache.fields[f] || (o !== undefined && !cache.fields[f].options?.[o]));
     throw new Error(
@@ -3900,8 +3978,195 @@ export interface CreateOpts {
   body?: string;
   parent?: number;
   estimate?: string;
+  priority?: string;
   state?: State;
   labels?: string[];
+}
+
+/** Validate a priority against the board's LIVE options rather than a hardcoded
+ *  P0..P3: `setup` seeds that set but never edits an existing field, so a host
+ *  repo's own scheme is the truth here — exactly as `next`'s ranking reads it. */
+/** `setup` never edits an existing field, so a host board may already carry a
+ *  TEXT or NUMBER field named "Priority" — and the name-only cache check would
+ *  wave both write paths through. The SET path merely failed confusingly
+ *  ("options are: (none)"), but CLEAR erased that field's value outright and
+ *  then reported `(none)`, because issue reads only recognise a single-select
+ *  Priority: destructive, and invisible in the output. Both paths refuse by
+ *  dataType first, naming what the board actually has. */
+function assertPrioritySingleSelect(cache: BoardCache): void {
+  const field = cache.fields[PRIORITY_FIELD];
+  if (field && field.dataType !== "SINGLE_SELECT") {
+    throw new UsageError(
+      `this board's ${PRIORITY_FIELD} field is ${field.dataType}, not SINGLE_SELECT — ralph ranks a ` +
+        `single-select ${PRIORITY_FIELD} and will neither write nor CLEAR a custom ${field.dataType} field ` +
+        `(clearing it would erase data \`board get\` cannot even show you). Convert it in the Projects UI, ` +
+        `or leave ${PRIORITY_FIELD} to the board.`,
+    );
+  }
+}
+
+function assertPriorityOption(cache: BoardCache, value: string): void {
+  assertPrioritySingleSelect(cache);
+  const options = Object.keys(cache.fields[PRIORITY_FIELD]?.options ?? {});
+  if (!options.includes(value)) {
+    throw new UsageError(
+      `unknown ${PRIORITY_FIELD} "${value}" — this board's options are: ${options.join(", ") || "(none)"}`,
+    );
+  }
+}
+
+/** The Priority field's live option order — what `next`/`frontier` hand the
+ *  ranker so a host repo's accepted custom scheme is orderable, not just
+ *  writable. An absent Priority field yields `[]`, i.e. exactly the
+ *  digit-suffix fallback boards without the field have always had.
+ *
+ *  Nothing in the field cache can notice a REORDER or a RENAME — `satisfied()`
+ *  only ever asks whether a name is present — so a purely cached read would
+ *  steer the queue by an obsolete scheme until some unrelated mutation happened
+ *  to refresh the schema. Refreshing on EVERY call is the wrong end of that
+ *  trade: `next` is pinned at 2 warm round trips by the metrics registry, and
+ *  the item cache exists precisely so a chain of reads pays for one walk. So
+ *  the refresh is triggered three ways, cheapest first:
+ *    - EVIDENCE: an item holds a priority value the cached options don't list.
+ *      That is proof the schema moved under us (a rename, or an option added
+ *      elsewhere), and it costs nothing on a healthy board — the common case
+ *      never fires it. This closes the rename half outright rather than
+ *      time-bounding it, and it is the reason the ranker's own input is passed
+ *      in rather than read here. Evidence is spent ONCE per value: a live read
+ *      that still does not list it proves the value is genuinely obsolete
+ *      (a supported case — an item keeping a removed value as historical
+ *      record), so it is recorded in `unresolvedPriorities` and stops counting
+ *      as news. Otherwise such a board would pay a schema query on every warm
+ *      read forever, defeating the very bound this design protects.
+ *    - OPERATOR: `--fresh`, the flag that already means "don't serve me a
+ *      snapshot", now forces the schema read too. A deterministic escape hatch
+ *      beats waiting out any Δ.
+ *    - AGE: a ceiling of PRIORITY_ORDER_MAX_AGE_MS for the one case no
+ *        evidence can reveal — a pure REORDER of names that are all still
+ *        present. That case is genuinely undetectable without reading the
+ *        schema (GitHub offers no schema ETag or version), so it is
+ *        bounded staleness by construction, exactly like the item cache's Δ,
+ *        and this comment is the honest label rather than a claim of freshness.
+ *
+ *  A failed refresh degrades to the cached order, and a total miss to `[]`
+ *  (digit-suffix ranking), each with a warning — deliberately fail-soft in that
+ *  direction: the option order is advisory ranking input, while a `next` that
+ *  cannot answer at all stops the loop. */
+const PRIORITY_ORDER_MAX_AGE_MS = 60 * 60_000;
+const PRIORITY_UNRESOLVED_MAX = 64;
+
+/** POSIX single-quoting, for option names echoed into a copy-pasteable command.
+ *  A live option may legitimately contain spaces or shell metacharacters
+ *  ("High Priority"), and an unquoted recovery command would split it — at best
+ *  failing, at worst setting a DIFFERENT valid option that matches the first
+ *  word. A recovery hint that silently does something else is the worst kind. */
+function shQuote(s: string): string {
+  return /^[A-Za-z0-9._\/:@-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+export function priorityOptionOrder(
+  ctx: Ctx,
+  opts: { values?: Array<string | null>; fresh?: boolean } = {},
+): string[] {
+  // The DECLARED order, never Object.keys of the option map — see FieldInfo.
+  // An older cache file predating optionOrder falls back to the map, which is
+  // correct for every non-integer-like scheme and no worse than before for the
+  // rest; the next refresh repairs it.
+  const order = (c: BoardCache): string[] => {
+    const f = c.fields[PRIORITY_FIELD];
+    return f?.optionOrder ?? Object.keys(f?.options ?? {});
+  };
+  // A cache written before `optionOrder` existed is STALE, not usable-as-is.
+  // Falling back to the map is only safe as a last resort, because for
+  // integer-like names it silently reverses the declared order — and the
+  // evidence trigger cannot save us there: every value IS in the map, so
+  // nothing looks unexplained and `next` would pick wrong work until the age
+  // ceiling expired. One refresh on first use after the upgrade closes it.
+  const legacy = (c: BoardCache): boolean => {
+    const f = c.fields[PRIORITY_FIELD];
+    return !!f?.options && f.optionOrder === undefined;
+  };
+  let cached: BoardCache;
+  try {
+    cached = ensureCache(ctx);
+  } catch {
+    process.stderr.write(`warn: ${PRIORITY_FIELD} options unreadable — ranking by digit suffix only\n`);
+    return [];
+  }
+  const cachedOrder = order(cached);
+  // An unparseable stamp counts as stale (NaN fails the comparison either way,
+  // so it is asserted, not left to coincidence).
+  const age = ctx.now().getTime() - Date.parse(cached.fetchedAt);
+  const known = new Set([...cachedOrder, ...(cached.unresolvedPriorities ?? [])]);
+  const candidates = (opts.values ?? []).filter((v): v is string => typeof v === "string" && v.length > 0);
+  // Once the suppression list has evicted anything, "unexplained" no longer
+  // proves the cache is stale — it may just be a value we can no longer afford
+  // to remember (see unresolvedPrioritiesTruncated).
+  const unexplained = cached.unresolvedPrioritiesTruncated ? [] : candidates.filter((v) => !known.has(v));
+  const stale =
+    opts.fresh === true ||
+    unexplained.length > 0 ||
+    legacy(cached) ||
+    !(Number.isFinite(age) && age <= PRIORITY_ORDER_MAX_AGE_MS);
+  if (!stale) return cachedOrder;
+  let refreshed: BoardCache;
+  try {
+    refreshed = refreshCache(ctx);
+  } catch (e) {
+    process.stderr.write(
+      `warn: ${PRIORITY_FIELD} options not refreshed (${(e as Error).message}) — ranking by the cached order\n`,
+    );
+    return cachedOrder;
+  }
+  const freshOrder = order(refreshed);
+  // Spend the evidence: whatever the LIVE schema still does not list is
+  // obsolete-by-confirmation, not a stale cache, and must not re-trigger.
+  // Filtered against the LIVE order, carried entries included: a name that is
+  // an option again is not obsolete, whatever a previous read concluded.
+  const all = [
+    ...new Set([...(cached.unresolvedPriorities ?? []), ...candidates]),
+  ].filter((v) => !freshOrder.includes(v));
+  // Bounded: this is a suppression list, not a ledger. Newest wins, because an
+  // old entry GitHub re-added is re-learned by the next live read. Crossing the
+  // cap sets the truncated flag, which is what stops eviction from turning into
+  // a permanent refresh loop.
+  const confirmed = all.slice(-PRIORITY_UNRESOLVED_MAX);
+  const truncated = cached.unresolvedPrioritiesTruncated === true || all.length > PRIORITY_UNRESOLVED_MAX;
+  if (confirmed.length || truncated) {
+    if (confirmed.length) refreshed.unresolvedPriorities = confirmed;
+    if (truncated) refreshed.unresolvedPrioritiesTruncated = true;
+    try {
+      writeFileSync(cachePath(ctx), JSON.stringify(refreshed, null, 2));
+    } catch {
+      /* the suppression list is an optimisation — losing it costs a query, not
+         correctness, so a read-only cache dir must not break ranking */
+    }
+  }
+  return freshOrder;
+}
+
+/** The setter `next` needed all along: an item filed without a priority ranks
+ *  dead last, and until now the only fix was the Projects V2 UI — i.e. off the
+ *  sanctioned path. `null` clears the field. */
+export function setPriority(ctx: Ctx, number: number, value: string | null): Issue {
+  const issue = fetchIssue(ctx, number);
+  const itemId = requireItem(issue);
+  // Live schema on BOTH branches. The set is what a value is judged against —
+  // and a clear needs it just as much, for the field ID rather than the
+  // options: a field deleted and recreated keeps its name, so the cache stays
+  // `satisfied()` while holding an obsolete id, and every clear would fail
+  // against it until some unrelated op happened to refresh. `--clear`
+  // validating nothing was the wrong reason to skip the read.
+  const cache = mutationCache(ctx, [[PRIORITY_FIELD]], [], [PRIORITY_FIELD]);
+  if (value === null) {
+    // Refuse BEFORE clearing: this is the destructive direction.
+    assertPrioritySingleSelect(cache);
+    clearField(ctx, cache, itemId, PRIORITY_FIELD);
+  } else {
+    assertPriorityOption(cache, value);
+    setSingleSelect(ctx, cache, itemId, PRIORITY_FIELD, value);
+  }
+  return fetchIssue(ctx, number);
 }
 
 export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
@@ -3910,7 +4175,21 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
       `cannot create an issue in terminal state "${opts.state}" — create it open, then move/cancel it`,
     );
   }
-  const cache = mutationCache(ctx, [[STATE_FIELD, opts.state ?? "Backlog"]]);
+  // Priority is validated BEFORE the issue exists — a bad option must cost a
+  // usage error, not an orphaned issue nobody's selector will ever surface.
+  //
+  // ASKED-FOR, not truthy: `--priority ""` (an unset shell variable) arrives as
+  // an empty string, and every truthiness check here used to skip validation
+  // AND the write, filing the unprioritized issue this gate exists to refuse.
+  // `undefined` is the only way to say "no priority"; anything else, empty
+  // string included, is a request that must be validated and can fail.
+  const wantsPriority = opts.priority !== undefined;
+  const needs: Array<[string, string?]> = [[STATE_FIELD, opts.state ?? "Backlog"]];
+  if (wantsPriority) needs.push([PRIORITY_FIELD]);
+  // …and validated against a LIVE option set: a cached option GitHub has since
+  // deleted would pass here and fail after createIssue (see mutationCache).
+  const cache = mutationCache(ctx, needs, [], wantsPriority ? [PRIORITY_FIELD] : []);
+  if (wantsPriority) assertPriorityOption(cache, opts.priority!);
   {
     const created = ghGraphQL(
       ctx,
@@ -3934,11 +4213,34 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
 
     setSingleSelect(ctx, cache, itemId, STATE_FIELD, opts.state ?? "Backlog");
     syncStatus(ctx, cache, itemId, opts.state ?? "Backlog");
+    // Unlike estimate, a failed priority write is FATAL-loud: a null priority
+    // is what makes an issue invisible to `next`, so it may not pass as a warn.
+    //
+    // DEFERRED, not immediate: throwing here skipped every later write, so
+    // `create --apply --priority …` could leave the issue without its apply
+    // label while the error told the operator to fix only Priority — following
+    // the advertised recovery would not restore the requested shape. The rest of
+    // the requested setup is applied first, and the throw then reports
+    // everything that did not land.
+    let priorityFailure: string | null = null;
+    if (wantsPriority) {
+      try {
+        setSingleSelect(ctx, cache, itemId, PRIORITY_FIELD, opts.priority!);
+      } catch (e) {
+        priorityFailure = (e as Error).message;
+      }
+    }
+    let estimateFailure: string | null = null;
     if (opts.estimate) {
       try {
         setSingleSelect(ctx, cache, itemId, ESTIMATE_FIELD, opts.estimate);
       } catch (e) {
-        process.stderr.write(`warn: estimate not set: ${(e as Error).message}\n`);
+        // Still only a warning on its own — an unset estimate does not hide the
+        // issue from `next`. But it is recorded, because the aggregate error
+        // below claims to name EVERY write that did not land, and a claim of
+        // completeness that quietly omits one is worse than no claim.
+        estimateFailure = (e as Error).message;
+        process.stderr.write(`warn: estimate not set: ${estimateFailure}\n`);
       }
     }
     // Labels are applied via `gh issue edit` rather than GraphQL: it resolves
@@ -3946,6 +4248,7 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
     // owner's call, not the CLI's. A label failure is LOUD but non-fatal —
     // the issue exists, and an apply twin missing its label is caught by the
     // merge gate rather than being silently mislabelled here.
+    let labelFailure: string | null = null;
     if (opts.labels?.length) {
       const r = ctx.exec([
         "gh", "issue", "edit", String(issue.number),
@@ -3953,20 +4256,50 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
         ...opts.labels.flatMap((l) => ["--add-label", l]),
       ]);
       if (r.code !== 0) {
+        labelFailure = r.stderr.trim() || r.stdout.trim();
         process.stderr.write(
           `warn: labels ${opts.labels.join(",")} not applied to #${issue.number}: ` +
-            `${r.stderr.trim() || r.stdout.trim()} (create the label first: gh label create)\n`,
+            `${labelFailure} (create the label first: gh label create)\n`,
         );
       }
     }
+    let parentFailure: string | null = null;
     if (opts.parent) {
-      const parent = fetchIssue(ctx, opts.parent);
-      ghGraphQL(
-        ctx,
-        `mutation($parentId: ID!, $childId: ID!) {
-          addSubIssue(input: { issueId: $parentId, subIssueId: $childId }) { issue { id } }
-        }`,
-        { parentId: parent.nodeId, childId: issue.id },
+      try {
+        const parent = fetchIssue(ctx, opts.parent);
+        ghGraphQL(
+          ctx,
+          `mutation($parentId: ID!, $childId: ID!) {
+            addSubIssue(input: { issueId: $parentId, subIssueId: $childId }) { issue { id } }
+          }`,
+          { parentId: parent.nodeId, childId: issue.id },
+        );
+      } catch (e) {
+        // Only reported when priority already failed — otherwise a parenting
+        // failure keeps its previous behavior of surfacing as itself.
+        if (priorityFailure === null) throw e;
+        parentFailure = (e as Error).message;
+      }
+    }
+    // One error naming EVERY operation that did not land, each with the command
+    // that repairs it — a recovery hint that fixes one of three unapplied writes
+    // is worse than none, because it reads as completeness.
+    if (priorityFailure !== null) {
+      const unapplied = [
+        `${PRIORITY_FIELD} (\`board priority ${issue.number} ${shQuote(opts.priority!)}\`): ${priorityFailure}`,
+        ...(estimateFailure !== null
+          ? [`${ESTIMATE_FIELD} ${opts.estimate} (set it in the board UI): ${estimateFailure}`]
+          : []),
+        ...(labelFailure !== null
+          ? [`labels ${opts.labels!.join(",")} (\`gh issue edit ${issue.number} --add-label …\`): ${labelFailure}`]
+          : []),
+        ...(parentFailure !== null
+          ? [`parent #${opts.parent} (\`board link ${opts.parent} ${issue.number}\`): ${parentFailure}`]
+          : []),
+      ];
+      throw new Error(
+        `#${issue.number} was created (${issue.url}) but ${unapplied.length} requested ` +
+          `${unapplied.length === 1 ? "write" : "writes"} did NOT land:\n  - ${unapplied.join("\n  - ")}`,
       );
     }
     return fetchIssue(ctx, issue.number);
@@ -5220,10 +5553,18 @@ reads
 
 mutations
   create --title T [--body B] [--parent NNN] [--estimate XS..XL] [--state S]
-                              [--label L[,L2]] [--apply]
+                              [--priority P0..P3] [--label L[,L2]] [--apply]
                               --apply files an APPLY unit under the configured
                               label: it closes only on deployed-and-verified
-                              evidence, never on a merge
+                              evidence, never on a merge.
+                              --priority is validated against the board's live
+                              Priority options; omitting it ranks the item LAST
+                              in \`next\` (null sorts after P3)
+  priority NNN <option>       set Priority on an existing item (--clear removes
+                              it). Options come from the live field, not a
+                              hardcoded P0..P3 — a host repo owns its scheme,
+                              and \`next\` orders a custom one by the field's
+                              option ORDER (a trailing digit is the fallback)
   claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
   claim join NNN --holder H   add a fleet sibling to an In Progress item's
                               shared claim (ClaimV2, max 8 holders; H must be
@@ -5348,7 +5689,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state", "all-repos", "fresh"].includes(key)) {
+      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state", "all-repos", "fresh", "clear"].includes(key)) {
         flags[key] = next;
         i++;
       } else {
@@ -5427,7 +5768,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 }
 
 const MUTATING = new Set([
-  "create", "claim", "release", "move", "cancel", "reopen", "answer",
+  "create", "claim", "release", "move", "cancel", "reopen", "answer", "priority",
   "link", "dep", "comment", "adopt", "reconcile", "parent-check",
   "resolve", "setup",
 ]);
@@ -5518,7 +5859,13 @@ export function run(argv: string[], ctx: Ctx): number {
       const own = ownRepo(ctx, full.open).own;
       // Closed own-repo items ride along as pass-through tree edges only.
       const closedEdges = ownRepo(ctx, full.closed).own;
-      const { eligible, blocked, inFlightEpics } = rankNext(own, closedEdges);
+      // The values the ranker will actually rank double as staleness evidence:
+      // one it cannot find in the cached options proves the schema moved.
+      const order = priorityOptionOrder(ctx, {
+        values: own.map((i) => i.priority),
+        fresh: flags.fresh === true,
+      });
+      const { eligible, blocked, inFlightEpics } = rankNext(own, closedEdges, order);
       // --json carries the diagnosis as fields, never as the prose line.
       const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics);
       if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked, ...dx, cache: cacheFacts(full) });
@@ -5560,7 +5907,13 @@ export function run(argv: string[], ctx: Ctx): number {
       const full = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
       const own = ownRepo(ctx, full.open).own;
       const closedEdges = ownRepo(ctx, full.closed).own;
-      const res = frontierView(rankNext(own, closedEdges));
+      const res = frontierView(
+        rankNext(
+          own,
+          closedEdges,
+          priorityOptionOrder(ctx, { values: own.map((i) => i.priority), fresh: flags.fresh === true }),
+        ),
+      );
       if (flags.json) json({ ...res, cache: cacheFacts(full) });
       else if (res.frontier.length === 0) {
         out(
@@ -5636,11 +5989,19 @@ export function run(argv: string[], ctx: Ctx): number {
       if (typeof flags.title !== "string" || !flags.title) throw new UsageError("--title required");
       const state = typeof flags.state === "string" ? parseStateArg(flags.state) : null;
       if (typeof flags.state === "string" && !state) throw new UsageError(`unknown state "${flags.state}"`);
+      // A valueless `--priority` parses as boolean true; `--priority ""` (an
+      // unset shell variable) parses as an empty string. Silently coercing
+      // either to "no priority" would file the very last-sorting item the flag
+      // was typed to avoid, so both are usage errors, not defaults. createIssue
+      // refuses the empty string as well — this is the message, not the gate.
+      if (flags.priority === true || (typeof flags.priority === "string" && flags.priority.trim() === ""))
+        throw new UsageError("--priority needs a value (this board's options: `board get` any item, or see `board help`)");
       const issue = createIssue(ctx, {
         title: flags.title,
         body: typeof flags.body === "string" ? flags.body : undefined,
         parent: typeof flags.parent === "string" ? requireNumber(flags.parent, "--parent") : undefined,
         estimate: typeof flags.estimate === "string" ? flags.estimate : undefined,
+        priority: typeof flags.priority === "string" ? flags.priority : undefined,
         state: state ?? undefined,
         // --apply resolves the CONFIGURED label rather than a literal, so a
         // repo that renamed it (apply.label) cannot end up with apply units
@@ -5664,6 +6025,18 @@ export function run(argv: string[], ctx: Ctx): number {
       });
       out(issueLine(issue));
       out(issue.url);
+      return 0;
+    }
+
+    case "priority": {
+      const number = requireNumber(positional[0]);
+      const value = positional[1];
+      if (!flags.clear && !value)
+        throw new UsageError("priority NNN <option> (or --clear) required");
+      if (flags.clear && value)
+        throw new UsageError("--clear takes no priority value");
+      const issue = setPriority(ctx, number, flags.clear ? null : value!);
+      out(`#${issue.number} priority=${issue.priority ?? "(none)"} ${issue.title}`);
       return 0;
     }
 

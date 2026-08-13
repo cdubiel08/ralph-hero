@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -54,6 +54,7 @@ import {
   type QueueItem,
   QUEUE_SELECT_MINIMAL,
   QUEUE_SELECT_NO_LABELS,
+  priorityOptionOrder,
   rankNext,
   readiness,
   realExec,
@@ -63,6 +64,7 @@ import {
   run,
   scopeMatches,
   setDependency,
+  setPriority,
   setup,
   SMELL_DEFAULTS,
   STATES,
@@ -217,6 +219,47 @@ describe("rankNext", () => {
   it("priority sort is numeric, not lexicographic — P10 ranks after P2", () => {
     const items = [item(1, { priority: "P10" }), item(2, { priority: "P2" }), item(3, { priority: "P0" })];
     expect(rankNext(items).eligible.map((i) => i.number)).toEqual([3, 2, 1]);
+  });
+
+  it("a host repo's custom scheme is ordered by the field's live option order (GH-1789)", () => {
+    // Digit-suffix ranking alone gives "Now" and "Later" the same last place as
+    // null — so `next` would hand back an older unprioritized item ahead of the
+    // Now work the operator just filed. The option order is the ordering.
+    const order = ["Now", "Later"];
+    const items = [item(1), item(2, { priority: "Later" }), item(3, { priority: "Now" })];
+    expect(rankNext(items, [], order).eligible.map((i) => i.number)).toEqual([3, 2, 1]);
+    // Unprioritized still sorts last, the guarantee the ranking always made.
+    expect(rankNext([item(9), item(4, { priority: "Later" })], [], order).eligible.map((i) => i.number)).toEqual([4, 9]);
+    // Inheritance runs through the same ranker, so it speaks the scheme too.
+    const tree = [item(1, { priority: "Now" }), item(2, { priority: "Later" }), child(5, 1)];
+    expect(rankNext(tree, [], order).eligible[0].number).toBe(5);
+  });
+
+  it("a value the live options no longer hold ranks BEHIND every live option, digits or not", () => {
+    // A renamed/removed option still stamped on an item. The digit fallback is
+    // offset past the option range, so it cannot share rank space with it: the
+    // dangerous case is stale "P0", which at rank 0 would TIE `Now` and take
+    // the head on the issue-number tie-break. Lowest numbers here are the
+    // stale ones on purpose.
+    const order = ["Now", "Later"];
+    const items = [
+      item(1, { priority: "P0" }), // stale, and would win every tie-break
+      item(2, { priority: "URGENT" }), // stale, no digits at all
+      item(8, { priority: "Later" }), // live, last option
+      item(9, { priority: "Now" }), // live, first option
+    ];
+    expect(rankNext(items, [], order).eligible.map((i) => i.number)).toEqual([9, 8, 1, 2]);
+    // Relative order AMONG stale digit values is still preserved.
+    expect(
+      rankNext([item(1, { priority: "P3" }), item(2, { priority: "P1" })], [], order).eligible.map((i) => i.number),
+    ).toEqual([2, 1]);
+  });
+
+  it("a seeded P0..P3 board ranks identically with and without the live order", () => {
+    const items = [item(1, { priority: "P10" }), item(2, { priority: "P2" }), item(3), item(4, { priority: "P0" })];
+    const expected = [4, 2, 1, 3];
+    expect(rankNext(items).eligible.map((i) => i.number)).toEqual(expected);
+    expect(rankNext(items, [], ["P0", "P1", "P2", "P3"]).eligible.map((i) => i.number)).toEqual(expected);
   });
 
   // -------------------------------------------------------------------------
@@ -2560,6 +2603,634 @@ describe("applyEvidenceFailure", () => {
     const ctx = makeCtx(gh);
     gh.issues.set(1, { number: 1, state: "Backlog", comments: [] });
     expect(applyEvidenceFailure(ctx, 1)).toMatch(/no <!-- ralph-apply-evidence:v1 -->/);
+  });
+});
+
+describe("priority is writable through the CLI (GH-1789)", () => {
+  it("create --priority sets it, so a filed issue is reachable by next", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const issue = createIssue(ctx, { title: "urgent", priority: "P0" });
+    expect(issue.priority).toBe("P0");
+    expect(gh.mutations).toContain(`setPriority(#${issue.number}, P0)`);
+  });
+
+  it("an unknown priority is refused BEFORE the issue exists", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(() => createIssue(ctx, { title: "x", priority: "P9" })).toThrow(UsageError);
+    expect(gh.mutations.filter((m) => m.startsWith("createIssue"))).toEqual([]);
+    expect(gh.issues.size).toBe(0);
+  });
+
+  it("validates against the LIVE options, not a hardcoded P0..P3", () => {
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
+    const ctx = makeCtx(gh);
+    const issue = createIssue(ctx, { title: "x", priority: "Now" }); // a scheme setup never seeded is accepted
+    expect(issue.priority).toBe("Now");
+    expect(gh.mutations).toContain(`setPriority(#${issue.number}, Now)`);
+    expect(() => createIssue(ctx, { title: "y", priority: "P0" })).toThrow(/Now, Later/);
+  });
+
+  it("the setter corrects a mis-filed backlog item, and --clear removes it", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: null });
+    expect(setPriority(ctx, 1, "P1").priority).toBe("P1");
+    expect(setPriority(ctx, 1, null).priority).toBeNull();
+    expect(gh.mutations).toContain("clearField(#1, F_priority)");
+  });
+
+  it("the setter refuses an unknown option and an archived item", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(2, { number: 2, state: "Backlog", archived: true });
+    expect(() => setPriority(ctx, 1, "URGENT")).toThrow(UsageError);
+    expect(() => setPriority(ctx, 2, "P0")).toThrow(RefusalError);
+    expect(gh.mutations.filter((m) => m.startsWith("setPriority"))).toEqual([]);
+  });
+
+  it("`priority` is scope-gated like every other mutation", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.exec = (argv, stdin) => {
+      if (argv.join(" ").includes("remote get-url"))
+        return { code: 0, stdout: "git@github.com:someone-else/other.git\n", stderr: "" };
+      return gh.exec(argv, stdin);
+    };
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(() => run(["priority", "1", "P0"], ctx)).toThrow(RefusalError);
+  });
+
+  it("--clear never swallows the issue number", () => {
+    expect(parseArgs(["--clear", "1789"]).positional).toEqual(["1789"]);
+  });
+
+  /** A board whose LIVE Priority options are Now/Later, with a persistent field
+   *  cache still holding the seeded P0..P3 — the stale-schema shape. */
+  const staleP0P3Cache = (ctx: Ctx) =>
+    writeFileSync(
+      join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+      JSON.stringify({
+        projectId: "PVT_test",
+        repositoryId: "R_test",
+        fields: {
+          "Workflow State": {
+            id: "F_state", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+          },
+          Priority: {
+            id: "F_Priority", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries(["P0", "P1", "P2", "P3"].map((p) => [p, `P_${p}`])),
+          },
+        },
+        fetchedAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+  it("an option the cache holds but GitHub has REMOVED is caught before the issue exists", () => {
+    // The hole a cache-satisfied check cannot see: `satisfied()` only detects a
+    // GAINED option. Without the forced refresh, "P0" pre-validates clean and
+    // the field write fails after createIssue — the orphan this gate prevents.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
+    const ctx = makeCtx(gh);
+    staleP0P3Cache(ctx);
+    expect(() => createIssue(ctx, { title: "x", priority: "P0" })).toThrow(/Now, Later/);
+    expect(gh.issues.size).toBe(0);
+    expect(gh.mutations.filter((m) => m.startsWith("createIssue"))).toEqual([]);
+  });
+
+  it("the setter refuses a removed option too, and writes nothing", () => {
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    staleP0P3Cache(ctx);
+    expect(() => setPriority(ctx, 1, "P0")).toThrow(/Now, Later/);
+    expect(gh.mutations.filter((m) => m.startsWith("setPriority"))).toEqual([]);
+    staleP0P3Cache(ctx);
+    expect(setPriority(ctx, 1, "Now").priority).toBe("Now"); // the live option is accepted
+  });
+
+  it("an accepted custom priority is ORDERABLE by next, not just writable", () => {
+    // End-to-end on the very scheme the write path accepts: if `next` couldn't
+    // rank it, accepting it would be a trap.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: null }); // oldest, unprioritized
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "Later" });
+    gh.issues.set(3, { number: 3, state: "Backlog", priority: "Now" });
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["next"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(said.join("")).toMatch(/^next: #3\b/m);
+  });
+
+  /** Live options in a deliberate order, with a cache holding the OPPOSITE. */
+  const reorderedBoard = () => {
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Later", "Now"] });
+    const ctx = makeCtx(gh);
+    writeFileSync(
+      join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+      JSON.stringify({
+        projectId: "PVT_test",
+        repositoryId: "R_test",
+        fields: {
+          "Workflow State": {
+            id: "F_state", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+          },
+          // The obsolete order: Now first. Nothing about a REORDER is visible to
+          // a present/absent field check, so only a live read can catch it.
+          Priority: {
+            id: "F_Priority", dataType: "SINGLE_SELECT",
+            options: { Now: "Priority_Now", Later: "Priority_Later" },
+          },
+        },
+        fetchedAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "Now" });
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "Later" });
+    return { gh, ctx };
+  };
+
+  const sayNext = (ctx: Ctx) => {
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["next"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    return said.join("");
+  };
+
+  it("next ranks by the LIVE option order — a reorder the field cache cannot notice", () => {
+    // Options reordered to [Later, Now] in GitHub; the cache still says
+    // [Now, Later]. A cached read would steer the queue by the obsolete scheme
+    // indefinitely, since no mutation has to happen to refresh it.
+    const { ctx } = reorderedBoard();
+    expect(sayNext(ctx)).toMatch(/^next: #2\b/m);
+  });
+
+  it("an unrefreshable schema degrades to the cached order and still answers", () => {
+    // Fail-soft direction: ordering input is advisory, a `next` that cannot
+    // answer stops the loop.
+    const { gh, ctx } = reorderedBoard();
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      // Refuse ONLY the schema read (its own fragment names it — and the query
+      // text arrives on stdin, not argv); the item walk runs normally, so this
+      // isolates the refresh failure.
+      if (`${argv.join(" ")} ${stdin ?? ""}`.includes("fragment pf on ProjectV2"))
+        return { code: 1, stdout: "", stderr: "simulated schema read failure" };
+      return inner(argv, stdin);
+    };
+    const warns: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+      warns.push(String(s));
+      return true;
+    });
+    let text: string;
+    try {
+      text = sayNext(ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(warns.join("")).toMatch(/not refreshed/);
+    expect(text).toMatch(/^next: #1\b/m); // the cached [Now, Later] order
+  });
+
+  it("integer-like option names keep their DECLARED order, which Object.keys destroys", () => {
+    // A board declaring [10, 2] means 10 first. JS enumerates integer-like keys
+    // numerically ahead of string keys, so reconstructing the order from the
+    // option MAP yields [2, 10] — and no refresh can repair it, because the
+    // order is lost the moment options become object properties.
+    expect(Object.keys(Object.fromEntries([["10", "a"], ["2", "b"], ["P1", "c"]]))).toEqual(["2", "10", "P1"]);
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["10", "2", "P1"] });
+    const ctx = makeCtx(gh);
+    expect(priorityOptionOrder(ctx)).toEqual(["10", "2", "P1"]); // declared, not enumerated
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "2" });
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "10" });
+    // #2 holds the board's FIRST option, so it heads the queue despite the
+    // higher issue number and the lower-looking name.
+    expect(sayNext(ctx)).toMatch(/^next: #2\b/m);
+  });
+
+  it("a priority value absent from the cached options is EVIDENCE of a moved schema, and refreshes", () => {
+    // The rename half of the freshness problem, closed without a timer: the
+    // ranker's own input proves the cache is wrong. The cache here is fresh by
+    // age, so only the evidence can trigger the refresh.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Soon", "Later"] });
+    const ctx = makeCtx(gh);
+    const staleNames = (extra: Record<string, unknown> = {}) =>
+      writeFileSync(
+        join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+        JSON.stringify({
+          projectId: "PVT_test",
+          repositoryId: "R_test",
+          fields: {
+            "Workflow State": {
+              id: "F_state", dataType: "SINGLE_SELECT",
+              options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+            },
+            // Pre-rename snapshot: "Now" has since become "Soon".
+            Priority: {
+              id: "F_Priority", dataType: "SINGLE_SELECT",
+              options: { Now: "Priority_Now", Later: "Priority_Later" },
+              optionOrder: ["Now", "Later"],
+              ...extra,
+            },
+          },
+          fetchedAt: NOW.toISOString(), // fresh by age — evidence is the only trigger
+        }),
+      );
+    staleNames();
+    expect(priorityOptionOrder(ctx, { values: ["Soon"] })).toEqual(["Soon", "Later"]);
+    // Without that evidence, a fresh-by-age cache is served as-is — no refresh,
+    // which is what keeps `next` at its pinned warm round-trip count.
+    staleNames();
+    expect(priorityOptionOrder(ctx, { values: ["Later", null] })).toEqual(["Now", "Later"]);
+    // --fresh is the operator's deterministic override of any Δ.
+    staleNames();
+    expect(priorityOptionOrder(ctx, { values: ["Later"], fresh: true })).toEqual(["Soon", "Later"]);
+  });
+
+  it("a CONFIRMED-obsolete value stops being evidence — one refresh, not one per read", () => {
+    // The failure mode this closes: an item keeping a removed value is a case
+    // the ranker supports on purpose, so "absent from options" stays true even
+    // straight after a successful refresh. Left alone, every warm read pays a
+    // schema query forever — the exact bound the evidence trigger exists to
+    // protect. The assertions here are on COST, not just on the answer.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const schemaReads = () => gh.queries.filter((q) => q.includes("fragment pf on ProjectV2")).length;
+    const P = ["P0", "P1", "P2", "P3"];
+
+    // Warm the cache, then keep re-stamping it fresh so the AGE trigger can
+    // never be what fires — only evidence.
+    priorityOptionOrder(ctx);
+    const cacheFile = join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json");
+    const reheat = () => {
+      const c = JSON.parse(readFileSync(cacheFile, "utf8"));
+      c.fetchedAt = NOW.toISOString();
+      writeFileSync(cacheFile, JSON.stringify(c));
+    };
+    reheat();
+    const before = schemaReads();
+
+    // "P9" is not an option and never will be. First sighting is real evidence.
+    expect(priorityOptionOrder(ctx, { values: ["P9"] })).toEqual(P);
+    expect(schemaReads()).toBe(before + 1);
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).unresolvedPriorities).toEqual(["P9"]);
+
+    // Every subsequent read must be FREE: the value is confirmed obsolete.
+    reheat();
+    for (let i = 0; i < 5; i++) expect(priorityOptionOrder(ctx, { values: ["P9", "P1", null] })).toEqual(P);
+    expect(schemaReads()).toBe(before + 1);
+
+    // A DIFFERENT unexplained value is still news — suppression is per value,
+    // never a blanket "stop looking".
+    reheat();
+    priorityOptionOrder(ctx, { values: ["Whatever"] });
+    expect(schemaReads()).toBe(before + 2);
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).unresolvedPriorities).toEqual(["P9", "Whatever"]);
+
+    // The obsolete value still ranks BEHIND every live option (suppressing the
+    // refresh must not change the ranking contract).
+    const q = (n: number, priority: string): QueueItem => ({
+      number: n, repo: "cdubiel08/ralph-hero", title: `t${n}`, state: "Backlog", priority,
+      hasParent: false, parentNumber: null, openBlockers: [], openBlockerLabels: [],
+      blockersTruncated: false, fieldValuesTruncated: false, claim: null, claimRaw: null,
+      labels: [], labelsTruncated: false, closedBlockers: [],
+    });
+    expect(rankNext([q(1, "P9"), q(9, "P3")], [], P).eligible.map((i) => i.number)).toEqual([9, 1]);
+  });
+
+  it("a host repo's TEXT/NUMBER Priority field is never written and never CLEARED", () => {
+    // `setup` preserves an existing field, so a board can carry a custom
+    // Priority field of another type. The set path merely failed confusingly;
+    // --clear ERASED that field's value and then printed "(none)", because
+    // issue reads only recognise a single-select Priority. Destructive and
+    // invisible — so the guard is on dataType, before either write.
+    for (const dataType of ["TEXT", "NUMBER"]) {
+      const gh = new FakeGh();
+      gh.omitFields = ["Priority"];
+      gh.createdFields.push({ name: "Priority", dataType });
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+
+      expect(() => setPriority(ctx, 1, "P0")).toThrow(new RegExp(`${dataType}, not SINGLE_SELECT`));
+      expect(() => setPriority(ctx, 1, null)).toThrow(new RegExp(`${dataType}, not SINGLE_SELECT`));
+      expect(() => createIssue(ctx, { title: "x", priority: "P0" })).toThrow(UsageError);
+      // Nothing was written, and above all nothing was CLEARED.
+      expect(gh.mutations.filter((m) => m.includes("clearField") || m.startsWith("setPriority"))).toEqual([]);
+      expect(gh.issues.size).toBe(1); // the create never happened
+    }
+  });
+
+  it("a suppressed name that becomes an option again stops being suppressed", () => {
+    // `Soon` is removed (so it lands in the suppression list), and later an
+    // admin renames `Now` to `Soon`. The union would call the now-VALID value
+    // known-obsolete, skip the evidence refresh, and rank live work as stale.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
+    const ctx = makeCtx(gh);
+    const cacheFile = join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json");
+    const read = () => JSON.parse(readFileSync(cacheFile, "utf8"));
+
+    // Learn "Soon" as obsolete against the Now/Later schema.
+    expect(priorityOptionOrder(ctx, { values: ["Soon"] })).toEqual(["Now", "Later"]);
+    expect(read().unresolvedPriorities).toEqual(["Soon"]);
+
+    // The admin renames Now → Soon. Any refresh must drop the suppression.
+    gh.createdFields.length = 0;
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Soon", "Later"] });
+    expect(priorityOptionOrder(ctx, { values: ["Soon"], fresh: true })).toEqual(["Soon", "Later"]);
+    expect(read().unresolvedPriorities ?? []).toEqual([]); // pruned, not carried
+
+    // And it now ranks as the FIRST option rather than as a stale value.
+    const q = (n: number, priority: string): QueueItem => ({
+      number: n, repo: "cdubiel08/ralph-hero", title: `t${n}`, state: "Backlog", priority,
+      hasParent: false, parentNumber: null, openBlockers: [], openBlockerLabels: [],
+      blockersTruncated: false, fieldValuesTruncated: false, claim: null, claimRaw: null,
+      labels: [], labelsTruncated: false, closedBlockers: [],
+    });
+    const order = priorityOptionOrder(ctx, { values: ["Soon", "Later"] });
+    expect(rankNext([q(1, "Later"), q(2, "Soon")], [], order).eligible.map((i) => i.number)).toEqual([2, 1]);
+  });
+
+  it("the recovery command quotes a custom option name containing spaces", () => {
+    // `board priority 7 High Priority` would split, and `board priority` takes
+    // only the first word — potentially setting a DIFFERENT valid option.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["High Priority", "High"] });
+    const ctx = makeCtx(gh);
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      if (stdin?.includes("updateProjectV2ItemFieldValue") && stdin.includes("Priority_High Priority"))
+        return { code: 1, stdout: "", stderr: "simulated priority write failure" };
+      return inner(argv, stdin);
+    };
+    let err: Error | null = null;
+    try {
+      createIssue(ctx, { title: "x", priority: "High Priority" });
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err).not.toBeNull();
+    expect(err!.message).toContain(`board priority`);
+    expect(err!.message).toContain(`'High Priority'`); // quoted, so it round-trips
+    expect(err!.message).not.toMatch(/board priority \d+ High Priority`/); // never bare
+  });
+
+  it("a cache predating optionOrder is STALE, not usable — the upgrade path integer names would break", () => {
+    // The legacy-migration hole: a cache written by the previous version less
+    // than an hour ago has no optionOrder, so the map fallback reverses a
+    // declared ["10","2"] — and the evidence trigger cannot catch it, because
+    // both values ARE in the map, so nothing looks unexplained. `next` would
+    // pick the wrong work until the age ceiling expired.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["10", "2"] });
+    const ctx = makeCtx(gh);
+    writeFileSync(
+      join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+      JSON.stringify({
+        projectId: "PVT_test",
+        repositoryId: "R_test",
+        fields: {
+          "Workflow State": {
+            id: "F_state", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+          },
+          // Previous version's shape: options map, NO optionOrder.
+          Priority: { id: "F_Priority", dataType: "SINGLE_SELECT", options: { "10": "P_10", "2": "P_2" } },
+        },
+        fetchedAt: NOW.toISOString(), // fresh by age, and no value looks unknown
+      }),
+    );
+    // Declared order, because the legacy shape forced a refresh — not the
+    // map order ["2","10"] that Object.keys would have produced.
+    expect(priorityOptionOrder(ctx, { values: ["10", "2"] })).toEqual(["10", "2"]);
+  });
+
+  it("create applies the REST of the requested setup before reporting a priority failure", () => {
+    // `create --apply --priority …` used to throw the moment the priority write
+    // failed, skipping labels/estimate/parent — so the issue could end up
+    // without its apply label while the error told the operator to fix only
+    // Priority. Following that recovery would not restore the requested shape.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const inner = gh.exec;
+    const edits: string[][] = [];
+    ctx.exec = (argv, stdin) => {
+      if (argv[0] === "gh" && argv[1] === "issue" && argv[2] === "edit") {
+        edits.push(argv);
+        return { code: 0, stdout: "", stderr: "" }; // the label write SUCCEEDS
+      }
+      // Fail ONLY the Priority field write.
+      if (stdin?.includes("updateProjectV2ItemFieldValue") && stdin.includes("P_P0"))
+        return { code: 1, stdout: "", stderr: "simulated priority write failure" };
+      return inner(argv, stdin);
+    };
+    let err: Error | null = null;
+    try {
+      createIssue(ctx, { title: "infra", priority: "P0", estimate: "S", labels: ["ralph:apply"] });
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err).not.toBeNull();
+    expect(err!.message).toMatch(/was created/);
+    expect(err!.message).toMatch(/board priority \d+ P0/); // the repair command
+    // The apply label DID land despite the priority failure — the whole point.
+    expect(edits[0]).toContain("--add-label");
+    expect(edits[0]).toContain("ralph:apply");
+    // …and so did the estimate: the failure no longer aborts remaining setup.
+    expect(gh.mutations).toContain("setField(F_estimate)");
+  });
+
+  it("a create failure names EVERY unapplied write, not just the first", () => {
+    // A recovery hint that repairs one of two failures is worse than none: it
+    // reads as completeness.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      if (argv[0] === "gh" && argv[1] === "issue" && argv[2] === "edit")
+        return { code: 1, stdout: "", stderr: "label not found" };
+      if (stdin?.includes("updateProjectV2ItemFieldValue") && stdin.includes("P_P0"))
+        return { code: 1, stdout: "", stderr: "simulated priority write failure" };
+      return inner(argv, stdin);
+    };
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let err: Error | null = null;
+    try {
+      createIssue(ctx, { title: "infra", priority: "P0", labels: ["ralph:apply"] });
+    } catch (e) {
+      err = e as Error;
+    }
+    warn.mockRestore();
+    expect(err!.message).toMatch(/2 requested writes did NOT land/);
+    expect(err!.message).toMatch(/Priority/);
+    expect(err!.message).toMatch(/labels ralph:apply/);
+    expect(err!.message).toMatch(/label not found/);
+  });
+
+  it("a failed ESTIMATE is counted in the aggregate too — 'every write' has to mean every write", () => {
+    // Estimate stays a warning on its own (an unset estimate does not hide the
+    // issue from `next`), but the aggregate error claims completeness, and a
+    // claim of completeness that quietly omits one write is worse than none.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      if (
+        stdin?.includes("updateProjectV2ItemFieldValue") &&
+        (stdin.includes("P_P0") || stdin.includes("E_S"))
+      )
+        return { code: 1, stdout: "", stderr: "simulated field write failure" };
+      return inner(argv, stdin);
+    };
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let err: Error | null = null;
+    try {
+      createIssue(ctx, { title: "x", priority: "P0", estimate: "S" });
+    } catch (e) {
+      err = e as Error;
+    }
+    warn.mockRestore();
+    expect(err!.message).toMatch(/2 requested writes did NOT land/);
+    expect(err!.message).toMatch(/Priority/);
+    expect(err!.message).toMatch(/Estimate S/);
+  });
+
+  it("the suppression list survives a refresh, and its cap cannot become a refresh loop", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1" });
+    const cacheFile = join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json");
+    const schemaReads = () => gh.queries.filter((q) => q.includes("fragment pf on ProjectV2")).length;
+    const read = () => JSON.parse(readFileSync(cacheFile, "utf8"));
+    const reheat = () => {
+      const c = read();
+      c.fetchedAt = NOW.toISOString();
+      writeFileSync(cacheFile, JSON.stringify(c));
+    };
+
+    // Learn one obsolete value, then run a priority MUTATION — which force-
+    // refreshes the schema. The list must survive that, or every mutation
+    // re-arms the repeated-refresh cost the list exists to bound.
+    priorityOptionOrder(ctx, { values: ["P9"] });
+    expect(read().unresolvedPriorities).toEqual(["P9"]);
+    setPriority(ctx, 1, "P0");
+    expect(read().unresolvedPriorities).toEqual(["P9"]); // carried through refreshCache
+    reheat();
+    const afterMutation = schemaReads();
+    priorityOptionOrder(ctx, { values: ["P9"] });
+    expect(schemaReads()).toBe(afterMutation); // still suppressed, still free
+
+    // Past the cap, eviction would guarantee some observed value is always
+    // missing: evidence fires, the refresh drops the same value again, and
+    // every warm read pays forever. The truncated flag is what stops that.
+    const many = Array.from({ length: 200 }, (_, i) => `GONE-${i}`);
+    priorityOptionOrder(ctx, { values: many });
+    expect(read().unresolvedPrioritiesTruncated).toBe(true);
+    reheat();
+    const afterTruncation = schemaReads();
+    for (let i = 0; i < 5; i++) priorityOptionOrder(ctx, { values: many });
+    expect(schemaReads()).toBe(afterTruncation); // no loop, at any board size
+
+    // Bounded staleness is the honest cost of that: --fresh still forces a read.
+    priorityOptionOrder(ctx, { values: many, fresh: true });
+    expect(schemaReads()).toBe(afterTruncation + 1);
+  });
+
+  it("--clear forces the live schema too — a recreated field's stale ID would fail every clear", () => {
+    // A field deleted and recreated keeps its NAME, so satisfied() stays happy
+    // while the cached ID is dead. Nothing about clearing validates an option,
+    // which was the wrong reason to skip the refresh.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1" });
+    writeFileSync(
+      join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+      JSON.stringify({
+        projectId: "PVT_test",
+        repositoryId: "R_test",
+        fields: {
+          "Workflow State": {
+            id: "F_state", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+          },
+          Priority: {
+            id: "F_priority_DELETED", dataType: "SINGLE_SELECT",
+            options: { P0: "P_P0", P1: "P_P1" }, optionOrder: ["P0", "P1"],
+          },
+        },
+        fetchedAt: NOW.toISOString(), // fresh by age: only a forced read saves this
+      }),
+    );
+    expect(setPriority(ctx, 1, null).priority).toBeNull();
+    // The live ID, never the dead one the cache was still happy to serve.
+    expect(gh.mutations).toContain("clearField(#1, F_priority)");
+    expect(gh.mutations.join(" ")).not.toContain("F_priority_DELETED");
+  });
+
+  it("a valueless --priority is a usage error, not a silently unprioritized issue", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(parseArgs(["create", "--title", "x", "--priority"]).flags.priority).toBe(true);
+    expect(() => run(["create", "--title", "x", "--priority"], ctx)).toThrow(UsageError);
+    expect(gh.issues.size).toBe(0);
+  });
+
+  it("an EMPTY --priority is refused too — an unset shell variable is not 'no priority'", () => {
+    // `board create --title x --priority "$PRIORITY"` with PRIORITY unset. The
+    // flag parses as "", which the boolean-only guard missed and every
+    // truthiness check downstream then skipped — validation AND the write —
+    // filing exactly the unprioritized issue the guard exists to refuse.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(parseArgs(["create", "--title", "x", "--priority", ""]).flags.priority).toBe("");
+    expect(() => run(["create", "--title", "x", "--priority", ""], ctx)).toThrow(UsageError);
+    expect(() => run(["create", "--title", "x", "--priority", "   "], ctx)).toThrow(UsageError);
+    expect(gh.issues.size).toBe(0);
+
+    // The LIBRARY refuses it too, not just the CLI message: `undefined` is the
+    // only way to say "no priority", so an empty string is a request that must
+    // fail validation before the issue exists.
+    expect(() => createIssue(ctx, { title: "x", priority: "" })).toThrow(UsageError);
+    expect(gh.issues.size).toBe(0);
+    // …while omitting it entirely is still the supported unprioritized path.
+    expect(createIssue(ctx, { title: "ok" }).priority).toBeNull();
   });
 });
 

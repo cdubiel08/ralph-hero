@@ -12,8 +12,10 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { refreshCache, run, type Ctx } from "./board.js";
-import { FakeGh, makeCtx } from "./board.testkit.js";
+import { FakeGh, makeCtx, NOW } from "./board.testkit.js";
 
 /** Counting overlay on the exec seam: graphql round trips, mutation round
  *  trips, and query bytes. Reset by re-reading the fields. */
@@ -108,6 +110,37 @@ describe("metrics: read round trips", () => {
     const { out } = runQuiet(["next", "--json"], ctx);
     expect(m.graphql).toBe(2);
     expect(JSON.parse(out).queue).toHaveLength(150); // pagination loses nothing
+  });
+
+  it("next on an AGED field cache = 3 round trips — the one documented exception to that baseline", () => {
+    // GH-1789: ranking reads the Priority field's DECLARED option order, and a
+    // field cache older than PRIORITY_ORDER_MAX_AGE_MS is re-read once, so a
+    // reorder/rename cannot steer the queue indefinitely. That is +1 trip on
+    // the aged path ONLY. Pinned here so the exception is a measured fact
+    // rather than a claim in a comment — and so that charging it to the WARM
+    // path (which an earlier draft of this feature did) fails the suite.
+    const gh = new FakeGh();
+    flatBoard(gh, 150);
+    gh.itemsPageSize = 100;
+    const { ctx, m, reset } = warmCtx(gh);
+    const cacheFile = join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json");
+    const age = (iso: string) => {
+      const c = JSON.parse(readFileSync(cacheFile, "utf8"));
+      c.fetchedAt = iso;
+      writeFileSync(cacheFile, JSON.stringify(c));
+    };
+
+    age("2026-01-01T00:00:00Z"); // older than the ceiling
+    const { out } = runQuiet(["next", "--json"], ctx);
+    expect(m.graphql).toBe(3); // 2 page-walk trips + 1 schema re-read
+    expect(JSON.parse(out).queue).toHaveLength(150); // still ranks everything
+
+    // Re-stamped fresh, it is back to the 2-trip baseline: the extra read is
+    // bounded by the ceiling, never charged to every call.
+    reset();
+    age(NOW.toISOString());
+    runQuiet(["next", "--json"], ctx);
+    expect(m.graphql).toBe(2);
   });
 
   it("dep/link = 2 round trips (was 3, two of them full-issue payloads); id query stays skeletal", () => {
