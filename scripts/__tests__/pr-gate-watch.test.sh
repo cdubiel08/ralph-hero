@@ -310,16 +310,20 @@ fi
 expect "same check is plain CI without the override" "$D" "GATE-WAIT ci" 10
 
 echo "=== degenerate inputs ==="
+# A PR with no checks at all, under an attestation-REQUIRED policy, is not
+# ready: gate 4 still wants an attestation. It must not crash, and it must not
+# claim readiness — see P2/8 below for why that distinction is load-bearing.
 D="$TMP_ROOT/no-checks"
 scenario "$D" '[]' "$APPROVED_PR" "$APPROVAL"
-expect "a PR with no checks at all is ready, not crashed" "$D" "GATE-READY" 0
+expect "a PR with no checks at all does not crash" "$D" "GATE-YOURS attestation" 0
 
 D="$TMP_ROOT/garbage-checks"
 mkdir -p "$D"
 printf 'no checks reported on the branch' >"$D/pr_checks.json"
 printf '%s' "$APPROVED_PR" >"$D/pr_view.json"
 printf '%s' "$APPROVAL" >"$D/pr_reviews.json"
-expect "unparseable checks payload degrades to no checks" "$D" "GATE-READY" 0
+printf '[]' >"$D/issue_comments.json"
+expect "unparseable checks payload degrades to no checks" "$D" "GATE-YOURS attestation" 0
 
 echo "=== usage errors ==="
 for bad in "" "abc" "12x"; do
@@ -555,6 +559,120 @@ D="$TMP_ROOT/conflict-outranks"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
   "$(pr_state OPEN "" '[]' cdubiel08 CONFLICTING)" "$NO_REVIEWS"
 expect "a conflict outranks the review/attestation questions" "$D" "GATE-FAIL merge" 0
+
+########################################################################
+# codex P2 regressions, second review pass on PR #1764. Four ways the
+# revised classifier was still disagreeing with gate 5 — three of them by
+# being STRICTER than the gate, which is not caution but a hang.
+########################################################################
+
+echo "=== P2/6: review mode accepts what gate 5 accepts, not less ==="
+# merge-pr.sh gate 5 counts any NON-DISMISSED head-bound review by the bot.
+# Requiring APPROVED made the watcher stricter than the gate it mirrors: a
+# COMMENTED review whose findings were adjudicated satisfies gate 5, but the
+# watcher kept reporting GATE-YOURS review and never reached GATE-READY even
+# after attestation passed. Terminal verdict, permanently wrong.
+COMMENTED_AT_HEAD=$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
+  '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha,
+     html_url:"https://example.test/r/3"}]')
+D="$TMP_ROOT/commented-attested"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$COMMENTED_AT_HEAD"
+expect "adjudicated findings + a current attestation reach GATE-READY" "$D" "GATE-READY" 0
+
+# The nudge survives where it is still useful: same review, but nothing has
+# been attested yet, so "adjudicate then attest" is live advice.
+D="$TMP_ROOT/commented-unattested"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$COMMENTED_AT_HEAD"
+expect "the same findings before attesting still say adjudicate" "$D" "GATE-YOURS review" 0
+
+echo "=== P2/7: no external review required means none is waited for ==="
+# With no policy file, or external_review.required false, gate 5 does not run.
+# Waiting for a review there waits for something no gate will ever ask for.
+POLICY="$TMP_ROOT/policy-absent.json"
+D="$TMP_ROOT/no-policy-no-reviews"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$OPEN_PR" "$NO_REVIEWS"
+expect "no policy file + zero reviews is READY, not a wait" "$D" "GATE-READY" 0
+POLICY_OFF="$TMP_ROOT/policy-ext-off.json"
+jq '.external_review.required = false' "$POLICY_REVIEW" >"$POLICY_OFF"
+POLICY="$POLICY_OFF"
+expect "external_review.required=false waives the review wait" "$D" "GATE-READY" 0
+POLICY="$POLICY_REVIEW"
+expect "the same fixture under a required policy still waits" "$D" "GATE-WAIT review" 10
+
+echo "=== P2/8: a missing attestation STATUS is not readiness ==="
+# Before validate-attestation.yml publishes, when Actions did not fire, or
+# when the checks payload was unreadable, there is no attestation check to be
+# pending and none to be red. Falling through to GATE-READY ended --watch on a
+# merge-pr.sh run that stops at gate 4.
+D="$TMP_ROOT/att-status-missing"
+scenario "$D" "$GREEN_CHECKS" "$APPROVED_PR" "$APPROVAL"
+expect "no attestation status under a required policy is not READY" "$D" "GATE-YOURS attestation" 0
+run "$D"
+if [[ "$LAST_OUT" == *"attest-pr.sh 1740"* ]]; then
+  pass "hands back the attest command rather than a merge command"
+else
+  fail "missing-status remedy (out=${LAST_OUT:0:160})"
+fi
+
+# If the attestation COMMENT is already at this head, the work is done and
+# only the status is missing — that is a wait, not another attestation.
+D="$TMP_ROOT/att-status-missing-attested"
+scenario "$D" "$GREEN_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+expect "attested at this head with no status yet is a wait" "$D" "GATE-WAIT attestation" 10
+
+# A policy that does not require attestation must not acquire the new wait.
+POLICY_NOATT="$TMP_ROOT/policy-no-attestation.json"
+jq '.attestation.required = false' "$POLICY_REVIEW" >"$POLICY_NOATT"
+POLICY="$POLICY_NOATT"
+D="$TMP_ROOT/att-not-required"
+scenario "$D" "$GREEN_CHECKS" "$APPROVED_PR" "$APPROVAL"
+expect "attestation not required: a missing status is fine" "$D" "GATE-READY" 0
+POLICY="$POLICY_REVIEW"
+
+echo "=== P2/9: the reviews snapshot is paginated ==="
+# On a PR with more than one page of reviews the current-head review is
+# frequently on the LAST page. An unpaginated read reports "no review yet" for
+# evidence that exists, and the watcher waits for a review already filed.
+# The stub asserts the flag directly: without --paginate it serves page 1 only.
+cat >"$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+serve() {
+  local f="$GH_STUB_DIR/$1"
+  if [[ -f "$f" ]]; then cat "$f"; else echo "$2"; fi
+}
+case "${1:-} ${2:-}" in
+  "pr checks")
+    serve pr_checks.json '[]'
+    exit "${GH_STUB_CHECKS_EXIT:-0}"
+    ;;
+  "pr view") serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}' ;;
+  "api repos/"*)
+    if [[ "$2" == */issues/*/comments ]]; then serve issue_comments.json '[]'
+    # A paginated endpoint emits ONE JSON array PER PAGE; `gh --paginate`
+    # concatenates them, which is why both gates slurp with `-s ... add`.
+    # Page 2 is served only when --paginate was actually passed.
+    elif [[ " $* " == *" --paginate "* && -f "$GH_STUB_DIR/pr_reviews_page2.json" ]]; then
+      serve pr_reviews.json '[]'; cat "$GH_STUB_DIR/pr_reviews_page2.json"
+    else serve pr_reviews.json '[]'; fi
+    ;;
+  *) echo "stub: unhandled gh $*" >&2; exit 64 ;;
+esac
+STUB
+chmod +x "$STUB_BIN/gh"
+
+D="$TMP_ROOT/paginated-reviews"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$STALE_APPROVAL"
+printf '%s' "$APPROVAL" >"$D/pr_reviews_page2.json"
+expect "a current-head review on page 2 is found" "$D" "GATE-YOURS attestation" 0
+# And the harness is discriminating: drop page 2 and the same fixture waits.
+rm "$D/pr_reviews_page2.json"
+expect "without the second page the same fixture waits" "$D" "GATE-WAIT review" 10
 
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"

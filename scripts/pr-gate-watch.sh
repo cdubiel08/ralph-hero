@@ -46,9 +46,12 @@
 # two modes scripts/merge-pr.sh gate 5 and scripts/validate-attestation.sh
 # derive (PR #1839) — never invented here:
 #
-#   review  — a formal APPROVED review by the policy bot at the CURRENT head.
-#             The default, so a policy that names no markers behaves exactly
-#             as it did before comment mode existed.
+#   review  — a non-DISMISSED review by the policy bot at the CURRENT head,
+#             which is precisely what gate 5 counts today. The default, so a
+#             policy that names no markers behaves exactly as it did before
+#             comment mode existed. Deliberately NOT narrowed to APPROVED:
+#             being stricter than the gate is a hang, not caution (PR #1839
+#             tightens both together — see the SYNC NOTE in the jq program).
 #   comment — opted into by naming BOTH head_marker and clean_comment_marker:
 #             a head-bound review request followed by the bot's clean-result
 #             comment. Reviewers like Codex signal "clean" this way and never
@@ -140,7 +143,7 @@ POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$PROJECT_ROOT/.github/ralph-merge-policy
 
 # POLICY is the one object handed to jq. No policy file at all → gates 4-5 are
 # off in merge-pr.sh, so external review is not required here either.
-POLICY='{"externalRequired":false,"bot":"","trigger":"","headMarker":"","cleanMarker":"","mode":"review","exemptAuthors":[]}'
+POLICY='{"attestationRequired":false,"externalRequired":false,"bot":"","trigger":"","headMarker":"","cleanMarker":"","mode":"review","exemptAuthors":[]}'
 POLICY_ERROR=""
 if [ -f "$POLICY_FILE" ]; then
   if ! jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
@@ -149,6 +152,7 @@ if [ -f "$POLICY_FILE" ]; then
     POLICY_ERROR="merge policy file is not valid JSON: $POLICY_FILE"
   else
     POLICY=$(jq -c '{
+      attestationRequired: (.attestation.required // false),
       externalRequired: (.external_review.required // false),
       bot:             (.external_review.bot // "chatgpt-codex-connector[bot]"),
       trigger:         (.external_review.trigger // "@codex review"),
@@ -223,13 +227,23 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
     ($ext_required | not) or (((.user.login // "") | norm) == (($policy.bot // "") | norm))
   )))                                                   as $reviewer_reviews
 | ($reviewer_reviews | map(select(
-    (.state // "") == "APPROVED"
-    and (.state // "") != "DISMISSED"
-    and ((.commit_id // "") == $head)
-  )))                                                   as $approved
-| ($reviewer_reviews | map(select(
-    (.state // "") == "COMMENTED" and ((.commit_id // "") == $head)
-  )))                                                   as $commented
+    (.state // "") != "DISMISSED" and ((.commit_id // "") == $head)
+  )))                                                   as $at_head
+| ($at_head | map(select((.state // "") == "APPROVED"))) as $approved
+| ($at_head | map(select((.state // "") == "COMMENTED"))) as $commented
+# What SATISFIES review mode is whatever gate 5 accepts, and gate 5 today
+# accepts any non-DISMISSED head-bound review by the bot — not only APPROVED.
+# Being STRICTER than the gate is not caution here, it is a hang: a COMMENTED
+# review whose findings were adjudicated satisfies gate 5, so a watcher that
+# refuses it reports GATE-YOURS review forever and never reaches GATE-READY
+# even after attestation has passed (codex P2, second pass on PR #1764).
+#
+# SYNC NOTE: PR #1839 tightens review mode to APPROVED-only and moves this
+# repo to comment mode by naming the markers. When it lands, this becomes
+# `.state == "APPROVED"` — the comment-mode branch already refuses COMMENTED
+# reviews, which is exactly why the mode is derived rather than assumed.
+| (if $policy.mode == "comment" then false
+   else ($at_head | length) > 0 end)                     as $review_mode_ok
 # comment mode: a head-bound request, then the bot's clean-result comment
 # after it. Mirrors gate 5's ordering rule, including the strict `>` — GitHub
 # timestamps are second-precision, so equality is ambiguous and fails closed.
@@ -259,9 +273,20 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
 # Policy-exempt authors (bots) have attestation AND external review waived by
 # both merge-pr.sh and validate-attestation.sh, so requiring a review of them
 # produces a GATE-WAIT that nothing can ever clear (codex P2, PR #1764).
-| ((($approved | length) > 0) or $clean_ok or $exempt)   as $review_ok
+# `$ext_required | not` is the same waiver for the whole repo: with no policy
+# file, or external_review.required false, gate 5 does not run at all, so
+# demanding a review is a wait for something no gate will ever ask for.
+| (($ext_required | not) or $exempt
+   or ($approved | length) > 0 or $clean_ok or $review_mode_ok) as $review_ok
 | (if ($approved | length) > 0 then ($approved | last)
-   else ($clean_comments | last) end)                    as $verdict
+   elif ($clean_comments | length) > 0 then ($clean_comments | last)
+   else ($at_head | last) end)                           as $verdict
+# Findings at this head that nothing has answered yet. This is a NUDGE, not a
+# gate: gate 5 accepts the review above, so the only thing left to say is
+# "adjudicate before you attest" — and once a current attestation exists that
+# advice is spent, which is what keeps it from becoming a permanent verdict.
+| (($commented | length) > 0 and ($approved | length) == 0
+   and ($clean_ok | not))                                as $unanswered_findings
 | ($att_pending | map(.name) | join(", "))              as $att_names
 # Is there already an attestation for the CURRENT head? The status stays
 # pending for the minute or two validate-attestation.yml takes to recompute,
@@ -292,7 +317,7 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
     "GATE-WAIT ci: \($running | length) running (\($running | map(.name) | join(", ")))"
   elif ($review_ok | not) and ($ratelimited | length) > 0 then
     "GATE-YOURS review: CodeRabbit rate-limited — its check PASSES but it reviewed nothing; post `@coderabbitai review`"
-  elif ($review_ok | not) and ($commented | length) > 0 then
+  elif $unanswered_findings and (($review_ok | not) or ($attested_current | not)) then
     "GATE-YOURS review: \($commented | length) comment-only review(s) at this head, no verdict — adjudicate threads, then attest with the real verdict"
   elif ($review_ok | not) then
     (if $policy.mode == "comment" then
@@ -304,6 +329,17 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
      end)
   elif ($att_pending | length) > 0 and $attested_current then
     "GATE-WAIT attestation: attested at \($attested_sha[0:8]) — validate-attestation is recomputing \($att_names)"
+  # No attestation status AT ALL under an attestation-required policy: the
+  # workflow has not published it yet, Actions did not run, or the checks
+  # payload was unreadable. There is nothing to wait on and nothing green to
+  # believe, so falling through to GATE-READY ends --watch on a merge that
+  # stops at gate 4 (codex P2, second pass on PR #1764). The attestation
+  # COMMENT is the tiebreak: if one exists at this head the work is done and
+  # only the status is missing, which is a wait.
+  elif $policy.attestationRequired and ($att | length) == 0 and $attested_current then
+    "GATE-WAIT attestation: attested at \($attested_sha[0:8]) — no \($attest) status published yet"
+  elif $policy.attestationRequired and ($att | length) == 0 then
+    "GATE-YOURS attestation: no \($attest) status on this PR and no attestation at \($head[0:8]) — bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
   elif ($att_pending | length) > 0 then
     "GATE-YOURS attestation: \($att_names) is the only check left — bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
   # GATE-READY recommends merge-pr.sh, which stops at gate 2 unless GitHub
@@ -355,7 +391,12 @@ snapshot() {
   checks=$(gh pr checks "$PR" --json name,bucket,description 2>/dev/null) || true
   checks=$(json_array_or_empty "$checks")
 
-  reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR/reviews" 2>/dev/null) || true
+  # --paginate, like gate 5 and validate-attestation.sh: on a PR with more
+  # than one page of reviews the current-head review is frequently on the LAST
+  # page, and an unpaginated read would report "no review yet" for evidence
+  # that exists. `-s ... add // []` flattens the pages and tolerates zero.
+  reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR/reviews" --paginate 2>/dev/null \
+    | jq -s 'add // []' 2>/dev/null) || true
   reviews=$(json_array_or_empty "$reviews")
 
   # Issue comments carry comment-mode evidence: the head-bound request and the
