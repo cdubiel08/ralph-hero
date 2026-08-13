@@ -38,6 +38,14 @@ case "${1:-} ${2:-}" in
       f="$GH_STUB_DIR/issue_comments.json"
     elif [[ "$2" == */issues/*/reactions ]]; then
       f="$GH_STUB_DIR/pr_reactions.json"
+      if [[ -f "$GH_STUB_DIR/reaction_after_first" ]]; then
+        count_file="$GH_STUB_DIR/reaction_calls"
+        count=0
+        [[ -f "$count_file" ]] && count=$(cat "$count_file")
+        count=$((count + 1))
+        echo "$count" >"$count_file"
+        if [[ "$count" -eq 1 ]]; then f="$GH_STUB_DIR/empty_reactions.json"; fi
+      fi
     else
       f="$GH_STUB_DIR/pr_reviews.json"
     fi
@@ -148,6 +156,8 @@ run_v() {
   set +e
   out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" \
     RALPH_MERGE_POLICY_FILE="${policy:-/nonexistent-policy.json}" \
+    RALPH_EXTERNAL_REVIEW_RETRIES=1 \
+    RALPH_EXTERNAL_REVIEW_RETRY_DELAY_SECONDS=0 \
     bash "$SCRIPT" 123 2>&1)
   local rc=$?
   set -e
@@ -184,6 +194,13 @@ s_cleanext() {
   add_clean_codex_evidence "$1" "$SHA"
 }
 run_v "clean bot comment plus Codex PR thumbs-up" success "attested @ ${SHA:0:8}" "$POLICY" s_cleanext
+
+s_reaction_arrives_after_clean_comment() {
+  s_cleanext "$1"
+  echo '[]' >"$1/empty_reactions.json"
+  touch "$1/reaction_after_first"
+}
+run_v "validator retries when the Codex thumbs-up follows its clean comment" success "attested @ ${SHA:0:8}" "$POLICY" s_reaction_arrives_after_clean_comment
 
 s_clean_without_reaction() {
   s_cleanext "$1"

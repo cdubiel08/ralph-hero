@@ -132,62 +132,83 @@ if [[ "$external_required" == "true" ]]; then
   # Matching scripts/merge-pr.sh gate 5: Codex findings arrive as COMMENTED
   # reviews and never count as approval. A clean review is the bot-authored
   # clean-result comment plus its PR-level thumbs-up reaction.
-  external_fetch_ok=true
-  if ! ext_comments=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate 2>/dev/null | jq -s 'add // []'); then
-    ext_comments='[]'
-    external_fetch_ok=false
-  fi
-  if ! ext_reactions=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/reactions" --paginate 2>/dev/null | jq -s 'add // []'); then
-    ext_reactions='[]'
-    external_fetch_ok=false
-  fi
-  if ! ext_reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null | jq -s 'add // []'); then
-    ext_reviews='[]'
-    external_fetch_ok=false
-  fi
+  external_retries="${RALPH_EXTERNAL_REVIEW_RETRIES:-0}"
+  external_retry_delay="${RALPH_EXTERNAL_REVIEW_RETRY_DELAY_SECONDS:-5}"
+  [[ "$external_retries" =~ ^[0-9]+$ ]] || out failure "invalid external review retry count"
+  [[ "$external_retry_delay" =~ ^[0-9]+$ ]] || out failure "invalid external review retry delay"
+  external_attempt=0
+  while true; do
+    external_fetch_ok=true
+    if ! ext_comments=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate 2>/dev/null | jq -s 'add // []'); then
+      ext_comments='[]'
+      external_fetch_ok=false
+    fi
+    if ! ext_reactions=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/reactions" --paginate 2>/dev/null | jq -s 'add // []'); then
+      ext_reactions='[]'
+      external_fetch_ok=false
+    fi
+    if ! ext_reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null | jq -s 'add // []'); then
+      ext_reviews='[]'
+      external_fetch_ok=false
+    fi
 
-  head_marker="<!-- $external_head_marker: $head_sha -->"
-  request_at=$(jq -r --arg trigger "$external_trigger" --arg marker "$head_marker" '
-    [ .[]
-      | select((.body // "") | contains($trigger))
-      | select((.body // "") | contains($marker))
-      | .updated_at // .created_at // empty
-    ] | max // ""' <<<"$ext_comments")
-
-  clean_at=""
-  if [[ -n "$request_at" ]]; then
-    clean_at=$(jq -r --arg bot "$external_bot" --arg clean "$external_clean_marker" --arg request "$request_at" '
-      def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+    head_marker="<!-- $external_head_marker: $head_sha -->"
+    request_at=$(jq -r --arg trigger "$external_trigger" --arg marker "$head_marker" '
       [ .[]
-        | select(((.user.login // "") | norm) == ($bot | norm))
-        | select((.body // "") | contains($clean))
-        | select((.created_at // "") > $request)
-        | .created_at
+        | select((.body // "") | contains($trigger))
+        | select((.body // "") | contains($marker))
+        | .updated_at // .created_at // empty
       ] | max // ""' <<<"$ext_comments")
-  fi
 
-  ext_reaction_count=$(jq -r --arg bot "$external_bot" --arg reaction "$external_approval_reaction" '
+    clean_at=""
+    if [[ -n "$request_at" ]]; then
+      clean_at=$(jq -r --arg bot "$external_bot" --arg clean "$external_clean_marker" --arg request "$request_at" '
         def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
         [ .[]
           | select(((.user.login // "") | norm) == ($bot | norm))
-          | select((.content // "") == $reaction)
-        ] | length' <<<"$ext_reactions")
+          | select((.body // "") | contains($clean))
+          | select((.created_at // "") > $request)
+          | .created_at
+        ] | max // ""' <<<"$ext_comments")
+    fi
 
-  findings_after_clean=0
-  if [[ -n "$clean_at" ]]; then
-    findings_after_clean=$(jq -r --arg bot "$external_bot" --arg sha "$head_sha" --arg clean "$clean_at" '
-      def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-      [ .[]
-        | select(((.user.login // "") | norm) == ($bot | norm))
-        | select((.commit_id // "") == $sha)
-        | select((.state // "") != "DISMISSED" and (.state // "") != "APPROVED")
-        | select((.submitted_at // "") == "" or (.submitted_at // "") >= $clean)
-      ] | length' <<<"$ext_reviews")
-  fi
+    ext_reaction_count=$(jq -r --arg bot "$external_bot" --arg reaction "$external_approval_reaction" '
+          def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+          [ .[]
+            | select(((.user.login // "") | norm) == ($bot | norm))
+            | select((.content // "") == $reaction)
+          ] | length' <<<"$ext_reactions")
 
-  if [[ "$external_fetch_ok" != "true" || -z "$request_at" || -z "$clean_at" || "${ext_reaction_count:-0}" -eq 0 || "${findings_after_clean:-0}" -ne 0 ]]; then
-    out pending "awaiting external review by $external_bot at ${head_sha:0:8}"
-  fi
+    findings_after_clean=0
+    if [[ -n "$clean_at" ]]; then
+      findings_after_clean=$(jq -r --arg bot "$external_bot" --arg sha "$head_sha" --arg clean "$clean_at" '
+        def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+        [ .[]
+          | select(((.user.login // "") | norm) == ($bot | norm))
+          | select((.commit_id // "") == $sha)
+          | select((.state // "") != "DISMISSED" and (.state // "") != "APPROVED")
+          | select((.submitted_at // "") == "" or (.submitted_at // "") >= $clean)
+        ] | length' <<<"$ext_reviews")
+    fi
+
+    if [[ "$external_fetch_ok" == "true" && -n "$request_at" && -n "$clean_at" && "${ext_reaction_count:-0}" -ne 0 && "${findings_after_clean:-0}" -eq 0 ]]; then
+      break
+    fi
+
+    # GitHub has no reaction event. When the clean comment arrives just before
+    # the connector's thumbs-up, re-query briefly so that issue_comment can
+    # publish the completed verdict. Missing request/clean evidence or actual
+    # findings cannot be repaired by waiting and remain immediately pending.
+    retryable=false
+    if [[ "$external_fetch_ok" != "true" || ( -n "$request_at" && -n "$clean_at" && "${ext_reaction_count:-0}" -eq 0 && "${findings_after_clean:-0}" -eq 0 ) ]]; then
+      retryable=true
+    fi
+    if [[ "$retryable" != "true" || "$external_attempt" -ge "$external_retries" ]]; then
+      out pending "awaiting external review by $external_bot at ${head_sha:0:8}"
+    fi
+    external_attempt=$((external_attempt + 1))
+    if [[ "$external_retry_delay" -gt 0 ]]; then sleep "$external_retry_delay"; fi
+  done
 fi
 
 generated_by=$(jq -r '.generated_by // "unknown"' <<<"$att_json")
