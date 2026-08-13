@@ -379,9 +379,17 @@ def fenced_json:
 # terminates --watch on a request the merge will never make. The earlier
 # waiver fixes covered $review_ok; this branch is reached independently of it
 # whenever attestation is also waived (codex P2, PR #1764).
+| (($commented | map(.submitted_at // "") | max) // "") as $findings_at
+# A findings review that has ALREADY been answered with a fresh head-bound
+# request is not unanswered — the reviewer owes the next move, not the caller.
+# Without this, the nudge stayed terminal after the re-request it asked for,
+# told the caller to re-request again, and ended --watch on the one state where
+# waiting is exactly right (codex P2, PR #1764).
+| ($policy.mode == "comment" and $request_at != "" and $request_at > $findings_at)
+                                                         as $rerequested
 | ($ext_required and ($exempt | not)
    and ($commented | length) > 0 and ($approved | length) == 0
-   and ($clean_ok | not))                                as $unanswered_findings
+   and ($clean_ok | not) and ($rerequested | not))       as $unanswered_findings
 | ($att_pending | map(.name) | join(", "))              as $att_names
 # Is there already an attestation for the CURRENT head? The status stays
 # pending for the minute or two validate-attestation.yml takes to recompute,
@@ -474,7 +482,7 @@ def fenced_json:
        # this hands control back instead (codex P2, PR #1764).
        "GATE-YOURS review: no \($policy.trigger) request bound to \($head[0:8]) — post it (the trigger, a blank line, then '<!-- \($policy.headMarker): \($head) -->') so a clean result can count"
      elif $policy.mode == "comment" then
-       "GATE-WAIT review: request is in at \($head[0:8]); no clean \($policy.bot) result yet"
+       "GATE-WAIT review: request is in at \($head[0:8])\(if ($commented | length) > 0 then " and answers the findings review" else "" end); no clean \($policy.bot) result yet"
      elif $ext_required then
        "GATE-WAIT review: no \($policy.bot) verdict at \($head[0:8]) yet — comment '\($policy.trigger)' to trigger one"
      else

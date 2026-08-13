@@ -1467,6 +1467,40 @@ printf '%s' "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" \
   --argjson p "$(check board-tests pending)" '$g + [$a, $p]')" >"$D/pr_checks_second.json"
 expect "a check rerun between passes is a wait, not a merge" "$D" "GATE-WAIT ci" 10
 
+echo "=== P2/29: findings already answered by a re-request are a WAIT ==="
+# After findings, the nudge tells the caller to re-request. Once they have, the
+# reviewer owes the next move — but $unanswered_findings stayed true (the
+# COMMENTED review persists and no clean result has arrived yet), so the same
+# terminal verdict repeated and told them to re-request again, ending --watch
+# on the one state where waiting is exactly right (codex P2, PR #1764).
+POLICY="$POLICY_COMMENT"
+FINDINGS_AT_HEAD=$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
+  '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha,
+     submitted_at:"2026-08-13T04:00:00Z"}]')
+# Request posted BEFORE the findings: they are unanswered, so the caller acts.
+D="$TMP_ROOT/findings-not-rerequested"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$FINDINGS_AT_HEAD" \
+  "$(jq -nc --arg sha "$HEAD_SHA" \
+     '[{user:{login:"cdubiel08"}, body:("@codex review\n\n<!-- ralph-review-head: " + $sha + " -->"),
+        created_at:"2026-08-13T03:00:00Z"}]')"
+expect "findings with no newer request hand control back" "$D" "GATE-YOURS review" 0
+# Request posted AFTER the findings: the reviewer owes the answer, so wait.
+D="$TMP_ROOT/findings-rerequested"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$FINDINGS_AT_HEAD" \
+  "$(jq -nc --arg sha "$HEAD_SHA" \
+     '[{user:{login:"cdubiel08"}, body:("@codex review\n\n<!-- ralph-review-head: " + $sha + " -->"),
+        created_at:"2026-08-13T05:00:00Z"}]')"
+expect "findings already answered by a re-request are a wait" "$D" "GATE-WAIT review" 10
+run "$D"
+if [[ "$LAST_OUT" == *"answers the findings review"* ]]; then
+  pass "says the request answers the findings, so the wait is on the reviewer"
+else
+  fail "re-requested wait message (out=${LAST_OUT:0:180})"
+fi
+POLICY="$POLICY_REVIEW"
+
 echo "=== P2/28: gate 6 is inside the confirmed unit, not between passes ==="
 # Running the checker once BETWEEN the two passes left gate 6 as the single
 # gate the confirming pass did not confirm (codex P2, PR #1764): an apply
