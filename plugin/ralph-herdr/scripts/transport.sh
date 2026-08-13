@@ -26,6 +26,16 @@
 #      $RALPH_HERDR_ERR_CODE, the message in $RALPH_HERDR_ERR_MESSAGE
 #   3  herdr unreachable — binary missing, server down, or the call timed out
 #
+# Which pipe carries which: successes come back on stdout, refusals on stderr
+# (probed against the installed 0.8.x binary — see the capture below). Both are
+# protocol; only the SUCCESS channel is a parsing surface, because stderr also
+# carries ordinary diagnostics on calls that worked. So stderr is read for an
+# envelope only when stdout is empty and the exit was nonzero, and only when
+# the body is a complete protocol-19 error. Getting this wrong in the safe
+# direction is what GH-1832 was: stderr discarded, so every refusal in the
+# plugin — the linked-worktree cwd error, and the agent_pane_busy race the
+# retry logic depends on — reported as "server unreachable".
+#
 # Knobs:
 #   HERDR_BIN_PATH             herdr binary (default: `herdr` on PATH)
 #   RALPH_HERDR_TIMEOUT_SEC    per-call wall clock bound (default 30)
@@ -76,6 +86,72 @@ _ralph_array_fields() {
 RALPH_HERDR_ERR_CODE=""
 RALPH_HERDR_ERR_MESSAGE=""
 
+# _ralph_herdr_refusal BODY OP — consume a protocol-19 error envelope.
+#
+# Shared by both channels because herdr does not use one: successes arrive on
+# stdout, refusals on stderr (probed on 0.8.x — `worktree create` from a linked
+# worktree and `agent start` at a bogus pane both answer there, exit 1, with
+# stdout empty). The envelope means the same thing whichever pipe carried it,
+# so the validation must not be written twice and allowed to drift.
+#
+# rc 2 with the code on stdout, or rc 1 when the body is not shaped like a
+# refusal. See the call sites for why the code also travels on stdout.
+_ralph_herdr_refusal() {
+  local body="$1" op="$2" errc errm
+
+  # A refusal is only a refusal if it is SHAPED like one. Protocol 19 requires
+  # a correlated id plus a non-empty string code and message; anything less is
+  # a malformed response wearing an error's clothes, and letting it through as
+  # rc 2 would hand callers an empty code to branch on. Fail it as rc 1 —
+  # which is also the honest answer, since we cannot tell what the server did.
+  if ! printf '%s' "$body" | jq -e '
+    (.id | type == "string" and length > 0)
+    and (.error.code | type == "string" and length > 0)
+    and (.error.message | type == "string")' >/dev/null 2>&1; then
+    echo "ralph_herdr_call: $op returned a malformed error envelope (needs id + error.code + error.message)" >&2
+    return 1
+  fi
+  if [ -n "${RALPH_HERDR_EXPECT_ID:-}" ] &&
+    [ "$(printf '%s' "$body" | jq -r '.id')" != "$RALPH_HERDR_EXPECT_ID" ]; then
+    echo "ralph_herdr_call: $op returned an error correlated to a different request" >&2
+    return 1
+  fi
+  errc=$(printf '%s' "$body" | jq -r '.error.code // "unknown"')
+  errm=$(printf '%s' "$body" | jq -r '.error.message // ""')
+  errc=$(printf '%s' "$errc" | ralph_sanitize)
+  errm=$(printf '%s' "$errm" | ralph_sanitize)
+  RALPH_HERDR_ERR_CODE="$errc"
+  RALPH_HERDR_ERR_MESSAGE="$errm"
+  # ALSO on stdout, because the globals do not survive the call shape every
+  # caller actually uses: `out=$(ralph_herdr_call …) || rc=$?` runs the
+  # function in a subshell, and a variable set there dies with it. A caller
+  # that branches on the error code — the agent_pane_busy retry is the whole
+  # reason the code is preserved at all — would silently read an empty
+  # string and treat a retryable race as a hard failure.
+  #
+  # rc 2 means there is no result, so stdout is free and unambiguous: a
+  # caller either got rc 0 and a result, or rc 2 and this.
+  #
+  # ralph_herdr_err_code reads it back.
+  # jq -n --arg, NOT a printf of `jq -R .` outputs: `jq -R .` emits NOTHING
+  # for empty input, so an error whose message is empty (the `// ""` default
+  # above, or one that sanitizes to empty) produced
+  # `{"error":{"code":"unknown","message":}}` — invalid JSON, which makes
+  # every downstream error-code read come back empty and turns a retryable
+  # refusal into a fatal one.
+  jq -nc --arg code "$errc" --arg message "$errm" '{error: {code: $code, message: $message}}'
+  return 2
+}
+
+# _ralph_herdr_one_object BODY — true when BODY is exactly one JSON object and
+# nothing else. `jq -s` slurps the whole stream and fails outright on trailing
+# non-JSON, so this single check covers malformed bodies, truncated writes,
+# banner text printed before the envelope, and two envelopes concatenated by a
+# confused server.
+_ralph_herdr_one_object() {
+  printf '%s' "$1" | jq -e -s 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1
+}
+
 # ralph_herdr_err_code BODY — the error code out of an rc-2 body. The reliable
 # way to read it: unlike $RALPH_HERDR_ERR_CODE, this works when the call was
 # made in a command substitution, which is how nearly every caller writes it.
@@ -118,7 +194,7 @@ _ralph_herdr_timeout() {
 ralph_herdr_call() {
   local want="$1"; shift
   local bin="${HERDR_BIN_PATH:-herdr}"
-  local required arrays field out rc got_id got_type errc errm tmo op
+  local required arrays field out rc got_id got_type tmo op errf diag
 
   # A fixed, sanitized operation label for every diagnostic below. The raw "$*"
   # carries caller-supplied argv — notification titles and prompt bodies among
@@ -143,12 +219,25 @@ ralph_herdr_call() {
 
   # stderr is deliberately NOT merged into stdout: herdr prints diagnostics
   # there, and folding them in would turn a valid envelope into trailing
-  # garbage. It is discarded rather than relayed because it is terminal-derived
-  # and reaches the human only through the sanitized messages below.
+  # garbage. It is captured to a private file instead, because herdr answers a
+  # REFUSAL there — probed on 0.8.x: `worktree create` from a linked worktree
+  # and `agent start` at a bogus pane both write their error envelope to
+  # stderr, exit 1, and leave stdout empty. Discarding it (as this did) turned
+  # every refusal in the plugin into "server unreachable", which is how a
+  # one-line cwd error read as an outage (GH-1832) and how a retryable
+  # agent_pane_busy race read as a dead server.
+  errf=$(ralph_diag_file)
   tmo=$(_ralph_herdr_timeout)
   # shellcheck disable=SC2086  # intentional: $tmo is a command prefix or empty
-  out=$($tmo "$bin" "$@" 2>/dev/null)
+  out=$($tmo "$bin" "$@" 2>"$errf")
   rc=$?
+  diag=$(cat "$errf" 2>/dev/null || true)
+  # ralph_diag_file degrades to /dev/null when mktemp fails; `rm -f /dev/null`
+  # is a permission error, not a no-op, and these scripts are sourced under
+  # `set -e`. Skipping it costs nothing — that branch captured no diagnostic to
+  # clean up, and the call degrades to exactly the old stderr-discarding
+  # behaviour rather than taking the caller down with it.
+  [ "$errf" = /dev/null ] || rm -f "$errf" 2>/dev/null || true
 
   # 124 is the documented timeout(1) exit. Distinguished from a refusal because
   # a timed-out mutation may well have LANDED — the caller must not retry it
@@ -159,15 +248,32 @@ ralph_herdr_call() {
   fi
 
   if [ -z "$out" ]; then
+    # Nothing on stdout. Before claiming the server never answered, look at
+    # what it said on stderr — that is where a refusal lands. The predicate is
+    # deliberately tight: a nonzero exit (a success exit with an empty stdout
+    # is incoherent, not a refusal), exactly one JSON object, and the full
+    # protocol-19 error shape. Anything looser and an ordinary diagnostic line
+    # would be promoted to a protocol answer.
+    #
+    # Only consulted when stdout is EMPTY, so this never has to adjudicate
+    # between two candidate responses: with a body on stdout, stdout IS the
+    # response and stderr is noise, exactly as before.
+    if [ "$rc" -ne 0 ] && [ -n "$diag" ] && _ralph_herdr_one_object "$diag" &&
+      printf '%s' "$diag" | jq -e 'has("error")' >/dev/null 2>&1; then
+      _ralph_herdr_refusal "$diag" "$op"
+      return $?
+    fi
+    if [ -n "$diag" ]; then
+      # The server said SOMETHING — just not a protocol answer. Reporting that
+      # verbatim beats asserting a reachability verdict we did not test.
+      echo "ralph_herdr_call: $op produced no output on stdout (exit $rc); stderr said: $(printf '%s' "$diag" | head -c 200 | tr '\n' ' ' | ralph_sanitize)" >&2
+      return 3
+    fi
     echo "ralph_herdr_call: $op produced no output (exit $rc) — herdr server unreachable" >&2
     return 3
   fi
 
-  # Exactly one JSON value, nothing after it. `jq -s` slurps the whole stream
-  # and fails outright on trailing non-JSON, so this single check covers
-  # malformed bodies, truncated writes, banner text printed before the
-  # envelope, and two envelopes concatenated by a confused server.
-  if ! printf '%s' "$out" | jq -e -s 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1; then
+  if ! _ralph_herdr_one_object "$out"; then
     echo "ralph_herdr_call: $op did not return exactly one JSON envelope (exit $rc) — refusing to guess at the response" >&2
     return 1
   fi
@@ -176,49 +282,13 @@ ralph_herdr_call() {
   # understood us and said no. Surfaced as rc 2 with the code preserved so
   # callers can branch on a SPECIFIC refusal (agent_pane_busy is a race worth
   # retrying; agent_name_taken is a real answer). Never branch on the prose.
+  #
+  # Kept on the stdout path as well as the stderr one above: the channel is an
+  # observation about the installed binary, not a guarantee it owes us, and an
+  # envelope is an envelope wherever it arrives.
   if printf '%s' "$out" | jq -e 'has("error")' >/dev/null 2>&1; then
-    # A refusal is only a refusal if it is SHAPED like one. Protocol 19 requires
-    # a correlated id plus a non-empty string code and message; anything less is
-    # a malformed response wearing an error's clothes, and letting it through as
-    # rc 2 would hand callers an empty code to branch on. Fail it as rc 1 —
-    # which is also the honest answer, since we cannot tell what the server did.
-    if ! printf '%s' "$out" | jq -e '
-      (.id | type == "string" and length > 0)
-      and (.error.code | type == "string" and length > 0)
-      and (.error.message | type == "string")' >/dev/null 2>&1; then
-      echo "ralph_herdr_call: $op returned a malformed error envelope (needs id + error.code + error.message)" >&2
-      return 1
-    fi
-    if [ -n "${RALPH_HERDR_EXPECT_ID:-}" ] &&
-      [ "$(printf '%s' "$out" | jq -r '.id')" != "$RALPH_HERDR_EXPECT_ID" ]; then
-      echo "ralph_herdr_call: $op returned an error correlated to a different request" >&2
-      return 1
-    fi
-    errc=$(printf '%s' "$out" | jq -r '.error.code // "unknown"')
-    errm=$(printf '%s' "$out" | jq -r '.error.message // ""')
-    errc=$(printf '%s' "$errc" | ralph_sanitize)
-    errm=$(printf '%s' "$errm" | ralph_sanitize)
-    RALPH_HERDR_ERR_CODE="$errc"
-    RALPH_HERDR_ERR_MESSAGE="$errm"
-    # ALSO on stdout, because the globals do not survive the call shape every
-    # caller actually uses: `out=$(ralph_herdr_call …) || rc=$?` runs the
-    # function in a subshell, and a variable set there dies with it. A caller
-    # that branches on the error code — the agent_pane_busy retry is the whole
-    # reason the code is preserved at all — would silently read an empty
-    # string and treat a retryable race as a hard failure.
-    #
-    # rc 2 means there is no result, so stdout is free and unambiguous: a
-    # caller either got rc 0 and a result, or rc 2 and this.
-    #
-    # ralph_herdr_err_code reads it back.
-    # jq -n --arg, NOT a printf of `jq -R .` outputs: `jq -R .` emits NOTHING
-    # for empty input, so an error whose message is empty (the `// ""` default
-    # above, or one that sanitizes to empty) produced
-    # `{"error":{"code":"unknown","message":}}` — invalid JSON, which makes
-    # every downstream error-code read come back empty and turns a retryable
-    # refusal into a fatal one.
-    jq -nc --arg code "$errc" --arg message "$errm" '{error: {code: $code, message: $message}}'
-    return 2
+    _ralph_herdr_refusal "$out" "$op"
+    return $?
   fi
 
   # Protocol 19 requires `id` on every response. Its absence means we are not

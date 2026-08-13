@@ -71,11 +71,14 @@
 # modeled here prints an .error body and exits 1 — a test reaching for an
 # unmodeled subcommand should fail loudly, not silently succeed.
 #
-# The real herdr 0.8.0 CLI prints an .error JSON body AND exits nonzero when
-# the server refuses (probed: pane_not_found → rc 1) — mirror a refusal by
-# pairing a *.json error fixture WITH a *.rc file carrying the nonzero code.
-# An error body with rc 0 models only a hypothetical future CLI that reports
-# refusals softly. bash 3.2 compatible.
+# The real herdr 0.8.x CLI answers a refusal on STDERR — an error JSON body
+# there, an empty stdout, and a nonzero exit (re-probed for GH-1832; see
+# respond() for the capture). Mirror a refusal by pairing a *.json error
+# fixture WITH a *.rc file carrying the nonzero code; the fake routes the
+# envelope to the right pipe on its own. A test that needs the envelope on
+# STDOUT instead — the shape checks, which must be refused whichever pipe they
+# come from — uses a *.raw fixture, which is emitted verbatim on stdout.
+# bash 3.2 compatible.
 set -u
 
 FIX="${FAKE_HERDR_FIXTURES:-}"
@@ -163,11 +166,34 @@ respond() {
   #   {"id":…, …}     an explicit id — overrides the composed one, which is how
   #                   the mismatched-correlation case is written
   #   anything else   the payload, merged under the composed result.type
-  printf '%s' "$payload" | jq -c --arg id "$id" --arg type "$type" '
+  #
+  # An error envelope goes to STDERR with stdout left empty, because that is
+  # where the real binary puts it. Re-probed for GH-1832 against 0.8.x:
+  #
+  #   $ herdr worktree create --cwd <a linked worktree> …
+  #   rc 1 | stdout: (empty)
+  #        | stderr: {"error":{"code":"linked_worktree_source",…},"id":"cli:worktree:create"}
+  #   $ herdr agent start x --kind claude --pane <bogus>
+  #   rc 1 | stdout: (empty)
+  #        | stderr: {"error":{"code":"agent_pane_not_found",…},"id":"cli:agent:start"}
+  #
+  # This fake previously answered refusals on stdout. The header's earlier
+  # probe note recorded the exit code and not the channel, so the whole rc-2
+  # suite passed green against a channel the server never uses — while the
+  # adapter, reading stdout only, turned every real refusal into rc 3 "server
+  # unreachable". A fake that models the wrong pipe does not test the boundary;
+  # it certifies it.
+  local envelope
+  envelope=$(printf '%s' "$payload" | jq -c --arg id "$id" --arg type "$type" '
     (.id // $id) as $rid
     | if has("error") then {id: $rid, error: .error}
       else {id: $rid, result: ({type: $type} + (del(.id)))}
-      end'
+      end')
+  if printf '%s' "$envelope" | jq -e 'has("error")' >/dev/null 2>&1; then
+    printf '%s\n' "$envelope" >&2
+  else
+    printf '%s\n' "$envelope"
+  fi
 }
 
 key="${1-}-${2-}"
@@ -261,7 +287,7 @@ case "$key" in
     respond "cli:notification:show" "notification_show" '{"shown":true,"reason":"delivered"}' notification-show
     ;;
   *)
-    printf '{"id":"cli:unhandled","error":{"code":"fake_herdr_unhandled","message":"unmodeled command %s"}}\n' "$key"
+    printf '{"id":"cli:unhandled","error":{"code":"fake_herdr_unhandled","message":"unmodeled command %s"}}\n' "$key" >&2
     exit 1
     ;;
 esac

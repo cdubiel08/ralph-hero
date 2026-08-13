@@ -250,6 +250,92 @@ is "refusal: an empty MESSAGE still yields a parseable body" "agent_pane_busy" \
 is "refusal: and the body is valid JSON" "0" \
   "$(printf '%s' "$OUT" | jq -e . >/dev/null 2>&1; echo $?)"
 
+# ═══ 6b. a refusal arrives on STDERR (GH-1832) ═══════════════════════════════
+# The real binary answers refusals on stderr with an empty stdout. Every case
+# in section 6 above now travels that pipe, because the fake routes error
+# envelopes there. These pin the behaviour explicitly, plus the invariants the
+# stderr branch could plausibly break.
+#
+# The bug: stderr was discarded, so a refusal looked like silence and the
+# adapter reported "server unreachable" — sending the reader to probe a server
+# that was answering correctly the whole time.
+reset
+printf '{"error":{"code":"linked_worktree_source","message":"New and open worktree actions start from the repo parent workspace."}}\n' \
+  >"$FAKE_HERDR_FIXTURES/worktree-create.json"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/worktree-create.rc"
+call worktree_created worktree create --cwd /some/linked/worktree --branch feature/GH-1 --no-focus
+is "stderr refusal: a refusal on stderr is rc 2, NOT rc 3 unreachable" "2" "$RC"
+is "stderr refusal: the code is named" "linked_worktree_source" "$(ralph_herdr_err_code "$OUT")"
+is "stderr refusal: the message is carried verbatim" \
+  "New and open worktree actions start from the repo parent workspace." \
+  "$(ralph_herdr_err_message "$OUT")"
+case "$ERR" in
+  *unreachable*) not_ok "stderr refusal: the diagnostic must not claim unreachability — got '$ERR'" ;;
+  *) ok "stderr refusal: nothing claims the server was unreachable" ;;
+esac
+
+# stdout is the SUCCESS channel and stays authoritative: a successful call that
+# also logged an error-shaped line to stderr must not be re-read as a refusal.
+# Without the stdout-empty precondition this inverts a working call.
+reset
+printf '{"id":"cli:agent:list","error":{"code":"ignore_me","message":"stale stderr"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-list.err"
+call agent_list agent list
+is "stderr refusal: a body on stdout wins — stderr is not consulted" "0" "$RC"
+is "stderr refusal: and the result is the real one" "agent_list" \
+  "$(printf '%s' "$OUT" | jq -r '.type')"
+
+# A zero exit with an error envelope on stderr is incoherent — the real CLI
+# pairs a refusal with a nonzero exit. Promoting it would let a stray log line
+# on a call that SUCCEEDED (empty stdout, rc 0) masquerade as a protocol answer.
+reset
+printf '{"id":"cli:agent:list","error":{"code":"not_a_real_refusal","message":"rc 0"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-list.err"
+: >"$FAKE_HERDR_FIXTURES/agent-list.raw"
+call agent_list agent list
+is "stderr refusal: an error envelope at exit 0 is not promoted to a refusal" "3" "$RC"
+
+# The shape checks apply on this channel too: an envelope with no correlation
+# id is not a refusal, whichever pipe carried it.
+reset
+printf '{"error":{"code":"nope","message":"no id"}}\n' >"$FAKE_HERDR_FIXTURES/agent-list.err"
+: >"$FAKE_HERDR_FIXTURES/agent-list.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-list.rc"
+call agent_list agent list
+is "stderr refusal: an uncorrelated envelope on stderr is rc 1, not rc 2" "1" "$RC"
+
+# Ordinary diagnostic noise is not protocol. It stays a failure — we still have
+# no answer — but the message reports what was actually said instead of
+# asserting a reachability verdict nobody tested.
+reset
+printf 'error: could not open the session socket\n' >"$FAKE_HERDR_FIXTURES/agent-list.err"
+: >"$FAKE_HERDR_FIXTURES/agent-list.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-list.rc"
+call agent_list agent list
+is "stderr noise: a non-envelope stderr is still a failure" "3" "$RC"
+line_has "stderr noise: and the diagnostic quotes it" "$ERR" "could not open the session socket"
+
+# Silence — nothing on either pipe — is the one case that HAS earned the word.
+reset
+: >"$FAKE_HERDR_FIXTURES/agent-list.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-list.rc"
+call agent_list agent list
+is "silence: a truly empty response is rc 3" "3" "$RC"
+line_has "silence: and only THIS case says unreachable" "$ERR" "herdr server unreachable"
+
+# Terminal-derived prose reaches a human here, so it is sanitized like every
+# other message the adapter emits.
+reset
+printf 'boom \033[31mred\033[0m and \033]0;title\007hijack\n' >"$FAKE_HERDR_FIXTURES/agent-list.err"
+: >"$FAKE_HERDR_FIXTURES/agent-list.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-list.rc"
+call agent_list agent list
+case "$ERR" in
+  *$'\033'*) not_ok "stderr noise: escapes are stripped before the log — got '$ERR'" ;;
+  *) ok "stderr noise: escapes are stripped before the log" ;;
+esac
+reset
+
 # ═══ 7. incoherent exit status ═══════════════════════════════════════════════
 # A valid success body that arrived with a nonzero exit. The real CLI pairs a
 # nonzero exit with an ERROR body, so this means the process died partway
