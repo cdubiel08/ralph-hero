@@ -8,6 +8,11 @@
 # action is legitimate and only a property of it is off). So it never exits 2,
 # never gates, and rides an existing branch that healthy runs don't execute.
 #
+# "Closes no issue" is read from GitHub, never from the Bash command string —
+# but GitHub DERIVES that answer asynchronously and this hook runs immediately
+# after create, so an empty answer is re-checked against the PR's own body and
+# commit messages before anything is said. See the settle note below.
+#
 # NEVER EXITS NON-ZERO. Every command that can fail is guarded, including the
 # final emit: under `set -e` an unguarded last statement makes jq's own status
 # the hook's status, and jq exits 2 on a write error — precisely the blocking
@@ -98,11 +103,34 @@ PR="${URL##*/}"
 # timeout fires. Both calls still degrade to silence on any failure.
 GH=(gh)
 if command -v timeout >/dev/null 2>&1; then GH=(timeout 10 gh); fi
-PRJSON=$("${GH[@]}" pr view "$PR" -R "$SCOPE" --json closingIssuesReferences,headRefName,title,body 2>/dev/null) || exit 0
+PRJSON=$("${GH[@]}" pr view "$PR" -R "$SCOPE" --json closingIssuesReferences,headRefName,title,body,commits 2>/dev/null) || exit 0
 # GitHub's own linkage, not a regex over the body: closing keywords are also
 # honoured in commit messages, so a body-only check reports false anomalies.
 LINKED=$(jq '(.closingIssuesReferences // []) | length' <<<"$PRJSON" 2>/dev/null) || exit 0
 [ "$LINKED" = "0" ] || exit 0
+
+# ...but a ZERO is only authoritative once GitHub has caught up, and here it
+# has not. closingIssuesReferences is DERIVED asynchronously, while this hook
+# runs within milliseconds of `gh pr create` returning — so a PR whose body
+# plainly says "Closes #M" reports zero references for the first moments of its
+# life. Observed on #1764 (body carried `Closes #1763`; the same query answers
+# 1763 seconds later). Nonzero above stays authoritative-positive; a zero only
+# earns the hint after re-reading the two texts GitHub itself honours keywords
+# in, both already in the response above at no extra round trip.
+#
+# Note this subsumes scanning the Bash command string: `--body-file`, `--fill`,
+# a heredoc via `$(cat <<'EOF' … EOF)`, and an editor-composed body all land in
+# .body regardless of how they reached gh.
+#
+# Deliberately biased toward silence: a keyword GitHub will NOT honour (an
+# already-closed issue, a foreign repo, text inside a code fence) suppresses an
+# advisory line. For an observation that never gates, a missed hint is the
+# harmless way to be wrong and a false alarm is not.
+CLOSE_RE='(^|[^A-Za-z])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]*(#|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#|https?://[^[:space:]]+/issues/)[0-9]+'
+KEYWORD_TEXT=$(jq -r '[(.body // "" | tostring),
+                       ((.commits // []) | map(((.messageHeadline // "") + "\n" + (.messageBody // ""))) | join("\n"))]
+                      | join("\n")' <<<"$PRJSON" 2>/dev/null) || KEYWORD_TEXT=""
+if grep -qiE "$CLOSE_RE" <<<"$KEYWORD_TEXT"; then exit 0; fi
 
 # --- Apply-unit carve-out ---------------------------------------------------
 # Fails CLOSED on a malformed policy, exactly like scripts/apply-keywords.sh:
