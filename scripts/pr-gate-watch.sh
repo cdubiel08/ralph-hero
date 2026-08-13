@@ -46,12 +46,9 @@
 # two modes scripts/merge-pr.sh gate 5 and scripts/validate-attestation.sh
 # derive (PR #1839) — never invented here:
 #
-#   review  — a non-DISMISSED review by the policy bot at the CURRENT head,
-#             which is precisely what gate 5 counts today. The default, so a
-#             policy that names no markers behaves exactly as it did before
-#             comment mode existed. Deliberately NOT narrowed to APPROVED:
-#             being stricter than the gate is a hang, not caution (PR #1839
-#             tightens both together — see the SYNC NOTE in the jq program).
+#   review  — a formal APPROVED review by the policy bot at the CURRENT head.
+#             The default, so a policy that names no markers behaves exactly
+#             as it did before comment mode existed.
 #   comment — opted into by naming BOTH head_marker and clean_comment_marker:
 #             a head-bound review request followed by the bot's clean-result
 #             comment. Reviewers like Codex signal "clean" this way and never
@@ -231,19 +228,22 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
   )))                                                   as $at_head
 | ($at_head | map(select((.state // "") == "APPROVED"))) as $approved
 | ($at_head | map(select((.state // "") == "COMMENTED"))) as $commented
-# What SATISFIES review mode is whatever gate 5 accepts, and gate 5 today
-# accepts any non-DISMISSED head-bound review by the bot — not only APPROVED.
-# Being STRICTER than the gate is not caution here, it is a hang: a COMMENTED
-# review whose findings were adjudicated satisfies gate 5, so a watcher that
-# refuses it reports GATE-YOURS review forever and never reaches GATE-READY
-# even after attestation has passed (codex P2, second pass on PR #1764).
+# Review mode satisfied = a formal APPROVED review by the policy bot at this
+# head. That is gate 5 on main verbatim since PR #1839 (merged 2026-08-13):
+# a COMMENTED review object is findings, not approval, and the SHA-regex
+# comment path ("Reviewed commit <7-sha>") no longer exists in the gate at
+# all — it was replaced by comment mode's marker protocol precisely because
+# Codex's real clean body ("**Reviewed commit:** `<10-char-sha>`") could never
+# match it.
 #
-# SYNC NOTE: PR #1839 tightens review mode to APPROVED-only and moves this
-# repo to comment mode by naming the markers. When it lands, this becomes
-# `.state == "APPROVED"` — the comment-mode branch already refuses COMMENTED
-# reviews, which is exactly why the mode is derived rather than assumed.
+# Codex raised both of those as findings against an EARLIER main, where gate 5
+# still counted any non-DISMISSED review and still read the SHA regex. Both
+# were correct then and are stale now; keeping either would make this script
+# LOOSER than the gate, reporting GATE-READY into a merge that refuses. The
+# one rule that survives every revision: mirror the gate as it is, and never
+# hold a second opinion about the same evidence.
 | (if $policy.mode == "comment" then false
-   else ($at_head | length) > 0 end)                     as $review_mode_ok
+   else ($approved | length) > 0 end)                    as $review_mode_ok
 # comment mode: a head-bound request, then the bot's clean-result comment
 # after it. Mirrors gate 5's ordering rule, including the strict `>` — GitHub
 # timestamps are second-precision, so equality is ambiguous and fails closed.

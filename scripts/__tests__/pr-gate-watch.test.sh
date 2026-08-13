@@ -566,26 +566,53 @@ expect "a conflict outranks the review/attestation questions" "$D" "GATE-FAIL me
 # being STRICTER than the gate, which is not caution but a hang.
 ########################################################################
 
-echo "=== P2/6: review mode accepts what gate 5 accepts, not less ==="
-# merge-pr.sh gate 5 counts any NON-DISMISSED head-bound review by the bot.
-# Requiring APPROVED made the watcher stricter than the gate it mirrors: a
-# COMMENTED review whose findings were adjudicated satisfies gate 5, but the
-# watcher kept reporting GATE-YOURS review and never reached GATE-READY even
-# after attestation passed. Terminal verdict, permanently wrong.
+echo "=== P2/6: review mode is APPROVED-only, exactly as gate 5 is ==="
+# Gate 5 on main since PR #1839: a COMMENTED review object is findings, not
+# approval, and never satisfies the gate. Accepting one here would make the
+# watcher LOOSER than the gate and report GATE-READY into a merge that
+# refuses — the same class of disagreement as being stricter, other direction.
 COMMENTED_AT_HEAD=$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
   '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha,
      html_url:"https://example.test/r/3"}]')
 D="$TMP_ROOT/commented-attested"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
   "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$COMMENTED_AT_HEAD"
-expect "adjudicated findings + a current attestation reach GATE-READY" "$D" "GATE-READY" 0
+expect "COMMENTED findings are not approval, even once attested" "$D" "GATE-YOURS review" 0
 
-# The nudge survives where it is still useful: same review, but nothing has
-# been attested yet, so "adjudicate then attest" is live advice.
-D="$TMP_ROOT/commented-unattested"
+# An APPROVED review by the same bot at the same head IS the evidence.
+D="$TMP_ROOT/approved-attested"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+expect "an APPROVED review at this head + attestation is GATE-READY" "$D" "GATE-READY" 0
+
+# The gate's SHA-regex comment path is GONE (replaced by comment mode's
+# markers). A bot comment naming the short SHA must therefore NOT satisfy
+# review mode — the watcher does not keep a retired evidence shape alive.
+D="$TMP_ROOT/legacy-sha-comment"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
-  "$OPEN_PR" "$COMMENTED_AT_HEAD"
-expect "the same findings before attesting still say adjudicate" "$D" "GATE-YOURS review" 0
+  "$OPEN_PR" "$NO_REVIEWS" \
+  "$(jq -nc --arg bot "$BOT" --arg short "${HEAD_SHA:0:7}" \
+     '[{user:{login:$bot}, body:("Reviewed commit " + $short + ": no findings."),
+        created_at:"2026-08-13T04:00:10Z"}]')"
+expect "the retired 'Reviewed commit <short-sha>' shape is not evidence" "$D" "GATE-WAIT review" 10
+
+echo "=== the checked-in policy really is the one being read ==="
+# Guards the whole mirror argument: if .github/ralph-merge-policy.json drifts
+# out of comment mode, or the marker names change, this script silently starts
+# answering a different question than the gate does.
+REAL_POLICY="$(cd "$(dirname "$0")/../.." && pwd)/.github/ralph-merge-policy.json"
+if [[ "$(jq -r '.external_review.head_marker' "$REAL_POLICY")" == "ralph-review-head" ]] \
+   && [[ "$(jq -r '.external_review.clean_comment_marker' "$REAL_POLICY")" == "Codex Review: Didn't find any major issues." ]]; then
+  pass "this repo's policy names both markers (comment mode), as gate 5 reads it"
+else
+  fail "checked-in policy markers drifted from the gate's protocol"
+fi
+POLICY="$REAL_POLICY"
+D="$TMP_ROOT/real-policy-clean"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$NO_REVIEWS" "$(clean_evidence "$HEAD_SHA")"
+expect "the real policy recognizes a real clean Codex result" "$D" "GATE-YOURS attestation" 0
+POLICY="$POLICY_REVIEW"
 
 echo "=== P2/7: no external review required means none is waited for ==="
 # With no policy file, or external_review.required false, gate 5 does not run.
