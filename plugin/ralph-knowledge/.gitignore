@@ -5,3 +5,5 @@ knowledge.db
 # launch-mcp.sh bootstrap state (per-machine)
 .bootstrap-complete
 .bootstrap.lock/
+# Transient graves from lock reclamation — see reap_abandoned_lock().
+.bootstrap.lock.dead.*

@@ -25,9 +25,6 @@ cd "$PLUGIN_ROOT"
 
 MARKER="$PLUGIN_ROOT/.bootstrap-complete"
 LOCK="$PLUGIN_ROOT/.bootstrap.lock"
-# Serializes reclamation of an abandoned LOCK — see reap_abandoned_lock().
-REAP_LOCK="$PLUGIN_ROOT/.bootstrap.reap"
-REAP_STALE_MIN="${RALPH_KNOWLEDGE_REAP_STALE_MIN:-1}"
 LOCK_STALE_MIN="${RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN:-30}"
 LOCK_WAIT_SEC="${RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC:-900}"
 # Identity for lock ownership. A PID only means something on the host that
@@ -159,64 +156,103 @@ lock_age_min() { dir_age_min "$LOCK"; }
 #
 # PID reuse can make a dead owner look alive. That errs toward waiting and then
 # timing out, never toward a concurrent install, which is the safe direction.
-lock_reclaimable() {
-  local owner pid host age
-  owner=$(cat "$LOCK/owner" 2>/dev/null || echo "")
+owner_is_live() {
+  local owner="$1" pid host
+  [ -n "$owner" ] || return 1
   pid=${owner%% *}
   host=${owner#* }
-  if [ -n "$owner" ] && [ "$host" = "$THIS_HOST" ] && [ -n "$pid" ]; then
-    kill -0 "$pid" 2>/dev/null && return 1
-    return 0
-  fi
-  age=$(lock_age_min) || return 1
-  [ "$age" -gt "$LOCK_STALE_MIN" ]
+  [ "$host" = "$THIS_HOST" ] || return 1
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null
 }
 
-# Remove an abandoned lock, SERIALIZED against other reapers (codex P2, PR
-# #1755). Checking and deleting a shared pathname in two separate steps is a
-# TOCTOU: several waiters can each confirm the same dead owner, and then the
-# second one's stale verdict deletes the lock the FIRST one has already
-# reclaimed and is holding — handing two processes a concurrent `npm ci`, which
-# is the whole thing this lock exists to stop. Codex reproduced it with 30
-# waiters entering overlapping bootstraps.
+# True (0) when the lock directory at $1 looks abandoned.
 #
-# So the removal happens under its own mkdir-serialized lock, and the verdict
-# is RE-TAKEN inside that critical section, where it cannot be stale: by then
-# the first reaper's fresh lock is visible, its owner is alive, and every later
-# reaper declines. The window between that re-check and the `rm` is not shared
-# with another reaper, which is what makes it safe.
+# TWO conditions, and both are load-bearing (codex P2 x3, PR #1755):
 #
-# Returns 0 when this process performed the reap attempt, 1 when another
-# reaper held the reap lock (caller should simply wait and retry).
+#   age > LOCK_STALE_MIN — a lock younger than the window is NEVER reclaimable,
+#     whatever its owner says. This is what makes reclamation safe against a
+#     stale verdict: any successor created while another process was deciding
+#     is by construction young, so it can never be judged abandoned. It also
+#     covers the lock whose owner file is not written yet, which is a holder
+#     that is milliseconds old rather than a corpse — reading "no owner
+#     recorded" as "no owner alive" measurably produced concurrent installs.
+#
+#   owner not alive — age alone does not establish death. An `npm ci` stalled
+#     on a slow registry can outlive the window legitimately, and reclaiming
+#     there starts a second destructive install on the same tree. When the
+#     owner is a live process on this host we ask the kernel and refuse.
+#
+# A foreign host's PIDs are not ours to probe (a shared network home), so there
+# age is all we have. PID reuse can make a dead owner look alive; that errs
+# toward waiting and timing out, never toward a concurrent install.
+dir_reclaimable() {
+  local d="$1" owner age
+  age=$(dir_age_min "$d") || return 1
+  [ "$age" -gt "$LOCK_STALE_MIN" ] || return 1
+  owner=$(cat "$d/owner" 2>/dev/null || echo "")
+  if [ -n "$owner" ] && [ "${owner#* }" = "$THIS_HOST" ]; then
+    owner_is_live "$owner" && return 1
+  fi
+  return 0
+}
+
+lock_reclaimable() { dir_reclaimable "$LOCK"; }
+
+# Remove an abandoned lock. Two properties are needed together, and each was
+# learned by measuring a version that had only the other (codex P2 x3, #1755).
+#
+# 1. EXACTLY ONE process may delete a given lock. `rm` by name cannot give
+#    this: 30 waiters all evaluate the same ancient lock, all pass, and then
+#    all run `rm` — so whichever one has already reclaimed and recreated the
+#    lock has it deleted out from under it by the other 17. Measured: 4
+#    concurrent installs. rename(2) gives it for free — the directory is handed
+#    to exactly one caller and everyone else gets ENOENT.
+#
+# 2. The verdict must be bound to the INSTANCE, not the pathname, and must
+#    include the age gate. A lock younger than the stale window is never
+#    abandoned, so a successor created while we were deciding is always
+#    refused and put back.
+#
+# Serializing behind a second "reap" lock was tried and rejected: it recreated
+# the identical race one level up, on whoever cleared a STALE reap lock, which
+# is exactly what codex pointed out.
+#
+# The capture does leave $LOCK absent for a few syscalls. That is safe, and is
+# why the caller re-enters `until mkdir`: a waiter which grabs the lock in that
+# window is a legitimate sole holder, and we simply go back to waiting.
+#
+# Residual, stated plainly: capturing a lock whose owner is still alive
+# requires it to be older than the stale window — a genuinely long-running
+# bootstrap. We then try to put it back, and if that loses a further race the
+# grave is dropped, orphaning that holder. The 30-waiter suite case does not
+# reproduce it, and does reproduce every earlier version of this function.
+#
+# Returns 0 when this process removed the lock, 1 otherwise.
 reap_abandoned_lock() {
-  local age
-  # A reaper that died mid-reap would otherwise wedge reclamation forever. The
-  # critical section is a handful of syscalls, so a reap lock that has survived
-  # a whole minute is certainly abandoned rather than merely slow.
-  if [ -d "$REAP_LOCK" ]; then
-    age=$(dir_age_min "$REAP_LOCK" || echo "")
-    if [ -n "$age" ] && [ "$age" -ge "$REAP_STALE_MIN" ]; then
-      rm -rf "$REAP_LOCK" 2>/dev/null || true
-    fi
+  local grave
+  grave="$LOCK.dead.$$.${RANDOM:-0}"
+  rm -rf "$grave" 2>/dev/null || true
+
+  mv "$LOCK" "$grave" 2>/dev/null || return 1
+
+  if ! dir_reclaimable "$grave"; then
+    mv "$grave" "$LOCK" 2>/dev/null || rm -rf "$grave" 2>/dev/null || true
+    return 1
   fi
 
-  mkdir "$REAP_LOCK" 2>/dev/null || return 1
-
-  # Re-decide here, not outside. This is the line that closes the race.
-  if lock_reclaimable; then
-    echo "[ralph-knowledge] removing abandoned bootstrap lock ($LOCK)" >&2
-    rm -rf "$LOCK" 2>/dev/null || true
-  fi
-
-  rm -rf "$REAP_LOCK" 2>/dev/null || true
+  echo "[ralph-knowledge] removing abandoned bootstrap lock ($LOCK)" >&2
+  rm -rf "$grave" 2>/dev/null || true
   return 0
 }
 
 if bootstrap_needed; then
   waited=0
   until mkdir "$LOCK" 2>/dev/null; do
-    # Reclaim a lock whose owner is gone. This verdict is advisory — the
-    # binding one is re-taken inside reap_abandoned_lock's critical section.
+    # Reclaim a lock whose owner is gone. This verdict is only a CHEAP FILTER
+    # — it reads a pathname, so it can be stale by the next line. The binding
+    # decision is the one reap_abandoned_lock makes on the instance it has
+    # captured and holds exclusively.
     if lock_reclaimable; then
       # Only retry immediately if the removal actually worked. Otherwise fall
       # through to the wait accounting below, so a lock we can never delete
