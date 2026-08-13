@@ -124,71 +124,69 @@ case "$RALPH_HERDR_SPAWNED_REF" in
     not_ok "dry-run: RALPH_HERDR_SPAWNED_REF exported as name#epoch — got '$RALPH_HERDR_SPAWNED_REF'" ;;
 esac
 
-# ── ralph_worktree_source_dir: the parent workspace (GH-1832) ────────────────
+# ── ralph_worktree_source_dir: ASK herdr for the source (GH-1832, GH-1860) ───
 # herdr refuses `worktree create`/`open` when --cwd is a LINKED worktree, and
 # $REPO defaults to $PWD — which is always a linked worktree when an agent
-# spawns an agent, because that is where /ralph:work runs. A real git fixture
-# (not a stub) because the whole function is one git invocation and the trap it
-# avoids is a git output detail.
-GITREPO="$TMP/gitrepo"
-mkdir -p "$GITREPO"
-(
-  cd "$GITREPO" || exit 1
-  git init -q -b main .
-  git config user.email t@example.com
-  git config user.name t
-  git commit -q --allow-empty -m init
-  git worktree add -q "$TMP/linked" -b feature/GH-1 >/dev/null 2>&1
-) >/dev/null 2>&1
+# spawns an agent, because that is where /ralph:work runs.
+#
+# The source is READ from `worktree list`, not derived locally: herdr owns the
+# rule about which checkout it will start from, and a local `git worktree list`
+# answers a related-but-different question (the main GIT worktree). These tests
+# therefore assert the herdr contract, not a git one.
+is "source dir: resolved from herdr's source_checkout_path" \
+  "/tmp/fake-herdr-parent" "$(ralph_worktree_source_dir "$TMP/anywhere")"
 
-# Resolved paths are compared through `cd -P` because macOS hands out
-# /var/folders TMPDIRs that are symlinks to /private/var — git reports the
-# resolved form, the fixture path carries the symlink, and a raw string compare
-# would fail on a function that is behaving correctly.
-realp() { (cd -P "$1" 2>/dev/null && pwd -P); }
+# --cwd is load-bearing: without it herdr answers from its own session context
+# rather than the directory we asked about, which for a background spawn could
+# resolve a source in the WRONG repository. Asserted on the recorded argv.
+FAKE_HERDR_LOG="$TMP/argv.log" ralph_worktree_source_dir "$TMP/some/checkout" >/dev/null
+line_has_arg=$(grep 'worktree list' "$TMP/argv.log" 2>/dev/null | head -1)
+case "$line_has_arg" in
+  *"--cwd $TMP/some/checkout"*)
+    ok "source dir: the query is scoped with --cwd, never left to session context" ;;
+  *)
+    not_ok "source dir: the query is scoped with --cwd — got '$line_has_arg'" ;;
+esac
+rm -f "$TMP/argv.log"
 
-if [ -d "$TMP/linked" ]; then
-  is "source dir: from a LINKED worktree, resolves to the main checkout" \
-    "$(realp "$GITREPO")" "$(realp "$(ralph_worktree_source_dir "$TMP/linked")")"
-  is "source dir: from the main checkout, resolves to itself" \
-    "$(realp "$GITREPO")" "$(realp "$(ralph_worktree_source_dir "$GITREPO")")"
-  # The trap this function exists to avoid: `dirname $(git rev-parse
-  # --git-common-dir)` returns a bare "." from the main checkout, because
-  # --git-common-dir answers relative there. An absolute path is the contract.
-  case "$(ralph_worktree_source_dir "$GITREPO")" in
-    /*) ok "source dir: the result is absolute, never a relative '.'" ;;
-    *)  not_ok "source dir: the result is absolute — got '$(ralph_worktree_source_dir "$GITREPO")'" ;;
-  esac
-else
-  not_ok "source dir: git worktree fixture could not be built"
-fi
-
-# A non-repo has no parent workspace to find. Returning the input unchanged
-# lets herdr issue its own refusal, which beats a path this function invented.
-mkdir -p "$TMP/notgit"
-is "source dir: a non-repo falls back to the directory itself" \
+# A refusal (a non-repo cwd answers not_git_worktree) falls back to the input.
+# The caller is about to make a worktree call against the same server, so that
+# call surfaces herdr's own code — better than a path invented here.
+printf '{"error":{"code":"not_git_worktree","message":"Herdr worktree actions require a path inside a Git work tree"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/worktree-list.json"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/worktree-list.rc"
+is "source dir: a refused query falls back to the directory itself" \
   "$TMP/notgit" "$(ralph_worktree_source_dir "$TMP/notgit")"
+rm -f "$FAKE_HERDR_FIXTURES/worktree-list.json" "$FAKE_HERDR_FIXTURES/worktree-list.rc"
+
+# A response missing the path is not a source. Falling back beats printing an
+# empty --cwd, which herdr would answer with a far less obvious error.
+printf '{"source":{"repo_key":"k","repo_name":"n","repo_root":"/r"},"worktrees":[]}\n' \
+  >"$FAKE_HERDR_FIXTURES/worktree-list.json"
+is "source dir: a source with no checkout path falls back too" \
+  "$TMP/notgit" "$(ralph_worktree_source_dir "$TMP/notgit")"
+rm -f "$FAKE_HERDR_FIXTURES/worktree-list.json"
 
 # The dry-run plan must print the cwd the live path would use. A plan naming
 # $REPO while the spawn sends the parent workspace is a plan you cannot debug
 # from — and the misleading plan is half of what made GH-1832 expensive.
-if [ -d "$TMP/linked" ]; then
-  _saved_repo="$REPO"
-  REPO="$TMP/linked"
-  plan=$(RALPH_HERDR_DRY_RUN=true spawn_work_session 123 "$QUEUE" 2>&1)
-  REPO="$_saved_repo"
-  create_line=$(printf '%s\n' "$plan" | grep -- 'worktree create' | head -1)
-  case "$create_line" in
-    *"--cwd $(realp "$GITREPO") "*|*"--cwd $GITREPO "*)
-      ok "dry-run plan: worktree create --cwd is the parent workspace" ;;
-    *)
-      not_ok "dry-run plan: worktree create --cwd is the parent workspace — got '$create_line'" ;;
-  esac
-  case "$create_line" in
-    *"$TMP/linked"*) not_ok "dry-run plan: the linked worktree must not appear as --cwd — got '$create_line'" ;;
-    *)               ok "dry-run plan: the linked worktree is not offered as --cwd" ;;
-  esac
-fi
+_saved_repo="$REPO"
+REPO="$TMP/linked-worktree"
+plan=$(RALPH_HERDR_DRY_RUN=true spawn_work_session 123 "$QUEUE" 2>&1)
+REPO="$_saved_repo"
+create_line=$(printf '%s\n' "$plan" | grep -- 'worktree create' | head -1)
+case "$create_line" in
+  *"--cwd /tmp/fake-herdr-parent "*)
+    ok "dry-run plan: worktree create --cwd is herdr's source checkout" ;;
+  *)
+    not_ok "dry-run plan: worktree create --cwd is herdr's source checkout — got '$create_line'" ;;
+esac
+case "$create_line" in
+  *"$TMP/linked-worktree"*)
+    not_ok "dry-run plan: the linked worktree must not appear as --cwd — got '$create_line'" ;;
+  *)
+    ok "dry-run plan: the linked worktree is not offered as --cwd" ;;
+esac
 
 # ── the create-failure line names the code, not a guess (GH-1832) ────────────
 # The old text asserted "existing checkout is the usual cause" without checking.
