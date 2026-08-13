@@ -1348,14 +1348,20 @@ export function refreshCache(ctx: Ctx): BoardCache {
   } catch {
     /* no usable prior cache — nothing to carry */
   }
+  // Carried, but PRUNED against the schema just read: a suppressed name that is
+  // live again (an option removed, then a later rename reusing the name) must
+  // stop being suppressed, or the union in priorityOptionOrder would treat the
+  // now-valid value as known-obsolete and rank it as stale. Every refresh is a
+  // chance to learn that, so the pruning lives here rather than only on the
+  // ordering path.
+  const liveNames = new Set(fields[PRIORITY_FIELD]?.optionOrder ?? []);
+  const carried = (prior?.unresolvedPriorities ?? []).filter((v) => !liveNames.has(v));
   const cache: BoardCache = {
     projectId: project.id,
     repositoryId: repoData.repository.id,
     fields,
     fetchedAt: ctx.now().toISOString(),
-    ...(prior?.unresolvedPriorities?.length
-      ? { unresolvedPriorities: prior.unresolvedPriorities }
-      : {}),
+    ...(carried.length ? { unresolvedPriorities: carried } : {}),
     ...(prior?.unresolvedPrioritiesTruncated ? { unresolvedPrioritiesTruncated: true } : {}),
   };
   mkdirSync(ctx.cacheDir, { recursive: true });
@@ -4029,6 +4035,15 @@ function assertPriorityOption(cache: BoardCache, value: string): void {
 const PRIORITY_ORDER_MAX_AGE_MS = 60 * 60_000;
 const PRIORITY_UNRESOLVED_MAX = 64;
 
+/** POSIX single-quoting, for option names echoed into a copy-pasteable command.
+ *  A live option may legitimately contain spaces or shell metacharacters
+ *  ("High Priority"), and an unquoted recovery command would split it — at best
+ *  failing, at worst setting a DIFFERENT valid option that matches the first
+ *  word. A recovery hint that silently does something else is the worst kind. */
+function shQuote(s: string): string {
+  return /^[A-Za-z0-9._\/:@-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 export function priorityOptionOrder(
   ctx: Ctx,
   opts: { values?: Array<string | null>; fresh?: boolean } = {},
@@ -4086,9 +4101,11 @@ export function priorityOptionOrder(
   const freshOrder = order(refreshed);
   // Spend the evidence: whatever the LIVE schema still does not list is
   // obsolete-by-confirmation, not a stale cache, and must not re-trigger.
+  // Filtered against the LIVE order, carried entries included: a name that is
+  // an option again is not obsolete, whatever a previous read concluded.
   const all = [
-    ...new Set([...(cached.unresolvedPriorities ?? []), ...candidates.filter((v) => !freshOrder.includes(v))]),
-  ];
+    ...new Set([...(cached.unresolvedPriorities ?? []), ...candidates]),
+  ].filter((v) => !freshOrder.includes(v));
   // Bounded: this is a suppression list, not a ledger. Newest wins, because an
   // old entry GitHub re-added is re-learned by the next live read. Crossing the
   // cap sets the truncated flag, which is what stops eviction from turning into
@@ -4247,7 +4264,7 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
     // is worse than none, because it reads as completeness.
     if (priorityFailure !== null) {
       const unapplied = [
-        `${PRIORITY_FIELD} (\`board priority ${issue.number} ${opts.priority}\`): ${priorityFailure}`,
+        `${PRIORITY_FIELD} (\`board priority ${issue.number} ${shQuote(opts.priority!)}\`): ${priorityFailure}`,
         ...(estimateFailure !== null
           ? [`${ESTIMATE_FIELD} ${opts.estimate} (set it in the board UI): ${estimateFailure}`]
           : []),

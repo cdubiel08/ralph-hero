@@ -2932,6 +2932,63 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     expect(rankNext([q(1, "P9"), q(9, "P3")], [], P).eligible.map((i) => i.number)).toEqual([9, 1]);
   });
 
+  it("a suppressed name that becomes an option again stops being suppressed", () => {
+    // `Soon` is removed (so it lands in the suppression list), and later an
+    // admin renames `Now` to `Soon`. The union would call the now-VALID value
+    // known-obsolete, skip the evidence refresh, and rank live work as stale.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
+    const ctx = makeCtx(gh);
+    const cacheFile = join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json");
+    const read = () => JSON.parse(readFileSync(cacheFile, "utf8"));
+
+    // Learn "Soon" as obsolete against the Now/Later schema.
+    expect(priorityOptionOrder(ctx, { values: ["Soon"] })).toEqual(["Now", "Later"]);
+    expect(read().unresolvedPriorities).toEqual(["Soon"]);
+
+    // The admin renames Now → Soon. Any refresh must drop the suppression.
+    gh.createdFields.length = 0;
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Soon", "Later"] });
+    expect(priorityOptionOrder(ctx, { values: ["Soon"], fresh: true })).toEqual(["Soon", "Later"]);
+    expect(read().unresolvedPriorities ?? []).toEqual([]); // pruned, not carried
+
+    // And it now ranks as the FIRST option rather than as a stale value.
+    const q = (n: number, priority: string): QueueItem => ({
+      number: n, repo: "cdubiel08/ralph-hero", title: `t${n}`, state: "Backlog", priority,
+      hasParent: false, parentNumber: null, openBlockers: [], openBlockerLabels: [],
+      blockersTruncated: false, fieldValuesTruncated: false, claim: null, claimRaw: null,
+      labels: [], labelsTruncated: false, closedBlockers: [],
+    });
+    const order = priorityOptionOrder(ctx, { values: ["Soon", "Later"] });
+    expect(rankNext([q(1, "Later"), q(2, "Soon")], [], order).eligible.map((i) => i.number)).toEqual([2, 1]);
+  });
+
+  it("the recovery command quotes a custom option name containing spaces", () => {
+    // `board priority 7 High Priority` would split, and `board priority` takes
+    // only the first word — potentially setting a DIFFERENT valid option.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["High Priority", "High"] });
+    const ctx = makeCtx(gh);
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      if (stdin?.includes("updateProjectV2ItemFieldValue") && stdin.includes("Priority_High Priority"))
+        return { code: 1, stdout: "", stderr: "simulated priority write failure" };
+      return inner(argv, stdin);
+    };
+    let err: Error | null = null;
+    try {
+      createIssue(ctx, { title: "x", priority: "High Priority" });
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err).not.toBeNull();
+    expect(err!.message).toContain(`board priority`);
+    expect(err!.message).toContain(`'High Priority'`); // quoted, so it round-trips
+    expect(err!.message).not.toMatch(/board priority \d+ High Priority`/); // never bare
+  });
+
   it("a cache predating optionOrder is STALE, not usable — the upgrade path integer names would break", () => {
     // The legacy-migration hole: a cache written by the previous version less
     // than an hour ago has no optionOrder, so the map fallback reverses a
