@@ -286,14 +286,19 @@ export type SelectedQueueItem<S extends QueueSelect> = QueueItemCore &
  *       option — a renamed/removed option still stamped on an item, or a
  *       caller with no live schema to hand. "P0" → 0, "P10" → 10 (lexicographic
  *       would put "P10" before "P2").
- *  A seeded P0..P3 board ranks identically under both, so the default board's
- *  behavior is unchanged either way. */
+ *  The fallback is OFFSET past the live option range, never sharing its rank
+ *  space: otherwise a stale "P0" would tie `Now` at 0 and the issue-number
+ *  tie-break could hand the obsolete item the queue head. A value the board no
+ *  longer offers must sort behind every value it does, while keeping its
+ *  relative order against other stale values.
+ *  A seeded P0..P3 board ranks identically under both sources, so the default
+ *  board's behavior is unchanged either way. */
 function priorityRank(p: string | null, order: readonly string[] = []): number {
   if (p === null) return Number.MAX_SAFE_INTEGER;
   const idx = order.indexOf(p);
   if (idx !== -1) return idx;
   const m = p.match(/(\d+)\s*$/);
-  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+  return m ? order.length + Number(m[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 /** An epic root the ranker demoted because its subtree is already being
@@ -3949,12 +3954,45 @@ function assertPriorityOption(cache: BoardCache, value: string): void {
 /** The Priority field's live option order — what `next`/`frontier` hand the
  *  ranker so a host repo's accepted custom scheme is orderable, not just
  *  writable. An absent Priority field yields `[]`, i.e. exactly the
- *  digit-suffix fallback boards without the field have always had. This is a
- *  READ path: the persistent field cache is fine here (a stale option order
- *  can only mis-sort a queue the next refresh corrects), unlike the write
- *  paths, which validate against a refreshed option SET. */
+ *  digit-suffix fallback boards without the field have always had.
+ *
+ *  The order is AGE-BOUNDED, not merely cached. Nothing in the field cache can
+ *  notice a REORDER or a RENAME — `satisfied()` only ever asks whether a name
+ *  is present — so a purely cached read would steer the queue by an obsolete
+ *  scheme indefinitely, until some unrelated mutation happened to refresh the
+ *  schema. Refreshing on every call is the wrong end of that trade: `next` is
+ *  pinned at 2 warm round trips by the metrics registry, and the item cache
+ *  exists precisely so a chain of reads pays for one walk. So the ordering read
+ *  refreshes only a field cache older than PRIORITY_ORDER_MAX_AGE_MS, which
+ *  bounds the obsolete-order window to that Δ and costs a warm board nothing.
+ *
+ *  A failed refresh degrades to the cached order, and a total miss to `[]`
+ *  (digit-suffix ranking), each with a warning — deliberately fail-soft in that
+ *  direction: the option order is advisory ranking input, while a `next` that
+ *  cannot answer at all stops the loop. */
+const PRIORITY_ORDER_MAX_AGE_MS = 60 * 60_000;
+
 export function priorityOptionOrder(ctx: Ctx): string[] {
-  return Object.keys(ensureCache(ctx).fields[PRIORITY_FIELD]?.options ?? {});
+  const options = (c: BoardCache) => Object.keys(c.fields[PRIORITY_FIELD]?.options ?? {});
+  let cached: BoardCache;
+  try {
+    cached = ensureCache(ctx);
+  } catch {
+    process.stderr.write(`warn: ${PRIORITY_FIELD} options unreadable — ranking by digit suffix only\n`);
+    return [];
+  }
+  // An unparseable stamp counts as stale (NaN fails the comparison either way,
+  // so it is asserted, not left to coincidence).
+  const age = ctx.now().getTime() - Date.parse(cached.fetchedAt);
+  if (Number.isFinite(age) && age <= PRIORITY_ORDER_MAX_AGE_MS) return options(cached);
+  try {
+    return options(refreshCache(ctx));
+  } catch (e) {
+    process.stderr.write(
+      `warn: ${PRIORITY_FIELD} options not refreshed (${(e as Error).message}) — ranking by the cached order\n`,
+    );
+    return options(cached);
+  }
 }
 
 /** The setter `next` needed all along: an item filed without a priority ranks

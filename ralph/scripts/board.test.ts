@@ -234,12 +234,24 @@ describe("rankNext", () => {
     expect(rankNext(tree, [], order).eligible[0].number).toBe(5);
   });
 
-  it("a value the live options no longer hold falls back to digits, never ahead of a real option", () => {
-    // A renamed/removed option still stamped on an item: rankable by its digit
-    // suffix if it has one, last if it doesn't — but it cannot outrank Now.
+  it("a value the live options no longer hold ranks BEHIND every live option, digits or not", () => {
+    // A renamed/removed option still stamped on an item. The digit fallback is
+    // offset past the option range, so it cannot share rank space with it: the
+    // dangerous case is stale "P0", which at rank 0 would TIE `Now` and take
+    // the head on the issue-number tie-break. Lowest numbers here are the
+    // stale ones on purpose.
     const order = ["Now", "Later"];
-    const items = [item(1, { priority: "Now" }), item(2, { priority: "P3" }), item(3, { priority: "URGENT" })];
-    expect(rankNext(items, [], order).eligible.map((i) => i.number)).toEqual([1, 2, 3]);
+    const items = [
+      item(1, { priority: "P0" }), // stale, and would win every tie-break
+      item(2, { priority: "URGENT" }), // stale, no digits at all
+      item(8, { priority: "Later" }), // live, last option
+      item(9, { priority: "Now" }), // live, first option
+    ];
+    expect(rankNext(items, [], order).eligible.map((i) => i.number)).toEqual([9, 8, 1, 2]);
+    // Relative order AMONG stale digit values is still preserved.
+    expect(
+      rankNext([item(1, { priority: "P3" }), item(2, { priority: "P1" })], [], order).eligible.map((i) => i.number),
+    ).toEqual([2, 1]);
   });
 
   it("a seeded P0..P3 board ranks identically with and without the live order", () => {
@@ -2726,6 +2738,87 @@ describe("priority is writable through the CLI (GH-1789)", () => {
       spy.mockRestore();
     }
     expect(said.join("")).toMatch(/^next: #3\b/m);
+  });
+
+  /** Live options in a deliberate order, with a cache holding the OPPOSITE. */
+  const reorderedBoard = () => {
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Later", "Now"] });
+    const ctx = makeCtx(gh);
+    writeFileSync(
+      join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+      JSON.stringify({
+        projectId: "PVT_test",
+        repositoryId: "R_test",
+        fields: {
+          "Workflow State": {
+            id: "F_state", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+          },
+          // The obsolete order: Now first. Nothing about a REORDER is visible to
+          // a present/absent field check, so only a live read can catch it.
+          Priority: {
+            id: "F_Priority", dataType: "SINGLE_SELECT",
+            options: { Now: "Priority_Now", Later: "Priority_Later" },
+          },
+        },
+        fetchedAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "Now" });
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "Later" });
+    return { gh, ctx };
+  };
+
+  const sayNext = (ctx: Ctx) => {
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      run(["next"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    return said.join("");
+  };
+
+  it("next ranks by the LIVE option order — a reorder the field cache cannot notice", () => {
+    // Options reordered to [Later, Now] in GitHub; the cache still says
+    // [Now, Later]. A cached read would steer the queue by the obsolete scheme
+    // indefinitely, since no mutation has to happen to refresh it.
+    const { ctx } = reorderedBoard();
+    expect(sayNext(ctx)).toMatch(/^next: #2\b/m);
+  });
+
+  it("an unrefreshable schema degrades to the cached order and still answers", () => {
+    // Fail-soft direction: ordering input is advisory, a `next` that cannot
+    // answer stops the loop.
+    const { gh, ctx } = reorderedBoard();
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      // Refuse ONLY the schema read (its own fragment names it — and the query
+      // text arrives on stdin, not argv); the item walk runs normally, so this
+      // isolates the refresh failure.
+      if (`${argv.join(" ")} ${stdin ?? ""}`.includes("fragment pf on ProjectV2"))
+        return { code: 1, stdout: "", stderr: "simulated schema read failure" };
+      return inner(argv, stdin);
+    };
+    const warns: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+      warns.push(String(s));
+      return true;
+    });
+    let text: string;
+    try {
+      text = sayNext(ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(warns.join("")).toMatch(/not refreshed/);
+    expect(text).toMatch(/^next: #1\b/m); // the cached [Now, Later] order
   });
 
   it("a valueless --priority is a usage error, not a silently unprioritized issue", () => {
