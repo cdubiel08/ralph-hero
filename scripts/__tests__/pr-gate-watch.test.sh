@@ -1360,7 +1360,7 @@ out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_R
 rc=$?
 set -e
 rm -f "$D/pr_view_second.json"
-if [[ "$out" == "GATE-WAIT ci"* ]] && [[ "$out" == *"while gate 6 ran"* ]] && [ "$rc" -eq 10 ]; then
+if [[ "$out" == "GATE-WAIT ci"* ]] && [[ "$out" == *"while this snapshot was gathered"* ]] && [ "$rc" -eq 10 ]; then
   pass "a head that moves during gate 6 withholds the merge recommendation"
 else
   fail "gate 6 head recheck (rc=$rc out=${out:0:170})"
@@ -1403,6 +1403,75 @@ scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$
   "$OPEN_PR" "$NO_REVIEWS" "$REQUEST_ONLY"
 expect "request in, no clean result yet, is a wait" "$D" "GATE-WAIT review" 10
 POLICY="$POLICY_REVIEW"
+
+echo "=== P2/26: readiness is confirmed LIVE, not from the opening snapshot ==="
+# GATE-READY is the only verdict that says act NOW, and it is reached last —
+# after the checks read, the evidence reads, and gate 6's queries. Everything
+# above it describes the PR as it was BEFORE the script waited. A
+# CHANGES_REQUESTED can land mid-watch, and the base can advance and make the
+# head conflict, with nothing in the snapshot noticing.
+POLICY="$POLICY_REVIEW"
+READY_CHECKS=$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')
+setup_ready() {
+  scenario "$1" "$READY_CHECKS" \
+    "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+}
+# confirm_view <decision> <mergeable> -> the LIVE re-read served to the
+# confirmation query, at the SAME head, so this isolates the new facts.
+confirm_view() {
+  jq -nc --arg sha "$HEAD_SHA" --arg d "$1" --arg m "$2" \
+    '{headRefOid: $sha, reviewDecision: (if $d == "" then null else $d end), mergeable: $m}'
+}
+
+D="$TMP_ROOT/ready-then-changes-requested"
+setup_ready "$D"
+printf '%s' "$(confirm_view CHANGES_REQUESTED MERGEABLE)" >"$D/pr_view_second.json"
+expect "a CHANGES_REQUESTED landing mid-snapshot blocks readiness" "$D" "GATE-FAIL review" 0
+run "$D"
+if [[ "$LAST_OUT" == *"landed while this snapshot was gathered"* ]]; then
+  pass "says the verdict arrived mid-snapshot, not that it was there all along"
+else
+  fail "mid-snapshot CHANGES_REQUESTED message (out=${LAST_OUT:0:170})"
+fi
+
+D="$TMP_ROOT/ready-then-conflicting"
+setup_ready "$D"
+printf '%s' "$(confirm_view "" CONFLICTING)" >"$D/pr_view_second.json"
+expect "a base advance that conflicts blocks readiness" "$D" "GATE-FAIL merge" 0
+run "$D"
+if [[ "$LAST_OUT" == *rebase* ]]; then
+  pass "names the rebase rather than recommending the merge"
+else
+  fail "mid-snapshot conflict message (out=${LAST_OUT:0:170})"
+fi
+
+D="$TMP_ROOT/ready-then-unknown"
+setup_ready "$D"
+printf '%s' "$(confirm_view "" UNKNOWN)" >"$D/pr_view_second.json"
+expect "mergeability recomputing after a base advance is a wait" "$D" "GATE-WAIT merge" 10
+
+D="$TMP_ROOT/ready-confirm-unreadable"
+setup_ready "$D"
+printf '%s' '{}' >"$D/pr_view_second.json"
+expect "an unreadable confirmation withholds the recommendation" "$D" "GATE-WAIT ci" 10
+
+# The control: a live re-read still saying APPROVED and MERGEABLE at the same
+# head reaches GATE-READY — so the four cases above are a real difference, not
+# a confirmation step that can never be satisfied.
+D="$TMP_ROOT/ready-confirmed"
+setup_ready "$D"
+printf '%s' "$(confirm_view APPROVED MERGEABLE)" >"$D/pr_view_second.json"
+expect "a confirmed-live snapshot still reaches GATE-READY" "$D" "GATE-READY" 0
+
+# Non-terminal verdicts must NOT be changed by the confirmation read: they are
+# advice the next poll revises, and the confirmation exists only where
+# staleness costs a failed merge instead of a wasted poll.
+D="$TMP_ROOT/wait-ci-no-confirm"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson p "$(check board-tests pending)" \
+  --argjson a "$ATT_PASS" '$g + [$p, $a]')" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+printf '%s' "$(confirm_view CHANGES_REQUESTED CONFLICTING)" >"$D/pr_view_second.json"
+expect "a non-READY verdict is unaffected by the confirmation read" "$D" "GATE-WAIT ci" 10
 
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"

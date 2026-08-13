@@ -659,20 +659,52 @@ snapshot() {
         if ! apply_out=$("$APPLY_KEYWORDS_SH" "$PR" 2>&1); then
           line="GATE-FAIL apply: $(printf '%s' "$apply_out" | head -1) — fix the closing keywords before merging"
         fi
-        # Gate 6 makes its OWN GitHub queries, which take time, and it runs
-        # AFTER the head guard above — so a push landing during it would let
-        # every earlier finding (checks, review, attestation) describe the old
-        # head while this returns terminal GATE-READY for the new one. Re-check
-        # (codex P2, PR #1764). Only on this path, because it is the only one
-        # that does work after the guard.
-        local head_final
-        head_final=$(gh pr view "$PR" --json headRefOid 2>/dev/null | jq -r '.headRefOid // ""' 2>/dev/null) || head_final=""
-        if [ -z "$head_final" ] || [ "$head_final" != "$head_before" ]; then
-          printf 'GATE-WAIT ci: head moved or became unreadable while gate 6 ran — re-reading rather than recommending a merge for evidence gathered at %s' \
-            "${head_before:0:8}"
-          return 0
-        fi
       fi
+      # GATE-READY is the only verdict that tells the caller to act NOW, and it
+      # is reached last — after the checks read, the evidence reads, and gate
+      # 6's own queries. Everything above it therefore describes the PR as it
+      # was BEFORE the script waited, which is fine for "your turn" advice and
+      # not fine for "merge now": a CHANGES_REQUESTED can land mid-watch, and
+      # the base branch can advance and make the head conflict, without
+      # anything in this snapshot noticing (codex P2, PR #1764).
+      #
+      # So the three facts that make readiness terminal are re-read together,
+      # once, at the moment of the recommendation: the head it was computed
+      # for, a live review decision, and live mergeability. One extra query on
+      # the one path where staleness costs a failed merge instead of a wasted
+      # poll. Every other verdict is advice the next poll can revise.
+      case "$line" in
+        GATE-READY*)
+          local confirm confirm_head confirm_decision confirm_mergeable
+          confirm=$(gh pr view "$PR" --json headRefOid,reviewDecision,mergeable 2>/dev/null) || confirm=""
+          confirm_head=$(jq -r '.headRefOid // ""' <<<"${confirm:-{\}}" 2>/dev/null) || confirm_head=""
+          confirm_decision=$(jq -r '.reviewDecision // ""' <<<"${confirm:-{\}}" 2>/dev/null) || confirm_decision=""
+          confirm_mergeable=$(jq -r '.mergeable // ""' <<<"${confirm:-{\}}" 2>/dev/null) || confirm_mergeable=""
+          if [ -z "$confirm_head" ]; then
+            printf 'GATE-WAIT ci: could not confirm #%s is still ready (re-read failed) — withholding the merge recommendation rather than acting on a stale snapshot' "$PR"
+            return 0
+          fi
+          if [ "$confirm_head" != "$head_before" ]; then
+            printf 'GATE-WAIT ci: head moved from %s to %s while this snapshot was gathered — the evidence above describes the old head' \
+              "${head_before:0:8}" "${confirm_head:0:8}"
+            return 0
+          fi
+          if [ "$confirm_decision" = "CHANGES_REQUESTED" ]; then
+            printf 'GATE-FAIL review: CHANGES_REQUESTED landed while this snapshot was gathered — adjudicate the threads, then re-attest'
+            return 0
+          fi
+          if [ "$confirm_mergeable" = "CONFLICTING" ]; then
+            printf 'GATE-FAIL merge: head %s now conflicts with the base (it advanced during this snapshot) — rebase, then re-attest' \
+              "${confirm_head:0:8}"
+            return 0
+          fi
+          if [ "$confirm_mergeable" = "UNKNOWN" ]; then
+            printf 'GATE-WAIT merge: GitHub is recomputing mergeability for %s — the base moved during this snapshot' \
+              "${confirm_head:0:8}"
+            return 0
+          fi
+          ;;
+      esac
       ;;
   esac
   printf '%s' "$line"
