@@ -19,10 +19,12 @@
 #   pull_request (opened/synchronize/reopened) — a fresh push invalidates any
 #     prior attestation (head_sha binding), so the status recomputes: pending
 #     "awaiting attestation" until a matching attestation lands.
-#   issue_comment (created/edited) — attestation comments are posted by
-#     scripts/attest-pr.sh; validate as soon as one appears. NOTE: GitHub runs
-#     issue_comment workflows from the DEFAULT branch, so this half only works
-#     once the workflow is on main (bootstrap gap documented in the plan).
+#   issue_comment (created/edited) — attestation comments and configured
+#     external-review clean-result comments both affect the verdict. Recompute
+#     on every PR issue comment so policy markers can change without duplicating
+#     them in this workflow. NOTE: GitHub runs issue_comment workflows from the
+#     DEFAULT branch, so this half only works once the workflow is on main
+#     (bootstrap gap documented in the plan).
 #   pull_request_review (submitted/dismissed) — the external-review check below
 #     is part of this verdict, so a review LANDING must recompute it. Without
 #     this the status keeps a stale "awaiting external review" pending on
@@ -73,16 +75,18 @@ concurrency:
 
 jobs:
   validate:
-    # issue_comment also fires on plain issues — gate to PR comments carrying
-    # the attestation marker (expression context; body never reaches a shell).
+    # issue_comment also fires on plain issues — gate to PR comments. Every PR
+    # comment is relevant because external clean-result markers are policy-
+    # configured and must not be duplicated here (comment bodies never reach a
+    # shell).
     if: >-
       (github.event_name == 'pull_request' && github.event.action != 'edited') ||
       github.event_name == 'pull_request_review' ||
-      (github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, 'ralph-attestation:v1'))
+      github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
       statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
