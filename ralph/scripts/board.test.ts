@@ -2932,6 +2932,47 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     expect(rankNext([q(1, "P9"), q(9, "P3")], [], P).eligible.map((i) => i.number)).toEqual([9, 1]);
   });
 
+  it("the suppression list survives a refresh, and its cap cannot become a refresh loop", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1" });
+    const cacheFile = join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json");
+    const schemaReads = () => gh.queries.filter((q) => q.includes("fragment pf on ProjectV2")).length;
+    const read = () => JSON.parse(readFileSync(cacheFile, "utf8"));
+    const reheat = () => {
+      const c = read();
+      c.fetchedAt = NOW.toISOString();
+      writeFileSync(cacheFile, JSON.stringify(c));
+    };
+
+    // Learn one obsolete value, then run a priority MUTATION — which force-
+    // refreshes the schema. The list must survive that, or every mutation
+    // re-arms the repeated-refresh cost the list exists to bound.
+    priorityOptionOrder(ctx, { values: ["P9"] });
+    expect(read().unresolvedPriorities).toEqual(["P9"]);
+    setPriority(ctx, 1, "P0");
+    expect(read().unresolvedPriorities).toEqual(["P9"]); // carried through refreshCache
+    reheat();
+    const afterMutation = schemaReads();
+    priorityOptionOrder(ctx, { values: ["P9"] });
+    expect(schemaReads()).toBe(afterMutation); // still suppressed, still free
+
+    // Past the cap, eviction would guarantee some observed value is always
+    // missing: evidence fires, the refresh drops the same value again, and
+    // every warm read pays forever. The truncated flag is what stops that.
+    const many = Array.from({ length: 200 }, (_, i) => `GONE-${i}`);
+    priorityOptionOrder(ctx, { values: many });
+    expect(read().unresolvedPrioritiesTruncated).toBe(true);
+    reheat();
+    const afterTruncation = schemaReads();
+    for (let i = 0; i < 5; i++) priorityOptionOrder(ctx, { values: many });
+    expect(schemaReads()).toBe(afterTruncation); // no loop, at any board size
+
+    // Bounded staleness is the honest cost of that: --fresh still forces a read.
+    priorityOptionOrder(ctx, { values: many, fresh: true });
+    expect(schemaReads()).toBe(afterTruncation + 1);
+  });
+
   it("--clear forces the live schema too — a recreated field's stale ID would fail every clear", () => {
     // A field deleted and recreated keeps its NAME, so satisfied() stays happy
     // while the cached ID is dead. Nothing about clearing validates an option,

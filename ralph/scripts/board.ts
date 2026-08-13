@@ -1251,6 +1251,14 @@ interface BoardCache {
    *  is permanent evidence of staleness and every warm read pays a schema
    *  query forever; a confirmed-obsolete value must stop being news. */
   unresolvedPriorities?: string[];
+  /** Set when the list above hit its cap and had to evict. A bare cap would
+   *  RECREATE the loop it was meant to prevent: past the cap, eviction
+   *  guarantees some observed value is always missing, so evidence fires, the
+   *  refresh drops the same value again, and every warm read pays a query
+   *  forever. Once truncated, unexplained values stop counting as evidence —
+   *  `--fresh` and the age ceiling still bound staleness, so the degradation is
+   *  a slower reaction to a rename, never an unbounded cost. */
+  unresolvedPrioritiesTruncated?: boolean;
 }
 
 const STATE_FIELD = "Workflow State";
@@ -1329,11 +1337,26 @@ export function refreshCache(ctx: Ctx): BoardCache {
     };
   }
 
+  // The suppression list is evidence a LIVE read already spent, so a schema
+  // refresh must not make a confirmed-obsolete value news again. Without this
+  // carry-over every priority mutation (each of which force-refreshes) would
+  // reset it, and the repeated-refresh cost this field exists to bound would
+  // come straight back on the next `next`.
+  let prior: BoardCache | undefined;
+  try {
+    prior = JSON.parse(readFileSync(cachePath(ctx), "utf8")) as BoardCache;
+  } catch {
+    /* no usable prior cache — nothing to carry */
+  }
   const cache: BoardCache = {
     projectId: project.id,
     repositoryId: repoData.repository.id,
     fields,
     fetchedAt: ctx.now().toISOString(),
+    ...(prior?.unresolvedPriorities?.length
+      ? { unresolvedPriorities: prior.unresolvedPriorities }
+      : {}),
+    ...(prior?.unresolvedPrioritiesTruncated ? { unresolvedPrioritiesTruncated: true } : {}),
   };
   mkdirSync(ctx.cacheDir, { recursive: true });
   writeFileSync(cachePath(ctx), JSON.stringify(cache, null, 2));
@@ -4031,7 +4054,10 @@ export function priorityOptionOrder(
   const age = ctx.now().getTime() - Date.parse(cached.fetchedAt);
   const known = new Set([...cachedOrder, ...(cached.unresolvedPriorities ?? [])]);
   const candidates = (opts.values ?? []).filter((v): v is string => typeof v === "string" && v.length > 0);
-  const unexplained = candidates.filter((v) => !known.has(v));
+  // Once the suppression list has evicted anything, "unexplained" no longer
+  // proves the cache is stale — it may just be a value we can no longer afford
+  // to remember (see unresolvedPrioritiesTruncated).
+  const unexplained = cached.unresolvedPrioritiesTruncated ? [] : candidates.filter((v) => !known.has(v));
   const stale =
     opts.fresh === true || unexplained.length > 0 || !(Number.isFinite(age) && age <= PRIORITY_ORDER_MAX_AGE_MS);
   if (!stale) return cachedOrder;
@@ -4047,14 +4073,18 @@ export function priorityOptionOrder(
   const freshOrder = order(refreshed);
   // Spend the evidence: whatever the LIVE schema still does not list is
   // obsolete-by-confirmation, not a stale cache, and must not re-trigger.
-  const confirmed = [
+  const all = [
     ...new Set([...(cached.unresolvedPriorities ?? []), ...candidates.filter((v) => !freshOrder.includes(v))]),
-  ]
-    // Bounded: this is a suppression list, not a ledger. Newest wins, because
-    // an old entry that GitHub re-added is re-learned by the next live read.
-    .slice(-PRIORITY_UNRESOLVED_MAX);
-  if (confirmed.length) {
-    refreshed.unresolvedPriorities = confirmed;
+  ];
+  // Bounded: this is a suppression list, not a ledger. Newest wins, because an
+  // old entry GitHub re-added is re-learned by the next live read. Crossing the
+  // cap sets the truncated flag, which is what stops eviction from turning into
+  // a permanent refresh loop.
+  const confirmed = all.slice(-PRIORITY_UNRESOLVED_MAX);
+  const truncated = cached.unresolvedPrioritiesTruncated === true || all.length > PRIORITY_UNRESOLVED_MAX;
+  if (confirmed.length || truncated) {
+    if (confirmed.length) refreshed.unresolvedPriorities = confirmed;
+    if (truncated) refreshed.unresolvedPrioritiesTruncated = true;
     try {
       writeFileSync(cachePath(ctx), JSON.stringify(refreshed, null, 2));
     } catch {
