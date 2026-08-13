@@ -25,13 +25,22 @@ fail() { echo "  FAIL: $1"; ((FAIL++)) || true; }
 
 SELF_HOLDER="tick@$(hostname -s)"
 
-# run_tick <name> <runner_rc> <state> <holder> <get_fail(0|1)>
+# run_tick <name> <runner_rc> <state> <holder> <get_fail(0|1)> [layout]
+# layout: which worktree already exists — "legacy" (.claude/worktrees/GH-42,
+# the default: a checkout cut before GH-1807) or "new" (the derived leaf).
+# Either way NO git plumbing runs: tick only touches git when there is no
+# worktree to resume, which is what keeps this skeleton a plain directory.
 # -> sets TICK_RC, BOARD_LOG (stub invocations), TICKS_LOG, ISSUE_LOG
 run_tick() {
-  local name="$1" runner_rc="$2" state="$3" holder="$4" get_fail="$5"
-  local scen="$TMP_ROOT/$name" repo home
+  local name="$1" runner_rc="$2" state="$3" holder="$4" get_fail="$5" layout="${6:-legacy}"
+  local scen="$TMP_ROOT/$name" repo home wt
   repo="$scen/repo"; home="$scen/home"
-  mkdir -p "$repo/ralph/scripts" "$repo/.claude/worktrees/GH-42" "$home"
+  case "$layout" in
+    legacy) wt="GH-42" ;;
+    new) wt="feat-42-stub-unit" ;;
+    *) echo "run_tick: unknown layout '$layout'" >&2; exit 2 ;;
+  esac
+  mkdir -p "$repo/ralph/scripts" "$repo/.claude/worktrees/$wt" "$home"
   cp "$TICK_SRC" "$repo/ralph/scripts/tick.sh"
   echo "autopilot=true" > "$home/config"
 
@@ -40,6 +49,9 @@ run_tick() {
 echo "BOARD $*" >> "$STUB_LOG"
 case "${1:-}" in
   next) printf '{"next":{"number":42}}\n' ;;
+  # GH-1807: the branch/agent grammar is derived by the CLI, never rebuilt in
+  # shell — tick asks for it, so the stub must answer.
+  name) printf '{"number":42,"kind":"feat","lane":"w","branch":"feat/42-stub-unit","worktree":"feat-42-stub-unit","agent":"w42-stub-unit","legacyBranch":"feature/GH-42"}\n' ;;
   get)
     if [ "${STUB_GET_FAIL:-0}" = "1" ]; then echo "stub: get failed" >&2; exit 1; fi
     # ClaimV2 (contracts.ts): get --json serializes .claim.holders as an
@@ -134,6 +146,25 @@ expect_contains "ticks.log records ok" "$TICKS_LOG" "GH-42 ok"
 # 7. Clean exit but board untouched (Backlog) -> the no-op detector still fires.
 run_tick s7 0 "Backlog" "$SELF_HOLDER" 0
 expect_contains "rc=0 + Backlog -> no-op detected" "$TICKS_LOG" "no-op"
+
+# ---------------------------------------------------------------------------
+echo
+echo "=== tick.sh names the branch it actually used (GH-1807) ==="
+
+# 8. The names come from the CLI, not from shell string-building.
+run_tick s8 7 "In Progress" "$SELF_HOLDER" 0
+expect_contains "tick asks the board for the names" "$BOARD_LOG" "BOARD name 42 --json"
+
+# 9. Legacy resume: a pre-GH-1807 worktree exists, so THAT is the unit's
+# checkout and the release note must name the branch that goes with it —
+# pointing a human at feat/42-… when the WIP is on feature/GH-42 is a lie.
+expect_contains "legacy worktree -> note names the legacy branch" "$BOARD_LOG" "feature/GH-42"
+expect_not_contains "legacy worktree -> note does NOT name the derived branch" \
+  "$BOARD_LOG" "feat/42-stub-unit"
+
+# 10. New layout: no legacy checkout to resume, so the derived branch wins.
+run_tick s9 7 "In Progress" "$SELF_HOLDER" 0 new
+expect_contains "derived worktree -> note names the derived branch" "$BOARD_LOG" "feat/42-stub-unit"
 
 # ---------------------------------------------------------------------------
 echo

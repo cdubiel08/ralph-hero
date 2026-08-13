@@ -91,20 +91,25 @@ if [ -z "$BRANCH" ] || [ -z "$WT_LEAF" ]; then
 fi
 
 # --- Worktree per job: never a shared HEAD ----------------------------------
-# Resume beats re-cut. A unit that already has a branch under EITHER grammar
-# keeps it — cutting the new shape beside a live feature/GH-N would split one
-# unit's work across two heads.
-git -C "$REPO_ROOT" fetch -q origin main
-if ! git -C "$REPO_ROOT" show-ref -q --verify "refs/heads/$BRANCH" \
-  && ! git -C "$REPO_ROOT" show-ref -q --verify "refs/remotes/origin/$BRANCH"; then
-  if git -C "$REPO_ROOT" show-ref -q --verify "refs/heads/$LEGACY_BRANCH" \
-    || git -C "$REPO_ROOT" show-ref -q --verify "refs/remotes/origin/$LEGACY_BRANCH"; then
-    BRANCH="$LEGACY_BRANCH"
-    WT_LEAF="GH-$NEXT"
-  fi
-fi
+# Resume beats re-cut, and the legacy layout is a first-class resume target: a
+# unit that already has a feature/GH-N worktree or branch keeps it, or one
+# unit's work splits across two heads. Git is touched only when there is no
+# checkout to resume — an existing worktree needs no decision at all.
+branch_exists() {
+  git -C "$REPO_ROOT" show-ref -q --verify "refs/heads/$1" \
+    || git -C "$REPO_ROOT" show-ref -q --verify "refs/remotes/origin/$1"
+}
 WT="$REPO_ROOT/.claude/worktrees/$WT_LEAF"
-if [ ! -d "$WT" ]; then
+LEGACY_WT="$REPO_ROOT/.claude/worktrees/GH-$NEXT"
+if [ ! -d "$WT" ] && [ -d "$LEGACY_WT" ]; then
+  WT="$LEGACY_WT"
+  BRANCH="$LEGACY_BRANCH"
+elif [ ! -d "$WT" ]; then
+  git -C "$REPO_ROOT" fetch -q origin main
+  if ! branch_exists "$BRANCH" && branch_exists "$LEGACY_BRANCH"; then
+    BRANCH="$LEGACY_BRANCH"
+    WT="$LEGACY_WT"
+  fi
   git -C "$REPO_ROOT" worktree add -q -b "$BRANCH" "$WT" origin/main 2>/dev/null \
     || git -C "$REPO_ROOT" worktree add -q "$WT" "$BRANCH"
 fi
