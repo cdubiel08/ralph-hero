@@ -321,10 +321,26 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
 | (($pr.comments // [])
    | map(select(.body | contains($marker)))
    | last | (.body // "")
-   | (try (split("```json") | .[1] | split("```") | .[0] | fromjson | .head_sha)
-      catch null) // "")                                as $attested_sha
-| (($attested_sha != "") and ($attested_sha == ($pr.headRefOid // "")))
-                                                        as $attested_current
+   | (try (split("```json") | .[1] | split("```") | .[0] | fromjson)
+      catch null))                                      as $att_json
+| (($att_json.head_sha // ""))                          as $attested_sha
+# The WHOLE payload, not just the sha. Gate 4 re-reads the live comment and
+# checks three things, and an edit can preserve head_sha while breaking either
+# of the others — so a sha-only check calls a rejected attestation valid and
+# ends --watch on a merge that fails immediately (codex P2, PR #1764).
+# Mirrors merge-pr.sh:323-335 term for term, including `tests` being non-empty
+# (an attestation with no test evidence is not evidence) and the verdict being
+# exactly APPROVED (an honest REJECTED is evidence AGAINST merging, so
+# presence alone must not satisfy it).
+| ((($att_json.tests // []) | (length > 0) and all(.exit_code == 0))) as $att_tests_ok
+| (($att_json.review.verdict // ""))                    as $att_verdict
+| (($attested_sha != "") and ($attested_sha == ($pr.headRefOid // ""))
+   and $att_tests_ok and ($att_verdict == "APPROVED"))   as $attested_current
+# Attested at this head but otherwise invalid: worth naming precisely, because
+# "re-attest" and "your attestation records a failing test" are different jobs.
+| (($attested_sha != "") and ($attested_sha == ($pr.headRefOid // ""))
+   and (($att_tests_ok | not) or ($att_verdict != "APPROVED")))
+                                                        as $att_invalid_here
 
 | if $policy_error != "" then
     "GATE-FAIL policy: \($policy_error)"
@@ -403,6 +419,8 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
   # comment falls outside the window `gh pr view --json comments` returns, the
   # verdict degrades to GATE-YOURS attestation, and re-attesting is idempotent
   # because attest-pr.sh updates its existing comment.
+  elif $attest_required and $att_invalid_here then
+    "GATE-YOURS attestation: the attestation at \($head[0:8]) is invalid (\(if ($att_tests_ok | not) then "tests[] is empty or records a non-zero exit_code" else "review verdict \($att_verdict | tojson) is not APPROVED" end)) — gate 4 re-reads this live and rejects it; re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\""
   elif $attest_required and ($attested_current | not) then
     "GATE-YOURS attestation: \($attest) is green but no valid attestation is visible at \($head[0:8]) — re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --carry-review"
   elif ($pr.mergeable // "") == "UNKNOWN" then

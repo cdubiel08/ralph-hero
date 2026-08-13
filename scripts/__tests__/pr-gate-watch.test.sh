@@ -101,12 +101,26 @@ jq '.external_review |= del(.clean_comment_marker)' "$POLICY_COMMENT" >"$POLICY_
 POLICY_BROKEN="$TMP_ROOT/policy-broken.json"
 printf '{ "version": 1, "external_review": {' >"$POLICY_BROKEN"
 
-# attestation_comment <head-sha> -> the comment shape attest-pr.sh posts: the
-# v1 marker plus a fenced JSON block carrying head_sha.
+# attestation_comment <head-sha> [tests-exit] [verdict] -> the comment shape
+# attest-pr.sh posts. It carries the COMPLETE payload gate 4 validates, not
+# just head_sha: a non-empty tests[] with exit_code 0 and an APPROVED review
+# verdict. An edit can preserve the sha while breaking either of the others,
+# which is why the fixture has to be able to express that.
 attestation_comment() {
+  jq -n --arg sha "$1" --argjson exit "${2:-0}" --arg verdict "${3-APPROVED}" '
+    {body: ("<!-- ralph-attestation:v1 -->\n## Merge Attestation\n\n```json\n"
+      + ({version: 1, head_sha: $sha,
+          tests: [{cmd: "bash scripts/__tests__/pr-gate-watch.test.sh", exit_code: $exit}],
+          review: {verdict: $verdict, reviewer: "chatgpt-codex-connector[bot]"}} | tojson)
+      + "\n```\n")}'
+}
+# The same comment with an EMPTY tests[] — an attestation with no test
+# evidence is not evidence, and gate 4 says so.
+attestation_comment_no_tests() {
   jq -n --arg sha "$1" '
     {body: ("<!-- ralph-attestation:v1 -->\n## Merge Attestation\n\n```json\n"
-      + ({version: 1, head_sha: $sha} | tojson)
+      + ({version: 1, head_sha: $sha, tests: [],
+          review: {verdict: "APPROVED"}} | tojson)
       + "\n```\n")}'
 }
 
@@ -986,6 +1000,62 @@ if [[ ! -f "$TMP_ROOT/ran" ]]; then
 else
   fail "gate 6 ran on a non-READY verdict"
 fi
+
+echo "=== P2/15: the WHOLE live attestation payload is validated ==="
+# head_sha alone is not the gate. An edit can preserve the sha while turning
+# tests[] empty, flipping an exit_code non-zero, or downgrading the verdict —
+# and gate 4 re-reads all three from the live comment (merge-pr.sh:323-335).
+# A sha-only check calls a rejected attestation valid and ends --watch on a
+# merge that fails immediately.
+POLICY="$POLICY_REVIEW"
+ATT_READY_CHECKS=$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')
+
+D="$TMP_ROOT/att-nonzero-exit"
+scenario "$D" "$ATT_READY_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA" 1)]")" "$APPROVAL"
+expect "a recorded non-zero exit_code is not a valid attestation" "$D" "GATE-YOURS attestation" 0
+run "$D"
+if [[ "$LAST_OUT" == *"non-zero exit_code"* ]] && [[ "$LAST_OUT" == *"gate 4 re-reads this live"* ]]; then
+  pass "names which part of the payload is invalid, not just that it is"
+else
+  fail "invalid-attestation message (out=${LAST_OUT:0:200})"
+fi
+
+D="$TMP_ROOT/att-empty-tests"
+scenario "$D" "$ATT_READY_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment_no_tests "$HEAD_SHA")]")" "$APPROVAL"
+expect "an empty tests[] is not test evidence" "$D" "GATE-YOURS attestation" 0
+
+D="$TMP_ROOT/att-verdict-rejected"
+scenario "$D" "$ATT_READY_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA" 0 REJECTED)]")" "$APPROVAL"
+expect "a non-APPROVED verdict is evidence AGAINST merging" "$D" "GATE-YOURS attestation" 0
+run "$D"
+if [[ "$LAST_OUT" == *"REJECTED"* ]] && [[ "$LAST_OUT" == *"not APPROVED"* ]]; then
+  pass "quotes the actual verdict back rather than calling it merely absent"
+else
+  fail "verdict message (out=${LAST_OUT:0:200})"
+fi
+
+D="$TMP_ROOT/att-verdict-empty"
+scenario "$D" "$ATT_READY_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA" 0 "")]")" "$APPROVAL"
+expect "a missing verdict is not an approval either" "$D" "GATE-YOURS attestation" 0
+
+# The complete, valid payload still reaches READY — so the cases above are a
+# real difference and not a fixture that stopped passing for another reason.
+D="$TMP_ROOT/att-fully-valid"
+scenario "$D" "$ATT_READY_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+expect "a complete valid attestation is READY" "$D" "GATE-READY" 0
+
+# And a waived policy does not acquire the payload requirement.
+POLICY="$POLICY_NOATT"
+D="$TMP_ROOT/att-invalid-waived"
+scenario "$D" "$ATT_READY_CHECKS" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA" 1)]")" "$APPROVAL"
+expect "attestation not required: an invalid payload is not our problem" "$D" "GATE-READY" 0
+POLICY="$POLICY_REVIEW"
 
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
