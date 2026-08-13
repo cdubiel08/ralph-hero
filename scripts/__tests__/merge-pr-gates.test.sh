@@ -58,8 +58,12 @@ case "${1:-} ${2:-}" in
     ;;
   "api user") if [[ -n "$jq_expr" ]]; then echo "testuser"; else echo '{"login":"testuser"}'; fi ;;
   "api repos/"*)
-    # Gate 5 reads reviews via REST (needs .commit_id, which `gh pr view` omits).
-    reviews_file="$GH_STUB_DIR/pr_reviews.json"
+    # Gate 5 accepts either REST reviews or clean-result issue comments.
+    if [[ "$2" == */issues/*/comments ]]; then
+      reviews_file="$GH_STUB_DIR/issue_comments.json"
+    else
+      reviews_file="$GH_STUB_DIR/pr_reviews.json"
+    fi
     [[ -f "$reviews_file" ]] || echo '[]' >"$reviews_file"
     if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$reviews_file"; else cat "$reviews_file"; fi
     ;;
@@ -79,7 +83,7 @@ cat >"$POLICY" <<'EOF'
 {
   "version": 1,
   "attestation": { "required": true },
-  "external_review": { "required": true, "bot": "coderabbitai" },
+  "external_review": { "required": true, "bot": "chatgpt-codex-connector[bot]", "trigger": "@codex review" },
   "exempt_authors": ["dependabot[bot]", "app/dependabot", "github-actions[bot]"]
 }
 EOF
@@ -102,6 +106,7 @@ good_attestation_body() { # good_attestation_body <head_sha> [tests_exit] [verdi
 write_pr_view() {
   local dir="$1" decision="$2" mergeable="$3" author="$4" att="$5" reviews="$6" extra="${7:-}"
   echo "$reviews" >"$dir/pr_reviews.json"
+  echo '[]' >"$dir/issue_comments.json"
   local comments='[]'
   if [[ -n "$att" ]]; then
     comments=$(jq -n --arg b "$att" '[{body: $b}]')
@@ -121,15 +126,15 @@ write_pr_view() {
 
 GREEN_CHECKS='[{"name":"test-hooks","bucket":"pass"},{"name":"lint","bucket":"skipping"}]'
 # Gate 5 is head-bound: a review only counts at the CURRENT head sha.
-CODERABBIT_REVIEWS=$(jq -nc --arg sha "$SHA" \
-  '[{user: {login: "coderabbitai[bot]"}, state: "APPROVED", commit_id: $sha}]')
-STALE_REVIEWS=$(jq -nc '[{user: {login: "coderabbitai[bot]"}, state: "APPROVED",
+CODEX_REVIEWS=$(jq -nc --arg sha "$SHA" \
+  '[{user: {login: "chatgpt-codex-connector[bot]"}, state: "APPROVED", commit_id: $sha}]')
+STALE_REVIEWS=$(jq -nc '[{user: {login: "chatgpt-codex-connector[bot]"}, state: "APPROVED",
   commit_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]')
 DISMISSED_REVIEWS=$(jq -nc --arg sha "$SHA" \
-  '[{user: {login: "coderabbitai[bot]"}, state: "DISMISSED", commit_id: $sha}]')
+  '[{user: {login: "chatgpt-codex-connector[bot]"}, state: "DISMISSED", commit_id: $sha}]')
 # A rate-limited reviewer publishes bucket=pass with a truthful DESCRIPTION.
 RATE_LIMITED_CHECKS='[{"name":"test-hooks","bucket":"pass","description":""},
-  {"name":"CodeRabbit","bucket":"pass","description":"Review rate limited"}]'
+  {"name":"Codex","bucket":"pass","description":"Review rate limited"}]'
 
 expect_out() { # expect_out <desc> <grep-pattern>
   if grep -qF "$2" <<<"$LAST_OUT"; then pass "$1"; else fail "$1 — missing '$2' in: $LAST_OUT"; fi
@@ -174,7 +179,7 @@ echo "=== merge-pr.sh verification gates ==="
 
 # 1. Fully green: attested, external review present, checks pass
 setup_green() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
 }
 run_case "green path merges" 0 "$POLICY" setup_green
@@ -183,7 +188,7 @@ expect_merged "green path"
 
 # 2. CHANGES_REQUESTED blocks, even with --force
 setup_cr() {
-  write_pr_view "$1" "CHANGES_REQUESTED" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "CHANGES_REQUESTED" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
 }
 run_case "CHANGES_REQUESTED blocks" 1 "$POLICY" setup_cr
@@ -194,7 +199,7 @@ expect_not_merged "CHANGES_REQUESTED + force"
 
 # 3. Pending check is PENDING (75), not FAIL — still building is not red.
 setup_pending() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   echo '[{"name":"build","bucket":"pending"}]' >"$1/pr_checks.json"
 }
 run_case "pending checks are retry-able, not failure" 75 "$POLICY" setup_pending
@@ -208,7 +213,7 @@ expect_merged "--force pending checks"
 
 # 4. Failing check blocks and is named
 setup_failing() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   echo '[{"name":"test-hooks","bucket":"fail"},{"name":"lint","bucket":"pass"}]' >"$1/pr_checks.json"
 }
 run_case "failing check blocks" 1 "$POLICY" setup_failing
@@ -216,14 +221,14 @@ expect_out "failing check named" "test-hooks=fail"
 
 # 5. ralph-attestation status context is excluded from gate 3
 setup_att_ctx() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   echo '[{"name":"test-hooks","bucket":"pass"},{"name":"ralph-attestation","bucket":"pending"}]' >"$1/pr_checks.json"
 }
 run_case "ralph-attestation context excluded from checks gate" 0 "$POLICY" setup_att_ctx
 
 # 6. Missing attestation blocks
 setup_no_att() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "" "$CODEX_REVIEWS"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
 }
 run_case "missing attestation blocks" 1 "$POLICY" setup_no_att
@@ -231,7 +236,7 @@ expect_out "attestation gate named" "MERGE GATE FAIL — attestation"
 
 # 7. head_sha mismatch blocks (attest-then-push laundering)
 setup_stale_att() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")" "$CODEX_REVIEWS"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
 }
 run_case "stale attestation (head_sha mismatch) blocks" 1 "$POLICY" setup_stale_att
@@ -239,7 +244,7 @@ expect_out "mismatch tells re-attest" "re-attest after the latest push"
 
 # 8. Non-zero test exit in attestation blocks
 setup_bad_tests() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA" 1)" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA" 1)" "$CODEX_REVIEWS"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
 }
 run_case "failing test evidence blocks" 1 "$POLICY" setup_bad_tests
@@ -253,8 +258,30 @@ setup_no_ext() {
 }
 run_case "missing external review is retry-able, not failure" 75 "$POLICY" setup_no_ext
 expect_out "external gate emits PENDING" "MERGE GATE PENDING — external-review"
-expect_out "external gate names the trigger" "@coderabbitai review"
+expect_out "external gate names the trigger" "@codex review"
 expect_not_merged "missing external review"
+
+# A clean Codex result is an issue comment rather than a GitHub review object.
+setup_clean_ext() {
+  setup_no_ext "$1"
+  jq -n --arg sha "${SHA:0:7}" \
+    '[{user:{login:"chatgpt-codex-connector[bot]"}, body:("Reviewed commit " + $sha + ": no findings.")}]' \
+    >"$1/issue_comments.json"
+}
+run_case "clean bot comment at current head satisfies gate 5" 0 "$POLICY" setup_clean_ext
+expect_merged "clean external-review comment"
+
+setup_stale_clean_ext() {
+  setup_no_ext "$1"
+  echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"body":"Reviewed commit bbbbbbb: no findings."}]' >"$1/issue_comments.json"
+}
+run_case "clean bot comment for stale head does not satisfy gate 5" 75 "$POLICY" setup_stale_clean_ext
+
+setup_spoofed_clean_ext() {
+  setup_no_ext "$1"
+  jq -n --arg sha "${SHA:0:7}" '[{user:{login:"cdubiel08"}, body:("Reviewed commit " + $sha)}]' >"$1/issue_comments.json"
+}
+run_case "clean comment from wrong identity does not satisfy gate 5" 75 "$POLICY" setup_spoofed_clean_ext
 
 # 9a-bis. The SAME fixture under `external_review.required: false` — the branch
 #         a repo without a review bot actually runs on (GH-1831). Every other
@@ -267,7 +294,7 @@ cat >"$POLICY_NO_EXT" <<'EOF'
 {
   "version": 1,
   "attestation": { "required": true },
-  "external_review": { "required": false, "bot": "coderabbitai" },
+  "external_review": { "required": false, "bot": "chatgpt-codex-connector[bot]", "trigger": "@codex review" },
   "exempt_authors": ["dependabot[bot]", "app/dependabot", "github-actions[bot]"]
 }
 EOF
@@ -277,7 +304,7 @@ expect_absent() { # expect_absent <desc> <grep-pattern>
 run_case "external_review.required=false: no review is not a gate" 0 "$POLICY_NO_EXT" setup_no_ext
 expect_out "no-external policy still reaches PASS" "MERGE GATE PASS"
 expect_absent "no-external policy emits no external-review token" "external-review"
-expect_absent "no-external policy does not name the bot trigger" "@coderabbitai review"
+expect_absent "no-external policy does not name the bot trigger" "@codex review"
 expect_merged "external_review.required=false"
 
 # 9b. A review of an EARLIER sha does not count (the stale-review hole that
@@ -306,7 +333,7 @@ setup_rate_limited() {
 }
 run_case "rate-limited external reviewer is PENDING" 75 "$POLICY" setup_rate_limited
 expect_out "rate limit named" "rate-limited"
-expect_out "rate limit cites the check" "CodeRabbit"
+expect_out "rate limit cites the check" "Codex"
 expect_not_merged "rate-limited reviewer"
 
 # 9f. A passing reviewer check must NOT be read as a review — state lies.
@@ -376,7 +403,7 @@ expect_not_merged "--force without reason"
 
 # 14. Zero checks → warn + continue
 setup_no_checks() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   echo '[]' >"$1/pr_checks.json"
 }
 run_case "zero checks warns but continues" 0 "$POLICY" setup_no_checks
@@ -396,7 +423,7 @@ run_case "no policy file: red CI still blocks" 1 "" setup_no_policy_red
 
 # 16. CONFLICTING blocks even with --force
 setup_conflicting() {
-  write_pr_view "$1" "" "CONFLICTING" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "CONFLICTING" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
 }
 run_case "CONFLICTING blocks" 1 "$POLICY" setup_conflicting
@@ -405,7 +432,7 @@ expect_not_merged "CONFLICTING + force"
 
 # 17. Non-APPROVED attestation verdict blocks (CodeRabbit, PR #1602)
 setup_rejected() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA" 0 "REJECTED")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA" 0 "REJECTED")" "$CODEX_REVIEWS"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
 }
 run_case "REJECTED attestation verdict blocks" 1 "$POLICY" setup_rejected
@@ -450,7 +477,7 @@ expect_out "genuine failure names the state" "MERGE FAILED"
 #     inside a worktree is that worktree — so cleanup used to be a no-op in
 #     the worktree-per-job flow).
 setup_wt() { # setup_wt <dir> — caller sets $WT_ROOT and the branch
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   jq --arg b "$WT_BRANCH" '.headRefName = $b' "$1/pr_view.json" >"$1/pr_view.tmp" \
     && mv "$1/pr_view.tmp" "$1/pr_view.json"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
@@ -501,7 +528,7 @@ mkdir -p "$TREPO/sub" "$TREPO/worktrees/some-task" "$TMP_ROOT/worktrees/some-tas
 git -C "$TREPO" init -q 2>/dev/null
 
 setup_subdir() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   jq '.headRefName = "claude/some-task"' "$1/pr_view.json" >"$1/pr_view.tmp" \
     && mv "$1/pr_view.tmp" "$1/pr_view.json"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
@@ -645,7 +672,7 @@ APPLY_KEYWORDS_STUB=""
 # D8.3 the sanctioned divergence: UNKNOWN mergeability → PENDING — mergeable,
 # single attempt (exactly one `pr view` in the log — no retry re-query).
 setup_unknown() {
-  write_pr_view "$1" "" "UNKNOWN" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  write_pr_view "$1" "" "UNKNOWN" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
 }
 run_case "dry-run: UNKNOWN mergeability maps to PENDING — mergeable" 75 "$POLICY" setup_unknown --dry-run

@@ -22,9 +22,10 @@
 #   4. Attestation comment (<!-- ralph-attestation:v1 -->) present, JSON-valid,
 #      head_sha == current PR head, non-empty tests[] all exit_code 0, review
 #      verdict present. Skipped for policy-exempt authors (bots).
-#   5. External review by the policy bot (default coderabbitai) exists AT THE
-#      CURRENT HEAD (review.commit_id == head_sha), excluding DISMISSED — the
-#      same head-binding the attestation gate uses. No review at this head is
+#   5. External review evidence by the policy bot exists AT THE CURRENT HEAD:
+#      either a non-DISMISSED review object whose commit_id == head_sha, or a
+#      bot-authored issue comment containing "Reviewed commit <short-sha>".
+#      No evidence at this head is
 #      PENDING (exit 75), never FAIL: gate 1 already caught CHANGES_REQUESTED,
 #      so its absence is "not yet", not "no". Skipped for exempt authors.
 #   6. Apply-keyword hygiene (scripts/apply-keywords.sh, GH-1694): no closing
@@ -161,7 +162,8 @@ soft_gate() { # soft_gate <gate> <detail> — blocks unless --force
 # ---------------------------------------------------------------------------
 ATTESTATION_REQUIRED="false"
 EXTERNAL_REQUIRED="false"
-EXTERNAL_BOT="coderabbitai"
+EXTERNAL_BOT="chatgpt-codex-connector[bot]"
+EXTERNAL_TRIGGER="@codex review"
 if [[ -f "$POLICY_FILE" ]]; then
   # Fail CLOSED on a malformed policy file — a truncated/corrupt policy must
   # not silently disable the evidence gates (CodeRabbit finding, PR #1602).
@@ -170,7 +172,8 @@ if [[ -f "$POLICY_FILE" ]]; then
   fi
   ATTESTATION_REQUIRED=$(jq -r '.attestation.required // false | tostring' "$POLICY_FILE")
   EXTERNAL_REQUIRED=$(jq -r '.external_review.required // false | tostring' "$POLICY_FILE")
-  EXTERNAL_BOT=$(jq -r '.external_review.bot // "coderabbitai"' "$POLICY_FILE")
+  EXTERNAL_BOT=$(jq -r '.external_review.bot // "chatgpt-codex-connector[bot]"' "$POLICY_FILE")
+  EXTERNAL_TRIGGER=$(jq -r '.external_review.trigger // "@codex review"' "$POLICY_FILE")
 fi
 
 # ---------------------------------------------------------------------------
@@ -327,7 +330,18 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
           | select(.state != "DISMISSED")
           | select(.commit_id == $sha)
         ] | length' 2>/dev/null || echo "0")
-  if [[ "${ext_count:-0}" -eq 0 ]]; then
+  # Codex emits a review object when it finds something. A clean review has no
+  # review object; the connector instead leaves an issue comment naming the
+  # reviewed short SHA. Both shapes must be bot-authored and head-bound.
+  head_short=${head_sha:0:7}
+  ext_comment_count=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate 2>/dev/null \
+    | jq -s --arg bot "$EXTERNAL_BOT" --arg short "$head_short" '
+        def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+        [ add[]?
+          | select(((.user.login // "") | norm) == ($bot | norm))
+          | select((.body // "") | contains("Reviewed commit \($short)"))
+        ] | length' 2>/dev/null || echo "0")
+  if [[ "${ext_count:-0}" -eq 0 && "${ext_comment_count:-0}" -eq 0 ]]; then
     if [[ "$FORCE" == "true" ]]; then
       soft_gate "external-review" "no current $EXTERNAL_BOT review at head ${head_sha:0:8}"
     else
@@ -341,15 +355,15 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
       # review eventually lands, so it would mislabel every later wait; the
       # check is bound to this head and cannot go stale. Matched on the
       # description rather than a hardcoded check name so it stays
-      # bot-agnostic (the check is "CodeRabbit", the login "coderabbitai").
+      # bot-agnostic: check-run names need not equal the configured bot login.
       rl_checks=$(jq -r '
         [.[] | select(((.description // "") | ascii_downcase) | contains("rate limit"))]
         | map(.name) | join(", ")
       ' <<<"$checks_json" 2>/dev/null || echo "")
       if [[ -n "$rl_checks" ]]; then
-        pending "external-review" "$EXTERNAL_BOT is rate-limited and filed no review (per its own '$rl_checks' check) — retry after the window, or comment '@coderabbitai review'"
+        pending "external-review" "$EXTERNAL_BOT is rate-limited and filed no review evidence (per its own '$rl_checks' check) — retry after the window, or comment '$EXTERNAL_TRIGGER'"
       fi
-      pending "external-review" "no $EXTERNAL_BOT review at head ${head_sha:0:8} yet — comment '@coderabbitai review' to trigger one"
+      pending "external-review" "no $EXTERNAL_BOT review evidence at head ${head_sha:0:8} yet — comment '$EXTERNAL_TRIGGER' to trigger one"
     fi
   fi
 fi

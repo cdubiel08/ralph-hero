@@ -36,7 +36,7 @@ Merge exclusively through the host repo's own gate: `bash scripts/merge-pr.sh PR
 - **FAIL — attestation** — re-run the attested commands at the current head via `scripts/attest-pr.sh PR --run "<cmd>" --carry-review` — **contract rules: re-attestation only ever through `--run` (observed exit codes, never caller-typed), and the review verdict only ever carried forward, never authored or retyped**. Commands fail → demotion. Refusals key on their tokens, never the shared exit code: `ATTESTATION REFUSED — head moved` is not a test failure (re-check quiescence, retry once, else exit at In Review); `ATTESTATION REFUSED — no prior review` → Human Needed, never a fresh self-approval.
 - Any unclassified FAIL → Human Needed with the gate output quoted.
 
-Reviewer nudges: at most one `@coderabbitai review` per head SHA; read rate-limiting from the reviewer's check *description*, never its state. Thread replies are evidence-only — commit link, line link, test output link; anything argumentative is a rework signal, not a reply.
+Reviewer nudges: use the merge policy's `external_review.trigger` (currently `@codex review`), at most once per head SHA; never substitute another reviewer's trigger. Read rate-limiting from the reviewer's check *description*, never its state. Thread replies are evidence-only — commit link, line link, test output link; anything argumentative is a rework signal, not a reply.
 
 ## Close-out, demotion, safety rails
 

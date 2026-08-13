@@ -70,7 +70,7 @@ if ! jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
 fi
 attestation_required=$(jq -r '.attestation.required // false | tostring' "$POLICY_FILE")
 external_required=$(jq -r '.external_review.required // false | tostring' "$POLICY_FILE")
-external_bot=$(jq -r '.external_review.bot // "coderabbitai"' "$POLICY_FILE")
+external_bot=$(jq -r '.external_review.bot // "chatgpt-codex-connector[bot]"' "$POLICY_FILE")
 
 if [[ "$attestation_required" != "true" ]]; then
   out success "attestation not required by policy"
@@ -141,7 +141,15 @@ if [[ "$external_required" == "true" ]]; then
           | select(.state != "DISMISSED")
           | select(.commit_id == $sha)
         ] | length' 2>/dev/null || echo "0")
-  if [[ "${ext_count:-0}" -eq 0 ]]; then
+  head_short=${head_sha:0:7}
+  ext_comment_count=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate 2>/dev/null \
+    | jq -s --arg bot "$external_bot" --arg short "$head_short" '
+        def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+        [ add[]?
+          | select(((.user.login // "") | norm) == ($bot | norm))
+          | select((.body // "") | contains("Reviewed commit \($short)"))
+        ] | length' 2>/dev/null || echo "0")
+  if [[ "${ext_count:-0}" -eq 0 && "${ext_comment_count:-0}" -eq 0 ]]; then
     out pending "awaiting external review by $external_bot at ${head_sha:0:8}"
   fi
 fi
