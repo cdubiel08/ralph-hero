@@ -363,20 +363,27 @@ def fenced_json:
 # term could therefore never add anything except the disagreement.
 | (($ext_required | not) or $exempt
    or (if $policy.mode == "comment" then $clean_ok else $review_mode_ok end)) as $review_ok
-# The reviewer handed back for the attest command comes from the evidence the
-# ACTIVE mode accepts, so comment mode never names an approver gate 5 ignored.
+# The evidence the attest command may cite as an APPROVAL — and nothing else.
+# In the ACTIVE mode only: comment mode cites the clean result, review mode
+# cites an APPROVED review object.
+#
+# There is deliberately NO fallback to "the latest review at this head". That
+# fallback existed, and it meant a COMMENTED review — findings, an explicit
+# non-approval — produced `--review-verdict APPROVED` naming its author
+# (codex P1, PR #1764). Combined with the sibling defect below, this script
+# would have handed the caller a command asserting that a review which raised
+# problems had approved the change. attest-pr.sh accepts the string and gate 4
+# only checks a verdict is PRESENT, so nothing downstream would refuse it.
+#
+# An approval is the only thing that can be cited as an approval. Everything
+# else — no evidence, or evidence that is not an approval — takes the
+# --carry-review path, which can only copy a verdict someone really gave.
 | (if $policy.mode == "comment" then
-     (if ($clean_comments | length) > 0 then ($clean_comments | last)
-      else ($at_head | last) end)
+     (if ($clean_comments | length) > 0 then ($clean_comments | last) else null end)
    elif ($approved | length) > 0 then ($approved | last)
-   else ($at_head | last) end)                           as $verdict
-# The review flags for the attest command, built from EVIDENCE. With external
-# review WAIVED (policy off, or an exempt author) there is legitimately no
-# verdict, and pre-filling `--review-verdict APPROVED --reviewer unknown`
-# would be this script telling the caller to type an approval nobody gave.
-# attest-pr.sh accepts those strings and gate 4 only checks that a verdict is
-# PRESENT, so the fabrication would survive to a merge (codex P1, PR #1764).
-# No evidence, no verdict.
+   else null end)                                        as $verdict
+# With external review WAIVED (policy off, or an exempt author) there is
+# legitimately no approval to cite, which is the other way $verdict is null.
 | (if $verdict == null then
      "--carry-review   # no review evidence at this head: carry a real prior verdict, or pass --review-verdict/--reviewer from a review that actually happened"
    else

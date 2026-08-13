@@ -1541,6 +1541,43 @@ else
   fail "real verdict hint (out=${LAST_OUT:0:220})"
 fi
 
+# A COMMENTED review is an explicit NON-approval, and it used to satisfy the
+# "is there a verdict" test via a fallback to the latest review at this head —
+# so the hint said `--review-verdict APPROVED` and named the author of a review
+# that had raised findings (codex P1, PR #1764).
+POLICY="$POLICY_OFF"   # external review waived, so a COMMENTED review is all there is
+D="$TMP_ROOT/commented-not-an-approval-hint"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
+    '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha, html_url:"https://example.test/r/9"}]')"
+expect "a COMMENTED review still leaves attestation as the next step" "$D" "GATE-YOURS attestation" 0
+run "$D"
+if [[ "$LAST_OUT" != *"--review-verdict APPROVED"* ]] && [[ "$LAST_OUT" == *"--carry-review"* ]]; then
+  pass "a COMMENTED review is never cited as an approval"
+else
+  fail "COMMENTED review cited as APPROVED (out=${LAST_OUT:0:230})"
+fi
+if [[ "$LAST_OUT" != *"example.test/r/9"* ]]; then
+  pass "does not name the findings review as the approving reviewer"
+else
+  fail "findings review named as approver (out=${LAST_OUT:0:230})"
+fi
+# In comment mode, only the clean result may be cited — a COMMENTED review
+# there is not evidence at all, and must not become one via the hint.
+POLICY="$POLICY_COMMENT"
+D="$TMP_ROOT/comment-mode-commented-hint"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
+    '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha}]')" \
+  "$(clean_evidence "$HEAD_SHA")"
+run "$D"
+if [[ "$LAST_OUT" != *"--review-verdict APPROVED"* ]] || [[ "$LAST_OUT" == *"$BOT"* ]]; then
+  pass "comment mode cites the clean result, never a findings review"
+else
+  fail "comment-mode hint (out=${LAST_OUT:0:230})"
+fi
+POLICY="$POLICY_REVIEW"
+
 echo "=== P2/31: the comment-mode rate-limit nudge names the marker ==="
 # Gate 5 cannot bind a request that carries only the trigger, so a nudge
 # without the marker is a command the caller can follow and still not merge.
