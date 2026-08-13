@@ -658,6 +658,67 @@ RC=0
 OUT=$(RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
   ANTHROPIC_API_KEY=sk-test bash "$SCRIPTS/work-fleet.sh" </dev/null 2>&1) || RC=$?
 is "work-fleet: billing guard refuses a stray API key (rc 3)" "3" "$RC"
+
+# ═══ 9. work-fleet.sh — an EXPLICIT issue list (GH-1780) ═════════════════════
+# "Run a fleet on THESE issues" is an argument, not a second code path: same
+# cap, same guards, same spawn primitive. The frontier read stops being the
+# candidate source and becomes the eligibility oracle — and an issue it does
+# not admit is SKIPPED with a named reason, never fatal, because a fleet caller
+# must keep going.
+cat >"$FAKE_BOARD_FIXTURES/frontier.json" <<'EOF'
+{"frontier":[{"number":501,"title":"One"},{"number":502,"title":"Two"},{"number":503,"title":"Three"}],
+ "blocked":[{"number":601,"blockers_open":[7,8]},{"number":602,"blockers_open":[],"truncated":true}]}
+EOF
+run_wf 503 501
+is "work-fleet list: exits 0" "0" "$RC"
+is "work-fleet list: spawns exactly the named issues, in the order given" "503 501" \
+  "$(printf '%s\n' "$OUT" | sed -n 's/^DRY RUN — would spawn GH-\([0-9]*\):.*/\1/p' | tr '\n' ' ' | sed 's/ *$//')"
+line_lacks "work-fleet list: a frontier head nobody named is left alone" "$OUT" "GH-502"
+
+: >"$FAKE_HERDR_LOG"
+: >"$FAKE_BOARD_LOG"
+run_wf 601
+is "work-fleet list: a blocked issue is a skip, not a failure" "0" "$RC"
+line_has "work-fleet list: the skip names the open blockers" "$OUT" "SKIP blocked by #7 #8"
+# The whole point of skipping BEFORE the spawn: the herd is never touched and
+# the board is never written — validation is a read.
+is "work-fleet list: a skipped issue reaches herdr not at all" "0" \
+  "$(wc -l <"$FAKE_HERDR_LOG" | tr -d ' ')"
+is "work-fleet list: validation never mutates the board" "0" \
+  "$(log_count "$FAKE_BOARD_LOG" '^\(move\|claim\|answer\) ')"
+
+run_wf 602
+line_has "work-fleet list: a truncated dependency read fails closed, and says so" \
+  "$OUT" "blocked (dependency read truncated"
+
+: >"$FAKE_BOARD_LOG"
+run_wf 999
+is "work-fleet list: an issue the frontier does not carry is a skip" "0" "$RC"
+line_has "work-fleet list: the reason is the board's own view, not a guess" \
+  "$OUT" "not on the frontier — board says: #999 [Backlog]"
+is "work-fleet list: naming it costs exactly one targeted board get" "1" \
+  "$(log_count "$FAKE_BOARD_LOG" '^get 999')"
+
+run_wf 601 501
+is "work-fleet list: one bad issue does not strand the rest (rc 0)" "0" "$RC"
+line_has "work-fleet list: the blocked one is skipped" "$OUT" "SKIP blocked by"
+line_has "work-fleet list: the eligible one still spawns" "$OUT" "would spawn GH-501"
+line_has "work-fleet list: the summary reports the skip" "$OUT" "skipped: GH-601"
+
+run_wf 1 2 3 4 5
+is "work-fleet list: more than the hard cap dies" "1" "$RC"
+line_has "work-fleet list: the refusal names the cap" "$OUT" "hard cap is 4"
+
+run_wf --refill 501
+is "work-fleet list: --refill with an explicit list dies" "1" "$RC"
+line_has "work-fleet list: the refusal explains why refill and a list conflict" \
+  "$OUT" "closed set"
+
+run_wf --help
+is "work-fleet: --help exits 0" "0" "$RC"
+line_has "work-fleet: the capability is discoverable from --help" \
+  "$OUT" "work-fleet.sh [--refill] [ISSUE...]"
+
 rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
 
 echo "1..$n"
