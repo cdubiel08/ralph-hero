@@ -841,6 +841,89 @@ fi
 # never recover on its own. (The arch-swap cases above cover this: they change
 # identity with nothing running and require `npm ci`.)
 
+echo "=== provenance that cannot be verified fails closed ==="
+
+if ! { [ -d /proc ] || command -v lsof >/dev/null 2>&1; }; then
+  echo "  SKIP: no /proc and no lsof"
+else
+  # A tree built on ANOTHER host. Its processes are not in our process table,
+  # so a locally idle directory is not globally idle — the local probe simply
+  # cannot speak for a shared home (codex P2). Nothing is running here, and it
+  # must STILL refuse.
+  root=$(fake_root identity_foreignhost)
+  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+  printf '%s %s\n' "node-darwin-arm64-abi127" "some-other-host" >"$root/.bootstrap-identity"
+  RC=0
+  log="$root/calls.log"; : >"$log"
+  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+    FAKE_NODE_ID="darwin-x64-abi127" \
+    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+  if grep -q 'npm ci' "$log"; then
+    fail "rebuilt a tree built on another host while locally idle — a live remote server would be clobbered" \
+      "$(cat "$log")"
+  else
+    pass "a tree built on another host is never rebuilt from here, idle or not"
+  fi
+  if grep -q 'process table cannot see it' "$root/stderr.log"; then
+    pass "the refusal explains that the other host cannot be probed"
+  else
+    fail "the refusal does not explain the cross-host limitation" "$(cat "$root/stderr.log")"
+  fi
+
+  # Identity metadata missing entirely: provenance is UNKNOWN, not "ours". A
+  # deleted or never-written identity file used to skip the guard completely.
+  root=$(fake_root identity_missing)
+  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+  rm -f "$root/.bootstrap-identity"
+  rm -f "$root/.bootstrap-complete"          # force the rebuild path
+  ( cd "$root" && exec sleep 60 ) &
+  miss_pid=$!
+  sleep 0.3
+  RC=0
+  log="$root/calls.log"; : >"$log"
+  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+  kill "$miss_pid" 2>/dev/null || true
+  if grep -q 'npm ci' "$log"; then
+    fail "rebuilt a tree of unknown provenance with a live process in it" "$(cat "$log")"
+  else
+    pass "a tree with no identity record is not rebuilt while in use"
+  fi
+  if grep -q 'no identity record' "$root/stderr.log"; then
+    pass "the refusal names unknown provenance as the reason"
+  else
+    fail "the refusal does not mention the missing identity" "$(cat "$root/stderr.log")"
+  fi
+
+  # ...but an IDLE tree of unknown provenance must still rebuild, or every
+  # upgrade from a launcher version that wrote no identity would be stuck.
+  root=$(fake_root identity_missing_idle)
+  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+  rm -f "$root/.bootstrap-identity" "$root/.bootstrap-complete"
+  log=$(run_launcher "$root")
+  if grep -q 'npm ci' "$log"; then
+    pass "an idle tree of unknown provenance still rebuilds (upgrades are not blocked)"
+  else
+    fail "an idle tree could not be rebuilt — upgrades from an older launcher would wedge" \
+      "$(cat "$root/stderr.log")"
+  fi
+fi
+
+# The identity must be published BEFORE the completion marker, or a tree can
+# survive looking complete while carrying no provenance at all — which is the
+# state the guard above has to treat as unknown.
+# Match the WRITE, not the `rm -f "$MARKER" "$IDENTITY_FILE"` line — anchoring
+# on the bare name matched that instead, which made this assertion vacuous
+# (a deliberate swap did not fail it).
+id_line=$(grep -n '>"\$IDENTITY_FILE"' "$SRC" | head -1 | cut -d: -f1)
+marker_line=$(grep -n 'fingerprint >"\$MARKER"' "$SRC" | head -1 | cut -d: -f1)
+if [ -n "$id_line" ] && [ -n "$marker_line" ] && [ "$id_line" -lt "$marker_line" ]; then
+  pass "the identity record is written before the completion marker"
+else
+  fail "the marker is written before the identity — a complete tree could carry no provenance" \
+    "identity_line=${id_line:-none} marker_line=${marker_line:-none}"
+fi
+
 echo "=== waiters leave as soon as the tree is complete ==="
 
 # Losers used to keep polling after the winner finished, each waking on its own

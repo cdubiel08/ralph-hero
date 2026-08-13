@@ -254,8 +254,16 @@ run_bootstrap() {
   if [ -d node_modules/onnxruntime-web ]; then
     find node_modules/onnxruntime-web -name '*.wasm' -delete
   fi
+  # Identity BEFORE the marker (codex P2, PR #1755). The marker is the
+  # completion signal, so anything that survives with a marker must already
+  # carry its provenance — publishing them the other way round leaves a window
+  # where a complete-looking tree has no identity at all.
+  # The HOST is recorded too: a local /proc/lsof probe can only speak for this
+  # machine, so a tree built elsewhere on a shared home must not be judged idle
+  # from here.
+  printf '%s %s\n' "$(node_compat_boundary 2>/dev/null || echo unknown)" "$THIS_HOST" \
+    >"$IDENTITY_FILE" 2>/dev/null || true
   fingerprint >"$MARKER"
-  node_compat_boundary >"$IDENTITY_FILE" 2>/dev/null || true
   echo "[ralph-knowledge] bootstrap complete."
 }
 
@@ -363,19 +371,56 @@ if bootstrap_needed; then
       # Unknown must not read as "safe": on a host where neither /proc nor
       # lsof can answer, we cannot prove the tree is idle, so a cross-identity
       # rebuild is refused there too and the operator is told why.
-      built_identity=$(cat "$IDENTITY_FILE" 2>/dev/null || echo "")
+      built_line=$(cat "$IDENTITY_FILE" 2>/dev/null || echo "")
+      built_identity=$(printf '%s' "$built_line" | cut -d' ' -f1)
+      built_host=$(printf '%s' "$built_line" | cut -d' ' -f2)
       this_identity=$(node_compat_boundary 2>/dev/null || echo "")
-      if [ -n "$built_identity" ] && [ -n "$this_identity" ] \
-        && [ "$built_identity" != "$this_identity" ]; then
-        if ! dir_use_probe_available || dir_in_use "$PLUGIN_ROOT"; then
-          echo "[ralph-knowledge] refusing to rebuild: this tree was built for '$built_identity'" >&2
-          echo "[ralph-knowledge] and this session is '$this_identity'. Rebuilding would replace" >&2
-          echo "[ralph-knowledge] node_modules underneath any session still serving from it." >&2
-          if dir_use_probe_available; then
-            echo "[ralph-knowledge] a process is currently running in $PLUGIN_ROOT." >&2
-          else
-            echo "[ralph-knowledge] (this host cannot be probed for running processes)" >&2
-          fi
+
+      # Is there an existing built tree whose provenance we must respect? A
+      # genuinely empty root has nothing to protect.
+      guard_needed=false
+      guard_why=""
+      if [ -f "$MARKER" ] || [ -d node_modules ]; then
+        if [ -z "$built_identity" ]; then
+          # Missing identity metadata is UNKNOWN, not "ours" (codex P2, PR
+          # #1755). A deleted or never-written identity file previously skipped
+          # this guard entirely and let the rebuild proceed over a live server.
+          guard_needed=true
+          guard_why="this tree carries no identity record, so its provenance is unknown"
+        elif [ "$built_identity" != "$this_identity" ]; then
+          guard_needed=true
+          guard_why="this tree was built for '$built_identity' and this session is '$this_identity'"
+        fi
+      fi
+
+      if [ "$guard_needed" = true ]; then
+        refuse=""
+        if [ -n "$built_host" ] && [ "$built_host" != "$THIS_HOST" ]; then
+          # A shared home reached from two machines. The other host's processes
+          # are not in our process table, so a locally idle directory is NOT
+          # globally idle (codex P2, PR #1755) — and there is no cross-host
+          # signal to consult. Refuse rather than treat unprovable as safe.
+          refuse="it was built on host '$built_host' and this is '$THIS_HOST', whose process table cannot see it"
+        elif dir_use_probe_available && dir_in_use "$PLUGIN_ROOT"; then
+          refuse="a process is currently running in $PLUGIN_ROOT"
+        elif ! dir_use_probe_available && [ -n "$built_identity" ]; then
+          # Two runtimes are positively indicated and we cannot check for a
+          # live server, so this refuses. The missing-identity case below is
+          # NOT treated this harshly on purpose: a tree written by an older
+          # launcher carries no identity at all, so refusing there would block
+          # every ordinary upgrade on a host without /proc or lsof. That case
+          # probes when it can, and says so plainly when it cannot.
+          refuse="this host cannot be probed for running processes"
+        elif ! dir_use_probe_available; then
+          echo "[ralph-knowledge] note: rebuilding a tree of unknown provenance, and this host" >&2
+          echo "[ralph-knowledge] cannot be probed for running processes. Close other sessions" >&2
+          echo "[ralph-knowledge] using this plugin root if any are open." >&2
+        fi
+
+        if [ -n "$refuse" ]; then
+          echo "[ralph-knowledge] refusing to rebuild: $guard_why." >&2
+          echo "[ralph-knowledge] Rebuilding would replace node_modules underneath any session" >&2
+          echo "[ralph-knowledge] still serving from it, and $refuse." >&2
           # Deleting node_modules is NOT an alternative to closing sessions
           # (codex P2, PR #1755) — it destroys exactly the tree the guard just
           # refused to disrupt. It is only safe once nothing is serving from
