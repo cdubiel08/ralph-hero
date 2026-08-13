@@ -122,6 +122,10 @@ pr_state() {
 
 OPEN_PR=$(pr_state OPEN "")
 APPROVED_PR=$(pr_state OPEN APPROVED)
+# A green ralph-attestation status is a claim about the past; readiness also
+# needs the attestation COMMENT to still be there at this head. This is the
+# realistic paired state, and the fixture for every GATE-READY expectation.
+ATTESTED_PR=$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")
 NO_REVIEWS='[]'
 # Head-bound and authored by the POLICY reviewer — the only shape gate 5
 # accepts in review mode, and therefore the only shape that may be read here
@@ -293,7 +297,7 @@ expect "GATE-FAIL on live CHANGES_REQUESTED" "$D" "GATE-FAIL review" 0
 echo "=== ready and done ==="
 D="$TMP_ROOT/ready"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
-  "$APPROVED_PR" "$APPROVAL"
+  "$ATTESTED_PR" "$APPROVAL"
 expect "GATE-READY when green, reviewed and attested" "$D" "GATE-READY" 0
 run "$D"
 if [[ "$LAST_OUT" == *"merge-pr.sh 1740"* ]]; then
@@ -574,7 +578,7 @@ fi
 # verdict here would end the watch on an answer that has not arrived.
 D="$TMP_ROOT/mergeable-unknown"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
-  "$(pr_state OPEN APPROVED '[]' cdubiel08 UNKNOWN)" "$APPROVAL"
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]" cdubiel08 UNKNOWN)" "$APPROVAL"
 expect "uncomputed mergeability keeps the watch alive" "$D" "GATE-WAIT merge" 10
 
 # A conflict is worth reporting even before the review/attestation questions:
@@ -644,7 +648,7 @@ echo "=== P2/7: no external review required means none is waited for ==="
 POLICY="$TMP_ROOT/policy-absent.json"
 D="$TMP_ROOT/no-policy-no-reviews"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
-  "$OPEN_PR" "$NO_REVIEWS"
+  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$NO_REVIEWS"
 expect "no policy file + zero reviews is READY, not a wait" "$D" "GATE-READY" 0
 POLICY_OFF="$TMP_ROOT/policy-ext-off.json"
 jq '.external_review.required = false' "$POLICY_REVIEW" >"$POLICY_OFF"
@@ -879,6 +883,108 @@ if [[ "$mode" == "100755" ]] && [[ -x "$HOOKS_DIR/funnel-gate-watch.sh" ]]; then
   pass "funnel-gate-watch.sh is committed executable, like its siblings"
 else
   fail "funnel-gate-watch.sh mode is ${mode:-unknown} (needs 100755)"
+fi
+
+echo "=== P2/13: a green attestation STATUS is not live evidence ==="
+# The status is computed once and published. If the comment it was computed
+# from is then deleted, edited into invalidity, or belongs to an older head,
+# gate 4 re-reads the live comment and rejects — so readiness may not rest on
+# the status alone. Distinct from the missing-status case: here the status
+# exists and is green.
+POLICY="$POLICY_REVIEW"
+D="$TMP_ROOT/att-green-comment-gone"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$APPROVED_PR" "$APPROVAL"
+expect "green status with the attestation comment gone is not READY" "$D" "GATE-YOURS attestation" 0
+run "$D"
+if [[ "$LAST_OUT" == *"--carry-review"* ]]; then
+  pass "names --carry-review, so re-attesting does not retype an unearned verdict"
+else
+  fail "re-attest remedy (out=${LAST_OUT:0:170})"
+fi
+
+# Same, with the comment present but bound to an older head.
+D="$TMP_ROOT/att-green-comment-stale"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN APPROVED "[$(attestation_comment "$OLD_SHA")]")" "$APPROVAL"
+expect "green status with a stale attestation comment is not READY" "$D" "GATE-YOURS attestation" 0
+
+# Malformed live evidence must not read as valid either.
+D="$TMP_ROOT/att-green-comment-garbage"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(pr_state OPEN APPROVED '[{"body":"<!-- ralph-attestation:v1 -->\nno json fence"}]')" "$APPROVAL"
+expect "green status with an unparseable attestation comment is not READY" "$D" "GATE-YOURS attestation" 0
+
+# And a waived policy does not acquire the new requirement.
+POLICY="$POLICY_NOATT"
+expect "attestation not required: live evidence is not demanded" "$D" "GATE-READY" 0
+POLICY="$POLICY_REVIEW"
+
+echo "=== P2/14: gate 6 is RUN before recommending the merge ==="
+# The one gate with no status to read: a label added after
+# ralph-apply-keywords was computed leaves the status green while
+# apply-keywords.sh, run live, rejects the closing keyword. So the READY path
+# runs the same checker merge-pr.sh runs instead of predicting it.
+FAKE_APPLY="$TMP_ROOT/apply-keywords-fail.sh"
+cat >"$FAKE_APPLY" <<'AK'
+#!/usr/bin/env bash
+echo "APPLY KEYWORDS FAIL — PR closes apply unit #1763 (ralph:apply)"
+exit 1
+AK
+chmod +x "$FAKE_APPLY"
+D="$TMP_ROOT/ready"
+set +e
+LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  RALPH_APPLY_KEYWORDS_SH="$FAKE_APPLY" bash "$SCRIPT" 1740 2>&1)
+LAST_RC=$?
+set -e
+if [[ "$LAST_OUT" == "GATE-FAIL apply"* ]] && [[ "$LAST_OUT" == *"#1763"* ]] && [ "$LAST_RC" -eq 0 ]; then
+  pass "a live gate-6 rejection turns READY into GATE-FAIL apply, naming the checker's reason"
+else
+  fail "gate 6 live run (rc=$LAST_RC out=${LAST_OUT:0:170})"
+fi
+
+# A passing checker leaves READY alone...
+FAKE_APPLY_OK="$TMP_ROOT/apply-keywords-ok.sh"
+printf '#!/usr/bin/env bash\necho "APPLY KEYWORDS INERT — no apply block"\nexit 0\n' >"$FAKE_APPLY_OK"
+chmod +x "$FAKE_APPLY_OK"
+set +e
+LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  RALPH_APPLY_KEYWORDS_SH="$FAKE_APPLY_OK" bash "$SCRIPT" 1740 2>&1)
+LAST_RC=$?
+set -e
+if [[ "$LAST_OUT" == "GATE-READY"* ]] && [ "$LAST_RC" -eq 0 ]; then
+  pass "a passing/inert checker leaves GATE-READY intact"
+else
+  fail "gate 6 pass (rc=$LAST_RC out=${LAST_OUT:0:140})"
+fi
+
+# ...and a repo that does not ship the checker at all is unaffected, which is
+# what keeps this inert for host repos vendoring the gate without it.
+set +e
+LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  RALPH_APPLY_KEYWORDS_SH="$TMP_ROOT/nonexistent.sh" bash "$SCRIPT" 1740 2>&1)
+LAST_RC=$?
+set -e
+if [[ "$LAST_OUT" == "GATE-READY"* ]] && [ "$LAST_RC" -eq 0 ]; then
+  pass "no checker present: gate 6 is inert, not fatal"
+else
+  fail "gate 6 absent (rc=$LAST_RC out=${LAST_OUT:0:140})"
+fi
+
+# The checker must NOT run on non-READY verdicts — it costs API calls and its
+# answer is irrelevant while an earlier gate is unsatisfied.
+NOISY_APPLY="$TMP_ROOT/apply-keywords-noisy.sh"
+printf '#!/usr/bin/env bash\ntouch "%s/ran"\nexit 1\n' "$TMP_ROOT" >"$NOISY_APPLY"
+chmod +x "$NOISY_APPLY"
+set +e
+PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$TMP_ROOT/wait-ci" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  RALPH_APPLY_KEYWORDS_SH="$NOISY_APPLY" bash "$SCRIPT" 1740 >/dev/null 2>&1
+set -e
+if [[ ! -f "$TMP_ROOT/ran" ]]; then
+  pass "the checker is not run while an earlier gate is unsatisfied"
+else
+  fail "gate 6 ran on a non-READY verdict"
 fi
 
 echo

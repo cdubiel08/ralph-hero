@@ -23,6 +23,7 @@
 #   GATE-FAIL attestation   the attestation status itself is red     exit 0
 #   GATE-FAIL review        CHANGES_REQUESTED is live                exit 0
 #   GATE-FAIL merge         head CONFLICTING — rebase                exit 0
+#   GATE-FAIL apply         gate 6 (apply-keywords.sh, RUN live) rejects exit 0
 #   GATE-WAIT ci            non-attestation checks still running     exit 10
 #   GATE-YOURS review       no verdict AND the reviewer needs a nudge  exit 0
 #   GATE-WAIT review        reviewer simply has not posted yet        exit 10
@@ -170,6 +171,9 @@ if [ -f "$POLICY_FILE" ]; then
 fi
 POLICY_MODE=$(jq -r '.mode' <<<"$POLICY")
 POLICY_EXTERNAL=$(jq -r '.externalRequired | tostring' <<<"$POLICY")
+
+# Test-only override, same pattern merge-pr.sh gate 6 uses.
+APPLY_KEYWORDS_SH="${RALPH_APPLY_KEYWORDS_SH:-$PROJECT_ROOT/scripts/apply-keywords.sh}"
 
 ATTEST_CHECK="${PR_GATE_ATTEST_CHECK:-ralph-attestation}"
 # Must stay in sync with MARKER in attest-pr.sh and validate-attestation.sh,
@@ -389,6 +393,18 @@ def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
   # says MERGEABLE. UNKNOWN means the background computation has not settled,
   # which is a wait — emitting a terminal verdict here ENDS --watch on a
   # recommendation that would come back pending (codex P2, PR #1764).
+  # A green attestation STATUS is a claim about the past. If the comment it
+  # was computed from has since been deleted, edited, or moved off this head,
+  # gate 4 re-reads the live comment and rejects — so readiness may not rest
+  # on the status alone (codex P2, PR #1764). Distinct from the
+  # missing-status case above: here the status exists and is green.
+  #
+  # This also absorbs the documented comment-window limit: if the attestation
+  # comment falls outside the window `gh pr view --json comments` returns, the
+  # verdict degrades to GATE-YOURS attestation, and re-attesting is idempotent
+  # because attest-pr.sh updates its existing comment.
+  elif $attest_required and ($attested_current | not) then
+    "GATE-YOURS attestation: \($attest) is green but no valid attestation is visible at \($head[0:8]) — re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" --carry-review"
   elif ($pr.mergeable // "") == "UNKNOWN" then
     "GATE-WAIT merge: GitHub has not computed mergeability for \($head[0:8]) yet"
   else
@@ -471,7 +487,27 @@ snapshot() {
     --json state,reviewDecision,headRefOid,comments,author,mergeable 2>/dev/null) || return 1
   [ -n "$pr_json" ] || return 1
 
-  classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok"
+  local line
+  line=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok") || return 1
+
+  # Gate 6 is the one gate whose inputs are not visible in any status: a label
+  # added after `ralph-apply-keywords` was computed leaves the status green
+  # while apply-keywords.sh, run live, rejects the closing keyword (codex P2,
+  # PR #1764). So on the READY path only, RUN the same checker merge-pr.sh
+  # runs rather than predicting it from a status — this repo's rule is that
+  # gates are run, not predicted. Costs nothing on every other verdict, and is
+  # inert in repos that do not ship the checker or have not opted in.
+  case "$line" in
+    GATE-READY*)
+      if [ -x "$APPLY_KEYWORDS_SH" ]; then
+        local apply_out
+        if ! apply_out=$("$APPLY_KEYWORDS_SH" "$PR" 2>&1); then
+          line="GATE-FAIL apply: $(printf '%s' "$apply_out" | head -1) — fix the closing keywords before merging"
+        fi
+      fi
+      ;;
+  esac
+  printf '%s' "$line"
 }
 
 is_terminal() {
