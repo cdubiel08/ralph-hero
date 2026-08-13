@@ -1568,9 +1568,21 @@ scenario "$D2" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '
   "$(pr_state OPEN "" "[$(attestation_comment "$OLD_SHA")]")" "$NO_REVIEWS" '[]'
 run "$D2"
 if [[ "$LAST_OUT" == *"--carry-review"* ]]; then
-  pass "a prior attestation makes --carry-review the right offer"
+  pass "a prior APPROVED attestation makes --carry-review the right offer"
 else
   fail "carryable hint (out=${LAST_OUT:0:240})"
+fi
+# A prior REJECTED verdict is NOT carryable: attest-pr.sh copies it verbatim,
+# so the command would run and write another REJECTED attestation, leaving
+# gate 4 blocked (codex P2, PR #1764). Runnable is not the same as useful.
+D3="$TMP_ROOT/carry-rejected"
+scenario "$D3" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$(pr_state OPEN "" "[$(attestation_comment "$OLD_SHA" 0 REJECTED)]")" "$NO_REVIEWS" '[]'
+run "$D3"
+if [[ "$LAST_OUT" != *"--carry-review"* ]] && [[ "$LAST_OUT" == *"<VERDICT>"* ]]; then
+  pass "a REJECTED prior verdict is not offered for carrying"
+else
+  fail "REJECTED verdict offered as carryable (out=${LAST_OUT:0:240})"
 fi
 # Exempt authors are the other waiver and must behave the same.
 POLICY="$POLICY_REVIEW"

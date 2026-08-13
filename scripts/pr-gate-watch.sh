@@ -441,7 +441,12 @@ def fenced_json:
 # attest-pr.sh:173-190 refuses it unless a PRIOR attestation with a review
 # block exists, so on a never-attested PR that hint is as unrunnable as the
 # bare --run it replaced (codex P2, PR #1764).
-| (($att_json != null) and (($att_json.review.verdict // "") != "")) as $carryable
+# Carryable means "carrying it would HELP", not merely "the flag would be
+# accepted". attest-pr.sh copies the prior verdict verbatim, so carrying a
+# REJECTED one just writes another REJECTED attestation and gate 4 stays
+# blocked — a command that runs and cannot possibly unblock (codex P2,
+# PR #1764). Only an APPROVED prior verdict is worth offering.
+| (($att_json != null) and (($att_json.review.verdict // "") == "APPROVED")) as $carryable
 | (if $verdict != null then
      "--review-verdict APPROVED --reviewer \"\($verdict.user.login // "unknown")\" --review-url \"\($verdict.html_url // "")\""
    elif $carryable then
