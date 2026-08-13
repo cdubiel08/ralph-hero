@@ -10,7 +10,7 @@
   },
   "report_path": "~/.ralph/runs/a3f2/reports/w1743-claim-v2-multi-holder.json",
   "constraints": {
-    "branch": "feature/GH-1743",
+    "branch": "feat/1743-claim-v2-multi-holder",
     "base": "main",
     "no_force": true
   },

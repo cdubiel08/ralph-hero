@@ -27,6 +27,7 @@ export const PROJECT_ID = "PVT_test";
 export interface FakeIssue {
   number: number;
   archived?: boolean;
+  title?: string; // issue title (drives the derived slug); defaults to "Issue N"
   repo?: string; // nameWithOwner in the bulk items view; defaults to the own repo
   blockedBy?: Array<{ number: number; state: "OPEN" | "CLOSED"; repo?: string }>;
   state?: string | null;
@@ -65,7 +66,12 @@ export interface FakeIssue {
     commentAt?: string;
     pushedAt?: string;
   }>;
-  branchPrs?: FakeIssue["prs"]; // linked only via the feature/GH-NNN convention
+  branchPrs?: FakeIssue["prs"]; // sugar: PRs on the LEGACY feature/GH-NNN branch
+  /** Branch-convention refs by name. The fake applies GitHub's own SUBSTRING
+   *  filter to these, so a ref that merely contains the digits reaches
+   *  board.ts exactly as it would in production — and its rejection is the
+   *  linkage predicate under test, not the fixture's politeness. */
+  branchRefs?: Array<{ name: string; prs: FakeIssue["prs"] }>;
   commentTimes?: Array<string | null>; // createdAt aligned with comments[]
   stateUpdatedAt?: string | null; // when the board last wrote Workflow State
   // Tend-lane facts (GH-1712)
@@ -137,7 +143,7 @@ export class FakeGh {
     return {
       id: `I_${fi.number}`,
       number: fi.number,
-      title: `Issue ${fi.number}`,
+      title: fi.title ?? `Issue ${fi.number}`,
       url: `https://github.com/cdubiel08/ralph-hero/issues/${fi.number}`,
       state: fi.issueState ?? "OPEN",
       stateReason: fi.stateReason ?? null,
@@ -268,7 +274,7 @@ export class FakeGh {
   private queueContent(fi: FakeIssue) {
     return {
       number: fi.number,
-      title: `Issue ${fi.number}`,
+      title: fi.title ?? `Issue ${fi.number}`,
       state: fi.issueState ?? "OPEN",
       stateReason: fi.stateReason ?? null,
       closedAt: fi.closedAt ?? null,
@@ -325,7 +331,7 @@ export class FakeGh {
         }
         repo[`d${m[1]}`] = {
           number: fi.number,
-          title: `Issue ${fi.number}`,
+          title: fi.title ?? `Issue ${fi.number}`,
           comments: {
             nodes: (fi.comments ?? []).map((body, i) => ({
               body,
@@ -351,7 +357,17 @@ export class FakeGh {
                   ],
           },
         };
-        repo[`b${m[1]}`] = { nodes: (fi.branchPrs ?? []).map((p) => this.deliverPrNode(p)) };
+        const needle = String(variables[`h${m[1]}`] ?? "");
+        const refs = [
+          ...(fi.branchPrs ? [{ name: `feature/GH-${fi.number}`, prs: fi.branchPrs }] : []),
+          ...(fi.branchRefs ?? []),
+        ].filter((r) => needle !== "" && r.name.includes(needle));
+        repo[`b${m[1]}`] = {
+          nodes: refs.map((r) => ({
+            name: r.name,
+            associatedPullRequests: { nodes: (r.prs ?? []).map((p) => this.deliverPrNode(p)) },
+          })),
+        };
       }
       return data({ repository: repo });
     }

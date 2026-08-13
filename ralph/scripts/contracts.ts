@@ -195,6 +195,113 @@ export function collideName(base: string, taken: ReadonlySet<string>): string {
   throw new RangeError(`collision space exhausted for ${base} (--2..--9 all taken)`);
 }
 
+// ---------------------------------------------------------------------------
+// Branch names — grammar B's other face (GH-1807)
+//
+// `<kind>/<issue>-<slug>`, where the slug is byte-identical to the one in the
+// agent name for the same unit: `fix/1807-semantic-branch` alongside
+// `w1807-semantic-branch`. One vocabulary, two surfaces, one declaration.
+// ---------------------------------------------------------------------------
+
+/** Kind registry — the closed set a branch may open with. Derived from labels,
+ *  never free text, so `git branch` sorts into meaningful groups. */
+export const BRANCH_KINDS = {
+  feat: "new capability (the default)",
+  fix: "defect repair",
+  chore: "maintenance, deps, tooling",
+  docs: "documentation only",
+  apply: "apply unit — the deploy, not the merge",
+} as const;
+export type BranchKind = keyof typeof BRANCH_KINDS;
+export const BRANCH_KIND_CHARS = Object.keys(BRANCH_KINDS) as BranchKind[];
+export const DEFAULT_BRANCH_KIND: BranchKind = "feat";
+
+/** Label→kind, first match wins. Substring-matched against lowercased labels
+ *  so `type: bug`, `kind/bug` and `bug` all land on `fix`. The apply label is
+ *  NOT here — it is configured per repo and passed in separately. */
+const BRANCH_KIND_LABELS: ReadonlyArray<[string, BranchKind]> = [
+  ["bug", "fix"],
+  ["fix", "fix"],
+  ["defect", "fix"],
+  ["doc", "docs"],
+  ["chore", "chore"],
+  ["maintenance", "chore"],
+  ["dependencies", "chore"],
+  ["feature", "feat"],
+  ["enhancement", "feat"],
+];
+
+/** The kind for an issue's labels. `applyLabel` wins outright when present —
+ *  an apply unit is a different kind of work, not a flavour of feature. A
+ *  truncated label list cannot prove the apply label absent, so pass
+ *  `labelsTruncated` and the answer degrades to `apply` rather than guessing.
+ *  Everything unmatched is DEFAULT_BRANCH_KIND: the branch shape is always
+ *  producible, never blocked on a label taxonomy the host repo may not have. */
+export function branchKindFor(
+  labels: readonly string[],
+  opts: { applyLabel?: string | null; labelsTruncated?: boolean } = {},
+): BranchKind {
+  const lower = labels.map((l) => l.toLowerCase());
+  if (opts.applyLabel) {
+    if (opts.labelsTruncated) return "apply";
+    if (lower.includes(opts.applyLabel.toLowerCase())) return "apply";
+  }
+  for (const l of lower) {
+    for (const [needle, kind] of BRANCH_KIND_LABELS) if (l.includes(needle)) return kind;
+  }
+  return DEFAULT_BRANCH_KIND;
+}
+
+/** `<kind>/<issue>-<slug>`. Legacy shape: `feature/GH-<issue>` — matched only
+ *  by the parser, never produced. `feature` is deliberately NOT a live kind:
+ *  it is the legacy prefix, and letting both grammars claim it would make
+ *  `feature/1807-x` and `feature/GH-1807` neighbours in the same namespace. */
+export const BRANCH_RE = /^([a-z]+)\/([0-9]+)-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)$/;
+export const LEGACY_BRANCH_RE = /^feature\/GH-([0-9]+)$/;
+
+export type ParsedBranch =
+  | { kind: "v2"; branchKind: BranchKind; issue: number; slug: string }
+  | { kind: "legacy"; branch: string; issue: number };
+
+/** The branch for (kind, issue, title). Uses the AGENT slug budget unchanged —
+ *  including the 3 chars reserved for a collision suffix branches never carry.
+ *  Spending them on nothing is the price of a byte-identical slug on both
+ *  surfaces; a wider branch budget would be two grammars to read. */
+export function formatBranchName(kind: BranchKind, issue: number, title: string): string {
+  if (!(kind in BRANCH_KINDS)) throw new RangeError(`unknown branch kind ${JSON.stringify(kind)}`);
+  if (!Number.isInteger(issue) || issue < 0)
+    throw new RangeError(`issue must be a non-negative integer (got ${issue})`);
+  return `${kind}/${issue}-${truncateSlug(slugify(title), issue)}`;
+}
+
+/** Parse-back: grammar B first, then the legacy `feature/GH-N`. Mirrors
+ *  parseAgentName — an unknown kind fails, because the registry is closed and
+ *  a branch this cannot name is a branch the linkage must not claim. */
+export function parseBranchName(branch: string): ParsedBranch | null {
+  const legacy = LEGACY_BRANCH_RE.exec(branch);
+  if (legacy) return { kind: "legacy", branch, issue: Number(legacy[1]) };
+  const m = BRANCH_RE.exec(branch);
+  if (!m) return null;
+  if (!(m[1] in BRANCH_KINDS)) return null;
+  return { kind: "v2", branchKind: m[1] as BranchKind, issue: Number(m[2]), slug: m[3] };
+}
+
+/** The issue a branch belongs to, or null. The linkage predicate: GitHub's
+ *  ref filter is a SUBSTRING match, so `1807` also returns `feature/GH-18070`
+ *  and `chore/fix-1807-typo`. This is what rejects them. */
+export function branchIssue(branch: string): number | null {
+  return parseBranchName(branch)?.issue ?? null;
+}
+
+/** Worktree directory leaf for a branch: the branch with `/` → `-`, so
+ *  `.claude/worktrees/` reads the same as `git branch`. Legacy branches keep
+ *  their historical `GH-N` leaf — an existing worktree must stay findable. */
+export function worktreeLeaf(branch: string): string {
+  const p = parseBranchName(branch);
+  if (p?.kind === "legacy") return `GH-${p.issue}`;
+  return branch.replace(/\//g, "-");
+}
+
 // --- durable refs: name#spawn_epoch ---------------------------------------
 
 export interface AgentRef {
@@ -1009,7 +1116,12 @@ export function lintL7ParentOpen(payload: unknown, deps?: LiveLintDeps): LintRes
   return { rule, ok: true };
 }
 
-/** L8: the working branch is derived, not chosen: feature/GH-<issue>. */
+/** L8: the working branch is derived, not chosen — `<kind>/<issue>-<slug>`
+ *  (GH-1807), or the legacy `feature/GH-<issue>` for the deprecation window.
+ *  The SLUG is not checked: this lint has the issue number, not the title, and
+ *  a rule that cannot recompute the expected value must not pretend to. What
+ *  it does enforce is that the branch parses and names THIS issue — the same
+ *  predicate the PR linkage runs. */
 export function lintL8BranchConvention(payload: unknown): LintResult {
   const rule: LintId = "L8";
   if (!isDict(payload) || typeof payload.issue !== "number") return notApplicable(rule, "no issue");
@@ -1018,9 +1130,17 @@ export function lintL8BranchConvention(payload: unknown): LintResult {
     : isDict(payload.constraints) && typeof payload.constraints.branch === "string" ? payload.constraints.branch
     : null;
   if (branch === null) return notApplicable(rule, "no branch");
-  const want = `feature/GH-${payload.issue}`;
-  if (branch !== want)
-    return { rule, ok: false, message: `branch must be ${JSON.stringify(want)} (got ${JSON.stringify(branch)})` };
+  const shapes = `<kind>/${payload.issue}-<slug>` + ` (kind: ${BRANCH_KIND_CHARS.join("|")})` +
+    ` or the legacy "feature/GH-${payload.issue}"`;
+  const parsed = parseBranchName(branch);
+  if (parsed === null)
+    return { rule, ok: false, message: `branch ${JSON.stringify(branch)} matches neither shape — expected ${shapes}` };
+  if (parsed.issue !== payload.issue)
+    return {
+      rule,
+      ok: false,
+      message: `branch ${JSON.stringify(branch)} names issue #${parsed.issue}, not #${payload.issue} — expected ${shapes}`,
+    };
   return { rule, ok: true };
 }
 

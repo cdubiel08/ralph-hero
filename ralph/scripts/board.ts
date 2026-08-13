@@ -25,17 +25,25 @@ import { fileURLToPath } from "node:url";
 import {
   addHolder,
   BOARD_STATES,
+  type BranchKind,
+  branchKindFor,
   CLAIM_MAX_HOLDERS,
   type ClaimV2,
   CONTRACT_IDS,
   type ContractId,
   DELIVER_REASONS,
+  formatAgentName,
+  formatBranchName,
+  parseBranchName,
+  worktreeLeaf,
   emitJsonSchemas,
   formatClaim,
   heartbeat,
   isContractId,
   isMember,
   isValidHolder,
+  type Lane,
+  LANE_CHARS,
   type LiveLintDeps,
   parseClaim,
   removeHolder,
@@ -3266,9 +3274,9 @@ export interface DeliverPrFacts {
 export interface DeliverCandidate {
   number: number;
   title: string;
-  /** Linked PRs: closing references ∪ `feature/GH-NNN` branch convention
-   *  (detect-if-present — hosts without the convention degrade to closing
-   *  references only). Deduped by PR number. */
+  /** Linked PRs: closing references ∪ the branch convention — `<kind>/NNN-slug`
+   *  or the legacy `feature/GH-NNN` (detect-if-present — hosts without the
+   *  convention degrade to closing references only). Deduped by PR number. */
   prs: DeliverPrFacts[];
   stateUpdatedAt: string | null; // when the board wrote the current state
   lastCommentAt: string | null; // newest issue comment
@@ -3582,16 +3590,26 @@ export function fetchDeliverCandidates(
               updatedAt field { ... on ProjectV2FieldCommon { name } }
             } } } } }
         }
-        b${k}: pullRequests(first: 10, headRefName: $h${k}, states: [OPEN, MERGED, CLOSED]) {
-          nodes { ${DELIVER_PR_FACTS} }
+        b${k}: refs(refPrefix: "refs/heads/", query: $h${k}, first: 10) {
+          nodes {
+            name
+            associatedPullRequests(first: 10, states: [OPEN, MERGED, CLOSED]) {
+              nodes { ${DELIVER_PR_FACTS} }
+            }
+          }
         }`,
         )
         .join("\n");
       const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
       chunk.forEach((it, k) => {
         vars[`n${k}`] = it.number;
-        // Provenance convention (work rule 6), detect-if-present.
-        vars[`h${k}`] = `feature/GH-${it.number}`;
+        // Provenance convention (work rule 6), detect-if-present. GitHub's ref
+        // filter is a SUBSTRING match on the name after refs/heads/, so the
+        // bare number covers BOTH grammars — `fix/1807-slug` and the legacy
+        // `feature/GH-1807` — in one connection. It also returns unrelated
+        // refs that merely contain the digits; parseBranchName rejects those
+        // below. Costed live: +1 pt per DELIVER_CHUNK document (1 → 2).
+        vars[`h${k}`] = String(it.number);
       });
       const data: any = ghGraphQL(
         ctx,
@@ -3610,8 +3628,14 @@ export function fetchDeliverCandidates(
         for (const n of issue.closedByPullRequestsReferences?.nodes ?? []) {
           if (n?.number) byNumber.set(n.number, prFactsFrom(n));
         }
-        for (const n of repo[`b${k}`]?.nodes ?? []) {
-          if (n?.number && !byNumber.has(n.number)) byNumber.set(n.number, prFactsFrom(n));
+        for (const ref of repo[`b${k}`]?.nodes ?? []) {
+          // The substring filter is GitHub's; this is ours. A ref that does
+          // not PARSE as this issue's branch is a coincidence of digits
+          // (`feature/GH-18070`, `chore/fix-1807-typo`), not linkage.
+          if (parseBranchName(ref?.name ?? "")?.issue !== it.number) continue;
+          for (const n of ref?.associatedPullRequests?.nodes ?? []) {
+            if (n?.number && !byNumber.has(n.number)) byNumber.set(n.number, prFactsFrom(n));
+          }
         }
         const comments: Array<{ body: string; createdAt: string | null }> = (
           issue.comments?.nodes ?? []
@@ -5534,6 +5558,12 @@ reads
                               section [{number, blockers_open, truncated?}].
                               A re-projection of next's ranking, never a
                               second eligibility computation
+  name NNN [--json]           the derived names for a unit (GH-1807): branch
+                              <kind>/NNN-<slug>, agent w NNN-<slug> (grammar B,
+                              same slug), worktree leaf. Kind comes from labels
+                              (apply label wins); --lane picks the agent lane.
+                              The ONLY place a transport may read the
+                              convention from — no second copy of the grammar
   tree NNN                    subtree with states
   claim show NNN [--json]     the claim as the board holds it: holders, shared
                               since, age vs TTL, raw text when garbled
@@ -5824,6 +5854,41 @@ export function run(argv: string[], ctx: Ctx): number {
         for (const c of issue.children)
           out(`  child #${c.number} [${childStateLabel(c)}] ${c.title}`);
         for (const p of issue.prs) out(`  pr #${p.number} ${p.merged ? "merged" : p.state} ${p.url}`);
+      }
+      return 0;
+    }
+
+    case "name": {
+      // The convention is DECLARED in contracts.ts and READ here. Shell
+      // transports call this instead of rebuilding slugify in awk — a second
+      // copy of the grammar is a second grammar (GH-1807).
+      const num = requireNumber(positional[0]);
+      const issue = fetchIssue(ctx, num);
+      const lane = (typeof flags.lane === "string" ? flags.lane : "w") as Lane;
+      if (!LANE_CHARS.includes(lane))
+        throw new UsageError(
+          `--lane must be one of ${LANE_CHARS.join("|")} (got ${JSON.stringify(flags.lane)})`,
+        );
+      const kind = branchKindFor(issue.labels, {
+        applyLabel: ctx.cfg.apply.enabled ? ctx.cfg.apply.label : null,
+        labelsTruncated: issue.labelsTruncated,
+      });
+      const branch = formatBranchName(kind, num, issue.title);
+      const names = {
+        number: num,
+        title: issue.title,
+        kind,
+        lane,
+        branch,
+        worktree: worktreeLeaf(branch),
+        agent: formatAgentName(lane, num, issue.title),
+        legacyBranch: `feature/GH-${num}`,
+      };
+      if (flags.json) json(names);
+      else {
+        out(`branch   ${names.branch}`);
+        out(`agent    ${names.agent}`);
+        out(`worktree ${names.worktree}`);
       }
       return 0;
     }

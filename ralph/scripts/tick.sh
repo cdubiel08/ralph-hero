@@ -78,12 +78,35 @@ if [ -z "$NEXT" ]; then
   exit 0
 fi
 
+# --- Names: derived by the CLI, never re-implemented here (GH-1807) ---------
+# The grammar lives in contracts.ts. A shell that rebuilt slugify in sed would
+# be a second grammar, and two grammars drift.
+NAMES=$("$BOARD" name "$NEXT" --json) || {
+  echo "tick: \`board name $NEXT\` failed — cannot derive the branch" >&2; exit 1; }
+BRANCH=$(printf '%s' "$NAMES" | jq -r '.branch // empty')
+LEGACY_BRANCH=$(printf '%s' "$NAMES" | jq -r '.legacyBranch // empty')
+WT_LEAF=$(printf '%s' "$NAMES" | jq -r '.worktree // empty')
+if [ -z "$BRANCH" ] || [ -z "$WT_LEAF" ]; then
+  echo "tick: \`board name $NEXT\` returned no branch/worktree" >&2; exit 1
+fi
+
 # --- Worktree per job: never a shared HEAD ----------------------------------
-WT="$REPO_ROOT/.claude/worktrees/GH-$NEXT"
+# Resume beats re-cut. A unit that already has a branch under EITHER grammar
+# keeps it — cutting the new shape beside a live feature/GH-N would split one
+# unit's work across two heads.
+git -C "$REPO_ROOT" fetch -q origin main
+if ! git -C "$REPO_ROOT" show-ref -q --verify "refs/heads/$BRANCH" \
+  && ! git -C "$REPO_ROOT" show-ref -q --verify "refs/remotes/origin/$BRANCH"; then
+  if git -C "$REPO_ROOT" show-ref -q --verify "refs/heads/$LEGACY_BRANCH" \
+    || git -C "$REPO_ROOT" show-ref -q --verify "refs/remotes/origin/$LEGACY_BRANCH"; then
+    BRANCH="$LEGACY_BRANCH"
+    WT_LEAF="GH-$NEXT"
+  fi
+fi
+WT="$REPO_ROOT/.claude/worktrees/$WT_LEAF"
 if [ ! -d "$WT" ]; then
-  git -C "$REPO_ROOT" fetch -q origin main
-  git -C "$REPO_ROOT" worktree add -q -b "feature/GH-$NEXT" "$WT" origin/main 2>/dev/null \
-    || git -C "$REPO_ROOT" worktree add -q "$WT" "feature/GH-$NEXT"
+  git -C "$REPO_ROOT" worktree add -q -b "$BRANCH" "$WT" origin/main 2>/dev/null \
+    || git -C "$REPO_ROOT" worktree add -q "$WT" "$BRANCH"
 fi
 
 export RALPH_CLAIM_HOLDER="tick@$(hostname -s)"
@@ -119,9 +142,9 @@ if [ "$RC" -ne 0 ]; then
   STATUS="exit=$RC"
   if [ "$RC" -eq 124 ]; then
     STATUS=timeout
-    NOTE="tick timeout after ${TIMEOUT_MIN}m — see $LOG on $(hostname -s); work may be partially committed on feature/GH-$NEXT"
+    NOTE="tick timeout after ${TIMEOUT_MIN}m — see $LOG on $(hostname -s); work may be partially committed on $BRANCH"
   else
-    NOTE="tick runner exited RC=$RC — see $LOG on $(hostname -s); work may be partially committed on feature/GH-$NEXT"
+    NOTE="tick runner exited RC=$RC — see $LOG on $(hostname -s); work may be partially committed on $BRANCH"
   fi
   if AFTER_JSON=$("$BOARD" get "$NEXT" --json 2>>"$LOG"); then
     # ClaimV2: .claim.holders is an ARRAY (a single holder is a one-element
