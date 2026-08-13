@@ -755,6 +755,39 @@ PKG
     pass "an absent dependency fails the real deps_complete"
   fi
 
+  # `main` may be extensionless, or name a directory — node appends .js and
+  # falls back to <dir>/index.js. An exact existsSync reported three healthy
+  # packages in this repo's own tree as missing, and a false "missing" forces a
+  # destructive reinstall on EVERY launch.
+  root=$(dep_fixture real_extless)
+  printf '{"name":"zod","main":"./index"}\n' >"$root/node_modules/zod/package.json"
+  if ( cd "$root" && deps_complete ); then
+    pass "an extensionless main resolves (no false rebuild)"
+  else
+    fail "an extensionless main was reported missing — a healthy tree would reinstall forever"
+  fi
+
+  root=$(dep_fixture real_dirmain)
+  printf '{"name":"zod","main":"./lib"}\n' >"$root/node_modules/zod/package.json"
+  mkdir -p "$root/node_modules/zod/lib"
+  echo 'module.exports = {}' >"$root/node_modules/zod/lib/index.js"
+  if ( cd "$root" && deps_complete ); then
+    pass "a main naming a directory resolves via index.js"
+  else
+    fail "a directory main was reported missing"
+  fi
+
+  # A `binary` field is NOT proof of a native module: napi-build-utils ships
+  # one whose own note says it is not an N-API module.
+  root=$(dep_fixture real_binaryfield)
+  printf '{"name":"zod","main":"index.js","binary":{"note":"not an N-API module"}}\n' \
+    >"$root/node_modules/zod/package.json"
+  if ( cd "$root" && deps_complete ); then
+    pass "a 'binary' field alone does not demand a compiled addon"
+  else
+    fail "a package was treated as native on its 'binary' field — reinstalls a healthy tree"
+  fi
+
   # A native package needs its COMPILED ADDON, not just its JavaScript. This is
   # the better-sqlite3 case: the JS entry survives a partial cleanup while
   # build/Release/*.node does not, and startup then dies constructing the
@@ -957,10 +990,29 @@ else
   else
     pass "a tree built on another host is never rebuilt from here, idle or not"
   fi
-  if grep -q 'process table cannot see it' "$root/stderr.log"; then
+  if grep -q 'process table cannot see' "$root/stderr.log"; then
     pass "the refusal explains that the other host cannot be probed"
   else
     fail "the refusal does not explain the cross-host limitation" "$(cat "$root/stderr.log")"
+  fi
+
+  # The host is evaluated for EVERY rebuild, not only when identities differ.
+  # Two machines on a shared home can share platform, arch and ABI, so the
+  # identities MATCH while the remote server is still invisible to us.
+  root=$(fake_root host_same_identity)
+  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+  printf '%s %s\n' "node-darwin-arm64-abi127" "some-other-host" >"$root/.bootstrap-identity"
+  rm -f "$root/.bootstrap-complete"          # force a rebuild at the SAME identity
+  RC=0
+  log="$root/calls.log"; : >"$log"
+  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+    FAKE_NODE_ID="darwin-arm64-abi127" \
+    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+  if grep -q 'npm ci' "$log"; then
+    fail "rebuilt a tree built on another host because the identities happened to match" \
+      "$(cat "$log")"
+  else
+    pass "the recorded host is checked even when the Node identities match"
   fi
 
   # Identity metadata missing entirely: provenance is UNKNOWN, not "ours". A

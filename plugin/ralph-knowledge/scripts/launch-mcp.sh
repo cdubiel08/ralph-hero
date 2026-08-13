@@ -174,8 +174,20 @@ deps_complete() {
       // that declares none (or only a conditional exports map we cannot reduce
       // to one path) is accepted, because a false "missing" would reinstall on
       // every single launch.
+      // Node appends an extension and falls back to <entry>/index.js, and real
+      // packages rely on it: ms declares "./index", function-bind "index".
+      // An exact existsSync reported three healthy packages in this very tree
+      // as missing, which would have forced a full reinstall on EVERY launch.
+      const entryPresent = (base) => {
+        const p0 = path.join(dir, base);
+        for (const c of [p0, p0 + ".js", p0 + ".json", p0 + ".node",
+                         path.join(p0, "index.js")]) {
+          if (fs.existsSync(c)) return true;
+        }
+        return false;
+      };
       const entry = entryOf(m);
-      if (entry && !fs.existsSync(path.join(dir, entry))) { missing.push(d); continue; }
+      if (entry && !entryPresent(entry)) { missing.push(d); continue; }
 
       // A native package needs its COMPILED ADDON, not just its JavaScript
       // (codex P2, PR #1755). better-sqlite3 is the case that bites: its JS
@@ -183,6 +195,10 @@ deps_complete() {
       // and startup then dies constructing the database rather than repairing
       // the tree. A binding.gyp (or a gypfile flag) is what marks a package as
       // needing one, so exactly those are required to carry a .node somewhere.
+      // Only binding.gyp/gypfile. A `binary` field is NOT a reliable signal —
+      // napi-build-utils ships one whose own note reads "is not an N-API
+      // module. This entry is for unit testing", and requiring an addon there
+      // reinstalls a healthy tree on every launch.
       const isNative = m.gypfile === true || fs.existsSync(path.join(dir, "binding.gyp"));
       if (isNative && !hasAddon(dir)) missing.push(d);
     }
@@ -425,6 +441,22 @@ if bootstrap_needed; then
         && server_running_in "$PLUGIN_ROOT"; then
         echo "[ralph-knowledge] refusing to rebuild: a server is still running in $PLUGIN_ROOT." >&2
         echo "[ralph-knowledge] Rebuilding would replace node_modules underneath it." >&2
+        echo "[ralph-knowledge] close every session using this plugin root, then relaunch." >&2
+        echo "[ralph-knowledge] once they are closed, removing $PLUGIN_ROOT/node_modules forces a clean rebuild." >&2
+        exit 1
+      fi
+
+      # A tree built on ANOTHER HOST is refused for every rebuild, not only when
+      # the identities differ (codex P2, PR #1755). Two machines on a shared
+      # home can easily share platform, arch and ABI, in which case identities
+      # MATCH and the old placement of this check never ran — while the local
+      # probe cannot see the remote server either. So it is evaluated here,
+      # independently, alongside the live-server check.
+      if [ "$tree_exists" = true ] && [ -n "$built_host" ] \
+        && [ "$built_host" != "$THIS_HOST" ]; then
+        echo "[ralph-knowledge] refusing to rebuild: this tree was built on host '$built_host'" >&2
+        echo "[ralph-knowledge] and this is '$THIS_HOST', whose process table cannot see whether" >&2
+        echo "[ralph-knowledge] a server there is still serving from it." >&2
         echo "[ralph-knowledge] close every session using this plugin root, then relaunch." >&2
         echo "[ralph-knowledge] once they are closed, removing $PLUGIN_ROOT/node_modules forces a clean rebuild." >&2
         exit 1
