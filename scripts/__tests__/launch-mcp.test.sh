@@ -385,8 +385,8 @@ else
   fail "INT/TERM still share the bare EXIT handler" "$(grep -n 'trap' "$SRC")"
 fi
 
-if grep -qE "trap 'rm -rf \"\\\$LOCK\"; exit [0-9]+' INT" "$SRC" \
-  && grep -qE "trap 'rm -rf \"\\\$LOCK\"; exit [0-9]+' TERM" "$SRC"; then
+if grep -qE "trap '.*rm -rf \"\\\$LOCK\"; exit [0-9]+' INT" "$SRC" \
+  && grep -qE "trap '.*rm -rf \"\\\$LOCK\"; exit [0-9]+' TERM" "$SRC"; then
   pass "signal handlers exit explicitly instead of resuming the script"
 else
   fail "a signal handler cleans up but does not exit — bash would resume into a second npm ci" \
@@ -545,11 +545,78 @@ RC=0
 CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
   RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
   bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+# Age is NOT a substitute for proof of death across hosts (codex P2). Another
+# machine on a shared home may still be bootstrapping past the window; deleting
+# its live lock starts a second destructive install. Fail closed.
 if grep -q 'npm ci' "$log"; then
-  pass "aged foreign-host lock is reclaimed by age"
+  fail "an aged FOREIGN lock was reclaimed on age alone — a live remote bootstrap would be stolen" \
+    "$(cat "$log")"
 else
-  fail "an ancient foreign lock was never reclaimed — unrecoverable after a crash" \
-    "$(cat "$root/stderr.log")"
+  pass "aged foreign-host lock is NOT reclaimed (death cannot be proven across hosts)"
+fi
+# Failing closed is only acceptable if the operator is told how to recover.
+if grep -q "remove .*\.bootstrap\.lock and relaunch" "$root/stderr.log"; then
+  pass "the timeout names the manual remedy for a wedged foreign lock"
+else
+  fail "failed closed without telling the operator how to recover" "$(cat "$root/stderr.log")"
+fi
+
+echo "=== an orphaned reap marker must not wedge the tree forever ==="
+
+# A reaper SIGKILLed between creating the marker and removing the lock leaves
+# the marker inside the abandoned lock. Without recovery every later reaper's
+# mkdir fails and the bootstrap times out on EVERY launch, permanently.
+root=$(fake_root orphanmarker)
+rm -f "$root/dist/index.js"
+mkdir -p "$root/.bootstrap.lock/reaping"
+printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
+touch -t 200001010000 "$root/.bootstrap.lock" "$root/.bootstrap.lock/reaping" 2>/dev/null || true
+log="$root/calls.log"; : >"$log"
+RC=0
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+if grep -q 'npm ci' "$log"; then
+  pass "an orphaned reap marker is cleared and the tree recovers"
+else
+  fail "an orphaned reap marker wedged the tree permanently" "$(cat "$root/stderr.log")"
+fi
+
+# ...but a marker held by a LIVE reaper must still block: that is its job.
+root=$(fake_root freshmarker)
+rm -f "$root/dist/index.js"
+mkdir -p "$root/.bootstrap.lock/reaping"
+printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
+touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true
+log="$root/calls.log"; : >"$log"
+RC=0
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
+  RALPH_KNOWLEDGE_REAP_STALE_MIN=60 \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+if grep -q 'npm ci' "$log"; then
+  fail "a FRESH reap marker did not serialize — two reapers could delete concurrently" \
+    "$(cat "$log")"
+else
+  pass "a fresh reap marker still serializes reapers"
+fi
+
+echo "=== signal handlers disarm EXIT before removing their own lock ==="
+
+# Otherwise the handler removes the lock, then `exit` runs the still-armed EXIT
+# trap and removes the pathname AGAIN — deleting whatever waiter acquired it in
+# between, which lets a third waiter bootstrap concurrently.
+if grep -cE "trap 'trap - EXIT; rm -rf \"\\\$LOCK\"; exit [0-9]+' (INT|TERM)" "$SRC" | grep -q '^2$'; then
+  pass "both INT and TERM disarm EXIT before removing the lock"
+else
+  fail "a signal handler removes the lock with EXIT still armed (double removal)" \
+    "$(grep -n 'trap' "$SRC")"
+fi
+if grep -qE "trap 'rm -rf \"\\\$LOCK\"; exit [0-9]+'" "$SRC"; then
+  fail "a signal handler still removes the lock without disarming EXIT first" \
+    "$(grep -n 'trap' "$SRC")"
+else
+  pass "no signal handler removes the lock with EXIT armed"
 fi
 
 # The age check must not depend on GNU-only find flags. stat is tried in both

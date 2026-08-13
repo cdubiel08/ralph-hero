@@ -27,6 +27,9 @@ MARKER="$PLUGIN_ROOT/.bootstrap-complete"
 LOCK="$PLUGIN_ROOT/.bootstrap.lock"
 LOCK_STALE_MIN="${RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN:-30}"
 LOCK_WAIT_SEC="${RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC:-900}"
+# How long an in-lock reap marker may sit before it is treated as orphaned.
+# The reap critical section is a handful of syscalls, so minutes is generous.
+REAP_STALE_MIN="${RALPH_KNOWLEDGE_REAP_STALE_MIN:-5}"
 # Identity for lock ownership. A PID only means something on the host that
 # issued it, and a plugin directory can live on a shared network home.
 THIS_HOST="$(hostname 2>/dev/null || echo unknown-host)"
@@ -223,8 +226,16 @@ dir_reclaimable() {
   [ "$age" -gt "$LOCK_STALE_MIN" ] || return 1
   if [ "$host" = "$THIS_HOST" ] && [ -n "$pid" ]; then
     kill -0 "$pid" 2>/dev/null && return 1
+    return 0
   fi
-  return 0
+  # A FOREIGN host's PIDs are not ours to probe, so death cannot be proven —
+  # and age is no substitute (codex P2, PR #1755). A shared network home with
+  # another machine still bootstrapping past the window would have its LIVE
+  # lock deleted and a second destructive `npm ci` started against the same
+  # tree. Fail closed: never delete a lock we cannot prove is abandoned. The
+  # cost is that a foreign host which truly died wedges this tree until an
+  # operator removes the directory, and the wait timeout says exactly that.
+  return 1
 }
 
 lock_reclaimable() { dir_reclaimable "$LOCK"; }
@@ -259,13 +270,40 @@ lock_reclaimable() { dir_reclaimable "$LOCK"; }
 #
 # Returns 0 when this process removed the lock, 1 otherwise.
 reap_abandoned_lock() {
-  local before after
+  local before after age
   # Sample identity and take the verdict BEFORE the marker exists: creating it
   # writes into the lock directory and bumps the mtime some verdicts rest on.
   before=$(cat "$LOCK/owner" 2>/dev/null || echo "__none__")
   lock_reclaimable || return 1
 
+  # Recover a marker orphaned by a reaper that was SIGKILLed mid-reap (codex
+  # P2, PR #1755). Without this the marker sits inside the abandoned lock
+  # forever, every later `mkdir` below fails, and the bootstrap times out on
+  # every launch until someone deletes the directory by hand — a permanent
+  # wedge introduced by the marker itself.
+  #
+  # Clearing it is safe by the same age argument that protects the lock: a live
+  # reaper's marker is seconds old, and a successor lock's marker is younger
+  # still, so only an ancient marker is ever removed — and an ancient marker
+  # can only sit inside an ancient lock.
+  if [ -d "$LOCK/reaping" ]; then
+    age=$(dir_age_min "$LOCK/reaping" 2>/dev/null || echo "")
+    if [ -n "$age" ] && [ "$age" -ge "$REAP_STALE_MIN" ]; then
+      echo "[ralph-knowledge] clearing an orphaned reap marker ($LOCK/reaping)" >&2
+      rm -rf "$LOCK/reaping" 2>/dev/null || true
+    fi
+  fi
+
   mkdir "$LOCK/reaping" 2>/dev/null || return 1
+
+  # Release the marker if we are interrupted while holding it, so an ordinary
+  # kill does not cost the next launcher the full REAP_STALE_MIN recovery.
+  # Signal handlers disarm EXIT first: otherwise the handler removes the
+  # marker and then `exit` runs the still-armed EXIT trap, removing the
+  # pathname a SECOND time — which would delete whatever occupies it by then.
+  trap 'rm -rf "$LOCK/reaping" 2>/dev/null || true' EXIT
+  trap 'trap - EXIT; rm -rf "$LOCK/reaping" 2>/dev/null || true; exit 130' INT
+  trap 'trap - EXIT; rm -rf "$LOCK/reaping" 2>/dev/null || true; exit 143' TERM
 
   # From here no other reaper can delete this lock, and a successor can only
   # exist if someone deleted it first — so an unchanged owner record proves we
@@ -273,11 +311,13 @@ reap_abandoned_lock() {
   after=$(cat "$LOCK/owner" 2>/dev/null || echo "__none__")
   if [ "$after" != "$before" ]; then
     rmdir "$LOCK/reaping" 2>/dev/null || true
+    trap - EXIT INT TERM
     return 1
   fi
 
   echo "[ralph-knowledge] removing abandoned bootstrap lock ($LOCK)" >&2
   rm -rf "$LOCK" 2>/dev/null || true
+  trap - EXIT INT TERM
   return 0
 }
 
@@ -298,6 +338,7 @@ if bootstrap_needed; then
     fi
     if [ "$waited" -ge "$LOCK_WAIT_SEC" ]; then
       echo "[ralph-knowledge] timed out after ${LOCK_WAIT_SEC}s waiting for another process to bootstrap ($LOCK)" >&2
+      echo "[ralph-knowledge] if no other machine is bootstrapping this tree, remove $LOCK and relaunch" >&2
       exit 1
     fi
     [ "$waited" -eq 0 ] && echo "[ralph-knowledge] another process is bootstrapping; waiting..." >&2
@@ -312,9 +353,14 @@ if bootstrap_needed; then
   # concurrently, which is the exact race this lock exists to prevent. Claude
   # Code killing a slow first run makes that an ordinary event, not a corner
   # case. So signals clean up and exit; only normal EXIT merely cleans up.
+  # Signal handlers disarm EXIT FIRST (codex P2, PR #1755). Otherwise the
+  # handler removes the lock and then `exit` runs the still-armed EXIT trap,
+  # removing the same pathname a second time — and a waiter that acquired the
+  # lock between the two removals has its brand-new lock deleted, letting
+  # another waiter enter the destructive bootstrap concurrently.
   trap 'rm -rf "$LOCK"' EXIT
-  trap 'rm -rf "$LOCK"; exit 130' INT
-  trap 'rm -rf "$LOCK"; exit 143' TERM
+  trap 'trap - EXIT; rm -rf "$LOCK"; exit 130' INT
+  trap 'trap - EXIT; rm -rf "$LOCK"; exit 143' TERM
 
   # Record the owner so a later launcher can ask whether we are still alive
   # rather than inferring it from the lock's age. Written after the trap is
