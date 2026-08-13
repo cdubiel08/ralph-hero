@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # work-fleet.sh — cockpit action: spawn up to FLEET parallel /ralph:work
-# sessions from the dependency-aware frontier.
+# sessions from the dependency-aware frontier, or from an EXPLICIT issue list.
+#
+#   work-fleet.sh [--refill] [ISSUE...]
+#
+# The frontier ranking is good default POLICY; it is not the only policy
+# (GH-1780). Naming issues on the command line spawns exactly those, in the
+# order given — same spawn primitive, same cap, same guards, same ledger and
+# token writes; an argument, not a second code path. Each named issue is still
+# validated against the frontier read, and one that is blocked or not eligible
+# is SKIPPED with a named reason rather than killing the run: fleet callers
+# must keep going. Bare invocation is unchanged.
 #
 # ATTENDED-ONLY, honestly labelled: this is a human clicking "give me a few
 # sessions to shepherd", not a farm. The per-issue claim protocol inside each
@@ -48,11 +58,37 @@ trap hold_pane EXIT
 
 billing_guard
 
+usage() {
+  cat <<'EOF'
+usage: work-fleet.sh [--refill] [ISSUE...]
+
+  (no ISSUE)  spawn the top RALPH_HERDR_FLEET (default 2, hard cap 4) issues of
+              the ranked frontier — the default policy, unchanged.
+  ISSUE...    spawn exactly these issues, in the order given (same hard cap 4).
+              Each is validated against the same frontier read; one that is
+              blocked or not eligible is SKIPPED with a reason and the rest
+              still spawn. An issue a session already owns is skipped too.
+  --refill    arm watcher refill for the run from the frontier. Frontier policy
+              only — refused with an explicit list, which is a closed set.
+  -h, --help  this.
+
+Knobs: RALPH_HERDR_FLEET, RALPH_HERDR_REFILL / _TTL_MIN / _BUDGET,
+       RALPH_HERDR_DRY_RUN=true (plans everything, spawns and arms nothing).
+EOF
+}
+
 REFILL="${RALPH_HERDR_REFILL:-}"
+ISSUES=""
 for arg in "$@"; do
   case "$arg" in
     --refill) REFILL=1 ;;
-    *) die "unknown argument '$arg' (only --refill)" ;;
+    -h | --help)
+      trap - EXIT # --help is a read, not a pane session: don't hold for Enter
+      usage
+      exit 0
+      ;;
+    *[!0-9]* | "") die "unknown argument '$arg' (--refill, --help, or issue numbers)" ;;
+    *) ISSUES="$ISSUES $arg" ;;
   esac
 done
 [ "$REFILL" = "1" ] || REFILL=""
@@ -61,14 +97,56 @@ FLEET="${RALPH_HERDR_FLEET:-2}"
 validate_pos_int RALPH_HERDR_FLEET "$FLEET"
 [ "$FLEET" -le 4 ] || die "RALPH_HERDR_FLEET=$FLEET exceeds the hard cap of 4 — this is an attended tool, not a farm"
 
-# ONE candidate read (frontier verb when present, ranked queue otherwise);
-# .queue is ranked and .next equals .queue[0] in both shapes.
-QUEUE_JSON=$(ralph_fleet_frontier_json)
-NUMBERS=$(jq -r --argjson k "$FLEET" '.queue[0:$k][]?.number' <<<"$QUEUE_JSON")
-if [ -z "$NUMBERS" ]; then
-  echo "frontier empty — nothing to spawn"
-  exit 0
+if [ -n "$ISSUES" ]; then
+  # Refill tops the fleet back up FROM THE FRONTIER — a policy the caller just
+  # overrode. Refusing beats silently spawning issues nobody named.
+  [ -z "$REFILL" ] ||
+    die "--refill refills from the ranked frontier; an explicit issue list is a closed set — run the list, then run work-fleet again"
+  # shellcheck disable=SC2086  # intentional word-splitting: one argv per issue
+  set -- $ISSUES
+  [ "$#" -le 4 ] || die "$# issues named — the hard cap is 4 (this is an attended tool, not a farm)"
 fi
+
+# ONE candidate read (frontier verb when present, ranked queue otherwise);
+# .queue is ranked and .next equals .queue[0] in both shapes. With an explicit
+# list it is the eligibility oracle rather than the candidate source — and the
+# title/parent source either way (spawn_work_session reads them out of it).
+QUEUE_JSON=$(ralph_fleet_frontier_json)
+if [ -n "$ISSUES" ]; then
+  NUMBERS="$ISSUES"
+  echo "explicit list:${ISSUES} (frontier read used to validate, not to choose)"
+else
+  NUMBERS=$(jq -r --argjson k "$FLEET" '.queue[0:$k][]?.number' <<<"$QUEUE_JSON")
+  if [ -z "$NUMBERS" ]; then
+    echo "frontier empty — nothing to spawn"
+    exit 0
+  fi
+fi
+
+# frontier_verdict N QUEUE_JSON — rc 0 when the frontier admits N; otherwise
+# prints WHY (one line) and returns 1. The blocked section names the open
+# dependency edges; anything else — claimed, in flight, closed, off-board — is
+# named by the board's own one-line `get` view rather than guessed at here.
+frontier_verdict() {
+  local n="$1" q="$2" why line
+  jq -e --argjson n "$n" '[.queue[]? | select(.number == $n)] | length > 0' <<<"$q" >/dev/null 2>&1 &&
+    return 0
+  why=$(jq -r --argjson n "$n" '
+    [.blocked[]? | select(.number == $n)] | .[0] |
+    if . == null then empty
+    elif (.truncated // .blockersTruncated // .fieldValuesTruncated // false)
+      then "blocked (dependency read truncated — fails closed)"
+    else ((.blockers_open // .openBlockers // []) | map("#" + tostring) | join(" ")) as $b
+      | if $b == "" then "blocked (open dependencies)" else "blocked by " + $b end
+    end' <<<"$q" 2>/dev/null) || why=""
+  if [ -n "$why" ]; then
+    printf '%s\n' "$why"
+    return 1
+  fi
+  line=$("$BOARD" get "$n" 2>/dev/null | head -1) || line=""
+  printf 'not on the frontier — board says: %s\n' "${line:-#$n unreadable (is it on this board?)}"
+  return 1
+}
 
 # One run id for the whole fleet: briefs land under it, and --refill arms it.
 RALPH_HERDR_RUN_ID=$(ralph_run_id)
@@ -77,6 +155,13 @@ export RALPH_HERDR_RUN_ID
 spawned="" spawned_issues="" skipped="" failed=""
 for n in $NUMBERS; do
   echo "── GH-$n ──"
+  # Only the explicit list needs the check — the frontier queue IS the eligible
+  # set, so re-asking it of its own head would be a tautology.
+  if [ -n "$ISSUES" ] && ! why=$(frontier_verdict "$n" "$QUEUE_JSON"); then
+    echo "SKIP $why"
+    skipped="$skipped GH-$n"
+    continue
+  fi
   rc=0
   spawn_work_session "$n" "$QUEUE_JSON" || rc=$?
   case "$rc" in

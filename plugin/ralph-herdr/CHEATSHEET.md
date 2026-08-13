@@ -73,6 +73,7 @@ herdr plugin action invoke cockpit      --plugin ralph-herdr   # THE board pane:
 herdr plugin action invoke dashboard    --plugin ralph-herdr   # read-only watch loop
 herdr plugin action invoke work-next    --plugin ralph-herdr   # 1 work session, board-next
 herdr plugin action invoke work-fleet   --plugin ralph-herdr   # up to N frontier issues in parallel
+herdr plugin action invoke work-these   --plugin ralph-herdr   # same fleet, on issues you name (prompts)
 herdr plugin action invoke answer       --plugin ralph-herdr   # answer a Human Needed item, comment-first
 herdr plugin action invoke attend       --plugin ralph-herdr   # focus whatever is blocked (carries the question)
 herdr plugin action invoke deliver-pass --plugin ralph-herdr   # shepherd In Review PRs
@@ -156,6 +157,20 @@ board claim leave NNN --holder w1743-fix-thing   # last one out clears the field
 
 `work-fleet` spawns from the top of the frontier (`RALPH_HERDR_FLEET`,
 default 2, hard cap 4) — one worker per issue, each in its own worktree.
+
+Ranking is the DEFAULT policy, not the only one: name issues and it spawns
+exactly those, in the order given (same cap, same guards). Each name is still
+validated against the frontier, and one that is blocked or ineligible is
+skipped **with the reason** while the rest spawn.
+
+```bash
+bash plugin/ralph-herdr/scripts/work-fleet.sh 1778 1774   # exactly these two
+bash plugin/ralph-herdr/scripts/work-fleet.sh --help      # the whole surface
+herdr plugin action invoke work-these --plugin ralph-herdr  # the same, prompted, in a pane
+```
+
+`--refill` is frontier policy and is refused with an explicit list — a named
+list is a closed set, so there is nothing to top it back up from.
 
 The shared-claim `work-issue-fleet` (several sessions on ONE issue, one
 worktree) was removed in GH-1774: siblings raced on the index, the branch, and

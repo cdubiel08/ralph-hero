@@ -11,7 +11,7 @@
 
 id = "ralph-herdr"
 name = "Ralph Herdr"
-version = "0.5.0"
+version = "0.5.1"
 min_herdr_version = "0.8.0"
 description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets; v4 adds the card substrate: issue/PR link handlers (click → focus-or-offer), a comment-first Human Needed answer pane, and attend carrying the blocking question; v5 adds the cockpit pane: a three-column board TUI (Go) over a degradation ladder — fzf fallback, then the dashboard — that loses chrome, never verbs."
 platforms = ["macos", "linux"]
@@ -112,6 +112,21 @@ command = [
   '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint work-fleet --placement split --direction down --cwd "$cwd" --focus'''
 ]
 
+# work-these: the same fleet on issues the human NAMES (GH-1780). The frontier
+# ranking is default policy, not the only policy — and "run a fleet on these
+# issues" had no surface at all before this. The pane prompts, then execs
+# work-fleet.sh with the list; empty input is the ranked frontier, so this is a
+# superset of the action above rather than a competing one.
+[[actions]]
+id = "work-these"
+title = "Ralph: work these issues…"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint work-these --placement split --direction down --cwd "$cwd" --focus'''
+]
+
 # The shared-claim sibling fleet on ONE issue was REMOVED in GH-1774: it put
 # several agents in one git worktree, where they raced on the index, the
 # branch, and each other's uncommitted files. Parallelism now comes from
@@ -203,6 +218,11 @@ command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/doctor.sh\""]
 id = "work-fleet"
 title = "Ralph: work fleet"
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-fleet.sh\""]
+
+[[panes]]
+id = "work-these"
+title = "Ralph: work these issues"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-these.sh\""]
 
 [[panes]]
 id = "cockpit"

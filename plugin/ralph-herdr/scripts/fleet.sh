@@ -345,7 +345,11 @@ ralph_brief_write() {
 }
 
 # ralph_fleet_frontier_json — the fleet's candidate source, normalized to the
-# `board next --json` envelope ({next, queue: [...]}). Probes ONCE per call
+# `board next --json` envelope ({next, queue: [...], blocked: [...]}). The
+# blocked section rides along so a caller validating an EXPLICIT issue list can
+# tell "blocked by #N" from "not eligible" without a second board read; its
+# per-item shape is whichever verb answered (frontier: blockers_open; next:
+# openBlockers), so consumers read both keys. Probes ONCE per call
 # for a `board frontier --json` verb (dependency-aware Ready∧blockers-merged
 # frontier — may not exist yet); absent or unparseable, falls back to the
 # ranked `next` queue, whose eligibility filter is already dependency-aware
@@ -355,10 +359,10 @@ ralph_fleet_frontier_json() {
   local out
   if out=$("$BOARD" frontier --json 2>/dev/null) && [ -n "$out" ]; then
     jq -c '
-      if type == "array" then {next: (.[0] // null), queue: .}
-      elif (.queue? // null) != null then {next: (.next? // .queue[0] // null), queue: .queue}
-      elif (.frontier? // null) != null then {next: (.frontier[0] // null), queue: .frontier}
-      else {next: null, queue: []} end' <<<"$out" 2>/dev/null && return 0
+      if type == "array" then {next: (.[0] // null), queue: ., blocked: []}
+      elif (.queue? // null) != null then {next: (.next? // .queue[0] // null), queue: .queue, blocked: (.blocked? // [])}
+      elif (.frontier? // null) != null then {next: (.frontier[0] // null), queue: .frontier, blocked: (.blocked? // [])}
+      else {next: null, queue: [], blocked: []} end' <<<"$out" 2>/dev/null && return 0
   fi
   "$BOARD" next --json
 }
