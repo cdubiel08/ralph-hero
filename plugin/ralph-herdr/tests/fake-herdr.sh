@@ -43,6 +43,12 @@
 #   agent start <NAME> …          agent-start.<NAME>.json, then agent-start.json
 #   agent prompt …                agent-prompt.json
 #   agent focus <NAME>            agent-focus.json
+#   agent get <NAME>              agent-get.<NAME>.json, then agent-get.json
+#                                 payload {agent:{…}} (default: an idle agent)
+#   agent wait <NAME> …           agent-wait.<NAME>.json, then agent-wait.json
+#                                 (same shape — `agent wait` answers agent_info)
+#   tab create …                  tab-create.json         payload {tab,root_pane}
+#   tab close <ID>                tab-close.json
 #   agent read <NAME> …           agent-read.<NAME>.txt, then agent-read.txt —
 #                                 RAW pane text, not a JSON envelope (default:
 #                                 empty output, the blank-tail degradation)
@@ -68,7 +74,9 @@
 #                                                   never merge it into stdout)
 #                                 <cmd>-<sub>.rc    forces the exit code
 #                                 (failure injection; body still printed;
-#                                 per-arg fixtures share the base key's .rc)
+#                                 per-arg fixtures share the base key's .rc,
+#                                 except agent get/wait, where a per-TARGET
+#                                 fixture carries its own .rc)
 #
 # Built-in defaults answer the shapes the watcher scripts parse: an empty
 # herd, an empty pane, and protocol-valid success envelopes. Anything not
@@ -236,6 +244,37 @@ case "$key" in
     ;;
   agent-focus)
     respond "cli:agent:focus" "ok" '{}' agent-focus
+    ;;
+  agent-get | agent-wait)
+    # Both answer agent_info (probed on 0.8.x — `agent wait` returns the
+    # AgentInfo of the state it woke on). The default status is `idle`, a
+    # TERMINATING state: a watcher test that forgets its fixture should drop
+    # the target and exit, never poll a fake herd forever.
+    #
+    # A per-TARGET fixture also re-points $key, so the trailing rc lookup reads
+    # that target's .rc. Without it, "this ONE agent is gone (refusal + rc 1)
+    # while the others answer normally" — the multi-target watcher's whole
+    # branch table — would be inexpressible.
+    if [ -n "$FIX" ] && { [ -f "$FIX/$key.${3-}.json" ] || [ -f "$FIX/$key.${3-}.raw" ] ||
+      [ -f "$FIX/$key.${3-}.rc" ]; }; then
+      key="$key.${3-}"
+      if raw_body "$key"; then
+        exit "$(rc_for "$key")"
+      fi
+    fi
+    respond "cli:${1-}:${2-}" "agent_info" \
+      "$(printf '{"agent":{"name":"%s","agent_status":"idle","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":1}}' "${3-}")" \
+      "$key" "agent-${2-}"
+    ;;
+  tab-create)
+    # The lane spawns read .root_pane.pane_id and .tab.tab_id off this
+    # (GH-1855), so a default must answer both — tab_created requires them.
+    respond "cli:tab:create" "tab_created" \
+      '{"tab":{"tab_id":"w1:tF","workspace_id":"w1","label":"fake","number":1,"pane_count":1,"focused":false,"agent_status":"unknown"},"root_pane":{"pane_id":"pTF","tab_id":"w1:tF","workspace_id":"w1","terminal_id":"term_fake","focused":false,"agent_status":"unknown","revision":0}}' \
+      tab-create
+    ;;
+  tab-close)
+    respond "cli:tab:close" "ok" '{}' tab-close
     ;;
   agent-read)
     # RAW pane text (what --source recent-unwrapped prints), never a JSON

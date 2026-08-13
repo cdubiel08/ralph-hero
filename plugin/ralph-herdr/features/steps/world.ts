@@ -4,10 +4,16 @@
 // EXACT harness the *.test.sh suites use (watcher/fleet/substrate — read
 // them first, change them together):
 //
-//   bin/herdr    wrapper over tests/fake-herdr.sh (fixtures + invocation log;
-//                the wrapper additionally models `agent get` — unmodeled by
-//                the shim — as an idle agent so notify-watch.sh drains
-//                instead of polling forever)
+//   bin/herdr    wrapper over tests/fake-herdr.sh (fixtures + invocation log),
+//                plus whatever chaos a scenario injects ahead of it. It used
+//                to hand-roll `agent get` — then unmodeled by the shim — as a
+//                bare {result:{agent:{…}}} so notify-watch.sh would drain
+//                instead of polling forever. That body is one the real server
+//                cannot produce (protocol 19 requires an id and a
+//                result.type), and the moment notify-watch.sh started reading
+//                its polls through the transport adapter, the adapter refused
+//                it — correctly (GH-1855). fake-herdr.sh models `agent get`
+//                and `agent wait` now, envelope and all.
 //   bin/board    wrapper over tests/fake-board.sh
 //   bin/gh       the substrate.test.sh gh shim (logs into FAKE_BOARD_LOG)
 //   repo/        a real git clone of a local origin (the spawn path fetches
@@ -136,20 +142,13 @@ export class RalphWorld extends World {
     );
   }
 
-  /** The default herdr wrapper: fake-herdr.sh + an `agent get` model. */
+  /** The default herdr wrapper: fake-herdr.sh, plus any injected chaos. */
   installDefaultHerdrShim(extraPrelude = ''): void {
     writeExecutable(
       path.join(this.bin, 'herdr'),
       [
         '#!/bin/bash',
         extraPrelude,
-        '# `agent get` is unmodeled by fake-herdr.sh; answer idle so',
-        '# notify-watch.sh notifies once and drains (logged like the shim).',
-        'if [ "${1-}" = agent ] && [ "${2-}" = get ]; then',
-        '  if [ -n "${FAKE_HERDR_LOG:-}" ]; then printf \'%s\\n\' "$*" >>"$FAKE_HERDR_LOG"; fi',
-        '  printf \'{"result":{"agent":{"name":"%s","agent_status":"idle"}}}\\n\' "${3-}"',
-        '  exit 0',
-        'fi',
         `exec bash "${path.join(TESTS_DIR, 'fake-herdr.sh')}" "$@"`,
         '',
       ].join('\n'),

@@ -243,6 +243,70 @@ else
   not_ok "spawn failure: origin/main fixture could not be built"
 fi
 
+# ── ralph_herdr_tab_create: the lane spawns' tab goes through the adapter ────
+# deliver-pass.sh and tend-pass.sh used to capture `tab create` stdout and pull
+# a pane id out of it. A refusal lands on stderr with stdout empty, so that
+# capture came back empty and every failure — refused, unreachable, garbled —
+# read as the single line "no pane id in tab response": true, and stripped of
+# the error.code that says which one it was (GH-1855).
+is "tab create: the validated result is returned, not the envelope" "pTF" \
+  "$(ralph_herdr_tab_create ralph-deliver | jq -r '.root_pane.pane_id')"
+is "tab create: the tab id (the cleanup path reads it) comes back too" "w1:tF" \
+  "$(ralph_herdr_tab_create ralph-deliver | jq -r '.tab.tab_id')"
+is "tab create: no envelope fields leak into what callers read" "null" \
+  "$(ralph_herdr_tab_create ralph-deliver | jq -r '.result // "null"')"
+
+FAKE_HERDR_LOG="$TMP/tab.log" ralph_herdr_tab_create ralph-tend >/dev/null
+tab_argv=$(grep 'tab create' "$TMP/tab.log" 2>/dev/null | head -1)
+case "$tab_argv" in
+  *"--cwd $ROOT"*"--label ralph-tend"*"--no-focus"*)
+    ok "tab create: argv is unchanged by the route-through" ;;
+  *)
+    not_ok "tab create: argv is unchanged by the route-through — got '$tab_argv'" ;;
+esac
+rm -f "$TMP/tab.log"
+
+# A refusal: the error envelope on stderr with an empty stdout, which is what
+# the real 0.8.x binary does.
+printf '{"error":{"code":"tab_limit_reached","message":"too many tabs in this workspace"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/tab-create.json"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/tab-create.rc"
+tab_out=$(ralph_herdr_tab_create ralph-deliver 2>&1)
+tab_rc=$?
+is "tab create: a refusal fails the spawn" "1" "$tab_rc"
+case "$tab_out" in
+  *tab_limit_reached*) ok "tab create: the refusal names the server's code" ;;
+  *) not_ok "tab create: the refusal names the server's code — got '$tab_out'" ;;
+esac
+case "$tab_out" in
+  *"no pane id"*) not_ok "tab create: a refusal is not reported as a missing pane id — got '$tab_out'" ;;
+  *) ok "tab create: a refusal is not reported as a missing pane id" ;;
+esac
+rm -f "$FAKE_HERDR_FIXTURES/tab-create.json" "$FAKE_HERDR_FIXTURES/tab-create.rc"
+
+# Exit 0 with a body nobody can parse — the case an exit-status check sails
+# straight through. Nothing resembling a pane id may reach the caller.
+printf '{"id":"cli:tab:create","result":{"type":"tab_created","tab":{}}}trailing\n' \
+  >"$FAKE_HERDR_FIXTURES/tab-create.raw"
+tab_out=$(ralph_herdr_tab_create ralph-deliver 2>&1)
+is "tab create: a malformed body at exit 0 fails the spawn" "1" "$?"
+case "$tab_out" in
+  *pTF*) not_ok "tab create: a malformed body must yield no pane id — got '$tab_out'" ;;
+  *) ok "tab create: a malformed body yields no pane id" ;;
+esac
+rm -f "$FAKE_HERDR_FIXTURES/tab-create.raw"
+
+# Silence: no stdout, no stderr, nonzero exit — the server did not answer.
+: >"$FAKE_HERDR_FIXTURES/tab-create.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/tab-create.rc"
+tab_out=$(ralph_herdr_tab_create ralph-deliver 2>&1)
+is "tab create: an unanswered call fails the spawn" "1" "$?"
+case "$tab_out" in
+  *"did not answer"*) ok "tab create: silence is reported as silence, not as a refusal" ;;
+  *) not_ok "tab create: silence is reported as silence — got '$tab_out'" ;;
+esac
+rm -f "$FAKE_HERDR_FIXTURES/tab-create.raw" "$FAKE_HERDR_FIXTURES/tab-create.rc"
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

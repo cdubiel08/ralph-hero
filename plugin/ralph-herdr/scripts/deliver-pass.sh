@@ -30,8 +30,8 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   exit 0
 fi
 
-t=$("$HERDR" tab create --cwd "$REPO" --label "ralph-deliver" --no-focus)
-pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$t")
+t=$(ralph_herdr_tab_create "ralph-deliver")
+pane=$(jq -r '.root_pane.pane_id // empty' <<<"$t")
 [ -n "$pane" ] || die "no pane id in tab response"
 
 # One live pass per lane: the unique agent name is the interlock. A
@@ -39,7 +39,7 @@ pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$t")
 # just-created tab holds only an idle shell at this point (start failed), so
 # closing it is cleanup, not killing an agent.
 if ! agent_start_when_ready ralph-deliver "$pane"; then
-  tab_id=$(jq -r '.result.tab.tab_id // empty' <<<"$t")
+  tab_id=$(jq -r '.tab.tab_id // empty' <<<"$t")
   [ -n "$tab_id" ] && "$HERDR" tab close "$tab_id" >/dev/null 2>&1 || true
   die "agent start ralph-deliver failed — see the herdr error above (a live deliver pass owning the name is the common cause, but exhausted startup retries land here too); cleaned up the empty tab"
 fi
