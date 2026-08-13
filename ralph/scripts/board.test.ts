@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -2879,6 +2879,57 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     // --fresh is the operator's deterministic override of any Δ.
     staleNames();
     expect(priorityOptionOrder(ctx, { values: ["Later"], fresh: true })).toEqual(["Soon", "Later"]);
+  });
+
+  it("a CONFIRMED-obsolete value stops being evidence — one refresh, not one per read", () => {
+    // The failure mode this closes: an item keeping a removed value is a case
+    // the ranker supports on purpose, so "absent from options" stays true even
+    // straight after a successful refresh. Left alone, every warm read pays a
+    // schema query forever — the exact bound the evidence trigger exists to
+    // protect. The assertions here are on COST, not just on the answer.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const schemaReads = () => gh.queries.filter((q) => q.includes("fragment pf on ProjectV2")).length;
+    const P = ["P0", "P1", "P2", "P3"];
+
+    // Warm the cache, then keep re-stamping it fresh so the AGE trigger can
+    // never be what fires — only evidence.
+    priorityOptionOrder(ctx);
+    const cacheFile = join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json");
+    const reheat = () => {
+      const c = JSON.parse(readFileSync(cacheFile, "utf8"));
+      c.fetchedAt = NOW.toISOString();
+      writeFileSync(cacheFile, JSON.stringify(c));
+    };
+    reheat();
+    const before = schemaReads();
+
+    // "P9" is not an option and never will be. First sighting is real evidence.
+    expect(priorityOptionOrder(ctx, { values: ["P9"] })).toEqual(P);
+    expect(schemaReads()).toBe(before + 1);
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).unresolvedPriorities).toEqual(["P9"]);
+
+    // Every subsequent read must be FREE: the value is confirmed obsolete.
+    reheat();
+    for (let i = 0; i < 5; i++) expect(priorityOptionOrder(ctx, { values: ["P9", "P1", null] })).toEqual(P);
+    expect(schemaReads()).toBe(before + 1);
+
+    // A DIFFERENT unexplained value is still news — suppression is per value,
+    // never a blanket "stop looking".
+    reheat();
+    priorityOptionOrder(ctx, { values: ["Whatever"] });
+    expect(schemaReads()).toBe(before + 2);
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).unresolvedPriorities).toEqual(["P9", "Whatever"]);
+
+    // The obsolete value still ranks BEHIND every live option (suppressing the
+    // refresh must not change the ranking contract).
+    const q = (n: number, priority: string): QueueItem => ({
+      number: n, repo: "cdubiel08/ralph-hero", title: `t${n}`, state: "Backlog", priority,
+      hasParent: false, parentNumber: null, openBlockers: [], openBlockerLabels: [],
+      blockersTruncated: false, fieldValuesTruncated: false, claim: null, claimRaw: null,
+      labels: [], labelsTruncated: false, closedBlockers: [],
+    });
+    expect(rankNext([q(1, "P9"), q(9, "P3")], [], P).eligible.map((i) => i.number)).toEqual([9, 1]);
   });
 
   it("--clear forces the live schema too — a recreated field's stale ID would fail every clear", () => {

@@ -1245,6 +1245,12 @@ interface BoardCache {
   repositoryId: string;
   fields: Record<string, FieldInfo>; // field name → info
   fetchedAt: string;
+  /** Priority values a LIVE read has already confirmed are not options — an
+   *  item holding a removed/renamed value, which is a case the ranker supports
+   *  on purpose (historical record). Without this, "value absent from options"
+   *  is permanent evidence of staleness and every warm read pays a schema
+   *  query forever; a confirmed-obsolete value must stop being news. */
+  unresolvedPriorities?: string[];
 }
 
 const STATE_FIELD = "Workflow State";
@@ -3977,7 +3983,12 @@ function assertPriorityOption(cache: BoardCache, value: string): void {
  *      elsewhere), and it costs nothing on a healthy board — the common case
  *      never fires it. This closes the rename half outright rather than
  *      time-bounding it, and it is the reason the ranker's own input is passed
- *      in rather than read here.
+ *      in rather than read here. Evidence is spent ONCE per value: a live read
+ *      that still does not list it proves the value is genuinely obsolete
+ *      (a supported case — an item keeping a removed value as historical
+ *      record), so it is recorded in `unresolvedPriorities` and stops counting
+ *      as news. Otherwise such a board would pay a schema query on every warm
+ *      read forever, defeating the very bound this design protects.
  *    - OPERATOR: `--fresh`, the flag that already means "don't serve me a
  *      snapshot", now forces the schema read too. A deterministic escape hatch
  *      beats waiting out any Δ.
@@ -3993,6 +4004,7 @@ function assertPriorityOption(cache: BoardCache, value: string): void {
  *  direction: the option order is advisory ranking input, while a `next` that
  *  cannot answer at all stops the loop. */
 const PRIORITY_ORDER_MAX_AGE_MS = 60 * 60_000;
+const PRIORITY_UNRESOLVED_MAX = 64;
 
 export function priorityOptionOrder(
   ctx: Ctx,
@@ -4017,17 +4029,40 @@ export function priorityOptionOrder(
   // An unparseable stamp counts as stale (NaN fails the comparison either way,
   // so it is asserted, not left to coincidence).
   const age = ctx.now().getTime() - Date.parse(cached.fetchedAt);
-  const unknownValue = (opts.values ?? []).some((v) => v !== null && v !== undefined && !cachedOrder.includes(v));
-  const stale = opts.fresh === true || unknownValue || !(Number.isFinite(age) && age <= PRIORITY_ORDER_MAX_AGE_MS);
+  const known = new Set([...cachedOrder, ...(cached.unresolvedPriorities ?? [])]);
+  const candidates = (opts.values ?? []).filter((v): v is string => typeof v === "string" && v.length > 0);
+  const unexplained = candidates.filter((v) => !known.has(v));
+  const stale =
+    opts.fresh === true || unexplained.length > 0 || !(Number.isFinite(age) && age <= PRIORITY_ORDER_MAX_AGE_MS);
   if (!stale) return cachedOrder;
+  let refreshed: BoardCache;
   try {
-    return order(refreshCache(ctx));
+    refreshed = refreshCache(ctx);
   } catch (e) {
     process.stderr.write(
       `warn: ${PRIORITY_FIELD} options not refreshed (${(e as Error).message}) — ranking by the cached order\n`,
     );
     return cachedOrder;
   }
+  const freshOrder = order(refreshed);
+  // Spend the evidence: whatever the LIVE schema still does not list is
+  // obsolete-by-confirmation, not a stale cache, and must not re-trigger.
+  const confirmed = [
+    ...new Set([...(cached.unresolvedPriorities ?? []), ...candidates.filter((v) => !freshOrder.includes(v))]),
+  ]
+    // Bounded: this is a suppression list, not a ledger. Newest wins, because
+    // an old entry that GitHub re-added is re-learned by the next live read.
+    .slice(-PRIORITY_UNRESOLVED_MAX);
+  if (confirmed.length) {
+    refreshed.unresolvedPriorities = confirmed;
+    try {
+      writeFileSync(cachePath(ctx), JSON.stringify(refreshed, null, 2));
+    } catch {
+      /* the suppression list is an optimisation — losing it costs a query, not
+         correctness, so a read-only cache dir must not break ranking */
+    }
+  }
+  return freshOrder;
 }
 
 /** The setter `next` needed all along: an item filed without a priority ranks
