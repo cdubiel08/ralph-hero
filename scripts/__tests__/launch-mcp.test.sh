@@ -570,10 +570,34 @@ fi
 # degrades to the age fallback.
 root=$(fake_root ownerfile)
 log=$(run_launcher "$root")
-if grep -q "printf '%s %s\\\\n' \"\\\$\\\$\" \"\\\$THIS_HOST\" >\"\\\$LOCK/owner\"" "$SRC"; then
-  pass "the lock holder records pid + host"
+if grep -q 'lock_write_owner' "$SRC"; then
+  pass "the lock holder records an owner identity"
 else
   fail "no owner file is written — liveness could never be checked" "$(grep -n 'owner' "$SRC")"
+fi
+
+# The record must carry a BIRTH TIME rather than lean on directory mtime: the
+# reap marker is created inside the lock and bumps it.
+if grep -q 'born' "$SRC"; then
+  pass "the owner record carries a birth timestamp"
+else
+  fail "the lock's age still rests only on directory mtime, which the marker bumps"
+fi
+
+# The reaper mutex must live INSIDE the lock, so it cannot outlive what it
+# guards and become stale state of its own — the flaw in an external reap lock.
+if grep -q 'mkdir "$LOCK/reaping"' "$SRC"; then
+  pass "reaper serialization is scoped to the lock instance"
+else
+  fail "reaper serialization is not scoped to the lock instance" "$(grep -n 'reaping' "$SRC")"
+fi
+
+# ...and the lock is never taken out of its path to be inspected. That absence
+# window is what CI's 2-core runner exploited into 3 concurrent installs.
+if grep -q 'mv "$LOCK" "$grave"' "$SRC"; then
+  fail "the lock is still moved out of its path, opening an absence window"
+else
+  pass "the lock is never moved out of its path (no absence window)"
 fi
 
 echo "=== concurrent waiters on one abandoned lock: exactly one bootstrap ==="
