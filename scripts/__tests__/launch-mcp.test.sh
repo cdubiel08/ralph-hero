@@ -199,6 +199,24 @@ else
   fail ".mcp.json does not reference scripts/launch-mcp.sh" "$(cat "$MCP_JSON")"
 fi
 
+# The script must be run THROUGH bash, not named as the command (codex P1).
+# Windows launches an MCP `command` as an executable and cannot execute a .sh
+# or honour its shebang, even with Git Bash installed — naming the script
+# directly stops the server from starting there at all, which the `npx` wiring
+# this replaces did not do.
+if python3 -c "
+import json, sys
+d = json.load(open('$MCP_JSON'))
+s = d['mcpServers']['ralph-knowledge']
+sys.exit(0 if s['command'] == 'bash'
+         and any('launch-mcp.sh' in a for a in s.get('args', [])) else 1)
+" 2>/dev/null; then
+  pass ".mcp.json invokes the launcher through bash (works where .sh is not executable)"
+else
+  fail ".mcp.json names the .sh file as the command — Windows cannot execute it" \
+    "$(cat "$MCP_JSON")"
+fi
+
 # The release workflow used to rewrite the pin. It must no longer do so, or
 # the next release would reintroduce exactly the spec asserted against above.
 if grep -q 'ralph-hero-knowledge-index@\[0-9\]' "$RELEASE_WF"; then
