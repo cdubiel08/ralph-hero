@@ -27,6 +27,9 @@ MARKER="$PLUGIN_ROOT/.bootstrap-complete"
 LOCK="$PLUGIN_ROOT/.bootstrap.lock"
 LOCK_STALE_MIN="${RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN:-30}"
 LOCK_WAIT_SEC="${RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC:-900}"
+# Identity for lock ownership. A PID only means something on the host that
+# issued it, and a plugin directory can live on a shared network home.
+THIS_HOST="$(hostname 2>/dev/null || echo unknown-host)"
 
 fingerprint() {
   local hasher
@@ -124,14 +127,60 @@ run_bootstrap() {
   echo "[ralph-knowledge] bootstrap complete."
 }
 
+# Age of the lock directory in whole minutes, on stdout. BSD stat wants -f %m
+# and GNU stat wants -c %Y; try both and fail (non-zero, no output) when
+# neither answers, so an unreadable age can never be mistaken for "old".
+lock_age_min() {
+  local now mtime
+  now=$(date +%s 2>/dev/null) || return 1
+  mtime=$(stat -f %m "$LOCK" 2>/dev/null) || mtime=$(stat -c %Y "$LOCK" 2>/dev/null) || return 1
+  [ -n "$mtime" ] || return 1
+  echo $(( (now - mtime) / 60 ))
+}
+
+# True (0) when the lock may be taken away from whoever holds it.
+#
+# Age alone does NOT establish that the owner died (codex P2, PR #1755). An
+# `npm ci` stalled on a slow registry can legitimately outlive LOCK_STALE_MIN,
+# and reclaiming it there starts a second destructive `npm ci` against the same
+# tree — the precise race the lock exists to prevent. So when the owner is a
+# live process on this machine we ask the kernel instead of guessing, and never
+# reclaim; when it is dead we reclaim at once without waiting out the window.
+#
+# Age remains the fallback for the two cases liveness cannot decide: a lock
+# whose owner file is not written yet (the holder is between `mkdir` and the
+# write, so the lock is necessarily new), and a lock from another host — a
+# shared network home — whose PIDs are not ours to probe.
+#
+# PID reuse can make a dead owner look alive. That errs toward waiting and then
+# timing out, never toward a concurrent install, which is the safe direction.
+lock_reclaimable() {
+  local owner pid host age
+  owner=$(cat "$LOCK/owner" 2>/dev/null || echo "")
+  pid=${owner%% *}
+  host=${owner#* }
+  if [ -n "$owner" ] && [ "$host" = "$THIS_HOST" ] && [ -n "$pid" ]; then
+    kill -0 "$pid" 2>/dev/null && return 1
+    return 0
+  fi
+  age=$(lock_age_min) || return 1
+  [ "$age" -gt "$LOCK_STALE_MIN" ]
+}
+
 if bootstrap_needed; then
   waited=0
   until mkdir "$LOCK" 2>/dev/null; do
-    # Reclaim a lock abandoned by a killed process.
-    if [ -n "$(find "$LOCK" -maxdepth 0 -mmin "+${LOCK_STALE_MIN}" 2>/dev/null)" ]; then
-      echo "[ralph-knowledge] removing stale bootstrap lock ($LOCK)" >&2
-      rm -rf "$LOCK"
-      continue
+    # Reclaim a lock whose owner is gone.
+    if lock_reclaimable; then
+      echo "[ralph-knowledge] removing abandoned bootstrap lock ($LOCK)" >&2
+      rm -rf "$LOCK" 2>/dev/null || true
+      # Only retry immediately if the removal actually worked. Otherwise fall
+      # through to the wait accounting below, so a lock we can never delete
+      # (permissions, read-only mount) times out instead of spinning forever.
+      if [ ! -d "$LOCK" ]; then
+        continue
+      fi
+      echo "[ralph-knowledge] could not remove $LOCK; waiting instead" >&2
     fi
     if [ "$waited" -ge "$LOCK_WAIT_SEC" ]; then
       echo "[ralph-knowledge] timed out after ${LOCK_WAIT_SEC}s waiting for another process to bootstrap ($LOCK)" >&2
@@ -152,6 +201,13 @@ if bootstrap_needed; then
   trap 'rm -rf "$LOCK"' EXIT
   trap 'rm -rf "$LOCK"; exit 130' INT
   trap 'rm -rf "$LOCK"; exit 143' TERM
+
+  # Record the owner so a later launcher can ask whether we are still alive
+  # rather than inferring it from the lock's age. Written after the trap is
+  # armed, so a kill in this window still releases the lock; a waiter that
+  # arrives before this line sees no owner file and falls back to age, which
+  # is correct because the lock is necessarily new at that point.
+  printf '%s %s\n' "$$" "$THIS_HOST" >"$LOCK/owner" 2>/dev/null || true
 
   # Re-check under the lock: the process we waited on may have finished the
   # work, in which case we must not repeat the destructive `npm ci`.

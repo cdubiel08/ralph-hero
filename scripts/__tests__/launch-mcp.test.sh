@@ -442,6 +442,112 @@ else
   fail "script resumed past the signal and kept bootstrapping" "$(cat "$log")"
 fi
 
+echo "=== lock reclamation asks whether the owner died, not how old it is ==="
+
+# A live owner must keep its lock however long the install takes. `npm ci`
+# stalling on a slow registry past LOCK_STALE_MIN is a legitimate long
+# bootstrap, and reclaiming there starts a SECOND destructive npm ci against
+# the same tree — the race the lock exists to prevent (codex P2).
+root=$(fake_root livelock)
+rm -f "$root/dist/index.js"          # force the bootstrap path
+mkdir -p "$root/.bootstrap.lock"
+# Owner: this test process, which is very much alive, on this host.
+printf '%s %s\n' "$$" "$(hostname)" >"$root/.bootstrap.lock/owner"
+# Backdate the lock far beyond the stale window.
+touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true
+
+log="$root/calls.log"; : >"$log"
+RC=0
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+
+if grep -q 'npm ci' "$log"; then
+  fail "reclaimed a 25-year-old lock whose owner is ALIVE — concurrent npm ci" "$(cat "$log")"
+else
+  pass "live owner keeps its lock regardless of age (no concurrent npm ci)"
+fi
+if [ "$RC" -ne 0 ] && grep -q "timed out" "$root/stderr.log"; then
+  pass "waiter times out rather than stealing a live lock"
+else
+  fail "expected a wait-timeout against a live owner (rc=$RC)" "$(cat "$root/stderr.log")"
+fi
+
+# A dead owner is reclaimed AT ONCE — no need to wait out the stale window.
+root=$(fake_root deadlock)
+rm -f "$root/dist/index.js"
+mkdir -p "$root/.bootstrap.lock"
+# A PID that cannot be running: claim one, then make sure it is gone.
+DEAD_PID=$( (bash -c 'echo $$') )
+while kill -0 "$DEAD_PID" 2>/dev/null; do DEAD_PID=$((DEAD_PID + 1)); done
+printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
+# Deliberately FRESH: age alone would say "wait", liveness says "reclaim".
+log="$root/calls.log"; : >"$log"
+RC=0
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+
+if grep -q 'npm ci' "$log"; then
+  pass "dead owner's lock is reclaimed immediately, without waiting out the window"
+else
+  fail "a fresh lock owned by a DEAD pid was not reclaimed — a crash would block for the full window" \
+    "$(cat "$root/stderr.log")"
+fi
+
+# A foreign host's PID is not ours to probe, so age is the only signal left.
+root=$(fake_root foreignlock)
+rm -f "$root/dist/index.js"
+mkdir -p "$root/.bootstrap.lock"
+printf '%s %s\n' "$$" "some-other-host.example" >"$root/.bootstrap.lock/owner"
+log="$root/calls.log"; : >"$log"
+RC=0
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+if grep -q 'npm ci' "$log"; then
+  fail "reclaimed a FRESH lock held by another host" "$(cat "$log")"
+else
+  pass "fresh foreign-host lock is left alone (falls back to age)"
+fi
+
+touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true
+log="$root/calls.log"; : >"$log"
+RC=0
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+if grep -q 'npm ci' "$log"; then
+  pass "aged foreign-host lock is reclaimed by age"
+else
+  fail "an ancient foreign lock was never reclaimed — unrecoverable after a crash" \
+    "$(cat "$root/stderr.log")"
+fi
+
+# The age check must not depend on GNU-only find flags. stat is tried in both
+# BSD (-f %m) and GNU (-c %Y) spellings; assert the portable route is present
+# and that no find(1) age probe remains.
+if grep -q 'stat -f %m' "$SRC" && grep -q 'stat -c %Y' "$SRC"; then
+  pass "lock age uses both BSD and GNU stat spellings"
+else
+  fail "lock age is not portable across BSD/GNU stat" "$(grep -n 'stat ' "$SRC")"
+fi
+if grep -q 'find "\$LOCK"' "$SRC"; then
+  fail "a find(1)-based lock-age probe is still present" "$(grep -n 'find "\$LOCK"' "$SRC")"
+else
+  pass "no find(1) lock-age probe remains"
+fi
+
+# The owner file must actually be written, or every reclaim decision silently
+# degrades to the age fallback.
+root=$(fake_root ownerfile)
+log=$(run_launcher "$root")
+if grep -q "printf '%s %s\\\\n' \"\\\$\\\$\" \"\\\$THIS_HOST\" >\"\\\$LOCK/owner\"" "$SRC"; then
+  pass "the lock holder records pid + host"
+else
+  fail "no owner file is written — liveness could never be checked" "$(grep -n 'owner' "$SRC")"
+fi
+
 echo
 echo "launch-mcp.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
