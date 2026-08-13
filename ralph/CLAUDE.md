@@ -50,3 +50,5 @@ shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh
 ## Install model
 
 Claude Code installs `ralph` from the marketplace clone as an immutable versioned copy; edits here reach a running session after merge → `release-ralph.yml` bumps + tags → plugin update. `board.ts` ships inside the plugin (no npm, no version pin — the repo copy is the version).
+
+The herdr half of the cockpit does **not** auto-update (herdr has no `plugin update`), so `scripts/herdr-plugin-version` stamps the `ralph-herdr` version this ralph release expects; `herdr-setup.sh check` compares it against herdr's registered version and names the reinstall command on drift. Bump the stamp with `plugin/ralph-herdr/herdr-plugin.toml` — `scripts/__tests__/herdr-setup.test.sh` fails if they diverge.
