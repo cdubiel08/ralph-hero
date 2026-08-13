@@ -86,7 +86,7 @@ chmod +x "$BIN/node" "$BIN/npm" "$BIN/npx"
 # missing one is a hard error rather than a silent hole.
 # `bash` and `env` are load-bearing: the stubs' `#!/usr/bin/env bash` shebang
 # resolves through this PATH too, and without them every run dies at 127.
-BASE_UTILS="bash env rm cat find mkdir sleep date uname cut kill sed grep ls dirname basename pwd"
+BASE_UTILS="bash env rm cat find mkdir sleep date uname cut kill sed grep ls dirname basename pwd stat hostname"
 sanitized_bin() {
   local dir="$1"; shift
   mkdir -p "$dir"
@@ -546,6 +546,116 @@ if grep -q "printf '%s %s\\\\n' \"\\\$\\\$\" \"\\\$THIS_HOST\" >\"\\\$LOCK/owner
   pass "the lock holder records pid + host"
 else
   fail "no owner file is written — liveness could never be checked" "$(grep -n 'owner' "$SRC")"
+fi
+
+echo "=== concurrent waiters on one abandoned lock: exactly one bootstrap ==="
+
+# Codex's reproduction, as a test. Many launchers meet the SAME lock left by a
+# dead owner. Each can validate "owner is dead" before any removal happens, so
+# an unserialized reap lets waiter B's stale verdict delete the fresh lock that
+# waiter A just reclaimed — and both run a destructive `npm ci` on one tree.
+#
+# The invariant is not "one winner eventually" but "npm ci ran exactly once".
+root=$(fake_root concurrent)
+rm -f "$root/dist/index.js"                   # force the bootstrap path
+mkdir -p "$root/.bootstrap.lock"
+DEAD_PID=$( (bash -c 'echo $$') )
+while kill -0 "$DEAD_PID" 2>/dev/null; do DEAD_PID=$((DEAD_PID + 1)); done
+printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
+
+# A slow `npm ci` widens the window a broken reaper would fall into. Each line
+# is short, so appends from concurrent writers stay atomic in practice.
+CC_BIN="$TMP_ROOT/concurrent-bin"
+sanitized_bin "$CC_BIN" shasum
+cat >"$CC_BIN/npm" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "ci "*|"ci")
+    echo "npm-ci pid=$$" >>"$CALL_LOG"
+    sleep 2
+    ;;
+  "run build")
+    # Produce the artifact a real build would. Without this the tree stays
+    # unbootstrapped, every waiter in turn sees work to do, and the test
+    # measures its own stub rather than the lock.
+    echo 'console.log("server")' >dist/index.js
+    ;;
+esac
+exit 0
+STUB
+chmod +x "$CC_BIN/npm"
+
+CC_LOG="$root/concurrent.log"
+: >"$CC_LOG"
+WAITERS=30
+for _ in $(seq 1 "$WAITERS"); do
+  CALL_LOG="$CC_LOG" CLAUDE_PLUGIN_ROOT="$root" PATH="$CC_BIN" \
+    RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=30 \
+    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>>"$root/concurrent.stderr" &
+done
+wait
+
+# grep -c prints 0 AND exits 1 on no match, so `|| echo 0` would emit two
+# lines and break the arithmetic below. Take grep's own count and default only
+# when the variable is genuinely empty.
+ci_runs=$(grep -c '^npm-ci ' "$CC_LOG" 2>/dev/null) || true
+ci_runs=${ci_runs:-0}
+if [ "$ci_runs" -eq 1 ]; then
+  pass "$WAITERS concurrent waiters on an abandoned lock produced exactly 1 npm ci"
+else
+  fail "$WAITERS concurrent waiters produced $ci_runs concurrent npm ci runs (want exactly 1)" \
+    "$(sort "$CC_LOG" | uniq -c)"
+fi
+
+# The reap lock is a critical section, not a leak: nothing may survive the run.
+if [ ! -d "$root/.bootstrap.reap" ]; then
+  pass "reap lock is released (no leaked critical section)"
+else
+  fail "reap lock survived the run — reclamation would be wedged forever"
+fi
+
+# ...and the tree really did get bootstrapped by the one winner.
+if [ -f "$root/.bootstrap-complete" ]; then
+  pass "the single winner completed the bootstrap"
+else
+  fail "no winner completed the bootstrap" "$(tail -5 "$root/concurrent.stderr" 2>/dev/null)"
+fi
+
+echo "=== reap lock: serialized, and self-healing when its holder dies ==="
+
+# A reaper holding the reap lock blocks other reapers. With a live reap lock
+# held by nobody (fresh, never released), a waiter must NOT delete the lock.
+root=$(fake_root reapheld)
+rm -f "$root/dist/index.js"
+mkdir -p "$root/.bootstrap.lock" "$root/.bootstrap.reap"
+printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
+log="$root/calls.log"; : >"$log"
+RC=0
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
+  RALPH_KNOWLEDGE_REAP_STALE_MIN=60 \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+if grep -q 'npm ci' "$log"; then
+  fail "reaped a lock while another reaper held the reap lock" "$(cat "$log")"
+else
+  pass "a held reap lock serializes reclamation (waiter defers)"
+fi
+
+# But a reap lock whose holder died must not wedge reclamation forever.
+root=$(fake_root reapstale)
+rm -f "$root/dist/index.js"
+mkdir -p "$root/.bootstrap.lock" "$root/.bootstrap.reap"
+printf '%s %s\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
+touch -t 200001010000 "$root/.bootstrap.reap" 2>/dev/null || true
+log="$root/calls.log"; : >"$log"
+RC=0
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN=30 RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+if grep -q 'npm ci' "$log"; then
+  pass "an abandoned reap lock is cleared (reclamation self-heals)"
+else
+  fail "a stale reap lock wedged reclamation permanently" "$(cat "$root/stderr.log")"
 fi
 
 echo

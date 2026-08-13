@@ -25,6 +25,9 @@ cd "$PLUGIN_ROOT"
 
 MARKER="$PLUGIN_ROOT/.bootstrap-complete"
 LOCK="$PLUGIN_ROOT/.bootstrap.lock"
+# Serializes reclamation of an abandoned LOCK — see reap_abandoned_lock().
+REAP_LOCK="$PLUGIN_ROOT/.bootstrap.reap"
+REAP_STALE_MIN="${RALPH_KNOWLEDGE_REAP_STALE_MIN:-1}"
 LOCK_STALE_MIN="${RALPH_KNOWLEDGE_BOOTSTRAP_STALE_MIN:-30}"
 LOCK_WAIT_SEC="${RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC:-900}"
 # Identity for lock ownership. A PID only means something on the host that
@@ -127,16 +130,18 @@ run_bootstrap() {
   echo "[ralph-knowledge] bootstrap complete."
 }
 
-# Age of the lock directory in whole minutes, on stdout. BSD stat wants -f %m
-# and GNU stat wants -c %Y; try both and fail (non-zero, no output) when
-# neither answers, so an unreadable age can never be mistaken for "old".
-lock_age_min() {
+# Age of a directory in whole minutes, on stdout. BSD stat wants -f %m and GNU
+# stat wants -c %Y; try both and fail (non-zero, no output) when neither
+# answers, so an unreadable age can never be mistaken for "old".
+dir_age_min() {
   local now mtime
   now=$(date +%s 2>/dev/null) || return 1
-  mtime=$(stat -f %m "$LOCK" 2>/dev/null) || mtime=$(stat -c %Y "$LOCK" 2>/dev/null) || return 1
+  mtime=$(stat -f %m "$1" 2>/dev/null) || mtime=$(stat -c %Y "$1" 2>/dev/null) || return 1
   [ -n "$mtime" ] || return 1
   echo $(( (now - mtime) / 60 ))
 }
+
+lock_age_min() { dir_age_min "$LOCK"; }
 
 # True (0) when the lock may be taken away from whoever holds it.
 #
@@ -167,20 +172,58 @@ lock_reclaimable() {
   [ "$age" -gt "$LOCK_STALE_MIN" ]
 }
 
+# Remove an abandoned lock, SERIALIZED against other reapers (codex P2, PR
+# #1755). Checking and deleting a shared pathname in two separate steps is a
+# TOCTOU: several waiters can each confirm the same dead owner, and then the
+# second one's stale verdict deletes the lock the FIRST one has already
+# reclaimed and is holding — handing two processes a concurrent `npm ci`, which
+# is the whole thing this lock exists to stop. Codex reproduced it with 30
+# waiters entering overlapping bootstraps.
+#
+# So the removal happens under its own mkdir-serialized lock, and the verdict
+# is RE-TAKEN inside that critical section, where it cannot be stale: by then
+# the first reaper's fresh lock is visible, its owner is alive, and every later
+# reaper declines. The window between that re-check and the `rm` is not shared
+# with another reaper, which is what makes it safe.
+#
+# Returns 0 when this process performed the reap attempt, 1 when another
+# reaper held the reap lock (caller should simply wait and retry).
+reap_abandoned_lock() {
+  local age
+  # A reaper that died mid-reap would otherwise wedge reclamation forever. The
+  # critical section is a handful of syscalls, so a reap lock that has survived
+  # a whole minute is certainly abandoned rather than merely slow.
+  if [ -d "$REAP_LOCK" ]; then
+    age=$(dir_age_min "$REAP_LOCK" || echo "")
+    if [ -n "$age" ] && [ "$age" -ge "$REAP_STALE_MIN" ]; then
+      rm -rf "$REAP_LOCK" 2>/dev/null || true
+    fi
+  fi
+
+  mkdir "$REAP_LOCK" 2>/dev/null || return 1
+
+  # Re-decide here, not outside. This is the line that closes the race.
+  if lock_reclaimable; then
+    echo "[ralph-knowledge] removing abandoned bootstrap lock ($LOCK)" >&2
+    rm -rf "$LOCK" 2>/dev/null || true
+  fi
+
+  rm -rf "$REAP_LOCK" 2>/dev/null || true
+  return 0
+}
+
 if bootstrap_needed; then
   waited=0
   until mkdir "$LOCK" 2>/dev/null; do
-    # Reclaim a lock whose owner is gone.
+    # Reclaim a lock whose owner is gone. This verdict is advisory — the
+    # binding one is re-taken inside reap_abandoned_lock's critical section.
     if lock_reclaimable; then
-      echo "[ralph-knowledge] removing abandoned bootstrap lock ($LOCK)" >&2
-      rm -rf "$LOCK" 2>/dev/null || true
       # Only retry immediately if the removal actually worked. Otherwise fall
       # through to the wait accounting below, so a lock we can never delete
       # (permissions, read-only mount) times out instead of spinning forever.
-      if [ ! -d "$LOCK" ]; then
+      if reap_abandoned_lock && [ ! -d "$LOCK" ]; then
         continue
       fi
-      echo "[ralph-knowledge] could not remove $LOCK; waiting instead" >&2
     fi
     if [ "$waited" -ge "$LOCK_WAIT_SEC" ]; then
       echo "[ralph-knowledge] timed out after ${LOCK_WAIT_SEC}s waiting for another process to bootstrap ($LOCK)" >&2
