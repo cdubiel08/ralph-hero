@@ -1483,6 +1483,41 @@ printf '%s' "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" \
   --argjson p "$(check board-tests pending)" '$g + [$a, $p]')" >"$D/pr_checks_second.json"
 expect "a check rerun between passes is a wait, not a merge" "$D" "GATE-WAIT ci" 10
 
+echo "=== P2/30: a missing request outranks an unrelated rate limit ==="
+# The rate-limit note fired first, so a rate-limited CodeRabbit — a reviewer
+# gate 5 is not even waiting on — turned "you have not asked for a review yet"
+# into a non-terminal wait. That is the never-terminating loop this script
+# replaces, produced by an observation about an unrelated bot.
+POLICY="$POLICY_COMMENT"
+D="$TMP_ROOT/no-request-plus-ratelimit"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" \
+  --argjson c "$(check CodeRabbit pass 'Review rate limited')" '$g + [$a, $c]')" \
+  "$OPEN_PR" "$NO_REVIEWS" '[]'
+expect "no request + an unrelated rate limit hands control back" "$D" "GATE-YOURS review" 0
+run "$D"
+if [[ "$LAST_OUT" == *"ralph-review-head"* ]]; then
+  pass "names the request to post, not the rate-limited bystander"
+else
+  fail "missing-request precedence (out=${LAST_OUT:0:190})"
+fi
+# With the request IN, the rate-limit note is the useful thing to say, and
+# waiting is correct — so the note survives exactly where it belongs.
+D="$TMP_ROOT/request-in-plus-ratelimit"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" \
+  --argjson c "$(check CodeRabbit pass 'Review rate limited')" '$g + [$a, $c]')" \
+  "$OPEN_PR" "$NO_REVIEWS" \
+  "$(jq -nc --arg sha "$HEAD_SHA" \
+     '[{user:{login:"cdubiel08"}, body:("@codex review\n\n<!-- ralph-review-head: " + $sha + " -->"),
+        created_at:"2026-08-13T04:00:00Z"}]')"
+expect "request in + a rate limit is still a wait" "$D" "GATE-WAIT review" 10
+run "$D"
+if [[ "$LAST_OUT" == *"CodeRabbit"* ]]; then
+  pass "still reports the rate limit where waiting is the right answer"
+else
+  fail "rate-limit note lost (out=${LAST_OUT:0:190})"
+fi
+POLICY="$POLICY_REVIEW"
+
 echo "=== P2/29: findings already answered by a re-request are a WAIT ==="
 # After findings, the nudge tells the caller to re-request. Once they have, the
 # reviewer owes the next move — but $unanswered_findings stayed true (the

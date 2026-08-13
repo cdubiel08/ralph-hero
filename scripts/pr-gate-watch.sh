@@ -473,14 +473,17 @@ def fenced_json:
        "GATE-YOURS review: \($commented | length) comment-only review(s) at \($head[0:8]), no approval — adjudicate the threads, then re-request: comment '\($policy.trigger)' and wait for an APPROVED review BEFORE attesting"
      end)
   elif ($review_ok | not) then
-    (if ($ratelimited | length) > 0 then
-       "GATE-WAIT review: \($rl_names) reports pass but is rate-limited and reviewed nothing; gate 5 is waiting on \($policy.bot) at \($head[0:8]) — comment '\($policy.trigger)'"
-     elif $policy.mode == "comment" and $request_at == "" then
-       # No head-bound request exists, so gate 5 cannot accept ANY clean result
-       # until someone posts one. Nothing arrives by waiting, and polling on is
-       # precisely the never-terminating loop this script exists to replace, so
-       # this hands control back instead (codex P2, PR #1764).
+    # The MISSING REQUEST outranks the rate-limit note, deliberately. This
+     # branch answers "whose turn is it", and a rate-limited reviewer that gate
+     # 5 is not even waiting on does not change the answer: with no head-bound
+     # request, nothing can arrive by waiting, so a non-terminal verdict here
+     # is the never-terminating loop this script exists to replace — produced
+     # by an observation about an unrelated bot (codex P2, PR #1764). The rate
+     # limit is still reported, one rung down, where waiting IS correct.
+     (if $policy.mode == "comment" and $request_at == "" then
        "GATE-YOURS review: no \($policy.trigger) request bound to \($head[0:8]) — post it (the trigger, a blank line, then '<!-- \($policy.headMarker): \($head) -->') so a clean result can count"
+     elif ($ratelimited | length) > 0 then
+       "GATE-WAIT review: \($rl_names) reports pass but is rate-limited and reviewed nothing; gate 5 is waiting on \($policy.bot) at \($head[0:8]) — comment '\($policy.trigger)'"
      elif $policy.mode == "comment" then
        "GATE-WAIT review: request is in at \($head[0:8])\(if ($commented | length) > 0 then " and answers the findings review" else "" end); no clean \($policy.bot) result yet"
      elif $ext_required then
