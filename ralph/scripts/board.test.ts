@@ -3025,6 +3025,34 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     expect(err!.message).toMatch(/label not found/);
   });
 
+  it("a failed ESTIMATE is counted in the aggregate too — 'every write' has to mean every write", () => {
+    // Estimate stays a warning on its own (an unset estimate does not hide the
+    // issue from `next`), but the aggregate error claims completeness, and a
+    // claim of completeness that quietly omits one write is worse than none.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const inner = gh.exec;
+    ctx.exec = (argv, stdin) => {
+      if (
+        stdin?.includes("updateProjectV2ItemFieldValue") &&
+        (stdin.includes("P_P0") || stdin.includes("E_S"))
+      )
+        return { code: 1, stdout: "", stderr: "simulated field write failure" };
+      return inner(argv, stdin);
+    };
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let err: Error | null = null;
+    try {
+      createIssue(ctx, { title: "x", priority: "P0", estimate: "S" });
+    } catch (e) {
+      err = e as Error;
+    }
+    warn.mockRestore();
+    expect(err!.message).toMatch(/2 requested writes did NOT land/);
+    expect(err!.message).toMatch(/Priority/);
+    expect(err!.message).toMatch(/Estimate S/);
+  });
+
   it("the suppression list survives a refresh, and its cap cannot become a refresh loop", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);

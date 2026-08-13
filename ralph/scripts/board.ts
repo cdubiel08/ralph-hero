@@ -4191,11 +4191,17 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
         priorityFailure = (e as Error).message;
       }
     }
+    let estimateFailure: string | null = null;
     if (opts.estimate) {
       try {
         setSingleSelect(ctx, cache, itemId, ESTIMATE_FIELD, opts.estimate);
       } catch (e) {
-        process.stderr.write(`warn: estimate not set: ${(e as Error).message}\n`);
+        // Still only a warning on its own — an unset estimate does not hide the
+        // issue from `next`. But it is recorded, because the aggregate error
+        // below claims to name EVERY write that did not land, and a claim of
+        // completeness that quietly omits one is worse than no claim.
+        estimateFailure = (e as Error).message;
+        process.stderr.write(`warn: estimate not set: ${estimateFailure}\n`);
       }
     }
     // Labels are applied via `gh issue edit` rather than GraphQL: it resolves
@@ -4242,6 +4248,9 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
     if (priorityFailure !== null) {
       const unapplied = [
         `${PRIORITY_FIELD} (\`board priority ${issue.number} ${opts.priority}\`): ${priorityFailure}`,
+        ...(estimateFailure !== null
+          ? [`${ESTIMATE_FIELD} ${opts.estimate} (set it in the board UI): ${estimateFailure}`]
+          : []),
         ...(labelFailure !== null
           ? [`labels ${opts.labels!.join(",")} (\`gh issue edit ${issue.number} --add-label …\`): ${labelFailure}`]
           : []),
