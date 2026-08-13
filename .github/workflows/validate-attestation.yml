@@ -28,6 +28,11 @@
 #     change without duplicating them in this workflow. NOTE: GitHub runs
 #     issue_comment workflows from the DEFAULT branch, so this half only works
 #     once the workflow is on main (bootstrap gap documented in the plan).
+#   pull_request_review_thread (resolved/unresolved) — findings mode (GH-1847)
+#     gates on UNRESOLVED P0 threads, so resolving one is exactly the event
+#     that flips the verdict. Without it the status keeps a pending nobody can
+#     clear by doing the thing it asked for — the permanent-pending class this
+#     gate exists to remove.
 #   pull_request_review (submitted/dismissed) — the external-review check below
 #     is part of this verdict, so a review LANDING must recompute it. Without
 #     this the status keeps a stale "awaiting external review" pending on
@@ -59,6 +64,8 @@ on:
     types: [created, edited, deleted]
   pull_request_review:
     types: [submitted, dismissed]
+  pull_request_review_thread:
+    types: [resolved, unresolved]
 
 # Least privilege is declared PER JOB (zizmor excessive-permissions): with two
 # jobs, a workflow-level grant hands each job the union of what both need.
@@ -87,6 +94,7 @@ jobs:
     if: >-
       (github.event_name == 'pull_request_target' && github.event.action != 'edited') ||
       github.event_name == 'pull_request_review' ||
+      github.event_name == 'pull_request_review_thread' ||
       github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     permissions:

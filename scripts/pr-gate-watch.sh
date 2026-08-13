@@ -45,22 +45,21 @@
 #
 # What counts as review evidence is READ FROM THE MERGE POLICY, in the same
 # two modes scripts/merge-pr.sh gate 5 and scripts/validate-attestation.sh
-# derive (PR #1839) — never invented here:
+# derive — never invented here:
 #
-#   review  — a formal APPROVED review by the policy bot at the CURRENT head.
-#             The default, so a policy that names no markers behaves exactly
-#             as it did before comment mode existed.
-#   comment — opted into by naming BOTH head_marker and clean_comment_marker:
-#             a head-bound review request followed by the bot's clean-result
-#             comment. Reviewers like Codex signal "clean" this way and never
-#             file an APPROVED review, so under `review` mode a clean result
-#             is invisible and the watcher would wait forever.
+#   review   — a formal APPROVED review by the policy bot at the CURRENT head.
+#              The default, so a policy that names no marker behaves exactly
+#              as it always has.
+#   findings — opted into by naming head_marker (GH-1847): ONE scoped review
+#              per head, blocking only on unresolved P0 threads. Reviewers
+#              like Codex have no APPROVED verb, so under `review` mode their
+#              verdict is invisible and the watcher would wait forever.
 #
 # This classifier must never be a SECOND reader of the same evidence with its
 # own opinion: a watcher that says "wait for review" while the gate says PASS
-# (or the reverse) is worse than no watcher. The derivation, the marker names,
-# the norm() login rule, the ordering rule and the findings-after-clean
-# override below are all mirrors of gate 5 and must be changed with it.
+# (or the reverse) is worse than no watcher. In findings mode that is now
+# structural — this script RUNS scripts/codex-review-evidence.sh, the same
+# predicate gate 5 runs, and reports its verdict rather than recomputing one.
 #
 # Three further things the gate knows and this script now reads:
 #   - Policy-EXEMPT authors (bots) waive attestation and external review
@@ -150,7 +149,7 @@ POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$PROJECT_ROOT/.github/ralph-merge-policy
 
 # POLICY is the one object handed to jq. No policy file at all → gates 4-5 are
 # off in merge-pr.sh, so external review is not required here either.
-POLICY='{"attestationRequired":false,"externalRequired":false,"bot":"","trigger":"","headMarker":"","cleanMarker":"","mode":"review","exemptAuthors":[]}'
+POLICY='{"attestationRequired":false,"externalRequired":false,"bot":"","trigger":"","headMarker":"","mode":"review","exemptAuthors":[]}'
 POLICY_ERROR=""
 if [ -f "$POLICY_FILE" ]; then
   if ! jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
@@ -164,18 +163,11 @@ if [ -f "$POLICY_FILE" ]; then
       bot:             (.external_review.bot // "chatgpt-codex-connector[bot]"),
       trigger:         (.external_review.trigger // "@codex review"),
       headMarker:      (.external_review.head_marker // ""),
-      cleanMarker:     (.external_review.clean_comment_marker // ""),
       exemptAuthors:   (.exempt_authors // [])
     }
     # Mode derivation, byte-for-byte the rule in merge-pr.sh and
-    # validate-attestation.sh: BOTH markers → comment, neither → review,
-    # exactly one → unsatisfiable, and named rather than guessed at.
-    | .mode = (if (.headMarker != "" and .cleanMarker != "") then "comment"
-               elif (.headMarker != "" or .cleanMarker != "") then "half"
-               else "review" end)' "$POLICY_FILE")
-    if [ "$(jq -r '.mode' <<<"$POLICY")" = "half" ]; then
-      POLICY_ERROR="external_review declares only one of head_marker/clean_comment_marker — comment-evidence mode needs both"
-    fi
+    # validate-attestation.sh: a head_marker means findings mode.
+    | .mode = (if .headMarker != "" then "findings" else "review" end)' "$POLICY_FILE")
   fi
 fi
 POLICY_MODE=$(jq -r '.mode' <<<"$POLICY")
@@ -183,6 +175,10 @@ POLICY_EXTERNAL=$(jq -r '.externalRequired | tostring' <<<"$POLICY")
 
 # Test-only override, same pattern merge-pr.sh gate 6 uses.
 APPLY_KEYWORDS_SH="${RALPH_APPLY_KEYWORDS_SH:-$PROJECT_ROOT/scripts/apply-keywords.sh}"
+CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review-evidence.sh}"
+# The "not evaluated" evidence value: review mode, an exempt author, or a PR
+# that is already closed. ok=false is inert wherever the ladder waives review.
+CODEX_NONE='{"ok":false,"turn":"reviewer","detail":"review evidence not evaluated","reviewer":"","review_url":""}'
 
 # The literal, matching gate 3's hardcoded `ralph-attestation` comparison
 # (merge-pr.sh:287-295) exactly. There WAS a PR_GATE_ATTEST_CHECK override
@@ -314,34 +310,8 @@ def fenced_json:
 # LOOSER than the gate, reporting GATE-READY into a merge that refuses. The
 # one rule that survives every revision: mirror the gate as it is, and never
 # hold a second opinion about the same evidence.
-| (if $policy.mode == "comment" then false
+| (if $policy.mode == "findings" then false
    else ($approved | length) > 0 end)                    as $review_mode_ok
-# comment mode: a head-bound request, then the bot's clean-result comment
-# after it. Mirrors gate 5's ordering rule, including the strict `>` — GitHub
-# timestamps are second-precision, so equality is ambiguous and fails closed.
-| (if $policy.mode == "comment" and $ext_required then
-     ([ $comments[]
-        | select((.body // "") | contains($policy.trigger))
-        | select((.body // "") | contains("<!-- " + $policy.headMarker + ": " + $head + " -->"))
-        | .updated_at // .created_at // empty ] | max // "")
-   else "" end)                                         as $request_at
-| (if $request_at != "" then
-     [ $comments[]
-       | select(((.user.login // "") | norm) == (($policy.bot // "") | norm))
-       | select((.body // "") | contains($policy.cleanMarker))
-       | select((.created_at // "") > $request_at) ]
-   else [] end)                                          as $clean_comments
-| ($clean_comments | map(.created_at) | max // "")       as $clean_at
-# A findings review filed at this head at-or-after the clean result overrides
-# it: the reviewer looked again and had something to say.
-| (if $clean_at != "" then
-     [ $reviewer_reviews[]
-       | select((.commit_id // "") == $head)
-       | select((.state // "") != "DISMISSED" and (.state // "") != "APPROVED")
-       | select((.submitted_at // "") == "" or (.submitted_at // "") >= $clean_at) ]
-       | length
-   else 0 end)                                           as $findings_after_clean
-| (($clean_at != "") and $findings_after_clean == 0)      as $clean_ok
 # Policy-exempt authors (bots) have attestation AND external review waived by
 # both merge-pr.sh and validate-attestation.sh, so requiring a review of them
 # produces a GATE-WAIT that nothing can ever clear (codex P2, PR #1764).
@@ -355,14 +325,15 @@ def fenced_json:
 # (codex P2, PR #1764).
 | ($policy.attestationRequired and ($exempt | not))      as $attest_required
 # Evidence is judged by MODE, never pooled. `($approved | length) > 0` used to
-# sit here as an extra disjunct, which leaked formal approvals into comment
+# sit here as an extra disjunct, which leaked formal approvals into the other
 # mode — where gate 5 ignores them entirely and stays pending, so the watcher
 # would move on to attestation and eventually recommend a merge that refuses
 # (codex P2, PR #1764). `$review_mode_ok` already carries the approval for
-# review mode, and `$clean_ok` is comment mode's only evidence; the pooled
-# term could therefore never add anything except the disagreement.
+# review mode, and the evidence script is findings mode's only evidence; the
+# pooled term could therefore never add anything except the disagreement.
 | (($ext_required | not) or $exempt
-   or (if $policy.mode == "comment" then $clean_ok else $review_mode_ok end)) as $review_ok
+   or (if $policy.mode == "findings" then ($codex.ok == true)
+       else $review_mode_ok end))                        as $review_ok
 # The evidence the attest command may cite as an APPROVAL — and nothing else.
 # In the ACTIVE mode only: comment mode cites the clean result, review mode
 # cites an APPROVED review object.
@@ -378,8 +349,13 @@ def fenced_json:
 # An approval is the only thing that can be cited as an approval. Everything
 # else — no evidence, or evidence that is not an approval — takes the
 # --carry-review path, which can only copy a verdict someone really gave.
-| (if $policy.mode == "comment" then
-     (if ($clean_comments | length) > 0 then ($clean_comments | last) else null end)
+# In findings mode the citable approval is the P0-clean review the evidence
+# script ACCEPTED — a real review object, at this head, that raised nothing
+# blocking. Never a review the gate did not accept.
+| (if $policy.mode == "findings" then
+     (if $codex.ok == true
+      then {user: {login: $codex.reviewer}, html_url: $codex.review_url}
+      else null end)
    elif ($approved | length) > 0 then ($approved | last)
    else null end)                                        as $verdict
 # With external review WAIVED (policy off, or an exempt author) there is
@@ -405,17 +381,19 @@ def fenced_json:
 # review mode forever (codex P2, PR #1764). The nudge then kept telling a
 # caller who HAD re-requested to re-request again, which is the same defect
 # already fixed for comment mode, left unfixed in its sibling.
-| (if $policy.mode == "comment" then $request_at
-   elif $ext_required then
+| (if $ext_required then
      ([ $comments[]
         | select((.body // "") | contains($policy.trigger))
         | .updated_at // .created_at // empty ] | max // "")
    else "" end)                                          as $any_request_at
 | ($ext_required and $any_request_at != "" and $any_request_at > $findings_at)
                                                          as $rerequested
-| ($ext_required and ($exempt | not)
+# Review mode only: in findings mode the evidence script already decided whose
+# turn it is, and a second opinion here is exactly the disagreement this
+# script must not hold.
+| ($policy.mode == "review" and $ext_required and ($exempt | not)
    and ($commented | length) > 0 and ($approved | length) == 0
-   and ($clean_ok | not) and ($rerequested | not))       as $unanswered_findings
+   and ($rerequested | not))                             as $unanswered_findings
 | ($att_pending | map(.name) | join(", "))              as $att_names
 # Is there already an attestation for the CURRENT head? The status stays
 # pending for the minute or two validate-attestation.yml takes to recompute,
@@ -503,22 +481,12 @@ def fenced_json:
     # reviewer does not read, and the watcher would stop on advice that cannot
     # be followed (codex P2, PR #1764). Every other review branch already
     # interpolates it; this one was the holdout.
-    "GATE-YOURS review: \($rl_names) rate-limited — its check PASSES but it reviewed nothing; post `\($policy.trigger)`\(if $policy.mode == "comment" then " followed by a blank line and '<!-- \($policy.headMarker): \($head) -->' — gate 5 cannot bind a request without the marker" else "" end)"
+    "GATE-YOURS review: \($rl_names) rate-limited — its check PASSES but it reviewed nothing; post `\($policy.trigger)`\(if $policy.mode == "findings" then " followed by a blank line and '<!-- \($policy.headMarker): \($head) -->' — gate 5 cannot bind a request without the marker" else "" end)"
   elif $unanswered_findings and (($review_ok | not) or ($attested_current | not)) then
-    (if $policy.mode == "comment" then
-       # Adjudicating does not delete the COMMENTED review, and attesting does
-       # not either — so $findings_after_clean stays nonzero and gate 5 keeps
-       # rejecting the old clean marker. Attesting here is work that cannot
-       # unblock the merge; the evidence gate 5 wants is a NEWER clean result,
-       # which only a fresh head-bound request can produce (codex P2, #1764).
-       "GATE-YOURS review: \($commented | length) findings review(s) at \($head[0:8]) — adjudicate the threads, then re-request: comment '\($policy.trigger)' with '<!-- \($policy.headMarker): \($head) -->' and wait for a clean result BEFORE attesting"
-     else
-       # Same trap as comment mode, different evidence: adjudicating threads
-       # does not convert a COMMENTED review into the APPROVED object gate 5
-       # requires, and neither does attesting. Only a fresh approval can, so
-       # that is what this names (codex P2, PR #1764).
-       "GATE-YOURS review: \($commented | length) comment-only review(s) at \($head[0:8]), no approval — adjudicate the threads, then re-request: comment '\($policy.trigger)' and wait for an APPROVED review BEFORE attesting"
-     end)
+    # Adjudicating threads does not convert a COMMENTED review into the
+    # APPROVED object gate 5 requires, and neither does attesting. Only a
+    # fresh approval can, so that is what this names (codex P2, PR #1764).
+    "GATE-YOURS review: \($commented | length) comment-only review(s) at \($head[0:8]), no approval — adjudicate the threads, then re-request: comment '\($policy.trigger)' and wait for an APPROVED review BEFORE attesting"
   elif ($review_ok | not) then
     # The MISSING REQUEST outranks the rate-limit note, deliberately. This
      # branch answers "whose turn is it", and a rate-limited reviewer that gate
@@ -527,12 +495,20 @@ def fenced_json:
      # is the never-terminating loop this script exists to replace — produced
      # by an observation about an unrelated bot (codex P2, PR #1764). The rate
      # limit is still reported, one rung down, where waiting IS correct.
-     (if $policy.mode == "comment" and $request_at == "" then
-       "GATE-YOURS review: no \($policy.trigger) request bound to \($head[0:8]) — post it (the trigger, a blank line, then '<!-- \($policy.headMarker): \($head) -->') so a clean result can count"
+     # Findings mode: the evidence script's own verdict, verbatim. It already
+     # distinguishes "you must act" (no request bound to this head, unresolved
+     # P0 findings, too many threads to evaluate) from "the reviewer owes the
+     # next move" — so re-deriving that here could only produce a second
+     # opinion about the same evidence.
+     (if $policy.mode == "findings" and $codex.turn == "yours" then
+       "GATE-YOURS review: \($codex.detail)"
      elif ($ratelimited | length) > 0 then
+       # Ranked BELOW the caller's own move and above the plain wait, in both
+       # modes: where waiting is the right answer, a rate-limited reviewer is
+       # the useful thing to say about it.
        "GATE-WAIT review: \($rl_names) reports pass but is rate-limited and reviewed nothing; gate 5 is waiting on \($policy.bot) at \($head[0:8]) — comment '\($policy.trigger)'"
-     elif $policy.mode == "comment" then
-       "GATE-WAIT review: request is in at \($head[0:8])\(if ($commented | length) > 0 then " and answers the findings review" else "" end); no clean \($policy.bot) result yet"
+     elif $policy.mode == "findings" then
+       "GATE-WAIT review: \($codex.detail)"
      elif $ext_required and $any_request_at != "" then
        "GATE-WAIT review: request is in at \($head[0:8])\(if ($commented | length) > 0 then " and answers the findings review" else "" end); no APPROVED \($policy.bot) review yet"
      elif $ext_required then
@@ -586,7 +562,8 @@ def fenced_json:
   end
 JQ
 
-# classify <checks-json> <pr-json> <reviews-json> <comments-json> -> a verdict.
+# classify <checks-json> <pr-json> <reviews-json> <comments-json>
+#          <fetch-ok> <checks-ok> <codex-evidence-json> -> a verdict.
 # Every policy-derived string is BOUND with --arg/--argjson, never interpolated
 # into the filter text: the bot name and the markers come from a repo-supplied
 # file and would otherwise be jq injection (the same reason gate 5 cannot use
@@ -599,6 +576,7 @@ classify() {
     --argjson comments "$4" \
     --arg fetch_ok "$5" \
     --arg checks_ok "$6" \
+    --argjson codex "$7" \
     --argjson policy "$POLICY" \
     --arg policy_error "$POLICY_ERROR" \
     --arg attest "$ATTEST_CHECK" \
@@ -650,7 +628,7 @@ gather() {
   #     non-terminal GATE-WAIT and --watch would poll a finished PR forever.
   #   * Every remaining query is wasted on a PR nothing can act on.
   if [ "$(jq -r '.state // "OPEN"' <<<"$pr_json")" != "OPEN" ]; then
-    classify '[]' "$pr_json" '[]' '[]' true true
+    classify '[]' "$pr_json" '[]' '[]' true true "$CODEX_NONE"
     return 0
   fi
 
@@ -686,23 +664,35 @@ gather() {
     | jq -s 'add // []' 2>/dev/null) || { reviews='[]'; fetch_ok=false; }
   reviews=$(json_array_or_empty "$reviews")
 
-  # Issue comments carry comment-mode evidence: the head-bound request and the
-  # reviewer's clean result. Fetched paginated, like gate 5 — the evidence is
-  # frequently the newest comment on a long PR, and an unpaginated read would
-  # silently report "no clean result" on exactly the PRs that have one. Only
-  # comment mode reads them, so a review-mode repo pays nothing.
-  # Fetched in BOTH modes whenever external review is required. Gate 5 always
-  # requests comments AND reviews and holds evidence_ok=false if either fails,
-  # review mode included — so skipping this request in review mode meant a
-  # comments-endpoint outage produced GATE-READY here while the recommended
-  # merge returned pending (codex P2, PR #1764). Comment mode is the only
-  # consumer of the payload; review mode consumes the FAILURE, which is
-  # exactly the evidence that was being discarded.
+  # Issue comments carry review-mode's re-request timestamp. Fetched
+  # paginated, like gate 5 — the evidence is frequently the newest comment on a
+  # long PR. A FAILED fetch is not an empty list (fetch_ok), because gate 5
+  # holds evidence_ok=false when either read fails, and a comments-endpoint
+  # outage that read as "no comments" would produce GATE-READY here while the
+  # recommended merge returned pending (codex P2, PR #1764).
+  # Findings mode does not read them: codex-review-evidence.sh makes its own
+  # reads and reports its own fetch failures, so a second copy here could only
+  # disagree with the gate.
   comments='[]'
-  if [ "$POLICY_EXTERNAL" = "true" ]; then
+  if [ "$POLICY_EXTERNAL" = "true" ] && [ "$POLICY_MODE" = "review" ]; then
     comments=$(gh api "repos/{owner}/{repo}/issues/$PR/comments" --paginate 2>/dev/null \
       | jq -s 'add // []' 2>/dev/null) || { comments='[]'; fetch_ok=false; }
     comments=$(json_array_or_empty "$comments")
+  fi
+
+  # Findings mode: RUN the gate's own predicate rather than mirroring it. Not
+  # run for policy-exempt authors — gate 5 skips them, so the three reads it
+  # costs would buy an answer the ladder discards.
+  local codex="$CODEX_NONE"
+  if [ "$POLICY_EXTERNAL" = "true" ] && [ "$POLICY_MODE" = "findings" ] \
+     && [ "$(jq -r --argjson p "$POLICY" '
+            def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+            ((.author.login // "") | norm) as $a
+            | (($p.exemptAuthors // []) | map(norm) | index($a)) != null' <<<"$pr_json")" != "true" ]; then
+    codex=$("$CODEX_EVIDENCE_SH" "$PR" "$head_before" 2>/dev/null) \
+      || codex='{"ok":false,"turn":"reviewer","detail":"review evidence could not be evaluated — retry","reviewer":"","review_url":""}'
+    printf '%s' "$codex" | jq -e 'type == "object"' >/dev/null 2>&1 \
+      || codex="$CODEX_NONE"
   fi
 
   # Re-read the head only (a cheap query) and refuse to classify a snapshot
@@ -728,7 +718,7 @@ gather() {
 
 
   local verdict
-  verdict=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok") || return 1
+  verdict=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok" "$codex") || return 1
 
   # Gate 6 is the one gate with no status to read, so it is RUN rather than
   # predicted — and it is run HERE, inside gather, because it is part of what

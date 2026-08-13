@@ -67,9 +67,20 @@ case "${1:-} ${2:-}" in
       serve pr_view.json '{"state":"OPEN","reviewDecision":null,"headRefOid":"","comments":[]}'
     fi
     ;;
+  "api graphql")
+    # Findings mode: codex-review-evidence.sh reads review THREADS here
+    # (resolution state is GraphQL-only). Absent fixture = no threads.
+    if [[ -f "$GH_STUB_DIR/review_threads.json" ]]; then
+      cat "$GH_STUB_DIR/review_threads.json"
+    else
+      echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}'
+    fi
+    [[ -f "$GH_STUB_DIR/fail_threads" ]] && exit 1
+    exit 0
+    ;;
   "api repos/"*)
     # Gate-5-shaped evidence lives on two endpoints: formal review objects and
-    # issue comments (comment mode's head-bound request + clean result).
+    # issue comments (findings mode's head-bound request).
     n=$(cat "$GH_STUB_DIR/view_calls" 2>/dev/null || echo 0)
     if [[ "$2" == */issues/*/comments ]]; then
       if [[ "$n" -ge 3 && -f "$GH_STUB_DIR/issue_comments_second.json" ]]; then
@@ -130,21 +141,19 @@ cat >"$POLICY_REVIEW" <<EOF
   "external_review": { "required": true, "bot": "$BOT", "trigger": "@codex review" },
   "exempt_authors": ["dependabot[bot]", "app/dependabot"] }
 EOF
-POLICY_COMMENT="$TMP_ROOT/policy-comment.json"
-cat >"$POLICY_COMMENT" <<EOF
+POLICY_FINDINGS="$TMP_ROOT/policy-findings.json"
+cat >"$POLICY_FINDINGS" <<EOF
 { "version": 1,
   "attestation": { "required": true },
-  "external_review": { "required": true, "bot": "$BOT", "trigger": "@codex review",
-    "head_marker": "ralph-review-head",
-    "clean_comment_marker": "Codex Review: Didn't find any major issues." },
+  "external_review": { "required": true, "bot": "$BOT",
+    "trigger": "@codex review for P0 issues only",
+    "head_marker": "ralph-review-head" },
   "exempt_authors": ["dependabot[bot]", "app/dependabot"] }
 EOF
 POLICY_NOATT="$TMP_ROOT/policy-no-attestation.json"
 jq '.attestation.required = false' "$POLICY_REVIEW" >"$POLICY_NOATT"
 POLICY_OFF="$TMP_ROOT/policy-ext-off.json"
 jq '.external_review.required = false' "$POLICY_REVIEW" >"$POLICY_OFF"
-POLICY_HALF="$TMP_ROOT/policy-half.json"
-jq '.external_review |= del(.clean_comment_marker)' "$POLICY_COMMENT" >"$POLICY_HALF"
 POLICY_BROKEN="$TMP_ROOT/policy-broken.json"
 printf '{ "version": 1, "external_review": {' >"$POLICY_BROKEN"
 
@@ -588,98 +597,105 @@ scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g +
   "$(pr_state OPEN "" '[]' "cdubiel08")" "$NO_REVIEWS"
 expect "a human author still waits for the configured reviewer" "$D" "GATE-WAIT review" 10
 
-echo "=== P2/4: comment-mode clean-review evidence (the #1839 protocol) ==="
-# CODEX_CLEAN_BODY is the VERBATIM body Codex posts on a clean review, copied
-# from a live comment (2026-08-13). Do NOT tidy it. The previous generation of
-# this parser matched an idealized "Reviewed commit <7-sha>" paraphrase, and
-# that is exactly why the bug shipped: the real body writes
-# "**Reviewed commit:** `<10-char-sha>`", whose `:** ` separator and 10-char
-# SHA both defeat that regex. A fixture that does not match what the server
-# actually sends proves nothing. Detection here is the marker protocol
-# scripts/merge-pr.sh gate 5 uses (PR #1839), not a second private parser.
-CODEX_CLEAN_BODY='Codex Review: Didn'"'"'t find any major issues. More of your lovely PRs please.
-
-**Reviewed commit:** `306c13de30`
-
-<details> <summary>ℹ️ About Codex in GitHub</summary>
-
-[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you
-- Open a pull request for review
-- Mark a draft as ready
-- Comment "@codex review".
-
-If Codex has suggestions, it will comment; otherwise it will react with 👍.
-</details>'
-
-# clean_evidence <request-sha> -> the two comments gate 5 reads: a head-bound
-# request, then the bot's clean result AFTER it.
-clean_evidence() {
-  jq -nc --arg sha "$1" --arg bot "$BOT" --arg clean "$CODEX_CLEAN_BODY" '[
+echo "=== P2/4: findings-mode evidence (GH-1847) ==="
+# The RULE lives in scripts/codex-review-evidence.sh — which this script RUNS,
+# rather than mirroring — and is exercised case by case in
+# merge-pr-gates.test.sh. What is pinned here is the CLASSIFICATION: that the
+# watcher reports that script's verdict, and routes its "whose turn" answer to
+# the right rung of the ladder.
+#
+# codex_request <request-sha> -> the head-bound request comment gate 5 binds.
+codex_request() {
+  jq -nc --arg sha "$1" '[
     {user:{login:"cdubiel08"},
-     body:("@codex review\n<!-- ralph-review-head: " + $sha + " -->"),
-     created_at:"2026-08-13T04:00:00Z"},
-    {user:{login:$bot}, body:$clean, created_at:"2026-08-13T04:00:10Z",
-     html_url:"https://example.test/c/1"}
+     body:("@codex review for P0 issues only\n<!-- ralph-review-head: " + $sha + " -->"),
+     created_at:"2026-08-13T04:00:00Z"}
   ]'
 }
+# The bot's review of that request: COMMENTED, because Codex has no APPROVED
+# verb — which is the entire reason findings mode exists.
+CODEX_REVIEW_AT_HEAD=$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
+  '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha,
+     submitted_at:"2026-08-13T04:00:10Z", html_url:"https://example.test/r/9"}]')
+# One unresolved P0 thread, as Codex renders severity: a badge whose ALT TEXT
+# is the tier.
+p0_threads() { # p0_threads <resolved> <outdated>
+  jq -n --argjson r "$1" --argjson o "$2" --arg bot "chatgpt-codex-connector" '
+    {data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[
+      {isResolved:$r, isOutdated:$o, comments:{nodes:[{author:{login:$bot},
+        body:"**![P0 Badge](https://img.shields.io/badge/P0-red)**  Finding",
+        url:"https://example.test/d/1"}]}}
+    ]}}}}}'
+}
 
-POLICY="$POLICY_COMMENT"
-D="$TMP_ROOT/clean-comment"
+POLICY="$POLICY_FINDINGS"
+D="$TMP_ROOT/findings-clean"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
-  "$OPEN_PR" "$NO_REVIEWS" "$(clean_evidence "$HEAD_SHA")"
-expect "a real clean Codex comment is a verdict — attestation is next" "$D" "GATE-YOURS attestation" 0
+  "$OPEN_PR" "$CODEX_REVIEW_AT_HEAD" "$(codex_request "$HEAD_SHA")"
+expect "a P0-clean review at the head is a verdict — attestation is next" "$D" "GATE-YOURS attestation" 0
 run "$D"
 if [[ "$LAST_OUT" == *"$BOT"* ]]; then
-  pass "hands back the clean-comment author as the reviewer to attest with"
+  pass "hands back the accepted review's author as the reviewer to attest with"
 else
-  fail "clean-comment reviewer hint (out=${LAST_OUT:0:160})"
+  fail "findings-mode reviewer hint (out=${LAST_OUT:0:160})"
 fi
 
-# The request is bound to the FULL head sha, so a clean result requested at an
-# older head cannot be inherited across a push.
-D="$TMP_ROOT/clean-comment-stale"
+# The request is bound to the FULL head sha, so a review requested at an older
+# head cannot be inherited across a push. Terminal, not a wait: with no request
+# bound to THIS head, nothing arrives by waiting.
+D="$TMP_ROOT/findings-stale-request"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
-  "$OPEN_PR" "$NO_REVIEWS" "$(clean_evidence "$OLD_SHA")"
-# Terminal, not a wait: with no request bound to THIS head, gate 5 can never
-# accept a clean result, so the next move is the caller's (see P2/25).
-expect "a clean result requested at an older head is not evidence" "$D" "GATE-YOURS review" 0
+  "$OPEN_PR" "$CODEX_REVIEW_AT_HEAD" "$(codex_request "$OLD_SHA")"
+expect "a review requested at an older head is not evidence" "$D" "GATE-YOURS review" 0
 run "$D"
 if [[ "$LAST_OUT" == *"ralph-review-head"* ]] && [[ "$LAST_OUT" == *"@codex review"* ]]; then
   pass "names the marker protocol the caller must post to unblock it"
 else
-  fail "comment-mode remedy (out=${LAST_OUT:0:180})"
+  fail "findings-mode remedy (out=${LAST_OUT:0:180})"
 fi
 
-# A clean result that PRECEDES the request is not a review of the request.
-D="$TMP_ROOT/clean-comment-before"
+# Requested, not yet reviewed: the reviewer owes the next move.
+D="$TMP_ROOT/findings-awaiting-review"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
-  "$OPEN_PR" "$NO_REVIEWS" \
-  "$(clean_evidence "$HEAD_SHA" | jq -c '.[1].created_at = "2026-08-13T03:59:00Z"')"
-expect "a clean comment older than the request is not evidence" "$D" "GATE-WAIT review" 10
+  "$OPEN_PR" "$NO_REVIEWS" "$(codex_request "$HEAD_SHA")"
+expect "request in, no review yet, is a wait" "$D" "GATE-WAIT review" 10
 
-# Findings filed at this head at-or-after the clean result override it.
-LATER_FINDINGS=$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
-  '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha,
-     submitted_at:"2026-08-13T04:05:00Z"}]')
-D="$TMP_ROOT/clean-then-findings"
+# An unresolved P0 is the caller's move — and the verdict says which one.
+D="$TMP_ROOT/findings-open-p0"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
-  "$OPEN_PR" "$LATER_FINDINGS" "$(clean_evidence "$HEAD_SHA")"
-expect "findings after the clean result outrank it" "$D" "GATE-YOURS review" 0
+  "$OPEN_PR" "$CODEX_REVIEW_AT_HEAD" "$(codex_request "$HEAD_SHA")"
+p0_threads false false >"$D/review_threads.json"
+expect "an unresolved P0 hands control back" "$D" "GATE-YOURS review" 0
+run "$D"
+if [[ "$LAST_OUT" == *"unresolved P0 finding"* ]]; then
+  pass "names the P0 the caller must fix or resolve"
+else
+  fail "P0 remedy (out=${LAST_OUT:0:200})"
+fi
+# Resolved, and outdated (fixed by a push), both clear it — the two real verbs.
+p0_threads true false >"$D/review_threads.json"
+expect "a resolved P0 clears the way to attestation" "$D" "GATE-YOURS attestation" 0
+p0_threads false true >"$D/review_threads.json"
+expect "an outdated P0 clears the way to attestation" "$D" "GATE-YOURS attestation" 0
+rm "$D/review_threads.json"
 
-# Under REVIEW mode the same comments are NOT evidence — that is the whole
+# A failed threads read is not "no findings".
+touch "$D/fail_threads"
+expect "a failed threads fetch withholds the verdict" "$D" "GATE-WAIT review" 10
+rm "$D/fail_threads"
+
+# Under REVIEW mode the same evidence is NOT accepted — that is the whole
 # point of deriving the mode instead of accepting every shape everywhere.
 POLICY="$POLICY_REVIEW"
-D="$TMP_ROOT/clean-comment-review-mode"
+D="$TMP_ROOT/findings-evidence-review-mode"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
-  "$OPEN_PR" "$NO_REVIEWS" "$(clean_evidence "$HEAD_SHA")"
-expect "review-mode policy ignores comment evidence" "$D" "GATE-WAIT review" 10
+  "$OPEN_PR" "$CODEX_REVIEW_AT_HEAD" "$(codex_request "$HEAD_SHA")"
+expect "review-mode policy ignores a COMMENTED review" "$D" "GATE-YOURS review" 0
 
 echo "=== P2/4b: the policy is read, and a broken one fails closed ==="
-POLICY="$POLICY_HALF"
-D="$TMP_ROOT/policy-half"
+D="$TMP_ROOT/policy-broken"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
   "$APPROVED_PR" "$APPROVAL"
-expect "half-configured comment mode is named, not guessed at" "$D" "GATE-FAIL policy" 0
 POLICY="$POLICY_BROKEN"
 expect "unparseable policy fails closed instead of reporting READY" "$D" "GATE-FAIL policy" 0
 POLICY="$TMP_ROOT/policy-absent.json"
@@ -751,21 +767,21 @@ scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$
 expect "the retired 'Reviewed commit <short-sha>' shape is not evidence" "$D" "GATE-WAIT review" 10
 
 echo "=== the checked-in policy really is the one being read ==="
-# Guards the whole mirror argument: if .github/ralph-merge-policy.json drifts
-# out of comment mode, or the marker names change, this script silently starts
-# answering a different question than the gate does.
+# Guards the whole mirror argument: if .github/ralph-merge-policy.json drops
+# the head marker, or renames it, this script silently starts answering a
+# different question than the gate does.
 REAL_POLICY="$(cd "$(dirname "$0")/../.." && pwd)/.github/ralph-merge-policy.json"
 if [[ "$(jq -r '.external_review.head_marker' "$REAL_POLICY")" == "ralph-review-head" ]] \
-   && [[ "$(jq -r '.external_review.clean_comment_marker' "$REAL_POLICY")" == "Codex Review: Didn't find any major issues." ]]; then
-  pass "this repo's policy names both markers (comment mode), as gate 5 reads it"
+   && [[ "$(jq -r '.external_review.clean_comment_marker // "gone"' "$REAL_POLICY")" == "gone" ]]; then
+  pass "this repo's policy names the head marker (findings mode), as gate 5 reads it"
 else
   fail "checked-in policy markers drifted from the gate's protocol"
 fi
 POLICY="$REAL_POLICY"
 D="$TMP_ROOT/real-policy-clean"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
-  "$OPEN_PR" "$NO_REVIEWS" "$(clean_evidence "$HEAD_SHA")"
-expect "the real policy recognizes a real clean Codex result" "$D" "GATE-YOURS attestation" 0
+  "$OPEN_PR" "$CODEX_REVIEW_AT_HEAD" "$(codex_request "$HEAD_SHA")"
+expect "the real policy accepts a P0-clean Codex review" "$D" "GATE-YOURS attestation" 0
 POLICY="$POLICY_REVIEW"
 
 echo "=== P2/7: no external review required means none is waited for ==="
@@ -842,14 +858,14 @@ echo "=== P2/10: a failed evidence fetch is not an empty review list ==="
 # (single gh stub, defined once at the top of this file — the pass-aware
 #  and failure-injection behavior all cases rely on lives there.)
 
-POLICY="$POLICY_COMMENT"
+POLICY="$POLICY_FINDINGS"
 D="$TMP_ROOT/fetch-fail-reviews"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
-  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$NO_REVIEWS" \
-  "$(clean_evidence "$HEAD_SHA")"
+  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$CODEX_REVIEW_AT_HEAD" \
+  "$(codex_request "$HEAD_SHA")"
 # Control: with both fetches healthy this fixture IS ready. That is what makes
 # the failure case below a real difference and not a fixture that never passed.
-expect "control: clean evidence + attestation is READY" "$D" "GATE-READY" 0
+expect "control: P0-clean evidence + attestation is READY" "$D" "GATE-READY" 0
 touch "$D/fail_reviews"
 expect "a failed reviews fetch withholds the verdict" "$D" "GATE-WAIT review" 10
 rm "$D/fail_reviews"; touch "$D/fail_comments"
@@ -875,7 +891,7 @@ rm "$D3/fail_comments"
 # fetching this evidence at all, so a failed fetch is not a reason to make a
 # Dependabot PR wait. The waiver has to be applied before the fetch question,
 # not after it — which is the ordering bug this pins (codex P2, PR #1764).
-POLICY="$POLICY_COMMENT"
+POLICY="$POLICY_FINDINGS"
 D2="$TMP_ROOT/fetch-fail-exempt"
 scenario "$D2" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
   "$(pr_state OPEN "" '[]' "dependabot[bot]")" "$NO_REVIEWS"
@@ -891,25 +907,9 @@ expect "no external review required: an outage is not a review wait" "$D" "GATE-
 rm "$D/fail_reviews"
 POLICY="$POLICY_REVIEW"
 
-echo "=== P2/11: findings in comment mode need a NEW clean result ==="
-# Adjudicating threads does not delete the COMMENTED review, and neither does
-# attesting — so findings_after_clean stays nonzero, gate 5 keeps rejecting the
-# old clean marker, and "adjudicate, then attest" is an instruction that can be
-# followed perfectly and still never clear the gate.
-POLICY="$POLICY_COMMENT"
-D="$TMP_ROOT/comment-mode-findings"
-scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
-  "$OPEN_PR" "$LATER_FINDINGS" "$(clean_evidence "$HEAD_SHA")"
-expect "findings at this head are still GATE-YOURS review" "$D" "GATE-YOURS review" 0
-run "$D"
-if [[ "$LAST_OUT" == *"ralph-review-head: $HEAD_SHA"* ]] && [[ "$LAST_OUT" == *"@codex review"* ]] \
-   && [[ "$LAST_OUT" == *"BEFORE attesting"* ]]; then
-  pass "names the re-request that can actually clear gate 5, not a doomed attest"
-else
-  fail "comment-mode findings remedy (out=${LAST_OUT:0:220})"
-fi
-# Review mode keeps the original wording: there, adjudicating and attesting
-# with the real verdict IS the path, because gate 5 wants an APPROVED review.
+echo "=== P2/11: findings in review mode need a NEW approval ==="
+# In review mode, adjudicating and attesting with the real verdict IS the
+# path, because gate 5 wants an APPROVED review.
 POLICY="$POLICY_REVIEW"
 D="$TMP_ROOT/review-mode-findings"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
@@ -1297,32 +1297,31 @@ else
 fi
 POLICY="$POLICY_REVIEW"
 
-echo "=== P2/23: comment mode does not accept formal approvals ==="
-# Gate 5 in comment mode looks ONLY for the head-bound request plus the clean
-# marker; a formal APPROVED review is not evidence there. Pooling it into
-# $review_ok made the watcher looser than the gate: it moved on to attestation
-# and could recommend a merge that gate 5 refuses.
-POLICY="$POLICY_COMMENT"
-D="$TMP_ROOT/comment-mode-formal-approval"
+echo "=== P2/23: findings mode still needs a head-bound request ==="
+# An APPROVED review object that answers no request is not evidence in findings
+# mode. Pooling it into $review_ok made the watcher looser than the gate: it
+# moved on to attestation and could recommend a merge that gate 5 refuses.
+POLICY="$POLICY_FINDINGS"
+D="$TMP_ROOT/findings-formal-approval"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
   "$OPEN_PR" "$APPROVAL" '[]'
-expect "a formal APPROVED review is not comment-mode evidence" "$D" "GATE-YOURS review" 0
+expect "an unrequested APPROVED review is not findings-mode evidence" "$D" "GATE-YOURS review" 0
 run "$D"
 if [[ "$LAST_OUT" == *"ralph-review-head"* ]]; then
   pass "still asks for the marker protocol rather than accepting the approval"
 else
-  fail "comment-mode approval leak (out=${LAST_OUT:0:170})"
+  fail "findings-mode approval leak (out=${LAST_OUT:0:170})"
 fi
-# The clean marker IS evidence in the same fixture — so this is a real
+# The requested review IS evidence in the same fixture — so this is a real
 # difference, not a mode that can never be satisfied.
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
-  "$OPEN_PR" "$APPROVAL" "$(clean_evidence "$HEAD_SHA")"
-expect "the clean marker satisfies comment mode" "$D" "GATE-YOURS attestation" 0
+  "$OPEN_PR" "$CODEX_REVIEW_AT_HEAD" "$(codex_request "$HEAD_SHA")"
+expect "the requested review satisfies findings mode" "$D" "GATE-YOURS attestation" 0
 run "$D"
 if [[ "$LAST_OUT" == *"$BOT"* ]]; then
-  pass "names the clean-comment author, not the formal approver gate 5 ignored"
+  pass "names the review's author as the reviewer to attest with"
 else
-  fail "comment-mode verdict identity (out=${LAST_OUT:0:170})"
+  fail "findings-mode verdict identity (out=${LAST_OUT:0:170})"
 fi
 # And review mode still accepts the approval it is supposed to.
 POLICY="$POLICY_REVIEW"
@@ -1382,31 +1381,29 @@ else
   fail "gate 6 settled (rc=$rc out=${out:0:140})"
 fi
 
-echo "=== P2/25: a missing comment-mode request is the caller's turn ==="
-# With no head-bound request, gate 5 cannot accept ANY clean result until
-# someone posts one. Nothing arrives by waiting, so a non-terminal GATE-WAIT
-# is precisely the never-terminating loop this script exists to replace.
-POLICY="$POLICY_COMMENT"
-D="$TMP_ROOT/comment-mode-no-request"
+echo "=== P2/25: a missing findings-mode request is the caller's turn ==="
+# With no head-bound request, gate 5 cannot accept ANY review until someone
+# posts one. Nothing arrives by waiting, so a non-terminal GATE-WAIT is
+# precisely the never-terminating loop this script exists to replace.
+POLICY="$POLICY_FINDINGS"
+D="$TMP_ROOT/findings-no-request"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
   "$OPEN_PR" "$NO_REVIEWS" '[]'
 expect "no head-bound request hands control back" "$D" "GATE-YOURS review" 0
 run "$D"
-if [[ "$LAST_OUT" == *"ralph-review-head: $HEAD_SHA"* ]] && [[ "$LAST_OUT" == *"blank line"* ]]; then
-  pass "spells out the marker form the gate can actually read"
+if [[ "$LAST_OUT" == *"ralph-review-head: $HEAD_SHA"* ]] \
+   && [[ "$LAST_OUT" == *"@codex review for P0 issues only"* ]]; then
+  pass "spells out the request form the gate can actually read"
 else
   fail "missing-request remedy (out=${LAST_OUT:0:200})"
 fi
 
-# With the request IN and no clean result yet, waiting is correct — the
-# reviewer genuinely owes an answer, so this stays non-terminal.
-D="$TMP_ROOT/comment-mode-request-in"
-REQUEST_ONLY=$(jq -nc --arg sha "$HEAD_SHA" \
-  '[{user:{login:"cdubiel08"}, body:("@codex review\n\n<!-- ralph-review-head: " + $sha + " -->"),
-     created_at:"2026-08-13T04:00:00Z"}]')
+# With the request IN and no review yet, waiting is correct — the reviewer
+# genuinely owes an answer, so this stays non-terminal.
+D="$TMP_ROOT/findings-request-in"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
-  "$OPEN_PR" "$NO_REVIEWS" "$REQUEST_ONLY"
-expect "request in, no clean result yet, is a wait" "$D" "GATE-WAIT review" 10
+  "$OPEN_PR" "$NO_REVIEWS" "$(codex_request "$HEAD_SHA")"
+expect "request in, no review yet, is a wait" "$D" "GATE-WAIT review" 10
 POLICY="$POLICY_REVIEW"
 
 echo "=== P2/26: readiness must survive a SECOND, INDEPENDENT pass ==="
@@ -1643,7 +1640,7 @@ else
 fi
 # In comment mode, only the clean result may be cited — a COMMENTED review
 # there is not evidence at all, and must not become one via the hint.
-POLICY="$POLICY_COMMENT"
+POLICY="$POLICY_FINDINGS"
 D="$TMP_ROOT/comment-mode-commented-hint"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
   "$OPEN_PR" "$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
@@ -1662,7 +1659,7 @@ echo "=== P2/31: the comment-mode rate-limit nudge names the marker ==="
 # without the marker is a command the caller can follow and still not merge.
 POLICY_CR_COMMENT="$TMP_ROOT/policy-cr-comment.json"
 jq '.external_review.bot = "coderabbitai[bot]" | .external_review.trigger = "@coderabbitai review"' \
-  "$POLICY_COMMENT" >"$POLICY_CR_COMMENT"
+  "$POLICY_FINDINGS" >"$POLICY_CR_COMMENT"
 POLICY="$POLICY_CR_COMMENT"
 D="$TMP_ROOT/comment-mode-ratelimit"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" \
@@ -1718,7 +1715,7 @@ echo "=== P2/30: a missing request outranks an unrelated rate limit ==="
 # gate 5 is not even waiting on — turned "you have not asked for a review yet"
 # into a non-terminal wait. That is the never-terminating loop this script
 # replaces, produced by an observation about an unrelated bot.
-POLICY="$POLICY_COMMENT"
+POLICY="$POLICY_FINDINGS"
 D="$TMP_ROOT/no-request-plus-ratelimit"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" \
   --argjson c "$(check CodeRabbit pass 'Review rate limited')" '$g + [$a, $c]')" \
@@ -1735,10 +1732,7 @@ fi
 D="$TMP_ROOT/request-in-plus-ratelimit"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" \
   --argjson c "$(check CodeRabbit pass 'Review rate limited')" '$g + [$a, $c]')" \
-  "$OPEN_PR" "$NO_REVIEWS" \
-  "$(jq -nc --arg sha "$HEAD_SHA" \
-     '[{user:{login:"cdubiel08"}, body:("@codex review\n\n<!-- ralph-review-head: " + $sha + " -->"),
-        created_at:"2026-08-13T04:00:00Z"}]')"
+  "$OPEN_PR" "$NO_REVIEWS" "$(codex_request "$HEAD_SHA")"
 expect "request in + a rate limit is still a wait" "$D" "GATE-WAIT review" 10
 run "$D"
 if [[ "$LAST_OUT" == *"CodeRabbit"* ]]; then
@@ -1748,13 +1742,13 @@ else
 fi
 POLICY="$POLICY_REVIEW"
 
-echo "=== P2/29: findings already answered by a re-request are a WAIT ==="
+echo "=== P2/29: review-mode findings answered by a re-request are a WAIT ==="
 # After findings, the nudge tells the caller to re-request. Once they have, the
 # reviewer owes the next move — but $unanswered_findings stayed true (the
 # COMMENTED review persists and no clean result has arrived yet), so the same
 # terminal verdict repeated and told them to re-request again, ending --watch
 # on the one state where waiting is exactly right (codex P2, PR #1764).
-POLICY="$POLICY_COMMENT"
+POLICY="$POLICY_REVIEW"
 FINDINGS_AT_HEAD=$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
   '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha,
      submitted_at:"2026-08-13T04:00:00Z"}]')
@@ -1858,21 +1852,21 @@ else
   fail "dismissed approval (out=${LAST_OUT:0:150})"
 fi
 
-# Comment mode: the clean-result comment deleted between passes. reviewDecision
+# Findings mode: the head-bound request deleted between passes. reviewDecision
 # says nothing about this, which is precisely why it cannot stand in for the
 # evidence.
-POLICY="$POLICY_COMMENT"
-D="$TMP_ROOT/clean-comment-deleted"
+POLICY="$POLICY_FINDINGS"
+D="$TMP_ROOT/request-deleted"
 scenario "$D" "$READY_CHECKS" \
-  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$NO_REVIEWS" \
-  "$(clean_evidence "$HEAD_SHA")"
-expect "control: comment-mode evidence present is READY" "$D" "GATE-READY" 0
+  "$(pr_state OPEN "" "[$(attestation_comment "$HEAD_SHA")]")" "$CODEX_REVIEW_AT_HEAD" \
+  "$(codex_request "$HEAD_SHA")"
+expect "control: findings-mode evidence present is READY" "$D" "GATE-READY" 0
 printf '[]' >"$D/issue_comments_second.json"
 run "$D"
 if [[ "$LAST_OUT" != "GATE-READY"* ]] && [[ "$LAST_OUT" == *review* ]]; then
-  pass "a clean result deleted between passes blocks readiness"
+  pass "evidence deleted between passes blocks readiness"
 else
-  fail "deleted clean comment (out=${LAST_OUT:0:150})"
+  fail "deleted request (out=${LAST_OUT:0:150})"
 fi
 POLICY="$POLICY_REVIEW"
 

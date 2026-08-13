@@ -32,15 +32,19 @@ case "${1:-} ${2:-}" in
   "pr view")
     if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$GH_STUB_DIR/pr_view.json"; else cat "$GH_STUB_DIR/pr_view.json"; fi
     ;;
+  "api graphql")
+    # Findings-mode review threads (resolution state is GraphQL-only). Absent
+    # fixture = a PR with no threads.
+    if [[ -f "$GH_STUB_DIR/review_threads.json" ]]; then
+      cat "$GH_STUB_DIR/review_threads.json"
+    else
+      echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}'
+    fi
+    ;;
   "api repos/"*)
-    # External-review check reads findings and clean-result comments. The
-    # reactions branch is retained ONLY so a regression that starts reading
-    # reactions again is served an empty array and fails loudly, rather than
-    # falling through to the reviews fixture and passing by accident.
+    # The head-bound request comment, and the review objects.
     if [[ "$2" == */issues/*/comments ]]; then
       f="$GH_STUB_DIR/issue_comments.json"
-    elif [[ "$2" == */issues/*/reactions ]]; then
-      f="$GH_STUB_DIR/pr_reactions.json"
     else
       f="$GH_STUB_DIR/pr_reviews.json"
     fi
@@ -79,9 +83,8 @@ cat >"$POLICY" <<'EOF'
   "external_review": {
     "required": true,
     "bot": "chatgpt-codex-connector[bot]",
-    "trigger": "@codex review",
-    "head_marker": "ralph-review-head",
-    "clean_comment_marker": "Codex Review: Didn't find any major issues."
+    "trigger": "@codex review for P0 issues only",
+    "head_marker": "ralph-review-head"
   },
   "exempt_authors": ["dependabot[bot]", "app/dependabot"]
 }
@@ -105,10 +108,10 @@ attestation_body() { # attestation_body <sha> [tests_exit] [classes_csv]
 # write_pr <dir> <author> <att_body|""> <reviews_json> [files_json]
 write_pr() {
   local dir="$1" author="$2" att="$3" reviews="$4"
-  local clean_evidence=false
-  if [[ "$reviews" == "__CLEAN_CODEX__" ]]; then
+  local codex_evidence=false
+  if [[ "$reviews" == "__CODEX_P0_CLEAN__" ]]; then
     reviews='[]'
-    clean_evidence=true
+    codex_evidence=true
   fi
   local files="${5:-}"
   if [[ -z "$files" ]]; then
@@ -122,41 +125,34 @@ write_pr() {
               commit_id: (.commit_id // $sha), submitted_at: (.submitted_at // "2026-08-13T04:00:05Z")}]' \
     >"$dir/pr_reviews.json"
   echo '[]' >"$dir/issue_comments.json"
-  echo '[]' >"$dir/pr_reactions.json"
   jq -n --arg sha "$SHA" --arg author "$author" \
     --argjson comments "$comments" --argjson reviews "$reviews" --argjson files "$files" \
     '{headRefOid: $sha, author: {login: $author}, comments: $comments, reviews: $reviews, files: $files}' \
     >"$dir/pr_view.json"
-  if [[ "$clean_evidence" == "true" ]]; then
-    add_clean_codex_evidence "$dir" "$SHA"
+  if [[ "$codex_evidence" == "true" ]]; then
+    add_codex_evidence "$dir" "$SHA"
   fi
 }
 
-# VERBATIM live Codex clean-review body (PR #1830, 2026-08-13). The old fixture
-# was an idealized paraphrase, which is exactly how the original parser bug
-# reached main: the real body's "**Reviewed commit:** `<10-char-sha>`" line
-# defeated the 7-char-SHA regex, so only a review WITH findings could pass.
-CODEX_CLEAN_BODY='Codex Review: Didn'"'"'t find any major issues. More of your lovely PRs please.
-
-**Reviewed commit:** `8430effbdd`
-
-<details> <summary>ℹ️ About Codex in GitHub</summary>
-
-If Codex has suggestions, it will comment; otherwise it will react with 👍.
-</details>'
-
-add_clean_codex_evidence() { # add_clean_codex_evidence <dir> <head-sha>
+# Findings-mode evidence (GH-1847): a head-bound request, then ONE review by
+# the bot at that head. The evidence RULE lives in
+# scripts/codex-review-evidence.sh and is exercised case by case in
+# merge-pr-gates.test.sh; this suite owns the VERDICT MAPPING — that the
+# validator consults it, publishes its detail, and fails closed without it.
+add_codex_evidence() { # add_codex_evidence <dir> <head-sha>
   local dir="$1" sha="$2"
-  jq -n --arg sha "$sha" --arg clean "$CODEX_CLEAN_BODY" '[
-    {user:{login:"cdubiel08"}, body:("@codex review\n<!-- ralph-review-head: " + $sha + " -->"), created_at:"2026-08-13T04:00:00Z"},
-    {user:{login:"chatgpt-codex-connector[bot]"}, body:$clean, created_at:"2026-08-13T04:00:10Z"}
+  jq -n --arg sha "$sha" '[
+    {user:{login:"cdubiel08"},
+     body:("@codex review for P0 issues only\n<!-- ralph-review-head: " + $sha + " -->"),
+     created_at:"2026-08-13T04:00:00Z"}
   ]' >"$dir/issue_comments.json"
-  # Reactions are deliberately NOT evidence (codex P1, PR #1839).
-  echo '[]' >"$dir/pr_reactions.json"
+  jq -n --arg sha "$sha" '[
+    {user:{login:"chatgpt-codex-connector[bot]"}, state:"COMMENTED", commit_id:$sha,
+     submitted_at:"2026-08-13T04:00:10Z"}
+  ]' >"$dir/pr_reviews.json"
 }
 
-CODEX='__CLEAN_CODEX__'
-CODEX_COMMENTED='[{"author":{"login":"app/chatgpt-codex-connector"},"state":"COMMENTED","submitted_at":"2026-08-13T04:00:05Z"}]'
+CODEX='__CODEX_P0_CLEAN__'
 
 # run_v <desc> <expected_state> <expected_desc_grep> <policy|""> <setup> ...
 run_v() {
@@ -168,6 +164,7 @@ run_v() {
   set +e
   out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" \
     RALPH_MERGE_POLICY_FILE="${policy:-/nonexistent-policy.json}" \
+    RALPH_CODEX_EVIDENCE_SH="${CODEX_EVIDENCE_STUB:-$(dirname "$SCRIPT")/codex-review-evidence.sh}" \
     bash "$SCRIPT" 123 2>&1)
   local rc=$?
   set -e
@@ -197,100 +194,29 @@ s_undercov() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 0 "scripts-s
 run_v "class under-coverage (mcp-ts undeclared)" failure "not covered" "$POLICY" s_undercov
 
 s_noext() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "[]"; }
-run_v "external review absent" pending "awaiting external review by chatgpt-codex-connector[bot]" "$POLICY" s_noext
+run_v "external review absent" pending "no review request at head" "$POLICY" s_noext
 
-s_cleanext() {
+s_codexext() {
   write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "[]"
-  add_clean_codex_evidence "$1" "$SHA"
+  add_codex_evidence "$1" "$SHA"
 }
-run_v "clean bot comment plus Codex PR thumbs-up" success "attested @ ${SHA:0:8}" "$POLICY" s_cleanext
+run_v "P0-clean review at the head validates" success "attested @ ${SHA:0:8}" "$POLICY" s_codexext
 
-# Reaction evidence is gone, and with it the retry loop it forced. A clean
-# comment with NO reaction anywhere must validate — the case that used to hang
-# pending forever when the reaction never arrived (codex P1, PR #1839).
-s_clean_no_reaction_at_all() {
-  s_cleanext "$1"
-  echo '[]' >"$1/pr_reactions.json"
+# The pending DESCRIPTION is the evidence script's own detail, not a generic
+# "awaiting review": the status is what an operator reads to know what to do.
+s_open_p0() {
+  s_codexext "$1"
+  jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[
+    {isResolved:false, isOutdated:false, comments:{nodes:[{author:{login:"chatgpt-codex-connector"},
+      body:"**![P0 Badge](https://img.shields.io/badge/P0-red)**  Finding", url:"https://x/1"}]}}
+  ]}}}}}' >"$1/review_threads.json"
 }
-run_v "clean comment validates with no reaction at all" success "attested @ ${SHA:0:8}" "$POLICY" s_clean_no_reaction_at_all
+run_v "an unresolved P0 finding pends, and says so" pending "unresolved P0 finding" "$POLICY" s_open_p0
 
-s_commentedext() {
-  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "$CODEX_COMMENTED"
-}
-run_v "current-head COMMENTED Codex review is findings, not approval" pending "awaiting external review" "$POLICY" s_commentedext
-
-s_prefix_collision_cleanext() {
-  s_cleanext "$1"
-  jq --arg stale "${SHA:0:39}e" \
-    '.[0].body = ("@codex review\n<!-- ralph-review-head: " + $stale + " -->")' \
-    "$1/issue_comments.json" >"$1/issue_comments.next"
-  mv "$1/issue_comments.next" "$1/issue_comments.json"
-}
-run_v "different full SHA sharing the head prefix" pending "awaiting external review" "$POLICY" s_prefix_collision_cleanext
-
-s_spoofed_cleanext() {
-  s_cleanext "$1"
-  jq '.[1].user.login = "someone-else"' "$1/issue_comments.json" >"$1/issue_comments.next"
-  mv "$1/issue_comments.next" "$1/issue_comments.json"
-}
-run_v "clean comment from wrong identity" pending "awaiting external review" "$POLICY" s_spoofed_cleanext
-
-s_clean_without_head_request() {
-  s_cleanext "$1"
-  jq 'del(.[0])' "$1/issue_comments.json" >"$1/issue_comments.next"
-  mv "$1/issue_comments.next" "$1/issue_comments.json"
-}
-run_v "clean result without a full-head review request" pending "awaiting external review" "$POLICY" s_clean_without_head_request
-
-s_clean_before_head_request() {
-  s_cleanext "$1"
-  jq '.[0].created_at = "2026-08-13T04:00:20Z"' "$1/issue_comments.json" >"$1/issue_comments.next"
-  mv "$1/issue_comments.next" "$1/issue_comments.json"
-}
-run_v "clean result older than the full-head request" pending "awaiting external review" "$POLICY" s_clean_before_head_request
-
-s_old_request_edited_to_current_head() {
-  s_cleanext "$1"
-  jq '.[0].created_at = "2026-08-13T03:59:00Z" |
-      .[0].updated_at = "2026-08-13T04:00:20Z"' \
-    "$1/issue_comments.json" >"$1/issue_comments.next"
-  mv "$1/issue_comments.next" "$1/issue_comments.json"
-}
-run_v "editing an old request to the current SHA cannot reuse a prior clean result" pending "awaiting external review" "$POLICY" s_old_request_edited_to_current_head
-
-s_request_and_clean_same_second() {
-  s_cleanext "$1"
-  jq '.[0].updated_at = .[1].created_at' \
-    "$1/issue_comments.json" >"$1/issue_comments.next"
-  mv "$1/issue_comments.next" "$1/issue_comments.json"
-}
-run_v "clean evidence in the request's timestamp second fails closed" pending "awaiting external review" "$POLICY" s_request_and_clean_same_second
-
-s_findings_after_clean() {
-  s_cleanext "$1"
-  jq -n --arg sha "$SHA" '[{
-    user:{login:"chatgpt-codex-connector[bot]"}, state:"COMMENTED", commit_id:$sha,
-    submitted_at:"2026-08-13T04:00:20Z"
-  }]' >"$1/pr_reviews.json"
-}
-run_v "later current-head Codex findings invalidate an earlier clean result" pending "awaiting external review" "$POLICY" s_findings_after_clean
-
-s_findings_before_clean() {
-  s_cleanext "$1"
-  jq -n --arg sha "$SHA" '[{
-    user:{login:"chatgpt-codex-connector[bot]"}, state:"COMMENTED", commit_id:$sha,
-    submitted_at:"2026-08-13T04:00:05Z"
-  }]' >"$1/pr_reviews.json"
-}
-run_v "a later clean result supersedes earlier current-head findings" success "attested @ ${SHA:0:8}" "$POLICY" s_findings_before_clean
-
-# A stale thumbs-up cannot stand in for missing comment evidence.
-s_stale_reaction_only() {
-  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" '[]'
-  echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1","created_at":"2020-01-01T00:00:00Z"}]' \
-    >"$1/pr_reactions.json"
-}
-run_v "a stale thumbs-up alone" pending "awaiting external review" "$POLICY" s_stale_reaction_only
+# Findings mode with the predicate script absent must FAIL CLOSED — an absent
+# checker is not "no external review required".
+CODEX_EVIDENCE_STUB=/nonexistent-codex-evidence.sh \
+  run_v "findings mode with no evidence script" failure "is missing" "$POLICY" s_codexext
 
 # --- v1 formal-review policies keep working (codex P2, PR #1839) -----------
 POLICY_V1_FORMAL="$TMP_ROOT/policy-v1-formal.json"
@@ -317,40 +243,14 @@ s_v1_formal_stale() {
 }
 run_v "v1 formal-review policy pends on an APPROVED review at an OLD head" pending "awaiting external review" "$POLICY_V1_FORMAL" s_v1_formal_stale
 
-# Half-configured comment protocol is unsatisfiable — refuse loudly.
-POLICY_HALF="$TMP_ROOT/policy-half.json"
-cat >"$POLICY_HALF" <<'EOF'
-{
-  "version": 1,
-  "attestation": { "required": true },
-  "external_review": { "required": true, "bot": "coderabbitai", "trigger": "@x", "clean_comment_marker": "clean" },
-  "exempt_authors": []
-}
-EOF
-run_v "policy declaring only one marker" failure "comment-evidence mode needs both" "$POLICY_HALF" s_cleanext
-
 # --- API outage must stay retry-able, not read as missing evidence ---------
-# The stub prints valid clean evidence AND exits non-zero; without pipefail the
+# The stub prints valid evidence AND exits non-zero; without pipefail the
 # validator would trust it and publish success.
 s_ext_api_outage() {
-  s_cleanext "$1"
+  s_codexext "$1"
   echo "1" >"$1/gh_api_repos_exit"
 }
-run_v "a failing external-evidence fetch" pending "awaiting external review" "$POLICY" s_ext_api_outage
-
-# A formal review object is not Codex's clean outcome and cannot replace the
-# clean-result comment plus PR thumbs-up.
-s_formal_approved_ext() {
-  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" \
-    '[{"author":{"login":"app/chatgpt-codex-connector"},"state":"APPROVED"}]'
-}
-run_v "formal APPROVED Codex review alone" pending "awaiting external review" "$POLICY" s_formal_approved_ext
-
-s_dismissedext() {
-  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" \
-    '[{"author":{"login":"app/chatgpt-codex-connector"},"state":"DISMISSED"}]'
-}
-run_v "DISMISSED external review" pending "awaiting external review" "$POLICY" s_dismissedext
+run_v "a failing external-evidence fetch" pending "retry" "$POLICY" s_ext_api_outage
 
 s_exempt() { write_pr "$1" "app/dependabot" "" "[]"; }
 run_v "exempt bot author" success "exempt author" "$POLICY" s_exempt

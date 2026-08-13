@@ -57,12 +57,23 @@ case "${1:-} ${2:-}" in
     exit "${GH_STUB_MERGE_EXIT:-0}"
     ;;
   "api user") if [[ -n "$jq_expr" ]]; then echo "testuser"; else echo '{"login":"testuser"}'; fi ;;
+  "api graphql")
+    # Gate 5 findings mode reads review THREADS (resolution state is
+    # GraphQL-only). Absent fixture = a PR with no threads, which is the
+    # common real shape.
+    if [[ -f "$GH_STUB_DIR/review_threads.json" ]]; then
+      cat "$GH_STUB_DIR/review_threads.json"
+    else
+      echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}'
+    fi
+    if [[ -f "$GH_STUB_DIR/gh_api_graphql_exit" ]]; then
+      exit "$(cat "$GH_STUB_DIR/gh_api_graphql_exit")"
+    fi
+    ;;
   "api repos/"*)
-    # Gate 5 reads review findings, clean-result comments, and PR reactions.
+    # Gate 5 reads the head-bound request comment and the review objects.
     if [[ "$2" == */issues/*/comments ]]; then
       reviews_file="$GH_STUB_DIR/issue_comments.json"
-    elif [[ "$2" == */issues/*/reactions ]]; then
-      reviews_file="$GH_STUB_DIR/pr_reactions.json"
     else
       reviews_file="$GH_STUB_DIR/pr_reviews.json"
     fi
@@ -94,9 +105,8 @@ cat >"$POLICY" <<'EOF'
   "external_review": {
     "required": true,
     "bot": "chatgpt-codex-connector[bot]",
-    "trigger": "@codex review",
-    "head_marker": "ralph-review-head",
-    "clean_comment_marker": "Codex Review: Didn't find any major issues."
+    "trigger": "@codex review for P0 issues only",
+    "head_marker": "ralph-review-head"
   },
   "exempt_authors": ["dependabot[bot]", "app/dependabot", "github-actions[bot]"]
 }
@@ -119,14 +129,13 @@ good_attestation_body() { # good_attestation_body <head_sha> [tests_exit] [verdi
 # gate 5 via the `gh api .../reviews` stub branch.
 write_pr_view() {
   local dir="$1" decision="$2" mergeable="$3" author="$4" att="$5" reviews="$6" extra="${7:-}"
-  local clean_evidence=false
-  if [[ "$reviews" == "__CLEAN_CODEX__" ]]; then
+  local codex_evidence=false
+  if [[ "$reviews" == "__CODEX_P0_CLEAN__" ]]; then
     reviews='[]'
-    clean_evidence=true
+    codex_evidence=true
   fi
   echo "$reviews" >"$dir/pr_reviews.json"
   echo '[]' >"$dir/issue_comments.json"
-  echo '[]' >"$dir/pr_reactions.json"
   local comments='[]'
   if [[ -n "$att" ]]; then
     comments=$(jq -n --arg b "$att" '[{body: $b}]')
@@ -142,54 +151,53 @@ write_pr_view() {
       reviewDecision: $decision, author: {login: $author},
       headRefName: "feature/GH-9999", comments: $comments, reviews: $reviews}' \
     >"$dir/pr_view.json"
-  if [[ "$clean_evidence" == "true" ]]; then
-    add_clean_codex_evidence "$dir" "$SHA"
+  if [[ "$codex_evidence" == "true" ]]; then
+    add_codex_evidence "$dir" "$SHA"
   fi
 }
 
-# CODEX_CLEAN_BODY is the VERBATIM body Codex posts on a clean review, copied
-# from the live comment on PR #1830 (2026-08-13). Do not "tidy" it.
-#
-# The previous fixture used an idealized one-line paraphrase, and that is
-# precisely why the original parser bug shipped: the real body carries a
-# "**Reviewed commit:** `<10-char-sha>`" line whose `:** ` separator and
-# 10-char SHA both defeated the `Reviewed commit <7-sha>([^0-9A-Fa-f]|$)`
-# regex on main, so a CLEAN review could never satisfy gate 5 while a review
-# WITH findings could. A fixture that does not match what the server actually
-# sends proves nothing about the gate.
-CODEX_CLEAN_BODY='Codex Review: Didn'"'"'t find any major issues. More of your lovely PRs please.
-
-**Reviewed commit:** `8430effbdd`
-
-<details> <summary>ℹ️ About Codex in GitHub</summary>
-
-[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you
-- Open a pull request for review
-- Mark a draft as ready
-- Comment "@codex review".
-
-If Codex has suggestions, it will comment; otherwise it will react with 👍.
-</details>'
-
-add_clean_codex_evidence() { # add_clean_codex_evidence <dir> <head-sha>
+# Findings-mode evidence (GH-1847): a head-bound request, then ONE review by
+# the bot at that head. The review is COMMENTED — Codex has no APPROVED verb,
+# which is the whole reason this mode exists.
+add_codex_evidence() { # add_codex_evidence <dir> <head-sha>
   local dir="$1" sha="$2"
-  jq -n --arg sha "$sha" --arg clean "$CODEX_CLEAN_BODY" '[
-    {user:{login:"cdubiel08"}, body:("@codex review\n<!-- ralph-review-head: " + $sha + " -->"), created_at:"2026-08-13T04:00:00Z"},
-    {user:{login:"chatgpt-codex-connector[bot]"}, body:$clean, created_at:"2026-08-13T04:00:10Z"}
+  jq -n --arg sha "$sha" '[
+    {user:{login:"cdubiel08"},
+     body:("@codex review for P0 issues only\n<!-- ralph-review-head: " + $sha + " -->"),
+     created_at:"2026-08-13T04:00:00Z"}
   ]' >"$dir/issue_comments.json"
-  # No reaction fixture: PR-level reactions are deliberately NOT evidence
-  # (codex P1 + CodeRabbit, PR #1839). Kept empty so a regression that starts
-  # reading them again fails these tests instead of passing on stale data.
-  echo '[]' >"$dir/pr_reactions.json"
+  jq -n --arg sha "$sha" '[
+    {user:{login:"chatgpt-codex-connector[bot]"}, state:"COMMENTED", commit_id:$sha,
+     submitted_at:"2026-08-13T04:00:10Z",
+     html_url:"https://github.com/o/r/pull/123#pullrequestreview-1"}
+  ]' >"$dir/pr_reviews.json"
+  codex_threads "$dir" '[]'
+}
+
+# codex_threads <dir> <nodes-json> [hasNextPage] — the GraphQL reply shape
+# scripts/codex-review-evidence.sh asks for.
+codex_threads() {
+  jq -n --argjson n "$2" --argjson more "${3:-false}" \
+    '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:$more}, nodes:$n}}}}}' \
+    >"$1/review_threads.json"
+}
+
+# codex_thread <severity> <resolved> <outdated> [author] — one thread node.
+# The body carries the severity as Codex really renders it: a shields.io badge
+# whose ALT TEXT is the tier. A fixture that paraphrases the body proves
+# nothing about the gate (the lesson of the clean-comment regex, PR #1839).
+codex_thread() {
+  jq -nc --arg sev "$1" --argjson r "$2" --argjson o "$3" --arg a "${4:-chatgpt-codex-connector}" '
+    {isResolved: $r, isOutdated: $o, comments: {nodes: [{
+      author: {login: $a},
+      body: ("**<sub><sub>![" + $sev + " Badge](https://img.shields.io/badge/" + $sev
+             + "-red?style=flat)</sub></sub>  Finding title**\n\nSome prose."),
+      url: "https://github.com/o/r/pull/123#discussion_r1"}]}}'
 }
 
 GREEN_CHECKS='[{"name":"test-hooks","bucket":"pass"},{"name":"lint","bucket":"skipping"}]'
-# A clean Codex outcome is not a formal review object. The sentinel asks the
-# fixture writer to install the clean comment + PR-level thumbs-up evidence.
-CODEX_REVIEWS='__CLEAN_CODEX__'
-COMMENTED_REVIEWS=$(jq -nc --arg sha "$SHA" \
-  '[{user: {login: "chatgpt-codex-connector[bot]"}, state: "COMMENTED", commit_id: $sha,
-      submitted_at: "2026-08-13T04:00:05Z"}]')
+# The sentinel asks write_pr_view to install findings-mode evidence.
+CODEX_REVIEWS='__CODEX_P0_CLEAN__'
 APPROVED_REVIEWS=$(jq -nc --arg sha "$SHA" \
   '[{user: {login: "chatgpt-codex-connector[bot]"}, state: "APPROVED", commit_id: $sha,
       submitted_at: "2026-08-13T04:00:05Z"}]')
@@ -226,6 +234,7 @@ run_case() {
     GH_STUB_DIR="$dir" GH_STUB_LOG="$dir/gh.log" \
     RALPH_MERGE_POLICY_FILE="${policy:-/nonexistent-policy.json}" \
     RALPH_APPLY_KEYWORDS_SH="${APPLY_KEYWORDS_STUB:-/nonexistent-apply-keywords.sh}" \
+    RALPH_CODEX_EVIDENCE_SH="${CODEX_EVIDENCE_STUB:-$REPO_ROOT/scripts/codex-review-evidence.sh}" \
     bash "$SCRIPT" 123 "$@" 2>&1)
   actual=$?
   set -e
@@ -325,118 +334,138 @@ expect_out "external gate emits PENDING" "MERGE GATE PENDING — external-review
 expect_out "external gate names the trigger" "@codex review"
 expect_not_merged "missing external review"
 
-# A clean Codex result is a clean bot comment plus a PR-level thumbs-up, not a
-# formal GitHub APPROVED review.
-setup_clean_ext() {
+# Findings mode: ONE scoped review per head, blocking only on unresolved P0.
+setup_codex_ext() {
   setup_no_ext "$1"
-  add_clean_codex_evidence "$1" "$SHA"
+  add_codex_evidence "$1" "$SHA"
 }
-run_case "clean bot comment at the head satisfies gate 5" 0 "$POLICY" setup_clean_ext
-expect_merged "clean external-review evidence"
+run_case "a P0-clean review at the head satisfies gate 5" 0 "$POLICY" setup_codex_ext
+expect_merged "P0-clean external-review evidence"
 
-# The reaction is NOT evidence (codex P1 + CodeRabbit, PR #1839). Requiring it
-# reintroduced the permanent-pending bug class one layer up: a reaction fires
-# no workflow event, so a clean comment observed before the reaction published
-# a `pending` nothing would recompute. This pins the decision — with the
-# reaction absent entirely, a clean comment still merges.
-setup_clean_no_reaction_at_all() {
-  setup_clean_ext "$1"
-  echo '[]' >"$1/pr_reactions.json"
-}
-run_case "clean comment merges with NO reaction present at all" 0 "$POLICY" setup_clean_no_reaction_at_all
-expect_merged "clean comment without any reaction"
-
-# The other half of dropping reactions: a stale reaction cannot resurrect
-# missing comment evidence. GitHub keeps PR-level reactions across pushes, so
-# had they stayed evidence, one earned at an old head would satisfy a new one.
-setup_stale_reaction_no_clean() {
-  setup_no_ext "$1"
-  echo '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1","created_at":"2020-01-01T00:00:00Z"}]' \
-    >"$1/pr_reactions.json"
-}
-run_case "a stale thumbs-up alone never satisfies gate 5" 75 "$POLICY" setup_stale_reaction_no_clean
-expect_not_merged "stale reaction without clean comment"
-
-setup_commented_ext() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$COMMENTED_REVIEWS"
-  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
-}
-run_case "current-head COMMENTED Codex review is findings, not approval" 75 "$POLICY" setup_commented_ext
-expect_not_merged "COMMENTED Codex findings"
-
-setup_stale_clean_ext() {
-  setup_clean_ext "$1"
+# --- the head binding -------------------------------------------------------
+setup_stale_request() {
+  setup_codex_ext "$1"
   jq --arg stale "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
-    '.[0].body = ("@codex review\n<!-- ralph-review-head: " + $stale + " -->")' \
+    '.[0].body = ("@codex review for P0 issues only\n<!-- ralph-review-head: " + $stale + " -->")' \
     "$1/issue_comments.json" >"$1/issue_comments.next"
   mv "$1/issue_comments.next" "$1/issue_comments.json"
 }
-run_case "clean result requested for a stale full SHA does not satisfy gate 5" 75 "$POLICY" setup_stale_clean_ext
+run_case "a review requested at a stale full SHA does not satisfy gate 5" 75 "$POLICY" setup_stale_request
 
-setup_prefix_collision_clean_ext() {
-  setup_clean_ext "$1"
+setup_prefix_collision_request() {
+  setup_codex_ext "$1"
   jq --arg stale "${SHA:0:39}b" \
-    '.[0].body = ("@codex review\n<!-- ralph-review-head: " + $stale + " -->")' \
+    '.[0].body = ("@codex review for P0 issues only\n<!-- ralph-review-head: " + $stale + " -->")' \
     "$1/issue_comments.json" >"$1/issue_comments.next"
   mv "$1/issue_comments.next" "$1/issue_comments.json"
 }
-run_case "different full SHA sharing the head prefix does not satisfy gate 5" 75 "$POLICY" setup_prefix_collision_clean_ext
+run_case "a different full SHA sharing the head prefix does not satisfy gate 5" 75 "$POLICY" setup_prefix_collision_request
 
-setup_spoofed_clean_ext() {
-  setup_clean_ext "$1"
-  jq '.[1].user.login = "someone-else"' "$1/issue_comments.json" >"$1/issue_comments.next"
-  mv "$1/issue_comments.next" "$1/issue_comments.json"
+setup_review_without_request() {
+  setup_codex_ext "$1"
+  echo '[]' >"$1/issue_comments.json"
 }
-run_case "clean comment from wrong identity does not satisfy gate 5" 75 "$POLICY" setup_spoofed_clean_ext
+run_case "a review with no head-bound request stays pending" 75 "$POLICY" setup_review_without_request
+expect_out "no-request pending names the marker" "<!-- ralph-review-head:"
 
-setup_clean_without_head_request() {
-  setup_clean_ext "$1"
-  jq 'del(.[0])' "$1/issue_comments.json" >"$1/issue_comments.next"
-  mv "$1/issue_comments.next" "$1/issue_comments.json"
+setup_review_before_request() {
+  setup_codex_ext "$1"
+  jq '.[0].submitted_at = "2026-08-13T03:59:00Z"' "$1/pr_reviews.json" >"$1/pr_reviews.next"
+  mv "$1/pr_reviews.next" "$1/pr_reviews.json"
 }
-run_case "clean result without a full-head review request stays pending" 75 "$POLICY" setup_clean_without_head_request
+run_case "a review older than the head-bound request stays pending" 75 "$POLICY" setup_review_before_request
 
-setup_clean_before_head_request() {
-  setup_clean_ext "$1"
-  jq '.[0].created_at = "2026-08-13T04:00:20Z"' "$1/issue_comments.json" >"$1/issue_comments.next"
-  mv "$1/issue_comments.next" "$1/issue_comments.json"
-}
-run_case "clean result older than the full-head request stays pending" 75 "$POLICY" setup_clean_before_head_request
-
+# An edited request is a NEW request for ordering, or an old comment could be
+# rewritten with the current SHA and inherit a review from before the edit.
 setup_old_request_edited_to_current_head() {
-  setup_clean_ext "$1"
+  setup_codex_ext "$1"
   jq '.[0].created_at = "2026-08-13T03:59:00Z" |
       .[0].updated_at = "2026-08-13T04:00:20Z"' \
     "$1/issue_comments.json" >"$1/issue_comments.next"
   mv "$1/issue_comments.next" "$1/issue_comments.json"
 }
-run_case "editing an old request to the current SHA cannot reuse a prior clean result" 75 "$POLICY" setup_old_request_edited_to_current_head
+run_case "editing an old request to the current SHA cannot reuse a prior review" 75 "$POLICY" setup_old_request_edited_to_current_head
 
-setup_request_and_clean_same_second() {
-  setup_clean_ext "$1"
-  jq '.[0].updated_at = .[1].created_at' \
-    "$1/issue_comments.json" >"$1/issue_comments.next"
-  mv "$1/issue_comments.next" "$1/issue_comments.json"
+# The `>=` in the ordering rule, pinned deliberately. A review takes minutes,
+# so a same-second collision is theoretical — while failing closed on it would
+# strand a real review behind a request that can only be re-posted, moving the
+# bound forward again. That permanent pending is the bug class this gate exists
+# to remove.
+setup_review_in_request_second() {
+  setup_codex_ext "$1"
+  jq '.[0].submitted_at = "2026-08-13T04:00:00Z"' "$1/pr_reviews.json" >"$1/pr_reviews.next"
+  mv "$1/pr_reviews.next" "$1/pr_reviews.json"
 }
-run_case "clean evidence in the request's timestamp second fails closed" 75 "$POLICY" setup_request_and_clean_same_second
+run_case "a review in the request's timestamp second counts" 0 "$POLICY" setup_review_in_request_second
 
-setup_findings_after_clean() {
-  setup_clean_ext "$1"
-  jq -n --arg sha "$SHA" '[{
-    user:{login:"chatgpt-codex-connector[bot]"}, state:"COMMENTED", commit_id:$sha,
-    submitted_at:"2026-08-13T04:00:20Z"
-  }]' >"$1/pr_reviews.json"
+setup_spoofed_review() {
+  setup_codex_ext "$1"
+  jq '.[0].user.login = "someone-else"' "$1/pr_reviews.json" >"$1/pr_reviews.next"
+  mv "$1/pr_reviews.next" "$1/pr_reviews.json"
 }
-run_case "later current-head Codex findings invalidate an earlier clean result" 75 "$POLICY" setup_findings_after_clean
+run_case "a review from the wrong identity does not satisfy gate 5" 75 "$POLICY" setup_spoofed_review
 
-setup_findings_before_clean() {
-  setup_clean_ext "$1"
-  jq -n --arg sha "$SHA" '[{
-    user:{login:"chatgpt-codex-connector[bot]"}, state:"COMMENTED", commit_id:$sha,
-    submitted_at:"2026-08-13T04:00:05Z"
-  }]' >"$1/pr_reviews.json"
+# --- what blocks, and what is only advisory ---------------------------------
+setup_open_p0() {
+  setup_codex_ext "$1"
+  codex_threads "$1" "[$(codex_thread P0 false false)]"
 }
-run_case "a later clean result supersedes earlier current-head findings" 0 "$POLICY" setup_findings_before_clean
+run_case "an unresolved P0 finding blocks gate 5" 75 "$POLICY" setup_open_p0
+expect_out "P0 block names the severity" "unresolved P0 finding"
+expect_not_merged "unresolved P0"
+
+setup_resolved_p0() {
+  setup_codex_ext "$1"
+  codex_threads "$1" "[$(codex_thread P0 true false)]"
+}
+run_case "a RESOLVED P0 thread does not block" 0 "$POLICY" setup_resolved_p0
+
+# Codex never resolves its own threads, so a fixed P0 clears by going OUTDATED
+# — GitHub marks a thread outdated when the lines it anchors to change. Without
+# this, a fixed finding would block forever with no verb to clear it.
+setup_outdated_p0() {
+  setup_codex_ext "$1"
+  codex_threads "$1" "[$(codex_thread P0 false true)]"
+}
+run_case "an OUTDATED P0 thread does not block" 0 "$POLICY" setup_outdated_p0
+
+# The bound: P1/P2 are visible on the PR and adjudicated by the driver, never
+# blocking. This is what makes the gate terminate on a large diff.
+setup_open_p1_p2() {
+  setup_codex_ext "$1"
+  codex_threads "$1" "[$(codex_thread P1 false false),$(codex_thread P2 false false)]"
+}
+run_case "unresolved P1/P2 findings are advisory, not blocking" 0 "$POLICY" setup_open_p1_p2
+
+# A P2 whose PROSE mentions P0 is not a P0 — the badge alt text is the tier.
+setup_p0_in_prose() {
+  setup_codex_ext "$1"
+  codex_threads "$1" "[$(codex_thread P2 false false | jq -c '.comments.nodes[0].body += " Consider P0 impact."')]"
+}
+run_case "a P2 mentioning P0 in prose does not block" 0 "$POLICY" setup_p0_in_prose
+
+setup_foreign_p0() {
+  setup_codex_ext "$1"
+  codex_threads "$1" "[$(codex_thread P0 false false some-human)]"
+}
+run_case "a P0-shaped thread from another author does not block" 0 "$POLICY" setup_foreign_p0
+
+# Beyond one page the answer is NOT EVALUATED, and says so, rather than being
+# guessed at from the visible 100.
+setup_threads_truncated() {
+  setup_codex_ext "$1"
+  codex_threads "$1" '[]' true
+}
+run_case "more than 100 review threads is not evaluated" 75 "$POLICY" setup_threads_truncated
+expect_out "truncation is named" "more than 100 review threads"
+
+# A failed threads read is not "no findings" — same rule as the REST reads.
+setup_threads_api_outage() {
+  setup_codex_ext "$1"
+  echo "1" >"$1/gh_api_graphql_exit"
+}
+run_case "a failing threads fetch is retry-able, never trusted" 75 "$POLICY" setup_threads_api_outage
+expect_not_merged "threads fetched from a failing API call"
 
 # --- v1 policies that name a formal-review bot (codex P2, PR #1839) --------
 # A policy declaring NEITHER marker is in `review` mode: an APPROVED review at
@@ -476,27 +505,21 @@ setup_v1_formal_none() {
 run_case "v1 formal-review policy stays pending with no review" 75 "$POLICY_V1_FORMAL" setup_v1_formal_none
 expect_out "review-mode pending names the formal-review remedy" "no current APPROVED"
 
-# A half-configured comment protocol is unsatisfiable, not strict — say so.
-POLICY_HALF_MARKER="$TMP_ROOT/policy-half-marker.json"
-cat >"$POLICY_HALF_MARKER" <<'EOF'
-{
-  "version": 1,
-  "attestation": { "required": true },
-  "external_review": { "required": true, "bot": "coderabbitai", "trigger": "@x", "head_marker": "ralph-review-head" },
-  "exempt_authors": []
-}
-EOF
-run_case "policy declaring only one marker is refused" 1 "$POLICY_HALF_MARKER" setup_clean_ext
-expect_out "half-marker policy names the missing half" "comment-evidence mode needs both"
+# Findings mode with the predicate script absent is REFUSED, not skipped: a
+# host repo that vendored merge-pr.sh without it must not read as "no external
+# review required" (the same fail-closed rule as a malformed policy).
+CODEX_EVIDENCE_STUB=/nonexistent-codex-evidence.sh \
+  run_case "findings mode with no evidence script is refused" 1 "$POLICY" setup_codex_ext
+expect_out "missing evidence script is named" "is missing"
 
 # --- API outage must not read as "no evidence yet" (CodeRabbit, PR #1839) ---
-# Discriminating fixture: the stub prints VALID clean evidence AND exits 1.
+# Discriminating fixture: the stub prints VALID evidence AND exits 1.
 # Without `set -o pipefail`, `if ! x=$(gh api ... | jq ...)` records jq's exit
 # 0, external_fetch_ok stays true, the good payload is trusted and the PR
 # MERGES on evidence fetched from a failed call. With pipefail the pipeline
 # reports gh's failure and the gate stays retry-able.
 setup_ext_api_outage() {
-  setup_clean_ext "$1"
+  setup_codex_ext "$1"
   echo "1" >"$1/gh_api_repos_exit"
 }
 run_case "a failing external-evidence fetch is retry-able, never trusted" 75 "$POLICY" setup_ext_api_outage
@@ -526,19 +549,19 @@ expect_absent "no-external policy emits no external-review token" "external-revi
 expect_absent "no-external policy does not name the bot trigger" "@codex review"
 expect_merged "external_review.required=false"
 
-# 9b. Codex does not use formal GitHub APPROVED reviews for clean outcomes;
-#     that object alone is not a substitute for clean comment + thumbs-up.
+# 9b. An APPROVED review object with no head-bound request is not evidence:
+#     findings mode counts the review that answers THIS head's request.
 setup_formal_approved_ext() {
   write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$APPROVED_REVIEWS"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
 }
-run_case "formal APPROVED Codex review alone does not satisfy gate 5" 75 "$POLICY" setup_formal_approved_ext
-expect_not_merged "formal Codex approval without clean evidence"
+run_case "an unrequested APPROVED Codex review does not satisfy gate 5" 75 "$POLICY" setup_formal_approved_ext
+expect_not_merged "Codex approval with no head-bound request"
 
 # 9c. A DISMISSED review does not count (PR #1685 had exactly this shape).
 setup_dismissed_ext() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$DISMISSED_REVIEWS"
-  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+  setup_codex_ext "$1"
+  echo "$DISMISSED_REVIEWS" >"$1/pr_reviews.json"
 }
 run_case "DISMISSED external review does not satisfy gate 5" 75 "$POLICY" setup_dismissed_ext
 expect_not_merged "dismissed external review"
@@ -757,7 +780,9 @@ mkdir -p "$dir"
 GH_STUB_DIR="$dir" setup_subdir "$dir"
 set +e
 (cd "$TREPO/sub" && PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" GH_STUB_LOG="$dir/gh.log" \
-  RALPH_MERGE_POLICY_FILE="$POLICY" bash "$SCRIPT" 123 >/dev/null 2>&1)
+  RALPH_MERGE_POLICY_FILE="$POLICY" \
+  RALPH_CODEX_EVIDENCE_SH="$REPO_ROOT/scripts/codex-review-evidence.sh" \
+  bash "$SCRIPT" 123 >/dev/null 2>&1)
 set -e
 if [[ -d "$TMP_ROOT/worktrees/some-task" ]]; then
   pass "subdir cwd: path outside the repo is untouched"

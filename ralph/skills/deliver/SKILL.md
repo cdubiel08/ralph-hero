@@ -39,21 +39,24 @@ Merge exclusively through the host repo's own gate: `bash scripts/merge-pr.sh PR
 Reviewer nudges take the shape the merge policy declares. When
 `external_review.head_marker` is absent, the reviewer files formal APPROVED
 reviews and the nudge is just the policy's `external_review.trigger` — do not
-invent a marker it never reads. When the policy declares both `head_marker` and
-`clean_comment_marker` (comment-evidence mode, which is what this repo runs),
-the nudge is an exact two-line comment: the trigger, then
-`<!-- <head_marker>: <full-head-sha> -->` using the current 40-character head
-SHA. With the current policy, the body is:
+invent a marker it never reads. When the policy declares `head_marker`
+(findings mode, which is what this repo runs), the nudge is an exact two-line
+comment: the trigger, then `<!-- <head_marker>: <full-head-sha> -->` using the
+current 40-character head SHA. With the current policy, the body is:
 
 ```text
-@codex review
+@codex review for P0 issues only
 <!-- ralph-review-head: <full-head-sha> -->
 ```
 
-Post that body at most once per head SHA; never substitute another reviewer's
-trigger. Read rate-limiting from the reviewer's check *description*, never its
-state. Thread replies are evidence-only — commit link, line link, test output
-link; anything argumentative is a rework signal, not a reply.
+Post that body **once per head SHA** — one review per head is the bound, not a
+default. The gate then passes when that review exists and no P0 thread is
+unresolved; P1/P2 are advisory, adjudicated by you, and never block. Clearing a
+P0 has two honest verbs: fix it (the thread goes outdated) or resolve the thread
+once adjudicated. Never substitute another reviewer's trigger. Read
+rate-limiting from the reviewer's check *description*, never its state. Thread
+replies are evidence-only — commit link, line link, test output link; anything
+argumentative is a rework signal, not a reply.
 
 ## Close-out, demotion, safety rails
 
