@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -43,7 +44,11 @@ func viewModel(m Model) string {
 		title += " — " + baseName(m.cfg.Repo)
 	}
 	if !m.lastPoll.IsZero() {
-		title += styleDim.Render(fmt.Sprintf("  polled %s", m.lastPoll.Format("15:04:05")))
+		// The cadence is shown beside the timestamp because it is adaptive: on a
+		// quiet board the gap grows to minutes, and an operator who cannot see
+		// the current cadence reads that silence as a hung cockpit.
+		title += styleDim.Render(fmt.Sprintf("  polled %s · every %s",
+			m.lastPoll.Format("15:04:05"), m.pollEvery.Round(time.Second)))
 	}
 	b.WriteString(truncate(styleTitle.Render(title), m.width))
 	b.WriteString("\n")

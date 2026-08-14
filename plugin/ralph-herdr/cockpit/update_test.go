@@ -50,6 +50,7 @@ func testModel(f *fakeRunner) Model {
 	m := newModel(Config{
 		Board: "BOARD", Herdr: "HERDR", Gh: "", Repo: "/tmp/repo",
 		ScriptsDir: "/plug/scripts", Interval: 30 * time.Second,
+		MaxInterval: 300 * time.Second,
 	}, f)
 	m.width, m.height = 120, 40
 	m.cols = [3][]Card{
@@ -542,6 +543,223 @@ func TestTickSchedulesPollAndOverlay(t *testing.T) {
 	m3, _ := updateModel(m2, tickMsg(time.Now()))
 	if !m3.pollInFlight {
 		t.Error("a second tick must not clear the in-flight guard")
+	}
+}
+
+// boardOf rebuilds the testModel columns as a successful whole-board read.
+func boardOf(m Model) boardMsg { return boardMsg{cols: m.cols} }
+
+// settle drives n unchanged board reads, the way a quiet board does.
+func settle(m Model, n int) Model {
+	for i := 0; i < n; i++ {
+		m, _ = updateModel(m, boardOf(m))
+	}
+	return m
+}
+
+func TestPollBacksOffOnUnchangedBoardAndStopsAtTheCeiling(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	// First read is a change (cards appear from the seeded empty signature).
+	m, _ = updateModel(m, boardOf(m))
+	if m.pollEvery != 30*time.Second {
+		t.Fatalf("first read must sit at the floor, got %v", m.pollEvery)
+	}
+	want := []time.Duration{45 * time.Second, 68 * time.Second, 102 * time.Second, 153 * time.Second, 230 * time.Second, 300 * time.Second}
+	for i, w := range want {
+		m, _ = updateModel(m, boardOf(m))
+		if m.pollEvery != w {
+			t.Fatalf("unchanged read %d: cadence %v, want %v", i+1, m.pollEvery, w)
+		}
+	}
+	// The ceiling is HARD: no number of unchanged reads may pass it.
+	m = settle(m, 50)
+	if m.pollEvery != 300*time.Second {
+		t.Errorf("cadence %v breached the %v ceiling", m.pollEvery, m.cfg.MaxInterval)
+	}
+}
+
+func TestPollNeverGoesBelowTheFloor(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.cfg.MaxInterval = 0 // unconfigured ceiling = backoff off, NOT a zero cadence
+	m = settle(m, 20)
+	if m.pollEvery != m.cfg.Interval {
+		t.Errorf("cadence %v, want the floor %v", m.pollEvery, m.cfg.Interval)
+	}
+}
+
+func TestPollSnapsToFloorOnBoardChange(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m = settle(m, 8)
+	if m.pollEvery == m.cfg.Interval {
+		t.Fatal("precondition: the cadence must have backed off")
+	}
+	// #11 moves In Progress → In Review: one step back to the floor, not a
+	// gradual decrease.
+	changed := boardOf(m)
+	changed.cols[0] = []Card{card(10, "In Progress", "Ten"), card(12, "In Progress", "Twelve")}
+	changed.cols[1] = []Card{card(20, "In Review", "Twenty"), card(11, "In Review", "Eleven")}
+	m, _ = updateModel(m, changed)
+	if m.pollEvery != m.cfg.Interval {
+		t.Errorf("a changed board must snap to the floor, got %v", m.pollEvery)
+	}
+}
+
+func TestQuestionChurnDoesNotPinTheCadence(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m = settle(m, 3)
+	before := m.pollEvery
+	// The Human Needed question line comes from a separate bounded gh read that
+	// degrades to empty; flapping it must NOT read as a board change.
+	churn := boardOf(m)
+	churn.cols[2] = []Card{
+		{Number: 30, Repo: "o/r", Title: "Thirty", State: "Human Needed", Question: "pick A or B?"},
+		{Number: 31, Repo: "o/r", Title: "ThirtyOne", State: "Human Needed"},
+	}
+	m, _ = updateModel(m, churn)
+	if m.pollEvery <= before {
+		t.Errorf("question churn pinned the cadence at %v (was %v)", m.pollEvery, before)
+	}
+}
+
+func TestFailedBoardReadBacksOff(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m, _ = updateModel(m, boardOf(m))
+	// A failed read keeps its last good cards, so it is unchanged — and a
+	// rate-limited board is exactly what backoff is for.
+	m, _ = updateModel(m, boardMsg{failed: allColumnsUnknown, err: "GitHub GraphQL budget exhausted (0/5000)"})
+	if m.pollEvery != 45*time.Second {
+		t.Errorf("failed read: cadence %v, want 45s", m.pollEvery)
+	}
+	if len(m.cols[0]) != 3 {
+		t.Error("a failed read must keep the last good cards")
+	}
+}
+
+func TestAgentOverlayChangeSnapsToFloor(t *testing.T) {
+	live := []Agent{
+		{Name: "w10-ten", Status: "working", Pane: "p1", Issue: 10, Lane: "w"},
+		{Name: "w30-thirty", Status: "blocked", Pane: "p2", Issue: 30, Lane: "w"},
+	}
+	m := testModel(&fakeRunner{})
+	m.agentSig = agentSignature(m.agents)
+	m = settle(m, 6)
+	backedOff := m.pollEvery
+
+	// Identical overlay: no writer news, cadence untouched.
+	m, _ = updateModel(m, agentsMsg{herdrOK: true, agents: live})
+	if m.pollEvery != backedOff {
+		t.Errorf("an unchanged overlay must not move the cadence (%v → %v)", backedOff, m.pollEvery)
+	}
+	// A session goes working → blocked: it just moved the item to Human Needed.
+	moved := []Agent{live[0], {Name: "w30-thirty", Status: "working", Pane: "p2", Issue: 30, Lane: "w"}}
+	m, _ = updateModel(m, agentsMsg{herdrOK: true, agents: moved})
+	if m.pollEvery != m.cfg.Interval {
+		t.Errorf("an overlay change must snap to the floor, got %v", m.pollEvery)
+	}
+}
+
+func TestBoardPollWaitsForTheCadenceButTheOverlayDoesNot(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m = settle(m, 6) // cadence well above the 30s tick
+	base := time.Now()
+	m.lastPoll = base
+
+	m2, cmd := updateModel(m, tickMsg(base.Add(30*time.Second)))
+	if cmd == nil {
+		t.Fatal("every tick must still refresh the overlay and re-arm")
+	}
+	if m2.pollInFlight {
+		t.Errorf("board poll fired %v into a %v cadence", 30*time.Second, m.pollEvery)
+	}
+	m3, _ := updateModel(m, tickMsg(base.Add(m.pollEvery)))
+	if !m3.pollInFlight {
+		t.Errorf("board poll must fire once the %v cadence elapses", m.pollEvery)
+	}
+}
+
+func TestInteractionAndOwnWritesSnapToFloor(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  tea.Msg
+	}{
+		{"keypress", keyMsg("j")},
+		{"mouse click", tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: headerRows + colHeaderRows}},
+		{"our own answer", answerDoneMsg{issue: 30, boardOK: true}},
+		{"our own spawn", spawnDoneMsg{issue: 11, rc: 0, detail: "w11-eleven"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := settle(testModel(&fakeRunner{}), 6)
+			if m.pollEvery == m.cfg.Interval {
+				t.Fatal("precondition: the cadence must have backed off")
+			}
+			m, _ = updateModel(m, tt.msg)
+			if m.pollEvery != m.cfg.Interval {
+				t.Errorf("cadence %v, want the floor %v", m.pollEvery, m.cfg.Interval)
+			}
+		})
+	}
+}
+
+func TestSkippedSpawnDoesNotSnap(t *testing.T) {
+	// rc 2 = already owned: nothing was started, so nothing is about to write.
+	m := settle(testModel(&fakeRunner{}), 6)
+	before := m.pollEvery
+	m, _ = updateModel(m, spawnDoneMsg{issue: 11, rc: 2, detail: "already owned"})
+	if m.pollEvery != before {
+		t.Errorf("a skipped spawn moved the cadence %v → %v", before, m.pollEvery)
+	}
+}
+
+// TestIdleBoardCostsFarFewerWalks is the claim in GH-1805 measured rather than
+// asserted: an hour of ticks with nobody working and nobody watching. The
+// harness stamps lastPoll itself because boardMsg reads the real clock — the
+// simulated hour is the harness's, and every cadence decision under test is
+// the model's.
+func TestIdleBoardCostsFarFewerWalks(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	base := time.Now()
+	tick := m.cfg.Interval
+	walks := 0
+	for elapsed := tick; elapsed <= time.Hour; elapsed += tick {
+		now := base.Add(elapsed)
+		var next Model
+		next, _ = updateModel(m, tickMsg(now))
+		m = next
+		if !m.pollInFlight {
+			continue
+		}
+		walks++
+		m, _ = updateModel(m, boardOf(m))
+		m.lastPoll = now
+	}
+	fixed := int(time.Hour / tick)
+	if walks*5 > fixed {
+		t.Errorf("idle hour cost %d board walks vs %d at a fixed cadence — want at least 5× fewer", walks, fixed)
+	}
+	if m.pollEvery != m.cfg.MaxInterval {
+		t.Errorf("an idle hour must end at the ceiling, got %v", m.pollEvery)
+	}
+	t.Logf("idle hour: %d adaptive walks vs %d fixed (%.1f×)", walks, fixed, float64(fixed)/float64(walks))
+}
+
+func TestMaxPollInterval(t *testing.T) {
+	floor := 30 * time.Second
+	tests := []struct {
+		raw  string
+		want time.Duration
+	}{
+		{"", 300 * time.Second},
+		{"garbage", 300 * time.Second},
+		{"0", 300 * time.Second},
+		{"-5", 300 * time.Second},
+		{"600", 600 * time.Second},
+		{"10", floor}, // below the floor collapses TO it: backoff off
+	}
+	for _, tt := range tests {
+		if got := maxPollInterval(tt.raw, floor); got != tt.want {
+			t.Errorf("maxPollInterval(%q) = %v, want %v", tt.raw, got, tt.want)
+		}
 	}
 }
 

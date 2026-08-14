@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -97,6 +98,19 @@ func TestViewHumanNeededQuestionVerbatim(t *testing.T) {
 	out = viewModel(m)
 	if !strings.Contains(out, "question unavailable") {
 		t.Error("a missing question must be named, not invented")
+	}
+}
+
+func TestViewHeaderNamesTheLiveCadence(t *testing.T) {
+	// The cadence is adaptive, so the last-poll time alone is misleading: five
+	// quiet minutes must read as a quiet board, not a hung cockpit.
+	m := testModel(&fakeRunner{})
+	m.width = 220
+	m = settle(m, 8) // boardMsg stamps lastPoll itself, so fix the clock after
+	m.lastPoll = time.Date(2026, 8, 13, 14, 5, 9, 0, time.Local)
+	out := viewModel(m)
+	if !strings.Contains(out, "polled 14:05:09 · every 5m0s") {
+		t.Errorf("header must name the live cadence beside the poll time; got:\n%s", out)
 	}
 }
 

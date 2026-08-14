@@ -34,7 +34,11 @@ type Config struct {
 	Gh         string        // gh path; "" = absent (questions/diff hints degrade)
 	Repo       string        // working repo (RALPH_HERDR_REPO else cwd)
 	ScriptsDir string        // plugin scripts/ dir for the sanctioned spawn path
-	Interval   time.Duration // board poll cadence (default 30s, min 10s)
+	Interval   time.Duration // tick + board-poll FLOOR (default 30s, min 10s)
+	// MaxInterval is the hard staleness bound on the adaptive board cadence
+	// (GH-1805): the board is never walked less often than this, whatever the
+	// backoff says. Equal to Interval = backoff off, a constant cadence.
+	MaxInterval time.Duration
 }
 
 // Runner is the exec seam: tests substitute a recorder, production uses

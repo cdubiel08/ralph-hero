@@ -8,9 +8,11 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -95,6 +97,14 @@ type Model struct {
 	boardErr string // last board read failure — a failed read is not an empty board
 	lastPoll time.Time
 
+	// Adaptive board cadence (GH-1805). pollEvery is the CURRENT gap between
+	// board walks; it grows by pollBackoff on an unchanged board and snaps back
+	// to cfg.Interval (the floor) on evidence of a write. boardSig/agentSig are
+	// what "unchanged" is measured against.
+	pollEvery time.Duration
+	boardSig  string
+	agentSig  string
+
 	// Agent overlay (decoration).
 	agents  map[int][]Agent // issue → live agents, w-lane first then by name
 	herdrOK bool            // false = no multiplexer — overlay off, verbs degrade
@@ -134,12 +144,17 @@ type Model struct {
 // agent-list read lands; the board starts empty until the first poll.
 func newModel(cfg Config, r Runner) Model {
 	return Model{
-		cfg:     cfg,
-		runner:  r,
-		agents:  map[int][]Agent{},
-		herdrOK: cfg.Herdr != "",
-		width:   80,
-		height:  24,
+		cfg:       cfg,
+		runner:    r,
+		agents:    map[int][]Agent{},
+		herdrOK:   cfg.Herdr != "",
+		width:     80,
+		height:    24,
+		pollEvery: cfg.Interval,
+		// Seeded with the EMPTY board's signature so a board that is genuinely
+		// empty reads as unchanged from the first poll and backs off, rather
+		// than spending one cycle at the floor to discover nothing is there.
+		boardSig: boardSignature([3][]Card{}),
 	}
 }
 
@@ -198,6 +213,99 @@ func setAgents(list []Agent) map[int][]Agent {
 		byIssue[n] = as
 	}
 	return byIssue
+}
+
+// ── adaptive board cadence (GH-1805) ────────────────────────────────────────
+//
+// The board walk is the expensive read (a full ProjectV2 scan); the agent
+// overlay is a local herdr call. So the TICK stays fixed — the overlay must not
+// go stale — and only the board walk is gated by a cadence that grows while
+// nothing changes.
+//
+// This is event-COUPLED, not rate-estimated: we can see the writers. A ralph
+// session appearing, blocking or finishing shows up in the (free) agent
+// overlay BEFORE its board write lands; the cockpit's own answer/spawn verbs
+// are writes we perform ourselves; and a keypress means a human is looking.
+// Each of those snaps the cadence to the floor. Estimating λ from poll
+// outcomes is what a crawler does because it cannot see the writer — the
+// deliberately-declined half of #1805.
+const pollBackoff = 1.5
+
+// pollDue reports whether the board walk may run at `now`. The in-flight guard
+// is the caller's; this is only the cadence half. A zero lastPoll (nothing read
+// yet) is always due.
+//
+// Honest bound: the decision is only ever taken ON a tick, so the gap between
+// walks is the cadence rounded UP to the next tick — worst case pollEvery +
+// cfg.Interval, not pollEvery. The ceiling bounds the cadence exactly; it
+// bounds observed staleness to within one tick of it.
+func (m Model) pollDue(now time.Time) bool {
+	if m.lastPoll.IsZero() {
+		return true
+	}
+	return !now.Before(m.lastPoll.Add(m.pollEvery))
+}
+
+// backoff grows the cadence one step. cfg.MaxInterval is a HARD ceiling — the
+// stated staleness bound, clamped here rather than emerging from the curve, so
+// no number of unchanged polls can push the board past it.
+func (m *Model) backoff() {
+	// The ceiling is never below the floor, so an unset MaxInterval means "no
+	// backoff" — a constant cadence at the floor. It must not read as a zero
+	// ceiling, which would clamp the cadence to nothing and poll every tick:
+	// the failure mode this whole mechanism exists to prevent.
+	ceiling := m.cfg.MaxInterval
+	if ceiling < m.cfg.Interval {
+		ceiling = m.cfg.Interval
+	}
+	next := time.Duration(float64(m.pollEvery) * pollBackoff).Round(time.Second)
+	if next <= m.pollEvery {
+		next = m.pollEvery + time.Second // never stall on a sub-second floor
+	}
+	if next > ceiling {
+		next = ceiling
+	}
+	m.pollEvery = next
+}
+
+// snapToFloor is the asymmetric half: evidence of a write returns the cadence
+// to the floor in ONE step, never gradually. Changes cluster, so one change is
+// strong evidence of more (the asymmetry TCP uses, for the same reason).
+func (m *Model) snapToFloor() { m.pollEvery = m.cfg.Interval }
+
+// boardSignature is the change oracle for the board columns: the fields a
+// change would move a card by. Card.Question is deliberately EXCLUDED — it is
+// chrome from a separate, bounded `gh` read that degrades to empty on failure,
+// so a flapping gh call would pin the cadence at the floor forever and silently
+// undo this whole mechanism.
+func boardSignature(cols [3][]Card) string {
+	var b strings.Builder
+	for i := range cols {
+		fmt.Fprintf(&b, "%d:", i)
+		for _, c := range cols[i] {
+			fmt.Fprintf(&b, "%d|%s|%s|%s|%d|%s;", c.Number, c.State, c.Priority, c.Estimate, c.ParentNumber, c.Title)
+		}
+	}
+	return b.String()
+}
+
+// agentSignature is the writer oracle: which sessions are live and what they
+// are doing. Sorted, because the overlay is a map.
+func agentSignature(byIssue map[int][]Agent) string {
+	issues := make([]int, 0, len(byIssue))
+	for n := range byIssue {
+		issues = append(issues, n)
+	}
+	sort.Ints(issues)
+	var b strings.Builder
+	for _, n := range issues {
+		fmt.Fprintf(&b, "%d:", n)
+		for _, a := range byIssue[n] {
+			fmt.Fprintf(&b, "%s=%s,", a.Name, a.Status)
+		}
+		b.WriteByte(';')
+	}
+	return b.String()
 }
 
 // clampCursor keeps the cursor on a real card after any board refresh or

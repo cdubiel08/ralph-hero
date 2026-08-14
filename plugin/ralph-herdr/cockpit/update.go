@@ -38,11 +38,14 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		// The tick is FIXED at the floor: the agent overlay is a local herdr
+		// call and must stay live. Only the board walk — the expensive read —
+		// is gated by the adaptive cadence (GH-1805).
 		cmds := []tea.Cmd{
 			fetchAgentsCmd(m.cfg, m.runner), // overlay refresh every tick
 			tea.Tick(m.cfg.Interval, func(t time.Time) tea.Msg { return tickMsg(t) }),
 		}
-		if !m.pollInFlight {
+		if !m.pollInFlight && m.pollDue(time.Time(msg)) {
 			m.pollInFlight = true
 			cmds = append(cmds, fetchBoardCmd(m.cfg, m.runner))
 		}
@@ -63,11 +66,28 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 		m.clampCursor()
+		// Cadence, measured on the MERGED columns: a failed read keeps its last
+		// good cards, so it reads as unchanged and backs off — which is what a
+		// rate-limited board wants. The first poll (empty signature) is a change
+		// only if it found cards.
+		if sig := boardSignature(m.cols); sig != m.boardSig {
+			m.boardSig = sig
+			m.snapToFloor()
+		} else {
+			m.backoff()
+		}
 		return m, nil
 
 	case agentsMsg:
 		m.herdrOK = msg.herdrOK
 		m.agents = setAgents(msg.agents)
+		// The writers are visible here, one free local read ahead of their board
+		// writes: a session appearing (it is about to claim), going blocked (it
+		// moved the item to Human Needed), or leaving. Snap, don't wait.
+		if sig := agentSignature(m.agents); sig != m.agentSig {
+			m.agentSig = sig
+			m.snapToFloor()
+		}
 		return m, nil
 
 	case peekMsg:
@@ -148,13 +168,18 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 		m.status = board + " · " + agent
-		// The item just moved Human Needed → In Progress: re-poll now.
+		// The item just moved Human Needed → In Progress: re-poll now. Our own
+		// write, so the cadence returns to the floor too — more is coming.
 		m.pollInFlight = true
+		m.snapToFloor()
 		return m, fetchBoardCmd(m.cfg, m.runner)
 
 	case spawnDoneMsg:
 		switch msg.rc {
 		case 0:
+			// A spawned session claims the issue within seconds — a board write
+			// we caused. Be at the floor when it lands.
+			m.snapToFloor()
 			m.status = fmt.Sprintf("spawn #%d: %s", msg.issue, msg.detail)
 		case 2:
 			m.status = fmt.Sprintf("spawn #%d skipped — %s", msg.issue, msg.detail)
@@ -168,9 +193,14 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
+		// A human is at the cockpit: freshness is worth paying for again. Only
+		// the cadence resets — lastPoll does not — so a burst of keystrokes can
+		// never poll faster than the floor.
+		m.snapToFloor()
 		return updateMouse(m, msg)
 
 	case tea.KeyMsg:
+		m.snapToFloor()
 		return updateKey(m, msg)
 	}
 	return m, nil
