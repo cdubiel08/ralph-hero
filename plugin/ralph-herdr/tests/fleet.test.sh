@@ -41,6 +41,12 @@ export FAKE_HERDR_LOG="$TMP/herdr.log"
 export FAKE_BOARD_FIXTURES="$TMP/board-fixtures"
 export FAKE_BOARD_LOG="$TMP/board.log"
 mkdir -p "$FAKE_HERDR_FIXTURES" "$FAKE_BOARD_FIXTURES"
+# The healthy post-prompt world (GH-1926): the spawned agent left idle and a
+# turn is running. The fake's bare default is `idle`, which the spawn path now
+# refuses to count as a spawn — so a fleet test that wants a successful spawn
+# must say so, exactly as the real server would have.
+printf '{"agent":{"name":"w","agent_status":"working","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":9}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait-until.json"
 : >"$FAKE_HERDR_LOG"
 : >"$FAKE_BOARD_LOG"
 # Guard: no subprocess may ever fall back to the real ~/.ralph.

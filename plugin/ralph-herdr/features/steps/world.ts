@@ -100,6 +100,27 @@ export class RalphWorld extends World {
     this.combinedLogFile = touch(this.tmp, 'combined.log');
     this.scopedLedger = path.join(this.ledgerRoot, 'acme', 'demo', 'ledger.jsonl');
 
+    // The healthy post-prompt world (GH-1926): the spawned agent left idle and
+    // a turn is running. The fake's bare `agent wait` default is `idle`, which
+    // the spawn path refuses to count as a spawn — so the replay world states
+    // the healthy answer the real server would have given, and a scenario about
+    // an unsubmitted prompt overrides it.
+    this.writeHerdrFixture(
+      'agent-wait-until.json',
+      `${JSON.stringify({
+        agent: {
+          name: 'w',
+          agent_status: 'working',
+          pane_id: 'p1',
+          workspace_id: 'w1',
+          tab_id: 'w1:t1',
+          terminal_id: 'term_fake',
+          focused: false,
+          revision: 9,
+        },
+      })}\n`,
+    );
+
     this.installDefaultHerdrShim();
     // board + gh wrappers (not symlinks — the repo files' exec bits are never
     // load-bearing), exactly as the sh suites build them.

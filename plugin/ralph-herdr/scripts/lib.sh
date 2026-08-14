@@ -236,6 +236,43 @@ agent_start_when_ready() {
   done
 }
 
+# spawn_turn_started NAME — confirm the prompt was SUBMITTED, not merely
+# delivered. `agent prompt` returning 0 asserts the text reached the pane's
+# input buffer; it asserts nothing about Enter landing, and an unsubmitted
+# prompt leaves an agent that is live, `idle`, and indistinguishable from one
+# between turns (GH-1926 — observed: a fleet slot held for twelve minutes by a
+# pane containing the string `/ralph:work 1919`).
+#
+# The question is asked of herdr rather than re-derived from pane text:
+# `agent wait --until` is the owning service's own answer to "has this agent
+# left idle". Evidence is the STATUS it woke on, not the exit code — a wait
+# that answers `idle` (or a fake that answers it by default) proves nothing,
+# and reading rc alone is how this whole conflated-status class starts.
+#
+#   RALPH_HERDR_TURN_WAIT_SEC   seconds to wait for the turn (default 20)
+spawn_turn_started() {
+  local name="$1" secs="${RALPH_HERDR_TURN_WAIT_SEC:-20}" cap out status rc=0
+  case "$secs" in '' | *[!0-9]* | 0) secs=20 ;; esac
+  # Stay inside the adapter's own timeout(1) wrapper: a wait that outlives it
+  # comes back as rc 3 "may or may not have been applied", which says nothing
+  # about the turn and would report every slow start as an unknown.
+  cap=$(( ${RALPH_HERDR_TIMEOUT_SEC:-30} - 5 ))
+  [ "$cap" -lt 5 ] && cap=5
+  [ "$secs" -gt "$cap" ] && secs="$cap"
+  out=$(ralph_herdr_call agent_info agent wait "$name" \
+    --until working --until blocked --timeout "$((secs * 1000))") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "no turn started for $name within ${secs}s ($(ralph_herdr_err_code "$out" || true)) — the prompt was delivered but never submitted" >&2
+    return 1
+  fi
+  status=$(jq -r '.agent.agent_status // empty' <<<"$out" 2>/dev/null || true)
+  case "$status" in
+    working | blocked) return 0 ;;
+  esac
+  echo "$name is '${status:-unreadable}' after the prompt — no turn started; the prompt was delivered but never submitted" >&2
+  return 1
+}
+
 # hold_pane — EXIT trap for the spawn scripts. A plugin pane closes the instant
 # its command exits, taking the reason with it (a pane that flashes and
 # vanishes teaches nothing). The spawn scripts exec into notify-watch.sh on
@@ -576,6 +613,7 @@ spawn_work_session() {
     echo "    (fallback: $HERDR worktree open --cwd $src --branch $branch --no-focus${label:+ --label \"$label\"})"
     echo "  $HERDR agent start $agent --kind claude --pane <captured>"
     echo "  $HERDR agent prompt $agent \"/ralph:work $n\""
+    echo "  $HERDR agent wait $agent --until working --until blocked --timeout <${RALPH_HERDR_TURN_WAIT_SEC:-20}s>  (unconfirmed turn = failed spawn)"
     # The exact spawn record the live path would append (pane_id omitted —
     # pane ids are captured from the worktree response, never predicted) and
     # the token push derived from it. Printed, never written: dry-run stops
@@ -716,6 +754,17 @@ spawn_work_session() {
     echo "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:work $n\"" >&2
     return 1
   }
+
+  # The spawn is not complete when the prompt is delivered — it is complete
+  # when a turn has STARTED. An unconfirmed start is reported as a failure so
+  # the fleet's `failed:` line carries it and the slot is not counted as
+  # occupied and working (GH-1926). The agent is left live and the pane intact:
+  # the manual submit below recovers it, and reconcile already knows the
+  # ledgered worker.
+  if ! spawn_turn_started "$agent"; then
+    echo "spawn NOT confirmed for GH-$n — agent $agent is LIVE in pane $pane holding an unsubmitted prompt; submit it with: herdr pane send-keys $pane Enter" >&2
+    return 1
+  fi
 
   RALPH_HERDR_SPAWNED_AGENT="$agent"
   echo "spawned GH-$n on $branch (pane $pane, agent $agent)"

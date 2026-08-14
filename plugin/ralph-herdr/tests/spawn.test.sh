@@ -25,6 +25,13 @@ export HERDR_BIN_PATH="$SCRIPT_DIR/fake-herdr.sh"
 export FAKE_HERDR_FIXTURES="$TMP/fixtures"
 mkdir -p "$FAKE_HERDR_FIXTURES"
 export RALPH_HERDR_REPO="$ROOT"
+# The healthy post-prompt world (GH-1926): the agent left idle and a turn is
+# running. The fake's bare default is `idle` — correct as a default, since a
+# spawn that cannot demonstrate a started turn must fail — so every live-spawn
+# case here states the healthy answer explicitly, and the unhealthy ones
+# override it below.
+printf '{"agent":{"name":"w","agent_status":"working","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":9}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait-until.json"
 export RALPH_HERDR_LEDGER="$TMP/ledger/ledger.jsonl"
 
 # The spawn path derives its branch from `board name` (GH-1858). Point it at
@@ -384,6 +391,72 @@ SHIM
 else
   not_ok "race: origin/main fixture could not be built"
 fi
+
+# ── spawn_turn_started: delivered ≠ submitted (GH-1926) ─────────────────────
+# The observed defect: `agent prompt` returned 0, the text sat unsubmitted in
+# the pane's input, and the fleet counted the slot as working for twelve
+# minutes. Every assertion below is about the STATUS the wait woke on — an
+# exit code alone is the conflation this whole block exists to close.
+is "turn: a working agent is a started turn" "0" \
+  "$(spawn_turn_started w900-race-the-spawn >/dev/null 2>&1; echo $?)"
+
+# blocked = a turn that started and is waiting on a human. Started is started.
+printf '{"agent":{"name":"w","agent_status":"blocked","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":9}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait-until.json"
+is "turn: a blocked agent has also started its turn" "0" \
+  "$(spawn_turn_started w900-race-the-spawn >/dev/null 2>&1; echo $?)"
+
+# The defect itself: the call SUCCEEDS and answers `idle`. rc 0 from herdr,
+# and no turn — exactly the pair that used to read as a healthy spawn.
+printf '{"agent":{"name":"w","agent_status":"idle","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":9}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait-until.json"
+turn_out=$(spawn_turn_started w900-race-the-spawn 2>&1)
+is "turn: an idle agent after the prompt is NOT a started turn" "1" "$?"
+case "$turn_out" in
+  *"never submitted"*) ok "turn: the failure names the unsubmitted prompt" ;;
+  *) not_ok "turn: the failure names the unsubmitted prompt — got '$turn_out'" ;;
+esac
+
+# The wait timing out is the same verdict, reached the other way.
+printf '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait-until.json"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-wait-until.rc"
+turn_out=$(spawn_turn_started w900-race-the-spawn 2>&1)
+is "turn: a wait that times out is not a started turn" "1" "$?"
+case "$turn_out" in
+  *timeout*) ok "turn: the timeout is reported as the server's own code" ;;
+  *) not_ok "turn: the timeout is reported as the server's own code — got '$turn_out'" ;;
+esac
+rm -f "$FAKE_HERDR_FIXTURES/agent-wait-until.rc"
+
+# End to end: an unconfirmed turn fails the SPAWN, so the fleet summary's
+# `failed:` line carries it and the slot is never counted as occupied.
+if git -C "$SPAWNREPO" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+  _saved_repo="$REPO"
+  REPO="$SPAWNREPO"
+  herd_fixture '[]' "$SPAWNREPO"
+  RALPH_HERDR_LEDGER="$TMP/turn/ledger.jsonl"
+  mkdir -p "$TMP/turn"
+  turn_out=$(RALPH_HERDR_AGENT_LIVE= spawn_work_session 901 \
+    '{"next":{"number":901,"title":"Unsubmitted prompt"},"queue":[]}' 2>&1)
+  is "turn: an unconfirmed turn fails the spawn" "1" "$?"
+  case "$turn_out" in
+    *"spawned GH-901"*) not_ok "turn: an unconfirmed spawn must not report success — got '$turn_out'" ;;
+    *) ok "turn: an unconfirmed spawn does not report success" ;;
+  esac
+  case "$turn_out" in
+    *"send-keys"*) ok "turn: the failure hands back the manual submit" ;;
+    *) not_ok "turn: the failure hands back the manual submit — got '$turn_out'" ;;
+  esac
+  rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.json"
+  REPO="$_saved_repo"
+  RALPH_HERDR_LEDGER="$_saved_ledger"
+  unset RALPH_HERDR_AGENT_LIVE
+else
+  not_ok "turn: origin/main fixture could not be built"
+fi
+printf '{"agent":{"name":"w","agent_status":"working","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":9}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait-until.json"
 
 # ── ralph_herdr_tab_create: the lane spawns' tab goes through the adapter ────
 # deliver-pass.sh and tend-pass.sh used to capture `tab create` stdout and pull
