@@ -52,11 +52,9 @@ An issue carrying the configured apply label (`apply.label`, default `ralph:appl
 
 Honestly labelled limits: GitHub has no pre-close hook, so a UI close is *corrected within one reconcile pass*, not prevented; a label added after a PR's status was computed doesn't recompute it (merge time is the backstop); and non-run evidence proves a command exited 0, not that the operator's claim is true. Plan: `thoughts/shared/plans/2026-08-01-infra-apply-isolation.md`.
 
-### Names are derived, once (GH-1807)
+### Lane selectors and the doctor sweep
 
-Branch `<kind>/NNN-<slug>`, agent `w NNN-<slug>` — the **same slug**, so the branch panel, `herdr agent list` and `.claude/worktrees/` read as one vocabulary. Declared in `contracts.ts` (`formatBranchName`/`parseBranchName` beside grammar B's `formatAgentName`/`parseAgentName`, sharing `slugify`/`truncateSlug`/`slugBudget`); read via **`board name NNN [--json]`**, which is what tick.sh and tick-herdr.sh call — a shell that rebuilt slugify would be a second grammar. Kind comes from labels (apply label wins, and fails closed to `apply` on a truncated label list) with `feat` as the stated default; the registry is closed, so `spike/1807-x` does not parse.
-
-The legacy `feature/GH-NNN` resolves everywhere for the deprecation window, and **resume beats re-cut** — a unit that already has a legacy branch keeps it, or its work splits across two heads. Both grammars are covered by ONE query: `deliver-queue`'s PR linkage moved from exact `pullRequests(headRefName:)` to `refs(refPrefix:"refs/heads/", query:"<number>")`, because GitHub's ref filter is a **substring** match (probed, not assumed). That also returns coincidences — `feature/GH-18070`, `chore/1807-typo` — which `parseBranchName` rejects client-side; the alternative (recomputing the exact branch) would have needed the `labels` connection back in the item walk that GH-1803 just removed. Measured: +1 pt per 10-item deliver chunk, item walk untouched.
+Branch and agent names are **derived, once** (GH-1807) — `board name NNN` is the only grammar; details in `ralph/CLAUDE.md`.
 
 **Lane selectors** (GH-1712): `board deliver-queue` (quiescent In Review items with actionable PR signal — marker-gated per PR, gate truth from `merge-pr.sh --dry-run`, bounded verdict-agnostic retry) and `board tend-queue` (stale bodies, cleared/truncated deps, unformed intake, unaudited closes). Both are `next`-class typed read-only queries; empty `next` means spawn nothing. A lane = typed selector + judgment skill + goal; the four-dimension lane test gating new lane proposals is stated once in `ralph/CLAUDE.md`. Transport recipes (attended `/loop`, unattended routines/scheduler with the two-key fail-closed opt-in): `ralph/examples/README.md`.
 
@@ -72,24 +70,13 @@ The legacy `feature/GH-NNN` resolves everywhere for the deprecation window, and 
 
 ## Skills, Agent, Workflows
 
-| Surface | Purpose |
-|---|---|
-| `/ralph:work` | The execution verb: claim → work at driver-judged depth (no prescribed phases) → PR → gates → close-out, under the 8-rule contract in its SKILL.md |
-| `/ralph:deliver` | Follow-through lane (GH-1712): one pass over `board deliver-queue` — shepherd In Review PRs through the gate (token-mapped outcomes), close out merged-but-open items, demote semantic rework via the legal two-hop. Never `--force`; re-attests only via `attest-pr.sh --run --carry-review`; post-merge Done writes yield to reconcile |
-| `/ralph:tend` | Hygiene lane (GH-1712): one bounded pass over `board tend-queue` — Backlog shape + Done audit, metadata-only, closures only ever PROPOSED via a `ralph-tend:v1 proposed` marker comment (surfaced back by the selector while pending; the human answers with `board resolve`). Grep the live tree before trusting a body |
-| `/ralph:board` | Human surface: orientation, intake, answering Human Needed, doctor, readiness |
-| `/ralph:help` | Topic-routed setup help (GH-1759): `herdr` checks/wires the herdr cockpit via `ralph/scripts/herdr-setup.sh` (check + permission-gated fix); `board doctor` relays the same script's verdict as the advisory `herdr-cockpit` info line |
-| `ralph/agents/investigator.md` | Read-only fan-out worker — Read/Grep/Glob only (hard allowlist, no Bash) |
-| `.claude/workflows/{research-panel,plan-critique,tree-impl,adversarial-review}.md` | Optional ultracode fan-out equipment — granted, never prescribed |
+Five skills under `ralph/skills/` (`work` is the only execution verb; `deliver` and `tend` are the lanes; `board` and `help` are human surfaces), one read-only agent (`ralph/agents/investigator.md`), and optional ultracode fan-out equipment in `.claude/workflows/`. Each skill's own description is the routing contract.
 
 Model tiers (stated once in work/SKILL.md): sonnet default, haiku for mechanical fan-out, frontier (`fable`→`opus`) only as in-session bookends on feature/epic units; XS/S singles never touch frontier; escalate-never-preempt. `CLAUDE_CODE_SUBAGENT_MODEL=opus` is the harness escape hatch (flattens every tier).
 
 ## The Loop
 
-`ralph/scripts/tick.sh` runs ONE iteration: lock (flock when present, else atomic noclobber pidfile) → heartbeat → `board next` (empty = exit before spawning) → worktree-per-job → `$RALPH_TICK_RUNNER "/ralph:work NNN"` with hard timeout → per-issue log; timeout releases the claim. The scheduler (launchd/cron via `install-loop.sh --enable`) owns cadence — no sentinels, no in-session wakeups; success is judged by board state, not exit codes (a no-op runner logs loudly).
-
-- **Autopilot opt-in is typed and fail-closed**: `autopilot=true` in `~/.ralph/config`.
-- **Billing guard**: tick refuses to spawn when `ANTHROPIC_API_KEY` is set (would bill API credits, not the subscription) unless `RALPH_ALLOW_API_BILLING=true`. `RALPH_TICK_RUNNER` makes the transport pluggable — interactive `/ralph:work` and bridge-routine drives are equally valid.
+`ralph/scripts/tick.sh` runs ONE iteration, scheduler-owned (launchd/cron via `install-loop.sh --enable`). Autopilot is a typed fail-closed opt-in and tick refuses to spawn under `ANTHROPIC_API_KEY` — mechanics in `ralph/CLAUDE.md`.
 
 ## Merge Gate (GH-1589; gate 6 added in GH-1694)
 
@@ -101,14 +88,7 @@ Model tiers (stated once in work/SKILL.md): sonnet default, haiku for mechanical
 
 ## CI/CD
 
-| Workflow | Trigger | Purpose |
-|---|---|---|
-| `ci.yml` | push/PR | board-tests (vitest+tsc), knowledge, demo, hook/merge-gate script tests, shellcheck, actionlint+zizmor, mcp-pin check (knowledge) |
-| `state-guard.yml` | issue events + 15-min cron | The corrective wall (see above) |
-| `doctor.yml` | weekly + dispatch | Watchdog sweep |
-| `validate-attestation.yml` | PR + attestation comments | Republishes the merge-gate verdict, plus the `ralph-apply-keywords` verdict (apply-kind hygiene) |
-| `release-ralph.yml` | `ralph/**` on main | Plugin version bump + tag (no npm — the repo copy is the version) |
-| `release-knowledge.yml` | `plugin/ralph-knowledge/**` on main | Knowledge npm release + pin |
+Six workflows in `.github/workflows/` — read their `on:` blocks for triggers. `state-guard.yml` is the corrective wall (see above); the rest are CI, the weekly doctor sweep, attestation republishing, and the two release jobs.
 
 **Verify release fired after merging `ralph/**`** — push-event workflows have silently not fired here before: `gh run list --commit <merge-sha>`; `workflow_dispatch` is the manual backup.
 
@@ -118,15 +98,7 @@ Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OW
 
 ### Item cache — reads may be stale, writes see truth (GH-1806)
 
-The item walk is memoized to `~/.ralph/cache/items-{kind}-{select}-*` for 90 s, so a chain of board reads pays for one walk instead of one each. `--fresh` forces a walk for one command; a cached answer always says so, including on an empty queue.
-
-This is **client-side bounded staleness, not a lease** — GitHub offers no server participation. Three rules carry the whole safety argument, all enforced in code:
-
-1. **The cache never drives a write-guard evaluation.** Every MUTATING command, `doctor --fix`, and `prune --apply` run with the TTL zeroed (in `doctor()` itself, not only at the CLI dispatch), and every write path already re-reads the single item fresh at the guard. A stale entry can cost one wasted claim attempt — never a wrong transition — because the claim protocol is read-back verification, not read freshness.
-2. **Read-your-writes + monotonic reads.** Every mutation bumps an `epoch` mark (hooked in `ghGraphQL`, the one path all writes take) and unlinks every selection variant; `servedAt` is a high-water mark. `fetchedAt` is stamped at the *start* of the walk, so a ~22 s walk that began before a write cannot end-stamp its way past the epoch check.
-3. **An entry serves only a request its selection COVERS** (`selectCovers`). Since GH-1803 the walk's shape varies per caller, and an unselected group is *absent* from the item rather than empty — so serving a labels-less entry to a caller that reads labels would not lose data, it would fabricate "GitHub said there are none", and `next` would rank an item as unblocked whose dependencies were never fetched. `tsc` cannot catch this across a JSON file, so the check is at runtime and the cast on serve is honest only because it ran. The converse is free: a *wider* entry serves narrower requests, so a `list` or `doctor` walk pays for the `next`/`deliver-queue` reads after it. Entries are keyed by selection, so a lean walk cannot evict a fat one.
-
-The cached walk also carries `scan` (GH-1788's meter), so `board-volume` and `prune`'s dry run report the board they were actually computed from rather than a zeroed counter.
+The item walk is memoized for 90 s (`RALPH_ITEM_CACHE_TTL_SEC`); `--fresh` forces a walk, and a cached answer always says so. This is **client-side bounded staleness, not a lease** — the cache never drives a write-guard evaluation. The three rules carrying that safety argument are in `ralph/CLAUDE.md`.
 
 ## Gotchas
 
