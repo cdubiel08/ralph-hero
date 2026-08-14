@@ -36,7 +36,7 @@ Per category:
 
 Close-as-stale / cancel-as-superseded / reopen-as-unevidenced are **never executed by this lane**. This is the trust ratchet's deliberate starting position — promoting tend to direct closure is a future loosening someone must choose, not a default you drift into.
 
-A proposal **files as a marker comment, not as a state move** (GH-1777). Post the evidence (what you grepped, what landed where, what supersedes it) plus your recommendation, and stamp it:
+A proposal **files as a marker comment, not as a state move** (GH-1777). Post the evidence (what you grepped, what landed where, what supersedes it) plus your recommendation, and stamp it. The marker is not a C9 escalation — nothing is stopped, so it carries no `options`/`resume` — but its prose is composed the same way, per [../work/references/escalation.md](../work/references/escalation.md): the smallest true decision, the look-alikes that are *not* decisions named and set aside, what does not change across the dispositions, and the literal `board resolve`/`move`/`cancel` line for each. A proposal whose recommendation is **contingent** on an in-flight unit says so and wires the `board dep` edge, rather than asking a question that cannot be answered yet.
 
 ````text
 <!-- ralph-tend:v1 proposed -->

@@ -179,10 +179,10 @@ board contract validate ralph.escalation payload.json   # producer (strict) sche
 board contract lint ralph.completion_report - --live    # lints L1-L13
 ```
 
-Escalations you post to the board should satisfy C9's bar even as prose: a
-single-line body ≤240 chars, ≥2 enumerated options with exactly one
-recommended — the notification channel truncates around 240 chars, so the
-first line must be answerable from a phone.
+Escalations you post to the board should satisfy C9's bar even as prose — the
+notification channel truncates around 240 chars, so the first line must be
+answerable from a phone. The bar and how to compose an option set that meets
+it: [escalation.md](escalation.md).
 
 ## Self-discovery
 
