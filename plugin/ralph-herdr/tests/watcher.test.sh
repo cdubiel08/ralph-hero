@@ -791,7 +791,8 @@ watch_until() {
   local want="$1" i=0 pid
   shift
   : >"$TMP/notify-watch.out"
-  RALPH_HERDR_WATCH_POLL="${WATCH_POLL_ENV:-1}" RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+  RALPH_HERDR_WATCH_POLL="${WATCH_POLL_ENV:-1}" RALPH_HERDR_WATCH_ARM_SEC="${WATCH_ARM_ENV:-1}" \
+    RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
     bash "$SCRIPTS/notify-watch.sh" "$@" >"$TMP/notify-watch.out" 2>&1 &
   pid=$!
   WATCH_EXITED=0
@@ -916,6 +917,78 @@ line_has "poll knob: the multi-target loop degrades the same way" "$WATCH_OUT" \
   "ignoring RALPH_HERDR_WATCH_POLL='15s'"
 is "poll knob: the watcher is not killed by it (multi target)" "0" "$WATCH_RC"
 WATCH_POLL_ENV=
+
+rm -f "$FAKE_HERDR_FIXTURES"/agent-get.* "$FAKE_HERDR_FIXTURES"/agent-wait.*
+
+# ═══ idle inside the spawn window is not a finished session (GH-1878) ═══════
+# Observed 2026-08-14: a fleet agent was declared finished and dropped from the
+# watch list 30s after spawn, then worked for another 36 minutes unwatched. It
+# had simply not yet transitioned into `working` when the first poll landed.
+# `idle` is the one ambiguous read; `done` and `gone` are not.
+printf '{"agent":{"name":"w-fresh","agent_status":"idle","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"t","focused":false,"revision":1}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-get.w-fresh.json"
+printf '{"agent":{"name":"w-done","agent_status":"done","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"t","focused":false,"revision":1}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-get.w-done.json"
+
+WATCH_ARM_ENV=3600 watch_until "reads idle inside" w-fresh w-done
+line_has  "spawn window: an unarmed idle target is held, not dropped" "$WATCH_OUT" \
+  "w-fresh reads idle inside the 3600s spawn window"
+line_lacks "spawn window: …and is never announced finished" "$WATCH_OUT" "ralph: w-fresh idle"
+is "spawn window: the hold is announced once, not every poll" "1" \
+  "$(printf '%s\n' "$WATCH_OUT" | grep -c 'w-fresh reads idle inside' || true)"
+line_has  "spawn window: a genuinely done sibling still drops immediately" "$WATCH_OUT" \
+  "notify [w-done] ralph: w-done done"
+is "spawn window: the watcher keeps watching the held target" "0" "$WATCH_EXITED"
+
+# The window is bounded: an agent that never arms is not watched forever.
+WATCH_ARM_ENV=1 watch_until "notify [w-fresh]" w-fresh w-done
+line_has "spawn window: once the window closes, idle is terminal again" "$WATCH_OUT" \
+  "notify [w-fresh] ralph: w-fresh idle"
+is "spawn window: …and the watcher then exits" "1" "$WATCH_EXITED"
+
+# Single target: the bare `agent wait` default until-set includes idle, so this
+# is the path that fired at 30s in the observed run.
+printf '{"agent":{"name":"w-fresh","agent_status":"idle"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait.w-fresh.json"
+WATCH_ARM_ENV=3600 watch_until "reads idle inside" w-fresh
+line_has  "spawn window (single): the wait's idle match does not end the watch" "$WATCH_OUT" \
+  "w-fresh reads idle inside the 3600s spawn window"
+line_lacks "spawn window (single): no finished notification fires" "$WATCH_OUT" "ralph: w-fresh idle"
+is "spawn window (single): the watcher is still watching" "0" "$WATCH_EXITED"
+
+WATCH_ARM_ENV=1 watch_until "notify [w-fresh]" w-fresh
+line_has "spawn window (single): the window closes and idle is terminal" "$WATCH_OUT" \
+  "notify [w-fresh] ralph: w-fresh idle"
+is "spawn window (single): and the watch ends there" "1" "$WATCH_EXITED"
+
+# A malformed window value warns and defaults, like every other knob here.
+WATCH_ARM_ENV=2m watch_until "notify [w-done]" w-done
+line_has "spawn window: a malformed value warns" "$WATCH_OUT" \
+  "ignoring RALPH_HERDR_WATCH_ARM_SEC='2m'"
+is "spawn window: …and does not kill the watcher" "0" "$WATCH_RC"
+WATCH_ARM_ENV=
+
+# ── the latch, not just the clock: a target seen working is terminal on idle ──
+# The window bounds the ambiguity; being observed live resolves it outright. A
+# session that worked and then went idle really has finished, and must drop
+# immediately rather than waiting out the window.
+printf '{"agent":{"name":"w-arm","agent_status":"working","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"t","focused":false,"revision":1}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-get.w-arm.json"
+printf '{"agent":{"name":"w-arm","agent_status":"working"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait.w-arm.json"
+(
+  sleep 2
+  printf '{"agent":{"name":"w-arm","agent_status":"idle","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"t","focused":false,"revision":1}}\n' \
+    >"$FAKE_HERDR_FIXTURES/agent-get.w-arm.json"
+) &
+flip=$!
+WATCH_ARM_ENV=3600 watch_until "notify [w-arm]" w-arm w-fresh
+wait "$flip" 2>/dev/null || true
+line_has  "latch: a target observed working drops on idle inside the window" "$WATCH_OUT" \
+  "notify [w-arm] ralph: w-arm idle"
+line_lacks "latch: it is never held as a spawn-window read" "$WATCH_OUT" "w-arm reads idle inside"
+line_has  "latch: the never-armed sibling is still held" "$WATCH_OUT" "w-fresh reads idle inside"
+WATCH_ARM_ENV=
 
 rm -f "$FAKE_HERDR_FIXTURES"/agent-get.* "$FAKE_HERDR_FIXTURES"/agent-wait.*
 
