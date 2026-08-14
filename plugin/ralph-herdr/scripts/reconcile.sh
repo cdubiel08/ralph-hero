@@ -154,6 +154,60 @@ done
 # below goes through this guard rather than "${ledgers[@]}" directly.
 walk_ledgers() { printf '%s\n' ${ledgers[@]+"${ledgers[@]}"}; }
 
+# ── Ownership: which of these ledgers is THIS server's to sweep (GH-1863) ────
+# herdr runs the [[startup]] hook for EVERY server that starts, including a
+# scratch server from an isolated named session (`herdr --session x server`).
+# That pass gets pointed at the real ledgers under the ledger root while
+# answering about a herd it has never had, so the absence-driven phases read
+# "no live agent of that name" and sweep another server's live workers.
+# Observed live 2026-08-13: five running workers marked lost in one pass,
+# including the session writing the fix.
+#
+# The evidence is POSITIVE, matching claim-recover.sh's doctrine that an
+# absence proves nothing: a ledger is this server's when the server's own
+# snapshot holds a pane that one of the ledger's open records names. A foreign
+# server holds none of them, so it sweeps nothing. Everything else — a ledger
+# with no open records, or open records that recorded no pane — is UNKNOWN and
+# fails closed the same way: the absence-driven phases skip it, and the next
+# pass from the server that does own it reconciles as before.
+#
+# Computed ONCE here, from the pass-start open rows, because phase E closes
+# records: a ledger asked again after E could have lost the very row that
+# proved it ours.
+server_panes=$(printf '%s' "$snapshot" |
+  jq -r '(.panes // [])[] | .pane_id // empty' 2>/dev/null | tr '\n' ' ') || server_panes=""
+owned="" # ledger paths this server's snapshot proves it owns
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  export RALPH_HERDR_LEDGER="$f"
+  while IFS=$'\037' read -r ref pane _pid _harness _parent _state _issue _checkout _toks; do
+    [ -n "$ref" ] || continue
+    [ -n "$pane" ] || continue
+    case " $server_panes " in
+      *" $pane "*)
+        owned="$owned $f"
+        break
+        ;;
+    esac
+  done < <(ralph_ledger_open_rows || true)
+  case " $owned " in
+    *" $f "*) : ;;
+    *) log "not this server's ledger — no open record names a pane this server holds; sweeping nothing in $f" ;;
+  esac
+done < <(walk_ledgers)
+unset RALPH_HERDR_LEDGER
+
+# ledger_is_ours FILE — the prepass verdict. Gates the phases whose evidence is
+# an ABSENCE (A's exit-lost sweep, D's orphan pass); phase E asks the pane
+# directly and is already safe against a foreign server, and phase C writes
+# only where the herd matched a record, which a foreign server never does.
+ledger_is_ours() {
+  case " $owned " in
+    *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
 # live_rows — the herd as US-separated columns, derived once:
 #   name  status  pane  scope  checkout
 # Phase B walked live_json with four jq forks per agent to read exactly these.
@@ -314,6 +368,17 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
   ralph_ledger_lock "$f"
+  if ! ledger_is_ours "$f"; then
+    # Not ours to sweep (GH-1863). Every open name still counts as open, so
+    # phase B does not mint a second epoch for a worker this pass declined to
+    # judge.
+    while IFS= read -r ref; do
+      [ -n "$ref" ] || continue
+      open_all="$open_all $(scope_key "$f")|${ref%%#*}"
+    done < <(ralph_ledger_open_agents || true)
+    ralph_ledger_unlock "$f"
+    continue
+  fi
   live_names=$(ralph_names_for_ledger "$live_json" "$f")
   candidates=""
   while IFS= read -r ref; do
@@ -530,6 +595,12 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
   ralph_ledger_lock "$f"
+  if ! ledger_is_ours "$f"; then
+    # Same guard as phase A (GH-1863): adoption is decided against live_names,
+    # and a foreign server's live_names is empty for every ledger.
+    ralph_ledger_unlock "$f"
+    continue
+  fi
   # Re-scoped per ledger: phase A's loop variable belongs to phase A's
   # iteration, and reusing it here would hand this repository's orphan pass
   # whichever repository happened to be last in that earlier loop.

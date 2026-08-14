@@ -501,6 +501,59 @@ case "$OUT" in
 esac
 is "sick server: ledger untouched" "$lines_before" "$(wc -l <"$RLEDGER" | tr -d ' ')"
 
+# ═══ 6b. reconcile: a herd belonging to ANOTHER server sweeps nothing (GH-1863)
+# herdr runs [[startup]] for EVERY server that starts, so an isolated named
+# session ran this pass against the operator's real ledgers while answering
+# about a herd it never had. Observed live 2026-08-13: five running workers
+# marked lost in one sweep. The pass now needs POSITIVE evidence that a ledger
+# is its own — one of the ledger's open records naming a pane this server
+# holds — and an empty or foreign herd supplies none.
+FROOT="$TMP/froot"
+FLEDGER="$FROOT/acme/demo/ledger.jsonl"
+mkdir -p "$FROOT/acme/demo"
+foreign_ledger() {
+  cat >"$FLEDGER" <<'EOF'
+{"ts":"t0","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"role":"w","issue":"123","slug":"fix","depth":"0","state":"spawned"}}
+{"ts":"t1","ev":"spawn","agent_ref":"w9-gone#ffff","pane_id":"p9","tokens":{"role":"w","issue":"9","slug":"gone","depth":"0","state":"spawned"}}
+EOF
+}
+
+# (a) the observed case: a scratch server with no agents and no panes at all.
+foreign_ledger
+herd_fixture '[]'
+: >"$FAKE_HERDR_LOG"
+run_reconcile "$FROOT"
+is "foreign server: reconcile still exits 0" "0" "$RC"
+is "foreign server: nothing marked lost" "0" \
+  "$(lcount "$FLEDGER" '.ev=="exit"')"
+case "$OUT" in
+  *"not this server's ledger"*) ok "foreign server: declines the sweep loudly" ;;
+  *) not_ok "foreign server: declines the sweep loudly — got '$OUT'" ;;
+esac
+RALPH_HERDR_LEDGER="$FLEDGER"
+is "foreign server: both records still open" "w123-fix w9-gone" \
+  "$(ralph_ledger_open_agents | sed 's/#[0-9a-f]*$//' | sort | tr '\n' ' ' | sed 's/ *$//')"
+
+# (b) a NON-empty foreign herd is no better: ownership is proven by the panes
+# this ledger recorded, never by the herd merely being non-empty.
+foreign_ledger
+herd_fixture '[{"name":"w77-other","agent_status":"working","pane_id":"pz1"}]'
+: >"$FAKE_HERDR_LOG"
+run_reconcile "$FROOT"
+is "foreign herd: nothing marked lost" "0" "$(lcount "$FLEDGER" '.ev=="exit"')"
+is "foreign herd: no token pushed onto our panes" "0" "$(log_count '^pane report-metadata p[19] ')"
+
+# (c) the control: one recorded pane back in the snapshot proves the ledger
+# ours, and the ordinary sweep resumes — the guard is scoped, not a mute.
+foreign_ledger
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
+: >"$FAKE_HERDR_LOG"
+run_reconcile "$FROOT"
+is "owned ledger: the absent worker is marked lost again" "1" \
+  "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost"')"
+is "owned ledger: the live worker is left open" "0" \
+  "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w123-fix#aaaa"')"
+
 # ═══ 7. depth guard: refusal at depth 2 ══════════════════════════════════════
 DLEDGER="$TMP/depth/ledger.jsonl"
 mkdir -p "$TMP/depth"
@@ -677,7 +730,10 @@ RC=0
 OUT=$(RALPH_HERDR_LEDGER_ROOT="$CROOT4" RALPH_HERDR_BOARD="$BIN/board" \
   bash "$SCRIPTS/reconcile.sh" 2>&1) || RC=$?
 is "wrong server: pass exits 0" "0" "$RC"
-is "wrong server: phase A still closes the records (ledger is recoverable)" "2" \
+# GH-1809 accepted the ledger half of this as recoverable damage and asserted
+# the two exit-lost records here. GH-1863 closed it: neither pane is in this
+# server's snapshot, so the ledger is not this server's to sweep.
+is "wrong server: phase A closes nothing either (GH-1863)" "0" \
   "$(lcount "$CROOT4/acme/demo/ledger.jsonl" '.ev=="exit" and .reason=="lost"')"
 is "wrong server: NOT ONE board call, from either phase" "0" \
   "$(wc -l <"$FAKE_BOARD_LOG" | tr -d ' ')"

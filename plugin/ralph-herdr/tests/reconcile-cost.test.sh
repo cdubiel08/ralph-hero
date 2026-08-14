@@ -199,7 +199,16 @@ echo "# ═══ 3. THE REGRESSION: the fresh re-probe is per PASS, not per led
 # lost-looking candidates and each one used to trigger its own re-probe. The
 # pass-start snapshot plus ONE re-probe is the whole budget, at any number of
 # boards. Before GH-1775 this was N+1.
-herd_fixture '[]'
+#
+# The herd is not EMPTY, it is merely disjoint from the ledger names: since
+# GH-1863 a ledger is only swept when this server holds a pane one of its open
+# records names, so an empty snapshot would now make every ledger foreign and
+# the sweep this section measures would never run. `anchor_herd` supplies that
+# one pane (p1, which mk_ledger's first record carries) under a name no ledger
+# holds — so ownership is proven and every remaining record is still a
+# lost-looking candidate.
+anchor_herd() { herd_fixture '[{"name":"w900-anchor","agent_status":"working","pane_id":"p1"}]'; }
+anchor_herd
 for L in 1 2 5; do
   ROOT="$TMP/multi$L"
   i=1
@@ -219,7 +228,7 @@ echo "# ═══ 4. the re-probe is LAZY, and its failure is not retried per le
 # when it fails, is not re-attempted for each remaining ledger.
 ROOT="$TMP/lazy"
 for i in 1 2 3; do mk_ledger "$ROOT" "own$i" "rep$i" 2 p >/dev/null; done
-herd_fixture '[]'
+anchor_herd
 run_reconcile "$ROOT"
 is "lazy: three ledgers of candidates still cost one re-probe" "2" "$(log_count '^api snapshot')"
 case "$OUT" in
