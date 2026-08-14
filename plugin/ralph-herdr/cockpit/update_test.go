@@ -604,6 +604,51 @@ func TestPollSnapsToFloorOnBoardChange(t *testing.T) {
 	}
 }
 
+// ── focus as a third cadence input (GH-1876) ────────────────────────────────
+
+func TestBlurJumpsToTheCeilingAndFocusSnapsBack(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m, _ = updateModel(m, boardOf(m)) // first read: at the floor
+	if m.pollEvery != m.cfg.Interval {
+		t.Fatalf("precondition: want the floor, got %v", m.pollEvery)
+	}
+	m, _ = updateModel(m, tea.BlurMsg{})
+	if m.pollEvery != m.cfg.MaxInterval {
+		t.Errorf("blur must jump straight to the ceiling %v, got %v", m.cfg.MaxInterval, m.pollEvery)
+	}
+	m, _ = updateModel(m, tea.FocusMsg{})
+	if m.pollEvery != m.cfg.Interval {
+		t.Errorf("focus must snap to the floor %v, got %v", m.cfg.Interval, m.pollEvery)
+	}
+}
+
+// A terminal that reports a blur and never a focus cannot strand the cadence
+// past the stated staleness bound, and a keypress recovers it.
+func TestBlurIsBoundedByTheCeilingAndRecoverableByAKeypress(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.cfg.MaxInterval = 0 // backoff off: the ceiling collapses to the floor
+	m, _ = updateModel(m, tea.BlurMsg{})
+	if m.pollEvery != m.cfg.Interval {
+		t.Errorf("with backoff off, blur must stay at the floor, got %v", m.pollEvery)
+	}
+
+	m = testModel(&fakeRunner{})
+	m, _ = updateModel(m, boardOf(m))
+	before := m.lastPoll
+	m, _ = updateModel(m, tea.BlurMsg{})
+	if m.lastPoll != before {
+		t.Error("blur must not touch lastPoll — flapping focus would poll below the floor")
+	}
+	m = settle(m, 5) // no focus event ever arrives
+	if m.pollEvery != m.cfg.MaxInterval {
+		t.Errorf("stranded cadence %v must be pinned at the ceiling", m.pollEvery)
+	}
+	m, _ = updateModel(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if m.pollEvery != m.cfg.Interval {
+		t.Errorf("a keypress must recover the cadence, got %v", m.pollEvery)
+	}
+}
+
 func TestQuestionChurnDoesNotPinTheCadence(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	m = settle(m, 3)

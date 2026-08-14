@@ -119,7 +119,7 @@ of each script:
 |---|---|---|
 | `RALPH_HERDR_BOARD` | auto-discovered | board CLI override — authoritative when set: only that path is validated, and a broken value dies loudly with no fallback. Unset, the scripts try `<repo>/ralph/scripts/board`, then the newest installed ralph plugin copy under `~/.claude/plugins/cache`. Honest caveat: herdr panes inherit the herdr **server's** environment, not your shell's — an export only reaches panes if the server itself was started with it |
 | `RALPH_COCKPIT_INTERVAL` | `30` | Go cockpit TUI tick + board-poll **floor**, seconds (min 10): the fastest the board is ever walked, and the fixed cadence of the (free, local) agent-overlay refresh. The fzf rung ignores it — it re-reads the board on every interaction instead of on a timer |
-| `RALPH_COCKPIT_INTERVAL_MAX` | `300` | hard staleness bound on the cockpit's adaptive board cadence (GH-1805), seconds. On a quiet board the walk backs off ×1.5 per unchanged read up to this ceiling and no further; any evidence of a write — an agent appearing/blocking/leaving, the cockpit's own `a`/`s`, a keypress — snaps it back to the floor in one step. Set it **at or below** the floor to turn backoff off (a constant cadence) |
+| `RALPH_COCKPIT_INTERVAL_MAX` | `300` | hard staleness bound on the cockpit's adaptive board cadence (GH-1805), seconds. On a quiet board the walk backs off ×1.5 per unchanged read up to this ceiling and no further; any evidence of a write — an agent appearing/blocking/leaving, the cockpit's own `a`/`s`, a keypress, the pane regaining focus — snaps it back to the floor in one step, and the pane *losing* focus jumps straight to this ceiling (GH-1876: herdr forwards focus events, probed). Set it **at or below** the floor to turn backoff off (a constant cadence — and with it, the blur backoff) |
 | `RALPH_HERDR_PEEK_LINES` | `40` | fzf-rung peek/preview depth: pane-tail lines (`herdr agent read`) or latest-comment lines (`gh issue view --comments` tail) |
 | `RALPH_HERDR_DASH_INTERVAL` | `120` | dashboard refresh interval, seconds |
 | `RALPH_HERDR_DRY_RUN` | unset | set to `true` and every spawn script (`work-next`, `work-fleet`, lane passes) prints its exact plan — issues, branches, agent names, the herdr commands it would run — and exits 0 before any herdr mutation. Dashboard/attend are reads and ignore it |
@@ -268,7 +268,9 @@ No poll timer: the board re-reads after every verb.
   the floor (`RALPH_COCKPIT_INTERVAL`, 30 s) while anything is happening,
   backing off ×1.5 per unchanged walk to a hard ceiling
   (`RALPH_COCKPIT_INTERVAL_MAX`, 5 min) on a quiet board — roughly 10× fewer
-  walks when nobody is working and nobody is watching. The header shows the
+  walks when nobody is working and nobody is watching. A pane the operator
+  cannot see skips the ramp entirely and sits at the ceiling until it regains
+  focus (GH-1876). The header shows the
   live cadence beside the last-poll time, so a multi-minute gap reads as a
   quiet board rather than a hung cockpit. What it is NOT is a rate estimator:
   the writers here are *visible* (a ralph session shows up in the free local

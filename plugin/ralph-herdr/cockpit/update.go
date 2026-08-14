@@ -192,6 +192,19 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		m.status = string(msg)
 		return m, nil
 
+	case tea.FocusMsg:
+		// The pane is visible again. Same evidence a keypress carries — a human
+		// is looking — so the same one-step snap, and like a keypress it does
+		// not touch lastPoll, so flapping focus can never poll below the floor.
+		m.snapToFloor()
+		return m, nil
+
+	case tea.BlurMsg:
+		// Nobody can see this pane. Back off in one step rather than paying the
+		// ramp for a board nobody is reading.
+		m.blurToCeiling()
+		return m, nil
+
 	case tea.MouseMsg:
 		// A human is at the cockpit: freshness is worth paying for again. Only
 		// the cadence resets — lastPoll does not — so a burst of keystrokes can

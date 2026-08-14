@@ -38,7 +38,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ralph-cockpit:", err)
 		os.Exit(2)
 	}
-	p := tea.NewProgram(newModel(cfg, execRunner{}), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// WithReportFocus asks the terminal for DECSET 1004 focus reporting — the
+	// third cadence input (GH-1876). Probed against a real herdr pane
+	// 2026-08-14: herdr forwards \e[I / \e[O on pane switches. A host that
+	// does not support it simply never sends the events, and the cadence is
+	// exactly what GH-1805 shipped.
+	p := tea.NewProgram(newModel(cfg, execRunner{}), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "ralph-cockpit:", err)
 		os.Exit(1)
