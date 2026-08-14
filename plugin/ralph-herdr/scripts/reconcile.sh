@@ -26,6 +26,11 @@
 #                  recent ledger record (server restarts drop pane metadata)
 #   D  orphan pass adoption policy for open children whose parent is no
 #                  longer open — same pass watch-event.sh runs on pane death
+#   F  re-arm      (GH-1862) an ARMED fleet run whose workers the restart
+#                  killed is topped back up to k from the frontier — the level
+#                  trigger for refill.sh, whose edge trigger a restart destroys
+#                  along with the sessions that would have fired it. Inert
+#                  unless a human armed a run with `work-fleet --refill`
 #
 # Single pass, then EXIT — no daemon, no sleep loop; the [[events]] hooks own
 # steady-state.
@@ -73,6 +78,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/dirty.sh"
 # shellcheck source=claim-recover.sh
 . "$SCRIPT_DIR/claim-recover.sh"
+# fleet.sh then refill.sh (phase F): refill.sh calls ralph_fleet_*. Neither
+# touches anything at source time, and both are inert unless a fleet.json exists.
+# shellcheck source=fleet.sh
+. "$SCRIPT_DIR/fleet.sh"
+# shellcheck source=refill.sh
+. "$SCRIPT_DIR/refill.sh"
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
 
@@ -127,6 +138,7 @@ fi
 
 ts=$(date -u +%FT%TZ)
 open_all="" # names open in ANY ledger (dedup channel for phase B)
+dead_names="" # phase E's proven-gone worker names (capacity input for phase F)
 
 # The ledger set, enumerated ONCE (GH-1775). Every phase below used to re-glob
 # the ledger root, which cost five globs and — worse — let a ledger created
@@ -245,6 +257,13 @@ while IFS= read -r f; do
       continue
     }
     log "exit $ref (reason $verdict) [$f]"
+    # Phase F needs these NAMES (GH-1862). This phase exists precisely because
+    # a restart-rebuilt pane is still ANSWERED by `agent list` — that is why the
+    # verdict comes from the pane and not from the herd — so the herd read that
+    # refill uses for capacity would count every one of these dead workers as an
+    # occupied seat and refuse to spawn. The set of workers proven gone is
+    # computed exactly once, here, and handed forward.
+    dead_names="$dead_names ${ref%%#*}"
     recover_claim "$ref" "$f" "$verdict" "$issue" "$checkout" "$pane"
   done < <(ralph_ledger_open_rows || true)
   ralph_ledger_unlock "$f"
@@ -548,6 +567,45 @@ EOF
   ralph_ledger_unlock "$f"
 done < <(walk_ledgers)
 unset RALPH_HERDR_LEDGER
+
+# ── F: re-arm the fleet a restart emptied (GH-1862) ─────────────────────────
+# LAST of the phases, because it is the only one that acts on the world the
+# others just corrected. Phase E released the dead workers' claims, so those
+# issues are back in Backlog and back on the frontier; this phase is what
+# notices and spawns onto them.
+#
+# The gap it closes: refill is EDGE-triggered from watch-event.sh, on a w-lane
+# session exiting or finishing. A restart kills every pane's process at once and
+# restores panes holding a transcript at a prompt rather than a worker, so no
+# surviving session is left to emit the event that would refill the seat it just
+# vacated. An armed fleet.json then sits on disk, unexpired and unread, until
+# its TTL lapses — safe (GH-1809 made sure of that) but not productive. A
+# restart is an edge that destroys its own listeners, so it needs the same
+# question asked at a level instead: once, here, after the server comes back.
+#
+# NO NEW OPT-IN KEY, and no new bound. Every bound already lives in fleet.json,
+# which only exists because a human typed `work-fleet --refill`, and refill.sh
+# re-takes all of them from disk. `budget_left` in particular is durable, so a
+# restart STORM drains one shared budget and then disarms rather than getting a
+# fresh allowance per restart — the acceptance criterion is met by the existing
+# bound rather than by a restart-specific counter. With nothing armed this phase
+# is one jq read per fleet file and no board access whatsoever.
+#
+# Phase E's `dead_names` is load-bearing, not an optimization: see the
+# RALPH_HERDR_REFILL_EXCLUDE note in refill.sh. A restart's rebuilt panes still
+# answer `agent list`, so without it the capacity check counts the very workers
+# phase E just proved dead and this phase spawns nothing.
+#
+# Safe to reach a sick server: the pass already aborted above if the herdr
+# snapshot or scope resolution failed, and refill.sh's own herd and frontier
+# reads fail closed — an unreadable answer leaves the run armed for the next
+# reconcile rather than spawning into an unknown herd.
+export RALPH_HERDR_REFILL_EXCLUDE="$dead_names"
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  refill_all_to_capacity "$f" || true
+done < <(walk_ledgers)
+unset RALPH_HERDR_REFILL_EXCLUDE
 
 # Clear the dirty markers events left behind. LAST, after every phase: a marker
 # dropped earlier would be a promise this pass had already looked, and any

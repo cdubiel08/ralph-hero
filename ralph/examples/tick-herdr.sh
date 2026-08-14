@@ -46,11 +46,32 @@
 # reconcile pass rather than 120 minutes. (b) Agent resume was verified live
 # (thoughts/shared/research/2026-08-13-agent-pane-resume-probe.md): restore
 # types `claude --resume <id>` into a fresh shell, so a restored pane holds a
-# transcript at a prompt at best — never a worker mid-turn. What remains is
-# that nothing RE-ARMS: after a restart the claims come back to Backlog
-# correctly and no one picks them up, so an unattended chain is now safe but
-# not productive across a restart. That is the open blocker, and it is the
-# only one.
+# transcript at a prompt at best — never a worker mid-turn. What remained was
+# that nothing RE-ARMS: after a restart the claims came back to Backlog
+# correctly and no one picked them up, so an unattended chain was safe but not
+# productive across a restart.
+#
+# GH-1862 closed that gap in code: reconcile.sh grew a phase F that tops an
+# ARMED fleet run back up to k from the frontier, on the same startup pass that
+# released the claims, through the same bounded refill decision the watcher's
+# edge trigger uses (plugin/ralph-herdr/scripts/refill.sh). It needs no new
+# opt-in key — it acts only on a run a human already armed with `--refill` — and
+# a restart storm cannot outrun the budget, because `budget_left` is durable in
+# fleet.json rather than reset per restart.
+#
+# AND THE KEY STILL STAYS, on a blocker that is now purely evidentiary: all of
+# the above is proven against the REPLAY fakes (fleet.test.sh §7), and a replay
+# cannot answer the one question unattended arming turns on — whether a REAL
+# herdr restart presents the world the way phase F models it. Two facts are
+# assumed and unmeasured: that the server answers `session.snapshot` by the time
+# the [[startup]] hook runs (if not, the pass declines and re-arming waits for a
+# reconcile nobody schedules), and that rebuilt panes register their agents
+# again (the illusion phase F's exclusion set exists to see through — if a real
+# restart instead drops them from `agent list`, the exclusion is inert and the
+# capacity math is right for a different reason than the one written down).
+# Neither is dangerous if wrong; both make re-arming silently not happen, which
+# is exactly the failure this key is holding the line against. Lifting it wants
+# ONE live restart probe with an armed fleet in flight, not another replay row.
 #
 # Design record: thoughts/shared/research/2026-08-09-herdr-runtime-ralph-addon.md
 # Cockpit sibling (actions, lane panes, notifications): plugin/ralph-herdr/

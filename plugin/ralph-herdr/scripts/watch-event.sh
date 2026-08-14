@@ -57,6 +57,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/dirty.sh"
 # shellcheck source=fleet.sh
 . "$SCRIPT_DIR/fleet.sh"
+# refill.sh after fleet.sh (it calls ralph_fleet_*) and after log() is defined
+# below — it only ever calls log() from inside a function body, so definition
+# order at source time does not matter, but the dependency is real.
+# shellcheck source=refill.sh
+. "$SCRIPT_DIR/refill.sh"
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
 EVENT="${HERDR_PLUGIN_EVENT:-}"
@@ -116,177 +121,6 @@ live_names() {
     tr '\n' ' ' || true
 }
 
-# ── refill (Phase 3 — opt-in only; claim-TTL probe said NO-GO by default) ────
-# The board is the wait state: when a w-lane session exits or finishes, an
-# ARMED fleet run (work-fleet --refill) is topped back up to k from the
-# frontier. NEVER on blocked — blocked is attention, not capacity. All
-# bounds live in fleet.json (TTL checked at read time, max-total-spawns
-# budget, per-run spawned set) and all herdr interaction goes through lib.sh
-# (spawn_work_session, ralph_agents_json, notify).
-
-# maybe_refill LEDGER_FILE — try every run of LEDGER_FILE's scope. Cheap when
-# nothing is armed (one jq read per fleet.json); always rc 0.
-maybe_refill() {
-  local file="$1" runs ff
-  runs="$(dirname "$file")/runs"
-  [ -d "$runs" ] || return 0
-  for ff in "$runs"/*/fleet.json; do
-    [ -f "$ff" ] || continue
-    refill_one "$file" "$ff" || true
-  done
-  return 0
-}
-
-# refill_one LEDGER_FILE FLEET_FILE — one refill attempt for one run, in a
-# CONTAINED SUBSHELL: it sources lib.sh against the repo recorded at arm
-# time (fleet.json carries it because this process has no workspace cwd),
-# and any lib.sh refusal — no board CLI, billing guard — kills only the
-# subshell.
-#
-# LOCK DISCIPLINE: everything server- or network-priced runs OUTSIDE the
-# scope's ledger mutex — the SPAWN (agent-start retries alone can outlast
-# the 15s stale-lock break), and equally the agent-list and FRONTIER reads
-# (`board next` paginates the whole project; a large board takes longer than
-# the break, after which a waiter would recreate the lock and this holder's
-# identity check would falsely pass — unserializing the very consume the
-# mutex exists to close). The mutex guards ONLY the fleet.json
-# decide-and-consume: re-read state → capacity check (live w-agents from the
-# pre-lock snapshot PLUS the run's unexpired `inflight` picks, since a
-# mid-spawn agent is invisible to `agent list`) → pick a frontier item →
-# consume a budget unit recording the pick. Racing hooks therefore never
-# double-pick, and a burst of triggers never overshoots k. Both pre-lock
-# reads fail CLOSED (skip the refill, stay armed): unknown capacity must
-# never spawn into an unknown herd. The spawned session's own claim protocol
-# is the cross-run backstop, as everywhere.
-refill_one() (
-  ledger="$1" ff="$2"
-  state=$(ralph_fleet_state "$ff" 2>/dev/null) || exit 0
-  if [ "$(jq -r '.armed' <<<"$state")" != "true" ]; then
-    # Expiry is enforced at read time (state forces armed=false), but the
-    # FILE may still say armed=true — write the disarm down ONCE so the
-    # audit trail names why and the run reads as lapsed everywhere. No
-    # toast: a TTL lapse is the planned bound, not a completion. Under the
-    # scope mutex like every other fleet.json rewrite.
-    if [ "$(jq -r '.expired' <<<"$state")" = "true" ] &&
-      [ "$(jq -r '.armed // false' "$ff" 2>/dev/null)" = "true" ]; then
-      ralph_ledger_lock "$ledger"
-      state=$(ralph_fleet_state "$ff" 2>/dev/null) || state=""
-      if [ -n "$state" ] && [ "$(jq -r '.expired' <<<"$state")" = "true" ]; then
-        ralph_fleet_disarm "$ff" "ttl expired" || true
-        log "refill $(jq -r '.run_id' <<<"$state"): arming TTL expired — disarmed"
-      fi
-      ralph_ledger_unlock "$ledger"
-    fi
-    exit 0
-  fi
-  run_id=$(jq -r '.run_id' <<<"$state")
-  repo=$(jq -r '.repo // empty' <<<"$state")
-  if [ -z "$repo" ] || [ ! -d "$repo" ]; then
-    log "refill $run_id: armed but repo '$repo' is gone — disarming"
-    ralph_fleet_disarm "$ff" "repo missing" || true
-    exit 0
-  fi
-  export RALPH_HERDR_REPO="$repo" RALPH_HERDR_LEDGER="$ledger"
-  # lib.sh discovers the board CLI (dies loudly if none) and runs the
-  # billing guard's env check at spawn time; both are contained here.
-  # shellcheck source=lib.sh
-  . "$SCRIPT_DIR/lib.sh"
-  billing_guard
-  trap ralph_ledger_unlock_held EXIT
-
-  # Pre-lock snapshots (see the header): fail CLOSED — the conservative
-  # direction for REFILL is to skip and stay armed, never to spawn against
-  # an unknown herd (live_names' empty-on-failure convention is conservative
-  # for the orphan pass, and exactly backwards here).
-  k=$(jq -r '.k' <<<"$state")
-  agents=$(ralph_agents_json 2>/dev/null) || {
-    log "refill $run_id: herd read failed — leaving armed, not spawning into an unknown herd"
-    exit 0
-  }
-  live_w=$(jq -s 'map(select(.name | test("^w[0-9]+-|^gh-[0-9]+$"))) | length' <<<"$agents")
-  if [ "$live_w" -ge "$k" ]; then
-    exit 0 # at capacity — stays armed for the next exit
-  fi
-  live_issues=$(jq -s '[.[] | .name
-    | select(test("^w[0-9]+-|^gh-[0-9]+$"))
-    | sub("^w"; "") | sub("^gh-"; "") | split("-")[0] | tonumber]' <<<"$agents")
-  frontier=$(ralph_fleet_frontier_json) || {
-    log "refill $run_id: frontier read failed — leaving armed"
-    exit 0
-  }
-
-  ralph_ledger_lock "$ledger"
-  state=$(ralph_fleet_state "$ff" 2>/dev/null) || { ralph_ledger_unlock "$ledger"; exit 0; }
-  if [ "$(jq -r '.armed' <<<"$state")" != "true" ]; then
-    ralph_ledger_unlock "$ledger"
-    exit 0
-  fi
-  if [ "$(jq -r '.budget_left' <<<"$state")" -le 0 ]; then
-    # A racer's leftover: the consumer of the LAST unit disarms and
-    # notifies after its spawn — disarm silently here, never double-toast.
-    ralph_fleet_disarm "$ff" "budget exhausted" || true
-    ralph_ledger_unlock "$ledger"
-    exit 0
-  fi
-  # Capacity, re-checked under the lock with in-flight picks counted: a
-  # racing hook's consume is visible in `inflight` long before its agent
-  # shows up in `agent list`. Entries older than 10 min are a dead hook's
-  # leftovers (spawns take seconds, not minutes) and never block; ones
-  # whose agent already appeared are subtracted, never double-counted.
-  cutoff=$(_ralph_fleet_expiry -10)
-  inflight=$(jq -r --argjson live "$live_issues" --arg cutoff "$cutoff" '
-    ([(.inflight // [])[] | select(.ts > $cutoff) | .issue] - $live) | length' <<<"$state")
-  if [ $((live_w + inflight)) -ge "$k" ]; then
-    ralph_ledger_unlock "$ledger"
-    exit 0 # at capacity once in-flight spawns count — stays armed
-  fi
-  cand=$(jq -r --argjson live "$live_issues" --argjson frontier "$frontier" '
-    (.spawned // []) as $done | $frontier
-    | ([.queue[]?.number] - $live - $done) | first // empty' <<<"$state")
-  if [ -z "$cand" ]; then
-    ralph_fleet_disarm "$ff" "frontier empty" || true
-    ralph_ledger_unlock "$ledger"
-    notify fleet "fleet run $run_id complete" "frontier empty — refill disarmed"
-    exit 0
-  fi
-  budget_left=$(ralph_fleet_consume_budget "$ff" "$cand") || {
-    ralph_ledger_unlock "$ledger"
-    exit 0
-  }
-  ralph_ledger_unlock "$ledger"
-
-  # Spawn outside the mutex. Depth guard on the orchestrator plane (refill
-  # spawns are parentless peers of the human's fleet — depth 0 by
-  # construction, but the guard call keeps the contract wired); identity is
-  # threaded honestly: this spawn is machine-initiated.
-  depth=$(ralph_depth_guard "") || exit 0
-  export RALPH_HERDR_INVOKED_BY=scheduler RALPH_HERDR_RUN_ID="$run_id"
-  log "refill $run_id: spawning GH-$cand (depth $depth, budget left $budget_left)"
-  rc=0
-  spawn_work_session "$cand" "$frontier" || rc=$?
-  case "$rc" in
-    0)
-      ralph_brief_write "${RALPH_HERDR_SPAWNED_REF:?refill spawn without a ref}" "$cand" >/dev/null ||
-        log "refill $run_id: brief write failed for GH-$cand"
-      ralph_ledger_append "$(jq -nc --arg ts "$(date -u +%FT%TZ)" \
-        --arg run "$run_id" --arg ref "$RALPH_HERDR_SPAWNED_REF" \
-        --argjson n "$cand" --argjson left "$budget_left" \
-        '{ts: $ts, ev: "refill_spawn", run_id: $run, agent_ref: $ref,
-          issue: $n, budget_left: $left}')" ||
-        log "refill $run_id: refill_spawn append failed for GH-$cand"
-      log "refill $run_id: spawned $RALPH_HERDR_SPAWNED_AGENT for GH-$cand"
-      ;;
-    2) log "refill $run_id: GH-$cand already owned elsewhere — budget unit spent (attempts count)" ;;
-    *) log "refill $run_id: spawn failed for GH-$cand — budget unit spent (attempts count, no auto-retry)" ;;
-  esac
-  # The attempt is over (any outcome): stop counting it as capacity-in-flight.
-  ralph_fleet_spawn_done "$ff" "$cand" || true
-  if [ "$budget_left" -le 0 ]; then
-    ralph_fleet_disarm "$ff" "budget exhausted" || true
-    notify fleet "fleet run $run_id complete" "spawn budget exhausted — refill disarmed"
-  fi
-  exit 0
-)
 
 # ── pane.agent_status_changed ────────────────────────────────────────────────
 handle_status() {

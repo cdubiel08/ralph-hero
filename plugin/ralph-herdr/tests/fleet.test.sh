@@ -737,6 +737,146 @@ line_has "work-fleet: the capability is discoverable from --help" \
 
 rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
 
+# ═══ 7. restart re-arm — reconcile phase F (GH-1862) ═════════════════════════
+# The edge trigger cannot survive the restart, because the restart is what kills
+# every session that would have fired it. These rows drive the LEVEL trigger:
+# reconcile.sh's single startup pass.
+#
+# The fixture reproduces the restart's defining illusion, and it is the reason
+# this is not a two-line change: herdr REBUILDS panes and their agent
+# registrations, so `agent list` still answers "alive" for both workers whose
+# processes it just killed. Only `pane process-info` disagrees — the recorded
+# shell pid (123) is not the rebuilt pane's (the fake's default, 9000) — which
+# is exactly the reading phase E already takes. Anything that trusted the herd
+# read here would see k occupied seats and spawn nothing.
+run_reconcile() {
+  RC=0
+  OUT=$(RALPH_HERDR_LEDGER_ROOT="$1" RALPH_HERDR_BOARD="$BIN/board" \
+    ANTHROPIC_API_KEY= bash "$SCRIPTS/reconcile.sh" 2>&1) || RC=$?
+}
+# mk_restart_row NAME — a scope root whose two armed-run workers were killed by
+# a restart: recorded shell pids that no longer match, but a herd that still
+# reports both names live. Sets ROW/RLEDGER/RRID/RFF.
+mk_restart_row() {
+  ROW="$TMP/restart-$1"
+  RLEDGER="$ROW/acme/demo/ledger.jsonl"
+  mkdir -p "$ROW/acme/demo"
+  cat >"$RLEDGER" <<'EOF'
+{"ts":"t0","ev":"spawn","agent_ref":"w100-first#aaaa","pane_id":"p1","shell_pid":123,"tokens":{"role":"w","issue":"100","slug":"first","root":"w100-first#aaaa","depth":"0","state":"spawned","branch":"feature/GH-100","harness":"claude","spawn_epoch":"aaaa"}}
+{"ts":"t1","ev":"spawn","agent_ref":"w110-second#bbbb","pane_id":"p2","shell_pid":124,"tokens":{"role":"w","issue":"110","slug":"second","root":"w110-second#bbbb","depth":"0","state":"spawned","branch":"feature/GH-110","harness":"claude","spawn_epoch":"bbbb"}}
+EOF
+  RRID=$(ralph_run_id)
+  RFF=$(RALPH_HERDR_LEDGER="$RLEDGER" RALPH_HERDR_RUN_ID="$RRID" ralph_fleet_arm 2 1 100)
+  # The restart illusion: both dead workers still answer the herd read.
+  herd_fixture '[{"name":"w100-first","agent_status":"working","pane_id":"p1"},{"name":"w110-second","agent_status":"working","pane_id":"p2"}]'
+  printf '{"workspace":{"workspace_id":"wR"},"tab":{"tab_id":"wR:t1"},"root_pane":{"pane_id":"p31"},"worktree":{"path":"%s"}}\n' "$WT" \
+    >"$FAKE_HERDR_FIXTURES/worktree-create.json"
+  printf '{"frontier":[{"number":301,"title":"Add refill support"},{"number":302,"title":"Second candidate"}],"blocked":[]}\n' \
+    >"$FAKE_BOARD_FIXTURES/frontier.json"
+  : >"$FAKE_HERDR_LOG"
+  : >"$FAKE_BOARD_LOG"
+}
+
+# ── row H: the acceptance criterion — work is being worked again ─────────────
+mk_restart_row h
+run_reconcile "$ROW"
+is "restart H: the pass completes" "0" "$RC"
+is "restart H: both dead workers are exited restart_killed" "2" \
+  "$(lcount "$RLEDGER" '.ev=="exit" and .reason=="restart_killed"')"
+# The heart of it: BOTH freed seats refill, not one. The edge trigger fires
+# once per vacated seat; a restart vacates every seat with no event at all, so
+# the level trigger has to keep asking until the run is back at k.
+is "restart H: both freed seats spawn — the fleet is working again" "2" \
+  "$(lcount "$RLEDGER" '.ev=="spawn" and ((.agent_ref | startswith("w301-")) or (.agent_ref | startswith("w302-")))')"
+is "restart H: the refills are honestly machine-initiated" "2" \
+  "$(lcount "$RLEDGER" '.ev=="refill_spawn"')"
+is "restart H: budget spent once per spawn, and no more" "5" "$(jqf "$RFF" '.budget_left')"
+is "restart H: still armed for steady-state refill" "true" "$(jqf "$RFF" '.armed')"
+# The sweep's own in-flight markers deliberately OUTLIVE it: they are the only
+# record that these seats are taken until `agent list` catches up, and the
+# alternative is a k=2 fleet spawning until the budget runs out. They are inert
+# rather than leaked — capacity subtracts any whose agent has since appeared,
+# and ignores all of them after 10 minutes.
+is "restart H: the sweep's in-flight markers outlive it, one per seat filled" "2" \
+  "$(jqf "$RFF" '.inflight | length')"
+is "restart H: and they name the issues actually picked" "301 302" \
+  "$(jq -r '[.inflight[].issue] | sort | join(" ")' "$RFF")"
+line_has "restart H: the pass says what it re-armed" "$OUT" "spawning GH-301"
+
+# ── row I: nothing armed → phase F is inert, and costs no board access ───────
+# The no-new-key claim in one assertion: a scope where no human ever typed
+# --refill must come back from a restart exactly as it did before.
+ROW="$TMP/restart-i"
+RLEDGER="$ROW/acme/demo/ledger.jsonl"
+mkdir -p "$ROW/acme/demo"
+printf '{"ts":"t0","ev":"spawn","agent_ref":"w100-first#aaaa","pane_id":"p1","shell_pid":123,"tokens":{"role":"w","issue":"100","slug":"first","root":"w100-first#aaaa","depth":"0","state":"spawned","branch":"feature/GH-100","harness":"claude","spawn_epoch":"aaaa"}}\n' \
+  >"$RLEDGER"
+herd_fixture '[{"name":"w100-first","agent_status":"working","pane_id":"p1"}]'
+: >"$FAKE_HERDR_LOG"; : >"$FAKE_BOARD_LOG"
+run_reconcile "$ROW"
+is "restart I: unarmed scope — the pass still completes" "0" "$RC"
+is "restart I: nothing armed, nothing spawned" "0" "$(log_count "$FAKE_HERDR_LOG" '^worktree create ')"
+is "restart I: nothing armed, no frontier read at all" "0" \
+  "$(log_count "$FAKE_BOARD_LOG" '^frontier --json$')"
+
+# ── row J: a restart STORM cannot exceed the budget ──────────────────────────
+# The bound is `budget_left` being durable in fleet.json rather than per-process,
+# so repeated restarts drain ONE allowance. Nothing counts restarts.
+mk_restart_row j
+jq -c '.budget_left = 1' "$RFF" >"$RFF.t" && mv "$RFF.t" "$RFF"
+run_reconcile "$ROW"
+is "restart J: the last unit spawns, the second seat does not" "1" \
+  "$(lcount "$RLEDGER" '.ev=="refill_spawn"')"
+is "restart J: exhausted budget disarms" "false budget exhausted" \
+  "$(jq -r '"\(.armed) \(.disarm_reason)"' "$RFF")"
+# Restart again against the same, now-disarmed run.
+: >"$FAKE_HERDR_LOG"
+run_reconcile "$ROW"
+is "restart J: a second restart spawns nothing — the budget is spent, not reset" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" '^worktree create ')"
+
+# ── row K: an expired arming is not resurrected by a restart ─────────────────
+mk_restart_row k
+jq -c '.expires_at = "2000-01-01T00:00:00Z"' "$RFF" >"$RFF.t" && mv "$RFF.t" "$RFF"
+run_reconcile "$ROW"
+is "restart K: a lapsed TTL spawns nothing" "0" "$(log_count "$FAKE_HERDR_LOG" '^worktree create ')"
+is "restart K: and is written down as lapsed" "false ttl expired" \
+  "$(jq -r '"\(.armed) \(.disarm_reason)"' "$RFF")"
+
+# ── row L: a worker the restart did NOT kill keeps its seat ──────────────────
+# The exclusion only ever discounts what a POSITIVE pane reading disproved. A
+# survivor still occupies capacity, so a k=2 run refills exactly one seat.
+mk_restart_row l
+# p2's pane still holds the recorded shell pid AND a live harness → `alive`.
+printf '{"process_info":{"pane_id":"p2","shell_pid":124,"foreground_process_group_id":9100,"foreground_processes":[{"argv0":"claude","name":"2.1.229","pid":9100,"cmdline":"claude"}]}}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-process-info.p2.json"
+run_reconcile "$ROW"
+is "restart L: only the dead worker is exited" "1" \
+  "$(lcount "$RLEDGER" '.ev=="exit" and .reason=="restart_killed"')"
+is "restart L: the survivor holds its seat — exactly one refill" "1" \
+  "$(lcount "$RLEDGER" '.ev=="refill_spawn"')"
+is "restart L: budget reflects the single spawn" "6" "$(jqf "$RFF" '.budget_left')"
+rm -f "$FAKE_HERDR_FIXTURES/pane-process-info.p2.json"
+
+# ── row M: a sick server fails CLOSED — no spawn, nothing disarmed ───────────
+# Phase F never gets to fail closed on its own here, and that is the point: the
+# pass already aborts on an unreadable herd, so the level trigger inherits the
+# refusal rather than restating it. An armed run survives untouched for the
+# next reconcile — a restart into a half-up server must cost a delay, never the
+# arming.
+mk_restart_row m
+printf '1\n' >"$FAKE_HERDR_FIXTURES/api-snapshot.rc"
+run_reconcile "$ROW"
+line_has "restart M: the pass declines rather than sweeping" "$OUT" "not reconciling"
+is "restart M: a sick server spawns nothing" "0" "$(log_count "$FAKE_HERDR_LOG" '^worktree create ')"
+is "restart M: and never reads the frontier" "0" \
+  "$(log_count "$FAKE_BOARD_LOG" '^frontier --json$')"
+is "restart M: the arming survives intact for the next pass" "true 7" \
+  "$(jq -r '"\(.armed) \(.budget_left)"' "$RFF")"
+rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.rc"
+
+rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
