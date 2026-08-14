@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ralph-herdr v2 — exhaustive deep code review</title>
+<style>
+:root {
+  --paper: #f5f1e8;
+  --ink: #1b2329;
+  --accent: #2e5d7e;
+  --rust: #a94325;
+  --red: #8d2d28;
+  --amber: #996c1e;
+  --moss: #557345;
+  --sand: #e6dcc4;
+  --slate: #1f262b;
+  --gray-100: #f8f6f0;
+  --gray-150: #ece7db;
+  --gray-300: #cdc6b7;
+  --gray-500: #766f61;
+  --gray-700: #3a3a36;
+  --white: #fff;
+  --serif: 'Iowan Old Style', Charter, ui-serif, Georgia, serif;
+  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', Menlo, ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; padding: 48px 30px 90px; background: var(--paper);
+  color: var(--gray-700); font: 15px/1.62 var(--sans); -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4 { color: var(--ink); font-family: var(--serif); font-weight: 520; }
+h1 { margin: 0 0 18px; font-size: clamp(34px, 5vw, 52px); line-height: 1.04; letter-spacing: -.025em; }
+h2 { margin: 48px 0 14px; font-size: 26px; scroll-margin-top: 20px; }
+h3 { margin: 28px 0 10px; font-size: 19px; }
+h4 { margin: 0; font-size: 17px; }
+p { margin: 8px 0 12px; }
+ul, ol { margin: 9px 0; padding-left: 21px; }
+li { margin: 5px 0; }
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid currentColor; }
+code { font: 12.5px/1.5 var(--mono); overflow-wrap: anywhere; }
+pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.layout { max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 46px; }
+nav { position: sticky; top: 24px; align-self: start; max-height: calc(100vh - 48px); overflow: auto; padding-bottom: 20px; }
+nav .label, .eyebrow { font: 10px/1.4 var(--mono); letter-spacing: .11em; text-transform: uppercase; color: var(--gray-500); }
+nav .label { margin: 0 0 11px; }
+nav a { display: block; padding: 5px 0 5px 11px; color: var(--gray-700); border: 0; border-left: 2px solid var(--gray-300); font-size: 12.5px; }
+nav a:hover { color: var(--ink); border-left-color: var(--accent); }
+nav a.sub { padding-left: 23px; color: var(--gray-500); font-size: 11.5px; }
+nav .snapshot { margin-top: 25px; padding-top: 14px; border-top: 1px solid var(--gray-300); }
+nav code { display: block; margin-top: 4px; font-size: 10.5px; color: var(--gray-500); }
+main { min-width: 0; }
+.eyebrow { margin-bottom: 10px; }
+.lede { max-width: 900px; padding: 18px 21px; background: var(--white); border: 1.5px solid var(--gray-300); border-left: 4px solid var(--red); border-radius: 0 12px 12px 0; font-size: 16px; }
+.lede strong { color: var(--ink); }
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; margin: 18px 0 0; }
+.metric { padding: 13px 14px; background: rgba(255,255,255,.72); border: 1px solid var(--gray-300); border-radius: 10px; }
+.metric b { display: block; color: var(--ink); font: 23px/1.1 var(--serif); }
+.metric span { display: block; margin-top: 5px; color: var(--gray-500); font: 10.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+.callout { max-width: 920px; margin: 16px 0; padding: 14px 17px; border: 1px solid var(--sand); border-radius: 10px; background: rgba(230,220,196,.35); }
+.callout.warn { border-left: 4px solid var(--amber); border-radius: 0 10px 10px 0; }
+.callout.good { border-left: 4px solid var(--moss); border-radius: 0 10px 10px 0; }
+details { max-width: 940px; margin: 14px 0; overflow: hidden; background: var(--white); border: 1px solid var(--gray-300); border-radius: 10px; }
+summary { cursor: pointer; padding: 13px 16px; color: var(--ink); font-family: var(--serif); font-size: 16px; }
+details > div { padding: 0 17px 17px; }
+.prompt { padding: 15px 17px; color: #e8e6de; background: var(--slate); border-radius: 9px; font: 12.5px/1.65 var(--mono); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.badge { display: inline-block; padding: 2px 8px; border: 1px solid var(--gray-300); border-radius: 999px; font: 10.5px/1.5 var(--mono); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.critical { color: var(--red); border-color: var(--red); background: rgba(141,45,40,.09); }
+.high { color: var(--rust); border-color: var(--rust); background: rgba(169,67,37,.09); }
+.medium { color: var(--amber); border-color: #b6893c; background: rgba(182,137,60,.11); }
+.low { color: var(--moss); border-color: var(--moss); background: rgba(85,115,69,.09); }
+.confidence { color: var(--accent); border-color: var(--accent); background: rgba(46,93,126,.07); }
+table { width: 100%; margin: 13px 0 22px; border-spacing: 0; overflow: hidden; background: var(--white); border: 1px solid var(--gray-300); border-radius: 10px; font-size: 13px; }
+th, td { padding: 9px 11px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--gray-150); }
+th { color: var(--gray-500); background: var(--gray-150); font: 10.5px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .05em; }
+tr:last-child td { border-bottom: 0; }
+.findings { display: grid; gap: 13px; }
+.finding { background: var(--white); border: 1px solid var(--gray-300); border-radius: 12px; overflow: hidden; }
+.finding.release { border-left: 4px solid var(--red); border-radius: 0 12px 12px 0; }
+.finding > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 15px 17px 11px; background: linear-gradient(90deg, rgba(236,231,219,.55), transparent); }
+.finding .id { margin-bottom: 4px; color: var(--gray-500); font: 10px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.finding .tags { flex-shrink: 0; display: flex; gap: 6px; }
+.finding .body { padding: 0 17px 16px; }
+.finding .anchors { margin: 0 0 9px; color: var(--gray-500); font: 11px/1.55 var(--mono); }
+.finding .fix { margin-top: 11px; padding: 10px 12px; background: var(--gray-100); border-left: 3px solid var(--accent); }
+.finding .proof { margin: 10px 0; padding: 10px 12px; color: #e8e6de; background: var(--slate); border-radius: 8px; font: 11.5px/1.6 var(--mono); }
+.diagram { margin: 16px 0 24px; padding: 14px; background: var(--white); border: 1px solid var(--gray-300); border-radius: 12px; overflow-x: auto; }
+.diagram svg { min-width: 820px; width: 100%; height: auto; display: block; }
+.lane { fill: #f8f6f0; stroke: #cdc6b7; stroke-width: 1.5; }
+.box { fill: #fff; stroke: #2e5d7e; stroke-width: 1.7; rx: 8; }
+.badbox { fill: #fff8f4; stroke: #a94325; stroke-width: 2; rx: 8; }
+.svg-label { fill: #1b2329; font: 600 13px var(--sans); }
+.svg-sub { fill: #766f61; font: 11px var(--mono); }
+.arrow { stroke: #2e5d7e; stroke-width: 1.7; fill: none; marker-end: url(#arrow); }
+.badarrow { stroke: #a94325; stroke-width: 2.3; stroke-dasharray: 6 4; fill: none; marker-end: url(#badarrow); }
+.rank { width: 34px; color: var(--ink); font-family: var(--serif); font-size: 20px; }
+.checks td:first-child { white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+.footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--gray-300); color: var(--gray-500); font-size: 12px; }
+@media (max-width: 900px) {
+  body { padding: 28px 17px 70px; }
+  .layout { grid-template-columns: 1fr; }
+  nav { display: none; }
+  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .finding > header { display: block; }
+  .finding .tags { margin-top: 8px; }
+}
+@media print {
+  body { padding: 20px; background: #fff; }
+  nav { display: none; }
+  .layout { display: block; max-width: none; }
+  .finding, details, table { break-inside: avoid; }
+  details > div { display: block; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav aria-label="Review sections">
+    <div class="label">Review map</div>
+    <a href="#verdict">Verdict</a>
+    <a href="#prompt">Working prompt</a>
+    <a href="#architecture">Architecture &amp; fault lines</a>
+    <a href="#blockers">Release blockers</a>
+    <a class="sub" href="#f01">Shared checkout</a>
+    <a class="sub" href="#f02">Claim identity</a>
+    <a class="sub" href="#f03">Repository scope</a>
+    <a class="sub" href="#f04">Ledger mutex</a>
+    <a class="sub" href="#f05">Live-session ownership</a>
+    <a class="sub" href="#f06">Terminal controls</a>
+    <a href="#concurrency">Concurrency &amp; lifecycle</a>
+    <a href="#contracts">Contracts &amp; board</a>
+    <a href="#cockpit">Cockpit, CI &amp; operations</a>
+    <a href="#performance">Simplification &amp; speed</a>
+    <a href="#remediation">Remediation sequence</a>
+    <a href="#verification">Verification</a>
+    <a href="#positives">Positive checks</a>
+    <div class="snapshot">
+      <div class="label">Pinned snapshot</div>
+      <code>d36dc5747db95399118fb2dfd5d382feef8e0fb3</code>
+      <code>main…HEAD: 111 files</code>
+      <code>+19,929 / −199</code>
+      <code>review-only; no source edits</code>
+    </div>
+  </nav>
+
+  <main>
+    <header id="verdict">
+      <div class="eyebrow">Exhaustive code review · ralph-herdr v2 · 2026-08-11</div>
+      <h1>The parallelism layer is ahead of its identity and isolation model</h1>
+      <div class="lede">
+        <strong>Verdict: do not ship the sibling-fleet or unattended live-test surfaces unchanged.</strong>
+        The branch is impressively tested and generally fail-conscious, but six cross-layer faults survive the suite: independent agents share a mutable checkout; board claim identities do not match Herdr identities; global agent discovery is joined to repo-local work by issue number alone; the ledger mutex can admit simultaneous owners; the live harness deletes sessions it did not create; and untrusted terminal controls render verbatim. These are interaction defects, not ordinary unit-level mistakes—which is why 353 board tests, 561 new shell assertions, BDD, and the Go race suite can all pass beside them.
+      </div>
+      <div class="metrics" aria-label="Review summary">
+        <div class="metric"><b>6</b><span>release blockers</span></div>
+        <div class="metric"><b>24</b><span>ranked findings</span></div>
+        <div class="metric"><b>11</b><span>speed / simplification moves</span></div>
+        <div class="metric"><b>0</b><span>source files changed</span></div>
+      </div>
+      <div class="callout warn"><strong>Snapshot note.</strong> The branch advanced once during review; all analysis, reproductions, and anchors below were re-pinned to <code>d36dc574</code>. Three unrelated pre-existing untracked files were preserved.</div>
+    </header>
+
+    <h2 id="prompt">Working prompt</h2>
+    <details open>
+      <summary>The detailed review brief derived from the request</summary>
+      <div>
+        <pre class="prompt">Conduct an exhaustive, deep code review of the current repository and working-tree delta, pinned to an explicit commit. Map the architecture before judging individual lines. Inspect production code, tests, generated artifacts, configuration, release packaging, and operational scripts across correctness, concurrency and race safety, performance, scalability, lifecycle management, data integrity, security, failure recovery, observability, contract/type fidelity, maintainability, test quality, and deployment behavior.
+
+Because many worker threads and repositories may operate concurrently, specifically trace identity, repository scope, worktree/branch ownership, subprocess and session ownership, lock acquisition/recovery, event ordering, read–modify–write sequences, duplicate suppression, idempotency, timeouts, stale-result handling, and cleanup. Look for TOCTOU windows, deadlocks, livelocks, starvation, ABA/recycled identities, retry storms, lost updates, non-atomic transitions, false-empty reads, cross-repository routing, shared mutable state, and operations that continue after cancellation.
+
+Find simplification and optimization opportunities: duplicated scans, repeated network calls, N+1 subprocesses, full-log reductions, long critical sections, quadratic joins, unnecessary abstractions, divergent parsers, redundant schemas, and places where a single scoped snapshot or canonical identity object can replace parallel ad-hoc logic.
+
+Line-anchor every finding. Separate confirmed defects from bounded risks and disproved suspicions. Give severity and confidence, a minimal trigger/interleaving, concrete impact, and the smallest robust fix. Prefer root-cause groups over duplicate symptoms. Run focused and broad tests in proportion to risk, diagnose environmental failures before attributing them to code, state all unrun checks, and make no source changes.</pre>
+      </div>
+    </details>
+
+    <h2 id="architecture">Architecture and fault lines</h2>
+    <p>The intended control split is sound: GitHub Projects/board state is authoritative; Herdr is execution and presentation; the append-only ledger is recovery memory; contracts are the typed wire. The defects cluster where an identity crosses those layers.</p>
+    <div class="diagram" role="img" aria-label="Architecture map highlighting identity, repository scope, and mutex fault lines">
+      <svg viewBox="0 0 980 430" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#2e5d7e"/></marker>
+          <marker id="badarrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#a94325"/></marker>
+        </defs>
+        <rect class="lane" x="10" y="10" width="960" height="112" rx="12"/>
+        <text class="svg-sub" x="26" y="34">AUTHORITATIVE PLANE</text>
+        <rect class="box" x="54" y="51" width="190" height="48"/>
+        <text class="svg-label" x="78" y="72">GitHub Projects V2</text><text class="svg-sub" x="78" y="89">state · claim · issue</text>
+        <rect class="box" x="383" y="51" width="190" height="48"/>
+        <text class="svg-label" x="422" y="72">board.ts</text><text class="svg-sub" x="405" y="89">sole sanctioned mutation</text>
+        <rect class="badbox" x="710" y="51" width="205" height="48"/>
+        <text class="svg-label" x="742" y="72">ClaimV2 identity</text><text class="svg-sub" x="731" y="89">user@host ≠ agent name</text>
+        <path class="arrow" d="M244 75 H383"/><path class="arrow" d="M573 75 H710"/>
+
+        <rect class="lane" x="10" y="139" width="960" height="150" rx="12"/>
+        <text class="svg-sub" x="26" y="163">EXECUTION PLANE · ONE GLOBAL HERDR SESSION</text>
+        <rect class="box" x="53" y="184" width="185" height="70"/>
+        <text class="svg-label" x="85" y="207">Repo A workspace</text><text class="svg-sub" x="75" y="226">issue #123 · w123-a</text><text class="svg-sub" x="75" y="243">worktree feature/GH-123</text>
+        <rect class="box" x="284" y="184" width="185" height="70"/>
+        <text class="svg-label" x="316" y="207">Repo B workspace</text><text class="svg-sub" x="306" y="226">issue #123 · w123-b</text><text class="svg-sub" x="306" y="243">different board scope</text>
+        <rect class="badbox" x="525" y="184" width="190" height="70"/>
+        <text class="svg-label" x="550" y="207">Sibling K sessions</text><text class="svg-sub" x="548" y="226">same issue · prompt · cwd</text><text class="svg-sub" x="548" y="243">shared HEAD + index</text>
+        <rect class="badbox" x="763" y="184" width="165" height="70"/>
+        <text class="svg-label" x="789" y="207">Cockpit join</text><text class="svg-sub" x="783" y="226">global list → issue</text><text class="svg-sub" x="783" y="243">repo scope discarded</text>
+        <path class="badarrow" d="M469 219 H525"/><path class="badarrow" d="M715 219 H763"/>
+
+        <rect class="lane" x="10" y="307" width="960" height="110" rx="12"/>
+        <text class="svg-sub" x="26" y="331">RECOVERY + WIRE PLANE</text>
+        <rect class="badbox" x="53" y="349" width="218" height="48"/>
+        <text class="svg-label" x="82" y="370">ledger.jsonl + mkdir lock</text><text class="svg-sub" x="73" y="387">15s breaker · no owner token</text>
+        <rect class="box" x="377" y="349" width="205" height="48"/>
+        <text class="svg-label" x="421" y="370">watch / reconcile</text><text class="svg-sub" x="397" y="387">events · adoption · refill</text>
+        <rect class="badbox" x="692" y="349" width="236" height="48"/>
+        <text class="svg-label" x="728" y="370">Zod → JSON Schema</text><text class="svg-sub" x="710" y="387">refinements absent in artifacts</text>
+        <path class="badarrow" d="M271 373 H377"/><path class="arrow" d="M582 373 H692"/>
+        <path class="badarrow" d="M812 99 V184"/><path class="badarrow" d="M620 254 C620 310 480 300 480 349"/>
+      </svg>
+    </div>
+    <div class="callout"><strong>Unifying fix direction:</strong> define one immutable runtime identity—<code>{repoScope, issue, agentName, agentRef, paneId, claimHolder, worktree}</code>—at spawn time, persist it before the agent can emit events, and require every board, cockpit, ledger, and routing operation to consume that same object.</div>
+
+    <h2 id="blockers">Release blockers</h2>
+    <div class="legend"><span class="badge critical">critical</span><span class="badge high">high</span><span class="badge confidence">high confidence unless noted</span></div>
+    <div class="findings">
+      <article class="finding release" id="f01">
+        <header><div><div class="id">F01 · concurrency / data integrity</div><h4>Sibling fleets run independent workers in one worktree, branch, HEAD, and Git index</h4></div><div class="tags"><span class="badge critical">critical</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body">
+          <div class="anchors">fleet.sh:396–417, 493–539 · fleet.test.sh:607–613 · ralph/skills/work/SKILL.md:67–73</div>
+          <p>Each sibling receives the identical <code>/ralph:work N</code> prompt and <code>--cwd "$wt"</code>. There is no role partition, file ownership, coordinator, or integration protocol. That directly contradicts the work contract’s “one worktree per unit … never a shared HEAD.”</p>
+          <div class="proof">A edits X ──┐                    A: git add/commit ─┐
+            ├─ same filesystem → last writer / mixed file     ├─ same index → index.lock / mixed commit
+B edits X ──┘                    B: rebase/commit ────┘ moves shared HEAD underneath A</div>
+          <p>Expected failures include overwritten patches, nondeterministic test results, <code>index.lock</code> contention, commits containing another agent’s half-finished changes, and duplicate PR/board close-out.</p>
+          <div class="fix"><strong>Smallest robust fix:</strong> disable <code>K &gt; 1</code> for shared-issue fleets now. Re-enable only with one worktree/branch per worker plus a coordinator that assigns disjoint tasks and integrates reports/commits. A shared checkout needs a real transactional collaboration model; prompts are not one.</div>
+        </div>
+      </article>
+
+      <article class="finding release" id="f02">
+        <header><div><div class="id">F02 · identity / claims / deadlock</div><h4>Herdr agent identity and board claim identity disagree, producing ghost co-claims</h4></div><div class="tags"><span class="badge high">high</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body">
+          <div class="anchors">board.ts:754–772, 1535–1666, 1888–1932 · contracts.ts:225–231, 927–951 · fleet.sh:400–417, 542–568 · watch-event.sh:376–420</div>
+          <p>Normal board commands claim as <code>user@hostname</code>. Fleet setup then joins siblings 2…K under names such as <code>w123-fix--2</code>, but no spawned pane receives <code>RALPH_CLAIM_HOLDER=&lt;agent-name&gt;</code>; sibling 1 is not joined at all. L5 nevertheless authenticates completion by Herdr agent name.</p>
+          <p>On the first move out of In Progress, board removes only the caller (<code>user@host</code>) and deliberately writes remaining named holders back while setting Human Needed/In Review/Done. Those names have no process identity that naturally calls <code>claim leave</code>. <code>answer()</code> then posts the durable answer but cannot reclaim against the fresh “foreign” co-holder.</p>
+          <div class="proof">state = Human Needed
+claim = w123-fix--2|fresh-time
+board answer 123 → comment succeeds → Human Needed→In Progress refuses → wait TTL / manual cleanup</div>
+          <p>The one shared timestamp compounds this: any surviving member heartbeat refreshes every dead holder, so exited names can remain “fresh,” fill the eight-holder cap, and block recovery indefinitely.</p>
+          <div class="fix"><strong>Fix the model, not the symptom:</strong> give every session a canonical claim identity and join sibling 1; keep claims legal only while state is In Progress; clear the whole claim on a state transition or refuse finalization until an explicit fleet-finalize; use per-holder timestamps or reliable leave-on-exit. Align L5 with that exact identity.</div>
+        </div>
+      </article>
+
+      <article class="finding release" id="f03">
+        <header><div><div class="id">F03 · scope / confidentiality / wrong-target mutation</div><h4>Global Herdr agents are routed as repo-local work by issue number alone</h4></div><div class="tags"><span class="badge high">high</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body">
+          <div class="anchors">cockpit/fetch.go:203–227, 380–395 · cockpit/model.go:153–199 · lib.sh:364–374 · watch-event.sh:70–84, 178–190 · link-open.sh:84–111 · ralph-answer.sh:127–142</div>
+          <p><code>herdr agent list</code> spans all workspaces in a session. The cockpit, spawn suppression, refill capacity, link focus, answer nudge, and ledger routing parse only <code>w&lt;issue&gt;-*</code>/<code>gh-&lt;issue&gt;</code>. In a supported multi-workspace topology, repo A #123 and repo B #123 collide.</p>
+          <ul>
+            <li>Repo B can skip spawning because repo A has a live <code>w123-*</code>.</li>
+            <li>Repo B’s cockpit can peek, focus, or prompt repo A’s agent, exposing pane-tail data and sending the wrong instructions.</li>
+            <li>Repo A agents count against repo B’s refill capacity; the first matching ledger can receive the event.</li>
+          </ul>
+          <p>A related documented knob is also incomplete: <code>RALPH_HERDR_REPO</code> changes <code>cfg.Repo</code>/<code>REPO</code>, but Go subprocesses never set <code>cmd.Dir</code> and shell board/gh reads do not <code>cd "$REPO"</code>. The UI can label repo A while board commands resolve from caller cwd repo B.</p>
+          <div class="fix"><strong>Smallest robust fix:</strong> attach a canonical owner/repo scope token to every agent and filter every list/join/route by it. Until then, resolve pane cwd → git remote and cache it. Run all board/gh subprocesses with the configured repo cwd. Add two-repo/same-issue and caller-cwd≠configured-repo integration tests.</div>
+        </div>
+      </article>
+
+      <article class="finding release" id="f04">
+        <header><div><div class="id">F04 · mutex ownership / lost updates</div><h4>The 15-second stale-lock breaker admits multiple simultaneous owners</h4></div><div class="tags"><span class="badge high">high</span><span class="badge confidence">reproduced</span></div></header>
+        <div class="body">
+          <div class="anchors">ledger.sh:157–211, 349–393 · reconcile.sh:75–115 · watch-event.sh:397–415</div>
+          <p>The lock is an ownerless directory. Every waiter deletes it after ~15 seconds, regardless of holder PID, start time, or token; unlock is a plain <code>rmdir</code>. Legitimate critical sections call Herdr, token, notification, and repeated full-ledger reductions and can exceed that threshold.</p>
+          <div class="proof">isolated reproduction:
+holder-A acquired t=1786478769
+holder-A still inside t=1786478786
+holder-B acquired     t=1786478786  ← overlap confirmed</div>
+          <p>After B recreates the directory, A’s eventual unlock can remove B’s lock, allowing C in too. Consequences include duplicate exit/adoption/notification events, double refill decisions, and stale full-file <code>fleet.json</code> replacements.</p>
+          <div class="fix"><strong>Smallest robust fix:</strong> use <code>flock</code>/<code>lockf</code> or a small portable helper. If directory locks remain, persist an owner PID + random token, verify liveness before takeover, and unlock only a matching token. Compute snapshots and perform network/notification work outside short critical sections.</div>
+        </div>
+      </article>
+
+      <article class="finding release" id="f05">
+        <header><div><div class="id">F05 · destructive test lifecycle</div><h4>The live BDD suite adopts and deletes sessions it did not create</h4></div><div class="tags"><span class="badge high">high</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body">
+          <div class="anchors">features/steps/live.steps.ts:54–81, 178–187 · scripts/nightly-live.sh:43–59 · package.json:16</div>
+          <p>The fixed <code>ralph-bdd</code> name is reused when already running, with no ownership marker. Both the Cucumber <code>After</code> hook and nightly EXIT trap then unconditionally stop and delete it. The nightly trap is installed before the npm opt-in gate, so invoking the script without <code>RALPH_BDD_LIVE=1</code> still deletes that named session. Overlapping runs can delete each other.</p>
+          <div class="fix"><strong>Smallest robust fix:</strong> gate before installing cleanup; mint a per-run session name and ownership nonce; refuse/adopt nothing pre-existing; teardown only owned state; verify absence and fail while retaining logs if cleanup fails. If the fixed name is mandatory, add an interprocess lease.</div>
+        </div>
+      </article>
+
+      <article class="finding release" id="f06">
+        <header><div><div class="id">F06 · terminal trust boundary</div><h4>Issue, comment, error, and pane text reach the terminal with OSC/CSI intact</h4></div><div class="tags"><span class="badge high">high</span><span class="badge confidence">reproduced</span></div></header>
+        <div class="body">
+          <div class="anchors">cockpit/view.go:220–271, 330–341 · cockpit-fzf.sh:35–48, 102–130</div>
+          <p>GitHub titles/comments and pane tails are rendered verbatim. ANSI-aware truncation preserves control sequences; when text fits, it returns the original bytes. An OSC-52 payload survived the fzf decoration path byte-for-byte. A collaborator-controlled title/comment can manipulate clipboard, title, hyperlinks, colors, cursor position, or visual layout.</p>
+          <div class="fix"><strong>Smallest robust fix:</strong> sanitize all external strings before applying application styles. Strip OSC/DCS/CSI, C0/C1 controls, CR and embedded line controls; consider bidi controls; preserve printable Unicode and deliberate newlines only. Test OSC-52, CSI, CR, tab, bidi, and long escape boundaries in both renderers.</div>
+        </div>
+      </article>
+    </div>
+
+    <h2 id="concurrency">Concurrency and lifecycle findings</h2>
+    <div class="findings">
+      <article class="finding">
+        <header><div><div class="id">F07 · event ordering</div><h4>An agent can emit status or exit before its spawn record exists</h4></div><div class="tags"><span class="badge high">high</span><span class="badge confidence">0.95</span></div></header>
+        <div class="body"><div class="anchors">lib.sh:454–480 · fleet.sh:506–520 · watch-event.sh:292–345, 401–409</div><p><code>agent start</code> returns before the spawner mints/appends its ref. A fast hook can discover the same agent and mint ref A; the spawner then appends ref B. If the pane exits in the gap, the hook sees nothing and the later append creates a falsely open record. This breaks the durable epoch premise.</p><div class="fix"><strong>Fix:</strong> mint identity and append a provisional pane-bound spawn intent before start; terminalize it on start failure/collision. Make watcher discovery reuse that identity. A long lock around <code>agent start</code> is not safe with the current breaker.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F08 · ABA / durable identity</div><h4>Bare-name matching conflates recycled agents across epochs</h4></div><div class="tags"><span class="badge high">high</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body"><div class="anchors">watch-event.sh:73–83 · reconcile.sh:80–100, 239–247 · ledger.sh:307–329 · attend.sh:59–65</div><p>Several reducers strip <code>#epoch</code> and treat equal names as equal parents/agents. A missed exit followed by reuse of deterministic <code>w123-slug</code> can attach new status to the first old ref, spare a dead epoch because the new name is live, and adopt/orphan children against the wrong generation.</p><div class="fix"><strong>Fix:</strong> compare exact refs whenever stored data has an epoch; use pane identity and newest spawn to resolve duplicates; close older open refs as replaced. Retain bare-name fallback only for explicitly legacy records.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F09 · reconcile fail-open</div><h4>Successful-but-malformed agent JSON marks the entire herd lost</h4></div><div class="tags"><span class="badge high">high</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body"><div class="anchors">reconcile.sh:46–60, 91–105 · watcher.test.sh:367–377</div><p>The pass aborts on nonzero command exit, but rc=0 with truncated JSON, <code>{}</code>, missing <code>.result.agents</code>, or a soft error becomes an empty set. The fresh re-probe repeats the same mistake, then appends <code>exit-lost</code> for every open ref. Current tests cover nonzero exit only.</p><div class="fix"><strong>Fix:</strong> require <code>jq -e '.result.agents | type == "array"'</code> on both reads; treat wrong shape as unavailable and abort/retry without mutation. Apply the same envelope validator to cockpit and frontier reads.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F10 · refill arming race</div><h4>Initial workers start before refill state exists, so early completion is lost</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body"><div class="anchors">work-fleet.sh:73–124 · fleet.sh:119–163</div><p>The run spawns all initial workers sequentially and only then writes/arms <code>fleet.json</code>. A worker that finishes during that interval emits a refill trigger that finds no run. All-failed initial launches can produce an armed empty fleet with no later event. Failed initial attempts are also omitted from <code>spawned</code>, contradicting the stated “every attempt spends budget” rule.</p><div class="fix"><strong>Fix:</strong> create/arm state first, reserve each initial attempt through the same locked consume/inflight path as refill, and run one immediate capacity reconciliation after initial starts.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F11 · capacity accounting</div><h4>A done worker still consumes capacity while its pane remains listed</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.90</span></div></header>
+        <div class="body"><div class="anchors">watch-event.sh:178–190, 376–383 · fleet.test.sh:470–480</div><p><code>done</code> triggers refill, but capacity counts every matching agent name regardless of status—including the just-completed one. If the pane stays alive, the hook returns “at capacity” and the fleet remains productively underfilled until another event.</p><div class="fix"><strong>Fix:</strong> count only capacity-consuming statuses or explicitly exclude the completed event agent; test done-but-still-listed behavior.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F12 · lost update</div><h4>Full-file disarm writes bypass the fleet mutex</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.90</span></div></header>
+        <div class="body"><div class="anchors">fleet.sh:198–215 · watch-event.sh:161–164, 259–263</div><p><code>ralph_fleet_disarm</code> reads and replaces the whole JSON file without the scope lock at two call sites. Atomic rename prevents torn JSON, not stale-snapshot overwrite: it can restore <code>armed</code>, lose budget/spawned/inflight changes, or erase a newer disarm reason.</p><div class="fix"><strong>Fix:</strong> make every mutator acquire the same owner-safe scope lock internally, or require/assert an already-held token. Add disarm-vs-consume and disarm-vs-spawn_done race tests.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F13 · duplicate spawn</div><h4>Duplicate prevention fails open and the TUI permits repeated in-flight spawns</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.98</span></div></header>
+        <div class="body"><div class="anchors">lib.sh:364–374, 442–460 · cockpit/update.go:398–409 · cockpit/fetch.go:495–510</div><p>A list/parse failure is swallowed as “no live owner,” so an alternate-slug or legacy worker for the issue is missed. In the TUI, pressing <code>s</code> repeatedly launches concurrent five-minute spawn commands with no per-issue in-flight set. Both can fetch/open worktrees before the exact-name loser returns rc=2, leaving an extra pane.</p><div class="fix"><strong>Fix:</strong> fail closed on an unknown agent snapshot, add a repo+issue spawn lease in the shared shell path, and maintain a per-issue in-flight set in the model.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F14 · claim write verification</div><h4>Concurrent claim writes can silently drop co-holders and still “verify”</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.92</span></div></header>
+        <div class="body"><div class="anchors">board.ts:1649–1666, 1753–1775, 1817–1839 · board.fleet.test.ts:204–218, 266–274</div><p>GitHub has no CAS. Join/leave verification checks only whether the target holder is present/absent. A last-writer overwrite that preserves the target but drops another holder passes, so parallel claims are not compositionally safe.</p><div class="fix"><strong>Fix:</strong> verify the full expected ordered holder set and timestamp/raw value; on mismatch, surface a lost-update refusal and retry from a fresh read. Longer term move claim membership to a store with revision/CAS semantics.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F15 · append-log durability</div><h4>One truncated ledger line poisons every future whole-file reduction</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.90</span></div></header>
+        <div class="body"><div class="anchors">ledger.sh:219–239, 257–329</div><p>Reducers use <code>jq -s</code> over the entire JSONL file. A crash/ENOSPC/unusual filesystem that leaves one partial line makes all later reductions fail; valid later appends do not heal it, and several callers collapse failure into an empty set.</p><div class="fix"><strong>Fix:</strong> validate line-by-line, distinguish corruption from empty, quarantine/repair only a malformed tail at startup, and keep a compact materialized state snapshot beside the audit log.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F16 · epoch entropy</div><h4>Durable refs use only 16 deterministic bits</h4></div><div class="tags"><span class="badge low">low</span><span class="badge confidence">0.95</span></div></header>
+        <div class="body"><div class="anchors">naming.sh:188–199</div><p>The epoch is four hex digits derived from second+PID. For repeated respawns of the same deterministic name, collision probability reaches roughly 50% near 301 epochs; a collision reopens old lineage/parent state. Calls in the same process and second produce the same suffix.</p><div class="fix"><strong>Fix:</strong> use at least 64 random bits—prefer UUID/128-bit—and keep format validation at boundaries.</div></div>
+      </article>
+    </div>
+
+    <h2 id="contracts">Contracts and board findings</h2>
+    <div class="findings">
+      <article class="finding">
+        <header><div><div class="id">F17 · generated artifact fidelity</div><h4>Seven of eight documented bad contracts satisfy the emitted schemas</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body"><div class="anchors">contracts.ts:1132–1143 · contracts.test.ts:126–148 · generated/*.schema.json</div><p><code>zod-to-json-schema</code> omits <code>superRefine</code> and other semantic rules. The emitted files accept the bad completion report, escalation, fleet brief/reply, board queue, lineage, and token vocabulary fixtures; only structural depth=4 fails. Tests verify bad fixtures through Zod but test emitted schemas only for IDs.</p>
+          <table><tr><th>Artifact promises</th><th>Missing from emitted schema</th></tr><tr><td>Completion report</td><td>completed ⇒ PR+SHA; finished ≥ started; agent/ref coherence</td></tr><tr><td>Fleet / reply / escalation</td><td>skill↔issue; question options; exactly one recommendation; XOR rules</td></tr><tr><td>Queue / lineage / tokens</td><td>unique queue; ref grammar; token-value semantics</td></tr></table>
+          <div class="fix"><strong>Fix:</strong> encode representable rules with patterns, unions, and <code>if/then</code>; post-process non-representable refinements; run the good/bad corpus through AJV in CI. If the files are intentionally shape-only, rename them and stop describing them as the producer bar.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F18 · validation surface</div><h4><code>contract lint … {}</code> exits 0 with “lint: OK”</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">reproduced</span></div></header>
+        <div class="body"><div class="anchors">board.ts:4466–4489 · contracts.ts:809–831, 954–968 · herdr-api.md:170</div><p><code>lint</code> never validates the selected contract; absent fields make most rules “not applicable,” including missing contract/version. The Herdr reference presents live lint as the completion-report gate, making the success message unsafe.</p><div class="proof">printf '{}' | board contract lint ralph.completion_report -
+… L1–L13 skipped / vacuous …
+lint: OK   # exit 0</div><div class="fix"><strong>Fix:</strong> schema-validate first (consumer/loose if desired), require declared contract+version to match the requested ID, then run semantic/live lints.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F19 · deployment packaging</div><h4>The standard installed plugin lacks the runtime required for contract validation</h4></div><div class="tags"><span class="badge high">high</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body"><div class="anchors">contracts.ts:31–66 · ralph/scripts/board:15–28 · release-ralph.yml:3–8 · fleet.sh:331–346 · fleet.test.sh:321–354</div><p>The released Ralph plugin intentionally ships no <code>node_modules</code>. The board shim can fetch only <code>tsx</code>; <code>contract validate</code> lazily requires both Zod packages beside the plugin. FleetBrief writes first and retains the file when validation is unavailable. Tests now capability-gate this supported zodless case, so CI no longer proves the deployed validator works.</p><div class="fix"><strong>Fix:</strong> bundle a standalone compiled validator or ship/install its locked runtime dependencies. Split validation’s Zod loader from schema-emission dependencies; validate a temp artifact before publishing it; add an installed-layout release test with no workspace <code>node_modules</code>.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F20 · completion identity / live lint</div><h4>C2 can authenticate one agent while recording another, and L5 ignores state/TTL</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body"><div class="anchors">contracts.ts:406–424, 833–886, 927–951 · board.ts:3846–3853</div><p><code>agent="w7-wire"</code> and <code>agent_ref="w999-other#beef"</code> validate; L2/L5 prefer <code>agent</code> and ignore the durable ref name. L5 checks membership only—not OPEN/In Progress, claim age/TTL, or <code>board_state_claimed</code>. A stale claim from 2000 on Human Needed can pass.</p><div class="fix"><strong>Fix:</strong> require <code>parseRef(agent_ref).name === agent</code>, make the ref canonical, and expose board-computed stale/state/closure data to L5. Require OPEN + In Progress + fresh membership and cross-check reported state.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F21 · contract/runtime drift</div><h4>Depth 3 validates, but the runtime permits only depths 0–2</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.99</span></div></header>
+        <div class="body"><div class="anchors">contracts.ts:379–391, 682–700 · lib.sh:255–284</div><p>C1 and the token vocabulary accept <code>depth=3</code>; <code>ralph_depth_guard</code> refuses a child once its parent is depth ≥2 and calls the cap “three levels, depths 0–2.” A producer can emit a valid request the launcher rejects.</p><div class="fix"><strong>Fix:</strong> choose one definition and align schema, token regex, fixtures, docs, and runtime. The code/comments consistently suggest max=2.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F22 · typed identity edge cases</div><h4>Claim join accepts a holder for another issue; ClaimV2 is not fully V1-compatible</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.98</span></div></header>
+        <div class="body"><div class="anchors">contracts.ts:235–270 · board.ts:754–763, 1788–1819</div><p><code>board claim join 1 --holder w999-wrong</code> succeeds because only name grammar is checked. Also, V1 allowed arbitrary holder text, while V2 treats <code>+</code> as a separator and refuses <code>+</code>/<code>|</code> on write; legacy values containing them cannot round-trip and may silently split.</p><div class="fix"><strong>Fix:</strong> require structured holder issue == target issue and define legacy exceptions. Version or escape the wire format and provide migration; unescaped delimiter compatibility cannot be universal.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F23 · incomplete forward contract</div><h4>Frontier JSON is untyped and unknown success shapes normalize to an empty queue</h4></div><div class="tags"><span class="badge medium">medium</span><span class="badge confidence">0.98</span></div></header>
+        <div class="body"><div class="anchors">contracts.ts:503–515, 603–613 · board.ts:4148–4174 · fleet.sh:358–367</div><p>C6 covers next/deliver/tend but not the new frontier response. Any rc=0 object outside the recognized shapes is normalized to <code>{next:null,queue:[]}</code>, so API drift or a soft error becomes “nothing to do.” Blocker identities also lose repository qualification.</p><div class="fix"><strong>Fix:</strong> add a frontier discriminant/schema/parity test, reject unknown envelopes, and preserve qualified blocker identity.</div></div>
+      </article>
+      <article class="finding">
+        <header><div><div class="id">F24 · deferred route</div><h4>FleetBrief defaults replies to an agent that is never created</h4></div><div class="tags"><span class="badge low">low</span><span class="badge confidence">0.90</span></div></header>
+        <div class="body"><div class="anchors">fleet.sh:297–340 · README.md:127, 334–340 · herdr-plugin.toml:256–282</div><p><code>reply_to=s0-watch</code> passes grammar validation, but no production path starts or supervises that agent. Current impact is limited because completion reports are explicitly deferred and unread.</p><div class="fix"><strong>Fix before activation:</strong> create/supervise the watcher or route replies to an implemented durable channel. L1 should validate routability, not just syntax.</div></div>
+      </article>
+    </div>
+
+    <h3>Lower-severity contract hygiene</h3>
+    <table>
+      <tr><th>Anchor</th><th>Gap</th><th>Recommendation</th></tr>
+      <tr><td><code>contracts.ts:1012–1022</code></td><td>L9 uses <code>JSON.stringify</code> for equality, so semantically equal objects with different key insertion order fail.</td><td>Canonicalize or use <code>isDeepStrictEqual</code>.</td></tr>
+      <tr><td><code>contracts.ts:1057–1069</code></td><td>“No-secret-leak” recognizes only <code>sk-ant-</code>, <code>ANTHROPIC_API_KEY=</code>, and <code>ghp_</code>; it misses modern GitHub/OpenAI/AWS tokens, bearer headers, and private keys.</td><td>Rename to a narrow heuristic or use a maintained detector plus channel-specific redaction; never present regex coverage as proof.</td></tr>
+      <tr><td><code>contracts.ts:476–492, 753</code></td><td>Option IDs need not be unique, so a phone answer can select an ambiguous ID.</td><td>Refine on unique IDs and test duplicates in Zod and JSON Schema.</td></tr>
+      <tr><td><code>contracts.ts:68–69</code></td><td>Positive issue numbers are not constrained to safe integers; “non-empty” accepts whitespace-only strings.</td><td>Use <code>safe()</code>/<code>Number.isSafeInteger</code> and trimmed non-empty strings.</td></tr>
+      <tr><td><code>contracts.ts:421–424</code></td><td>C2 requires <code>lineage.spawned_by</code>, so a human/scheduler root completion cannot be represented honestly even though C1 permits roots.</td><td>Use root/child lineage variants; make <code>spawned_by</code> absent only for roots and carry <code>invoked_by</code>.</td></tr>
+      <tr><td><code>package.json:18</code></td><td><code>contracts:check</code> leaves its <code>mktemp</code> directory behind.</td><td>Add an EXIT trap or a small cleanup wrapper.</td></tr>
+    </table>
+
+    <h2 id="cockpit">Cockpit, CI, and operational risks</h2>
+    <table>
+      <tr><th>Risk</th><th>Evidence / impact</th><th>Fix</th></tr>
+      <tr><td><span class="badge medium">async stale results</span><br><code>update.go:18–99</code></td><td>Initial poll does not mark <code>pollInFlight</code>; at the interval a second starts. Messages carry no generation, so an older board/agent/peek/DAG result can overwrite a newer one. Maximum sequential board poll budget is ~219s.</td><td>Add monotonic request IDs, accept latest only, mark Init active, coalesce forced refreshes, and identify peek/DAG targets.</td></tr>
+      <tr><td><span class="badge medium">valid JSON, wrong shape</span><br><code>fetch.go:173–229, 269–310</code></td><td><code>{}</code>/<code>{"error":…}</code> unmarshals to nil slices and becomes a successful empty board/overlay/DAG, replacing last-known-good state.</td><td>Require non-null arrays/discriminants and reject error envelopes; share the validator with reconcile/frontier.</td></tr>
+      <tr><td><span class="badge medium">subprocess descendants</span><br><code>fetch.go:47–57, 495–510</code></td><td><code>CommandContext</code> kills the direct shell, not descendants; a pipe-holding child can outlive deadlines and complete mutation after UI cancellation.</td><td>Use per-command process groups, kill the group, finite <code>WaitDelay</code>, and a program-lifetime cancel context.</td></tr>
+      <tr><td><span class="badge medium">interval overflow</span><br><code>main.go:101–115</code></td><td>A huge positive seconds value overflows <code>time.Duration</code>; agent refresh has no in-flight guard, enabling an immediate hot loop.</td><td>Bound before multiplication and impose a reasonable maximum.</td></tr>
+      <tr><td><span class="badge medium">Go gate optional</span><br><code>ci.yml:148–173</code></td><td>The only compile/test gate exits 0 when Go is absent; install also degrades build failure to a lower rung. A runner image change can ship uncompiled TUI code.</td><td>Pin <code>actions/setup-go</code>, then run gofmt/vet/test/race unconditionally.</td></tr>
+      <tr><td><span class="badge low">floating npx</span><br><code>nightly-live.sh:69–72</code></td><td>If local dependencies are missing, unattended <code>npx cucumber-js</code> may fetch/execute a different package instead of failing closed.</td><td>Add a locked npm script and use the local binary with no-install/offline behavior.</td></tr>
+      <tr><td><span class="badge low">cleanup invisibility</span><br><code>live.steps.ts:178–187</code></td><td>Stop/delete errors are ignored and temp logs are removed, so a green run can leak a detached server and the next run adopts accumulated state.</td><td>Verify absence, retain logs, and fail cleanup for owned state.</td></tr>
+    </table>
+
+    <h2 id="performance">Simplification and speedup opportunities</h2>
+    <p>The best optimizations also remove race surface: fewer independent parsers, snapshots, subprocesses, and lock acquisitions mean fewer possible interleavings.</p>
+    <table>
+      <tr><th>#</th><th>Current cost / complexity</th><th>Simpler target</th><th>Expected benefit</th></tr>
+      <tr><td class="rank">1</td><td>Cockpit runs three full paginated board scans, then up to 12 sequential <code>gh issue view --comments</code> calls every poll (<code>fetch.go:334–373</code>).</td><td>One <code>board list --json</code>/new cockpit snapshot, partition locally; fetch latest comment in the same GraphQL query or bounded batch.</td><td>~3× fewer project scans; remove N+1; lower rate pressure and stale-poll overlap.</td></tr>
+      <tr><td class="rank">2</td><td>Every event scans every ledger and each reducer repeatedly slurps full history; reconcile does ~3 full scans per open ref.</td><td>Maintain one per-scope materialized open/ref/parent/pane index beside append-only audit log; reduce once per operation.</td><td><code>O(history × agents)</code> → <code>O(history + agents)</code>; shorter mutex holds.</td></tr>
+      <tr><td class="rank">3</td><td>Reconcile performs a fresh global <code>agent list</code> per ledger and accepts divergent parsers.</td><td>One validated immutable agent snapshot per pass, then partition by scope.</td><td>Fewer server calls, consistent truth, fail-closed envelope semantics.</td></tr>
+      <tr><td class="rank">4</td><td><code>rankNext</code> rewalks parent chains/descendants inside sorting (<code>board.ts:277–354</code>); synthetic 4k chain ≈717ms.</td><td>Memoize effective rank and descendant summary; one graph pass + sort.</td><td>Near <code>O(V+E) + O(V log V)</code>; predictable large-board behavior.</td></tr>
+      <tr><td class="rank">5</td><td>Orphan pass rescans ledger and performs metadata/notification calls while holding the mutex.</td><td>Snapshot + decide outside; append minimal records under lock; notify after unlock.</td><td>Avoid 15s threshold, lower contention, simpler ownership reasoning.</td></tr>
+      <tr><td class="rank">6</td><td>Fleet launch fetches <code>origin/main</code> separately for each sequential issue; joins K siblings with K fetch/write/refetch cycles.</td><td>Fetch once per launch; add a batch claim-join/finalize transaction.</td><td>Save 1–3 network round trips and shrink claim race windows.</td></tr>
+      <tr><td class="rank">7</td><td>Fzf decoration uses a nested card×agent shell loop.</td><td>Build one jq/awk name→status map and join in one pass.</td><td>Quadratic shell work → linear.</td></tr>
+      <tr><td class="rank">8</td><td>Every event scans all historical <code>runs/*/fleet.json</code>.</td><td>Active-run index; archive disarmed/expired runs.</td><td>Event cost proportional to active work, not history.</td></tr>
+      <tr><td class="rank">9</td><td>Frontier capability is reprobed and fallback invoked on every call.</td><td>Cache capability once per process/version.</td><td>Avoid doubled board calls on older implementations.</td></tr>
+      <tr><td class="rank">10</td><td>Go, Bash, and TypeScript each parse names/scopes/envelopes with subtly different rules.</td><td>Generate fixtures/parsers from one versioned identity/envelope contract and test cross-language parity.</td><td>Remove whole classes of drift (depth, scope, ref, wrong-shape behavior).</td></tr>
+      <tr><td class="rank">11</td><td>Generated schemas inline duplicated structures with <code>$refStrategy:none</code>; Zod and converter load together.</td><td>Named definitions; separate validation and emission loaders; ship compiled validator.</td><td>Smaller artifacts and a deployable validation path.</td></tr>
+    </table>
+
+    <h2 id="remediation">Prioritized remediation sequence</h2>
+    <table>
+      <tr><th>Order</th><th>Action</th><th>Exit criterion</th></tr>
+      <tr><td><strong>P0 · contain</strong></td><td>Hide/cap shared-issue fleets at one worker. Move the live BDD gate before any trap; refuse pre-existing session. Add terminal sanitization. Fail closed on unknown agent/board envelopes.</td><td>No shared checkout; no deletion of unowned state; OSC/CSI regression tests; rc=0 wrong-shape tests preserve last good state.</td></tr>
+      <tr><td><strong>P1 · identity</strong></td><td>Create a canonical scoped AgentContext before start; persist provisional ref; inject claim holder; route every agent operation by repo scope+ref; make claims legal only in WIP and add leave/finalize.</td><td>Two repos with same issue coexist; L5 passes real spawned agents; exit-before-append and recycled-name tests are deterministic; Human Needed answer never waits on ghost claims.</td></tr>
+      <tr><td><strong>P1 · serialization</strong></td><td>Replace ownerless lock; put all fleet mutations behind it; move slow work out; exact-set claim verification.</td><td>Healthy 30s holder cannot be stolen; concurrent disarm/consume/spawn_done and join/join preserve every update.</td></tr>
+      <tr><td><strong>P2 · snapshots</strong></td><td>One board snapshot per poll, one validated Herdr snapshot per reconcile, materialized ledger state, active-run index, request generations.</td><td>No N+1 poll; bounded overlap; large-history event latency does not grow linearly with every prior event.</td></tr>
+      <tr><td><strong>P2 · contracts</strong></td><td>Ship validation runtime; validate-before-lint; enforce C2 identity/state/depth; make emitted-schema corpus reject the same bad fixtures.</td><td>Installed-layout test passes without host <code>node_modules</code>; AJV and Zod agree on all fixtures.</td></tr>
+      <tr><td><strong>P3 · re-enable</strong></td><td>Design sibling work partition + coordinator using isolated worktrees/branches; then add real concurrent and crash-recovery tests.</td><td>Parallel edits/commits/rebases cannot touch shared mutable Git state; one coordinator owns PR/board finalization.</td></tr>
+    </table>
+
+    <h2 id="verification">Verification evidence and limits</h2>
+    <table class="checks">
+      <tr><th>Check</th><th>Result</th><th>What it covers</th></tr>
+      <tr><td><code>npm run test:board</code></td><td><span class="badge low">353 passed</span></td><td>Board transitions, claims, contracts, lints, fleet views.</td></tr>
+      <tr><td><code>npm run contracts:check</code></td><td><span class="badge low">passed</span></td><td>Generated-file drift—not semantic equivalence.</td></tr>
+      <tr><td><code>npm run test:bdd</code></td><td><span class="badge low">12 / 110 passed</span></td><td>Replay scenarios; chaos profile also passed 3 scenarios / 25 steps.</td></tr>
+      <tr><td><code>new shell suites</code></td><td><span class="badge low">561 / 561 passed</span></td><td>Naming 60, spawn 35, watcher 84, fleet 181, substrate 106, cockpit 80, lineage 15.</td></tr>
+      <tr><td><code>go test ./...</code></td><td><span class="badge low">passed</span></td><td>Go cockpit unit/update/view behavior.</td></tr>
+      <tr><td><code>go test -race ./...</code></td><td><span class="badge low">passed</span></td><td>No ordinary Go shared-memory race; logical result-order races remain.</td></tr>
+      <tr><td><code>gofmt · go vet · 20× tests</code></td><td><span class="badge low">passed</span></td><td>Format/static checks and repeated suite stability.</td></tr>
+      <tr><td><code>npx tsc --noEmit</code></td><td><span class="badge low">passed</span></td><td>TypeScript compile surface.</td></tr>
+      <tr><td><code>bash -n · git diff --check</code></td><td><span class="badge low">passed</span></td><td>Shell parse and whitespace integrity.</td></tr>
+      <tr><td><code>ledger lock probe</code></td><td><span class="badge critical">overlap reproduced</span></td><td>Healthy 17s holder and waiter concurrently entered.</td></tr>
+      <tr><td><code>OSC probe</code></td><td><span class="badge critical">raw bytes reproduced</span></td><td>Terminal-control preservation through fzf path.</td></tr>
+    </table>
+    <div class="callout warn"><strong>Not run:</strong> live BDD (it mutates/deletes persistent Herdr state and the ownership defect made it unsafe); live GitHub/Projects mutations; ShellCheck/actionlint (unavailable); npm audit/govulncheck (registry/tool availability). Initial <code>tsx</code> IPC and Go toolchain failures inside the restricted sandbox were environmental; permission-adjusted reruns passed and are not counted as code failures.</div>
+
+    <h2 id="positives">Disproved suspicions and strengths worth preserving</h2>
+    <div class="callout good">
+      <ul>
+        <li>Go reply/answer/spawn paths pass external data as argv elements; the only Bash body is constant. No material shell-command injection was found.</li>
+        <li>Answer ordering is correctly durable board comment first, best-effort agent nudge second; typed input behavior distinguishes posted-vs-unposted failures.</li>
+        <li>Nonzero and syntactically invalid board reads preserve last-known-good columns. The remaining parser defect is specifically valid JSON with the wrong envelope.</li>
+        <li>Bubble Tea updates maps on its serialized event loop; the race detector passed. Reported cockpit races are async ordering and subprocess lifecycle, not unsynchronized Go memory.</li>
+        <li>Healthy-lock duplicate <code>pane.exited</code>/<code>pane.closed</code> handling is idempotent; normal refill consume/spawn_done share a lock. The ownerless breaker and unlocked disarm are the exceptions.</li>
+        <li>Dry runs stop before git, Herdr, ledger, or board mutation. Scope gates cover claim join/leave and malformed/truncated board reads fail closed in the core board layer.</li>
+        <li>Board state enums and ordinary delimiter-free ClaimV1/V2 forms share a real source of truth; L3 validates SHA shape before invoking Git.</li>
+        <li>The documentation is unusually candid about deferred report consumption and unlearned sibling semantics. The next step is to enforce those limits at the product surface.</li>
+      </ul>
+    </div>
+
+    <div class="footer">Prepared from a read-only review of <code>main…d36dc574</code>. Findings combine direct source tracing, isolated reproductions, broad automated verification, and independent reviews of shell/runtime, board/contracts, and cockpit/BDD/CI.</div>
+  </main>
+</div>
+</body>
+</html>

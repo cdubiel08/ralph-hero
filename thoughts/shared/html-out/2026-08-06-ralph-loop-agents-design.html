@@ -1,0 +1,1012 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loop agents for ralph — how many, what they own, when they fire</title>
+<style>
+/* --- :root palette + type stacks (marine ink on cream) --- */
+:root {
+  --paper:    #f5f1e8;
+  --ink:      #1b2329;
+  --accent:   #2e5d7e;
+  --rust:     #b35a2c;
+  --moss:     #5a7847;
+  --sand:     #e6dcc4;
+  --slate:    #1f262b;
+  --gray-150: #ece7db;
+  --gray-300: #cdc6b7;
+  --gray-500: #847d6c;
+  --gray-700: #3a3a36;
+  --white:    #ffffff;
+
+  --serif: 'Iowan Old Style', Charter, ui-serif, Georgia, serif;
+  --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:  'JetBrains Mono', 'SF Mono', Menlo, ui-monospace, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--paper);
+  color: var(--gray-700);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  padding: 56px 32px 96px;
+}
+
+.page { max-width: 1360px; margin: 0 auto; }
+
+h1 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 38px;
+  line-height: 1.15;
+  color: var(--ink);
+  margin-bottom: 18px;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--ink);
+  margin: 40px 0 14px;
+  scroll-margin-top: 24px;
+}
+
+p { margin-bottom: 12px; max-width: 680px; }
+code { font-family: var(--mono); font-size: 13px; }
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid currentColor; }
+ul { padding-left: 20px; max-width: 680px; }
+li { margin-bottom: 6px; }
+
+/* --- shared components --- */
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-bottom: 10px;
+}
+
+.tldr {
+  border: 1.5px solid var(--gray-300);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--white);
+  padding: 16px 18px;
+  margin-bottom: 8px;
+  max-width: 760px;
+}
+.tldr b { color: var(--ink); }
+
+.callout {
+  display: flex;
+  gap: 12px;
+  border: 1.5px solid var(--sand);
+  background: rgba(230, 220, 196, 0.35);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 18px 0;
+  font-size: 14px;
+  max-width: 760px;
+}
+.callout .ico { color: var(--accent); font-weight: 600; }
+
+.card {
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+details {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 10px;
+  background: var(--white);
+  margin: 14px 0;
+  overflow: hidden;
+  max-width: 760px;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "▸";
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 12px;
+  transition: transform 120ms;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details summary .where {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gray-500);
+  margin-left: auto;
+}
+details .body { padding: 0 16px 16px; }
+details .body p { font-size: 14px; }
+
+/* --- spec workflow: comparison cards --- */
+
+.prompt-box {
+  background: var(--gray-150);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 16px 20px;
+  font-size: 14.5px;
+  color: var(--gray-700);
+  max-width: 760px;
+}
+.prompt-box .label {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gray-500);
+  display: block;
+  margin-bottom: 6px;
+}
+
+.approaches {
+  display: grid;
+  gap: 28px;
+  margin-bottom: 56px;
+}
+.approaches[data-n="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.approaches[data-n="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.approaches[data-n="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1100px) {
+  .approaches[data-n="2"],
+  .approaches[data-n="3"],
+  .approaches[data-n="4"] { grid-template-columns: 1fr; }
+}
+
+.approach {
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.approach-head h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 21px;
+  color: var(--ink);
+  margin: 0 0 6px;
+}
+.approach-head .num {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--sand);
+  color: var(--ink);
+  padding: 2px 8px;
+  border-radius: 8px;
+  margin-right: 8px;
+  vertical-align: 3px;
+}
+.approach-head p {
+  font-size: 14px;
+  color: var(--gray-500);
+}
+
+.code {
+  background: var(--slate);
+  border-radius: 12px;
+  padding: 18px 20px;
+  overflow-x: auto;
+}
+.code pre {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: #E8E6DE;
+  white-space: pre;
+}
+.code .kw  { color: #7fb2d4; }
+.code .str { color: #9dba8a; }
+.code .cm  { color: var(--gray-500); }
+.code .fn  { color: #c9b98a; }
+
+.tradeoffs {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.tradeoffs .row { display: grid; grid-template-columns: 1fr 1fr; }
+.tradeoffs .row + .row { border-top: 1.5px solid var(--gray-300); }
+.tradeoffs .cell { padding: 10px 14px; }
+.tradeoffs .cell:first-child { border-right: 1.5px solid var(--gray-300); }
+.tradeoffs .head {
+  background: var(--gray-150);
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tradeoffs .pro::before,
+.tradeoffs .con::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: 2px;
+}
+.tradeoffs .pro::before { background: var(--moss); }
+.tradeoffs .con::before { background: var(--rust); }
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--gray-150);
+  border: 1.5px solid var(--gray-300);
+  color: var(--gray-700);
+  padding: 5px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.chip strong { color: var(--ink); font-weight: 600; }
+
+.reco {
+  border-left: 4px solid var(--accent);
+  background: var(--white);
+  border-radius: 0 12px 12px 0;
+  padding: 24px 28px;
+  max-width: 860px;
+}
+.reco h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--ink);
+  margin: 0 0 10px;
+}
+.reco p { font-size: 15px; margin-bottom: 8px; }
+.reco code {
+  background: var(--gray-150);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.page-head { margin-bottom: 30px; }
+.page-head h1 { margin-bottom: 12px; }
+.lede { font-size: 16px; color: var(--gray-700); max-width: 720px; }
+
+.sev {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1.5px solid var(--gray-300);
+  color: var(--gray-700);
+  white-space: nowrap;
+}
+.sev.high { background: rgba(179, 90, 44, 0.14); border-color: var(--rust); color: var(--rust); }
+.sev.med  { background: rgba(201, 153, 60, 0.16); border-color: #b8893a; color: #8a6420; }
+.sev.low  { background: rgba(90, 120, 71, 0.14); border-color: var(--moss); color: var(--moss); }
+
+.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 28px;
+}
+.toc a {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--gray-700);
+  background: var(--gray-150);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 999px;
+  padding: 4px 12px;
+  border-bottom: 1.5px solid var(--gray-300);
+}
+.toc a:hover { border-color: var(--accent); color: var(--accent); }
+
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1px; background: var(--gray-300); border: 1.5px solid var(--gray-300); border-radius: 12px; overflow: hidden; margin: 18px 0 30px; }
+.summary .cell { background: var(--white); padding: 14px 16px; }
+.summary .cell .k { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gray-500); margin-bottom: 4px; }
+.summary .cell .v { font-size: 16px; color: var(--ink); font-family: var(--serif); }
+.summary .cell .v.accent { color: var(--accent); }
+.summary .cell .note { font-size: 12.5px; color: var(--gray-500); margin-top: 4px; }
+
+.milestones { margin: 8px 0 30px; }
+.milestone { display: grid; grid-template-columns: 92px 28px 1fr; gap: 4px; }
+.milestone .when { font-family: var(--mono); font-size: 11.5px; color: var(--gray-500); padding-top: 2px; text-align: right; padding-right: 14px; }
+.milestone .rail { display: flex; flex-direction: column; align-items: center; }
+.milestone .rail .dot { width: 13px; height: 13px; border-radius: 50%; background: var(--white); border: 2.5px solid var(--accent); margin-top: 3px; }
+.milestone .rail .dot.done { background: var(--moss); border-color: var(--moss); }
+.milestone .rail .line { flex: 1; width: 2px; background: var(--gray-300); margin: 2px 0; }
+.milestone .ms-body { padding-bottom: 22px; }
+.milestone .ms-body h3 { font-family: var(--serif); font-weight: 500; font-size: 16px; color: var(--ink); margin-bottom: 4px; }
+.milestone .ms-body p { font-size: 14px; }
+.milestone .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.milestone .tag { font-family: var(--mono); font-size: 10.5px; background: var(--gray-150); border: 1px solid var(--gray-300); border-radius: 6px; padding: 2px 8px; color: var(--gray-700); }
+
+.diagram { border: 1.5px solid var(--gray-300); border-radius: 12px; background: var(--white); padding: 22px; margin: 16px 0; text-align: center; overflow-x: auto; }
+.diagram .caption { font-size: 13px; color: var(--gray-500); margin-top: 12px; max-width: none; }
+
+.open-q { border: 1.5px solid var(--gray-300); border-left: 3px solid #b8893a; border-radius: 0 12px 12px 0; background: var(--white); padding: 16px 20px; margin: 14px 0; max-width: 860px; }
+.open-q .oq { padding: 6px 0; }
+.open-q .oq .qt { color: var(--ink); font-weight: 600; }
+.open-q .oq .owner { font-family: var(--mono); font-size: 11px; color: var(--gray-500); }
+
+/* --- page-specific: ownership matrix + cadence table --- */
+table.matrix {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 1200px;
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  overflow: hidden;
+  font-size: 13.5px;
+  margin: 14px 0 28px;
+}
+table.matrix th, table.matrix td {
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--gray-150);
+}
+table.matrix th {
+  background: var(--gray-150);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gray-500);
+  font-weight: 600;
+}
+table.matrix td:first-child { font-family: var(--serif); font-size: 15px; color: var(--ink); white-space: nowrap; }
+table.matrix code { background: var(--gray-150); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+table.matrix .never { color: var(--rust); }
+.lane-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 0px; }
+.lane-work { background: var(--accent); }
+.lane-deliver { background: var(--rust); }
+.lane-tend { background: var(--moss); }
+.lane-human { background: #b8893a; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="page-head">
+  <div class="eyebrow">Design exploration · ralph-hero · 2026-08-06</div>
+  <h1>Loop agents for ralph: how many, what they own, when they fire</h1>
+  <div class="prompt-box">
+    <span class="label">Prompt</span>
+    Design easy-to-create agents that run in loops within the ralph-hero plugin ecosystem.
+    Starting concepts: a <b>board agent</b> (context across plan files, issues, hygiene),
+    a <b>delivery agent</b> (CI / comments / reviews / CD, PR stacking), and a
+    <b>work agent</b> (picks epics and issues off the backlog). Explore granularity
+    (2 vs 3 vs 5 agents), boundaries, trigger/dispatch cadence, and how to make new
+    agents cheap to create and configure.
+  </div>
+</header>
+
+<div class="tldr">
+  <b>TLDR:</b> In ralph v2 terms an "agent" is a <b>lane</b>: a deterministic <b>selector</b>,
+  one <b>skill</b>, a <b>cadence</b>, a bounded <b>write lane</b>, and a model tier.
+  Split lanes where signal source, write lane, cadence, and permission set <i>all four</i>
+  differ at once — that test yields exactly <b>three lanes</b>, and they map onto the board's
+  own state machine: <b>work</b> owns In&nbsp;Progress (exists, never enabled),
+  <b>deliver</b> owns In&nbsp;Review (the biggest gap — <code>merge-pr.sh</code>'s exit-75
+  retry contract was designed for a caller loop nobody built), and <b>tend</b> owns
+  Backlog shape plus the Done→effective audit. Ship each lane as a <b>capability with a
+  stable contract</b> (typed selector, exit codes, one skill) plus a <b>malleable example
+  loop script</b> — never a prescribed harness. Enforcement already lives at the mutation
+  path, so the scripting stays the user's. Step zero is not new code:
+  <b>switch on the loop that already exists</b>.
+</div>
+
+<nav class="toc">
+  <a href="#ground">Ground truth</a>
+  <a href="#configs">Three configurations</a>
+  <a href="#reco">Recommendation</a>
+  <a href="#boundaries">Boundaries &amp; handoffs</a>
+  <a href="#triggers">Triggers &amp; cadence</a>
+  <a href="#harness">Capabilities &amp; examples</a>
+  <a href="#cost">Cost &amp; model tiers</a>
+  <a href="#ladder">Ladder grading</a>
+  <a href="#rollout">Rollout</a>
+  <a href="#open">Open questions</a>
+</nav>
+
+<h2 id="ground">Ground truth: what already exists, what is missing</h2>
+
+<p>The three starting concepts land very differently against the current tree. One is built,
+one is half-built as deterministic code, and one is a genuine void.</p>
+
+<div class="summary">
+  <div class="cell">
+    <div class="k">Work lane</div>
+    <div class="v">Built, never enabled</div>
+    <div class="note"><code>tick.sh</code> + <code>board next</code> + <code>/ralph:work</code> are complete; waystone grades <code>ralph-tick-loop</code> at rung 1, "built-but-never-enabled", baseline 0 ticks/day (<code>ladder.yaml:34-41</code>, charter W4).</div>
+  </div>
+  <div class="cell">
+    <div class="k">Board hygiene, layer 0</div>
+    <div class="v">Already code</div>
+    <div class="note"><code>state-guard.yml</code> event lane + 15-min <code>doctor --fix</code> cron + weekly <code>doctor --strict</code>. The deterministic part of the "board agent" is shipped — only the <i>judgment</i> tier is missing.</div>
+  </div>
+  <div class="cell">
+    <div class="k">Delivery</div>
+    <div class="v accent">Nothing</div>
+    <div class="note">No re-review nudges, no thread replies, no re-attest on new head, no CI retry, no stack retarget. <code>merge-pr.sh:39-48</code> defines <code>PASS/WARN/PENDING(75)/FAIL</code> explicitly "for loop-runners" — none exists.</div>
+  </div>
+  <div class="cell">
+    <div class="k">Scheduler contract</div>
+    <div class="v">Transport-agnostic, prompt-hardcoded</div>
+    <div class="note">The v2 record says the contract is only "invoke one work session per tick" and calls <code>tick.sh</code> "a convenience, not the architecture." This design keeps it that way: new lanes ship as contracts plus example scripts users copy and own — never a harness ralph runs for you.</div>
+  </div>
+</div>
+
+<p>Three architectural facts constrain everything below:</p>
+<ul>
+  <li><b>Projects V2 emits no usable webhook</b> — field-level truth is only observable by polling, which is why <code>state-guard.yml</code> is a two-lane event-plus-reconciler design. Any board-watching agent inherits the reconciler shape.</li>
+  <li><b>The claim protocol's safety margin assumes one flock-serialized scheduler per machine</b> (Projects V2 has no compare-and-swap; races are made visible and refused, not impossible). Adding schedulers carelessly erodes a stated design assumption.</li>
+  <li><b>The rework edge already exists.</b> <code>MACHINE</code> at <code>board.ts:41-48</code> allows In&nbsp;Review&nbsp;→&nbsp;In&nbsp;Progress and In&nbsp;Progress&nbsp;→&nbsp;Backlog, so a delivery lane can demote a PR that needs semantic rework without any state-machine change (two legal hops, same precedent as the deliberately multi-hop <code>parent-check</code>).</li>
+</ul>
+
+<div class="callout"><span class="ico">§</span><span>
+The v2 design record's <b>funnel test</b> governs this whole exercise: "a proposed addition that
+is not a state mutation, an invariant, or doctor belongs to the model's judgment." Applied here:
+lane <i>eligibility</i> is a typed selector (code), lane <i>invariants</i> are board.ts guards and
+doctor checks (code), lane <i>judgment</i> is one SKILL.md (prose). Nothing else gets to exist.
+</span></div>
+
+<h2 id="configs">Three configurations</h2>
+
+<section class="approaches" data-n="3">
+
+  <article class="approach">
+    <header class="approach-head">
+      <h2><span class="num">01</span>Two lanes: work + steward</h2>
+      <p>Keep <code>/ralph:work</code>; add one reconciler-shaped steward that sweeps both board
+      hygiene and PR follow-through in a single pass.</p>
+    </header>
+    <div class="tradeoffs">
+      <div class="row head"><div class="cell">Pro</div><div class="cell">Con</div></div>
+      <div class="row">
+        <div class="cell pro">Smallest surface: one new skill, one new selector, one schedule — maximally faithful to v2 minimalism</div>
+        <div class="cell con">Permission blast radius: board grooming needs <i>zero</i> code rights; PR follow-through needs branch/push/merge rights — one skill carries the union everywhere</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Both jobs are the same <i>shape</i> (sweep → diff desired vs actual → act), so one prompt skeleton serves both</div>
+        <div class="cell con">Cadence mismatch: PR follow-through wants ~10 min; judgment hygiene wants hours. One schedule either wastes tokens or starves PRs</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">One heartbeat, one lock, one log — doctor grows two checks, not six</div>
+        <div class="cell con">Signal sources barely overlap (board+thoughts+tree vs checks+reviews+attestations) — the prompt becomes a v1-style mega-skill with mode branches</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">No new handoff seams beyond the ones the state machine already has</div>
+        <div class="cell con">Metrics muddle: "steward acted 12 times" can't tell you whether delivery latency or board rot improved</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">new skills: <strong>1</strong></span>
+      <span class="chip">new selectors: <strong>1</strong></span>
+      <span class="chip">schedules: <strong>2</strong></span>
+      <span class="chip">permission scope: <strong>union (wide)</strong></span>
+    </div>
+  </article>
+
+  <article class="approach">
+    <header class="approach-head">
+      <h2><span class="num">02</span>Three lanes, partitioned by board state</h2>
+      <p><b>work</b> owns In&nbsp;Progress, <b>deliver</b> owns In&nbsp;Review + open PRs,
+      <b>tend</b> owns Backlog shape and the Done→effective audit. The state machine is the boundary object.</p>
+    </header>
+    <div class="tradeoffs">
+      <div class="row head"><div class="cell">Pro</div><div class="cell">Con</div></div>
+      <div class="row">
+        <div class="cell pro">Write lanes are disjoint by construction — at most one agent lane can mutate an issue, because ownership follows its current state</div>
+        <div class="cell con">Two new skills + two selectors to build and keep honest (selector drift is the new failure mode doctor must watch)</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Each lane has a genuinely distinct signal source, cadence, and permission set — the split pays for itself in all four dimensions at once</div>
+        <div class="cell con">The deliver/work boundary needs one sharp rule (mechanical vs semantic rework) or PRs ping-pong between lanes</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Matches the proven-at-work pattern 1:1, and each lane closes a named waystone edge: tend → observation→work (rung 6), deliver → merge→effective (W5)</div>
+        <div class="cell con">Tend's judgment sweeps burn tokens even when nothing is wrong — needs a hard per-pass budget and slow cadence</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Per-lane kill switch, heartbeat, and outcome log — one sick lane degrades to exactly the status quo, not below it</div>
+        <div class="cell con">Three schedules on one machine — the example scripts share one spawn lock (skip-don't-queue) to preserve the one-scheduler claim-safety assumption</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">new skills: <strong>2</strong></span>
+      <span class="chip">new selectors: <strong>2</strong></span>
+      <span class="chip">schedules: <strong>3</strong></span>
+      <span class="chip">permission scope: <strong>per-lane (tight)</strong></span>
+    </div>
+  </article>
+
+  <article class="approach">
+    <header class="approach-head">
+      <h2><span class="num">03</span>Five lanes: intake, groom, work, respond, merge</h2>
+      <p>Split the board agent into intake/triage vs hygiene, and the delivery agent into a
+      review-responder vs a merger/CD watcher.</p>
+    </header>
+    <div class="tradeoffs">
+      <div class="row head"><div class="cell">Pro</div><div class="cell">Con</div></div>
+      <div class="row">
+        <div class="cell pro">Sharpest possible prompts — each skill is a page, trivially testable in isolation</div>
+        <div class="cell con">v1 is the counterevidence: 16 agents and 9 verb skills died precisely of this granularity; prose seams between co-owned surfaces don't converge under review</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Per-lane model tiers get cheap: haiku plausibly serves intake and merge-watch</div>
+        <div class="cell con">Intake vs groom and respond vs merge read the <i>same signals</i> — the split fails the four-dimension test, so the boundary is arbitrary and drifts</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Fine-grained metrics per function</div>
+        <div class="cell con">Handoffs multiply: respond→merge needs a channel the board doesn't model (both live in In&nbsp;Review), so either a new sub-state appears (v1 phase-state regression) or agents double-handle PRs</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Any single lane can be disabled without touching the others</div>
+        <div class="cell con">Five heartbeats, five locks, five autopilot flags, five log streams — doctor and readiness grow ~15 checks; ops surface exceeds the work it saves</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">new skills: <strong>4</strong></span>
+      <span class="chip">new selectors: <strong>4</strong></span>
+      <span class="chip">schedules: <strong>5</strong></span>
+      <span class="chip">boundary basis: <strong>job title, not signal</strong></span>
+    </div>
+  </article>
+
+</section>
+
+<aside class="reco" id="reco">
+  <h2>Recommendation</h2>
+  <p>Go with <b>approach 02 — three lanes partitioned by board state</b>, shipped as
+  capabilities plus example scripts (below), never a prescribed harness. The decision rule
+  that produces it is the one worth keeping:
+  <b>split where signal source, write lane, cadence, and permission set all differ
+  simultaneously</b>. Work (backlog + code, claims, 15-min, full dev rights), deliver
+  (checks + reviews + attestations, PR/branch + In&nbsp;Review transitions, ~10-min,
+  push/merge rights), and tend (board + thoughts + live tree, issue metadata only, hours,
+  zero code rights) each pass all four. The five-way split divides lanes that share signals;
+  the two-way merge fuses lanes that share nothing but shape.</p>
+  <p>Conditions that change the answer: if token budget is the binding constraint, run
+  approach 01 with the steward on a slow cadence — it is strictly better than nothing and
+  upgrade-compatible with 02 (the steward skill forks into <code>deliver</code>/<code>tend</code>
+  later). If a future lane candidate passes the four-dimension test (a plausible one: a
+  <b>release/effective</b> lane once deploy lanes exist per waystone W5), add it as a fourth
+  lane — the test, not the count, is the design.</p>
+</aside>
+
+<h2 id="boundaries">Boundaries and handoffs</h2>
+
+<p>The state machine is the only boundary object, and state transitions are the only handoff
+channel. No agent-to-agent messaging, no shared scratch state: the v2 rule that "the board is
+the control channel; nothing parses transcript output" extends unchanged to multiple lanes.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 980 330" width="980" height="330" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif" font-size="13">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#847d6c"/>
+    </marker>
+    <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b35a2c"/>
+    </marker>
+  </defs>
+  <!-- lane bands -->
+  <rect x="20"  y="40" width="220" height="170" rx="14" fill="rgba(90,120,71,0.10)" stroke="#5a7847" stroke-dasharray="5 4"/>
+  <text x="34" y="62" fill="#5a7847" font-weight="600" font-size="12" style="text-transform:uppercase;letter-spacing:.05em">tend</text>
+  <rect x="270" y="40" width="200" height="170" rx="14" fill="rgba(46,93,126,0.10)" stroke="#2e5d7e" stroke-dasharray="5 4"/>
+  <text x="284" y="62" fill="#2e5d7e" font-weight="600" font-size="12">WORK</text>
+  <rect x="500" y="40" width="200" height="170" rx="14" fill="rgba(179,90,44,0.10)" stroke="#b35a2c" stroke-dasharray="5 4"/>
+  <text x="514" y="62" fill="#b35a2c" font-weight="600" font-size="12">DELIVER</text>
+  <rect x="730" y="40" width="230" height="170" rx="14" fill="rgba(90,120,71,0.10)" stroke="#5a7847" stroke-dasharray="5 4"/>
+  <text x="744" y="62" fill="#5a7847" font-weight="600" font-size="12">tend (audit)</text>
+
+  <!-- states -->
+  <g>
+    <rect x="45"  y="100" width="170" height="46" rx="10" fill="#ffffff" stroke="#cdc6b7" stroke-width="1.5"/>
+    <text x="130" y="128" text-anchor="middle" fill="#1b2329" font-weight="600">Backlog</text>
+    <rect x="295" y="100" width="150" height="46" rx="10" fill="#ffffff" stroke="#2e5d7e" stroke-width="1.5"/>
+    <text x="370" y="121" text-anchor="middle" fill="#1b2329" font-weight="600">In Progress</text>
+    <text x="370" y="138" text-anchor="middle" fill="#847d6c" font-size="10.5">claim = holder|iso8601</text>
+    <rect x="525" y="100" width="150" height="46" rx="10" fill="#ffffff" stroke="#b35a2c" stroke-width="1.5"/>
+    <text x="600" y="121" text-anchor="middle" fill="#1b2329" font-weight="600">In Review</text>
+    <text x="600" y="138" text-anchor="middle" fill="#847d6c" font-size="10.5">PR open · gates run</text>
+    <rect x="755" y="100" width="180" height="46" rx="10" fill="#ffffff" stroke="#cdc6b7" stroke-width="1.5"/>
+    <text x="845" y="121" text-anchor="middle" fill="#1b2329" font-weight="600">Done</text>
+    <text x="845" y="138" text-anchor="middle" fill="#847d6c" font-size="10.5">merged → effective?</text>
+    <rect x="415" y="250" width="170" height="46" rx="10" fill="#ffffff" stroke="#b8893a" stroke-width="1.5"/>
+    <text x="500" y="271" text-anchor="middle" fill="#1b2329" font-weight="600">Human Needed</text>
+    <text x="500" y="288" text-anchor="middle" fill="#847d6c" font-size="10.5">/ralph:board answer</text>
+  </g>
+
+  <!-- forward edges -->
+  <line x1="215" y1="123" x2="292" y2="123" stroke="#847d6c" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="253" y="114" text-anchor="middle" fill="#847d6c" font-size="10.5">claim</text>
+  <line x1="445" y1="123" x2="522" y2="123" stroke="#847d6c" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="483" y="114" text-anchor="middle" fill="#847d6c" font-size="10.5">PR up</text>
+  <line x1="675" y1="123" x2="752" y2="123" stroke="#847d6c" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="713" y="114" text-anchor="middle" fill="#847d6c" font-size="10.5">gate PASS</text>
+
+  <!-- rework two-hop -->
+  <path d="M 560 152 C 530 195, 420 195, 385 152" fill="none" stroke="#b35a2c" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrR)"/>
+  <text x="472" y="184" text-anchor="middle" fill="#b35a2c" font-size="10.5">semantic rework: hop 1 (board.ts:44)</text>
+  <path d="M 330 152 C 290 200, 200 200, 155 152" fill="none" stroke="#b35a2c" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrR)"/>
+  <text x="240" y="196" text-anchor="middle" fill="#b35a2c" font-size="10.5">hop 2 + findings comment</text>
+
+  <!-- human needed edges -->
+  <line x1="390" y1="146" x2="465" y2="248" stroke="#b8893a" stroke-width="1.2" marker-end="url(#arr)"/>
+  <line x1="590" y1="146" x2="530" y2="248" stroke="#b8893a" stroke-width="1.2" marker-end="url(#arr)"/>
+</svg>
+<div class="caption">Lane ownership follows the item's current state. The dashed rust path is the delivery lane's
+rework demotion — two hops already legal in <code>MACHINE</code> (<code>board.ts:41-48</code>), landing the issue back in
+Backlog where <code>board next</code> re-surfaces it by priority. No state-machine change required.</div>
+</div>
+
+<table class="matrix">
+  <tr><th>Lane</th><th>Owns (state)</th><th>Signals read</th><th>May write</th><th>Never touches</th><th>Hands off by</th></tr>
+  <tr>
+    <td><span class="lane-dot lane-work"></span>work</td>
+    <td>In&nbsp;Progress (exclusive, via claim)</td>
+    <td><code>board next</code>, issue body, codebase, thoughts/</td>
+    <td>Code, branches, PRs, board transitions on the claimed issue, follow-up <code>board create</code></td>
+    <td>Other lanes' items; anything cross-repo (escalates instead)</td>
+    <td>In&nbsp;Progress → In&nbsp;Review (PR up) or → Human&nbsp;Needed</td>
+  </tr>
+  <tr>
+    <td><span class="lane-dot lane-deliver"></span>deliver</td>
+    <td>In&nbsp;Review + its open PRs</td>
+    <td><code>gh pr checks</code> buckets, <code>reviewDecision</code>, review threads, attestation head-binding, merge-policy, auto-merge state</td>
+    <td>PR branches (rebase, conflicts, stack retarget), re-attest, reviewer nudges, thread replies, <code>merge-pr.sh</code>, In&nbsp;Review → Done / → In&nbsp;Progress→Backlog / → Human&nbsp;Needed</td>
+    <td class="never">Feature semantics — any change a reviewer would call a design decision</td>
+    <td>Merge (→ Done via gate) or rework demotion with a findings comment</td>
+  </tr>
+  <tr>
+    <td><span class="lane-dot lane-tend"></span>tend</td>
+    <td>Backlog shape; Done/Canceled audit</td>
+    <td>Board vs live tree, plan files vs issue bodies, dependency graph, dream-loop reflections, staleness ages</td>
+    <td>Issue bodies/titles/comments, <code>board dep</code>, priority/estimate fields, <code>board create</code> (observations→issues), close-as-stale <i>proposals</i></td>
+    <td class="never">Code, branches, PRs, claims, In&nbsp;Progress/In&nbsp;Review items (metadata comments at most)</td>
+    <td>Well-formed Backlog items; Human&nbsp;Needed escalations for judgment calls (e.g. cancel-as-superseded)</td>
+  </tr>
+  <tr>
+    <td><span class="lane-dot lane-human"></span>human</td>
+    <td>Human&nbsp;Needed</td>
+    <td><code>/ralph:board</code> answer-mode walk</td>
+    <td>Answers as comments; → Backlog / In&nbsp;Progress</td>
+    <td>—</td>
+    <td>Answering; tend may age-report the queue but never answers</td>
+  </tr>
+</table>
+
+<details>
+  <summary>Contested call: who handles CHANGES_REQUESTED and review threads?<span class="where">deliver vs work</span></summary>
+  <div class="body">
+    <p><b>Deliver owns mechanical remediation; work owns semantic rework.</b> Mechanical =
+    rebase onto main, conflict resolution that preserves both sides' intent, lint/format fixes,
+    CI retry, re-running <code>attest-pr.sh</code> after a new head, posting
+    <code>@coderabbitai review</code> after fixes (standing permission exists; spend deliberately —
+    each nudge costs a rate-limit unit), and replying in-thread where the answer is already in
+    the diff or the issue. Unresolved GraphQL review threads are the ground-truth work list —
+    deliver replies in-thread, never dismisses a finding by timestamp.</p>
+    <p>Semantic = anything a reviewer would call a design decision. Deliver demotes:
+    In&nbsp;Review → In&nbsp;Progress → Backlog (both hops legal), posts one findings comment
+    summarizing every unresolved thread, and releases. <code>board next</code> re-surfaces the
+    issue by priority; the next work tick claims it fresh with the findings in the issue history.
+    This deliberately reuses the claim protocol instead of inventing a deliver→work channel.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Contested call: who owns branch topology and stacking?<span class="where">deliver</span></summary>
+  <div class="body">
+    <p><b>Deliver owns PR shape end-to-end</b>: splitting an oversized PR, maintaining stacks
+    (<code>git rebase --update-refs</code>), and — critically — retargeting dependent PRs
+    <i>before</i> merging a stack base, because <code>merge-pr.sh</code> merges with
+    <code>--delete-branch</code> and GitHub closes (not retargets) a dependent PR whose base
+    disappears. That known hazard becomes a deliver-lane checklist item rather than a human
+    memory. Work creates PRs in the simplest correct shape; it never manages stacks.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Contested call: who creates issues, and who may close them?<span class="where">tend arbitrates</span></summary>
+  <div class="body">
+    <p>Any lane may <code>board create</code> (work rule 4 already requires it for deferred
+    findings). <b>Tend owns dedup and formation</b>: merging duplicates, wiring
+    <code>--parent</code>/<code>board dep</code>, and grepping the live tree before trusting an
+    issue body — the repo's documented failure mode is stale backlog items whose deliverables
+    already landed or whose target architecture was deleted by a cutover. Tend never
+    closes-as-stale unilaterally: it proposes via Human&nbsp;Needed with evidence, because
+    close/cancel is the one hygiene action with real blast radius.</p>
+  </div>
+</details>
+
+<h2 id="triggers">Triggers and cadence</h2>
+
+<p>Four constraints decide this, and they point at one hybrid rather than a menu:</p>
+<ul>
+  <li><b>Board signals can only be polled.</b> Projects V2 has no field webhook — the 15-min reconciler in <code>state-guard.yml</code> is the proven pattern, not a compromise.</li>
+  <li><b>Model lanes must run locally.</b> Cloud routines can't load ralph plugins; launchd/cron driving a local runner (the existing <code>install-loop.sh</code> transport) is the realistic host. GitHub Actions stays what it is: the deterministic corrective wall, never a model lane.</li>
+  <li><b>Cheap idle-exit is what makes polling affordable.</b> <code>tick.sh:75-79</code> queries the selector and exits before spawning anything when empty. Elevate this from an implementation detail to <i>the lane contract</i>: every lane MUST have a deterministic selector whose empty result costs an API call, not a model session.</li>
+  <li><b>Async review state needs settle time.</b> Reviewer/CI state read mid-flight produces false "stuck" verdicts; deliver's selector acts only on signals older than a settle window (~3 min).</li>
+</ul>
+
+<p>Continuous daemons and in-session wake-up loops are rejected outright — v2 killed exactly
+that ceremony (sentinel manifests, ScheduleWakeup discipline) and recorded a silent-loop-death
+failure under it. The scheduler owns cadence; every lane run is one mortal process judged by
+board state, not exit codes.</p>
+
+<table class="matrix">
+  <tr><th>Lane</th><th>Trigger</th><th>Interval</th><th>Timeout</th><th>Selector (idle-exit gate)</th><th>Event adjunct</th></tr>
+  <tr>
+    <td><span class="lane-dot lane-work"></span>work</td>
+    <td>Poll</td>
+    <td>15 min (exists)</td>
+    <td>45 min</td>
+    <td><code>board next --json</code> — Backlog, unclaimed, unblocked, priority-ranked</td>
+    <td>— (issue events already reconciled by state-guard)</td>
+  </tr>
+  <tr>
+    <td><span class="lane-dot lane-deliver"></span>deliver</td>
+    <td>Poll + settle guard</td>
+    <td>10 min</td>
+    <td>10–15 min</td>
+    <td>In&nbsp;Review items whose PR has: checks concluded, or reviewDecision/thread delta, or attestation no longer head-bound, or gate last returned 75 — and signal age &gt; 3 min</td>
+    <td>Optional later: <code>workflow_run</code> → repo-dispatch ping shortens latency; never required</td>
+  </tr>
+  <tr>
+    <td><span class="lane-dot lane-tend"></span>tend</td>
+    <td>Slow poll</td>
+    <td>6 h (or 2×/day)</td>
+    <td>20 min</td>
+    <td>Hygiene queue: stale-age thresholds, unlinked plan files, blocked-with-closed-blockers, Done-items lacking effective-evidence, fresh dream-loop reflections tagged actionable</td>
+    <td>Nightly: run once after the dream-loop so reflections become issues while fresh (rung-6 edge)</td>
+  </tr>
+</table>
+
+<h2 id="harness">Capabilities and examples: making agents cheap to create</h2>
+
+<p><b>Scripts are examples; contracts are doctrine.</b> The doctrine line is the mutation
+path: everything ralph must enforce already lives beneath any script a user could write —
+claim/scope/state gates in <code>board.ts</code>, merge gates in <code>merge-pr.sh</code>,
+the corrective wall in Actions. That is precisely why the loop layer can be soft. A shipped
+<code>lane.sh</code> harness with a lanes registry in <code>.ralph.json</code> would promote
+a convenience into prescribed choreography — the v1 mistake in shell form. The v2 record
+already states the right posture: <code>tick.sh</code> is "a convenience, not the
+architecture," and any command that invokes one session per tick is an equally first-class
+drive. Users perform their own scripting; ralph makes that scripting easy and safe to write.</p>
+
+<p>So per lane, the plugin ships exactly two kinds of things:</p>
+<ul>
+  <li><b>Capabilities with hardened contracts</b> — the parts worth typing, versioning, and
+  testing: selectors (<code>board next --json</code> today; <code>board deliver-queue --json</code>
+  and <code>board tend-queue --json</code> as <code>board.ts</code> additions for the
+  board-derived halves of eligibility), the grep-parseable
+  <code>MERGE GATE PASS/PENDING/FAIL</code> + exit <code>0/1/75</code> contract, claim/TTL
+  semantics, and <code>readiness</code> willing to read a heartbeat or outcomes file wherever
+  a user's script declares one.</li>
+  <li><b>One example loop script per lane</b> — a reference composition to copy and rewrite,
+  owned by the user the moment it's copied, the same way host repos own their merge flow.
+  Ralph never executes it for you.</li>
+</ul>
+
+<div class="code"><pre><span class="cm"># deliver-loop.sh — EXAMPLE composition. Copy it, rewrite it, own it.
+# The stable part is the contracts it leans on, not this script:
+#   board list --state 'In Review' --json      typed selector (board.ts)
+#   scripts/merge-pr.sh → exit 0 / 1 / 75      gate contract, grep-parseable
+#   claim TTL + release                        enforced in board.ts, beneath this script</span>
+grep -q <span class="str">'^autopilot.deliver=true'</span> <span class="str">"$HOME/.ralph/config"</span> || <span class="kw">exit</span> 0   <span class="cm"># fail-closed opt-in — keep this</span>
+[ -n <span class="str">"$ANTHROPIC_API_KEY"</span> ] &amp;&amp; [ <span class="str">"$RALPH_ALLOW_API_BILLING"</span> != true ] &amp;&amp; <span class="kw">exit</span> 3  <span class="cm"># billing guard — keep this</span>
+<span class="kw">exec</span> 9&gt;<span class="str">"$HOME/.ralph/spawn.lock"</span>; flock -n 9 || <span class="kw">exit</span> 0    <span class="cm"># share ONE spawn lock across your loops</span>
+date +%s &gt; <span class="str">"$HOME/.ralph/deliver.heartbeat"</span>
+ID=$(<span class="fn">./deliver-queue.sh</span>) || <span class="kw">exit</span> 0                         <span class="cm"># idle-exit: empty queue spawns no model</span>
+timeout 15m claude -p --model sonnet <span class="str">"/ralph:deliver $ID"</span>
+<span class="kw">echo</span> <span class="str">"$(date -u +%FT%TZ) deliver GH-$ID rc=$? checked=$N acted=$M"</span> &gt;&gt; <span class="str">"$HOME/.ralph/deliver.outcomes.log"</span></pre></div>
+
+<p>The conventions the example carries — and what enforces each one:</p>
+<ul>
+  <li><b>One shared spawn lock, skip-don't-queue</b> keeps the claim protocol's "one
+  flock-serialized scheduler per machine" assumption literally true: a deliver fire during a
+  45-min work tick skips and retries next interval. This is a convention the examples follow,
+  not a rule ralph checks — lanes are state-disjoint, so a user who drops it loses a safety
+  margin, not an invariant. Loosen it in your own scripts on contention evidence, not principle.</li>
+  <li><b>Fail-closed opt-in and the billing guard travel with the example, not the enforcement
+  layer.</b> That is acceptable — they guard the user's own spend and machine, not board
+  integrity — but it is exactly why they sit at the top of the example, prominent enough that
+  copies inherit them by default instead of discovering the need later.</li>
+  <li><b>Proof-of-input outcome lines</b> (<code>checked=N acted=M</code>) make a dead lane
+  visibly dead, never silently green (waystone W1). <code>readiness</code> detects-if-present
+  and recommends: "your deliver loop emits no outcome lines" is a level-3 recommendation,
+  never a gate. <code>doctor</code> stays what it is — board invariants — and never audits
+  user scripts.</li>
+  <li><b>Selectors live in code, judgment lives in the skill.</b> Deliver's eligibility test
+  (checks concluded ∧ settle age ∧ head-binding) is deterministic — the funnel test assigns it
+  to typed code ralph ships and maintains. What to <i>do</i> about a failing check is judgment
+  the skill owns. The user's script is just the wire between them.</li>
+  <li><b>Creating a new agent = one SKILL.md plus your own scripting.</b> The skill
+  (auto-registered from <code>ralph/skills/&lt;lane&gt;/</code>, no manifest edit) is the
+  plugin-shipped judgment; the loop is yours, started from an example. "Easy to create" is
+  honest here because the contracts carry the weight — not because ralph runs the loop for you.</li>
+</ul>
+
+<div class="callout"><span class="ico">!</span><span>
+<b>What deliberately does not exist:</b> no lanes registry in <code>.ralph.json</code>, no
+<code>lane.sh</code> harness ralph executes, no lane priorities, no lane-to-lane messaging,
+no scheduler-side routing, no orchestrator agent, no <code>--force</code>. The v2 record
+vetoed scheduler-side choreography once already; lanes coordinate only through board state,
+exactly as work sessions already coordinate through claims.
+</span></div>
+
+<h2 id="cost">Cost and model tiers</h2>
+
+<p><b>Sonnet drives every lane.</b> The existing tier policy transfers unchanged: haiku only
+for mechanical fan-out <i>inside</i> a session, frontier only as in-session bookends on
+feature/epic units, never as a driver — a five-lane split would tempt per-lane haiku drivers,
+but deliver's judgment calls (is this conflict resolution semantic?) are exactly where a cheap
+model quietly does damage. The selector, not the model tier, is the cost control: idle polls
+cost API calls only.</p>
+
+<div class="chips" style="margin-bottom:18px">
+  <span class="chip">idle poll: <strong>≈ $0 (gh API only)</strong></span>
+  <span class="chip">deliver pass: <strong>short session, bounded 15 min</strong></span>
+  <span class="chip">measured CI cost: <strong>~55–75 billed min / PR</strong></span>
+  <span class="chip">pilot datum: <strong>~40 PRs/day tripped a spending cap</strong></span>
+  <span class="chip">CodeRabbit nudge: <strong>1 rate-limit unit each</strong></span>
+</div>
+
+<p>The measured PR cost model cuts <i>for</i> the deliver and tend lanes, not against them:
+marginal CI cost is per-PR and size-independent, so the expensive failure mode is PR
+<i>count</i> — stranded PRs re-pushed into fresh ones, duplicate work from stale backlog items,
+abandoned branches. Deliver shepherds existing PRs to merged instead of letting them rot;
+tend kills duplicate work before it forks a branch. Both lanes should net-reduce PR count.
+The loop's own token spend is bounded by cadence × timeout per lane — knobs that live in
+scripts and schedules the user owns, not in plugin config.</p>
+
+<h2 id="ladder">Grading the lanes on the waystone ladder</h2>
+
+<p>Each lane exists to close a named edge, and each gets graded like any other subsystem —
+the ladder is the shared maturity vocabulary, so the design targets are stated as rungs:</p>
+
+<table class="matrix">
+  <tr><th>Lane</th><th>Today</th><th>Target</th><th>Edge it closes</th><th>Rung evidence required</th></tr>
+  <tr>
+    <td><span class="lane-dot lane-work"></span>work</td>
+    <td>Rung 1 — built-but-never-enabled, 0 ticks/day</td>
+    <td>Rung 4–5</td>
+    <td>Backlog → landed code, unattended</td>
+    <td>Heartbeat-age liveness (not bare plist existence); ticks/day &gt; 0; outcome log provably fresh</td>
+  </tr>
+  <tr>
+    <td><span class="lane-dot lane-deliver"></span>deliver</td>
+    <td>— (does not exist)</td>
+    <td>Rung 5, on the rung-7 path</td>
+    <td><b>Merge → effective</b> (W5): landing is not the end state</td>
+    <td>In-Review dwell time falls; exit-75 retries observed in outcomes.log; zero stranded head-unbound attestations</td>
+  </tr>
+  <tr>
+    <td><span class="lane-dot lane-tend"></span>tend</td>
+    <td>— (deterministic layer 0 only)</td>
+    <td>Rung 6</td>
+    <td><b>Observation → tracked work</b> (W2): high-confidence observations become deduped board issues without a human transcribing</td>
+    <td>Issues created from reflections/audits with provenance comments; duplicate-work rate falls; stale-item age distribution shrinks</td>
+  </tr>
+</table>
+
+<h2 id="rollout">Rollout</h2>
+
+<div class="milestones">
+  <div class="milestone">
+    <div class="when">Phase 0<br>now</div>
+    <div class="rail"><div class="dot"></div><div class="line"></div></div>
+    <div class="ms-body">
+      <h3>Switch on the loop that exists</h3>
+      <p>Zero new code. <code>install-loop.sh --enable</code>, watch every tick for a few days,
+      baseline ticks/day, timeout rate, claim-release behavior, no-op detections. Everything
+      after this is speculation until the first lane has run for real — and every harness
+      decision above (shared lock, skip-don't-queue, outcome lines) gets its first evidence here.</p>
+      <div class="tags"><span class="tag">W4</span><span class="tag">baseline: 0 → &gt;0 ticks/day</span></div>
+    </div>
+  </div>
+  <div class="milestone">
+    <div class="when">Phase 1</div>
+    <div class="rail"><div class="dot"></div><div class="line"></div></div>
+    <div class="ms-body">
+      <h3>Deliver lane</h3>
+      <p>Ship <code>/ralph:deliver</code> (the judgment), a typed
+      <code>board deliver-queue --json</code> selector for the board-derived eligibility, and
+      an example <code>deliver-loop.sh</code> beside — not replacing — <code>tick.sh</code>.
+      The user wires their own launchd/cron entry from the example. Biggest gap, most
+      mechanical judgment, and the exit-75 contract is already waiting for its caller.</p>
+      <div class="tags"><span class="tag">/ralph:deliver</span><span class="tag">board deliver-queue</span><span class="tag">example deliver-loop.sh</span><span class="tag">readiness: convention detection</span></div>
+    </div>
+  </div>
+  <div class="milestone">
+    <div class="when">Phase 2</div>
+    <div class="rail"><div class="dot"></div><div class="line"></div></div>
+    <div class="ms-body">
+      <h3>Tend lane</h3>
+      <p><code>/ralph:tend</code> + a <code>board tend-queue --json</code> selector + an
+      example loop script, slow cadence + post-dream-loop run.
+      Start read-mostly (propose via Human&nbsp;Needed) and promote to direct metadata
+      writes as trust accrues — the same recommend-never-impose posture ralph takes toward
+      host repos, applied to its own newest lane.</p>
+      <div class="tags"><span class="tag">/ralph:tend</span><span class="tag">rung-6 edge</span><span class="tag">dream-loop coupling</span></div>
+    </div>
+  </div>
+  <div class="milestone">
+    <div class="when">Phase 3</div>
+    <div class="rail"><div class="dot"></div></div>
+    <div class="ms-body">
+      <h3>Loosen on evidence</h3>
+      <p>With outcomes data: loosen the shared lock in your own scripts if skip-rates hurt
+      delivery latency; consider an Actions→local event ping for deliver; grade all three lanes on the ladder and
+      publish the rungs in the weekly scorecard. Only now revisit lane count — with the
+      four-dimension test, not appetite, as the bar.</p>
+      <div class="tags"><span class="tag">W6 scorecard</span><span class="tag">contention data</span></div>
+    </div>
+  </div>
+</div>
+
+<h2 id="open">Open questions</h2>
+
+<div class="open-q">
+  <div class="oq"><span class="qt">Thread-reply depth for deliver.</span>
+  <span class="owner">decide at Phase 1</span><br>
+  Replying in-thread is ground truth for review handling, but where is the line between
+  "answer already in the diff" and relitigating a finding? Proposal: deliver replies only with
+  evidence links (commit, line, test run), never with argument; anything argumentative demotes to rework.</div>
+  <div class="oq"><span class="qt">Host repos without the merge gate.</span>
+  <span class="owner">decide at Phase 1</span><br>
+  Deliver must degrade gracefully where <code>scripts/merge-pr.sh</code> doesn't exist
+  (recommend-never-impose): fall back to the repo's own merge flow and native checks, and let
+  <code>board readiness</code> report the gap — never require the gate.</div>
+  <div class="oq"><span class="qt">Rework demotion: two-hop vs a direct edge.</span>
+  <span class="owner">decide with usage data</span><br>
+  The two-hop In&nbsp;Review→In&nbsp;Progress→Backlog works today with zero schema change. If
+  rework turns out to be frequent, a direct In&nbsp;Review→Backlog edge in <code>MACHINE</code>
+  is a one-line, contract-tested change — but add it on observed frequency, not anticipation.</div>
+  <div class="oq"><span class="qt">Per-lane holder identity.</span>
+  <span class="owner">Phase 1 detail</span><br>
+  <code>RALPH_CLAIM_HOLDER</code> should carry the lane (<code>deliver@host</code> vs
+  <code>tick@host</code>) so eviction comments, doctor output, and the decision journal say
+  which lane acted — cheap provenance, zero protocol change.</div>
+</div>
+
+</div>
+</body>
+</html>
