@@ -503,6 +503,18 @@ not here.
   moment it blocked. Since GH-1774 an event's *own* reach is narrower still: it
   can record a snapshot-confirmed status against an identity the ledger already
   holds, and otherwise only mark the scope dirty.
+- **A reconcile pass only sweeps ledgers its own server owns (GH-1863).** herdr
+  runs `[[startup]]` for *every* server that starts, so an isolated named session
+  (`herdr --session probe server`) used to run this pass against the operator's
+  real ledgers while answering about a herd it had never had — observed live on
+  2026-08-13, five running workers marked `reason=lost` in one sweep. Ownership
+  is now proven positively, in the same spirit as `claim-recover.sh`: a ledger is
+  this server's when the server's snapshot holds a pane one of the ledger's open
+  records names. The absence-driven phases (exit-lost, the orphan pass) skip
+  every other ledger and say so in the log. The honest limit: a ledger whose
+  workers' panes are *all* gone supplies no such evidence either, so its stale
+  records wait for a pass in which at least one pane is back rather than being
+  closed on the spot — a delay, and the fail-closed side of the trade.
 - **Repository containment is only as good as the provenance herdr reports.** A
   workspace with no worktree provenance falls back to matching cwds, which a
   session can change under us; a checkout that resolves to no board config is
