@@ -427,7 +427,9 @@ ralph_worktree_source_dir() {
 #               --label "GH-N via GH-parent" so the cockpit shows the nesting;
 #               when it carries N's title, the agent name gets its slug.
 #
-# Agent naming is grammar B (naming.sh, which mirrors contracts.ts slugify
+# The BRANCH comes from ralph_branch_for_issue (the board CLI's grammar, with
+# the legacy feature/GH-N resume). Agent naming is grammar B (naming.sh,
+# which mirrors contracts.ts slugify
 # exactly — the golden table pins both): w<N>-<slug> from the queue item's
 # title. An absent title takes the "work" slug; a pathological one (all
 # punctuation/digits) takes ralph_slugify's shared "task" fallback. Legacy
@@ -453,6 +455,51 @@ ralph_worktree_source_dir() {
 #          winning session); 1 real failure (worktree/start/prompt).
 # Honors RALPH_HERDR_DRY_RUN=true: prints the exact plan and returns 0 before
 # ANY herdr mutation.
+# _ralph_branch_exists BRANCH — rc 0 when BRANCH is a local head or an
+# origin remote-tracking ref in $REPO. Reads refs as they stand; see the
+# fetch note in ralph_branch_for_issue.
+_ralph_branch_exists() {
+  git -C "$REPO" show-ref -q --verify "refs/heads/$1" ||
+    git -C "$REPO" show-ref -q --verify "refs/remotes/origin/$1"
+}
+
+# ralph_branch_for_issue N — print the branch the cockpit spawns N on.
+#
+# The grammar (<kind>/N-<slug>) is derived by the board CLI, never rebuilt
+# here (GH-1807, GH-1858). Unlike an AGENT name — a pure function of lane,
+# issue and title, which is why naming.sh can mirror it under a golden table
+# — a branch name needs the issue's LABELS to pick <kind>, so a bash mirror
+# would need this same round trip to be correct. One implementation, one
+# subprocess.
+#
+# Resume beats re-cut: when the semantic branch does not exist but the legacy
+# feature/GH-N one does, the legacy branch is printed, so a unit's work never
+# splits across two heads (tick.sh parity). The refs are read as they stand —
+# the spawn's `git fetch` runs later, because a dry run must reach its plan
+# without mutating anything, ref updates included. Residual: a legacy branch
+# that exists only on an unfetched origin is not seen and the semantic name
+# wins. That is a fresh cut, not a wrong one — the create/open fallback below
+# still resumes any checkout that is really there.
+#
+# rc 1 with a stderr message when `board name` fails or names no branch.
+ralph_branch_for_issue() {
+  local n="${1-}" names branch legacy
+  names=$("$BOARD" name "$n" --json) || {
+    echo "ralph_branch_for_issue: \`board name $n\` failed — cannot derive the branch" >&2
+    return 1
+  }
+  branch=$(printf '%s' "$names" | jq -r '.branch // empty')
+  legacy=$(printf '%s' "$names" | jq -r '.legacyBranch // empty')
+  if [ -z "$branch" ]; then
+    echo "ralph_branch_for_issue: \`board name $n\` returned no branch" >&2
+    return 1
+  fi
+  if [ -n "$legacy" ] && ! _ralph_branch_exists "$branch" && _ralph_branch_exists "$legacy"; then
+    branch="$legacy"
+  fi
+  printf '%s\n' "$branch"
+}
+
 spawn_work_session() {
   local n="$1" queue_json="${2:-}" branch label parent title agent live pane out
   local ref ts record ledger src
@@ -465,7 +512,7 @@ spawn_work_session() {
   export RALPH_HERDR_SPAWNED_AGENT RALPH_HERDR_SPAWNED_REF
   export RALPH_HERDR_SPAWNED_PANE RALPH_HERDR_SPAWNED_WORKTREE
   case "$n" in ''|*[!0-9]*) echo "spawn_work_session: bad issue number '$n'" >&2; return 1 ;; esac
-  branch="feature/GH-$n"
+  branch=$(ralph_branch_for_issue "$n") || return 1
 
   # Nesting label + title: children group under an epic on the board; carry
   # that into the worktree workspace label when the caller's queue JSON knows
@@ -546,7 +593,7 @@ spawn_work_session() {
   # Never branch from local HEAD: herdr's `worktree create` bases NEW branches
   # on the parent checkout's HEAD unless told otherwise, so fetch and pin
   # --base origin/main (tick.sh parity). The fresh base only holds for
-  # brand-new branches: an existing feature/GH-N branch is silently checked
+  # brand-new branches: an existing branch (either grammar) is silently checked
   # out as-is (--base ignored) — resumed, possibly behind origin/main, and the
   # session is expected to rebase. Create refuses only when the CHECKOUT
   # already exists — then open it instead: resuming beats re-creating.

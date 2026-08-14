@@ -204,7 +204,10 @@ on purpose and returns instantly if the state already matches.
 ## 8. Drive an agent by hand
 
 ```bash
-herdr worktree create --cwd <repo> --branch feature/GH-NNNN --base origin/main --no-focus
+# The branch name is derived, never typed: <kind>/N-<slug>, where <kind>
+# comes from the issue's labels (GH-1807). Ask the board CLI for it.
+BRANCH=$(board name NNNN --json | jq -r .branch)
+herdr worktree create --cwd <repo> --branch "$BRANCH" --base origin/main --no-focus
 ```
 
 **Always `--base origin/main`** — left alone, herdr branches from the parent

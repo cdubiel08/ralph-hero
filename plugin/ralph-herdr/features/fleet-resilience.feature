@@ -9,7 +9,7 @@ Feature: One failure does not strand the fleet
     Given a replay world with a board-scoped repo
     And the herd is empty
     And the frontier offers issues 301 "Add refill support", 302 "Broken checkout", 303 "Third in line"
-    And every worktree verb fails for branch "feature/GH-302"
+    And every worktree verb fails for branch "feat/302-fake-issue"
     When work-fleet runs with a fleet size of 3
     Then the fleet summary reports GH-302 failed and the other two spawned
     And agents "w301-add-refill-support" and "w303-third-in-line" were each started and prompted once

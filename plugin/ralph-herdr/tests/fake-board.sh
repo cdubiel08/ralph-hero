@@ -34,6 +34,9 @@
 #                        list.<state-slug>.rc then list.rc
 #   answer N …           answer.<N>.json, then answer.json, else board.ts's
 #                        "answer commented; Human Needed → In Progress" line
+#   name N [--json]      name.<N>.json, then name.json, else a canned
+#                        GH-1807 name envelope (feat/N-fake-issue + its
+#                        legacyBranch) — the spawn path's branch source
 #   move N STATE         move.json, else a bare success line
 #   help …               help.txt (RAW text) — ABSENT prints a default that
 #                        INCLUDES the `  answer NNN` verb line; a help.txt
@@ -130,6 +133,21 @@ case "${1-} ${2-}" in
     emit_fixture "answer.${2-}" answer ||
       printf '#%s: answer commented; Human Needed → In Progress\n' "${2-}"
     key="answer"
+    ;;
+  "name "*)
+    # The GH-1807 branch/agent grammar the spawn path reads (GH-1858). The
+    # default is a CANNED envelope, deliberately not a re-derivation: this
+    # shim proves the spawn path READS board.ts's answer, and a second
+    # slugify here would be the very thing GH-1807 exists to prevent. Tests
+    # that care about the grammar itself use naming-golden.tsv.
+    emit_fixture "name.${2-}" name ||
+      printf '{"number":%s,"kind":"feat","lane":"w","branch":"feat/%s-fake-issue","worktree":"feat-%s-fake-issue","agent":"w%s-fake-issue","legacyBranch":"feature/GH-%s"}\n' \
+        "${2-0}" "${2-0}" "${2-0}" "${2-0}" "${2-0}"
+    if [ -n "$FIX" ] && [ -f "$FIX/name.${2-}.rc" ]; then
+      key="name.${2-}"
+    else
+      key="name"
+    fi
     ;;
   "move "*)
     emit_fixture move || printf '#%s moved to %s (fake)\n' "${2-}" "${3-}"

@@ -27,6 +27,13 @@ mkdir -p "$FAKE_HERDR_FIXTURES"
 export RALPH_HERDR_REPO="$ROOT"
 export RALPH_HERDR_LEDGER="$TMP/ledger/ledger.jsonl"
 
+# The spawn path derives its branch from `board name` (GH-1858). Point it at
+# the shim so the dry-run plan stays offline — the real CLI would fetch the
+# issue from GitHub for a name a unit test has no business needing.
+export RALPH_HERDR_BOARD="$SCRIPT_DIR/fake-board.sh"
+export FAKE_BOARD_FIXTURES="$TMP/board-fixtures"
+mkdir -p "$FAKE_BOARD_FIXTURES"
+
 # lib.sh sets -euo pipefail at source time; the harness needs to observe
 # failures, not die on them.
 # shellcheck source=../scripts/lib.sh
@@ -89,7 +96,7 @@ is "record: issue is a number"               "123"            "$(jqr '.lineage.i
 is "record: parent_issue from the queue"     "45"             "$(jqr '.lineage.parent_issue')"
 is "record: plane is herdr"                  "herdr"          "$(jqr '.lineage.plane')"
 is "record: invoked_by is human"             "human"          "$(jqr '.lineage.spawner.invoked_by')"
-is "record: worktree branch"                 "feature/GH-123" "$(jqr '.lineage.herdr.worktree_branch')"
+is "record: worktree branch is the board's grammar" "feat/123-fake-issue" "$(jqr '.lineage.herdr.worktree_branch')"
 is "record: workspace label carries nesting" "GH-123 via GH-45" "$(jqr '.lineage.herdr.workspace_label')"
 is "record: ts equals spawned_at"            "$(jqr '.ts')"   "$(jqr '.lineage.spawned_at')"
 is "record: token role"                      "w"              "$(jqr '.tokens.role')"
@@ -441,6 +448,46 @@ case "$tab_out" in
   *) not_ok "tab create: silence is reported as silence — got '$tab_out'" ;;
 esac
 rm -f "$FAKE_HERDR_FIXTURES/tab-create.raw" "$FAKE_HERDR_FIXTURES/tab-create.rc"
+
+# ── ralph_branch_for_issue: the GH-1807 grammar, and the legacy resume ───────
+# A throwaway git repo so the ref probes see exactly the branches this block
+# creates — the real checkout's branch list is not a fixture.
+BREPO="$TMP/branch-repo"
+mkdir -p "$BREPO"
+git -C "$BREPO" init -q
+git -C "$BREPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+REPO="$BREPO"
+
+is "branch: the board's grammar is what the cockpit cuts" \
+  "feat/500-fake-issue" "$(ralph_branch_for_issue 500)"
+
+# Resume beats re-cut: a legacy branch with no semantic sibling keeps the unit
+# on one head instead of splitting its work across two.
+git -C "$BREPO" branch -q feature/GH-501
+is "branch: a lone legacy branch is resumed, not re-cut" \
+  "feature/GH-501" "$(ralph_branch_for_issue 501)"
+
+# ...but only when there is nothing semantic to resume. Once the new branch
+# exists it wins, so a unit that already migrated does not fall back.
+git -C "$BREPO" branch -q feature/GH-502
+git -C "$BREPO" branch -q feat/502-fake-issue
+is "branch: the semantic branch outranks a legacy sibling" \
+  "feat/502-fake-issue" "$(ralph_branch_for_issue 502)"
+
+# A board CLI that cannot name the issue must not silently mint a branch —
+# guessing here would re-introduce the second grammar GH-1807 removed.
+printf '1\n' >"$FAKE_BOARD_FIXTURES/name.503.rc"
+fails "branch: a failing \`board name\` refuses rather than guessing" \
+  ralph_branch_for_issue 503
+rm -f "$FAKE_BOARD_FIXTURES/name.503.rc"
+
+# Same for an answer that parses but names no branch.
+echo '{"number":504}' >"$FAKE_BOARD_FIXTURES/name.504.json"
+fails "branch: a name envelope with no branch is refused" \
+  ralph_branch_for_issue 504
+rm -f "$FAKE_BOARD_FIXTURES/name.504.json"
+
+REPO="$ROOT"
 
 echo "1..$n"
 echo "# $pass passed, $fail failed"
