@@ -31,3 +31,15 @@ Feature: Spawn honors the naming grammar
     And no worktree was created and no agent was started
     And no "--2" sibling name was ever attempted
     And the ledger stayed empty
+
+  # GH-1926: `agent prompt` returning 0 says the text reached the pane's input
+  # buffer, not that Enter landed. A live-but-idle agent holding an unsubmitted
+  # prompt burns a fleet slot while the summary reports `failed: (none)`.
+  Scenario: A prompt that was delivered but never submitted is not a spawn
+    Given a replay world with a board-scoped repo
+    And the herd is empty
+    And the spawned agent never leaves idle after the prompt
+    And the queue offers issue 123 titled "Fix the flaky test" under parent 45
+    When spawn_work_session runs for issue 123
+    Then the spawn fails as an unconfirmed turn
+    And "w123-fix-the-flaky-test" was prompted once

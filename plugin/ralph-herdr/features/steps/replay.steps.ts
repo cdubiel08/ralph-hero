@@ -157,6 +157,28 @@ Given('the board CLI predates the answer verb', function (this: RalphWorld) {
 
 // ── Whens ────────────────────────────────────────────────────────────────────
 
+Given('the spawned agent never leaves idle after the prompt', function (this: RalphWorld) {
+  // The observed defect (GH-1926): herdr answers the post-prompt wait
+  // successfully, and the status it answers with is `idle` — no turn ever
+  // started. rc 0 plus an unstarted turn is the pair that read as a healthy
+  // spawn.
+  this.writeHerdrFixture(
+    'agent-wait-until.json',
+    `${JSON.stringify({
+      agent: {
+        name: 'w',
+        agent_status: 'idle',
+        pane_id: 'p1',
+        workspace_id: 'w1',
+        tab_id: 'w1:t1',
+        terminal_id: 'term_fake',
+        focused: false,
+        revision: 9,
+      },
+    })}\n`,
+  );
+});
+
 When('spawn_work_session runs for issue {int}', function (this: RalphWorld, issue: number) {
   const r = this.run(
     [
@@ -268,6 +290,29 @@ Then('the spawn succeeds', function (this: RalphWorld) {
   assert.strictEqual(this.spawnRc, 0, `spawn rc — output:\n${this.last.out}`);
   const n = s(this).issue;
   assert.match(this.last.out, new RegExp(`spawned GH-${n} on feat/${n}-fake-issue`));
+});
+
+Then('the spawn fails as an unconfirmed turn', function (this: RalphWorld) {
+  assert.strictEqual(this.spawnRc, 1, `spawn rc — output:\n${this.last.out}`);
+  const n = s(this).issue;
+  assert.ok(
+    !this.last.out.includes(`spawned GH-${n}`),
+    `an unconfirmed spawn must not report success:\n${this.last.out}`,
+  );
+  assert.match(this.last.out, /never submitted/);
+  // The pane is named with the manual submit — the agent is live, and the
+  // report has to be actionable rather than merely honest.
+  assert.match(this.last.out, /send-keys/);
+});
+
+Then('{string} was prompted once', function (this: RalphWorld, agent: string) {
+  // Named literally: a spawn that failed exports no RALPH_HERDR_SPAWNED_AGENT,
+  // and the point of this assertion is that delivery DID happen — the defect
+  // is everything after it.
+  assert.strictEqual(
+    countLines(this.herdrLog(), (l) => l.startsWith(`agent prompt ${agent} `)),
+    1,
+  );
 });
 
 Then('the agent is named {string}', function (this: RalphWorld, name: string) {
