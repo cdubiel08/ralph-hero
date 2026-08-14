@@ -16,9 +16,11 @@
 # script never kills an agent and never writes board state.
 #
 # Knobs:
-#   RALPH_HERDR_WATCH_POLL   multi-target poll interval, and the single-target
-#                            backoff after an unreadable poll, seconds
-#                            (default 15)
+#   RALPH_HERDR_WATCH_POLL   multi-target poll interval, and the backoff after
+#                            an unreadable read in either mode, seconds
+#                            (default 15; a malformed value warns and defaults)
+#   RALPH_HERDR_WAIT_MAX_SEC ceiling on ONE server-owned `agent wait`, seconds
+#                            (default 86400 — see wait_for)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,8 +30,40 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ "$#" -ge 1 ] || die "usage: notify-watch.sh <agent-name-or-pane-id>…"
 
 REPO_NAME=$(basename "$REPO")
-POLL="${RALPH_HERDR_WATCH_POLL:-15}"
-validate_pos_int RALPH_HERDR_WATCH_POLL "$POLL"
+
+# watch_poll — the poll/backoff interval, defaulting past an unusable value.
+#
+# Deliberately NOT validate_pos_int, which dies: every spawn path (deliver-pass,
+# tend-pass, work-next, work-fleet, link-offer) `exec`s into this watcher AFTER
+# its agent is live, and exec discards hold_pane's EXIT trap — so dying here
+# closes the pane instantly, takes the error line with it, and leaves a live
+# agent unwatched. RALPH_* vars are exported from shell profiles and inherited
+# by every pane, so a stale value is a live route to exactly that. A poll
+# interval is advisory; the watch is not.
+watch_poll() {
+  local v="${RALPH_HERDR_WATCH_POLL:-15}"
+  case "$v" in
+    '' | *[!0-9]* | 0*)
+      echo "${0##*/}: ignoring RALPH_HERDR_WATCH_POLL='$(printf '%s' "$v" | ralph_sanitize)' (not a positive integer) — using 15s" >&2
+      v=15
+      ;;
+  esac
+  echo "$v"
+}
+POLL=$(watch_poll)
+
+# _herdr_verdict BODY — the shared classification of an adapter refusal, so the
+# two modes cannot drift on what "gone" means. rc 2 only for herdr's own
+# no-such-agent answer; rc 1 for everything else it refused.
+#
+# From the returned BODY, never $RALPH_HERDR_ERR_CODE: the calls below run in
+# command substitutions, so a global they set died with that subshell.
+_herdr_verdict() {
+  case "$(ralph_herdr_err_code "${1-}")" in
+    agent_not_found | not_found) return 2 ;;
+  esac
+  return 1
+}
 
 # agent_status_of TARGET — the target's agent_status, through the transport
 # adapter, with "I could not find out" kept distinct from every real state.
@@ -53,12 +87,7 @@ agent_status_of() {
     printf '%s' "$status"
     return 0
   fi
-  # From the returned BODY, never $RALPH_HERDR_ERR_CODE: the call above runs in
-  # a command substitution, so a global it set died with that subshell.
-  case "$(ralph_herdr_err_code "$out")" in
-    agent_not_found | not_found) return 2 ;;
-  esac
-  return 1
+  _herdr_verdict "$out"
 }
 
 # ── Multi-target: portable poll loop ─────────────────────────────────────────
@@ -124,21 +153,60 @@ fi
 # ── Single target: event-driven server-owned wait (unchanged) ────────────────
 TARGET="$1"
 
-# The agent name clears when the session exits, so a failed wait/get usually
-# means it is gone. Say so and stop watching — the board has the truth.
+# The agent name clears when the session exits, so herdr answers agent_not_found
+# for a departed session (probed on 0.8.x, both `agent get` and `agent wait`).
+# THAT is what ends a watch — not any nonzero exit. Say so and stop watching;
+# the board has the truth.
 gone() {
   notify "$TARGET" "ralph: $TARGET gone" "agent no longer live in $REPO_NAME — check the board for where it left things"
   exit 0
 }
 
-# JSON responses are muted: the notify() echo lines are the pane's trail.
-wait_for() { "$HERDR" agent wait "$TARGET" "$@" >/dev/null; }
+# wait_for ARG… — `agent wait`, through the same adapter and the same three
+# outcomes (rc 0 / rc 2 gone / rc 1 unreadable). Its JSON is discarded; the
+# notify() lines are the pane's trail.
+#
+# This is the call GH-1855 left behind: `"$HERDR" agent wait … ; wait_for ||
+# gone` read ANY nonzero — a herdr outage, a dropped socket, a missing binary —
+# as "the agent departed", which is the fail-open the adapter exists to remove,
+# and it disagreed with the multi-target loop about the same fact.
+#
+# The bound is why it needed thought rather than a straight swap. `agent wait`
+# blocks until a state matches — server-owned and unbounded is the DESIGN of
+# the single-target watch — while ralph_herdr_call applies
+# RALPH_HERDR_TIMEOUT_SEC (30s) to every call, which would cut every wait short
+# and report rc 3. So this call carries its own ceiling: long enough never to
+# fire on a live session, finite so a wedged server eventually surfaces as an
+# unreadable read instead of hanging the pane forever. The override rides
+# inside the command substitution, so it cannot leak to any other call.
+wait_for() {
+  local out rc=0
+  out=$(RALPH_HERDR_TIMEOUT_SEC="${RALPH_HERDR_WAIT_MAX_SEC:-86400}" \
+    ralph_herdr_call agent_info agent wait "$TARGET" "$@") || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  _herdr_verdict "$out"
+}
+
+# wait_or_backoff ARG… — one wait, with the three outcomes resolved: rc 0 to
+# carry on, an exit through gone() when herdr says the agent is not there, and
+# rc 1 after a backoff when the answer was unreadable. Callers write
+# `wait_or_backoff … || continue`, so both waits below agree — and agree with
+# the multi-target loop — that an unreachable server is not a departure.
+wait_or_backoff() {
+  local rc=0
+  wait_for "$@" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  [ "$rc" -eq 2 ] && gone   # exits
+  echo "$(date -u +%FT%TZ) wait failed for $TARGET — retrying in ${POLL}s"
+  sleep "$POLL"
+  return 1
+}
 
 echo "watching $TARGET (repo $REPO_NAME) — waiting for blocked/done/idle"
 
 while :; do
   # Bare wait: blocked/done/idle are agent wait's default until-set.
-  wait_for || gone
+  wait_or_backoff || continue
 
   rc=0
   state=$(agent_status_of "$TARGET") || rc=$?
@@ -148,8 +216,7 @@ while :; do
     *)
       # Unreadable, not gone. The wait above returned, so the agent was there a
       # moment ago; announcing "gone" off a response nobody could parse would
-      # end the watch on a fabricated fact. Back off and re-arm — a genuinely
-      # departed agent fails the wait, which is the branch that says gone.
+      # end the watch on a fabricated fact. Back off and re-arm.
       echo "$(date -u +%FT%TZ) read failed for $TARGET — retrying in ${POLL}s"
       sleep "$POLL"
       continue
@@ -163,7 +230,7 @@ while :; do
       # A session can block repeatedly. Re-arm only after the state moves
       # off blocked — the top-level wait matches the *current* state, so an
       # immediate re-wait would return instantly and spin-notify.
-      wait_for --until working --until "done" --until idle || gone
+      wait_or_backoff --until working --until "done" --until idle || continue
       ;;
     done | idle)
       exit 0
