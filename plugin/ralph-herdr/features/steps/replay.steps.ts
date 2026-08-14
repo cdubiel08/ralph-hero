@@ -306,8 +306,8 @@ Then(
   },
 );
 
-Then("the spawn record's agent ref is the agent's name plus a 4-hex epoch", function (this: RalphWorld) {
-  assert.match(this.spawnRef, new RegExp(`^${this.spawnAgent}#[0-9a-f]{4}$`));
+Then("the spawn record's agent ref is the agent's name plus a 8-hex epoch", function (this: RalphWorld) {
+  assert.match(this.spawnRef, new RegExp(`^${this.spawnAgent}#[0-9a-f]{8}$`));
 });
 
 Then(
@@ -502,7 +502,7 @@ Then(
     const hits = this.ledgerRecords().filter(
       (r) =>
         r.ev === 'discover' &&
-        new RegExp(`^${name}#[0-9a-f]{4}$`).test(r.agent_ref) &&
+        new RegExp(`^${name}#[0-9a-f]{8}$`).test(r.agent_ref) &&
         r.pane_id === pane &&
         r.via === 'reconcile',
     );
