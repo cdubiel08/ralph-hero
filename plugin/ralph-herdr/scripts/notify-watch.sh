@@ -230,7 +230,14 @@ while :; do
       # A session can block repeatedly. Re-arm only after the state moves
       # off blocked — the top-level wait matches the *current* state, so an
       # immediate re-wait would return instantly and spin-notify.
-      wait_or_backoff --until working --until "done" --until idle || continue
+      #
+      # A transient failure retries THIS wait rather than falling back to the
+      # loop top, because the bare wait's default until-set includes blocked:
+      # while the agent is still blocked it would return at once and fire a
+      # second notification for an episode that never re-transitioned. The
+      # backoff lives in wait_or_backoff, and a departed agent still exits
+      # through gone(), so this cannot spin.
+      until wait_or_backoff --until working --until "done" --until idle; do :; done
       ;;
     done | idle)
       exit 0

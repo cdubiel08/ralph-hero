@@ -767,6 +767,28 @@ watch_until "notify [w-left]" w-left
 line_has "wait: herdr's agent_not_found still ends the watch" "$WATCH_OUT" "notify [w-left] ralph: w-left gone"
 is "wait: and the process exits cleanly" "1" "$WATCH_EXITED"
 
+# ── a blocked episode notifies ONCE, transient failure or not (GH-1870) ─────
+# Codex P2 on #1871: routing the off-blocked re-arm through the backoff made a
+# transient failure `continue` to the loop top, and the BARE wait's default
+# until-set includes blocked — so while the agent was still blocked it returned
+# at once, the status read said blocked again, and a second notification fired
+# for an episode that never re-transitioned. Under a persistent outage that is
+# a notification every poll interval: the spin this file already fixed once,
+# through a different door.
+#
+# The fixture pair is the point: the bare wait answers, the --until re-arm does
+# not.
+printf '{"agent":{"name":"w-stuck","agent_status":"blocked","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"t","focused":false,"revision":1}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-get.w-stuck.json"
+: >"$FAKE_HERDR_FIXTURES/agent-wait-until.w-stuck.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-wait-until.w-stuck.rc"
+watch_until "wait failed for w-stuck" w-stuck
+is "blocked: notified exactly once despite the failing re-arm" "1" \
+  "$(printf '%s\n' "$WATCH_OUT" | grep -c 'ralph: w-stuck blocked' || true)"
+line_has  "blocked: the failing re-arm is reported" "$WATCH_OUT" "wait failed for w-stuck"
+line_lacks "blocked: and it is not read as a departure" "$WATCH_OUT" "w-stuck gone"
+rm -f "$FAKE_HERDR_FIXTURES"/agent-wait-until.w-stuck.*
+
 # ── a malformed poll knob may not kill the watch (GH-1870) ──────────────────
 # validate_pos_int had been hoisted above the mode branch, making a junk value
 # FATAL for single-target watches that previously ignored it. Every spawn path
