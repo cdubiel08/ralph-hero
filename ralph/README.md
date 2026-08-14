@@ -15,6 +15,7 @@ This is ralph v2 (GH-1662). Design record (normative): [`../thoughts/shared/idea
 | `/ralph:tend` | Hygiene lane: Backlog shape + Done audit — dedup, dependency wiring, stale-body detection against the live tree, observation intake with provenance. Metadata-only; closures are proposals via Human Needed |
 | `/ralph:board` | Human surface: orientation ("what's going on"), intake ("make a ticket"), answering blocked items, doctor, readiness |
 | `scripts/board` | Typed board CLI — the sole sanctioned mutation path: 6-state machine, claims with TTL, scope gate, doctor, and the lane selectors (`next`, `deliver-queue`, `tend-queue`) |
+| `scripts/deliver-push.sh` | The deliver lane's branch-write gate (GH-1917): a pinned `--force-with-lease` push, so a work session that pushed first wins atomically instead of being silently clobbered. No `--force` exists |
 | `examples/README.md` | Transport recipes for driving the lanes — `/loop` (fixed and self-paced), scheduled routines, scheduler scripts. Copy and own; ralph executes none of them |
 | `agents/investigator.md` | Read-only fan-out worker (Read/Grep/Glob hard allowlist) for parallel investigation |
 | `hooks/funnel-{board,merge}.sh` | Courtesy redirects: raw board mutations → the CLI; bare `gh pr merge` → the merge gate, when the host repo ships one. **Not** enforcement |
