@@ -1342,6 +1342,29 @@ describe("bounded queue read (GH-1785) — listOwnOpenItems", () => {
     expect(() => listItemsFull(ctx)).toThrow(/no cursor to fetch them/);
   });
 
+  describe("a cursor that drops a live item (GH-1896)", () => {
+    beforeEach(() => {
+      for (let n = 1; n <= 5; n++) gh.issues.set(n, { number: n, state: "Backlog" });
+      gh.itemsPageSize = 2;
+    });
+
+    it("retries once, and serves the retry when the drop was transient", () => {
+      gh.cursorDrops = new Set([3]);
+      gh.cursorDropWalks = 1; // the second walk sees a healthy cursor
+      expect(listItemsFull(ctx, QUEUE_SELECT_MINIMAL).open.map((i) => i.number)).toEqual([1, 2, 3, 4, 5]);
+      expect(gh.itemWalks).toBe(2);
+    });
+
+    it("raises rather than serving a short board when the drop persists", () => {
+      gh.cursorDrops = new Set([3]);
+      expect(() => listItemsFull(ctx, QUEUE_SELECT_MINIMAL)).toThrow(/returned 4 of 5 items/);
+    });
+
+    it("stays silent on a complete walk", () => {
+      expect(listItemsFull(ctx, QUEUE_SELECT_MINIMAL).open).toHaveLength(5);
+    });
+  });
+
   describe("through the CLI", () => {
     const capture = (argv: string[]) => {
       const said: string[] = [];

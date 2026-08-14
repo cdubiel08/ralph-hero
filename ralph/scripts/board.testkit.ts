@@ -109,6 +109,9 @@ export class FakeGh {
   runListJson = "[]"; // gh run list payload for doctor's state-guard check
   dropPageInfo = false; // corrupt-read injection: connection returns no pageInfo
   dropEndCursor = false; // corrupt-read injection: hasNextPage true, cursor absent
+  cursorDrops = new Set<number>(); // GH-1896: issue numbers the project cursor skips while totalCount still counts them
+  cursorDropWalks = Infinity; // how many item walks the drop survives — 1 models a transient skip
+  itemWalks = 0; // item walks begun (a request with no cursor starts one)
   itemsPageSize = Infinity; // items-per-page for the bulk view — finite exercises the cursor walk
   removedItems: string[] = []; // project item ids prune actually removed
   /** Removal-failure injection: "all" fails every removal (rate limit /
@@ -628,13 +631,21 @@ export class FakeGh {
       // edge GitHub would never have shown it (GH-1814).
       const all = [...this.issues.values()].filter((fi) => fi.onBoard !== false);
       const start = variables.after ? Number(variables.after) : 0;
-      const page = Number.isFinite(this.itemsPageSize)
-        ? all.slice(start, start + this.itemsPageSize)
-        : all;
-      const end = start + page.length;
+      if (!variables.after) this.itemWalks++;
+      const dropping = this.itemWalks <= this.cursorDropWalks;
+      const page = (
+        Number.isFinite(this.itemsPageSize) ? all.slice(start, start + this.itemsPageSize) : all
+      ).filter((fi) => !(dropping && this.cursorDrops.has(fi.number)));
+      // `end` walks the UNFILTERED slice: a cursor that skipped a node still
+      // advanced past it, which is exactly the GH-1896 hazard being modelled.
+      const end = Math.min(start + (Number.isFinite(this.itemsPageSize) ? this.itemsPageSize : all.length), all.length);
       return data({
         node: {
           items: {
+            // The connection counts what it holds, including the nodes the
+            // cursor failed to hand over — the only signal a walk has that it
+            // came up short.
+            totalCount: all.length,
             pageInfo: this.pageInfo(end < all.length, String(end)),
             nodes: page.map((fi) => ({
               // The bulk walk selects the ProjectV2Item id (prune's only

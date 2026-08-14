@@ -3344,9 +3344,35 @@ export function listItemsFull<S extends QueueSelect = typeof QUEUE_SELECT_FULL>(
   return serveWalk<S>(ctx, entry, false);
 }
 
+/** GitHub's `items(first:100, after:)` cursor is not stable across a project
+ *  being mutated under a ~15-page walk: a page boundary can skip a live node
+ *  (observed 2026-08-14, GH-1896 — #1873 reproducibly absent while the
+ *  issues-rooted read returned it). `totalCount` is the connection's own
+ *  answer to "how many are there", so a walk that paged FEWER nodes than that
+ *  dropped some. One retry absorbs the transient case; a second short read is
+ *  raised, because doctor's sweeps read a dropped item as "none" — silently
+ *  failing OPEN is the one outcome this file refuses everywhere else. */
 function walkFull(ctx: Ctx, select: QueueSelect): ItemCacheEntry {
+  const first = walkFullOnce(ctx, select);
+  if (!first.short) return first.entry;
+  const second = walkFullOnce(ctx, select);
+  if (!second.short) return second.entry;
+  throw new Error(
+    `project ${ctx.cfg.projectNumber}: the item walk returned ${second.scanned} of ${second.expected} items ` +
+      `(twice) — GitHub's cursor dropped live board items, so this read is incomplete. Retry; if it persists, ` +
+      `the project is being mutated faster than it can be paged.`,
+  );
+}
+
+function walkFullOnce(
+  ctx: Ctx,
+  select: QueueSelect,
+): { entry: ItemCacheEntry; short: boolean; scanned: number; expected: number } {
   const fetchedAt = startStamp(ctx);
-  return withCache(ctx, (cache) => {
+  // `expected` is the LAST page's totalCount: the connection's count as of the
+  // end of the walk, which is what the nodes paged so far must account for.
+  let expected = 0;
+  const entry: ItemCacheEntry = withCache(ctx, (cache): ItemCacheEntry => {
     const items: QueueItemAny[] = [];
     const closed: ClosedItemAny[] = [];
     // What the walk actually PAID FOR, counted as it pages. Not derivable from
@@ -3369,6 +3395,7 @@ function walkFull(ctx: Ctx, select: QueueSelect): ItemCacheEntry {
           node(id: $projectId) {
             ... on ProjectV2 {
               items(first: ${ITEMS_PAGE}, after: $after) {
+                totalCount
                 pageInfo { hasNextPage endCursor }
                 nodes {
                   id
@@ -3391,6 +3418,10 @@ function walkFull(ctx: Ctx, select: QueueSelect): ItemCacheEntry {
       // page is an error, never a page that "cost nothing".
       scan.pages++;
       scan.nodes += (page.nodes ?? []).length;
+      // A connection that answers with no totalCount cannot prove the walk
+      // complete, but it also cannot prove it short — 0 leaves the check
+      // inert rather than turning an unasked question into a failure.
+      if (typeof page.totalCount === "number") expected = page.totalCount;
       for (const n of page.nodes ?? []) {
         const c = n.content;
         if (!c?.number) continue;
@@ -3439,6 +3470,7 @@ function walkFull(ctx: Ctx, select: QueueSelect): ItemCacheEntry {
     // request at RUNTIME — the type-level cast alone cannot cross a JSON file.
     return { version: ITEM_CACHE_VERSION, kind: "full", select, fetchedAt, open: items, closed, scan };
   });
+  return { entry, short: entry.scan.nodes < expected, scanned: entry.scan.nodes, expected };
 }
 
 export function listItems<S extends QueueSelect = typeof QUEUE_SELECT_FULL>(
