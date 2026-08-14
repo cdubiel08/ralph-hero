@@ -297,7 +297,8 @@ ralph_fleet_spawn_done() {
 # invocation is exactly what the pane was prompted with, reply_to points at
 # a durable herdr agent (default s0-watch — see the header), report_path is
 # where Phase-6 skills will drop the C2 CompletionReport, and constraints
-# pin the branch (default feature/GH-N; shared-claim siblings pass the
+# pin the branch (default: the board CLI's grammar for the issue, legacy
+# feature/GH-N when it cannot be reached; shared-claim siblings pass the
 # SHARED branch), base origin/main, no_force always.
 #
 # When a board CLI is resolvable ($BOARD from lib.sh) the brief is validated
@@ -321,7 +322,13 @@ ralph_brief_write() {
     echo "ralph_brief_write: lane '$lane' has no skill mapping — only w-lane briefs exist today" >&2
     return 1
   fi
-  [ -n "$branch" ] || branch="feature/GH-$issue"
+  # The default is derived, not formatted (GH-1858): spawn callers pass the
+  # branch they actually cut, and a shared-claim sibling passes the SHARED
+  # one, so this only fires for a brief written outside a spawn. A board CLI
+  # that cannot name the issue leaves the legacy shape — it still resolves
+  # everywhere, and a brief is an observation that must not cost the spawn.
+  [ -n "$branch" ] || branch=$(ralph_branch_for_issue "$issue" 2>/dev/null) ||
+    branch="feature/GH-$issue"
   [ -n "$reply" ] || reply="${RALPH_HERDR_REPLY_TO:-s0-watch}"
   dir=$(ralph_run_dir "$id") || return 1
   file="$dir/briefs/$ref.json"

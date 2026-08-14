@@ -296,10 +296,18 @@ is "brief: replies route to the durable watcher agent" "herdr_agent s0-watch" \
   "$(jq -r '"\(.reply_to.kind) \(.reply_to.name)"' "$B")"
 is "brief: report_path reserves the C2 slot in reports/" \
   "$RDIR/reports/w9-fix#abcd.json" "$(jqf "$B" '.report_path')"
-is "brief: constraints pin branch/base/no_force" "feature/GH-9 origin/main true" \
+is "brief: constraints pin branch/base/no_force" "feat/9-fake-issue origin/main true" \
   "$(jq -r '"\(.constraints.branch) \(.constraints.base) \(.constraints.no_force)"' "$B")"
 is "brief: validated through board contract validate" "1" \
   "$(log_count "$FAKE_BOARD_LOG" '^contract validate ralph.fleet_brief ')"
+
+# A brief is an observation: an unnameable issue leaves the legacy shape
+# (which still resolves everywhere) rather than failing the write (GH-1858).
+printf '1\n' >"$FAKE_BOARD_FIXTURES/name.9.rc"
+B=$(ralph_brief_write "w9-fix#dc03" 9 2>/dev/null)
+is "brief: an unnameable issue falls back to the legacy branch" "feature/GH-9" \
+  "$(jqf "$B" '.constraints.branch')"
+rm -f "$FAKE_BOARD_FIXTURES/name.9.rc"
 
 B=$(ralph_brief_write "w9-fix#ef01" 9 "feature/GH-77" 2>/dev/null)
 is "brief: an explicit branch overrides the default (shared-claim siblings)" \

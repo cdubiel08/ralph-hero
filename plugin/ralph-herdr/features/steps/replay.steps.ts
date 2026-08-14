@@ -262,7 +262,7 @@ When('the operator answers item {int} with {string}', function (this: RalphWorld
 Then('the spawn succeeds', function (this: RalphWorld) {
   assert.strictEqual(this.spawnRc, 0, `spawn rc — output:\n${this.last.out}`);
   const n = s(this).issue;
-  assert.match(this.last.out, new RegExp(`spawned GH-${n} on feature/GH-${n}`));
+  assert.match(this.last.out, new RegExp(`spawned GH-${n} on feat/${n}-fake-issue`));
 });
 
 Then('the agent is named {string}', function (this: RalphWorld, name: string) {
@@ -302,7 +302,7 @@ Then(
     assert.strictEqual(rec.lineage.issue, issue);
     assert.strictEqual(rec.lineage.parent_issue, parent);
     assert.strictEqual(rec.lineage.plane, 'herdr');
-    assert.strictEqual(rec.lineage.herdr.worktree_branch, `feature/GH-${issue}`);
+    assert.strictEqual(rec.lineage.herdr.worktree_branch, `feat/${issue}-fake-issue`);
   },
 );
 
