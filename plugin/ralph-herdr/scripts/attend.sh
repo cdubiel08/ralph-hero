@@ -55,10 +55,18 @@ target=$(
       group=0
     fi
     ts=""
-    if [ -n "$ledger" ] && [ -s "$ledger" ]; then
-      ts=$(jq -rs --arg name "$name" '
+    # Name -> open ref FIRST, then an exact-ref join (GH-1776). Matching the
+    # name part of every record instead would read a dead generation's blocked
+    # timestamps as this agent's: names are deterministic, so a respawn after a
+    # crash recycles one, and the stale ts is always the older one — it would
+    # win the sort and send the human to the wrong pane first. No open ref (an
+    # agent the ledger never met, or an unreadable ledger) leaves ts empty,
+    # which is the documented fallback to agent-list order.
+    ref=$(ralph_ledger_open_ref "$name" "$REPO" 2>/dev/null) || ref=""
+    if [ -n "$ref" ] && [ -n "$ledger" ] && [ -s "$ledger" ]; then
+      ts=$(jq -rs --arg ref "$ref" '
         [ .[]
-          | select(((.agent_ref // "") | split("#")[0]) == $name)
+          | select((.agent_ref // "") == $ref)
           | select((.ev == "state" and ((.agent_status // .state // "") == "blocked"))
                    or (((try .tokens.state catch null) // "") == "blocked"))
           | .ts // empty ]

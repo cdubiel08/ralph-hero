@@ -131,6 +131,10 @@ is "open: pane correlation finds the ref bound to pA" "w1-a#0001" \
   "$(ralph_ledger_open_for_pane pA)"
 is "open: parent edges resolve children" "w2-b#0002" \
   "$(ralph_ledger_children w1-a#0001)"
+is "open: name resolves to its open ref" "w1-a#0001" "$(ralph_ledger_open_ref w1-a)"
+is "open: a name the ledger never met resolves to nothing" "" \
+  "$(ralph_ledger_open_ref w9-nope)"
+
 ralph_ledger_append '{"ts":"t4","ev":"exit","agent_ref":"w1-a#0001","reason":"pane_closed"}'
 is "open: exit closes exactly that ref" "w2-b#0002" \
   "$(ralph_ledger_open_agents | sort | tr '\n' ' ' | sed 's/ *$//')"
@@ -184,6 +188,27 @@ is "latest: a recycled name's NEW epoch inherits no parent edge (rc 1)" "1" "$rc
 is "latest: the dead epoch still answers for itself" "s0-root#0001" \
   "$(_ralph_ledger_latest_parent 'o10-orch#aaaa')"
 is "latest: pane reads are epoch-exact too" "pY" "$(_ralph_ledger_latest_pane 'o10-orch#bbbb')"
+
+mkdir -p "$TMP/unit2b"
+_saved_ledger="$RALPH_HERDR_LEDGER"
+RALPH_HERDR_LEDGER="$TMP/unit2b/ledger.jsonl"
+# GH-1776 — the join is on the EXACT ref, never the name part. A recycled name
+# (respawn after a crash: names are deterministic) would otherwise give the
+# LIVE generation the dead one's children, and the consequences are writes —
+# orphan_pass re-parents or orphan-marks whatever this returns.
+ralph_ledger_append '{"ts":"t3b","ev":"spawn","agent_ref":"w8-ghost#0088","pane_id":"pG"}'
+ralph_ledger_append '{"ts":"t3c","ev":"spawn","agent_ref":"w9-kid#0099","pane_id":"pK","tokens":{"parent":"w8-ghost#0088"}}'
+ralph_ledger_append '{"ts":"t3d","ev":"exit","agent_ref":"w8-ghost#0088","reason":"pane_closed"}'
+ralph_ledger_append '{"ts":"t3e","ev":"spawn","agent_ref":"w8-ghost#0188","pane_id":"pG2"}'
+is "open: a recycled name does not inherit the dead epoch's children" "" \
+  "$(ralph_ledger_children w8-ghost#0188)"
+is "open: the dead epoch still owns them (the ref is the key)" "w9-kid#0099" \
+  "$(ralph_ledger_children w8-ghost#0088)"
+is "open: the name resolves to the LIVE generation" "w8-ghost#0188" \
+  "$(ralph_ledger_open_ref w8-ghost)"
+is "open: a name the ledger never met resolves to nothing" "" \
+  "$(ralph_ledger_open_ref w7-nope)"
+RALPH_HERDR_LEDGER="$_saved_ledger"
 
 # ═══ 3. watch-event: pane.agent_status_changed ═══════════════════════════════
 WROOT="$TMP/wroot"
@@ -365,6 +390,31 @@ is "orphan re-pass: reconcile exits 0" "0" "$RC"
 is "orphan re-pass: no duplicate ledger events" "$lines_before" "$(wc -l <"$OLEDGER" | tr -d ' ')"
 is "orphan re-pass: no duplicate notification" "0" "$(log_count '^notification show')"
 
+# ═══ 5a. GH-1776: a recycled parent NAME does not suppress the orphan pass ═══
+# The dead parent o30-solo#0006 is closed and a NEW generation of the same
+# name (#0106) is open. Reconcile's "is this parent still open?" test used to
+# compare name parts, so the live generation answered for the dead one and the
+# child stayed silently parented to a worker that no longer exists — the ghost
+# this phase exists to clear. The test is on the full ref, so the pass runs.
+GROOT="$TMP/groot"
+GLEDGER="$GROOT/acme/demo/ledger.jsonl"
+mkdir -p "$GROOT/acme/demo"
+cat >"$GLEDGER" <<'EOF'
+{"ts":"t0","ev":"spawn","agent_ref":"o30-solo#0006","pane_id":"p30","tokens":{"role":"o","issue":"30","slug":"solo","depth":"0","state":"spawned","root":"o30-solo#0006"}}
+{"ts":"t1","ev":"spawn","agent_ref":"w31-kid#0007","pane_id":"p31","tokens":{"role":"w","issue":"31","slug":"kid","depth":"1","state":"spawned","parent":"o30-solo#0006","root":"o30-solo#0006"}}
+{"ts":"t2","ev":"exit","agent_ref":"o30-solo#0006","reason":"pane_exited"}
+{"ts":"t3","ev":"spawn","agent_ref":"o30-solo#0106","pane_id":"p32","tokens":{"role":"o","issue":"30","slug":"solo","depth":"0","state":"spawned","root":"o30-solo#0106"}}
+EOF
+herd_fixture '[{"name":"w31-kid","agent_status":"working","pane_id":"p31"},{"name":"o30-solo","agent_status":"working","pane_id":"p32"}]'
+
+: >"$FAKE_HERDR_LOG"
+run_reconcile "$GROOT"
+is "recycled parent: reconcile exits 0" "0" "$RC"
+is "recycled parent: the child is orphaned, not left on the ghost" "1" \
+  "$(lcount "$GLEDGER" '.ev=="state" and .agent_ref=="w31-kid#0007" and .state=="orphaned" and .prev_parent=="o30-solo#0006"')"
+is "recycled parent: the live generation did not adopt it" "0" \
+  "$(lcount "$GLEDGER" '.ev=="adopt" and .agent_ref=="w31-kid#0007"')"
+
 # ═══ 5b. RACING pane.exited + pane.closed — one death, one record set ════════
 # The server subscribes both because either can arrive alone, and it runs
 # hook commands CONCURRENTLY. The per-ledger mutex makes the loser re-read a
@@ -419,7 +469,7 @@ esac
 is "reconcile: open agent with no live counterpart marked lost" "1" \
   "$(lcount "$RLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost" and .via=="reconcile"')"
 is "reconcile: unledgered live agent discovered (fresh ref + tokens)" "1" \
-  "$(lcount "$RLEDGER" '.ev=="discover" and (.agent_ref | test("^w5-alpha#[0-9a-f]{4}$")) and .pane_id=="p5" and .via=="reconcile" and .tokens.role=="w" and .tokens.issue=="5" and .tokens.slug=="alpha"')"
+  "$(lcount "$RLEDGER" '.ev=="discover" and (.agent_ref | test("^w5-alpha#[0-9a-f]{8}$")) and .pane_id=="p5" and .via=="reconcile" and .tokens.role=="w" and .tokens.issue=="5" and .tokens.slug=="alpha"')"
 is "reconcile: legacy singleton never ledgered" "0" \
   "$(grep -c 'ralph-deliver' "$RLEDGER" || true)"
 is "reconcile: non-ralph agent never ledgered" "0" \

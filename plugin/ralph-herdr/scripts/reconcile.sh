@@ -516,10 +516,15 @@ while IFS= read -r f; do
   # whichever repository happened to be last in that earlier loop.
   live_names=$(ralph_names_for_ledger "$live_json" "$f")
   rows=$(ralph_ledger_open_rows) || rows=""
-  open_names=""
+  # Membership is by full ref, never by name part (GH-1776): a parent edge
+  # pointing at a DEAD generation whose name a live agent has since recycled
+  # would read as "parent still open" and the orphan pass would never run —
+  # the child stays silently parented to a worker that no longer exists, which
+  # is the ghost this phase exists to clear.
+  open_refs=""
   while IFS=$'\037' read -r ref _p _pid _h _par _st _i _co _t; do
     [ -n "$ref" ] || continue
-    open_names="$open_names ${ref%%#*}"
+    open_refs="$open_refs $ref"
   done <<EOF
 $rows
 EOF
@@ -527,8 +532,8 @@ EOF
   while IFS=$'\037' read -r ref _pane _pid _harness p _state _issue _checkout _toks; do
     [ -n "$ref" ] || continue
     [ -n "$p" ] || continue
-    case " $open_names " in
-      *" ${p%%#*} "*) continue ;; # parent still open — not an orphan edge
+    case " $open_refs " in
+      *" $p "*) continue ;; # parent still open — not an orphan edge
     esac
     case " $deads " in
       *" $p "*) : ;;

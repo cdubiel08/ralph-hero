@@ -229,6 +229,34 @@ ralph_ledger_open_agents() {
     | to_entries[] | select(.value) | .key' <"$file"
 }
 
+# ralph_ledger_open_ref NAME [REPO_ROOT] — the open agent_ref whose name part
+# is NAME, or nothing. This is the bridge for the callers that only have a
+# name: herdr knows names, the ledger keys on refs, and the join between them
+# has to happen somewhere. Doing it HERE means it happens once, against the
+# open set — a recycled name's dead generations are already closed, so they
+# cannot answer. A caller that instead matched `split("#")[0]` against every
+# record would match them (GH-1776), which is the ABA _ralph_ledger_latest
+# describes.
+#
+# Should a name ever have two open refs — it should not; a spawn of a live
+# name loses the agent-name mutex — the LAST is served: the newest generation
+# is the live one, and the older is a missing exit record, not a live worker.
+# shellcheck disable=SC2120  # REPO_ROOT is optional, as in the helpers above
+ralph_ledger_open_ref() {
+  local name="${1-}" ref out=""
+  [ -n "$name" ] || return 0
+  shift
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    [ "${ref%%#*}" = "$name" ] || continue
+    out="$ref"
+  done <<EOF
+$(ralph_ledger_open_agents "$@" 2>/dev/null || true)
+EOF
+  [ -n "$out" ] || return 0
+  printf '%s\n' "$out"
+}
+
 # ralph_ledger_last AGENT_REF — the most recent record for a ref, compact
 # JSON. rc 1 (silently) when the ref has no records.
 ralph_ledger_last() {
@@ -393,14 +421,23 @@ _ralph_ledger_latest_issue() {
 }
 
 # ralph_ledger_children REF — open agent_refs whose latest parent edge points
-# at REF (matched as exact ref, bare name, or same name part of another ref —
-# producers may record either form during the transition).
+# at REF, matched as the EXACT ref.
+#
+# The bare-name arm this used to carry (GH-1776) admitted that a child whose
+# parent edge names a DEAD generation of REF's name is REF's child. It is not:
+# names recycle on respawn, so that child belongs to the previous session and
+# the live agent inherits it. Every consequence of the mis-join is a write —
+# orphan_pass re-parents the child to this ref's grandparent, or marks it
+# orphaned and notifies — so the leniency did not degrade a diagnostic, it
+# corrupted the tree. Every producer writes a full ref (the token vocabulary's
+# `parent` is `name#epoch`, and ralph_depth_guard has always resolved it
+# exact-only through _ralph_ledger_latest), so nothing legitimate is lost.
 ralph_ledger_children() {
   local ref="${1-}" file
   [ -n "$ref" ] || return 1
   file=$(ralph_ledger_path) || return 1
   [ -s "$file" ] || return 0
-  jq -rs --arg ref "$ref" --arg name "${ref%%#*}" '
+  jq -rs --arg ref "$ref" '
     reduce .[] as $e ({open: {}, par: {}};
       if ($e.agent_ref // "") == "" then .
       else
@@ -413,7 +450,7 @@ ralph_ledger_children() {
     | .par as $par
     | .open | to_entries[]
     | select(.value)
-    | select((($par[.key] // "") | split("#")[0]) == $name or ($par[.key] // "") == $ref)
+    | select(($par[.key] // "") == $ref)
     | .key' <"$file"
 }
 
