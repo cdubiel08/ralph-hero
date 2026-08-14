@@ -182,10 +182,35 @@ be split again if it grows.
   `ralph/CLAUDE.md`, so future changes can be tested against it rather than
   re-deriving it from `fleet.sh` comments.
 
+## Decided: investigators are herdr-plane children, not forced in-process
+
+Investigators are **clear children of the agent that spawned them**, on the herdr
+plane. They are not bound to be in-process subagents.
+
+This was checked against the record rather than re-decided. Nothing forbids
+herdr-plane investigators. Two adjacent constraints exist, and neither is a ban:
+
+1. **The depth cap** — `ralph_depth_guard` caps herdr-plane spawn depth at 3
+   levels (depths 0–2); inner-plane `Agent(...)` subagents are free and never
+   counted. A driver at depth 0 or 1 may spawn investigator children within cap.
+2. **A soft preference, with a criterion** — `herdr-api.md:101`:
+
+   > Prefer inner subagents — herdr-plane children are for work **that must
+   > outlive your session**.
+
+   This is guidance about *when*, not a prohibition. An investigator whose
+   findings must survive the driver's turn, or that a human wants to read in a
+   pane, satisfies the stated criterion.
+
+What *was* litigated is a different thing: GH-1774 removed **shared claims**
+(the original D2 "one issue, many siblings"). That eliminated co-equal sibling
+*writers*. It said nothing about children.
+
+Consequence for #1808: its edge rule `driver → investigator only` already
+encodes this, and its scope stands unchanged. Investigators must appear in the
+lineage record as children of their spawning agent, carrying `role:
+investigator`, and are leaves (they spawn nothing).
+
 ## Open questions
 
-None blocking. One worth deciding during implementation: whether investigators
-in the driver's worktree earn their keep over in-process `ralph:investigator`
-agents dispatched via the Agent tool, which need no worktree at all. #1808's
-value is the *structural refusal* of a second driver; the investigator-placement
-half may be smaller than it looks.
+None blocking.
