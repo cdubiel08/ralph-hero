@@ -137,10 +137,15 @@ One case deserves separate statement because it is the load-bearing rationale, a
 epistemic rather than about latency.
 
 The investigator told the orchestrator that retiring a workspace "should have closed a lineage
-record and didn't". The peer session read the actual ledgers, found one spawn event and no
-`state` events, and demonstrated that the framing was the dramatic reading rather than the
-supported one. The investigator retracted; the orchestrator, which had already repeated the
-claim to the user, propagated the correction.
+record and didn't" — **asserting past its evidence, without having read the ledgers.** The peer
+session read them, found one spawn event and no `state` events, and demonstrated that the
+framing was the dramatic reading rather than the supported one. The investigator retracted; the
+orchestrator, which had already repeated the claim to the user, propagated the correction.
+
+The precise shape matters, and the investigator insisted on it against its own interest: this is
+not an agent self-correcting. It is **a peer catching an agent asserting past its evidence** —
+which is a strictly stronger case for the edge, because self-correction needs no channel and
+external falsification does.
 
 That correction exists **only because a flat reply path existed**. Routed through the hub, it is
 one session's claim against another's, arriving at a busy coordinator as two reports — and the
