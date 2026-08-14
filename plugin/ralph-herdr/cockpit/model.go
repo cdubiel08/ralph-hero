@@ -268,6 +268,24 @@ func (m *Model) backoff() {
 	m.pollEvery = next
 }
 
+// blurToCeiling is the third cadence input (GH-1876): the pane lost focus, so
+// nobody can see the board. That is not "nothing changed" — it is "the reader
+// left" — so it jumps straight to the staleness bound instead of walking there
+// through the ×1.5 ramp.
+//
+// Bounded by construction, which is why a terminal that sends BlurMsg and never
+// FocusMsg cannot strand the cadence: the ceiling IS the stated staleness bound
+// (an unset MaxInterval leaves it at the floor — no backoff means no blur
+// backoff either), and any keypress snaps back — and a pane you are not focused
+// on is a pane you cannot type into.
+func (m *Model) blurToCeiling() {
+	ceiling := m.cfg.MaxInterval
+	if ceiling < m.cfg.Interval {
+		ceiling = m.cfg.Interval
+	}
+	m.pollEvery = ceiling
+}
+
 // snapToFloor is the asymmetric half: evidence of a write returns the cadence
 // to the floor in ONE step, never gradually. Changes cluster, so one change is
 // strong evidence of more (the asymmetry TCP uses, for the same reason).
