@@ -185,16 +185,26 @@ ralph_agent_parse() {
   printf '%s %s %s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$gen"
 }
 
-# ralph_agent_ref NAME — print the durable ref NAME#EPOCH. EPOCH is 4
-# lowercase-hex chars hashed cheaply (cksum) from spawn time + pid; it is
-# what outlives a pane — pane ids are server-scoped and never durable.
-# rc 1 when NAME does not parse.
+# ralph_agent_ref NAME — print the durable ref NAME#EPOCH. EPOCH is 8
+# lowercase-hex chars hashed cheaply (cksum); it is what outlives a pane —
+# pane ids are server-scoped and never durable. rc 1 when NAME does not parse.
+#
+# The mint takes four inputs, and the last two are why (GH-1776): spawn time
+# and pid alone are CONSTANT across a fleet loop, so N spawns in one second
+# from one process minted one epoch — observed `#12d9` x4. $RANDOM and a
+# per-process counter vary within that second, so two generations of one name
+# get distinct epochs. Width went 16 -> 32 bits at the same time: at 4 hex
+# chars a birthday collision runs ~0.08% across 10 generations of a name, and
+# every join here keys on the full ref, so a collision is an ABA — the dead
+# generation's parent edge, state and depth read as the live one's.
+_RALPH_REF_SEQ=0
 ralph_agent_ref() {
   local name="${1-}" sum
   ralph_agent_parse "$name" >/dev/null || {
     echo "ralph_agent_ref: unparseable name '$name'" >&2
     return 1
   }
-  sum=$(printf '%s' "$(date +%s)$$" | cksum | awk '{print $1}')
-  printf '%s#%04x\n' "$name" "$((sum % 65536))"
+  _RALPH_REF_SEQ=$((_RALPH_REF_SEQ + 1))
+  sum=$(printf '%s' "$(date +%s)$$${RANDOM}$_RALPH_REF_SEQ" | cksum | awk '{print $1}')
+  printf '%s#%08x\n' "$name" "$sum"
 }

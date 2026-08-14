@@ -378,13 +378,36 @@ rm -f "$FAKE_HERDR_FIXTURES/agent-read.w42-fix-pipeline.txt"
 # Ledger timestamps order the queue: oldest blocked-since first.
 mkdir -p "$TMP/att"
 cat >"$TMP/att/ledger.jsonl" <<'EOF'
-{"ts":"2026-08-11T02:00:00Z","ev":"state","agent_ref":"w42-fix-pipeline#cccc","agent_status":"blocked"}
-{"ts":"2026-08-11T01:00:00Z","ev":"state","agent_ref":"w41-older#dddd","agent_status":"blocked"}
+{"ts":"2026-08-11T00:00:00Z","ev":"spawn","agent_ref":"w42-fix-pipeline#cccccccc"}
+{"ts":"2026-08-11T00:00:00Z","ev":"spawn","agent_ref":"w41-older#dddddddd"}
+{"ts":"2026-08-11T02:00:00Z","ev":"state","agent_ref":"w42-fix-pipeline#cccccccc","agent_status":"blocked"}
+{"ts":"2026-08-11T01:00:00Z","ev":"state","agent_ref":"w41-older#dddddddd","agent_status":"blocked"}
 EOF
 herd_fixture '[{"name":"w42-fix-pipeline","agent_status":"blocked","pane_id":"p4"},{"name":"w41-older","agent_status":"blocked","pane_id":"p3"}]'
 clear_logs
 run_attend "$TMP/att/ledger.jsonl"
 is "attend ordering: the longest-blocked w-lane wins" "1" \
+  "$(fcount "$FAKE_HERDR_LOG" "agent focus w41-older")"
+
+# GH-1776 — a DEAD generation of a live name must not order the live one.
+# Names are deterministic, so a crash-and-respawn recycles one. Here the LIVE
+# w42 generation has no blocked record yet (herdr reports the status; the
+# ledger has not caught up), while its dead predecessor sat blocked for a day.
+# A bare-name join — what this read used to do — hands the live w42 that
+# day-old timestamp, so the ghost's wait wins the sort and the human is sent
+# to the wrong pane. On an exact-ref join w42 simply has no timestamp and
+# sorts after w41, which is the only agent whose wait is real.
+cat >"$TMP/att/ledger.jsonl" <<'EOF'
+{"ts":"2026-08-10T00:00:00Z","ev":"spawn","agent_ref":"w42-fix-pipeline#deadbeef"}
+{"ts":"2026-08-10T00:30:00Z","ev":"state","agent_ref":"w42-fix-pipeline#deadbeef","agent_status":"blocked"}
+{"ts":"2026-08-10T23:00:00Z","ev":"exit","agent_ref":"w42-fix-pipeline#deadbeef"}
+{"ts":"2026-08-11T00:00:00Z","ev":"spawn","agent_ref":"w42-fix-pipeline#cccccccc"}
+{"ts":"2026-08-11T00:00:00Z","ev":"spawn","agent_ref":"w41-older#dddddddd"}
+{"ts":"2026-08-11T01:00:00Z","ev":"state","agent_ref":"w41-older#dddddddd","agent_status":"blocked"}
+EOF
+clear_logs
+run_attend "$TMP/att/ledger.jsonl"
+is "attend ordering: a recycled name's dead epoch does not order the live one" "1" \
   "$(fcount "$FAKE_HERDR_LOG" "agent focus w41-older")"
 # Without the ledger the tie falls back to agent-list order.
 clear_logs

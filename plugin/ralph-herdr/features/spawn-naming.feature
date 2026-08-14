@@ -16,7 +16,7 @@ Feature: Spawn honors the naming grammar
     And the worktree was created on branch "feature/GH-123" from origin/main
     And the agent was prompted with "/ralph:work 123"
     And the ledger holds one spawn record binding the agent ref to issue 123 with parent 45
-    And the spawn record's agent ref is the agent's name plus a 4-hex epoch
+    And the spawn record's agent ref is the agent's name plus a 8-hex epoch
     And the spawn record's lineage validates against the ralph.lineage contract
     And the spawn tokens were pushed onto the pane
 

@@ -367,6 +367,37 @@ honestly.
                        write reports in Phase 6, and nothing reads this yet
 ```
 
+## The one-writer invariant
+
+> Only one worker may write into a worktree at a time, through a claim.
+> Everything else is orchestration, relay, and messaging.
+
+This is the fleet's single safety property, and the test to apply to any change
+here: **does this protect the invariant, or is it bookkeeping?** Bookkeeping may
+be wrong without producing an unsafe state — it produces bad diagnostics.
+
+It holds by construction, through three layers:
+
+| Layer | Mechanism | Strength |
+|---|---|---|
+| Worktree topology | the branch derives from the issue number, so issue ↔ branch ↔ worktree is 1:1 | structural |
+| Agent-name mutex | names are `w<N>-<slug>`; herdr refuses a duplicate name server-side | atomic — this is what wins a real race |
+| Board claim | taken inside `/ralph:work`, read-back verified | the backstop |
+
+The `w<N>-*` pre-check in `lib.sh` is advisory and fails open; it is not what
+holds the line. The name collision at `agent start` is, and the lost race is
+answered with `rc=2` — never an improvised `--N` sibling. The schedule that
+pins this is `tests/spawn.test.sh`'s race block, which replays the interleaving
+deterministically rather than hoping two real processes collide (GH-1776).
+
+Everything else here — the ledger, agent refs, lineage records, reconcile — is
+**observability**. If every one of them were wrong at once the result is an
+unreadable diagnostic trail, never two writers in one tree. That is why refs are
+joined on the full `name#epoch` and never on the name part: names are
+deterministic and recycle on respawn, so a name-level join lets a dead
+generation answer for the live one (an ABA), and the passes that act on those
+answers — adoption, orphaning — write.
+
 ## Sibling fleets (shared claims) — removed
 
 `work-issue-fleet` put several `/ralph:work` sessions on ONE issue: one

@@ -100,8 +100,8 @@ is "parse: infra name s0-watch" \
 
 # ── ralph_agent_ref ──────────────────────────────────────────────────────────
 ref=$(ralph_agent_ref w1-foo)
-re='^w1-foo#[0-9a-f]{4}$'
-if [[ $ref =~ $re ]]; then ok "ref: name#epoch with 4 lowercase-hex chars"; else not_ok "ref: bad shape '$ref'"; fi
+re='^w1-foo#[0-9a-f]{8}$'
+if [[ $ref =~ $re ]]; then ok "ref: name#epoch with 8 lowercase-hex chars"; else not_ok "ref: bad shape '$ref'"; fi
 fails "ref: unparseable name refused" ralph_agent_ref not-a-name
 
 # ── invalid inputs ───────────────────────────────────────────────────────────
