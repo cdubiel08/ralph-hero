@@ -326,7 +326,11 @@ export function parseRef(ref: string): AgentRef | null {
 }
 
 // ---------------------------------------------------------------------------
-// ClaimV2 — multi-holder, wire-compatible with board.ts's single-holder claim
+// ClaimV2 — wire-compatible with board.ts's single-holder claim
+//
+// Multi-holder values are RECOGNIZED but never CREATED (GH-1869): nothing
+// grows a holder set any more. Readers, doctor checks and the leave path
+// still parse, report and shrink values already on the board.
 // ---------------------------------------------------------------------------
 
 /** Wire format: "holder1+holder2+...|iso8601". One holder serializes to
@@ -379,18 +383,6 @@ export function formatClaim(claim: ClaimV2): string {
 
 export function isMember(claim: ClaimV2, holder: string): boolean {
   return claim.holders.includes(holder);
-}
-
-/** Fleet join: adds the holder (no-op membership-wise if already in) and
- *  refreshes the shared since. Throws past the 8-holder cap — a full fleet is
- *  a refusal the caller must surface, not silently absorb. */
-export function addHolder(claim: ClaimV2, holder: string, now: Date): ClaimV2 {
-  if (holder === "" || holder.includes("+") || holder.includes("|"))
-    throw new RangeError(`holder contains wire delimiters: ${JSON.stringify(holder)}`);
-  if (isMember(claim, holder)) return { holders: [...claim.holders], since: now };
-  if (claim.holders.length >= CLAIM_MAX_HOLDERS)
-    throw new RangeError(`claim holder cap (${CLAIM_MAX_HOLDERS}) reached; ${holder} cannot join`);
-  return { holders: [...claim.holders, holder], since: now };
 }
 
 /** Leave: removing the last holder returns null — the caller clears the

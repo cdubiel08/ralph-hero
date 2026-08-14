@@ -140,24 +140,26 @@ plus the last reconcile. L10 lineage closure is checked read-only by
 
 ## Fleets (shared claims)
 
-ClaimV2 holds up to 8 holders on one shared timestamp — wire
-`h1+h2+...|iso8601`, single-holder byte-identical to the v1 claim. The verbs:
+ClaimV2 recognizes up to 8 holders on one shared timestamp — wire
+`h1+h2+...|iso8601`, single-holder byte-identical to the v1 claim. **Nothing
+creates a multi-holder value any more** (`claim join` was removed in GH-1869);
+what remains reads and cleans values already on the board:
 
 ```bash
 board claim show NNN            # holders, shared since, age vs TTL
-board claim join NNN --holder w1743-fix-thing   # In Progress items only
 board claim leave NNN --holder w1743-fix-thing  # last one out clears the field
 ```
 
-`claim join`/`leave` never transition state — board moves stay the skills'
-job. Any member's heartbeat refreshes the ONE shared since.
+`claim leave` never transitions state — board moves stay the skills' job. Any
+member's heartbeat refreshes the ONE shared since.
 
 Nothing creates shared claims any more. The `work-issue-fleet` action that put
 sibling sessions on one issue was removed in GH-1774: siblings shared a git
 worktree, and so raced on the index, the branch, and each other's uncommitted
 files — the claim coordinated the *issue* while the damage happened to the
-*tree*. `claim join`/`leave` remain for reading and cleaning claims already
-written. To parallelize one issue, decompose it into separate issues with
+*tree*. `claim show`/`leave` remain for reading and cleaning claims already
+written; `claim join`, the last path that grew a holder set, was removed in
+GH-1869. To parallelize one issue, decompose it into separate issues with
 dependency edges and let `work-fleet` give each its own worktree.
 
 Refill (`work-fleet --refill`) is watcher-owned and gated: opt-in per run,

@@ -7,11 +7,14 @@
  * (claimRaw non-null with claim null) survives untouched. The transition
  * suite here pins the fleet semantics: any-member heartbeat preserves
  * co-holders, release = removeHolder, and the LAST one out clears the field.
+ *
+ * GH-1869 split creation from recognition: nothing grows a holder set any
+ * more, while every read/report/leave path still handles values already on
+ * the board. Both halves are pinned below.
  */
 
 import { describe, expect, it } from "vitest";
 import {
-  addHolder,
   CLAIM_MAX_HOLDERS,
   type Claim,
   encodeClaim,
@@ -24,6 +27,8 @@ import {
   removeHolder,
   transition,
 } from "./board.js";
+import * as boardApi from "./board.js";
+import * as contractsApi from "./contracts.js";
 import { FakeGh, makeCtx, NOW, refusalMessage } from "./board.testkit.js";
 
 const T0 = new Date("2026-08-10T12:00:00Z");
@@ -59,23 +64,17 @@ describe("ClaimV2 wire format (single-holder back-compat)", () => {
 
 describe("ClaimV2 membership operations", () => {
   const base: Claim = { holders: ["w1-a"], since: T0 };
+  // Multi-holder values are RECOGNIZED, never CREATED (GH-1869) — so a fleet
+  // claim under test comes off the wire, the way a real one now only can.
+  const two = parseClaim(`w1-a+w1-b|${iso}`)!;
 
-  it("addHolder joins and refreshes the ONE shared since", () => {
-    const later = new Date(T0.getTime() + 60_000);
-    expect(addHolder(base, "w1-b", later)).toEqual({ holders: ["w1-a", "w1-b"], since: later });
-    // Re-adding a member is membership-idempotent but still refreshes since.
-    expect(addHolder(base, "w1-a", later)).toEqual({ holders: ["w1-a"], since: later });
-  });
-
-  it("addHolder refuses the 9th holder (cap = 8) — a full fleet is a refusal, not a silent drop", () => {
-    let claim: Claim = base;
-    for (let i = 2; i <= CLAIM_MAX_HOLDERS; i++) claim = addHolder(claim, `w1-h${i}`, T0);
-    expect(claim.holders).toHaveLength(CLAIM_MAX_HOLDERS);
-    expect(() => addHolder(claim, "w1-overflow", T0)).toThrow(/cap/);
+  it("nothing exported can grow a holder set (GH-1869: creation removed)", () => {
+    expect(Object.keys(boardApi)).not.toContain("addHolder");
+    expect(Object.keys(boardApi)).not.toContain("claimJoin");
+    expect(Object.keys(contractsApi)).not.toContain("addHolder");
   });
 
   it("removeHolder drops a member; the LAST one out returns null (caller clears the field)", () => {
-    const two = addHolder(base, "w1-b", T0);
     expect(removeHolder(two, "w1-a")).toEqual({ holders: ["w1-b"], since: T0 });
     expect(removeHolder(base, "w1-a")).toBeNull();
     expect(removeHolder(base, "stranger")).toBe(base); // non-member: idempotent no-op
@@ -83,11 +82,16 @@ describe("ClaimV2 membership operations", () => {
 
   it("heartbeat: ANY member refreshes the shared since; a non-member gets null", () => {
     const later = new Date(T0.getTime() + 5 * 60_000);
-    const two = addHolder(base, "w1-b", T0);
     expect(heartbeat(two, "w1-b", later)).toEqual({ holders: ["w1-a", "w1-b"], since: later });
     expect(heartbeat(two, "stranger", later)).toBeNull();
     expect(isMember(two, "w1-b")).toBe(true);
     expect(isMember(two, "stranger")).toBe(false);
+  });
+
+  it("the read cap still bounds a recognized fleet at CLAIM_MAX_HOLDERS", () => {
+    const eight = Array.from({ length: CLAIM_MAX_HOLDERS }, (_, i) => `w1-h${i}`).join("+");
+    expect(parseClaim(`${eight}|${iso}`)?.holders).toHaveLength(CLAIM_MAX_HOLDERS);
+    expect(parseClaim(`${eight}+w1-overflow|${iso}`)).toBeNull();
   });
 });
 
