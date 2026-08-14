@@ -621,6 +621,7 @@ export interface Config {
   apply: ApplyConfig; // GH-1693: apply-kind opt-in, read from the merge policy
   smells: SmellThresholds; // GH-1715: doctor's advisory state-smell tripwires
   volume: VolumeThresholds; // GH-1788: how big the scanned board may get before doctor says so
+  foreign: ForeignRepoPolicy; // GH-1815: may items from other repos live on this board at all
 }
 
 // ---------------------------------------------------------------------------
@@ -882,6 +883,7 @@ export function loadConfig(repoRoot: string): Config {
     apply: loadApplyConfig(repoRoot),
     smells: parseSmellThresholds(),
     volume: parseVolumeThresholds(),
+    foreign: parseForeignRepoPolicy(),
   };
 }
 
@@ -976,6 +978,100 @@ export function parseVolumeThresholds(
     maxItems: positive("RALPH_VOLUME_MAX_ITEMS", VOLUME_DEFAULTS.maxItems),
     pruneAfterDays: positive("RALPH_PRUNE_AFTER_DAYS", VOLUME_DEFAULTS.pruneAfterDays),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Foreign-repo posture (GH-1815) — multi-repo is opt-in, never implicit.
+//
+// The board is repo-blind by construction: the walk is rooted at
+// ProjectV2.items, so an item from ANY repository lands in the result and is
+// partitioned after the fact by ownRepo(). Nothing in GitHub prevents one from
+// being added. This posture says whether that is permitted at all.
+//
+// It exists for GH-1814, which narrows the read path to a repo-scoped walk.
+// That narrowing is sound only if foreign items cannot be introduced — a
+// foreign item on a board nobody scans for foreign items is INVISIBLE, which
+// is strictly worse than today's visible-but-partitioned behaviour.
+//
+// Honest limit, the same shape as the apply close gate: GitHub has no pre-add
+// hook, so a human, the Projects UI or another automation can still place a
+// foreign item on the board. board.ts refuses to be the one that does it, and
+// doctor's full-project sweep is the periodic audit that catches the rest.
+// That division is the point: the hot path may be repo-scoped precisely
+// because doctor still walks the whole project.
+// ---------------------------------------------------------------------------
+
+export const FOREIGN_REPO_ENV = "RALPH_ALLOW_FOREIGN_REPO_ITEMS";
+
+/** `configured` is not decoration: "nobody has decided" and "somebody decided
+ *  deny" are different postures, and doctor reports which one is in effect so
+ *  an operator can tell a default they inherited from a choice they made. */
+export interface ForeignRepoPolicy {
+  allow: boolean;
+  configured: boolean;
+}
+
+/** Unlike the smell and volume thresholds, this one gates a WRITE, so an
+ *  unreadable value may not degrade to "whatever the default was" quietly —
+ *  it fails closed AND says so. Empty reads as unset (an exported-but-empty
+ *  shell variable is the commonest way to arrive here, and it is not a
+ *  decision), which costs nothing: both postures deny. */
+export function parseForeignRepoPolicy(
+  env: Record<string, string | undefined> = process.env,
+): ForeignRepoPolicy {
+  const raw = env[FOREIGN_REPO_ENV];
+  if (raw === undefined || raw.trim() === "") return { allow: false, configured: false };
+  const v = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) return { allow: true, configured: true };
+  if (["0", "false", "no", "off"].includes(v)) return { allow: false, configured: true };
+  process.stderr.write(
+    `warn: ${FOREIGN_REPO_ENV}=${JSON.stringify(raw)} is not a boolean — denying foreign-repo items\n`,
+  );
+  return { allow: false, configured: true };
+}
+
+/** The `owner/repo` an issue URL says the issue lives in, or null if the URL
+ *  is not one we can read. Host-agnostic (GHE lives under a different host,
+ *  same path shape). */
+export function repoFromIssueUrl(url: string): string | null {
+  const m = /^https?:\/\/[^/]+\/([^/\s]+)\/([^/\s]+)\/issues\/\d+/.exec(url);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+/** The one gate between board.ts and placing an item on the board.
+ *
+ *  Audited 2026-08-14 (GH-1815): both add-to-project call sites are own-repo
+ *  BY CONSTRUCTION — `createIssue` writes into `cache.repositoryId` and
+ *  `adopt` resolves through `fetchIssue`, whose query is pinned to
+ *  cfg.owner/cfg.repo, while `requireNumber` accepts a bare integer only. So
+ *  this is an ASSERTION, not a filter: it currently refuses nothing. It ships
+ *  anyway so that a future add path which is NOT own-repo trips here instead
+ *  of silently making GH-1814's repo-scoped walk incomplete — the audit
+ *  written down as code rather than as a comment that rots.
+ *
+ *  It is checked at the MUTATION, not at the verb, because a verb-level check
+ *  is one refactor away from being routed around. And it keys on the URL
+ *  GitHub returned in the same response as the node id being added — comparing
+ *  `${cfg.owner}/${cfg.repo}` against itself would assert nothing. */
+export function assertBoardAddAllowed(ctx: Ctx, url: string, number: number): void {
+  if (ctx.cfg.foreign.allow) return;
+  const self = `${ctx.cfg.owner}/${ctx.cfg.repo}`;
+  const repo = repoFromIssueUrl(url);
+  // Fails closed on an unreadable URL: it arrives in the same response as the
+  // node id about to be added, so not being able to read it means not knowing
+  // what is being added — and the blast radius is `adopt`/`create` alone.
+  if (repo === null)
+    throw new RefusalError(
+      `cannot read the repository from issue URL ${JSON.stringify(url)}, so #${number} cannot be ` +
+        `confirmed to belong to ${self}. Foreign-repo items are denied on this board; ` +
+        `set ${FOREIGN_REPO_ENV}=true to permit them.`,
+    );
+  if (repo.toLowerCase() !== self.toLowerCase())
+    throw new RefusalError(
+      `#${number} belongs to ${repo}, not ${self}. Foreign-repo items are denied on this board ` +
+        `(multi-repo is opt-in): set ${FOREIGN_REPO_ENV}=true to permit them. ` +
+        `Items already on the board are never removed by this refusal — \`board doctor\` lists them.`,
+    );
 }
 
 /** TTL is the only override path in this CLI, so a bad value must not fail
@@ -2337,6 +2433,7 @@ export function adopt(ctx: Ctx, number: number, prefetched?: Issue): Issue {
   let issue = prefetched ?? fetchIssue(ctx, number);
   if (issue.archived) return issue; // archived items reject writes — no-op
   if (!issue.itemId) {
+    assertBoardAddAllowed(ctx, issue.url, issue.number);
     const added = ghGraphQL(
       ctx,
       `mutation($projectId: ID!, $contentId: ID!) {
@@ -4226,6 +4323,20 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
     );
     const issue = created.createIssue.issue;
 
+    // The issue already exists by the time the URL it is judged on exists, so
+    // a refusal here has a durable half — say so, like answer() does, rather
+    // than leaving an issue nobody's selector will ever surface (the same
+    // reason priority is validated above BEFORE createIssue runs).
+    try {
+      assertBoardAddAllowed(ctx, issue.url, issue.number);
+    } catch (e) {
+      if (e instanceof RefusalError)
+        throw new RefusalError(
+          `${e.message}\nThe issue WAS created (${issue.url}) and is NOT on the board — ` +
+            `\`board adopt ${issue.number}\` once the posture permits it, or close it.`,
+        );
+      throw e;
+    }
     const added = ghGraphQL(
       ctx,
       `mutation($projectId: ID!, $contentId: ID!) {
@@ -4897,6 +5008,19 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         ? `${ESTIMATE_FIELD} + ${PRIORITY_FIELD} present`
         : `${missingAdvisory.join(", ")} missing — sizing/ranking degrade gracefully (board setup creates them)`,
     );
+    // GH-1815. INFO by construction — a posture is a configuration, never a
+    // breach; the breach (a foreign item under `deny`) is `foreign-items`
+    // below. Reported OUTSIDE the item sweep so a scan that throws still
+    // leaves the operator able to see which posture is in effect.
+    add(
+      "foreign-repo-policy",
+      "info",
+      ctx.cfg.foreign.allow
+        ? `allow — foreign-repo items are permitted (${FOREIGN_REPO_ENV} set); reads partition them out of every write path`
+        : `deny${ctx.cfg.foreign.configured ? ` (${FOREIGN_REPO_ENV} set)` : " (default — nothing configured)"}` +
+          ` — board.ts refuses to place a foreign-repo item on this board. GitHub has no pre-add hook, so items` +
+          ` added by hand or by other automation are caught by the \`foreign-items\` sweep, not prevented.`,
+    );
 
     // item sweep: legacy states, claim anomalies, stale claims, closed drift
     try {
@@ -4909,12 +5033,25 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       // runs cold-cache, so this is always "fresh read" there.
       if (pages.cached)
         add("board-read", "info", `item sweep ran on a cached board read, ${pages.ageSec}s old (\`--fresh\` forces a walk; \`--fix\` always walks)`);
+      // GH-1815: posture-aware. Under `allow` a foreign item is the configured
+      // shape of the board and stays informational. Under `deny` it is a
+      // policy breach AND the thing that would make GH-1814's repo-scoped walk
+      // incomplete — so it warns. It does NOT escalate under --strict and
+      // --fix never touches it: pre-existing items are grandfathered by
+      // policy, the remedy removes work from a board, and that is a human's
+      // call. A weekly CI doctor going red over a state the policy explicitly
+      // declines to auto-fix would be the check crying wolf about itself.
+      const foreignList = foreign.map((i) => `${i.repo}#${i.number}`).join(" ");
       add(
         "foreign-items",
-        "ok",
+        foreign.length === 0 || ctx.cfg.foreign.allow ? "ok" : "warn",
         foreign.length === 0
           ? "none"
-          : `${foreign.length} item(s) from other repos on this board (informational; board.ts never touches them): ${foreign.map((i) => `${i.repo}#${i.number}`).join(" ")}`,
+          : ctx.cfg.foreign.allow
+            ? `${foreign.length} item(s) from other repos on this board, permitted by ${FOREIGN_REPO_ENV} (board.ts never touches them): ${foreignList}`
+            : `${foreign.length} item(s) from other repos on this board while foreign-repo items are DENIED: ${foreignList}. ` +
+              `Grandfathered — never removed automatically. Either set ${FOREIGN_REPO_ENV}=true to permit them, ` +
+              `or move them off this board; until then a repo-scoped read cannot be assumed complete.`,
       );
       // Board volume (GH-1788). INFO by construction: a big board is a cost,
       // never a broken invariant, so --strict must not escalate it and --fix
@@ -5802,7 +5939,12 @@ mutations
   comment NNN -m "body"
 
 maintenance
-  adopt NNN                   ensure issue is on the board (new items → Backlog)
+  adopt NNN                   ensure issue is on the board (new items → Backlog).
+                              Refuses a foreign-repo issue: multi-repo is
+                              opt-in via RALPH_ALLOW_FOREIGN_REPO_ITEMS=true
+                              (unset = deny). Items already on the board are
+                              grandfathered — doctor lists them, nothing
+                              removes them.
   reconcile NNN               sync board state to issue reality (closed→Done/Canceled,
                               reopened→Backlog); the state-guard event lane
   parent-check NNN            advance parent if all children closed
@@ -5811,7 +5953,13 @@ maintenance
                               machine's own comment trail — never gates, never
                               fixed; thresholds via RALPH_SMELL_CLAIM_EXPIRIES
                               (2), RALPH_SMELL_ESCALATIONS (3),
-                              RALPH_SMELL_REVIEW_DAYS (7)
+                              RALPH_SMELL_REVIEW_DAYS (7).
+                              "foreign-repo-policy" reports the posture in
+                              effect and whether it was configured or
+                              defaulted; "foreign-items" warns when items from
+                              other repos are on a board that denies them —
+                              never escalated by --strict, never removed by
+                              --fix (that call stays with the operator)
   prune [--apply] [--json] [--limit N]
                               list closed items removable from the PROJECT (the
                               issues are untouched) — closed ≥180 days
