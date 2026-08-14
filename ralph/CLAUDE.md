@@ -31,6 +31,16 @@ ralph/
 
 A lane is a **typed selector + a judgment skill + a goal** — cadence is derived per pass from what the queue is blocked on, never configured. Three exist: **work** (`board next` → `/ralph:work`), **deliver** (`board deliver-queue` → `/ralph:deliver` — quiescent In Review items, marker-gated per PR, gate truth from `merge-pr.sh --dry-run`), **tend** (`board tend-queue` → `/ralph:tend` — Backlog hygiene + Done audit, metadata-only, closures only ever proposed via a marker comment the selector reads back). Skills are single-pass operators; pacing vocabulary lives only in `examples/README.md`.
 
+### Work/deliver exclusion is typed at the branch write (GH-1917)
+
+The lanes spec accepted this exclusion as **probabilistic**: an interactive `/ralph:work` session never holds `tick.pid`, so if it idles past `RALPH_SETTLE_MIN` deliver can rebase and push a branch that live session still owns. The two named mitigations do not cover it. Quiescence and the pre-push re-check evaluate the *same* predicate — the newest of state change, issue comment, and open-PR activity (`board.ts:3697-3713`), all **remote** signals — and a session editing files locally emits none of them. So the re-check is not an independent second guard for this hazard; it is the settle window sampled twice. Two mitigations, one blind spot.
+
+Mutual exclusion needs an atomic winner, and **a message cannot be one** (that is GH-1890's finding, and why no channel was built here). Projects V2 has no compare-and-swap, so the board claim cannot carry it either — and the claim is gone by then regardless: `transition()` clears it on In Progress → In Review (`board.ts:2108-2136`) and read-back-throws if the clear did not stick.
+
+But the contested resource is not a board item — it is a **git branch, and git ref updates are a real server-side CAS**. That is the primitive `scripts/deliver-push.sh` uses: a `--force-with-lease` pinned to the head deliver rebased from, so a work session that pushed first wins and deliver is refused (`DELIVER PUSH PENDING`, exit 75 — back off, not escalate). Always pinned, never bare: a bare `--force-with-lease` compares against the remote-tracking ref, which **any background `git fetch` silently refreshes** — proved to clobber in `deliver-push.test.ts`, which also keeps a control case showing a plain force push destroying the work commit outright.
+
+Honest bound: this excludes at the **push instant**, and only against work that was *pushed*. A session holding unpushed local commits is not covered — its next push conflicts loudly, the "messy-but-recoverable" outcome the lanes spec already accepted. This is the load-bearing half of the exclusion, not the whole of it.
+
 **The four-dimension lane test** (gates every future lane proposal; stated once, here): a new lane is justified only when **signal source, write lane, pacing signal, and permission set all four differ simultaneously** from every existing lane. The pacing signal is the observable a lane derives its next wake from (work: queue depth; deliver: check conclusions, review deltas, retry/settle windows; tend: accumulation age) — a proposal that differs only in derived cadence numbers fails the test.
 
 ## Conventions
