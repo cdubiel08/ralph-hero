@@ -47,6 +47,31 @@ npx vitest run ralph/scripts/ && npx tsc --noEmit
 shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh
 ```
 
+## Names are derived, once (GH-1807)
+
+Branch `<kind>/NNN-<slug>`, agent `w NNN-<slug>` — the **same slug**, so the branch panel, `herdr agent list` and `.claude/worktrees/` read as one vocabulary. Declared in `contracts.ts` (`formatBranchName`/`parseBranchName` beside grammar B's `formatAgentName`/`parseAgentName`, sharing `slugify`/`truncateSlug`/`slugBudget`); read via **`board name NNN [--json]`**, which is what tick.sh and tick-herdr.sh call — a shell that rebuilt slugify would be a second grammar. Kind comes from labels (apply label wins, and fails closed to `apply` on a truncated label list) with `feat` as the stated default; the registry is closed, so `spike/1807-x` does not parse.
+
+The legacy `feature/GH-NNN` resolves everywhere for the deprecation window, and **resume beats re-cut** — a unit that already has a legacy branch keeps it, or its work splits across two heads. Both grammars are covered by ONE query: `deliver-queue`'s PR linkage moved from exact `pullRequests(headRefName:)` to `refs(refPrefix:"refs/heads/", query:"<number>")`, because GitHub's ref filter is a **substring** match (probed, not assumed). That also returns coincidences — `feature/GH-18070`, `chore/1807-typo` — which `parseBranchName` rejects client-side; the alternative (recomputing the exact branch) would have needed the `labels` connection back in the item walk that GH-1803 just removed. Measured: +1 pt per 10-item deliver chunk, item walk untouched.
+
+## The Loop
+
+`scripts/tick.sh` runs ONE iteration: lock (flock when present, else atomic noclobber pidfile) → heartbeat → `board next` (empty = exit before spawning) → worktree-per-job → `$RALPH_TICK_RUNNER "/ralph:work NNN"` with hard timeout → per-issue log; timeout releases the claim. The scheduler (launchd/cron via `install-loop.sh --enable`) owns cadence — no sentinels, no in-session wakeups; success is judged by board state, not exit codes (a no-op runner logs loudly).
+
+- **Autopilot opt-in is typed and fail-closed**: `autopilot=true` in `~/.ralph/config`.
+- **Billing guard**: tick refuses to spawn when `ANTHROPIC_API_KEY` is set (would bill API credits, not the subscription) unless `RALPH_ALLOW_API_BILLING=true`. `RALPH_TICK_RUNNER` makes the transport pluggable — interactive `/ralph:work` and bridge-routine drives are equally valid.
+
+## Item cache — reads may be stale, writes see truth (GH-1806)
+
+The item walk is memoized to `~/.ralph/cache/items-{kind}-{select}-*` for 90 s, so a chain of board reads pays for one walk instead of one each. `--fresh` forces a walk for one command; a cached answer always says so, including on an empty queue.
+
+This is **client-side bounded staleness, not a lease** — GitHub offers no server participation. Three rules carry the whole safety argument, all enforced in code:
+
+1. **The cache never drives a write-guard evaluation.** Every MUTATING command, `doctor --fix`, and `prune --apply` run with the TTL zeroed (in `doctor()` itself, not only at the CLI dispatch), and every write path already re-reads the single item fresh at the guard. A stale entry can cost one wasted claim attempt — never a wrong transition — because the claim protocol is read-back verification, not read freshness.
+2. **Read-your-writes + monotonic reads.** Every mutation bumps an `epoch` mark (hooked in `ghGraphQL`, the one path all writes take) and unlinks every selection variant; `servedAt` is a high-water mark. `fetchedAt` is stamped at the *start* of the walk, so a ~22 s walk that began before a write cannot end-stamp its way past the epoch check.
+3. **An entry serves only a request its selection COVERS** (`selectCovers`). Since GH-1803 the walk's shape varies per caller, and an unselected group is *absent* from the item rather than empty — so serving a labels-less entry to a caller that reads labels would not lose data, it would fabricate "GitHub said there are none", and `next` would rank an item as unblocked whose dependencies were never fetched. `tsc` cannot catch this across a JSON file, so the check is at runtime and the cast on serve is honest only because it ran. The converse is free: a *wider* entry serves narrower requests, so a `list` or `doctor` walk pays for the `next`/`deliver-queue` reads after it. Entries are keyed by selection, so a lean walk cannot evict a fat one.
+
+The cached walk also carries `scan` (GH-1788's meter), so `board-volume` and `prune`'s dry run report the board they were actually computed from rather than a zeroed counter.
+
 ## Install model
 
 Claude Code installs `ralph` from the marketplace clone as an immutable versioned copy; edits here reach a running session after merge → `release-ralph.yml` bumps + tags → plugin update. `board.ts` ships inside the plugin (no npm, no version pin — the repo copy is the version).
