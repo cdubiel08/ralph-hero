@@ -12,6 +12,12 @@
 # once on done/idle/gone — then drops from the watch list; the watcher exits
 # when the list is empty.
 #
+# `idle` is the one ambiguous read: a session that has been spawned but has not
+# yet produced its first token reads exactly like one that finished. Both modes
+# therefore hold an `idle` target that has never been observed live (working or
+# blocked) until either it arms or RALPH_HERDR_WATCH_ARM_SEC elapses. `done`
+# and `gone` are unambiguous and stay terminal on the first read.
+#
 # Notifications are advisory; the board stays the sole source of truth. This
 # script never kills an agent and never writes board state.
 #
@@ -21,6 +27,9 @@
 #                            (default 15; a malformed value warns and defaults)
 #   RALPH_HERDR_WAIT_MAX_SEC ceiling on ONE server-owned `agent wait`, seconds
 #                            (default 86400 — see wait_for)
+#   RALPH_HERDR_WATCH_ARM_SEC how long an unarmed target may read `idle` before
+#                            idle counts as terminal, seconds (default 120 —
+#                            see armed/in_grace)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,7 +40,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 REPO_NAME=$(basename "$REPO")
 
-# watch_poll — the poll/backoff interval, defaulting past an unusable value.
+# forgiving_int — a knob resolver that defaults past an unusable value.
 #
 # Deliberately NOT validate_pos_int, which dies: every spawn path (deliver-pass,
 # tend-pass, work-next, work-fleet, link-offer) `exec`s into this watcher AFTER
@@ -40,17 +49,27 @@ REPO_NAME=$(basename "$REPO")
 # agent unwatched. RALPH_* vars are exported from shell profiles and inherited
 # by every pane, so a stale value is a live route to exactly that. A poll
 # interval is advisory; the watch is not.
-watch_poll() {
-  local v="${RALPH_HERDR_WATCH_POLL:-15}"
+#
+# arm_sec resolves RALPH_HERDR_WATCH_ARM_SEC the same forgiving way and for the
+# same reason: a stale export from a shell profile may not kill a live watch.
+forgiving_int() {  # forgiving_int NAME VALUE DEFAULT
+  local v="$2"
   case "$v" in
     '' | *[!0-9]* | 0*)
-      echo "${0##*/}: ignoring RALPH_HERDR_WATCH_POLL='$(printf '%s' "$v" | ralph_sanitize)' (not a positive integer) — using 15s" >&2
-      v=15
+      echo "${0##*/}: ignoring $1='$(printf '%s' "$v" | ralph_sanitize)' (not a positive integer) — using $3s" >&2
+      v="$3"
       ;;
   esac
   echo "$v"
 }
-POLL=$(watch_poll)
+POLL=$(forgiving_int RALPH_HERDR_WATCH_POLL "${RALPH_HERDR_WATCH_POLL:-15}" 15)
+ARM_SEC=$(forgiving_int RALPH_HERDR_WATCH_ARM_SEC "${RALPH_HERDR_WATCH_ARM_SEC:-120}" 120)
+
+# The grace clock starts when the watcher does. Every spawn path execs into
+# this script immediately after its agent is live, so watcher start is the
+# spawn timestamp to within one command — no ledger read required.
+WATCH_START=$(date -u +%s)
+in_grace() { [ "$(($(date -u +%s) - WATCH_START))" -lt "$ARM_SEC" ]; }
 
 # _herdr_verdict BODY — the shared classification of an adapter refusal, so the
 # two modes cannot drift on what "gone" means. rc 2 only for herdr's own
@@ -95,6 +114,8 @@ if [ "$#" -gt 1 ]; then
   # bash 3.2: space-separated string lists, membership via case globs.
   watch_list="$*"
   blocked_seen=""   # targets already notified for their current blocked episode
+  armed=""          # targets observed live (working/blocked) at least once
+  grace_noted=""    # targets whose spawn-window hold has been announced
 
   in_list() { case " $1 " in *" $2 "*) return 0 ;; *) return 1 ;; esac; }
   drop_from() {  # drop_from "LIST" NAME — prints the list without NAME
@@ -127,19 +148,36 @@ if [ "$#" -gt 1 ]; then
           watch_list=$(drop_from "$watch_list" "$t")
           blocked_seen=$(drop_from "$blocked_seen" "$t")
           ;;
-        done | idle)
-          notify "$t" "ralph: $t $state" "repo $REPO_NAME — session finished; check the pane"
+        idle)
+          # Ambiguous: not-started-yet reads identically to finished. Hold it
+          # until it arms or the grace window closes (GH-1878).
+          if ! in_list "$armed" "$t" && in_grace; then
+            if ! in_list "$grace_noted" "$t"; then
+              echo "$(date -u +%FT%TZ) $t reads idle inside the ${ARM_SEC}s spawn window — holding it on the watch list"
+              grace_noted="$grace_noted $t"
+            fi
+            continue
+          fi
+          notify "$t" "ralph: $t idle" "repo $REPO_NAME — session finished; check the pane"
+          watch_list=$(drop_from "$watch_list" "$t")
+          blocked_seen=$(drop_from "$blocked_seen" "$t")
+          ;;
+        "done")
+          notify "$t" "ralph: $t done" "repo $REPO_NAME — session finished; check the pane"
           watch_list=$(drop_from "$watch_list" "$t")
           blocked_seen=$(drop_from "$blocked_seen" "$t")
           ;;
         blocked)
+          in_list "$armed" "$t" || armed="$armed $t"
           if ! in_list "$blocked_seen" "$t"; then
             notify "$t" "ralph: $t blocked" "repo $REPO_NAME — attend the pane"
             blocked_seen="$blocked_seen $t"
           fi
           ;;
         *)
-          # working/unknown — re-arm the blocked edge for this target.
+          # working/anything-else — the target is live: latch it armed, and
+          # re-arm the blocked edge.
+          in_list "$armed" "$t" || armed="$armed $t"
           blocked_seen=$(drop_from "$blocked_seen" "$t")
           ;;
       esac
@@ -202,6 +240,9 @@ wait_or_backoff() {
   return 1
 }
 
+ARMED=0        # 1 once the session has been observed working or blocked
+GRACE_NOTED=0  # the spawn-window hold is announced once, not every poll
+
 echo "watching $TARGET (repo $REPO_NAME) — waiting for blocked/done/idle"
 
 while :; do
@@ -222,6 +263,18 @@ while :; do
       continue
       ;;
   esac
+
+  # The bare wait's default until-set includes idle, so a session spawned but
+  # not yet producing tokens satisfies it on the first call and used to end the
+  # watch 30 seconds in (GH-1878). Hold it — pacing by POLL, since the wait
+  # would keep returning instantly — until it arms or the window closes.
+  if [ "$state" = idle ] && [ "$ARMED" -eq 0 ] && in_grace; then
+    [ "$GRACE_NOTED" -eq 1 ] || echo "$(date -u +%FT%TZ) $TARGET reads idle inside the ${ARM_SEC}s spawn window — still watching"
+    GRACE_NOTED=1
+    sleep "$POLL"
+    continue
+  fi
+  case "$state" in working | blocked) ARMED=1 ;; esac
 
   notify "$TARGET" "ralph: $TARGET $state" "repo $REPO_NAME — attend the pane"
 

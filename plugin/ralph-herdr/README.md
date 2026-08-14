@@ -89,6 +89,10 @@ while the session keeps blocking and exits once the session is done or idle.
 Multiple targets (the fleet case): a portable poll loop (`agent get` every
 `RALPH_HERDR_WATCH_POLL`s) notifies on each agent's first block and once on
 done/idle/gone, dropping it from the watch list; exits when the list is empty.
+`idle` is the one ambiguous read — a session spawned but not yet producing
+tokens looks exactly like one that finished — so both modes hold an `idle`
+target that has never been observed working or blocked until it arms or
+`RALPH_HERDR_WATCH_ARM_SEC` elapses (GH-1878).
 Both verbs — `agent get` and `agent wait` — go through the transport adapter,
 so a read that cannot be answered is neither a state nor a departure: only
 herdr's own `agent_not_found` ends a watch. Anything else keeps the target on
@@ -134,6 +138,7 @@ of each script:
 | `RALPH_HERDR_REPO` | `$PWD` | repo the scripts operate on; the default (the pane's cwd) is almost always right |
 | `HERDR_BIN_PATH` | `herdr` | path to the herdr binary |
 | `RALPH_HERDR_WATCH_POLL` | `15` | poll interval, seconds, for the multi-target watcher loop, and the backoff after an unreadable read in either mode (the single-target watch is otherwise event-driven). A malformed value warns and falls back — the watcher is `exec`'d into after its agent is live, so dying on it would leave that agent unwatched |
+| `RALPH_HERDR_WATCH_ARM_SEC` | `120` | how long a target that has never been observed working or blocked may read `idle` before `idle` counts as a finished session. Bounds the spawn window in which "not started yet" and "finished" are indistinguishable; `done` and `gone` are unambiguous and stay terminal on the first read. Same forgiving fallback as the poll knob |
 | `RALPH_HERDR_WAIT_MAX_SEC` | `86400` | ceiling on one server-owned `agent wait`. The wait is unbounded by design; this exists only so a wedged server surfaces as an unreadable read rather than hanging the pane forever |
 | `RALPH_HERDR_ANSWER_TAIL` | `40` | lines of `gh issue view --comments` the answer pane shows before the answer prompt |
 | `RALPH_HERDR_ANSWER_NUDGE_MS` | `15000` | `--wait` timeout for the post-answer `agent prompt` nudge; expiry reports "sent but not confirmed", never "delivered" |
