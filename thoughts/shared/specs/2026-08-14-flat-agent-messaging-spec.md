@@ -177,6 +177,16 @@ verified board claim). This is filed as its own unit (§14), because a session t
 "build a channel" would have shipped the channel and left this race open behind it — which is
 exactly the v1 pattern, where every fix was a message discipline and none was a mechanism.
 
+**Evidential status: no data, which is not the same as no problem.** Asked whether tonight's
+fleet produced a near-miss, the orchestrator checked rather than recalled and reported that **no
+deliver lane ran at all** — the selector was read every tick but never acted on, and every unit
+was spawned serially, one issue per branch. The race needs an enabled deliver loop concurrent
+with an interactive work session idle past `RALPH_SETTLE_MIN`; that configuration never existed.
+A clean night under conditions that never exercised the race is worth nothing as evidence in
+either direction. **The hazard stands on the lanes spec's own text, not on observation** — and
+letting "nothing happened" render identically to "nothing could have happened" is the exact
+defect class this repo shipped three fixes for on the same day (#1878/#1907/#1909).
+
 ---
 
 ## 4. Why this does not reverse the lanes non-goal
@@ -290,6 +300,15 @@ Wrong for a sibling edge for two reasons that survive §5.1's correction:
 an agent it is responsible for. Sibling-to-sibling use is forbidden. `agent attach [--takeover]`
 remains the *human's* escalation rung, a different actor and not a sibling edge.
 
+**Explicitly permitted, so the prohibition is not misapplied: spawner→worker lifecycle.**
+Resuming an outage-killed session is a hub call, not a sibling edge, and it is the one operation
+with **no sanctioned alternative** — a killed session cannot be reached by `SendMessage`, and the
+board cannot restart it. The prohibition above is about *peer coordination*, and a reader who
+applied it to session lifecycle would remove the only tool for the case that needs it. Two
+conditions keep this from becoming a loophole: the caller must be the party responsible for that
+agent's lifecycle (its spawner or the scheduler), and the payload must be a resume, never a
+coordination message that §1 would have prohibited on a live peer.
+
 ---
 
 ## 6. What a peer message may authorize: nothing
@@ -390,6 +409,11 @@ ungoverned namespace is that defect recurring. But it is **adjacent to GH-1890, 
 this issue is about the message path; that is about the name — so it is filed separately (§14)
 rather than absorbed.
 
+*Provenance:* found by tripping over it, not proposed in the abstract — the orchestrator hit the
+collision live while sending the message that produced §12, addressing this session by its herdr
+agent name and bouncing. That is the stronger provenance and it is why the defect is stated as
+observed rather than suspected.
+
 **Interim rule, which needs no fix to be safe:** reply to the sender's `from` address; enumerate
 with `ListAgents` when initiating; never construct a peer address, and never assume a herdr
 agent name resolves.
@@ -412,6 +436,14 @@ construction: preventing it means an inbox or a lease, and §5.3 refuses the inb
 
 The existing error behaviour is in-repo precedent worth citing: it named the stale socket and
 directed the caller to re-run `ListAgents` rather than failing silently.
+
+**The invalidating party should know it is invalidating.** Reported by the orchestrator against
+itself: it retired the workspace with no sense that it was ending a live channel between two
+other parties. This is not an argument for an inbox — it is the observation that **retirement is
+a lifecycle event with a second-order effect that is currently invisible to the actor causing
+it.** Nothing in this spec depends on fixing that, because §6 keeps the loss bounded to advice.
+It is recorded because the asymmetry is real: the sender learns the address died, the party that
+killed it never does.
 
 **What a holder is entitled to assume: nothing beyond the moment.** An address is valid until it
 isn't, and the sender finds out by sending. This is acceptable *only because* the payload class
