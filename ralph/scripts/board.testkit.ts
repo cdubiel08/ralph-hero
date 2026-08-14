@@ -554,6 +554,27 @@ export class FakeGh {
         },
       });
     }
+    // Closed-edge closure (GH-1814): aliased parent lookups, no `number`
+    // variable — must precede the single-issue branch, which would read one.
+    if (query.includes("pe0: issue(number")) {
+      const out: Record<string, any> = {};
+      for (const m of query.matchAll(/pe(\d+): issue\(number: (\d+)\)/g)) {
+        const fi = this.issues.get(Number(m[2]));
+        out[`pe${m[1]}`] = fi
+          ? {
+              number: fi.number,
+              parent: fi.parent
+                ? { number: fi.parent, repository: { nameWithOwner: "cdubiel08/ralph-hero" } }
+                : null,
+              projectItems: {
+                pageInfo: { hasNextPage: fi.projectItemsTruncated ?? false },
+                nodes: fi.onBoard === false ? [] : [{ project: { id: PROJECT_ID } }],
+              },
+            }
+          : null;
+      }
+      return data({ repository: out });
+    }
     if (query.includes("issue(number")) {
       const fi = this.issues.get(variables.number);
       if (!fi) return data({ repository: { issue: null } });
@@ -565,7 +586,10 @@ export class FakeGh {
       return data({ repository: { issue: this.issuePayload(fi) } });
     }
     if (query.includes("items(first")) {
-      const all = [...this.issues.values()];
+      // A project scan returns BOARD items. An `onBoard: false` issue is not
+      // one, and a fake that hands it over anyway lets a caller see a tree
+      // edge GitHub would never have shown it (GH-1814).
+      const all = [...this.issues.values()].filter((fi) => fi.onBoard !== false);
       const start = variables.after ? Number(variables.after) : 0;
       const page = Number.isFinite(this.itemsPageSize)
         ? all.slice(start, start + this.itemsPageSize)
