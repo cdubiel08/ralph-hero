@@ -220,6 +220,54 @@ describe("metrics: doctor sweep", () => {
   });
 });
 
+describe("metrics: tend-queue (GH-1891)", () => {
+  /** Was: the full project scan (one page per 100 items the board has EVER
+   *  held) plus a 20-issue history chunk per 20 recent closes — 22 round trips
+   *  and 47 GraphQL points on this repo. Now both halves are issues-rooted and
+   *  the trail fetch is comments-only: 17 points over these 4 round trips.
+   *
+   *  The pin that matters is that NONE of them scale with closed history: the
+   *  open page and the closed WINDOW page are both bounded by live work, so a
+   *  board with 55 long-closed items costs exactly what a board with none
+   *  does. A regression here is a reader that went back to the scan. */
+  it("tend-queue on a board of 5 open + 55 long-closed = 3 round trips warm", () => {
+    const gh = new FakeGh();
+    const old = new Date(NOW.getTime() - 400 * 86_400_000).toISOString();
+    const stale = new Date(NOW.getTime() - 45 * 86_400_000).toISOString();
+    for (let n = 1; n <= 5; n++) gh.issues.set(n, { number: n, state: "Backlog", updatedAt: stale });
+    for (let n = 6; n <= 60; n++)
+      gh.issues.set(n, {
+        number: n, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED",
+        closedAt: old, updatedAt: old,
+      });
+    const { ctx, m } = warmCtx(gh);
+    runQuiet(["tend-queue", "--json"], ctx);
+    // 1 open page + 1 closed-window page + 1 trail chunk for the 5 queued open
+    // items (all stale-body). No audit trail chunk: every close here is outside
+    // the 14-day window, so the audit fetches nothing.
+    expect(m.graphql).toBe(3);
+    expect(m.mutations).toBe(0); // a selector never writes — pinned
+  });
+
+  it("and does not grow when the closed history does", () => {
+    const cost = (closedCount: number): number => {
+      const gh = new FakeGh();
+      const old = new Date(NOW.getTime() - 400 * 86_400_000).toISOString();
+      const stale = new Date(NOW.getTime() - 45 * 86_400_000).toISOString();
+      for (let n = 1; n <= 5; n++) gh.issues.set(n, { number: n, state: "Backlog", updatedAt: stale });
+      for (let n = 6; n <= 5 + closedCount; n++)
+        gh.issues.set(n, {
+          number: n, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED",
+          closedAt: old, updatedAt: old,
+        });
+      const { ctx, m } = warmCtx(gh);
+      runQuiet(["tend-queue", "--json"], ctx);
+      return m.graphql;
+    };
+    expect(cost(300)).toBe(cost(0));
+  });
+});
+
 describe("metrics: next directness (epic boards)", () => {
   it("the head is immediately actionable — a leaf, not the epic root that needs a follow-up get", () => {
     const gh = new FakeGh();

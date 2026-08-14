@@ -535,6 +535,43 @@ export class FakeGh {
         },
       });
     }
+    // Bounded closed-window read for the Done audit (GH-1891). Served
+    // UPDATED_AT DESC like GitHub does, since the reader stops at the first
+    // node older than its cutoff — a fake that returned them in any other
+    // order would pass a reader that truncates early.
+    if (query.includes("issues(states: CLOSED")) {
+      const all = [...this.issues.values()]
+        .filter(
+          (fi) =>
+            (fi.issueState ?? "OPEN") === "CLOSED" &&
+            (fi.repo ?? "cdubiel08/ralph-hero") === "cdubiel08/ralph-hero",
+        )
+        .sort((a, b) => Date.parse(b.updatedAt ?? b.closedAt ?? "") - Date.parse(a.updatedAt ?? a.closedAt ?? ""));
+      const start = variables.after ? Number(variables.after) : 0;
+      const page = Number.isFinite(this.itemsPageSize) ? all.slice(start, start + this.itemsPageSize) : all;
+      const end = start + page.length;
+      return data({
+        repository: {
+          issues: {
+            pageInfo: this.pageInfo(end < all.length, String(end)),
+            nodes: page.map((fi) => ({
+              number: fi.number,
+              closedAt: fi.closedAt ?? null,
+              // An issue's close IS an update, so absent updatedAt falls back
+              // to closedAt rather than to "unknown" — see listOwnRecentClosed.
+              updatedAt: fi.updatedAt ?? fi.closedAt ?? null,
+              projectItems: {
+                pageInfo: { hasNextPage: fi.projectItemsTruncated ?? false },
+                nodes:
+                  fi.onBoard === false
+                    ? []
+                    : [{ isArchived: fi.archived ?? false, project: { id: PROJECT_ID } }],
+              },
+            })),
+          },
+        },
+      });
+    }
     if (query.includes("repositories(first")) {
       return data({
         node: { repositories: { nodes: this.linkedRepos.map((r) => ({ nameWithOwner: r })) } },

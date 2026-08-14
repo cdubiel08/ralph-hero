@@ -1719,6 +1719,14 @@ export interface IssueHistory {
 
 const HISTORY_COMMENTS = 60;
 const HISTORY_CHUNK = 20; // issues per round trip
+/** Issues per round trip when only comments are read (GH-1891). Higher than
+ *  HISTORY_CHUNK because the charge follows nodeCount, and without the
+ *  projectItems × fieldValues nesting each issue costs 60 nodes instead of
+ *  ~280 — so this batch bills LESS than the smaller one it replaces. */
+const COMMENTS_CHUNK = 100;
+
+const COMMENTS_SELECTION = `
+  comments(last: ${HISTORY_COMMENTS}) { nodes { body } }`;
 
 const HISTORY_SELECTION = `
   comments(last: ${HISTORY_COMMENTS}) { nodes { body } }
@@ -1736,6 +1744,26 @@ const HISTORY_SELECTION = `
     }
   }`;
 
+/** Comment trails only (GH-1891) — what the tend lane actually reads.
+ *
+ *  `HISTORY_SELECTION` costs what it costs because of ONE nesting:
+ *  `projectItems × fieldValues` is 200 of the ~280 nodes charged per issue, and
+ *  the tend lane reads neither — it wants the audit/proposal markers, which
+ *  live in comments. Dropping that nesting is what lets the chunk grow too:
+ *  cost tracks nodeCount, so 100 issues × 60 comments bills less than 20 issues
+ *  × 280 did. Measured on this repo's 14-day audit window, 5 round trips at
+ *  3 pts became 1 at 2.
+ *
+ *  A separate return type rather than an `IssueHistory` with nulled fields:
+ *  `stateUpdatedAt: null` means "the board never wrote this item's state", and
+ *  a read that never asked may not make that claim (the same absent-vs-empty
+ *  rule the queue selects follow). Doctor's smells keep `fetchHistories`. */
+export function fetchCommentTrails(ctx: Ctx, numbers: number[]): Map<number, string[]> {
+  return batchIssueRead(ctx, numbers, COMMENTS_CHUNK, COMMENTS_SELECTION, (issue) =>
+    (issue.comments?.nodes ?? []).map((c: any) => c?.body ?? ""),
+  );
+}
+
 /** History for MANY issues, batched behind GraphQL aliases. A query per open
  *  item would multiply doctor's cost by the size of the board (and the
  *  reconciler cron runs every 15 min), so `HISTORY_CHUNK` issues share one
@@ -1743,16 +1771,43 @@ const HISTORY_SELECTION = `
  *  machine's audit trail lives. Issues that came back null are simply absent
  *  from the map; every caller must treat "no history" as "no smell". */
 export function fetchHistories(ctx: Ctx, numbers: number[]): Map<number, IssueHistory> {
-  const out = new Map<number, IssueHistory>();
+  return batchIssueRead(ctx, numbers, HISTORY_CHUNK, HISTORY_SELECTION, (issue, cache) => {
+    const item = (issue.projectItems?.nodes ?? []).find(
+      (x: any) => x?.project?.id === cache.projectId,
+    );
+    const stateValue = (item?.fieldValues?.nodes ?? []).find(
+      (v: any) => v?.field?.name === STATE_FIELD,
+    );
+    return {
+      comments: (issue.comments?.nodes ?? []).map((c: any) => c?.body ?? ""),
+      stateUpdatedAt: stateValue?.updatedAt ?? null,
+      prActivityAt: (issue.closedByPullRequestsReferences?.nodes ?? [])
+        .map((p: any) => p?.updatedAt)
+        .filter((t: unknown): t is string => typeof t === "string"),
+    };
+  });
+}
+
+/** The batched-alias read both issue-trail fetchers share. Selection and chunk
+ *  size are the caller's — the per-chunk fault isolation, which is the part
+ *  that is easy to get subtly wrong, is not duplicated. */
+function batchIssueRead<T>(
+  ctx: Ctx,
+  numbers: number[],
+  chunkSize: number,
+  selection: string,
+  parse: (issue: any, cache: BoardCache) => T,
+): Map<number, T> {
+  const out = new Map<number, T>();
   if (numbers.length === 0) return out;
   return withCache(ctx, (cache) => {
     let succeeded = 0;
     let lastFailure: unknown = null;
-    for (let start = 0; start < numbers.length; start += HISTORY_CHUNK) {
-      const chunk = numbers.slice(start, start + HISTORY_CHUNK);
+    for (let start = 0; start < numbers.length; start += chunkSize) {
+      const chunk = numbers.slice(start, start + chunkSize);
       const decls = chunk.map((_, k) => `$n${k}: Int!`).join(", ");
       const aliases = chunk
-        .map((_, k) => `a${k}: issue(number: $n${k}) { ${HISTORY_SELECTION} }`)
+        .map((_, k) => `a${k}: issue(number: $n${k}) { ${selection} }`)
         .join("\n");
       const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
       chunk.forEach((n, k) => (vars[`n${k}`] = n));
@@ -1781,19 +1836,7 @@ export function fetchHistories(ctx: Ctx, numbers: number[]): Map<number, IssueHi
       chunk.forEach((n, k) => {
         const issue = repo[`a${k}`];
         if (!issue) return;
-        const item = (issue.projectItems?.nodes ?? []).find(
-          (x: any) => x?.project?.id === cache.projectId,
-        );
-        const stateValue = (item?.fieldValues?.nodes ?? []).find(
-          (v: any) => v?.field?.name === STATE_FIELD,
-        );
-        out.set(n, {
-          comments: (issue.comments?.nodes ?? []).map((c: any) => c?.body ?? ""),
-          stateUpdatedAt: stateValue?.updatedAt ?? null,
-          prActivityAt: (issue.closedByPullRequestsReferences?.nodes ?? [])
-            .map((p: any) => p?.updatedAt)
-            .filter((t: unknown): t is string => typeof t === "string"),
-        });
+        out.set(n, parse(issue, cache));
       });
     }
     // EVERY chunk failing is not partial degradation — it is the history read
@@ -3169,6 +3212,85 @@ const PROJECT_ITEMS_PAGE = 10;
 /** Parent lookups per round trip in the closed-edge closure. */
 const CLOSED_EDGE_BATCH = 50;
 
+/** The own-repo issues closed inside a lookback window, issues-rooted (GH-1891).
+ *
+ *  The Done audit is the last reader that needed the project scan's `closed`
+ *  half, which is what kept `tend-queue` paying for every item the board has
+ *  ever held (15 pages, 30 pts) to find ~90 issues closed in the last 14 days.
+ *
+ *  There is no server-side `closedAt` filter or ordering, so the window is cut
+ *  against UPDATED_AT DESC. That is COMPLETE, not a heuristic: closing an issue
+ *  is an update, so `updatedAt >= closedAt` always — an issue closed inside the
+ *  window cannot have sorted below one updated outside it. The first node older
+ *  than the cutoff therefore ends the read, and only issues whose window
+ *  membership was decided by a field GitHub actually sorted on are dropped.
+ *
+ *  Cheaper than the walk it replaces in a second way: the audit reads only
+ *  `number` and `closedAt` off these, so `fieldValues` — the connection that
+ *  makes the open walk's `projectItems` nesting cost real points — is not
+ *  requested at all. Board membership and archived are filtered exactly as the
+ *  scan-derived set filtered them, and a truncated membership list is the same
+ *  hard, self-naming error the open walk raises rather than a silent drop. */
+export function listOwnRecentClosed(
+  ctx: Ctx,
+  since: Date,
+): Array<{ number: number; closedAt: string }> {
+  const cutoff = since.getTime();
+  return withCache(ctx, (cache) => {
+    const out: Array<{ number: number; closedAt: string }> = [];
+    let after: string | null = null;
+    for (;;) {
+      const data: any = ghGraphQL(
+        ctx,
+        `query($owner: String!, $repo: String!, $after: String) {
+          repository(owner: $owner, name: $repo) {
+            issues(states: CLOSED, first: 100, after: $after,
+                   orderBy: {field: UPDATED_AT, direction: DESC}) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                number
+                closedAt
+                updatedAt
+                projectItems(first: ${PROJECT_ITEMS_PAGE}) {
+                  pageInfo { hasNextPage }
+                  nodes { isArchived project { id } }
+                }
+              }
+            }
+          }
+        }`,
+        { owner: ctx.cfg.owner, repo: ctx.cfg.repo, after },
+      );
+      const page = data.repository?.issues;
+      if (!page)
+        throw new Error(`could not read closed issues for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+      assertPageInfo(page.pageInfo, `closed issues for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+      for (const c of page.nodes ?? []) {
+        if (!c?.number) continue;
+        const updated = new Date(c.updatedAt ?? "").getTime();
+        // An unreadable updatedAt cannot be proven older than the cutoff, so it
+        // is skipped rather than allowed to end the read early.
+        if (Number.isFinite(updated) && updated < cutoff) return out;
+        const nodes = c.projectItems?.nodes ?? [];
+        const item = nodes.find((n: any) => n.project?.id === cache.projectId);
+        if (!item) {
+          if (c.projectItems?.pageInfo?.hasNextPage)
+            throw new Error(
+              `issue #${c.number}: project membership truncated — cannot tell if it is on the board`,
+            );
+          continue; // genuinely off-board
+        }
+        if (item.isArchived) continue;
+        const closed = new Date(c.closedAt ?? "").getTime();
+        if (!Number.isFinite(closed) || closed < cutoff) continue;
+        out.push({ number: c.number, closedAt: c.closedAt });
+      }
+      if (!page.pageInfo.hasNextPage) return out;
+      after = page.pageInfo.endCursor;
+    }
+  });
+}
+
 /** The closed pass-through tree edges an issues-rooted walk cannot see
  *  (GH-1814).
  *
@@ -4211,21 +4333,22 @@ export function classifyTend(
  *  batched history fetch doctor uses — no per-item round trips, no MCP. */
 export function tendQueue(ctx: Ctx, opts: TendOpts = parseTendOpts()): TendQueueResult {
   // classifyTend reads dependency edges (deps-cleared / deps-truncated) and
-  // never labels — 2 pts/page instead of 3 (GH-1803).
-  const full = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
-  const open = ownRepo(ctx, full.open).own;
-  const closedOwn = ownRepo(ctx, full.closed).own.filter((c) => !c.archived);
+  // never labels — 2 pts/page instead of 3 (GH-1803). Both halves are
+  // issues-rooted (GH-1891): the open one joins `next`/`deliver-queue` on
+  // GH-1814's read, and the Done audit's window is cut server-side rather than
+  // filtered out of a scan over every item the board has ever held.
+  const open = listOwnOpenItems(ctx, QUEUE_SELECT_NO_LABELS);
   const dayMs = 86_400_000;
-  const recent = closedOwn.filter((c) => {
-    const t = c.closedAt ? new Date(c.closedAt).getTime() : NaN;
-    return Number.isFinite(t) && ctx.now().getTime() - t <= opts.auditDays * dayMs;
-  });
-  const histories = fetchHistories(ctx, recent.map((c) => c.number));
+  const recent = listOwnRecentClosed(
+    ctx,
+    new Date(ctx.now().getTime() - opts.auditDays * dayMs),
+  );
+  const trails = fetchCommentTrails(ctx, recent.map((c) => c.number));
   const closed = recent.map((c) => ({
     number: c.number,
     title: "",
     closedAt: c.closedAt,
-    comments: histories.get(c.number)?.comments ?? [],
+    comments: trails.get(c.number) ?? [],
   }));
   // Proposal markers live in the comment trails of OPEN items, which this
   // selector does not fetch. Bound that cost by classifying first and reading
@@ -4240,9 +4363,9 @@ export function tendQueue(ctx: Ctx, opts: TendOpts = parseTendOpts()): TendQueue
   const numbers = first.queue.map((r) => r.number).filter((n) => candidates.has(n));
   const proposals = new Map<number, string | null>();
   if (numbers.length > 0) {
-    const trails = fetchHistories(ctx, numbers);
+    const openTrails = fetchCommentTrails(ctx, numbers);
     for (const n of numbers) {
-      const p = pendingProposal(trails.get(n)?.comments ?? []);
+      const p = pendingProposal(openTrails.get(n) ?? []);
       if (p) proposals.set(n, p.at);
     }
   }

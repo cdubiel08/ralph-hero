@@ -1658,6 +1658,56 @@ describe("inverted ranking walk (GH-1814) — closedTreeEdges", () => {
     listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
     expect(inverted).toBeLessThan(gh.graphqlCalls - scanStart);
   });
+
+  // GH-1891 — the Done audit was the last reader holding tend-queue on the
+  // project scan. Measured on this repo: 47 pts / 22 calls → 17 / 6.
+  const days = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();
+  it("`tend-queue` pages open work and a closed WINDOW, never the project scan", () => {
+    for (let n = 1; n <= 5; n++) gh.issues.set(n, { number: n, state: "Backlog", updatedAt: days(45) });
+    for (let n = 6; n <= 60; n++)
+      gh.issues.set(n, {
+        number: n, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED",
+        closedAt: days(400), updatedAt: days(400),
+      });
+    gh.itemsPageSize = 10;
+    tendQueue(ctx, TEND_DEFAULTS);
+    expect(gh.queries.filter((q) => q.includes("items(first: 100"))).toHaveLength(0);
+  });
+
+  /** The window read's TERMINATION is the whole reason it is cheap, and it is
+   *  only sound because closing an issue is an update — so UPDATED_AT DESC
+   *  cannot sort an in-window close below an out-of-window one. Pin that it
+   *  actually stops rather than paging the repo's whole closed history. */
+  it("the closed-window read stops at the first page beyond the cutoff", () => {
+    gh.issues.set(1, {
+      number: 1, state: "Done", issueState: "CLOSED", closedAt: days(2), updatedAt: days(2),
+    });
+    for (let n = 2; n <= 40; n++)
+      gh.issues.set(n, {
+        number: n, state: "Done", issueState: "CLOSED", closedAt: days(300), updatedAt: days(300),
+      });
+    gh.itemsPageSize = 10;
+    const recent = listOwnRecentClosed(ctx, new Date(NOW.getTime() - 14 * 86_400_000));
+    expect(recent.map((c) => c.number)).toEqual([1]);
+    // One page: the in-window issue sorts first, the rest of that page is
+    // already older than the cutoff, so no cursor is ever followed.
+    expect(gh.queries.filter((q) => q.includes("issues(states: CLOSED"))).toHaveLength(1);
+  });
+
+  /** The audit reads comments and nothing else. `projectItems × fieldValues`
+   *  was 200 of the ~280 nodes charged per issue in HISTORY_SELECTION — the
+   *  reason the trail fetch, not the walk, became tend-queue's biggest term
+   *  once the scan was gone. */
+  it("the tend lane's trail fetch asks for comments only, in one large batch", () => {
+    for (let n = 1; n <= 60; n++) gh.issues.set(n, { number: n, state: "Backlog" });
+    fetchCommentTrails(ctx, [...Array(60)].map((_, i) => i + 1));
+    const trail = gh.queries.filter((q) => q.includes("comments(last"));
+    expect(trail).toHaveLength(1); // 60 issues, COMMENTS_CHUNK = 100
+    for (const q of trail) {
+      expect(q).not.toContain("projectItems");
+      expect(q).not.toContain("closedByPullRequestsReferences");
+    }
+  });
 });
 
 describe("doctor hardening (closed drift, fix gating, resilience, garbled claims)", () => {
@@ -4273,6 +4323,8 @@ import {
   pendingProposal,
   resolveProposal,
   tendQueue,
+  listOwnRecentClosed,
+  fetchCommentTrails,
 } from "./board.js";
 
 describe("tend-queue (spec §4.3)", () => {
