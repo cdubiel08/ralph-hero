@@ -203,12 +203,20 @@ ralph_scoped_agents() {
     | .[]'
 }
 
-# ralph_is_ralph_name NAME — the display convention for a Ralph-owned agent:
-# the legacy grammar (gh-N, ralph-deliver/tend) or grammar B (<lane><issue>-…).
+# RALPH_NAME_RE — the display convention for a Ralph-owned agent: the legacy
+# grammar (gh-N, ralph-deliver/tend) or grammar B (<lane><issue>-…). Named
+# rather than inlined because it is read from BOTH sides now — `grep -E` below
+# and jq's `test()` in ralph_herd_by_scope — and two spellings of the same
+# convention is exactly how a filter starts disagreeing with itself. The syntax
+# used here (anchors, alternation, classes) means the same thing to POSIX ERE
+# and to jq's Oniguruma.
+RALPH_NAME_RE='^gh-[0-9]+$|^ralph-(deliver|tend)$|^[a-z][0-9]+-[a-z].*$'
+
+# ralph_is_ralph_name NAME — RALPH_NAME_RE as a predicate.
 # A convention, never a boundary — see ralph_agents_json.
 ralph_is_ralph_name() {
   case "${1-}" in '' | null) return 1 ;; esac
-  printf '%s' "$1" | grep -Eq '^gh-[0-9]+$|^ralph-(deliver|tend)$|^[a-z][0-9]+-[a-z].*$'
+  printf '%s' "$1" | grep -Eq "$RALPH_NAME_RE"
 }
 
 # ralph_herd_by_scope SNAPSHOT — every Ralph-named agent in SNAPSHOT, each
@@ -222,40 +230,48 @@ ralph_is_ralph_name() {
 # genuinely spans repositories. Everything else wants ralph_scoped_agents,
 # which asks the narrower and safer question.
 #
-# Scope is resolved per checkout, not per agent, and memoized in the loop: the
-# resolution reads files off disk, and a session with a dozen workers in one
-# worktree would otherwise stat the same config a dozen times.
+# Scope is resolved per DISTINCT CHECKOUT, not per agent: the resolution reads
+# config off disk and may fork `git rev-parse`, and a session with a dozen
+# workers in one worktree would otherwise pay for the same answer a dozen
+# times.
 #
 # An agent whose scope resolves to null is deliberately RETAINED here with a
 # null tag rather than dropped, because reconcile needs to tell "this agent
 # belongs to another repository" (leave it entirely alone) from "this agent
 # belongs to no repository I can identify" (also leave it alone, but say so).
 # Dropping it would make the two look identical to a caller counting names.
+#
+# Shape (GH-1775): a keyed join in three steps — filter, resolve the distinct
+# key set, join the map back on — rather than a per-agent loop. The old form
+# forked three jq per agent and memoized only the LAST checkout seen, so a herd
+# whose workers interleave across worktrees re-resolved every one of them. Cost
+# is now a fixed handful of jq passes plus one resolution per distinct
+# checkout, and it stops growing with the number of agents.
+#
+# rc 1 when the snapshot cannot be read. That is a CHANGE and a deliberate one:
+# the old loop consumed `ralph_all_agents` through a heredoc, so a jq failure
+# on a malformed snapshot produced an empty herd and rc 0 — indistinguishable
+# from "this session has no Ralph agents", which is precisely the distinction
+# reconcile's `if ! live_json=$(...)` guard exists to act on before it sweeps.
 ralph_herd_by_scope() {
-  local snapshot="$1" line name checkout scope
-  local seen_path="" seen_scope=""
+  local snapshot="$1" named paths path scope map='{}'
 
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    name=$(printf '%s' "$line" | jq -r '.name // empty')
-    ralph_is_ralph_name "$name" || continue
+  named=$(ralph_all_agents "$snapshot" |
+    jq -c --arg re "$RALPH_NAME_RE" 'select((.name // "") | test($re))') || return 1
+  [ -n "$named" ] || return 0
 
-    checkout=$(printf '%s' "$line" | jq -r '.checkout // empty')
-    if [ -n "$checkout" ] && [ "$checkout" = "$seen_path" ]; then
-      scope="$seen_scope"
-    elif [ -n "$checkout" ]; then
-      scope=$(ralph_repo_scope "$checkout" 2>/dev/null) || scope=""
-      seen_path="$checkout"
-      seen_scope="$scope"
-    else
-      scope=""
-    fi
-
-    printf '%s' "$line" | jq -c --arg scope "$scope" \
-      '. + {scope: (if $scope == "" then null else $scope end)}'
+  paths=$(printf '%s\n' "$named" | jq -r '.checkout // empty' | sort -u) || return 1
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    scope=$(ralph_repo_scope "$path" 2>/dev/null) || scope=""
+    map=$(printf '%s' "$map" | jq -c --arg p "$path" --arg s "$scope" \
+      '.[$p] = (if $s == "" then null else $s end)') || return 1
   done <<EOF
-$(ralph_all_agents "$snapshot")
+$paths
 EOF
+
+  printf '%s\n' "$named" | jq -c --argjson m "$map" \
+    '. + {scope: ($m[.checkout // ""] // null)}'
 }
 
 # ralph_names_for_ledger LIVE_JSON LEDGER_FILE — space-separated live agent
