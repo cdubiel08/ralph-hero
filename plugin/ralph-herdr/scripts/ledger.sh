@@ -289,6 +289,81 @@ _ralph_ledger_latest() {
   printf '%s\n' "$out"
 }
 
+# ralph_ledger_open_rows [REPO_ROOT] — the open set AND every open ref's latest
+# fields, in ONE pass over the file. One line per open ref, fields separated by
+# US (0x1f), in this order:
+#
+#   ref  pane  shell_pid  harness  parent  state  issue  checkout  tokens
+#
+# Read it with `IFS=$'\037' read -r ...`. The separator is US and not a tab
+# because tab is IFS *whitespace*: bash collapses runs of it and strips it from
+# the ends, so two adjacent empty columns would silently become one and every
+# field after them would shift. US is not whitespace, so an empty column stays
+# an empty column — and empty is the common case here (a discover record has no
+# shell_pid, a root has no parent).
+#
+# The open set is the same order-aware reduce as ralph_ledger_open_agents, and
+# each field is the same "last non-empty value for this EXACT ref" rule as
+# _ralph_ledger_latest. Those helpers stay: they are the right shape for a
+# caller asking about one ref (lib.sh's depth guard, the watcher tests). This
+# is the shape for a caller that walks every open ref and wants several fields
+# from each — which is every phase of reconcile.
+#
+# Why (GH-1775): _ralph_ledger_latest re-slurps the WHOLE ledger per (ref,
+# field), so a reconcile pass cost O(open refs x ledger size) across ~6 forks
+# per worker — phase E alone reads pane, shell_pid and harness for the verdict,
+# then issue, checkout and pane again to recover the claim. Emitting rows lets
+# the loops read fields straight off the line, so a pass is O(ledger size) and
+# one fork per ledger, and the ledger's size stops being a per-worker cost.
+#
+# No column can forge a separator: `tokens` is jq's own `tojson`, which escapes
+# a control character rather than emitting it, and every other column is a
+# grammar-constrained identifier, path or number. The explicit gsub is the belt
+# — a stray separator or newline degrades one field to a space, it never shifts
+# a column. Joined manually rather than with `@tsv`, which also escapes
+# BACKSLASH: the tokens column is JSON, so `@tsv` would double every escape in
+# it and hand the caller back something that no longer parses.
+#
+# Missing/empty ledger: rc 0, no output.
+# shellcheck disable=SC2120  # REPO_ROOT is optional, as in the helpers above
+ralph_ledger_open_rows() {
+  local file
+  file=$(ralph_ledger_path "$@") || return 1
+  [ -s "$file" ] || return 0
+  jq -rs '
+    def keep($cur; $new): if ($new == null or $new == "") then $cur else $new end;
+    def col: (. // "") | tostring | gsub("[\u001f\t\r\n]"; " ");
+    reduce .[] as $e ({open: {}, f: {}};
+      (($e.agent_ref // "")) as $ref
+      | if $ref == "" then .
+        else
+          (if $e.ev == "spawn" or $e.ev == "discover" then .open[$ref] = true
+           elif $e.ev == "exit" then .open[$ref] = false
+           else . end)
+          | (.f[$ref] // {}) as $c
+          | .f[$ref] = {
+              pane:      keep($c.pane;      ((try ($e.pane_id // $e.lineage.herdr.pane_id) catch null) // "")),
+              shell_pid: keep($c.shell_pid; (($e.shell_pid // "") | tostring)),
+              harness:   keep($c.harness;   ((try $e.tokens.harness catch null) // "")),
+              parent:    keep($c.parent;    (if $e.ev == "adopt" then ($e.parent // "") else ((try $e.tokens.parent catch null) // "") end)),
+              state:     keep($c.state;     (if $e.ev == "state" then ($e.state // "") else ((try $e.tokens.state catch null) // "") end)),
+              issue:     keep($c.issue;     (((try $e.tokens.issue catch null) // "") | tostring)),
+              checkout:  keep($c.checkout;  (($e.checkout // "") | tostring)),
+              tokens:    keep($c.tokens;    ((try $e.tokens catch null) | if . == null then "" else tojson end))
+            }
+        end)
+    | .f as $f
+    | .open
+    | to_entries[]
+    | select(.value)
+    | .key as $ref
+    | ($f[$ref] // {}) as $v
+    | [$ref, ($v.pane|col), ($v.shell_pid|col), ($v.harness|col),
+       ($v.parent|col), ($v.state|col), ($v.issue|col), ($v.checkout|col),
+       ($v.tokens|col)]
+    | join("\u001f")' <"$file"
+}
+
 # Latest parent edge for a ref (adopt events win over the spawn/discover
 # token), latest bound pane, latest lifecycle state, latest token map.
 _ralph_ledger_latest_parent() {
