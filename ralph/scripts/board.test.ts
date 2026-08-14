@@ -1126,6 +1126,64 @@ describe("fetchNodeIds (link/dep/comment id lookups)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Doctor's heartbeat line (GH-1909) — registration is half the predicate.
+// ---------------------------------------------------------------------------
+
+describe("doctor heartbeat — registered-but-dead is the only alarm (GH-1909)", () => {
+  /** Runs doctor with a heartbeat of the given age (null = no file) and a
+   *  faked install-loop.sh verdict (null = the probe could not run). */
+  const line = (ageMin: number | null, registered: boolean | null) => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const home = mkdtempSync(join(tmpdir(), "ralph-hb-"));
+    if (ageMin !== null) {
+      const secs = Math.round((ctx.now().getTime() - ageMin * 60_000) / 1000);
+      writeFileSync(join(home, "heartbeat"), `${secs}\n`);
+    }
+    const inner = ctx.exec;
+    ctx.exec = (argv, stdin) => {
+      if (argv.includes("--status")) {
+        if (registered === null) return { code: 127, stdout: "", stderr: "boom" };
+        return registered
+          ? { code: 0, stdout: "loop: registered (launchd com.ralph.tick, every 15m)\n", stderr: "" }
+          : { code: 1, stdout: "loop: not registered (no plist)\n", stderr: "" };
+      }
+      return inner(argv, stdin);
+    };
+    vi.stubEnv("RALPH_HOME", home);
+    vi.stubEnv("RALPH_INSTALL_LOOP_SH", join(home, "install-loop.sh"));
+    writeFileSync(join(home, "install-loop.sh"), "#!/bin/sh\n"); // must exist to be probed
+    try {
+      return doctor(ctx).checks.find((c) => c.name === "heartbeat")!;
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  };
+
+  it("no scheduler registered: absent is ok, and a stale leftover is info — never a warning", () => {
+    expect(line(null, false).level).toBe("ok");
+    const leftover = line(20_144, false);
+    expect(leftover.level).toBe("info"); // the observed 14-day cutover leftover
+    expect(leftover.detail).toMatch(/leftover/);
+    expect(line(5, false).level).toBe("ok"); // a manual tick just ran
+  });
+
+  it("scheduler registered: fresh is ok, stale is the alarm, never-fired warns", () => {
+    expect(line(5, true).level).toBe("ok");
+    const dead = line(20_144, true);
+    expect(dead.level).toBe("warn");
+    expect(dead.detail).toMatch(/registered but not firing/);
+    expect(line(null, true).level).toBe("warn");
+  });
+
+  it("an unusable registration probe degrades to the age-only reading, fail-closed", () => {
+    expect(line(20_144, null).level).toBe("warn");
+    expect(line(20_144, null).detail).toMatch(/not evaluated/);
+    expect(line(null, null).level).toBe("ok");
+  });
+});
+
 describe("doctor (legacy states, archived items)", () => {
   it("doctor: legacy states warn by default, fail under --strict", () => {
     const gh = new FakeGh();
