@@ -118,7 +118,8 @@ of each script:
 | Var | Default | Meaning |
 |---|---|---|
 | `RALPH_HERDR_BOARD` | auto-discovered | board CLI override — authoritative when set: only that path is validated, and a broken value dies loudly with no fallback. Unset, the scripts try `<repo>/ralph/scripts/board`, then the newest installed ralph plugin copy under `~/.claude/plugins/cache`. Honest caveat: herdr panes inherit the herdr **server's** environment, not your shell's — an export only reaches panes if the server itself was started with it |
-| `RALPH_COCKPIT_INTERVAL` | `30` | Go cockpit TUI board-poll cadence, seconds (min 10). The fzf rung ignores it — it re-reads the board on every interaction instead of on a timer |
+| `RALPH_COCKPIT_INTERVAL` | `30` | Go cockpit TUI tick + board-poll **floor**, seconds (min 10): the fastest the board is ever walked, and the fixed cadence of the (free, local) agent-overlay refresh. The fzf rung ignores it — it re-reads the board on every interaction instead of on a timer |
+| `RALPH_COCKPIT_INTERVAL_MAX` | `300` | hard staleness bound on the cockpit's adaptive board cadence (GH-1805), seconds. On a quiet board the walk backs off ×1.5 per unchanged read up to this ceiling and no further; any evidence of a write — an agent appearing/blocking/leaving, the cockpit's own `a`/`s`, a keypress — snaps it back to the floor in one step. Set it **at or below** the floor to turn backoff off (a constant cadence) |
 | `RALPH_HERDR_PEEK_LINES` | `40` | fzf-rung peek/preview depth: pane-tail lines (`herdr agent read`) or latest-comment lines (`gh issue view --comments` tail) |
 | `RALPH_HERDR_DASH_INTERVAL` | `120` | dashboard refresh interval, seconds |
 | `RALPH_HERDR_DRY_RUN` | unset | set to `true` and every spawn script (`work-next`, `work-fleet`, lane passes) prints its exact plan — issues, branches, agent names, the herdr commands it would run — and exits 0 before any herdr mutation. Dashboard/attend are reads and ignore it |
@@ -204,7 +205,7 @@ loses chrome, never a verb.**
 | Rung | Surface | Taken when | What it loses |
 |---|---|---|---|
 | 1 | `cockpit/ralph-cockpit` — the Go TUI | the binary is built and executable (`scripts/build-cockpit.sh`, run at install by the manifest `[[build]]` hook) | nothing — full chrome |
-| 2 | the **same binary**, poll-only | always, today: poll-only IS the shipped mode (herdr `[[events]]` feed the watcher, not the TUI — events integration is Phase-6+ work). A documentation distinction, not a launcher branch | event-driven freshness — the board re-reads every `RALPH_COCKPIT_INTERVAL` seconds |
+| 2 | the **same binary**, poll-only | always, today: poll-only IS the shipped mode (herdr `[[events]]` feed the watcher, not the TUI — events integration is Phase-6+ work). A documentation distinction, not a launcher branch | event-driven freshness — the board re-reads on an adaptive cadence between `RALPH_COCKPIT_INTERVAL` and `RALPH_COCKPIT_INTERVAL_MAX` |
 | 3 | `scripts/cockpit-fzf.sh` | no built TUI, `fzf` on PATH | side-by-side columns, mouse, live glyph refresh, timed refresh — **every verb kept** (observe / peek / reply / answer / spawn / diff / browser / quit, over the same `board` / `herdr` / `gh` calls) |
 | 4 | `scripts/dashboard.sh` | no built TUI, no fzf | interactivity — a read-only glance; the verbs survive one command away (`board answer N -m …`, `herdr agent focus …`) |
 | 5 | `board` + `gh` standalone | no herdr at all — not a launcher branch, just the floor the ladder stands on | all chrome. `board list --state "Human Needed"`, `board answer N -m`, `board frontier`, `gh pr diff N` are the cockpit's verbs with no cockpit |
@@ -260,10 +261,20 @@ No poll timer: the board re-reads after every verb.
 
 ### Honest limits (cockpit)
 
-- **Poll-only in this phase.** The TUI polls (`RALPH_COCKPIT_INTERVAL`,
-  default 30 s); the herdr `[[events]]` hooks feed the watcher ledger, not
-  the TUI. Wiring events into the cockpit is Phase-6+ — until then a state
-  change shows up at the next poll, not the moment it happens.
+- **Poll-only in this phase.** The TUI polls; the herdr `[[events]]` hooks
+  feed the watcher ledger, not the TUI. Wiring events into the cockpit is
+  Phase-6+ — until then a state change shows up at the next poll, not the
+  moment it happens. The cadence is **adaptive and event-coupled** (GH-1805):
+  the floor (`RALPH_COCKPIT_INTERVAL`, 30 s) while anything is happening,
+  backing off ×1.5 per unchanged walk to a hard ceiling
+  (`RALPH_COCKPIT_INTERVAL_MAX`, 5 min) on a quiet board — roughly 10× fewer
+  walks when nobody is working and nobody is watching. The header shows the
+  live cadence beside the last-poll time, so a multi-minute gap reads as a
+  quiet board rather than a hung cockpit. What it is NOT is a rate estimator:
+  the writers here are *visible* (a ralph session shows up in the free local
+  agent overlay before its board write lands, and `a`/`s` are our own
+  writes), so the cadence keys on those events, not on a λ̂ fitted to poll
+  outcomes.
 - **The install never blocks on the TUI.** The manifest `[[build]]` hook is
   `scripts/build-cockpit.sh`, which exits 0 with a loud warning when Go is
   absent, `cockpit/` is missing, or the compile fails — a herdr build

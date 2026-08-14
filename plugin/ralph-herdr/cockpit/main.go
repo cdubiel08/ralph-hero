@@ -14,7 +14,10 @@
 //	RALPH_HERDR_REPO        repo to operate on (default: cwd)
 //	RALPH_HERDR_SCRIPTS     plugin scripts/ dir for the sanctioned spawn path
 //	                        (default: <executable>/../../scripts)
-//	RALPH_COCKPIT_INTERVAL  board poll seconds (default 30, min 10)
+//	RALPH_COCKPIT_INTERVAL  tick + board-poll FLOOR seconds (default 30, min 10)
+//	RALPH_COCKPIT_INTERVAL_MAX
+//	                        hard staleness bound on the adaptive board cadence
+//	                        (default 300; below the floor = backoff off)
 package main
 
 import (
@@ -103,6 +106,7 @@ func resolveConfig(args []string, getenv func(string) string) (Config, error) {
 	}
 
 	cfg.Interval = pollInterval(getenv("RALPH_COCKPIT_INTERVAL"))
+	cfg.MaxInterval = maxPollInterval(getenv("RALPH_COCKPIT_INTERVAL_MAX"), cfg.Interval)
 	return cfg, nil
 }
 
@@ -121,6 +125,25 @@ func pollInterval(raw string) time.Duration {
 		n = 10
 	}
 	return time.Duration(n) * time.Second
+}
+
+// maxPollInterval parses RALPH_COCKPIT_INTERVAL_MAX — the hard staleness bound
+// on the adaptive board cadence (GH-1805): default 300s, garbage takes the
+// default, and a value below the floor collapses TO the floor, which is the
+// honest way to turn the backoff off (a constant cadence) rather than a
+// configuration that cannot be satisfied.
+func maxPollInterval(raw string, floor time.Duration) time.Duration {
+	const def = 300 * time.Second
+	max := def
+	if raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			max = time.Duration(n) * time.Second
+		}
+	}
+	if max < floor {
+		return floor
+	}
+	return max
 }
 
 // installedBoardCLI returns the newest executable board CLI from the installed
