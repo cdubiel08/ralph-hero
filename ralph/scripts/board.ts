@@ -23,7 +23,6 @@ import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  addHolder,
   BOARD_STATES,
   type BranchKind,
   branchKindFor,
@@ -146,7 +145,7 @@ export function parseStateArg(raw: string): State | null {
 // ---------------------------------------------------------------------------
 
 export type Claim = ClaimV2;
-export { addHolder, CLAIM_MAX_HOLDERS, formatClaim, heartbeat, isMember, parseClaim, removeHolder } from "./contracts.js";
+export { CLAIM_MAX_HOLDERS, formatClaim, heartbeat, isMember, parseClaim, removeHolder } from "./contracts.js";
 
 /** Single-holder encode — the spawn/steal path's convenience over formatClaim
  *  (byte-identical to the v1 wire format for one holder). */
@@ -2243,13 +2242,15 @@ export function parentCheck(ctx: Ctx, parentNumber: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Shared-claim fleet verbs (ralph-herdr v2 Phase 3) — explicit join/leave for
-// multi-sibling issues. ClaimV2 already carries the fleet (1..8 holders, ONE
-// shared since); these verbs give the cockpit the membership edit that
-// transition() only performs as a side effect of moving state. They touch the
-// Claim field ONLY: a last-out leave deliberately strands an In Progress item
-// claimless (doctor's claimless-wip line surfaces it) rather than inventing a
-// fourth state-write lane — board transitions stay the skills' job.
+// Claim membership verbs. `leave` and `show` remain; `join` was REMOVED in
+// GH-1869 — it was the only path that grew a holder set, and under the
+// one-writer invariant one owner holds the claim while delegates hold none.
+// Existing multi-holder values are still RECOGNIZED everywhere (parse, report,
+// leave), so state already on the board can be reported and cleaned.
+// `leave` touches the Claim field ONLY: a last-out leave deliberately strands
+// an In Progress item claimless (doctor's claimless-wip line surfaces it)
+// rather than inventing a fourth state-write lane — board transitions stay
+// the skills' job.
 // ---------------------------------------------------------------------------
 
 /** The guards every claim edit shares: item on the board, field values fully
@@ -2273,10 +2274,9 @@ function guardClaimEdit(issue: Issue): string {
   return itemId;
 }
 
-/** Post-write membership verify, shared by join and leave: GitHub has no CAS,
- *  so the echo re-read is the only proof the edit stuck (same protocol as
- *  transition()). `wantMember` is the direction being verified. */
-function verifyClaimEcho(ctx: Ctx, number: number, holder: string, wantMember: boolean): Issue {
+/** Post-write membership verify for leave: GitHub has no CAS, so the echo
+ *  re-read is the only proof the edit stuck (same protocol as transition()). */
+function verifyClaimEcho(ctx: Ctx, number: number, holder: string): Issue {
   const after = fetchIssue(ctx, number);
   if (after.fieldValuesTruncated) {
     throw new RefusalError(
@@ -2284,65 +2284,13 @@ function verifyClaimEcho(ctx: Ctx, number: number, holder: string, wantMember: b
         `claim state unverifiable; check with \`board get ${number}\` or let doctor reconcile`,
     );
   }
-  const member = after.claim !== null && isMember(after.claim, holder);
-  if (wantMember && !member) {
-    throw new RefusalError(
-      after.claim
-        ? `lost the claim race on #${number} to ${after.claim.holders.join("+")} — the join did not stick`
-        : `claim on #${number} vanished after the write (concurrent clear) — the join did not stick`,
-    );
-  }
-  if (!wantMember && member) {
+  if (after.claim !== null && isMember(after.claim, holder)) {
     throw new RefusalError(
       `claim on #${number} survived the leave (the write did not stick) — ` +
         `re-run the leave or let doctor release it`,
     );
   }
   return after;
-}
-
-/** Fleet join: addHolder onto the item's shared claim. In Progress only — a
- *  sibling joining work nobody started would smuggle in the state transition
- *  this verb refuses to own (and there is no --force, by design). Joining a
- *  claimless In Progress item creates the claim, mirroring transition()'s
- *  acquisition arm; joining refreshes the ONE shared since (any-member
- *  heartbeat semantics), so a fleet's TTL clock restarts on every arrival.
- *  That refresh applies to a STALE claim too — deliberately: arrival is
- *  treated as liveness, so a join resurrects the absent holders' claim with
- *  no comment trail. A driver waiting out a stale TTL should evict via
- *  `board claim NNN --steal` (which posts the eviction comment), not join. */
-export function claimJoin(ctx: Ctx, number: number, holder: string): Issue {
-  if (!isValidHolder(holder)) {
-    throw new UsageError(
-      `--holder must be a grammar-B agent name (<lane><issue>-<slug>, lanes ` +
-        `w/r/o/d/s/x) or a legacy name (gh-N, ralph-deliver, ralph-tend) — got ${JSON.stringify(holder)}`,
-    );
-  }
-  // Cache freshness resolved BEFORE any write; the body never retries.
-  const cache = mutationCache(ctx, [[CLAIM_FIELD]]);
-  const issue = fetchIssue(ctx, number);
-  const itemId = guardClaimEdit(issue);
-  if (issue.state !== "In Progress") {
-    throw new RefusalError(
-      `#${number} is "${issue.state ?? "(none)"}" — join is for In Progress items only. ` +
-        `Claim it first (\`board claim ${number}\`); there is no --force.`,
-    );
-  }
-  let next: Claim;
-  try {
-    next = issue.claim
-      ? addHolder(issue.claim, holder, ctx.now())
-      : { holders: [holder], since: ctx.now() };
-  } catch (e) {
-    // addHolder's holder-cap (8) refusal — an invariant, not a usage slip.
-    if (e instanceof RangeError) throw new RefusalError(`#${number}: ${e.message}`);
-    throw e;
-  }
-  // Clear-then-set, like every claim write: the value carries the timestamp,
-  // so we never depend on the field's own updatedAt.
-  clearField(ctx, cache, itemId, CLAIM_FIELD);
-  setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(next));
-  return verifyClaimEcho(ctx, number, holder, true);
 }
 
 /** Fleet leave: removeHolder from the shared claim. A non-member leave is an
@@ -2362,7 +2310,7 @@ export function claimLeave(
   const rest = removeHolder(issue.claim, holder);
   clearField(ctx, cache, itemId, CLAIM_FIELD);
   if (rest) setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(rest));
-  return { issue: verifyClaimEcho(ctx, number, holder, false), changed: true };
+  return { issue: verifyClaimEcho(ctx, number, holder), changed: true };
 }
 
 /** What `claim show` reports — the claim exactly as the board holds it, plus
@@ -6219,14 +6167,12 @@ mutations
                               and \`next\` orders a custom one by the field's
                               option ORDER (a trailing digit is the fallback)
   claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
-  claim join NNN --holder H   add a fleet sibling to an In Progress item's
-                              shared claim (ClaimV2, max 8 holders; H must be
-                              a grammar-B or legacy agent name). Refreshes the
-                              ONE shared since; refuses when not In Progress
-  claim leave NNN --holder H  remove a sibling from the shared claim; non-
-                              member leave is a no-op; the LAST one out clears
-                              the field. Never transitions state — board moves
-                              stay the skills' job
+  claim leave NNN --holder H  remove a holder from an existing shared claim;
+                              non-member leave is a no-op; the LAST one out
+                              clears the field. Never transitions state — board
+                              moves stay the skills' job. (\`claim join\` was
+                              removed in GH-1869: nothing creates multi-holder
+                              claims; existing ones are still read and cleaned)
   release NNN -m "why"        In Progress → Backlog; parking comment required
   move NNN <state> [--why W]  any legal transition; Human Needed requires --why
   answer NNN -m "decision"    Human Needed → In Progress, COMMENT-FIRST: the
@@ -6760,14 +6706,17 @@ export function run(argv: string[], ctx: Ctx): number {
         }
         return 0;
       }
-      if (sub === "join" || sub === "leave") {
+      if (sub === "join") {
+        throw new RefusalError(
+          `claim join was removed in GH-1869 — nothing creates a multi-holder claim any more. ` +
+            `One owner holds the claim (\`board claim NNN\`) and delegates hold none; ` +
+            `co-equal siblings on one issue are decomposition (\`board create\` + \`board dep\`), not a shared claim.`,
+        );
+      }
+      if (sub === "leave") {
         const number = requireNumber(positional[1]);
         if (typeof flags.holder !== "string" || !flags.holder) {
-          throw new UsageError(`claim ${sub} requires --holder <agent name>`);
-        }
-        if (sub === "join") {
-          out(issueLine(claimJoin(ctx, number, flags.holder)));
-          return 0;
+          throw new UsageError(`claim leave requires --holder <agent name>`);
         }
         const { issue: after, changed } = claimLeave(ctx, number, flags.holder);
         out(

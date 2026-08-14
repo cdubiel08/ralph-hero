@@ -8,15 +8,15 @@
  * blockers: [{number, state}], eligible} and a blocked section
  * [{number, blockers_open, truncated?}].
  *
- * Claim-verb contract: join = addHolder (In Progress only, grammar-B/legacy
- * holder, 8-cap refusal, garbled refusal, read-back verify); leave =
- * removeHolder (non-member no-op, last-out clears, NEVER a state transition);
- * show is a plain read that works from any clone.
+ * Claim-verb contract: `join` was REMOVED in GH-1869 (it was the only path
+ * that grew a holder set) and is now a refusal naming the migration; leave =
+ * removeHolder (non-member no-op, last-out clears, NEVER a state transition)
+ * and still handles multi-holder values already on the board; show is a plain
+ * read that works from any clone and reports a fleet claim faithfully.
  */
 
 import { describe, expect, it, vi } from "vitest";
 import {
-  claimJoin,
   claimLeave,
   claimShow,
   encodeClaim,
@@ -28,6 +28,7 @@ import {
   run,
   UsageError,
 } from "./board.js";
+import * as boardApi from "./board.js";
 import { FakeGh, makeCtx, NOW, refusalMessage } from "./board.testkit.js";
 
 /** run() with stdout captured — the CLI-envelope harness the next-suite uses. */
@@ -146,84 +147,22 @@ describe("frontier: a re-projection of next's ranking", () => {
   });
 });
 
-describe("claim join", () => {
-  it("adds a sibling to the shared claim and refreshes the ONE shared since (read-back verified)", () => {
+describe("claim join — removed (GH-1869)", () => {
+  it("refuses, names the migration, and writes nothing", () => {
     const gh = new FakeGh();
-    const old = new Date(NOW.getTime() - 30 * 60_000);
-    gh.issues.set(1, { number: 1, state: "In Progress", claim: `w1-first|${old.toISOString()}` });
-    const ctx = makeCtx(gh);
-    const after = claimJoin(ctx, 1, "w1-second");
-    expect(gh.issues.get(1)!.claim).toBe(`w1-first+w1-second|${NOW.toISOString()}`);
-    expect(after.claim?.holders).toEqual(["w1-first", "w1-second"]);
-    // Clear-then-set, the claim-write protocol everywhere in this file.
-    expect(gh.mutations).toEqual(["clearField(#1, F_claim)", "setClaim(#1)"]);
-  });
-
-  it("joining a claimless In Progress item creates the claim (mirrors transition's acquisition arm)", () => {
-    const gh = new FakeGh();
-    gh.issues.set(1, { number: 1, state: "In Progress" });
-    const ctx = makeCtx(gh);
-    claimJoin(ctx, 1, "w1-solo");
-    expect(gh.issues.get(1)!.claim).toBe(`w1-solo|${NOW.toISOString()}`);
-  });
-
-  it("refuses when the item is not In Progress — the state transition is not join's to smuggle", () => {
-    const gh = new FakeGh();
-    gh.issues.set(1, { number: 1, state: "Backlog" });
-    const ctx = makeCtx(gh);
-    const msg = refusalMessage(() => claimJoin(ctx, 1, "w1-early"));
-    expect(msg).toContain(`#1 is "Backlog"`);
-    expect(gh.mutations).toEqual([]); // refused before any write
-  });
-
-  it("refuses the 9th holder (cap = 8) as a refusal, leaving the claim untouched", () => {
-    const gh = new FakeGh();
-    const eight = Array.from({ length: 8 }, (_, i) => `w1-h${i}`).join("+");
-    const wire = `${eight}|${NOW.toISOString()}`;
+    const wire = `w1-first|${NOW.toISOString()}`;
     gh.issues.set(1, { number: 1, state: "In Progress", claim: wire });
     const ctx = makeCtx(gh);
-    const msg = refusalMessage(() => claimJoin(ctx, 1, "w1-ninth"));
-    expect(msg).toContain("cap (8)");
+    const msg = refusalMessage(() => run(["claim", "join", "1", "--holder", "w1-second"], ctx));
+    expect(msg).toContain("GH-1869");
+    expect(msg).toContain("board create");
     expect(gh.issues.get(1)!.claim).toBe(wire);
+    expect(gh.mutations).toEqual([]);
   });
 
-  it("validates the holder grammar (grammar-B or legacy) as usage, before any read", () => {
-    const gh = new FakeGh();
-    gh.issues.set(1, { number: 1, state: "In Progress" });
-    const ctx = makeCtx(gh);
-    expect(() => claimJoin(ctx, 1, "me@host")).toThrow(UsageError);
-    expect(() => claimJoin(ctx, 1, "")).toThrow(UsageError);
-    expect(() => claimJoin(ctx, 1, "W1-Upper")).toThrow(UsageError);
-    // Legacy names remain valid holders during the transition window.
-    claimJoin(ctx, 1, "gh-1");
-    expect(gh.issues.get(1)!.claim).toBe(`gh-1|${NOW.toISOString()}`);
-  });
-
-  it("refuses a garbled claim — a hand-edited Claim field is never rewritten", () => {
-    const gh = new FakeGh();
-    gh.issues.set(1, { number: 1, state: "In Progress", claim: "hand-edited note to self" });
-    const ctx = makeCtx(gh);
-    const msg = refusalMessage(() => claimJoin(ctx, 1, "w1-late"));
-    expect(msg).toContain("unparseable");
-    expect(gh.issues.get(1)!.claim).toBe("hand-edited note to self");
-  });
-
-  it("read-back verify: a rival's write landing last is a loss, not a silent success", () => {
-    const gh = new FakeGh();
-    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("w1-a", NOW) });
-    gh.raceClaimTo = "rival@x";
-    const ctx = makeCtx(gh);
-    const msg = refusalMessage(() => claimJoin(ctx, 1, "w1-b"));
-    expect(msg).toContain("lost the claim race on #1 to rival@x");
-  });
-
-  it("read-back verify: a concurrent clear reads as vanished, not as held", () => {
-    const gh = new FakeGh();
-    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("w1-a", NOW) });
-    gh.vanishClaim = true;
-    const ctx = makeCtx(gh);
-    const msg = refusalMessage(() => claimJoin(ctx, 1, "w1-b"));
-    expect(msg).toContain("vanished");
+  it("no exported function can grow a holder set", () => {
+    expect(Object.keys(boardApi)).not.toContain("claimJoin");
+    expect(Object.keys(boardApi)).not.toContain("addHolder");
   });
 });
 
@@ -313,23 +252,27 @@ describe("claim show + CLI dispatch", () => {
     expect(parsed.stale).toBeNull();
   });
 
-  it("join/leave round-trip through the CLI; a bare number still drives the classic claim", () => {
+  it("leave round-trips through the CLI; a bare number still drives the classic claim", () => {
     const gh = new FakeGh();
-    gh.issues.set(1, { number: 1, state: "Backlog" });
+    // A fleet claim already on the board — the only way one exists post-GH-1869.
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Progress",
+      claim: `me@test+w1-sib|${NOW.toISOString()}`,
+    });
+    gh.issues.set(2, { number: 2, state: "Backlog" });
     const ctx = makeCtx(gh);
     // Classic claim (transition) is untouched by the subverb dispatch.
-    expect(run(["claim", "1"], ctx)).toBe(0);
-    expect(gh.issues.get(1)!.claim).toBe(`me@test|${NOW.toISOString()}`);
-    expect(run(["claim", "join", "1", "--holder", "w1-sib"], ctx)).toBe(0);
-    expect(gh.issues.get(1)!.claim).toBe(`me@test+w1-sib|${NOW.toISOString()}`);
+    expect(run(["claim", "2"], ctx)).toBe(0);
+    expect(gh.issues.get(2)!.claim).toBe(`me@test|${NOW.toISOString()}`);
     const noop = captured(["claim", "leave", "1", "--holder", "w1-stranger"], ctx);
     expect(noop).toContain("no-op");
     expect(run(["claim", "leave", "1", "--holder", "w1-sib"], ctx)).toBe(0);
     expect(gh.issues.get(1)!.claim).toBe(`me@test|${NOW.toISOString()}`);
-    expect(() => run(["claim", "join", "1"], ctx)).toThrow(/--holder/);
+    expect(() => run(["claim", "leave", "1"], ctx)).toThrow(/--holder/);
   });
 
-  it("scope gate: join/leave are mutations (refused off-scope); show is a plain read", () => {
+  it("scope gate: leave is a mutation (refused off-scope); show is a plain read", () => {
     const gh = new FakeGh();
     gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("w1-a", NOW) });
     const ctx = makeCtx(gh);
@@ -338,7 +281,6 @@ describe("claim show + CLI dispatch", () => {
         return { code: 0, stdout: "git@github.com:someone-else/other.git\n", stderr: "" };
       return gh.exec(argv, stdin);
     };
-    expect(() => run(["claim", "join", "1", "--holder", "w1-b"], ctx)).toThrow(RefusalError);
     expect(() => run(["claim", "leave", "1", "--holder", "w1-a"], ctx)).toThrow(RefusalError);
     expect(run(["claim", "show", "1"], ctx)).toBe(0); // read path works from any clone
   });

@@ -424,9 +424,10 @@ board dep NNN --needs MMM             # record the edges
 That yields more real parallelism than the sibling fleet ever safely did, and
 the board can see it.
 
-`board claim join` / `claim leave` remain on the board CLI so existing shared
-claims can be read and cleaned. Nothing creates them any more; a legacy shared
-claim is surfaced by doctor, not extended.
+`board claim show` / `claim leave` remain on the board CLI so existing shared
+claims can be read and cleaned. Nothing creates them any more: `claim join` was
+the last path that grew a holder set and was removed in GH-1869. A legacy
+shared claim is surfaced by doctor, not extended.
 
 ## The Herdr boundary (GH-1774)
 

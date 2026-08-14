@@ -12,7 +12,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { encodeClaim } from "./board.js";
 import {
-  addHolder,
   BRANCH_KIND_CHARS,
   type BranchKind,
   branchIssue,
@@ -69,6 +68,7 @@ import {
   runLints,
   validateContract,
 } from "./contracts.js";
+import * as contractsApi from "./contracts.js";
 
 // ---------------------------------------------------------------------------
 // Example corpus — the fixtures ARE the documentation
@@ -451,21 +451,23 @@ describe("ClaimV2", () => {
     expect(isMember(claim, "w1743-wir")).toBe(false);
   });
 
-  it("addHolder joins the fleet and refreshes the ONE shared since; inputs stay untouched", () => {
-    const claim: ClaimV2 = { holders: ["w1743-wire"], since: t0 };
-    const joined = addHolder(claim, "r1743-review", t1);
-    expect(joined).toEqual({ holders: ["w1743-wire", "r1743-review"], since: t1 });
-    expect(claim).toEqual({ holders: ["w1743-wire"], since: t0 }); // no mutation
-    // Re-joining an existing member never duplicates, but still heartbeats.
-    expect(addHolder(joined, "w1743-wire", t0)).toEqual({ holders: ["w1743-wire", "r1743-review"], since: t0 });
+  it("no exported helper grows a holder set (GH-1869: creation removed, recognition kept)", () => {
+    expect(Object.keys(contractsApi)).not.toContain("addHolder");
+    // Recognition is what stays: a fleet value already on the board still
+    // parses, formats back byte-identically, and answers membership.
+    const wire = `w1743-wire+r1743-review|${t0.toISOString()}`;
+    const parsed = parseClaim(wire)!;
+    expect(parsed.holders).toEqual(["w1743-wire", "r1743-review"]);
+    expect(formatClaim(parsed)).toBe(wire);
+    expect(isMember(parsed, "r1743-review")).toBe(true);
   });
 
-  it("the 8-holder cap refuses loudly; wire delimiters in a holder refuse at the door", () => {
+  it("the 8-holder cap bounds what a read will recognize; wire delimiters refuse at the writer", () => {
     const eight = Array.from({ length: CLAIM_MAX_HOLDERS }, (_, i) => `w${i + 1}-agent`);
-    expect(addHolder({ holders: eight.slice(0, 7), since: t0 }, "w8-agent", t1).holders).toHaveLength(8);
-    expect(() => addHolder({ holders: eight, since: t0 }, "w9-agent", t1)).toThrow(RangeError);
-    expect(() => addHolder({ holders: [], since: t0 }, "a+b", t1)).toThrow(RangeError);
-    expect(() => addHolder({ holders: [], since: t0 }, "a|b", t1)).toThrow(RangeError);
+    expect(parseClaim(`${eight.join("+")}|${t0.toISOString()}`)?.holders).toHaveLength(8);
+    expect(parseClaim(`${eight.join("+")}+w9-agent|${t0.toISOString()}`)).toBeNull();
+    expect(() => formatClaim({ holders: ["a+b"], since: t0 })).toThrow(RangeError);
+    expect(() => formatClaim({ holders: ["a|b"], since: t0 })).toThrow(RangeError);
   });
 
   it("removeHolder: order preserved, non-member is a no-op, last-out clears (null)", () => {

@@ -151,7 +151,6 @@ without the move; `--any-state` comments on an item outside Human Needed.
 ```bash
 board frontier                                   # every issue eligible to start NOW (+ who's blocked on what)
 board claim show NNN                             # holders, shared since, age vs TTL
-board claim join NNN --holder w1743-fix-thing    # add a sibling (In Progress only, ≤8 holders)
 board claim leave NNN --holder w1743-fix-thing   # last one out clears the field
 ```
 
@@ -175,8 +174,9 @@ list is a closed set, so there is nothing to top it back up from.
 The shared-claim `work-issue-fleet` (several sessions on ONE issue, one
 worktree) was removed in GH-1774: siblings raced on the index, the branch, and
 each other's uncommitted files, and no amount of claim bookkeeping made that
-tree safe. `claim join` / `claim leave` remain on the board CLI for reading and
-cleaning claims already written; nothing creates shared claims now. To
+tree safe. `claim show` / `claim leave` remain on the board CLI for reading and
+cleaning claims already written; nothing creates shared claims now — `claim
+join`, the last path that grew a holder set, was removed in GH-1869. To
 parallelize one issue, decompose it into separate issues.
 
 Refill (`work-fleet --refill`, or `RALPH_HERDR_REFILL=1`) is opt-in per run,
