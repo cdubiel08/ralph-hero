@@ -97,6 +97,12 @@ export class FakeGh {
   stickyClaim = false; // simulate a claim clear silently not sticking
   dropCreates = false; // simulate a field create acking but not sticking
   refreshClaimOnFetch = new Set<number>(); // holder renews its claim mid-sweep
+  /** Deliver A→B race: these PRs read OPEN in phase A and MERGED in phase B,
+   *  i.e. they merged between the two calls (GH-1811). */
+  mergeBeforePrFacts = new Set<number>();
+  /** Deliver A→B broken read: these PRs are OPEN in phase A and resolve to
+   *  NOTHING in phase B — the partial read the fetch must refuse (GH-1811). */
+  vanishBeforePrFacts = new Set<number>();
   omitFields: string[] = []; // simulate a fresh board missing these fields
   createdFields: Array<{ name: string; dataType: string; options?: string[] }> = [];
   linkedRepos = ["cdubiel08/ralph-hero"]; // projectV2 → repositories linkage
@@ -231,11 +237,35 @@ export class FakeGh {
     };
   }
 
-  /** One PR node for the deliver detail query (GH-1712). */
-  private deliverPrNode(p: NonNullable<FakeIssue["prs"]>[number]) {
+  /** Phase A's view of a linked PR: linkage only (GH-1811). */
+  private deliverPrLink(p: NonNullable<FakeIssue["prs"]>[number]) {
     return {
+      id: `PR_${p.number}`,
       number: p.number,
       state: p.prState ?? (p.merged ? "MERGED" : "OPEN"),
+    };
+  }
+
+  /** Every PR any issue links, by NODE ID — phase B queries by id alone, with
+   *  no issue and no repository in the document to scope it. */
+  private allPrs(): Map<string, NonNullable<FakeIssue["prs"]>[number]> {
+    const out = new Map<string, NonNullable<FakeIssue["prs"]>[number]>();
+    for (const fi of this.issues.values()) {
+      for (const p of [
+        ...(fi.prs ?? []),
+        ...(fi.branchPrs ?? []),
+        ...(fi.branchRefs ?? []).flatMap((r) => r.prs ?? []),
+      ]) {
+        if (!out.has(`PR_${p.number}`)) out.set(`PR_${p.number}`, p);
+      }
+    }
+    return out;
+  }
+
+  /** One PR node for the deliver detail query (GH-1712), phase B (GH-1811). */
+  private deliverPrNode(p: NonNullable<FakeIssue["prs"]>[number]) {
+    return {
+      ...this.deliverPrLink(p),
       headRefOid: p.headSha ?? "deadbeef",
       commits: {
         nodes: [
@@ -321,6 +351,26 @@ export class FakeGh {
     const { query, variables } = payload;
     this.queries.push(query);
 
+    // Deliver-lane phase B (GH-1811): pK alias per OPEN PR, facts only. Keyed
+    // by node id and NOT nested under `repository` — the whole point is that a
+    // cross-repo closing reference resolves to the right PR.
+    if (query.includes("p0: node(id")) {
+      const all = this.allPrs();
+      const out: Record<string, unknown> = {};
+      for (const [key, id] of Object.entries(variables)) {
+        const m = /^p(\d+)$/.exec(key);
+        if (!m) continue;
+        const p = all.get(id as string);
+        out[`p${m[1]}`] =
+          !p || this.vanishBeforePrFacts.has(p.number)
+            ? null
+            : this.mergeBeforePrFacts.has(p.number)
+              ? { ...this.deliverPrNode(p), state: "MERGED" }
+              : this.deliverPrNode(p);
+      }
+      return data(out);
+    }
+
     // Deliver-lane detail fetch (GH-1712): dK/bK alias pairs. Matched before
     // every other issue branch — its selection set contains their needles.
     if (query.includes("d0: issue(number")) {
@@ -344,7 +394,7 @@ export class FakeGh {
             })),
           },
           closedByPullRequestsReferences: {
-            nodes: (fi.prs ?? []).map((p) => this.deliverPrNode(p)),
+            nodes: (fi.prs ?? []).map((p) => this.deliverPrLink(p)),
           },
           projectItems: {
             nodes:
@@ -370,7 +420,7 @@ export class FakeGh {
         repo[`b${m[1]}`] = {
           nodes: refs.map((r) => ({
             name: r.name,
-            associatedPullRequests: { nodes: (r.prs ?? []).map((p) => this.deliverPrNode(p)) },
+            associatedPullRequests: { nodes: (r.prs ?? []).map((p) => this.deliverPrLink(p)) },
           })),
         };
       }
