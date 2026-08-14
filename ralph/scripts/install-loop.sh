@@ -46,9 +46,31 @@ EOF
       echo "autopilot=false — tick.sh now refuses to run; remove the crontab line manually (crontab -e)"
     fi
     ;;
+  --status)
+    # The registration fact, read from wherever --enable put it. Doctor relays
+    # this line rather than re-deriving the label/plist path (two derivations
+    # drift). Exit: 0 registered · 1 not registered.
+    if [ "$(uname)" = "Darwin" ]; then
+      if [ -f "$PLIST" ]; then
+        SECS="$(sed -n 's/.*<key>StartInterval<\/key>[^<]*<integer>\([0-9]*\)<\/integer>.*/\1/p' "$PLIST" | head -1)"
+        [ -n "$SECS" ] && EVERY="every $((SECS / 60))m" || EVERY="interval unknown"
+        echo "loop: registered (launchd $LABEL, $EVERY)"
+        exit 0
+      fi
+      echo "loop: not registered (no $PLIST)"
+      exit 1
+    fi
+    if crontab -l 2>/dev/null | grep -q 'tick\.sh'; then
+      echo "loop: registered (crontab entry for tick.sh)"
+      exit 0
+    fi
+    echo "loop: not registered (no crontab entry for tick.sh)"
+    exit 1
+    ;;
   *)
-    echo "usage: install-loop.sh --enable | --disable" >&2
-    echo "  --enable  writes autopilot=true, installs launchd job (or prints cron line)" >&2
+    echo "usage: install-loop.sh --enable | --disable | --status" >&2
+    echo "  --enable  writes autopilot=true, installs launchd job (or prints cron line)
+  --status  report whether a scheduler is registered (exit 0 yes / 1 no)" >&2
     exit 64
     ;;
 esac

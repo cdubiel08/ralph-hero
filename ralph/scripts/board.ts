@@ -5634,13 +5634,50 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     }
   }
 
-  // heartbeat (Phase 3 writes it; absence is fine before then)
-  const hb = join(homedir(), ".ralph", "heartbeat");
-  if (existsSync(hb)) {
-    const ageMin = (ctx.now().getTime() - Number(readFileSync(hb, "utf8").trim()) * 1000) / 60_000;
-    add("heartbeat", ageMin < 60 ? "ok" : "warn", `${ageMin.toFixed(0)} min old`);
-  } else {
-    add("heartbeat", "ok", "absent (loop not installed)");
+  // heartbeat (GH-1909). The file's age alone cannot tell "no scheduler was
+  // ever installed here" from "a scheduler is registered and has stopped
+  // firing", and only the second is worth an alarm: a machine that ran one
+  // manual tick months ago warns forever from a leftover file. So the
+  // registration fact is consulted too — read from install-loop.sh, which
+  // owns how the job is registered, rather than re-derived here.
+  {
+    const hb = join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "heartbeat");
+    const ageMin = existsSync(hb)
+      ? (ctx.now().getTime() - Number(readFileSync(hb, "utf8").trim()) * 1000) / 60_000
+      : null;
+    const fresh = ageMin !== null && ageMin < 60;
+    const age = ageMin === null ? "" : `${ageMin.toFixed(0)} min old`;
+
+    let registered: boolean | null = null; // null = could not be determined
+    let note = "";
+    try {
+      const sh =
+        process.env.RALPH_INSTALL_LOOP_SH ??
+        join(dirname(fileURLToPath(import.meta.url)), "install-loop.sh");
+      if (existsSync(sh)) {
+        const r = ctx.exec(["bash", sh, "--status"]);
+        if (r.code === 0 || r.code === 1) {
+          registered = r.code === 0;
+          note = r.stdout.trim().replace(/^loop:\s*/, "");
+        }
+      }
+    } catch {
+      /* registration stays unknown; the heartbeat half still reports */
+    }
+
+    if (registered === null) {
+      // Unknown registration: fall back to the age-only reading, fail-closed.
+      if (ageMin === null) add("heartbeat", "ok", "absent (scheduler registration not evaluated)");
+      else add("heartbeat", fresh ? "ok" : "warn", `${age} (scheduler registration not evaluated)`);
+    } else if (registered) {
+      if (ageMin === null) add("heartbeat", "warn", `scheduler registered but has never fired — ${note}`);
+      else if (fresh) add("heartbeat", "ok", `${age} — ${note}`);
+      else add("heartbeat", "warn", `scheduler registered but not firing — ${age}, ${note}`);
+    } else {
+      if (ageMin === null) add("heartbeat", "ok", "absent (loop not installed)");
+      else if (fresh) add("heartbeat", "ok", `${age} (manual tick; loop not installed)`);
+      else add("heartbeat", "info", `loop not installed; heartbeat ${age} is a leftover — \`install-loop.sh --enable\` to run the loop`);
+    }
   }
 
   // state-guard proof-of-fire (Phase 2 workflow; tolerate absence)
