@@ -240,3 +240,72 @@ the project walk.
 Unaffected by the correction: `list` keeps BOTH connections under #1803's
 `QUEUE_SELECT_FULL` ("contract kept"), so the cockpit's one-read poll continues
 to receive every field it partitions on.
+
+---
+
+## Addendum, 2026-08-13 (GH-1811) — Finding 2 does not generalize, and `deliver-queue` was never 100
+
+Measured the same way, against the live repo, with the production selection set
+at 10 aliases. Two things in this document need correcting before anyone sizes
+another query on them.
+
+### The number: 607, not 100
+
+| variant (10 candidates, one document) | cost | nodeCount |
+|---|---|---|
+| **production, as shipped on 2026-08-13** | **607** | 237,000 |
+| issue head + bare `refs` (no PR facts anywhere) | 1 | 271 |
+| `closedByPullRequestsReferences` + facts (1 alias) | 6 | 2,391 |
+| **`refs` → `associatedPullRequests` + facts (1 alias)** | **55** | 21,310 |
+
+The 100 above was measured before GH-1807, which added the `refs` alias to
+`fetchDeliverCandidates`. That commit's own source note reads "Costed live: +1 pt
+per DELIVER_CHUNK document (1 → 2)" — true of a **bare** `refs`, and the probe
+above reproduces it exactly (1 pt). But the alias that shipped carries a full
+`DELIVER_PR_FACTS` inside `associatedPullRequests`, and that branch alone is
+**55 of the 61 points per candidate**. The +1 was measured on a shape that was
+not the one committed.
+
+### The model: cost tracks nodeCount, not connection count
+
+Finding 2 above is correct **for the item walk** and was over-generalized into a
+property of GitHub's cost function. It is not one. Cost tracks `nodeCount`, and
+`nodeCount` is the **product of the `first:`/`last:` values down each nesting**:
+
+```text
+refs(first:10) × associatedPullRequests(first:10) × contexts(first:100) = 10,000 nodes
+```
+
+...for one alias's checks alone. The walk's nested connections all sit under a
+single `items(first:100)` page, so their products land in the same few
+100-request buckets and trimming moves nothing — which is exactly what Finding 2
+observed. Raise the nesting one level, as `deliver-queue` does, and the same
+trim is worth hundreds of points. **Both are true; neither is the rule.**
+
+Confirmed static and data-independent (10 nonexistent issue numbers cost the
+identical 607) and exactly linear in alias count (1/2/5/10 → 61/121/304/607),
+which re-confirms this document's "re-chunking buys nothing".
+
+### The fix that landed
+
+Hoisting `DELIVER_PR_FACTS` out of the nested linkage connections and onto
+top-level `node(id:)` aliases — a single node multiplies nothing — measured on
+the two documents `board.ts` now emits:
+
+| | calls | cost |
+|---|---|---|
+| before | 1 | **607** |
+| phase A — issue facts + PR linkage (`id number state`) | 1 | **2** |
+| phase B — facts for the OPEN PRs only | 1 | **6** |
+| **after** | 2 | **8** |
+
+Phase B fetches by **node id, not number**: a closing reference can name a PR in
+another repo, where the same number is a different PR or none. It covers only
+OPEN PRs, because every signal check in `classifyDeliver` reads off the open
+subset — a merged PR's checks, reviews and threads were always fetched and
+discarded. A chunk with no open PRs skips phase B entirely.
+
+**Do not re-derive the rule from either measurement.** Probe the document you
+are actually sending: `RALPH_GQL_COST=1`, or `rateLimit { cost nodeCount }`
+inline. `board.test.ts` now asserts the *shape* (no fact field may appear in the
+linkage document), because this regression already happened once silently.

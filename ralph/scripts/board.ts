@@ -3254,6 +3254,18 @@ export function parseDeliverMarker(
   }
 }
 
+/** A linked PR before its facts are fetched — all phase A of the fetch knows
+ *  (GH-1811). Enough for the two length checks and to pick phase B's set;
+ *  deliberately not enough for a signal check, which is why it is a type. */
+export interface DeliverPrLink {
+  /** The node id, not the number, is what phase B fetches by: a closing
+   *  reference can name a PR in ANOTHER repo, where the same number is a
+   *  different PR entirely (or none). */
+  id: string;
+  number: number;
+  state: "OPEN" | "MERGED" | "CLOSED";
+}
+
 /** What one linked PR looks like to the selector — cheap-signal cursors only;
  *  gate truth stays in merge-pr.sh --dry-run (D8). */
 export interface DeliverPrFacts {
@@ -3274,10 +3286,15 @@ export interface DeliverPrFacts {
 export interface DeliverCandidate {
   number: number;
   title: string;
-  /** Linked PRs: closing references ∪ the branch convention — `<kind>/NNN-slug`
-   *  or the legacy `feature/GH-NNN` (detect-if-present — hosts without the
-   *  convention degrade to closing references only). Deduped by PR number. */
-  prs: DeliverPrFacts[];
+  /** Linked PRs of ANY state: closing references ∪ the branch convention —
+   *  `<kind>/NNN-slug` or the legacy `feature/GH-NNN` (detect-if-present —
+   *  hosts without the convention degrade to closing references only).
+   *  Deduped by PR number. Linkage only; facts live in `openPrs`. */
+  prs: DeliverPrLink[];
+  /** Facts for the OPEN linked PRs, and only those (GH-1811). Every signal
+   *  check reads off the open subset, so a merged PR's checks, reviews and
+   *  threads were fetched and discarded — ~90% of this query's cost. */
+  openPrs: DeliverPrFacts[];
   stateUpdatedAt: string | null; // when the board wrote the current state
   lastCommentAt: string | null; // newest issue comment
   marker: Record<string, DeliverMarkerEntry> | null;
@@ -3365,7 +3382,7 @@ export function classifyDeliver(
       blocked.push({ number: c.number, title: c.title, pr: null, reason: "no-pr" });
       continue;
     }
-    const open = c.prs.filter((p) => p.state === "OPEN");
+    const open = c.openPrs;
     if (open.length === 0) {
       // All linked PRs merged/closed: the close-out branch (§4.4). Neither
       // reconcile nor doctor covers an open In Review issue with a merged PR;
@@ -3512,7 +3529,15 @@ export function classifyDeliver(
 
 const DELIVER_CHUNK = 10;
 
-/** Everything one PR contributes to the cheap checks, in one selection. */
+/** All phase A reads off a linked PR. Both linkage connections are nested two
+ *  deep (`refs` → `associatedPullRequests`), and GraphQL cost tracks the
+ *  PRODUCT of the `first:` values down that nesting — so anything selected here
+ *  is charged 10x-100x over. Facts go in phase B, under a single node. */
+const DELIVER_PR_LINK = `id number state`;
+
+/** Everything one PR contributes to the cheap checks, in one selection.
+ *  Selected ONLY under a top-level `node(id:)` alias (phase B): a single node
+ *  multiplies nothing, so this costs ~212 nodes per PR flat. */
 const DELIVER_PR_FACTS = `
   number state headRefOid
   commits(last: 1) { nodes { commit { committedDate pushedDate
@@ -3565,9 +3590,41 @@ function prFactsFrom(node: any): DeliverPrFacts {
   };
 }
 
-/** Batched detail fetch for the In Review candidates: one GraphQL document
- *  per DELIVER_CHUNK candidates (issue facts + branch-convention PRs), never
- *  one ad-hoc call per signal per candidate (§4.2 cost bound). */
+/** Phase B: facts for the OPEN PRs of one chunk, keyed by NODE ID.
+ *
+ *  Split out of the issue document (GH-1811) because cost tracks the product of
+ *  the `first:` values down a nesting, and these facts used to hang two
+ *  connections deep under `refs` → `associatedPullRequests`: 21,310 nodes and
+ *  55 points for ONE candidate, measured. Under `node(id:)` the same selection
+ *  is one node — 10 PRs cost 6 points total.
+ *
+ *  By id and not by number, with no `repository` scope: a closing reference can
+ *  name a PR in ANOTHER repo, where that number is a different PR or none. */
+function fetchDeliverPrFacts(ctx: Ctx, ids: string[]): Map<string, DeliverPrFacts> {
+  const out = new Map<string, DeliverPrFacts>();
+  for (let start = 0; start < ids.length; start += DELIVER_CHUNK) {
+    const chunk = ids.slice(start, start + DELIVER_CHUNK);
+    const decls = chunk.map((_, k) => `$p${k}: ID!`).join(", ");
+    const aliases = chunk
+      .map((_, k) => `p${k}: node(id: $p${k}) { ... on PullRequest { ${DELIVER_PR_FACTS} } }`)
+      .join("\n");
+    const vars: Record<string, unknown> = {};
+    chunk.forEach((id, k) => {
+      vars[`p${k}`] = id;
+    });
+    const data: any = ghGraphQL(ctx, `query(${decls}) {\n${aliases}\n}`, vars);
+    chunk.forEach((id, k) => {
+      const node = data[`p${k}`];
+      if (node?.number) out.set(id, prFactsFrom(node));
+    });
+  }
+  return out;
+}
+
+/** Batched detail fetch for the In Review candidates: two GraphQL documents
+ *  per DELIVER_CHUNK candidates — issue facts + PR linkage, then facts for the
+ *  open PRs that linkage found — never one ad-hoc call per signal per
+ *  candidate (§4.2 cost bound). */
 export function fetchDeliverCandidates(
   ctx: Ctx,
   items: Array<{ number: number; title: string }>,
@@ -3584,7 +3641,7 @@ export function fetchDeliverCandidates(
         d${k}: issue(number: $n${k}) {
           number title
           comments(last: 50) { nodes { body createdAt } }
-          closedByPullRequestsReferences(first: 10) { nodes { ${DELIVER_PR_FACTS} } }
+          closedByPullRequestsReferences(first: 10) { nodes { ${DELIVER_PR_LINK} } }
           projectItems(first: 10) { nodes { project { id } fieldValues(first: 20) { nodes {
             ... on ProjectV2ItemFieldSingleSelectValue {
               updatedAt field { ... on ProjectV2FieldCommon { name } }
@@ -3594,7 +3651,7 @@ export function fetchDeliverCandidates(
           nodes {
             name
             associatedPullRequests(first: 10, states: [OPEN, MERGED, CLOSED]) {
-              nodes { ${DELIVER_PR_FACTS} }
+              nodes { ${DELIVER_PR_LINK} }
             }
           }
         }`,
@@ -3621,12 +3678,13 @@ export function fetchDeliverCandidates(
         vars,
       );
       const repo: any = data.repository ?? {};
+      const pending: DeliverCandidate[] = [];
       chunk.forEach((it, k) => {
         const issue = repo[`d${k}`];
         if (!issue) return; // deleted/foreign mid-walk — absent, not invented
-        const byNumber = new Map<number, DeliverPrFacts>();
+        const byNumber = new Map<number, DeliverPrLink>();
         for (const n of issue.closedByPullRequestsReferences?.nodes ?? []) {
-          if (n?.number) byNumber.set(n.number, prFactsFrom(n));
+          if (n?.number) byNumber.set(n.number, { id: n.id, number: n.number, state: n.state });
         }
         for (const ref of repo[`b${k}`]?.nodes ?? []) {
           // The substring filter is GitHub's; this is ours. A ref that does
@@ -3634,7 +3692,9 @@ export function fetchDeliverCandidates(
           // (`feature/GH-18070`, `chore/fix-1807-typo`), not linkage.
           if (parseBranchName(ref?.name ?? "")?.issue !== it.number) continue;
           for (const n of ref?.associatedPullRequests?.nodes ?? []) {
-            if (n?.number && !byNumber.has(n.number)) byNumber.set(n.number, prFactsFrom(n));
+            if (n?.number && !byNumber.has(n.number)) {
+              byNumber.set(n.number, { id: n.id, number: n.number, state: n.state });
+            }
           }
         }
         const comments: Array<{ body: string; createdAt: string | null }> = (
@@ -3650,15 +3710,49 @@ export function fetchDeliverCandidates(
           .map((c) => c.createdAt)
           .filter((t): t is string => typeof t === "string")
           .sort();
-        out.push({
+        pending.push({
           number: issue.number,
           title: issue.title ?? "",
           prs: [...byNumber.values()],
+          openPrs: [],
           stateUpdatedAt: stateValue?.updatedAt ?? null,
           lastCommentAt: commentTimes[commentTimes.length - 1] ?? null,
           marker: parseDeliverMarker(comments.map((c) => c.body)),
         });
       });
+
+      // Phase B — facts, for the open PRs only. A chunk whose candidates have
+      // none (all merged, or PR-less) skips the call entirely.
+      const openIds = [
+        ...new Set(pending.flatMap((c) => c.prs.filter((p) => p.state === "OPEN").map((p) => p.id))),
+      ];
+      const facts = openIds.length
+        ? fetchDeliverPrFacts(ctx, openIds)
+        : new Map<string, DeliverPrFacts>();
+      for (const c of pending) {
+        c.openPrs = c.prs
+          .filter((p) => p.state === "OPEN")
+          .map((p) => {
+            const f = facts.get(p.id);
+            // Fail closed. An open PR with no facts must never be dropped
+            // silently: an empty `openPrs` is the CLOSE-OUT branch, so a
+            // swallowed miss would tell the deliver lane to close an issue
+            // whose PR is still open. Phase A saw this PR moments ago, so a
+            // miss is a broken read, not a state — and it says so.
+            if (!f) {
+              throw new Error(
+                `deliver: PR #${p.number} (${p.id}) was OPEN in the linkage read but ` +
+                  `returned no facts — refusing to classify #${c.number} on a partial read`,
+              );
+            }
+            return f;
+          })
+          // A PR that merged BETWEEN the two calls is legitimately gone from
+          // the open set: phase B is the fresher read and wins, so the item
+          // classifies as a close-out on truth rather than on stale facts.
+          .filter((f) => f.state === "OPEN");
+        out.push(c);
+      }
     }
     return out;
   });

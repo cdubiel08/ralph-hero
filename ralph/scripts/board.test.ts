@@ -3587,15 +3587,25 @@ describe("deliver-queue: classification (spec §4.2)", () => {
     lastActivityAt: "2026-07-31T11:00:00Z", // 60 min ago — well settled
     ...over,
   });
-  const cand = (n: number, over: Partial<DeliverCandidate> = {}): DeliverCandidate => ({
-    number: n,
-    title: `Issue ${n}`,
-    prs: [dpr(100 + n)],
-    stateUpdatedAt: "2026-07-31T10:00:00Z",
-    lastCommentAt: null,
-    marker: null,
-    ...over,
-  });
+  // Fixtures declare `prs` as full facts; `openPrs` is derived the way the
+  // two-phase fetch derives it (GH-1811), so a fixture cannot describe an open
+  // PR the classifier has no facts for — a state the fetch cannot produce.
+  const cand = (
+    n: number,
+    over: Omit<Partial<DeliverCandidate>, "prs"> & { prs?: DeliverPrFacts[] } = {},
+  ): DeliverCandidate => {
+    const prs = over.prs ?? [dpr(100 + n)];
+    return {
+      number: n,
+      title: `Issue ${n}`,
+      stateUpdatedAt: "2026-07-31T10:00:00Z",
+      lastCommentAt: null,
+      marker: null,
+      ...over,
+      prs: prs.map((p) => ({ id: `PR_${p.number}`, number: p.number, state: p.state })),
+      openPrs: over.openPrs ?? prs.filter((p) => p.state === "OPEN"),
+    };
+  };
   const entry = (over: Partial<DeliverMarkerEntry> = {}): DeliverMarkerEntry => ({
     head_sha: "sha-a",
     verdict: "PENDING",
@@ -3971,6 +3981,105 @@ describe("deliver-queue: fetch + CLI wiring", () => {
     ]);
     // #1809 is present but PR-less — the coincidences linked nothing.
     expect(res.blocked.map((r) => [r.number, r.reason])).toContainEqual([1809, "no-pr"]);
+  });
+
+  // --- GH-1811: the facts do not belong in the linkage document ------------
+  //
+  // GraphQL cost tracks the PRODUCT of the `first:` values down a nesting, not
+  // the connection count (that model holds for the item walk, where everything
+  // sits under one page — it does not generalize). Measured live: with the
+  // facts inside `refs` → `associatedPullRequests`, ONE candidate cost 55 pts
+  // and 21,310 nodes; the whole 10-candidate document cost 607. Hoisted under
+  // `node(id:)` — a single node, so nothing multiplies — the same data costs
+  // 2 + 6, measured live on both documents as board.ts emits them. GH-1807
+  // reintroduced this silently once, believing it had added 1 point, so the
+  // shape is asserted rather than remembered.
+  const FACT_FIELDS = ["headRefOid", "statusCheckRollup", "reviewThreads", "reviews("];
+
+  it("the linkage document selects NO per-PR facts — they cost 10-100x under a nested connection", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      prs: [{ number: 101, merged: false, headSha: "sha-a", pushedAt: OLD }],
+      branchRefs: [
+        { name: "fix/1-thing", prs: [{ number: 102, merged: false, headSha: "sha-b", pushedAt: OLD }] },
+      ],
+    });
+    deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
+
+    const phaseA = gh.queries.filter((q) => q.includes("d0: issue(number"));
+    const phaseB = gh.queries.filter((q) => q.includes("p0: node(id"));
+    expect(phaseA).toHaveLength(1);
+    expect(phaseB).toHaveLength(1);
+    // The expensive nesting is still there — it is what finds the PRs — but it
+    // now carries `number state` and nothing else.
+    expect(phaseA[0]).toContain("associatedPullRequests");
+    for (const field of FACT_FIELDS) expect(phaseA[0]).not.toContain(field);
+    // ...and phase B carries the facts with no connection above them at all.
+    for (const field of FACT_FIELDS) expect(phaseB[0]).toContain(field);
+    expect(phaseB[0]).not.toContain("associatedPullRequests");
+    expect(phaseB[0]).not.toContain("closedByPullRequestsReferences");
+    // Fetched by NODE ID, and not scoped to a repository: a closing reference
+    // can name a PR in another repo, where the same NUMBER is a different PR
+    // (or none at all). Both open PRs above are in one document.
+    expect(phaseB[0]).toContain("p0: node(id: $p0)");
+    expect(phaseB[0]).toContain("p1: node(id: $p1)");
+    expect(phaseB[0]).not.toContain("repository(");
+    expect(phaseB[0]).not.toContain("pullRequest(number");
+  });
+
+  it("an open PR that returns no facts REFUSES the read — it must never read as a close-out", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      prs: [{ number: 101, merged: false, headSha: "sha-a", pushedAt: OLD }],
+    });
+    gh.vanishBeforePrFacts.add(101); // OPEN in phase A, resolves to nothing in phase B
+    // Empty `openPrs` IS the close-out branch, so swallowing this miss would
+    // tell the deliver lane to close an issue whose PR is still open. The
+    // split must fail loudly instead — a broken read, not a state.
+    expect(() => deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }))).toThrow(
+      /PR #101 .* was OPEN in the linkage read but returned no facts/,
+    );
+  });
+
+  it("no open PR anywhere in a chunk → the facts call is never made", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "In Review", stateUpdatedAt: OLD }); // PR-less
+    gh.issues.set(2, {
+      number: 2,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      prs: [{ number: 202, merged: true, headSha: "sha-m", pushedAt: OLD }], // merged
+    });
+    const res = deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
+    expect(gh.queries.filter((q) => q.includes("p0: node(id"))).toHaveLength(0);
+    // Both still classify — neither branch ever needed a fact.
+    expect(res.blocked.map((r) => [r.number, r.reason])).toContainEqual([1, "no-pr"]);
+    expect(res.queue.map((r) => [r.number, r.reason])).toContainEqual([2, "no-open-pr"]);
+  });
+
+  it("a PR that merges BETWEEN the two calls reads as a close-out, not an open PR with stale facts", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      prs: [{ number: 101, merged: false, headSha: "sha-a", pushedAt: OLD }],
+    });
+    gh.mergeBeforePrFacts.add(101); // OPEN in phase A, MERGED in phase B
+    const res = deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
+    // Phase B is the fresher read of the two and wins: the item is a close-out,
+    // never an `actionable` row against a PR that is already merged.
+    expect(res.queue.map((r) => [r.number, r.pr, r.reason])).toEqual([[1, null, "no-open-pr"]]);
   });
 
   it("run(): deliver-queue --json emits {next,queue,blocked} and prose mode names blocked reasons", () => {
