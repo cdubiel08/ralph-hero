@@ -49,7 +49,12 @@ gate on them; the board comment trail is the record.
 contracts.ts `TOKENS`: `role issue slug parent root depth state branch claim
 pr spawn_epoch harness inner fresh` (names ≤32 chars of `[A-Za-z0-9_-]`,
 values ≤80, no newlines). The `state` token takes the C8 lifecycle enum:
-`spawned briefed working blocked reporting orphaned adopted`. Real syntax
+`spawned briefed working blocked reporting interrupted indeterminate orphaned
+adopted`. The last four are written ABOUT a session, never by it — `orphaned`
+when its pane is gone (GH-1888), and `interrupted`/`indeterminate` when its
+turn ended without a close-out (GH-1907). Which is the reason `state=reporting`
+below is worth the one call it costs: it is the only positive completion claim
+in the vocabulary, and an outage-killed session cannot forge it. Real syntax
 (probed against herdr 0.8.0 — the pane id must come FIRST; space-separated
 option values, never `--opt=value`; see
 `plugin/ralph-herdr/scripts/tokens.sh` for the full discovery note):

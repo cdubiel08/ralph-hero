@@ -780,6 +780,20 @@ export const AGENT_STATES = [
   "working",
   "blocked",
   "reporting",
+  // GH-1907 — terminal-turn VERDICTS, written by the watcher rather than by the
+  // session, because the session that needs them most is the one that died. A
+  // herdr `done` is a turn boundary: an outage that kills a session mid-response
+  // ends its turn exactly as a delivery does, and the pre-1907 token then kept
+  // its last value, so an outage-killed pair read `done … spawned` — identical
+  // to a finished one, over worktrees full of uncommitted work.
+  //
+  // `interrupted` is positive evidence of unfinished work (a dirty checkout).
+  // `indeterminate` is the honest refusal: nothing separates "finished but never
+  // reported" from "killed before it could report". Neither is a completion
+  // claim — only `reporting` is, and only a live session can write it. A caller
+  // deciding whether to retire a workspace may act on `reporting` alone.
+  "interrupted",
+  "indeterminate",
   "orphaned",
   "adopted",
 ] as const;

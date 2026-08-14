@@ -199,6 +199,11 @@ ralph_scoped_agents() {
            agent_session: ($a.agent_session.value // null),
            cwd: ($a.cwd // null),
            checkout: ($wt.checkout_path // $p.cwd // $a.cwd // null),
+           # The current C8 `state` token on the pane, carried so a caller reading a
+           # terminal agent_status can ask outcome.sh whether the session ever
+           # closed out (GH-1907). Null when the pane has none — and null is
+           # the ABSENCE of a completion claim, never a claim of one.
+           state_token: ($p.tokens.state // null),
            via: $via})
     | .[]'
 }
@@ -315,7 +320,8 @@ ralph_all_agents() {
         | {name: $a.name, status: ($a.agent_status // "unknown"),
            pane: $a.pane_id, workspace: $a.workspace_id,
            agent_session: ($a.agent_session.value // null),
-           checkout: ($wt.checkout_path // $wt.repo_root // $p.cwd // $a.cwd // null)})
+           checkout: ($wt.checkout_path // $wt.repo_root // $p.cwd // $a.cwd // null),
+           state_token: ($p.tokens.state // null)})
     | .[]'
 }
 

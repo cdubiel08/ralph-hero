@@ -34,7 +34,8 @@
 #   sort    [{field: {token: "state"}, order: "asc"},
 #            {field: "attention", order: "desc"}]
 #           — token-based sort on the C8 state token: "blocked" sorts before
-#           "done"/"orphaned"/"spawned"/"working" lexically, so asc = blocked
+#           "done"/"indeterminate"/"interrupted"/"orphaned"/"spawned"/
+#           "working" lexically, so asc = blocked
 #           first (a lexical accident of the C8 vocabulary we accept and pin
 #           here; if the vocabulary grows a pre-"blocked" state, revisit).
 #           Fallback if token sorts turn out unsupported live: the builtin

@@ -60,6 +60,8 @@ _RALPH_HERDR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # growing a second, driftable copy of that resolution.
 # shellcheck source=scope.sh
 . "$_RALPH_HERDR_LIB_DIR/scope.sh"
+# shellcheck source=outcome.sh
+. "$_RALPH_HERDR_LIB_DIR/outcome.sh"
 # Fleet controller (Phase 3): per-run state, FleetBriefs, refill arming,
 # shared-claim issue fleets — pure functions + file writes, no side effects
 # at source time.
