@@ -992,6 +992,136 @@ WATCH_ARM_ENV=
 
 rm -f "$FAKE_HERDR_FIXTURES"/agent-get.* "$FAKE_HERDR_FIXTURES"/agent-wait.*
 
+# ═══ 8. an outage-killed session is not a finished one (GH-1907) ══════════════
+# The repro: an API outage killed two fleet sessions mid-turn and both read
+#
+#   w1863-reconcile-sweeps-every  done  1863  spawned
+#
+# identically to a session that had delivered and exited, over worktrees full of
+# uncommitted work. `done` is a TURN boundary; an error ends a turn exactly as a
+# completion does, and the state token a dead session never wrote stayed at its
+# spawn value. Retiring a workspace on that reading discards finished work.
+# shellcheck source=../scripts/outcome.sh
+. "$SCRIPTS/outcome.sh"
+
+mkgit() {  # mkgit DIR [dirty] — a git checkout, optionally with unstaged work
+  mkdir -p "$1"
+  git -C "$1" init -q 2>/dev/null
+  git -C "$1" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+  [ "${2-}" = dirty ] && printf 'half a fix\n' >"$1/wip.txt"
+  return 0
+}
+WT_DIRTY="$TMP/wt-dirty"; mkgit "$WT_DIRTY" dirty
+WT_CLEAN="$TMP/wt-clean"; mkgit "$WT_CLEAN"
+
+rc=0; ralph_worktree_dirty "$WT_DIRTY" || rc=$?
+is "dirty: uncommitted work is rc 0" "0" "$rc"
+rc=0; ralph_worktree_dirty "$WT_CLEAN" || rc=$?
+is "dirty: a clean checkout is rc 1" "1" "$rc"
+# rc 2 is a THIRD outcome, not a synonym for clean: folding an unreadable
+# checkout into "no unfinished work here" is the fail-open this file removes.
+rc=0; ralph_worktree_dirty "$TMP" || rc=$?
+is "dirty: a non-git directory is unreadable (rc 2), not clean" "2" "$rc"
+rc=0; ralph_worktree_dirty "$TMP/nowhere-at-all" || rc=$?
+is "dirty: a missing path is unreadable (rc 2)" "2" "$rc"
+rc=0; ralph_worktree_dirty "" || rc=$?
+is "dirty: no path at all is unreadable (rc 2)" "2" "$rc"
+
+is "outcome: the session word wins — reporting is finished even over a dirty tree" \
+  "finished" "$(ralph_session_outcome reporting "$WT_DIRTY")"
+is "outcome: the observed repro — token stuck at spawned + dirty tree is interrupted" \
+  "interrupted" "$(ralph_session_outcome spawned "$WT_DIRTY")"
+is "outcome: no token + dirty tree is interrupted" \
+  "interrupted" "$(ralph_session_outcome "" "$WT_DIRTY")"
+# The honest refusal. A clean tree does NOT earn a completion claim: only the
+# session can make one, and this one never did.
+is "outcome: no token + clean tree withholds the verdict" \
+  "indeterminate" "$(ralph_session_outcome "" "$WT_CLEAN")"
+is "outcome: an unresolvable checkout never yields a terminal claim" \
+  "indeterminate" "$(ralph_session_outcome "" "")"
+line_has "outcome: the withheld verdict names WHICH two it cannot separate" \
+  "$(ralph_outcome_note indeterminate w1863)" 'killed before it could report'
+line_has "outcome: and says the workspace may not be retired on it" \
+  "$(ralph_outcome_note indeterminate w1863)" 'do NOT retire'
+
+# ── through the event hook: `done` now resolves to a verdict ─────────────────
+OROOT="$TMP/oroot"
+OLEDG="$OROOT/acme/demo/ledger.jsonl"
+mkdir -p "$(dirname "$OLEDG")"
+cat >"$OLEDG" <<'EOF'
+{"ts":"2026-08-14T00:00:00Z","ev":"spawn","agent_ref":"w1863-sweep#bbbb","pane_id":"p0","tokens":{"role":"w","issue":"1863","slug":"sweep","root":"w1863-sweep#bbbb","depth":"0","state":"spawned","branch":"feature/GH-1863","harness":"claude","spawn_epoch":"bbbb"}}
+EOF
+
+# The killed session: herdr says done, the pane token is still `spawned`, and
+# the worktree holds the work it never got to commit.
+herd_fixture '[{"name":"w1863-sweep","agent_status":"done","pane_id":"p0","tokens":{"state":"spawned"}}]' "$WT_DIRTY"
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p0","agent":"w1863-sweep","agent_status":"done"}' "$OROOT"
+is "done: exits 0" "0" "$RC"
+is "done: a killed session is tokened interrupted, not left at spawned" "1" \
+  "$(log_count '^pane report-metadata p0 --source ralph-herdr --token state=interrupted$')"
+line_has "done: and the reason is logged, not left to a pane read" "$OUT" \
+  "worktree holds uncommitted work"
+
+# The finished session: it closed out, so its own word stands and the token is
+# NOT overwritten with a restatement of it.
+herd_fixture '[{"name":"w1863-sweep","agent_status":"done","pane_id":"p0","tokens":{"state":"reporting"}}]' "$WT_DIRTY"
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p0","agent":"w1863-sweep","agent_status":"done"}' "$OROOT"
+is "done: a session that closed out keeps its own reporting token" "0" \
+  "$(log_count '^pane report-metadata p0 .*--token state=')"
+line_has "done: and is recorded as a real completion claim" "$OUT" "closed out"
+
+# Neither signal available: the verdict is withheld rather than defaulting to
+# the quiet reading.
+herd_fixture '[{"name":"w1863-sweep","agent_status":"done","pane_id":"p0","tokens":{"state":"spawned"}}]' "$WT_CLEAN"
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p0","agent":"w1863-sweep","agent_status":"done"}' "$OROOT"
+is "done: nothing to tell them apart pushes indeterminate" "1" \
+  "$(log_count '^pane report-metadata p0 --source ralph-herdr --token state=indeterminate$')"
+
+# THE defect, stated as one assertion: the two readings must differ.
+herd_fixture '[{"name":"w1863-sweep","agent_status":"done","pane_id":"p0","tokens":{"state":"reporting"}}]' "$WT_CLEAN"
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p0","agent":"w1863-sweep","agent_status":"done"}' "$OROOT"
+is "done: a finished session and a killed one no longer read alike" "0" \
+  "$(log_count 'token state=interrupted\|token state=indeterminate')"
+
+# A verdict is a durable claim about a session fate, so it obeys the same rule
+# refill does: an unverified payload may not cause one.
+herd_fixture '[]'
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p0","agent":"w1863-sweep","agent_status":"done"}' "$OROOT"
+is "done: an unconfirmed agent gets no verdict at all" "0" \
+  "$(log_count '^pane report-metadata')"
+
+# The verdict rides in the LEDGER too, not just on the pane. Tokens are chrome:
+# a server restart drops them and reconcile re-pushes from the ledger's reduced
+# `state`. Left out of the record, a verdict would be silently replaced by the
+# spawn record's `spawned` on the next restart — the exact reading this fixes.
+herd_fixture '[{"name":"w1863-sweep","agent_status":"done","pane_id":"p0","tokens":{"state":"spawned"}}]' "$WT_DIRTY"
+before_verdicts=$(lcount "$OLEDG" '.ev=="state" and .state=="interrupted"')
+run_event pane.agent_status_changed \
+  '{"pane_id":"p0","agent":"w1863-sweep","agent_status":"done"}' "$OROOT"
+is "done: the verdict is recorded in the ledger, so it survives a token drop" "$((before_verdicts + 1))" \
+  "$(lcount "$OLEDG" '.ev=="state" and .agent_status=="done" and .state=="interrupted"')"
+is "done: a finished session records no verdict — reporting is already the claim" "0" \
+  "$(lcount "$OLEDG" '.state=="finished"')"
+
+# GH-1878 is not re-litigated here: `idle` is the read that cannot tell
+# not-started from finished, and it still carries no lifecycle claim.
+herd_fixture '[{"name":"w1863-sweep","agent_status":"idle","pane_id":"p0","tokens":{"state":"spawned"}}]' "$WT_DIRTY"
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p0","agent":"w1863-sweep","agent_status":"idle"}' "$OROOT"
+is "idle: still no token push — the spawn-window latch owns that read" "0" \
+  "$(log_count '^pane report-metadata')"
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

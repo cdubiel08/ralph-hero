@@ -55,6 +55,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/scope.sh"
 # shellcheck source=dirty.sh
 . "$SCRIPT_DIR/dirty.sh"
+# shellcheck source=outcome.sh
+. "$SCRIPT_DIR/outcome.sh"
 # shellcheck source=fleet.sh
 . "$SCRIPT_DIR/fleet.sh"
 # refill.sh after fleet.sh (it calls ralph_fleet_*) and after log() is defined
@@ -126,6 +128,7 @@ live_names() {
 handle_status() {
   local agent status pane parsed legacy entry file ref ts cwd repo_root
   local lane issue slug gen title labels body snapshot confirmed
+  local prior checkout verdict
   agent=$(pfield '.agent // .data.agent // empty')
   status=$(pfield '.agent_status // .data.agent_status // empty')
   pane=$(pfield '.pane_id // .data.pane_id // empty')
@@ -191,6 +194,18 @@ handle_status() {
     log "$agent not confirmed in a live snapshot — treating the event as a hint only, no durable write"
   fi
 
+  # The GH-1907 verdict, computed BEFORE the ledger append so the record carries
+  # it: `ralph_ledger_open_rows` reduces `state` from the ledger, and that is
+  # what reconcile re-pushes after a server restart drops the pane tokens. A
+  # verdict that lived only on the pane would be quietly replaced by the spawn
+  # record's `spawned` on the next restart — the exact reading this fixes.
+  verdict=""
+  if [ "$status" = "done" ] && [ -n "$confirmed" ]; then
+    prior=$(printf '%s' "$confirmed" | jq -r '.state_token // empty' 2>/dev/null) || prior=""
+    checkout=$(printf '%s' "$confirmed" | jq -r '.checkout // empty' 2>/dev/null) || checkout=""
+    verdict=$(ralph_session_outcome "$prior" "$checkout")
+  fi
+
   ts=$(date -u +%FT%TZ)
   file="" ref=""
   if [ -z "$legacy" ]; then
@@ -247,7 +262,9 @@ handle_status() {
     if ralph_ledger_open_agents 2>/dev/null |
       awk -F'#' -v r="$ref" '$0 == r { found = 1 } END { exit !found }'; then
       ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg st "$status" --arg p "$pane" \
-        '{ts: $ts, ev: "state", agent_ref: $ref, agent_status: $st, pane_id: $p, via: "event"}')" ||
+        --arg v "$verdict" \
+        '{ts: $ts, ev: "state", agent_ref: $ref, agent_status: $st, pane_id: $p, via: "event"}
+         + (if $v == "" or $v == "finished" then {} else {state: $v} end)')" ||
         log "state append failed for $ref"
     else
       log "$ref is no longer open — dropping a late state event rather than reopening it"
@@ -260,13 +277,38 @@ handle_status() {
   fi
 
   # State token: only herdr statuses with a clean C8 lifecycle mapping are
-  # pushed (working→working, blocked→blocked). idle/done/unknown carry no
-  # honest lifecycle claim — the token keeps its last value; the ledger's
-  # state event above still records the raw status.
+  # pushed (working→working, blocked→blocked). idle/unknown carry no honest
+  # lifecycle claim — the token keeps its last value; the ledger's state event
+  # above still records the raw status.
+  #
+  # `done` is the exception, and GH-1907 is why. It is a TURN boundary, not a
+  # lifecycle outcome: an outage that kills a session mid-response ends its turn
+  # exactly as a delivery does. Leaving the token at its last value made the two
+  # indistinguishable — an outage-killed pair read `done … spawned`, identical to
+  # a finished session, over worktrees full of uncommitted work. So a terminal
+  # turn resolves to a VERDICT (outcome.sh) rather than to silence: `finished`
+  # only when the session itself said so, `interrupted` on positive evidence of
+  # unfinished work, `indeterminate` when nothing separates the two. A caller
+  # deciding whether to retire the workspace may act on `finished` alone.
+  #
+  # Gated on $confirmed for the same reason refill is: an unverified payload may
+  # not cause a durable claim about a session's fate. Unconfirmed leaves the
+  # token untouched — the pre-GH-1907 behaviour, which is the safe direction
+  # here because it is the one that never asserts completion.
   case "$status" in
     working | blocked)
       if [ -n "$pane" ]; then
         ralph_tokens_push "$pane" "state=$status"
+      fi
+      ;;
+    done)
+      if [ -n "$pane" ] && [ -n "$verdict" ]; then
+        # `finished` is already spelled `reporting` on the pane — the session's
+        # own word, and the token it is read from. Overwriting it would replace
+        # a first-hand claim with a restatement of it, which is also why the
+        # ledger record above omits it.
+        [ "$verdict" = finished ] || ralph_tokens_push "$pane" "state=$verdict"
+        log "$(ralph_outcome_note "$verdict" "$agent")"
       fi
       ;;
   esac

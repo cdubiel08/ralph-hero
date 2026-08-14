@@ -93,6 +93,33 @@ done/idle/gone, dropping it from the watch list; exits when the list is empty.
 tokens looks exactly like one that finished — so both modes hold an `idle`
 target that has never been observed working or blocked until it arms or
 `RALPH_HERDR_WATCH_ARM_SEC` elapses (GH-1878).
+
+`done` is ambiguous in the other direction, and `outcome.sh` answers it
+(GH-1907). `done` is a **turn** boundary: an API outage that kills a session
+mid-response ends its turn exactly as a delivery does. Observed 2026-08-14 —
+two outage-killed fleet sessions read `done … spawned`, identical to finished
+ones, over worktrees holding real uncommitted work; an orchestrator trusting
+that reading would have retired both workspaces. So `pane.agent_status_changed`
+now resolves a confirmed `done` to a **verdict** and writes it to the `state`
+token instead of leaving the token at its last value:
+
+| verdict | evidence | meaning |
+|---|---|---|
+| `finished` | the pane's `state` token already reads `reporting` | the session said so itself — the only positive completion claim, and the token is left alone rather than restated |
+| `interrupted` | no close-out **and** the session's checkout is dirty | positive evidence of unfinished work |
+| `indeterminate` | no close-out and nothing else separates them | the verdict is withheld: "finished but never reported" and "killed before it could report" both fit |
+
+The invariant: **a workspace may never be retired on a signal a killed session
+also produces**, so only `finished` licenses retirement. An unreadable checkout
+counts as no evidence (`indeterminate`), never as clean, and an *unconfirmed*
+`done` event writes no verdict at all — a verdict is a durable claim about a
+session's fate, held to the same bar as refill. The two templates this copies
+are already in the repo: `pr-gate-watch.sh` withholding a verdict it cannot
+bind to one commit, and the GH-1878 latch resolving where it can and bounding
+where it cannot. The verdict is written to the ledger as well as the pane —
+tokens are chrome, and reconcile re-pushes them from the ledger after a server
+restart, so a pane-only verdict would be replaced by the spawn record's
+`spawned` on the next restart.
 Both verbs — `agent get` and `agent wait` — go through the transport adapter,
 so a read that cannot be answered is neither a state nor a departure: only
 herdr's own `agent_not_found` ends a watch. Anything else keeps the target on
@@ -537,7 +564,7 @@ not here.
 - **Pane tokens are chrome.** Pushed best-effort via `herdr pane report-metadata`;
   a push failure is a one-time warning, never an aborted verb, and a server restart
   drops them until reconcile re-pushes. The state token only claims what maps
-  honestly (`working`/`blocked`); `idle`/`done` update the ledger, not the chip.
+  honestly (`working`/`blocked`); `idle` updates the ledger, not the chip.
 - **A process can outlive its pane, and until GH-1888 nothing looked (`doctor-orphans.sh`).**
   Both sides of `doctor-lineage.sh` are keyed on a ledger identity, so neither
   can see a process that was never a ledgered agent — a cockpit, a dev server, a

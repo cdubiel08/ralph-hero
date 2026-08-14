@@ -46,7 +46,11 @@ herd_fixture() {
       tabs: [{tab_id: "wR:t1"}],
       panes: [$agents | to_entries[] | (complete(.key) + .value)
               | {pane_id, terminal_id, workspace_id, tab_id, focused,
-                 agent_status, revision, cwd: $root}],
+                 agent_status, revision, cwd: $root,
+                 # A partial agent may carry `tokens`: the pane metadata map the
+                 # server keeps, which is where the C8 `state` token lives and
+                 # therefore where the GH-1907 outcome verdict reads its evidence.
+                 tokens: (.tokens // {})}],
       layouts: [],
       agents: [$agents | to_entries[] | complete(.key) + .value]
     }}' >"$FAKE_HERDR_FIXTURES/api-snapshot.json"
