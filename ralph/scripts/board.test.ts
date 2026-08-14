@@ -46,6 +46,7 @@ import {
   listItems,
   listItemsFull,
   listOwnOpenItems,
+  closedTreeEdges,
   ownRepo,
   isState,
   MACHINE,
@@ -1403,7 +1404,10 @@ describe("lean query selection (GH-1803)", () => {
 
   /** The walk's own documents — the deliver lane's per-issue detail fetch has
    *  its own shape and is not what this issue is about. */
-  const walkQueries = () => gh.queries.filter((q) => q.includes("items(first: 100"));
+  const walkQueries = () =>
+    gh.queries.filter(
+      (q) => q.includes("items(first: 100") || q.includes("issues(states: OPEN, first: 100"),
+    );
   const capture = (argv: string[]) => {
     const said: string[] = [];
     const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
@@ -1533,6 +1537,126 @@ describe("lean query selection (GH-1803)", () => {
       expect(Object.keys(row)).not.toContain("labelsTruncated");
       expect(Array.isArray(row.openBlockers)).toBe(true);
     }
+  });
+});
+
+describe("inverted ranking walk (GH-1814) — closedTreeEdges", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  /** The invariant the whole change rests on: whatever the project scan's
+   *  `closed` half contributed to ranking, the upward closure contributes too.
+   *  Compared through rankNext rather than by set equality — the scan hands
+   *  over every closed board item, the closure only the ones on a path to an
+   *  open node, and the surplus is what provably changes no answer. */
+  const rankingsAgree = () => {
+    const full = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
+    const own = ownRepo(ctx, full.open).own;
+    const viaScan = rankNext(own, ownRepo(ctx, full.closed).own);
+    const viaClosure = rankNext(own, closedTreeEdges(ctx, own));
+    const shape = (r: ReturnType<typeof rankNext>) => ({
+      eligible: r.eligible.map((i) => i.number),
+      blocked: r.blocked.map((i) => i.number),
+      inFlightEpics: r.inFlightEpics.map((e) => e.root),
+    });
+    expect(shape(viaClosure)).toEqual(shape(viaScan));
+    return shape(viaClosure);
+  };
+
+  it("keeps a Done phase from severing an epic root from its live grandchildren", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P0" }); // epic root
+    gh.issues.set(2, {
+      number: 2, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED", parent: 1,
+    }); // closed phase — pass-through only
+    gh.issues.set(3, { number: 3, state: "Backlog", priority: "P2", parent: 2 }); // grandchild
+
+    expect(closedTreeEdges(ctx, listOwnOpenItems(ctx, QUEUE_SELECT_NO_LABELS))).toEqual([
+      { number: 2, parentNumber: 1 },
+    ]);
+    rankingsAgree();
+  });
+
+  it("walks a chain of closed ancestors, not just the first generation", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P0" });
+    for (const n of [2, 3]) {
+      gh.issues.set(n, {
+        number: n, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED", parent: n - 1,
+      });
+    }
+    gh.issues.set(4, { number: 4, state: "Backlog", priority: "P2", parent: 3 });
+
+    expect(closedTreeEdges(ctx, listOwnOpenItems(ctx, QUEUE_SELECT_NO_LABELS))).toEqual([
+      { number: 3, parentNumber: 2 },
+      { number: 2, parentNumber: 1 },
+    ]);
+    rankingsAgree();
+  });
+
+  it("leaves the tree severed at an OFF-BOARD closed parent, exactly as the scan did", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P0" });
+    gh.issues.set(2, {
+      number: 2, state: null, onBoard: false, issueState: "CLOSED", stateReason: "COMPLETED", parent: 1,
+    });
+    gh.issues.set(3, { number: 3, state: "Backlog", priority: "P2", parent: 2 });
+
+    expect(closedTreeEdges(ctx, listOwnOpenItems(ctx, QUEUE_SELECT_NO_LABELS))).toEqual([]);
+    rankingsAgree();
+  });
+
+  it("fails closed when a candidate parent's board membership is truncated", () => {
+    gh.issues.set(1, {
+      number: 1, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED",
+      onBoard: false, projectItemsTruncated: true,
+    });
+    gh.issues.set(2, { number: 2, state: "Backlog", parent: 1 });
+
+    expect(() => closedTreeEdges(ctx, listOwnOpenItems(ctx, QUEUE_SELECT_NO_LABELS)))
+      .toThrow(/#1.*project membership truncated/);
+  });
+
+  it("spends nothing when every parent is already open — the common board", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P0" });
+    gh.issues.set(2, { number: 2, state: "Backlog", parent: 1 });
+
+    const open = listOwnOpenItems(ctx, QUEUE_SELECT_NO_LABELS);
+    const before = gh.graphqlCalls;
+    expect(closedTreeEdges(ctx, open)).toEqual([]);
+    expect(gh.graphqlCalls).toBe(before);
+  });
+
+  /** Cost SHAPE, pinned (GH-1811's lesson, applied to the inverted walk):
+   *  `projectItems` is a second nesting level, so its `first:` multiplies the
+   *  whole page and IS the walk's price. Probed at 20 → 21 pts, at 10 → 11.
+   *  A future edit raising it doubles every ranking read silently. */
+  it("keeps the issues-rooted walk's second nesting level trimmed", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    listOwnOpenItems(ctx, QUEUE_SELECT_NO_LABELS);
+    const walk = gh.queries.filter((q) => q.includes("issues(states: OPEN, first: 100"));
+    expect(walk).not.toHaveLength(0);
+    for (const q of walk) expect(q).toContain("projectItems(first: 10)");
+  });
+
+  it("`next` now pages open work, not project history", () => {
+    for (let n = 1; n <= 5; n++) gh.issues.set(n, { number: n, state: "Backlog" });
+    for (let n = 6; n <= 60; n++)
+      gh.issues.set(n, { number: n, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED" });
+    gh.itemsPageSize = 10;
+
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const before = gh.graphqlCalls;
+    try {
+      run(["next", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    const inverted = gh.graphqlCalls - before;
+    const scanStart = gh.graphqlCalls;
+    listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
+    expect(inverted).toBeLessThan(gh.graphqlCalls - scanStart);
   });
 });
 

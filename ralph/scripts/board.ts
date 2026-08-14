@@ -3101,7 +3101,7 @@ function walkOwnOpen(ctx: Ctx, select: QueueSelect): ItemCacheEntry {
               pageInfo { hasNextPage endCursor }
               nodes {
                 ${queueContentFragment(select)}
-                projectItems(first: 20) {
+                projectItems(first: ${PROJECT_ITEMS_PAGE}) {
                   pageInfo { hasNextPage }
                   nodes { isArchived project { id } ${FIELD_VALUES_FRAGMENT} }
                 }
@@ -3142,6 +3142,110 @@ function walkOwnOpen(ctx: Ctx, select: QueueSelect): ItemCacheEntry {
       after = page.pageInfo.endCursor;
     }
     return { version: ITEM_CACHE_VERSION, kind: "own-open", select, fetchedAt, open: items, closed: [], scan };
+  });
+}
+
+/** Project memberships read per issue in the issues-rooted paths.
+ *
+ *  This one number IS the cost of the inverted walk, and it is the exception
+ *  the GH-1811 lesson predicts: on the ProjectV2.items walk every connection
+ *  hangs under one `items(first: 100)` page, so trimming a nested `first:` is
+ *  worth zero. Here `projectItems` is a SECOND level of nesting, and
+ *  `fieldValues` hangs under IT — so the product, and the charge, is
+ *  100 × projectItems × fieldValues. Probed against this repo, one page:
+ *
+ *      projectItems  fieldValues   cost
+ *                20           20     21
+ *                20           10     21   ← fieldValues is free
+ *                10           20     11
+ *                 5           20      6
+ *
+ *  `fieldValues` moves nothing; `projectItems` halves the walk. 10 buys the
+ *  halving while keeping ample headroom over the number of projects a board
+ *  issue is realistically on — and being wrong is a hard, self-naming error
+ *  (membership truncated), never a silently short read. */
+const PROJECT_ITEMS_PAGE = 10;
+
+/** Parent lookups per round trip in the closed-edge closure. */
+const CLOSED_EDGE_BATCH = 50;
+
+/** The closed pass-through tree edges an issues-rooted walk cannot see
+ *  (GH-1814).
+ *
+ *  `next`/`frontier` used to take these from the full project scan's `closed`
+ *  half — the whole reason those two commands still paid for a walk over every
+ *  item the board has ever held. What the ranker actually needs is far
+ *  smaller: only a closed node that lies BETWEEN an open item and an open
+ *  ancestor changes any answer. A closed subtree with no open descendant
+ *  contributes nothing — closed nodes are rankless and never eligible, and the
+ *  descendant walk only reaches them from an open root.
+ *
+ *  So the closure runs UPWARD from the open set: take every parent the open
+ *  items name that is not itself open, resolve its own parent, repeat. That is
+ *  exactly the set of intermediate nodes, and it terminates because each round
+ *  either finds new numbers or stops. On this board it is usually zero round
+ *  trips — most parents are open.
+ *
+ *  Two filters keep the result identical to the scan-derived one it replaces:
+ *  a parent is an edge only if it is ON the configured board (an off-board
+ *  closed parent severed the tree before and must keep severing it), and only
+ *  own-repo parents are followed (a foreign #N must never rebuild a tree edge
+ *  onto this repo's #N — the same fail-closed rule `toQueueItem` applies).
+ *  Archived is deliberately NOT filtered: an archived closed item carried a
+ *  tree edge under the project scan, and dropping it here would sever a tree
+ *  the previous read path joined. */
+export function closedTreeEdges(ctx: Ctx, open: { number: number; parentNumber: number | null }[]): ClosedEdge[] {
+  const self = `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase();
+  const known = new Set(open.map((i) => i.number));
+  const edges: ClosedEdge[] = [];
+  let frontier = [...new Set(open.map((i) => i.parentNumber).filter((n): n is number => n != null && !known.has(n)))];
+  for (const n of frontier) known.add(n);
+  if (frontier.length === 0) return edges;
+
+  return withCache(ctx, (cache) => {
+    while (frontier.length > 0) {
+      const next: number[] = [];
+      for (let i = 0; i < frontier.length; i += CLOSED_EDGE_BATCH) {
+        const batch = frontier.slice(i, i + CLOSED_EDGE_BATCH);
+        const aliases = batch
+          .map((n, k) => `pe${k}: issue(number: ${n}) {
+            number
+            parent { number repository { nameWithOwner } }
+            projectItems(first: ${PROJECT_ITEMS_PAGE}) { pageInfo { hasNextPage } nodes { project { id } } }
+          }`)
+          .join("\n");
+        const d: any = ghGraphQL(
+          ctx,
+          `query($owner: String!, $repo: String!) {
+            repository(owner: $owner, name: $repo) { ${aliases} }
+          }`,
+          { owner: ctx.cfg.owner, repo: ctx.cfg.repo },
+        );
+        const repo = d.repository;
+        if (!repo) throw new Error(`could not read parent issues for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+        batch.forEach((n, k) => {
+          const c = repo[`pe${k}`];
+          if (!c) return; // deleted or transferred — no edge, same as off-board
+          const pi = c.projectItems;
+          // Fail closed, exactly as the walk does: membership we could not see
+          // must not read as "not on the board".
+          if (!pi?.nodes?.some((x: any) => x.project?.id === cache.projectId)) {
+            if (pi?.pageInfo?.hasNextPage)
+              throw new Error(`issue #${n}: project membership truncated — cannot tell if it is on the board`);
+            return; // genuinely off-board — the tree stays severed here
+          }
+          const p =
+            c.parent && c.parent.repository?.nameWithOwner?.toLowerCase() === self ? c.parent.number : null;
+          edges.push({ number: n, parentNumber: p });
+          if (p != null && !known.has(p)) {
+            known.add(p);
+            next.push(p);
+          }
+        });
+      }
+      frontier = next;
+    }
+    return edges;
   });
 }
 
@@ -3866,8 +3970,11 @@ export function deliverQueue(
   // The lane filters on board state and hands {number, title} to the
   // candidate fetch — neither labels nor dependency edges are ever read, so
   // the walk runs at the 1-point floor (GH-1803).
-  const inReview = ownRepo(ctx, listItems(ctx, QUEUE_SELECT_MINIMAL))
-    .own.filter((i) => i.state === "In Review");
+  // Own-repo open items only, and the walk is rooted at them (GH-1814): the
+  // lane's inputs are all open by definition, so the project scan's closed
+  // half was pure history it paid for and discarded.
+  const inReview = listOwnOpenItems(ctx, QUEUE_SELECT_MINIMAL)
+    .filter((i) => i.state === "In Review");
   const cands = fetchDeliverCandidates(ctx, inReview);
   let probe: DeliverProbe | null;
   if (probeOverride !== undefined) {
@@ -6324,10 +6431,11 @@ export function run(argv: string[], ctx: Ctx): number {
     case "next": {
       // Ranking is blockers + field values; labels are never consulted, so the
       // walk skips that connection (GH-1803).
-      const full = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
-      const own = ownRepo(ctx, full.open).own;
-      // Closed own-repo items ride along as pass-through tree edges only.
-      const closedEdges = ownRepo(ctx, full.closed).own;
+      const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+      const own = full.open;
+      // Closed items ride along as pass-through tree edges only — resolved
+      // upward from the open set rather than by paging the whole project.
+      const closedEdges = closedTreeEdges(ctx, own);
       // The values the ranker will actually rank double as staleness evidence:
       // one it cannot find in the cached options proves the schema moved.
       const order = priorityOptionOrder(ctx, {
@@ -6373,9 +6481,9 @@ export function run(argv: string[], ctx: Ctx): number {
     case "frontier": {
       // EXACTLY next's inputs and ranking — frontier is a re-projection,
       // down to the query selection.
-      const full = listItemsFull(ctx, QUEUE_SELECT_NO_LABELS);
-      const own = ownRepo(ctx, full.open).own;
-      const closedEdges = ownRepo(ctx, full.closed).own;
+      const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+      const own = full.open;
+      const closedEdges = closedTreeEdges(ctx, own);
       const res = frontierView(
         rankNext(
           own,
