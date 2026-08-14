@@ -237,6 +237,12 @@ bash plugin/ralph-herdr/scripts/doctor-lineage.sh
                                              # L10: live agents ↔ open ledger records, read-only
                                              # (0 closed / 1 findings / 2 not evaluable);
                                              # /ralph:help herdr relays the same verdict
+bash plugin/ralph-herdr/scripts/doctor-orphans.sh
+                                             # GH-1888: processes whose HERDR_PANE_ID names no
+                                             # live pane — the side neither lineage check can
+                                             # see, because an orphan was never a ledgered
+                                             # agent (0 none / 1 found / 2 not evaluable).
+                                             # Reports the pid; never kills anything
 board contract validate ralph.fleet_brief \
   ~/.ralph/<owner>/<repo>/runs/<run_id>/briefs/<ref>.json   # typed payloads C1-C9
 board contract lint ralph.completion_report report.json --live  # lints L1-L13
