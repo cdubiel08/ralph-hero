@@ -1602,12 +1602,13 @@ describe("doctor hardening (closed drift, fix gating, resilience, garbled claims
     expect(gh.issues.get(1)!.claim).toBe("not-a-claim"); // surfaced, not fixed
   });
 
-  it("foreign-repo items are an informational ok line, named with their repo", () => {
+  it("foreign-repo items under `allow` are an informational ok line, named with their repo", () => {
     gh.issues.set(1, { number: 1, state: "Backlog" });
     gh.issues.set(2, { number: 2, state: "Backlog", repo: "someone-else/theirs" });
+    ctx.cfg.foreign = { allow: true, configured: true };
 
     const check = doctor(ctx).checks.find((c) => c.name === "foreign-items");
-    expect(check?.level).toBe("ok"); // informational, never a gate
+    expect(check?.level).toBe("ok"); // the configured shape of the board — never a gate
     expect(check?.detail).toContain("someone-else/theirs#2");
     expect(check?.detail).toContain("never touches them");
   });
@@ -5052,5 +5053,204 @@ describe("prune CLI (GH-1788)", () => {
     const res = drive(["prune", "--apply"], makeCtx(gh));
     expect(gh.removedItems).toEqual([]);
     expect(res.code).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GH-1815 — foreign-repo items are opt-in, never implicit.
+// ---------------------------------------------------------------------------
+
+import {
+  assertBoardAddAllowed,
+  FOREIGN_REPO_ENV,
+  parseForeignRepoPolicy,
+  repoFromIssueUrl,
+} from "./board.js";
+
+describe("foreign-repo posture (GH-1815)", () => {
+  describe("parseForeignRepoPolicy", () => {
+    it("defaults to deny, and says it was never configured", () => {
+      expect(parseForeignRepoPolicy({})).toEqual({ allow: false, configured: false });
+    });
+
+    it("reads an empty value as unset — an exported-but-empty shell var is not a decision", () => {
+      expect(parseForeignRepoPolicy({ [FOREIGN_REPO_ENV]: "" })).toEqual({
+        allow: false,
+        configured: false,
+      });
+      expect(parseForeignRepoPolicy({ [FOREIGN_REPO_ENV]: "   " })).toEqual({
+        allow: false,
+        configured: false,
+      });
+    });
+
+    it("distinguishes an explicit deny from the default — the whole point of `configured`", () => {
+      expect(parseForeignRepoPolicy({ [FOREIGN_REPO_ENV]: "false" })).toEqual({
+        allow: false,
+        configured: true,
+      });
+    });
+
+    it("accepts the usual truthy and falsy spellings, case-insensitively", () => {
+      for (const yes of ["1", "true", "TRUE", "Yes", "on"])
+        expect(parseForeignRepoPolicy({ [FOREIGN_REPO_ENV]: yes }).allow).toBe(true);
+      for (const no of ["0", "false", "No", "OFF"])
+        expect(parseForeignRepoPolicy({ [FOREIGN_REPO_ENV]: no }).allow).toBe(false);
+    });
+
+    it("fails CLOSED and warns on a value it cannot read — this one gates a write", () => {
+      const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        expect(parseForeignRepoPolicy({ [FOREIGN_REPO_ENV]: "maybe" })).toEqual({
+          allow: false,
+          configured: true,
+        });
+        expect(warn.mock.calls.map((c) => String(c[0])).join("")).toContain(FOREIGN_REPO_ENV);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+
+  describe("repoFromIssueUrl", () => {
+    it("reads owner/repo out of a github.com issue URL", () => {
+      expect(repoFromIssueUrl("https://github.com/cdubiel08/ralph-hero/issues/1815")).toBe(
+        "cdubiel08/ralph-hero",
+      );
+    });
+
+    it("is host-agnostic — GHE has a different host and the same path shape", () => {
+      expect(repoFromIssueUrl("https://ghe.corp.example/team/svc/issues/7")).toBe("team/svc");
+    });
+
+    it("returns null for anything it cannot read, rather than guessing", () => {
+      expect(repoFromIssueUrl("u/900")).toBeNull();
+      expect(repoFromIssueUrl("")).toBeNull();
+      expect(repoFromIssueUrl("https://github.com/cdubiel08/ralph-hero/pull/12")).toBeNull();
+    });
+  });
+
+  describe("assertBoardAddAllowed", () => {
+    const ctxFor = (foreign: { allow: boolean; configured: boolean }): Ctx => {
+      const c = makeCtx(new FakeGh());
+      c.cfg.foreign = foreign;
+      return c;
+    };
+    const own = "https://github.com/cdubiel08/ralph-hero/issues/5";
+    const theirs = "https://github.com/someone-else/theirs/issues/5";
+
+    it("permits an own-repo add under the default deny posture", () => {
+      expect(() => assertBoardAddAllowed(ctxFor({ allow: false, configured: false }), own, 5)).not.toThrow();
+    });
+
+    it("refuses a foreign-repo add and names the variable that would permit it", () => {
+      const msg = refusalMessage(() =>
+        assertBoardAddAllowed(ctxFor({ allow: false, configured: false }), theirs, 5),
+      );
+      expect(msg).toContain("someone-else/theirs");
+      expect(msg).toContain("cdubiel08/ralph-hero");
+      expect(msg).toContain(FOREIGN_REPO_ENV);
+      // Grandfathering is policy: the refusal must not read as "and I removed it".
+      expect(msg).toContain("never removed");
+    });
+
+    it("refuses an unreadable URL — not knowing what is being added is not permission", () => {
+      const msg = refusalMessage(() =>
+        assertBoardAddAllowed(ctxFor({ allow: false, configured: false }), "u/5", 5),
+      );
+      expect(msg).toContain(FOREIGN_REPO_ENV);
+    });
+
+    it("compares repo slugs case-insensitively, like ownRepo does", () => {
+      const c = ctxFor({ allow: false, configured: false });
+      expect(() =>
+        assertBoardAddAllowed(c, "https://github.com/CDubiel08/Ralph-Hero/issues/5", 5),
+      ).not.toThrow();
+    });
+
+    it("under `allow`, permits anything — today's multi-repo behaviour, unchanged", () => {
+      const c = ctxFor({ allow: true, configured: true });
+      expect(() => assertBoardAddAllowed(c, theirs, 5)).not.toThrow();
+      expect(() => assertBoardAddAllowed(c, "u/5", 5)).not.toThrow();
+    });
+  });
+
+  describe("wired at the mutation, not at the verb", () => {
+    it("adopt refuses a foreign issue and adds NOTHING to the board", () => {
+      const gh = new FakeGh();
+      gh.issues.set(5, { number: 5, state: null, onBoard: false, repo: "someone-else/theirs" });
+      const ctx = makeCtx(gh);
+
+      const msg = refusalMessage(() => adopt(ctx, 5));
+      expect(msg).toContain(FOREIGN_REPO_ENV);
+      expect(gh.issues.get(5)!.onBoard).toBeFalsy();
+    });
+
+    it("adopt is a no-op re-read for an issue already on the board — the guard is on the ADD", () => {
+      const gh = new FakeGh();
+      gh.issues.set(5, { number: 5, state: "Backlog", onBoard: true, repo: "someone-else/theirs" });
+      // Grandfathered: a foreign item already on the board is doctor's to report,
+      // never something a read path may refuse to look at.
+      expect(() => adopt(makeCtx(gh), 5)).not.toThrow();
+    });
+
+    it("create still works — its issue is born in the configured repo", () => {
+      const gh = new FakeGh();
+      const issue = createIssue(makeCtx(gh), { title: "t", body: "b" });
+      expect(issue.number).toBeGreaterThan(0);
+      expect(gh.issues.get(issue.number)!.onBoard).toBe(true);
+    });
+  });
+
+  describe("doctor", () => {
+    it("reports the deny posture as info, and says it was defaulted", () => {
+      const ctx = makeCtx(new FakeGh());
+      const check = doctor(ctx).checks.find((c) => c.name === "foreign-repo-policy");
+      expect(check?.level).toBe("info");
+      expect(check?.detail).toContain("deny");
+      expect(check?.detail).toContain("default");
+    });
+
+    it("distinguishes an explicitly configured deny from the default", () => {
+      const ctx = makeCtx(new FakeGh());
+      ctx.cfg.foreign = { allow: false, configured: true };
+      const check = doctor(ctx).checks.find((c) => c.name === "foreign-repo-policy");
+      expect(check?.detail).toContain("deny");
+      expect(check?.detail).toContain(FOREIGN_REPO_ENV);
+      expect(check?.detail).not.toContain("default");
+    });
+
+    it("reports the allow posture", () => {
+      const ctx = makeCtx(new FakeGh());
+      ctx.cfg.foreign = { allow: true, configured: true };
+      const check = doctor(ctx).checks.find((c) => c.name === "foreign-repo-policy");
+      expect(check?.level).toBe("info");
+      expect(check?.detail).toContain("allow");
+    });
+
+    it("warns about pre-existing foreign items under deny, naming them and the remedies", () => {
+      const gh = new FakeGh();
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+      gh.issues.set(2, { number: 2, state: "Backlog", repo: "someone-else/theirs" });
+      const check = doctor(makeCtx(gh)).checks.find((c) => c.name === "foreign-items");
+      expect(check?.level).toBe("warn");
+      expect(check?.detail).toContain("someone-else/theirs#2");
+      expect(check?.detail).toContain(FOREIGN_REPO_ENV);
+      expect(check?.detail).toContain("never removed automatically");
+    });
+
+    it("never escalates under --strict and never removes under --fix — they are grandfathered", () => {
+      const gh = new FakeGh();
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+      gh.issues.set(2, { number: 2, state: "Backlog", repo: "someone-else/theirs" });
+
+      const strict = doctor(makeCtx(gh), { strict: true });
+      expect(strict.checks.find((c) => c.name === "foreign-items")?.level).toBe("warn");
+
+      const fixed = doctor(makeCtx(gh), { fix: true });
+      expect(fixed.checks.find((c) => c.name === "foreign-items")?.level).toBe("warn");
+      expect(gh.removedItems).toEqual([]);
+      expect(gh.issues.has(2)).toBe(true);
+    });
   });
 });

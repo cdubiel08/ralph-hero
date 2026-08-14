@@ -144,7 +144,12 @@ export class FakeGh {
       id: `I_${fi.number}`,
       number: fi.number,
       title: fi.title ?? `Issue ${fi.number}`,
-      url: `https://github.com/cdubiel08/ralph-hero/issues/${fi.number}`,
+      // Honours `repo` so the single-issue read and the bulk items view agree
+      // about where an issue lives — GH-1815's add guard reads this URL, and a
+      // fixture that always said "own repo" could not model the path it exists
+      // to refuse. Production `fetchIssue` pins owner/repo, so this shape is
+      // unreachable there; the fixture is how the guard gets exercised at all.
+      url: `https://github.com/${fi.repo ?? "cdubiel08/ralph-hero"}/issues/${fi.number}`,
       state: fi.issueState ?? "OPEN",
       stateReason: fi.stateReason ?? null,
       labels: {
@@ -601,7 +606,18 @@ export class FakeGh {
     if (query.includes("createIssue")) {
       const number = 900 + this.issues.size;
       this.issues.set(number, { number, state: null });
-      return data({ createIssue: { issue: { id: `I_${number}`, number, url: `u/${number}` } } });
+      // A real issue URL, not a stub: GH-1815's add guard reads the repo off
+      // it, and a fixture that shortens what GitHub actually returns would
+      // make the guard look broken instead of the fixture.
+      return data({
+        createIssue: {
+          issue: {
+            id: `I_${number}`,
+            number,
+            url: `https://github.com/cdubiel08/ralph-hero/issues/${number}`,
+          },
+        },
+      });
     }
     if (query.includes("addProjectV2ItemById")) {
       const num = Number(String(variables.contentId).replace("I_", ""));
@@ -662,6 +678,10 @@ export function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo", opts
     apply: { enabled: false, label: APPLY_LABEL_DEFAULT, infraPaths: [] },
     smells: { ...SMELL_DEFAULTS },
     volume: { ...VOLUME_DEFAULTS },
+    // GH-1815: the production default. Every pre-existing test is written
+    // against an own-repo board, so `deny` colours nothing — and the opt-in
+    // path gets its coverage by saying so, which is the direction that needs it.
+    foreign: { allow: false, configured: false },
   };
   return {
     // Delegate per-call so tests may overlay gh.exec after ctx construction.
