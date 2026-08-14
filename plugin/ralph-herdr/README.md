@@ -89,9 +89,11 @@ while the session keeps blocking and exits once the session is done or idle.
 Multiple targets (the fleet case): a portable poll loop (`agent get` every
 `RALPH_HERDR_WATCH_POLL`s) notifies on each agent's first block and once on
 done/idle/gone, dropping it from the watch list; exits when the list is empty.
-Every `agent get` goes through the transport adapter, so a poll that cannot be
-read is neither a state nor a departure: the target keeps its place on the
-watch list and the pane says the read failed (GH-1855).
+Both verbs — `agent get` and `agent wait` — go through the transport adapter,
+so a read that cannot be answered is neither a state nor a departure: only
+herdr's own `agent_not_found` ends a watch. Anything else keeps the target on
+the watch list (multi-target) or backs off and re-arms (single-target), so the
+two modes agree about what "unreachable" means (GH-1855, GH-1870).
 
 ### Agent names (grammar B)
 
@@ -130,7 +132,8 @@ of each script:
 | `RALPH_HERDR_START_TRIES` | `15` | retries (1s apart) for `agent start` on a just-created pane still sourcing rc files (`agent_pane_busy` only, just-created panes only) |
 | `RALPH_HERDR_REPO` | `$PWD` | repo the scripts operate on; the default (the pane's cwd) is almost always right |
 | `HERDR_BIN_PATH` | `herdr` | path to the herdr binary |
-| `RALPH_HERDR_WATCH_POLL` | `15` | poll interval, seconds, for the multi-target watcher loop, and the single-target backoff after an unreadable poll (the single-target watch is otherwise event-driven) |
+| `RALPH_HERDR_WATCH_POLL` | `15` | poll interval, seconds, for the multi-target watcher loop, and the backoff after an unreadable read in either mode (the single-target watch is otherwise event-driven). A malformed value warns and falls back — the watcher is `exec`'d into after its agent is live, so dying on it would leave that agent unwatched |
+| `RALPH_HERDR_WAIT_MAX_SEC` | `86400` | ceiling on one server-owned `agent wait`. The wait is unbounded by design; this exists only so a wedged server surfaces as an unreadable read rather than hanging the pane forever |
 | `RALPH_HERDR_ANSWER_TAIL` | `40` | lines of `gh issue view --comments` the answer pane shows before the answer prompt |
 | `RALPH_HERDR_ANSWER_NUDGE_MS` | `15000` | `--wait` timeout for the post-answer `agent prompt` nudge; expiry reports "sent but not confirmed", never "delivered" |
 | `RALPH_ALLOW_API_BILLING` | unset | billing guard override, same contract as `tick.sh`: if `ANTHROPIC_API_KEY` is set, spawning is refused (it would bill API credits, not the subscription) unless this is exactly `true` |

@@ -47,6 +47,10 @@
 #                                 payload {agent:{…}} (default: an idle agent)
 #   agent wait <NAME> …           agent-wait.<NAME>.json, then agent-wait.json
 #                                 (same shape — `agent wait` answers agent_info)
+#   agent wait <NAME> --until …   agent-wait-until.<NAME>.*, then
+#                                 agent-wait-until.*, then the agent-wait keys
+#                                 above (the off-blocked re-arm, answerable
+#                                 apart from the bare wait)
 #   tab create …                  tab-create.json         payload {tab,root_pane}
 #   tab close <ID>                tab-close.json
 #   agent read <NAME> …           agent-read.<NAME>.txt, then agent-read.txt —
@@ -255,12 +259,25 @@ case "$key" in
     # that target's .rc. Without it, "this ONE agent is gone (refusal + rc 1)
     # while the others answer normally" — the multi-target watcher's whole
     # branch table — would be inexpressible.
-    if [ -n "$FIX" ] && { [ -f "$FIX/$key.${3-}.json" ] || [ -f "$FIX/$key.${3-}.raw" ] ||
-      [ -f "$FIX/$key.${3-}.rc" ]; }; then
-      key="$key.${3-}"
-      if raw_body "$key"; then
-        exit "$(rc_for "$key")"
+    #
+    # `agent wait --until …` is a different question from the bare wait — it is
+    # the watcher's off-blocked re-arm, whose until-set deliberately EXCLUDES
+    # blocked — so it gets its own key, `agent-wait-until`. Failing the re-arm
+    # while the bare wait answers normally is otherwise inexpressible, and that
+    # combination is the whole of the duplicate-blocked-notification case.
+    _ag_keys="$key.${3-} $key"
+    case " $* " in
+      *" --until "*) _ag_keys="agent-wait-until.${3-} agent-wait-until $_ag_keys" ;;
+    esac
+    for _ag_try in $_ag_keys; do
+      if [ -n "$FIX" ] && { [ -f "$FIX/$_ag_try.json" ] || [ -f "$FIX/$_ag_try.raw" ] ||
+        [ -f "$FIX/$_ag_try.rc" ]; }; then
+        key="$_ag_try"
+        break
       fi
+    done
+    if raw_body "$key"; then
+      exit "$(rc_for "$key")"
     fi
     respond "cli:${1-}:${2-}" "agent_info" \
       "$(printf '{"agent":{"name":"%s","agent_status":"idle","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":1}}' "${3-}")" \

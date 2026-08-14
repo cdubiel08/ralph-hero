@@ -678,13 +678,14 @@ is "verdict: matches argv0, not the version-string name" "alive" \
 rm -f "$FAKE_HERDR_FIXTURES"/agent-get.* "$FAKE_HERDR_FIXTURES"/agent-wait.*
 
 # watch_until SUBSTR TARGET… — run notify-watch.sh until it prints SUBSTR or
-# exits; then stop it. Sets WATCH_OUT and WATCH_EXITED (1 if it exited on its
-# own before we stopped it).
+# exits; then stop it. Sets WATCH_OUT, WATCH_EXITED (1 if it exited on its own
+# before we stopped it) and WATCH_RC (its exit code — only meaningful then).
+# $WATCH_POLL_ENV overrides the poll knob, including with junk.
 watch_until() {
   local want="$1" i=0 pid
   shift
   : >"$TMP/notify-watch.out"
-  RALPH_HERDR_WATCH_POLL=1 RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+  RALPH_HERDR_WATCH_POLL="${WATCH_POLL_ENV:-1}" RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
     bash "$SCRIPTS/notify-watch.sh" "$@" >"$TMP/notify-watch.out" 2>&1 &
   pid=$!
   WATCH_EXITED=0
@@ -703,7 +704,8 @@ watch_until() {
     i=$((i + 1))
   done
   kill "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
+  WATCH_RC=0
+  wait "$pid" 2>/dev/null || WATCH_RC=$?
   WATCH_OUT=$(cat "$TMP/notify-watch.out")
 }
 
@@ -738,6 +740,76 @@ is "watch (single): the watcher is still watching" "0" "$WATCH_EXITED"
 watch_until "notify [w-gone]" w-gone
 line_has "watch (single): a refused get IS a gone verdict" "$WATCH_OUT" "notify [w-gone] ralph: w-gone gone"
 is "watch (single): and the watch ends there" "1" "$WATCH_EXITED"
+
+# ── `agent wait` is adapted too, or the get branch is unreachable (GH-1870) ──
+# GH-1855 routed the two `agent get` polls through the adapter and left
+# `wait_for` reading a bare exit status three lines above the new backoff, so
+# `wait_for || gone` still read ANY nonzero — a herdr outage, a dropped socket,
+# a missing binary — as "the agent departed". Reproduced with a herdr that
+# fails every call: the watcher announced gone and exited 0, and the adapted
+# `agent get` branch below it was never reached.
+#
+# An empty body at a nonzero exit is that server: nothing on either pipe.
+: >"$FAKE_HERDR_FIXTURES/agent-wait.w-blip.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-wait.w-blip.rc"
+watch_until "wait failed for w-blip" w-blip
+line_has  "wait: an unanswered wait backs off" "$WATCH_OUT" "wait failed for w-blip — retrying"
+line_lacks "wait: an unreachable server is NOT a departure" "$WATCH_OUT" "w-blip gone"
+is "wait: the watcher keeps watching a live agent through the blip" "0" "$WATCH_EXITED"
+
+# …and the verdict that DOES end a watch still does. herdr answers
+# agent_not_found for a departed session on `agent wait` too (probed on 0.8.x),
+# so this is the one nonzero that means gone.
+printf '{"error":{"code":"agent_not_found","message":"agent target w-left not found"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait.w-left.json"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-wait.w-left.rc"
+watch_until "notify [w-left]" w-left
+line_has "wait: herdr's agent_not_found still ends the watch" "$WATCH_OUT" "notify [w-left] ralph: w-left gone"
+is "wait: and the process exits cleanly" "1" "$WATCH_EXITED"
+
+# ── a blocked episode notifies ONCE, transient failure or not (GH-1870) ─────
+# Codex P2 on #1871: routing the off-blocked re-arm through the backoff made a
+# transient failure `continue` to the loop top, and the BARE wait's default
+# until-set includes blocked — so while the agent was still blocked it returned
+# at once, the status read said blocked again, and a second notification fired
+# for an episode that never re-transitioned. Under a persistent outage that is
+# a notification every poll interval: the spin this file already fixed once,
+# through a different door.
+#
+# The fixture pair is the point: the bare wait answers, the --until re-arm does
+# not.
+printf '{"agent":{"name":"w-stuck","agent_status":"blocked","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"t","focused":false,"revision":1}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-get.w-stuck.json"
+: >"$FAKE_HERDR_FIXTURES/agent-wait-until.w-stuck.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-wait-until.w-stuck.rc"
+watch_until "wait failed for w-stuck" w-stuck
+is "blocked: notified exactly once despite the failing re-arm" "1" \
+  "$(printf '%s\n' "$WATCH_OUT" | grep -c 'ralph: w-stuck blocked' || true)"
+line_has  "blocked: the failing re-arm is reported" "$WATCH_OUT" "wait failed for w-stuck"
+line_lacks "blocked: and it is not read as a departure" "$WATCH_OUT" "w-stuck gone"
+rm -f "$FAKE_HERDR_FIXTURES"/agent-wait-until.w-stuck.*
+
+# ── a malformed poll knob may not kill the watch (GH-1870) ──────────────────
+# validate_pos_int had been hoisted above the mode branch, making a junk value
+# FATAL for single-target watches that previously ignored it. Every spawn path
+# `exec`s into this watcher AFTER its agent is live, and exec discards
+# hold_pane's EXIT trap — so the pane closed instantly, took the error line
+# with it, and left the just-spawned agent unwatched. RALPH_* vars are exported
+# from shell profiles and inherited by every pane, so the junk value is a live
+# route, not a hypothetical.
+WATCH_POLL_ENV=15s
+watch_until "notify [w-done]" w-done
+line_has "poll knob: a malformed value warns" "$WATCH_OUT" \
+  "ignoring RALPH_HERDR_WATCH_POLL='15s'"
+line_has "poll knob: …and the watch still happens" "$WATCH_OUT" "notify [w-done] ralph: w-done done"
+is "poll knob: the watcher is not killed by it (single target)" "0" "$WATCH_RC"
+
+# Both modes read the knob through the same resolver, so neither dies on it.
+watch_until "all watched agents finished" w-done w-gone
+line_has "poll knob: the multi-target loop degrades the same way" "$WATCH_OUT" \
+  "ignoring RALPH_HERDR_WATCH_POLL='15s'"
+is "poll knob: the watcher is not killed by it (multi target)" "0" "$WATCH_RC"
+WATCH_POLL_ENV=
 
 rm -f "$FAKE_HERDR_FIXTURES"/agent-get.* "$FAKE_HERDR_FIXTURES"/agent-wait.*
 
