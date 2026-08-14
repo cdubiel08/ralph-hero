@@ -241,7 +241,12 @@ When(
 
 When('work-fleet runs with a fleet size of {int}', function (this: RalphWorld, k: number) {
   this.run(`bash "${SCRIPTS_DIR}/work-fleet.sh" </dev/null`, {
-    env: { RALPH_HERDR_FLEET: String(k), RALPH_HERDR_WATCH_POLL: '1' },
+    // Both watcher knobs are pinned so the replay terminates in test time:
+    // the poll interval, and the spawn window during which an `idle` read is
+    // held rather than treated as a finished session (GH-1878). The replay's
+    // fake agents read idle from their first poll, so the default 120s window
+    // would hang this scenario for its whole duration.
+    env: { RALPH_HERDR_FLEET: String(k), RALPH_HERDR_WATCH_POLL: '1', RALPH_HERDR_WATCH_ARM_SEC: '1' },
   });
 });
 
