@@ -533,6 +533,21 @@ not here.
   a push failure is a one-time warning, never an aborted verb, and a server restart
   drops them until reconcile re-pushes. The state token only claims what maps
   honestly (`working`/`blocked`); `idle`/`done` update the ledger, not the chip.
+- **A process can outlive its pane, and until GH-1888 nothing looked (`doctor-orphans.sh`).**
+  Both sides of `doctor-lineage.sh` are keyed on a ledger identity, so neither
+  can see a process that was never a ledgered agent — a cockpit, a dev server, a
+  shell loop. Observed 2026-08-14: a cockpit polled a dead PTY for 30 hours,
+  invisible to every check; the first live run of this one found seven more,
+  the oldest up two days. The signal is `HERDR_PANE_ID`, which herdr stamps into
+  every pane's environment and which outlives the pane: a process whose pane id
+  is in no snapshot pane is orphaned. Two deliberate asymmetries. It **does not
+  scope by repository** — `scope.sh` fails closed because it decides *may I
+  write here*, this writes nothing, and scope resolution runs through the very
+  pane→workspace join an orphan no longer has, so a scoped version could never
+  fire on the case it exists to catch. And a read it could not perform is **not
+  evaluable, never clean**: no herdr, no snapshot, or a `ps` that shows no
+  environments at all (procps reads `-E` as "every process" and prints a table
+  with none in it — a silent all-clear on a machine never inspected).
 - **The orphan pass records, it does not reap.** A dead parent's children are
   adopted by a live grandparent or marked `orphaned` (token + ledger + one
   notification) — their claims and panes are left alone. The Phase-3 fleet

@@ -10,6 +10,7 @@
     "test:watcher": "bash plugin/ralph-herdr/tests/watcher.test.sh",
     "test:fleet": "bash plugin/ralph-herdr/tests/fleet.test.sh",
     "test:lineage": "bash plugin/ralph-herdr/tests/doctor-lineage.test.sh",
+    "test:orphans": "bash plugin/ralph-herdr/tests/doctor-orphans.test.sh",
     "test:substrate": "bash plugin/ralph-herdr/tests/substrate.test.sh",
     "test:cockpit": "bash plugin/ralph-herdr/tests/cockpit.test.sh",
     "test:transport": "bash plugin/ralph-herdr/tests/transport.test.sh",

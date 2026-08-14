@@ -259,6 +259,39 @@ else
   esac
 fi
 
+# ── orphaned herdr processes (advisory — GH-1888, doctor-orphans.sh) ─────────
+# Same NOTE-level contract as the lineage relay above, and for the same reason:
+# a process outliving its pane is telemetry about the machine, never a cockpit
+# wiring gap, so it must move neither the exit code nor the --oneline gap count.
+# Resolved the same way (herdr's registered plugin_root first, repo-relative
+# guess as the fallback for a vendored checkout).
+orphans_sh="${RALPH_HERDR_ORPHANS_SH:-}"
+if [ -z "$orphans_sh" ]; then
+  orphans_sh="$SCRIPT_DIR/../../plugin/ralph-herdr/scripts/doctor-orphans.sh"
+  [ -n "$PLUGIN_ROOT" ] && [ -f "$PLUGIN_ROOT/scripts/doctor-orphans.sh" ] &&
+    orphans_sh="$PLUGIN_ROOT/scripts/doctor-orphans.sh"
+fi
+if [ ! -f "$orphans_sh" ]; then
+  note "watcher-orphans" "not evaluated (doctor-orphans.sh not found — it ships inside the ralph-herdr herdr plugin)"
+elif [ -z "$SERVER_UP" ]; then
+  note "watcher-orphans" "not checked (server down)"
+else
+  orphans_rc=0
+  orphans_out=$(bash "$orphans_sh" 2>/dev/null) || orphans_rc=$?
+  case "$orphans_rc" in
+    0) note "watcher-orphans" "no orphans — every herdr process still has its pane" ;;
+    1)
+      orphans_gaps=$(grep -c '^  GAP ' <<<"$orphans_out" || true)
+      note "watcher-orphans" "${orphans_gaps:-some} orphaned process(es) — bash $orphans_sh for detail (nothing is killed for you)"
+      if [ -z "$ONELINE" ]; then
+        grep '^  GAP ' <<<"$orphans_out" | sed 's/^  GAP  /       · /' || true
+      fi
+      ;;
+    2) note "watcher-orphans" "not evaluable (herdr unreachable, or this system's ps hides process environments)" ;;
+    *) note "watcher-orphans" "not evaluated (doctor-orphans.sh exited $orphans_rc)" ;;
+  esac
+fi
+
 # ── report / oneline ─────────────────────────────────────────────────────────
 # Note the length guards before every "${GAPS[@]}" expansion: macOS ships
 # bash 3.2, where an empty array trips `set -u` even quoted.
