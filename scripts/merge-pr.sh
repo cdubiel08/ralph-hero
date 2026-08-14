@@ -466,10 +466,18 @@ if [[ "$DRY_RUN" == "true" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Worktree cleanup (pre-merge so --delete-branch succeeds)
+# Head-branch facts — read ONCE, used by both worktree cleanup and the
+# post-merge remote-branch delete (GH-1873). Read unconditionally: the delete
+# below needs HEAD_BRANCH even when the caller supplied --worktree.
+# ---------------------------------------------------------------------------
+head_facts=$(gh pr view "$PR_NUMBER" --json headRefName,isCrossRepository 2>/dev/null || echo '{}')
+HEAD_BRANCH=$(jq -r '.headRefName // ""' <<<"$head_facts" 2>/dev/null || echo "")
+IS_FORK=$(jq -r '.isCrossRepository // false' <<<"$head_facts" 2>/dev/null || echo "false")
+
+# ---------------------------------------------------------------------------
+# Worktree cleanup (pre-merge, so the tree is gone before the branch is)
 # ---------------------------------------------------------------------------
 if [[ -z "$WORKTREE_ID" ]]; then
-  HEAD_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName' 2>/dev/null || echo "")
   # Any branch, not just feature/GH-*: the worktree dir is the branch's last
   # path segment, which covers feature/GH-1234 -> GH-1234 and claude/foo -> foo
   # alike. Non-feature branches were silently never cleaned up before.
@@ -537,19 +545,44 @@ fi
 # window cannot merge an unreviewed commit (TOCTOU; CodeRabbit finding).
 # ---------------------------------------------------------------------------
 echo "Merging PR #$PR_NUMBER @ ${head_sha:0:8}..."
-# `--delete-branch` merges remotely, then attempts LOCAL cleanup (checkout of
-# main + branch delete). In a worktree layout that cleanup fails ("'main' is
-# already used by worktree ...") and gh exits nonzero AFTER the merge already
-# succeeded — a false negative (GH-1677). The PR's actual state is the truth:
-# on a nonzero exit, re-query it before declaring failure.
-if ! gh pr merge "$PR_NUMBER" --merge --delete-branch --match-head-commit "$head_sha"; then
+# NO `--delete-branch` (GH-1873). That flag merges remotely, then does LOCAL
+# cleanup: check out the default branch, delete the local branch. Run from
+# inside a linked worktree — the normal path under tick.sh and work-fleet —
+# that checkout lands IN THE WORKTREE, and both outcomes are bad:
+#
+#   main already checked out elsewhere -> gh exits nonzero AFTER a successful
+#     merge, a false negative (GH-1677, handled below and still needed for
+#     other failures)
+#   main free -> the checkout SUCCEEDS and silently relocates main into the
+#     worktree. Nothing notices until some later `git checkout main` in the
+#     primary checkout refuses with "'main' is already used by worktree ..."
+#
+# The remote branch is deleted explicitly after the merge instead, so the
+# behavior no longer depends on which branch the primary checkout happens to
+# be sitting on. Local branches are pruned by `git fetch --prune`.
+if ! gh pr merge "$PR_NUMBER" --merge --match-head-commit "$head_sha"; then
   merged_state=$(gh pr view "$PR_NUMBER" --json state --jq .state 2>/dev/null || echo "UNKNOWN")
   if [ "$merged_state" = "MERGED" ]; then
-    echo "PR #$PR_NUMBER merged successfully (local branch cleanup skipped — main is checked out in another worktree)."
-    exit 0
+    echo "PR #$PR_NUMBER merged successfully (gh exited nonzero after the merge landed)."
+  else
+    echo "MERGE FAILED — gh pr merge exited nonzero and PR #$PR_NUMBER state is $merged_state, not MERGED." >&2
+    exit 1
   fi
-  echo "MERGE FAILED — gh pr merge exited nonzero and PR #$PR_NUMBER state is $merged_state, not MERGED." >&2
-  exit 1
+fi
+
+# Remote head-branch delete — best-effort, never fatal: the merge has already
+# landed and a housekeeping failure must not report it as a failure.
+# Skipped for forks (the ref lives in another repo) and when the repo has
+# delete_branch_on_merge enabled, in which case GitHub already removed it and
+# the DELETE answers 422/404.
+if [[ "$IS_FORK" == "true" ]]; then
+  echo "Head branch left alone: PR #$PR_NUMBER is from a fork."
+elif [[ -z "$HEAD_BRANCH" ]]; then
+  echo "Head branch not resolved — skipping remote branch delete." >&2
+elif gh api --method DELETE "repos/{owner}/{repo}/git/refs/heads/$HEAD_BRANCH" >/dev/null 2>&1; then
+  echo "Remote branch deleted: $HEAD_BRANCH"
+else
+  echo "Remote branch $HEAD_BRANCH not deleted (already gone, or delete refused) — harmless."
 fi
 
 echo "PR #$PR_NUMBER merged successfully."

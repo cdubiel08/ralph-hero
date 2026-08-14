@@ -56,6 +56,12 @@ case "${1:-} ${2:-}" in
     echo "merged"
     exit "${GH_STUB_MERGE_EXIT:-0}"
     ;;
+  "api --method")
+    # GH-1873: the post-merge remote head-branch delete. Logged above like
+    # every other call; exit is configurable so the best-effort branch can be
+    # exercised (an already-deleted ref answers 422/404).
+    exit "${GH_STUB_REF_DELETE_EXIT:-0}"
+    ;;
   "api user") if [[ -n "$jq_expr" ]]; then echo "testuser"; else echo '{"login":"testuser"}'; fi ;;
   "api graphql")
     # Gate 5 findings mode reads review THREADS (resolution state is
@@ -147,9 +153,11 @@ write_pr_view() {
     --arg decision "$decision" --arg mergeable "$mergeable" \
     --arg author "$author" --arg sha "$SHA" \
     --argjson comments "$comments" --argjson reviews "$reviews" \
+    --argjson fork "${PR_IS_FORK:-false}" \
     '{state: "OPEN", mergeable: $mergeable, headRefOid: $sha,
       reviewDecision: $decision, author: {login: $author},
-      headRefName: "feature/GH-9999", comments: $comments, reviews: $reviews}' \
+      headRefName: "feature/GH-9999", isCrossRepository: $fork,
+      comments: $comments, reviews: $reviews}' \
     >"$dir/pr_view.json"
   if [[ "$codex_evidence" == "true" ]]; then
     add_codex_evidence "$dir" "$SHA"
@@ -751,7 +759,43 @@ setup_worktree_cleanup_fail() {
   printf '{"state":"MERGED"}' >"$1/pr_view_after.json"
 }
 GH_STUB_MERGE_EXIT=1 run_case "worktree cleanup failure is not a merge failure" 0 "$POLICY" setup_worktree_cleanup_fail
-expect_out "worktree cleanup skip is loud" "local branch cleanup skipped"
+expect_out "post-merge nonzero exit is loud" "merged successfully (gh exited nonzero after the merge landed)"
+
+# 20b. GH-1873: `--delete-branch` does LOCAL cleanup — it checks out the
+# default branch and deletes the local branch. Run from inside a linked
+# worktree (the normal path under tick.sh/work-fleet) that checkout lands IN
+# THE WORKTREE whenever main is free, silently relocating main; the primary
+# checkout then cannot `git checkout main` at all. The flag must never come
+# back: the remote branch is deleted explicitly instead.
+run_case "green path merges without --delete-branch" 0 "$POLICY" setup_green
+if grep -q -- "--delete-branch" "$LAST_DIR/gh.log" 2>/dev/null; then
+  fail "merge passed --delete-branch (GH-1873): $(grep 'pr merge' "$LAST_DIR/gh.log" 2>/dev/null)"
+else
+  pass "merge does not pass --delete-branch"
+fi
+if grep -q -- "api --method DELETE repos/{owner}/{repo}/git/refs/heads/feature/GH-9999" "$LAST_DIR/gh.log" 2>/dev/null; then
+  pass "remote head branch deleted explicitly after merge"
+else
+  fail "no explicit remote branch delete: $(grep 'api --method' "$LAST_DIR/gh.log" 2>/dev/null)"
+fi
+expect_out "remote branch delete is reported" "Remote branch deleted: feature/GH-9999"
+
+# 20c. GH-1873: a failed ref delete is housekeeping, never a merge failure —
+# the merge has already landed. An already-deleted ref (repos with
+# delete_branch_on_merge) answers 422/404 and must stay exit 0.
+GH_STUB_REF_DELETE_EXIT=1 run_case "failed ref delete does not fail the merge" 0 "$POLICY" setup_green
+expect_out "failed ref delete is loud but harmless" "not deleted (already gone, or delete refused)"
+
+# 20d. GH-1873: a fork's head ref lives in another repository — deleting it
+# through this repo's refs API would 404, and attempting it at all is wrong.
+setup_fork() { PR_IS_FORK=true setup_green "$1"; }
+run_case "fork PR skips the remote branch delete" 0 "$POLICY" setup_fork
+expect_out "fork delete is skipped and said so" "is from a fork"
+if grep -q -- "api --method DELETE" "$LAST_DIR/gh.log" 2>/dev/null; then
+  fail "fork PR attempted a ref delete in this repo"
+else
+  pass "fork PR attempted no ref delete"
+fi
 
 # 21. GH-1677 inverse: a merge that ACTUALLY failed (PR still open) stays a failure.
 setup_merge_actually_failed() {
