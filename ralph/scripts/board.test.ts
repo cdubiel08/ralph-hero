@@ -53,6 +53,8 @@ import {
   MACHINE,
   parentCheck,
   parseArgs,
+  BOOLEAN_FLAGS,
+  VALUE_FLAGS,
   parseClaim,
   parseSmellThresholds,
   parseStateArg,
@@ -499,6 +501,35 @@ describe("parseArgs", () => {
     const p = parseArgs(["12", "-m", "parked here", "--steal", "--state", "wip"]);
     expect(p.positional).toEqual(["12"]);
     expect(p.flags).toEqual({ m: "parked here", steal: true, state: "wip" });
+  });
+
+  // GH-1826 — `--accept`/`--reject` were absent from the boolean list, so the
+  // form `board help` prints swallowed the `-m` and then refused for want of it.
+  it("resolve parses identically in both documented flag orders", () => {
+    const after = parseArgs(["1777", "--reject", "-m", "not delivered"]);
+    const before = parseArgs(["1777", "-m", "not delivered", "--reject"]);
+    expect(after.flags).toEqual({ reject: true, m: "not delivered" });
+    expect(after).toEqual(before);
+    expect(parseArgs(["1777", "--accept", "-m", "yes"]).flags).toEqual({ accept: true, m: "yes" });
+  });
+
+  it("a flag never swallows another flag as its value", () => {
+    // Structural half of the fix: undeclared flags cannot eat `-m` either.
+    expect(parseArgs(["--unknown", "-m", "x"]).flags).toEqual({ unknown: true, m: "x" });
+    // A negative number is still a value, not a flag.
+    expect(parseArgs(["--limit", "-5"]).flags).toEqual({ limit: "-5" });
+  });
+
+  it("every flag run() reads is declared with an arity", () => {
+    // The list was deny-by-omission; this is the test that makes it a closed set.
+    const src = readFileSync(new URL("./board.ts", import.meta.url), "utf8");
+    const read = new Set<string>();
+    for (const m of src.matchAll(/flags\.([a-zA-Z][a-zA-Z0-9]*)|flags\["([a-z-]+)"\]/g)) {
+      read.add(m[1] ?? m[2]);
+    }
+    read.delete("m"); // `-m` is parsed by its own branch, not by the tables.
+    const undeclared = [...read].filter((f) => !BOOLEAN_FLAGS.has(f) && !VALUE_FLAGS.has(f));
+    expect(undeclared).toEqual([]);
   });
 
   it("there is no --force, by design", () => {
@@ -4709,6 +4740,7 @@ import {
   TEND_PROPOSAL_MARKER,
   TEND_RESOLUTION_MARKER,
   pendingProposal,
+  lastMarkerIndex,
   resolveProposal,
   tendQueue,
   listOwnRecentClosed,
@@ -4879,6 +4911,54 @@ describe("tend-queue (spec §4.3)", () => {
     ).toBeNull();
     // A resolution with nothing to answer is inert, not a pending anything.
     expect(pendingProposal([resolution("rejected")])).toBeNull();
+  });
+
+  // GH-1826 — a comment that DISCUSSES the marker is not a comment that speaks
+  // it. Fixture is the shape of #1777's own trail: three comments quoting the
+  // marker in backticks, which filed a phantom proposal against the very issue
+  // that implemented the marker — and it was undated, so it failed closed to
+  // pending and no close could ever settle it.
+  it("pendingProposal: a marker quoted in prose or a code span is not a proposal", () => {
+    // Verbatim from #1777's comments (fetched 2026-08-15) — the acceptance
+    // criterion, decision section 3, and the close-out.
+    const acceptanceCriterion =
+      "- [ ] A `" + TEND_PROPOSAL_MARKER + "` marker comment (fenced JSON payload: proposed action, evidence, recommendation, ISO timestamp) — same shape discipline as the `audited` marker";
+    const decisionSection =
+      "3. **Proposals get a filing surface**: `" + TEND_PROPOSAL_MARKER + "` marker comment + a `proposed` category in `board tend-queue` (first in spec order, so a pending proposal surfaces as itself and is not re-proposed) + an advisory doctor `i` line for proposals that go unanswered.";
+    const closeOut =
+      "- Proposals file as `" + TEND_PROPOSAL_MARKER + "` marker comments, re-surfaced by a new `proposed` category in `board tend-queue` (first in spec order — that ordering *is* the do-not-re-propose cursor) and by doctor's advisory `tend-proposal-stale` line (`RALPH_SMELL_PROPOSAL_DAYS`, default 7).";
+    const fencedResolution =
+      "The disposition marker is\n\n```\n" + TEND_RESOLUTION_MARKER + "\n```\n\nwritten by `board resolve`.";
+    expect(pendingProposal([acceptanceCriterion, decisionSection, closeOut, fencedResolution])).toBeNull();
+    // Indented and inline-quoted forms are prose too.
+    expect(pendingProposal(["  " + TEND_PROPOSAL_MARKER, "see " + TEND_PROPOSAL_MARKER + " above"]))
+      .toBeNull();
+    // And the real thing still registers alongside all of that noise.
+    expect(pendingProposal([acceptanceCriterion, proposal(days(4)), closeOut])).toEqual({
+      at: days(4),
+    });
+  });
+
+  it("lastMarkerIndex: masking preserves offsets, so within-comment ordering survives", () => {
+    // The resolution answers the proposal only because its index is LATER; a
+    // mask that shortened the quoted span ahead of it would invert that.
+    const body = "quoting `" + TEND_PROPOSAL_MARKER + "` here\n" + TEND_PROPOSAL_MARKER + "\n" + TEND_RESOLUTION_MARKER;
+    expect(lastMarkerIndex(body, TEND_RESOLUTION_MARKER)).toBeGreaterThan(
+      lastMarkerIndex(body, TEND_PROPOSAL_MARKER),
+    );
+    expect(lastMarkerIndex("nothing", TEND_MARKER)).toBe(-1);
+    // A marker inside a fenced block is masked; the fence's own text is not
+    // matched even when the fence never closes.
+    expect(lastMarkerIndex("```json\n" + TEND_MARKER + "\n", TEND_MARKER)).toBe(-1);
+  });
+
+  it("done-audit: an audit marker quoted in prose does not mark the issue audited", () => {
+    const closed = { number: 9, closedAt: days(2), comments: ["we write `" + TEND_MARKER + "` on audit"] };
+    expect(
+      classifyTend([], [closed], TEND_DEFAULTS, NOW, new Map()).queue.map((r) => r.category),
+    ).toEqual(["done-audit"]);
+    const audited = { number: 9, closedAt: days(2), comments: [TEND_MARKER + "\n```json\n{}\n```"] };
+    expect(classifyTend([], [audited], TEND_DEFAULTS, NOW, new Map()).queue).toEqual([]);
   });
 
   it("proposed: a REJECTED Backlog proposal stops surfacing — the item returns to its own category", () => {
