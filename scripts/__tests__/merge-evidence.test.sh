@@ -141,6 +141,32 @@ eq "an unclosed fence reads to the end" "ok" "$(me_attestation_status "$UNCLOSED
 TWO=$(printf '```json\n{"head_sha":"first"}\n```\n```json\n{"head_sha":"second"}\n```\n')
 eq "the first fence is the payload" "first" "$(me_attestation_field "$TWO" .head_sha)"
 
+# --- base binding (GH-1841) ------------------------------------------------
+# Retargeting a PR changes what it MERGES without moving head_sha, so a
+# head-only predicate keeps saying "ok" about a diff that no longer exists.
+echo "=== attestation base binding ==="
+
+mk_att_base() { # mk_att_base <sha> <base_ref>
+  printf '<!-- ralph-attestation:v1 -->\n```json\n%s\n```\n' \
+    "$(jq -nc --arg s "$1" --arg b "$2" \
+      '{head_sha:$s, base_ref:$b, tests:[{exit_code:0}], review:{verdict:"APPROVED"}}')"
+}
+
+AT_MAIN=$(mk_att_base abc123 main)
+eq "attested at the same base"      "ok"           "$(me_attestation_status "$AT_MAIN" abc123 main)"
+# The regression this issue names: attest against base A, retarget to base B.
+eq "retargeted to another base"     "base-changed" "$(me_attestation_status "$AT_MAIN" abc123 feat/stack)"
+# A payload predating the binding cannot answer the question; same remedy as a
+# changed base, so the same code rather than a silent pass.
+eq "no base_ref recorded at all"    "base-changed" "$(me_attestation_status "$GOOD" abc123 main)"
+# An unreadable base is not evidence that the base moved — the caller passes ""
+# and the binding is skipped, never guessed at.
+eq "unreadable base skips the check" "ok"          "$(me_attestation_status "$AT_MAIN" abc123 "")"
+eq "omitted base arg skips it too"   "ok"          "$(me_attestation_status "$AT_MAIN" abc123)"
+# Ordering: a moved head outranks a moved base — both say re-attest, and the
+# head is the more familiar diagnosis.
+eq "a moved head still reads stale" "stale"        "$(me_attestation_status "$AT_MAIN" def456 feat/stack)"
+
 # --- jq-side parity --------------------------------------------------------
 # pr-gate-watch.sh calls these defs from inside its own jq program rather than
 # through the bash wrappers. Same rules, so same answers — asserted, because a
@@ -148,13 +174,17 @@ eq "the first fence is the payload" "first" "$(me_attestation_field "$TWO" .head
 # library was extracted to end.
 echo "=== the jq surface answers identically to the bash surface ==="
 
-jq_status() { jq -r "$ME_JQ_LIB"' me_fenced_json | (try fromjson catch null) | me_attestation_status($h)' \
-  -R -s --arg h "$2" <<<"$1"; }
+jq_status() { jq -r "$ME_JQ_LIB"' me_fenced_json | (try fromjson catch null) | me_attestation_status($h; $b)' \
+  -R -s --arg h "$2" --arg b "${3:-}" <<<"$1"; }
 
-for case_name in GOOD INLINE UNCLOSED; do
+for case_name in GOOD INLINE UNCLOSED AT_MAIN; do
   body="${!case_name}"
   eq "jq and bash agree on $case_name" \
     "$(me_attestation_status "$body" abc123)" "$(jq_status "$body" abc123)"
+  # Again with a base bound: pr-gate-watch.sh passes one, so parity must hold
+  # on the arm that actually runs in the classifier.
+  eq "jq and bash agree on $case_name (base main)" \
+    "$(me_attestation_status "$body" abc123 main)" "$(jq_status "$body" abc123 main)"
 done
 
 eq "jq exempt matches bash exempt" \

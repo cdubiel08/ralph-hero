@@ -410,7 +410,11 @@ def is_attest: .name == $attest;
 # check calls a rejected attestation valid and ends --watch on a merge that
 # fails immediately (codex P2, PR #1764). This is not a mirror of gate 4's
 # terms any more: it IS gate 4's predicate, from the shared lib (GH-1843).
-| ($att_json | me_attestation_status($pr.headRefOid // "")) as $att_status
+# Base-bound as well as head-bound (GH-1841): a retarget changes what the PR
+# merges without moving the head, so a head-only predicate here would report
+# GATE-READY into a gate-4 refusal — the classifier/gate disagreement GH-1843
+# removed. An unreadable base is "" and skips the binding, same as gate 4.
+| ($att_json | me_attestation_status($pr.headRefOid // ""; $pr.baseRefName // "")) as $att_status
 | (($att_json.review.verdict // ""))                    as $att_verdict
 # --carry-review is only offerable when there is something to carry:
 # attest-pr.sh:173-190 refuses it unless a PRIOR attestation with a review
@@ -618,7 +622,7 @@ gather() {
   # policy exemption; both are inputs to the ladder, so both are fetched here
   # rather than assumed.
   pr_json=$(gh pr view "$PR" \
-    --json state,reviewDecision,headRefOid,author,mergeable 2>/dev/null) || return 1
+    --json state,reviewDecision,headRefOid,baseRefName,author,mergeable 2>/dev/null) || return 1
   [ -n "$pr_json" ] || return 1
   head_before=$(jq -r '.headRefOid // ""' <<<"$pr_json")
 

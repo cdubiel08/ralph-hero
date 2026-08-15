@@ -118,11 +118,11 @@ cat >"$POLICY" <<'EOF'
 }
 EOF
 
-good_attestation_body() { # good_attestation_body <head_sha> [tests_exit] [verdict]
-  local sha="$1" texit="${2:-0}" verdict="${3:-APPROVED}"
+good_attestation_body() { # good_attestation_body <head_sha> [tests_exit] [verdict] [base_ref]
+  local sha="$1" texit="${2:-0}" verdict="${3:-APPROVED}" base="${4-main}"
   local payload
-  payload=$(jq -n --arg sha "$sha" --argjson texit "$texit" --arg v "$verdict" '{
-    version: 1, pr: 123, head_sha: $sha,
+  payload=$(jq -n --arg sha "$sha" --argjson texit "$texit" --arg v "$verdict" --arg base "$base" '{
+    version: 1, pr: 123, head_sha: $sha, base_ref: $base,
     tests: [{command: "npm test", exit_code: $texit, summary: "ok"}],
     review: {verdict: $v, reviewer: "ralph:review-agent", mode: "internal"}
   }')
@@ -156,6 +156,7 @@ write_pr_view() {
     --argjson comments "$comments" --argjson reviews "$reviews" \
     --argjson fork "${PR_IS_FORK:-false}" \
     '{state: "OPEN", mergeable: $mergeable, headRefOid: $sha,
+      baseRefName: ($ENV.PR_BASE_REF // "main"),
       reviewDecision: $decision, author: {login: $author},
       headRefName: "feature/GH-9999", isCrossRepository: $fork,
       comments: $comments, reviews: $reviews}' \
@@ -327,6 +328,24 @@ setup_stale_att() {
 }
 run_case "stale attestation (head_sha mismatch) blocks" 1 "$POLICY" setup_stale_att
 expect_out "mismatch tells re-attest" "re-attest after the latest push"
+
+# 7b. Base retarget blocks (GH-1841) — the head-bound twin of case 7: the
+# attestation stays valid at this head while the PR now merges a different
+# diff, so a head-only gate would pass it.
+setup_retargeted_att() {
+  PR_BASE_REF="release/2026-08" write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "retargeted PR (base mismatch) blocks" 1 "$POLICY" setup_retargeted_att
+expect_out "mismatch names the base" "re-attest against the current base"
+
+# An attestation predating the base binding has no base_ref to compare, which
+# is not a pass — same refusal, same remedy.
+setup_baseless_att() {
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA" 0 APPROVED "")" "$CODEX_REVIEWS"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "attestation with no base_ref blocks" 1 "$POLICY" setup_baseless_att
 
 # 8. Non-zero test exit in attestation blocks
 setup_bad_tests() {

@@ -84,7 +84,7 @@ chmod +x "$STUB_BIN/gh"
 new_case() { # new_case → sets CASE_DIR, seeds pr_view.json
   CASE_DIR="$TMP_ROOT/case-$RANDOM-$((PASS + FAIL))"
   mkdir -p "$CASE_DIR"
-  jq -n --arg sha "$SHA" '{headRefOid: $sha, files: [{path: "scripts/merge-pr.sh"}, {path: "mcp-server/src/index.ts"}]}' \
+  jq -n --arg sha "$SHA" '{headRefOid: $sha, baseRefName: "main", files: [{path: "scripts/merge-pr.sh"}, {path: "mcp-server/src/index.ts"}]}' \
     >"$CASE_DIR/pr_view.json"
 }
 
@@ -184,7 +184,7 @@ LOCAL_HEAD=$(git -C "$RUN_REPO" rev-parse HEAD)
 new_run_case() { # new_run_case <headRefOid> — pr_view head under our control
   CASE_DIR="$TMP_ROOT/case-$RANDOM-$((PASS + FAIL))"
   mkdir -p "$CASE_DIR"
-  jq -n --arg sha "$1" '{headRefOid: $sha, files: [{path: "scripts/merge-pr.sh"}]}' \
+  jq -n --arg sha "$1" '{headRefOid: $sha, baseRefName: "main", files: [{path: "scripts/merge-pr.sh"}]}' \
     >"$CASE_DIR/pr_view.json"
 }
 

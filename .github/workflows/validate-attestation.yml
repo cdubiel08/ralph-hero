@@ -20,7 +20,10 @@
 #     any prior attestation (head_sha binding), so the status recomputes:
 #     pending "awaiting attestation" until matching evidence lands. The target
 #     form keeps this status-writing workflow definition on the trusted default
-#     branch.
+#     branch. Plus `edited` WHEN `changes.base` is present (GH-1841): a base
+#     retarget changes the merged diff while leaving head_sha alone, so the
+#     attestation's base binding must be re-checked or a green status carries
+#     onto a diff that no longer exists.
 #   issue_comment (created/edited/deleted) — attestation comments, head-bound
 #     review requests, and external-review clean-result comments all affect the
 #     verdict. Deletion must recompute too, or removed evidence leaves a stale
@@ -56,12 +59,15 @@ on:
   # zizmor: ignore[dangerous-triggers] Every job checks out only the repository
   # default branch; no code or action from the PR head or target base executes.
   pull_request_target:
-    # `edited` is here for the apply-keywords job only (see its `if`): editing
-    # a PR body is exactly how a closing keyword gets added AFTER CI went
-    # green, so a status computed once at `opened` would be stale where it
-    # matters most. The attestation job deliberately ignores `edited` — a body
-    # edit cannot change whether the head SHA is attested, and recomputing it
-    # would just add runs.
+    # `edited` serves both jobs, for different reasons. apply-keywords: editing
+    # a PR body is exactly how a closing keyword gets added AFTER CI went green,
+    # so a status computed once at `opened` would be stale where it matters
+    # most. attestation: a BODY edit still cannot change whether the head SHA is
+    # attested, but retargeting the BASE also arrives as `edited` (GH-1841) —
+    # and that changes what the PR merges without moving the head, so a green
+    # status computed against the old base would survive onto a different diff.
+    # The attestation job therefore takes `edited` only when the payload carries
+    # `changes.base`; every other edit is still ignored rather than adding runs.
     types: [opened, edited, synchronize, reopened]
   issue_comment:
     types: [created, edited, deleted]
@@ -93,7 +99,8 @@ jobs:
     # configured and must not be duplicated here (comment bodies never reach a
     # shell).
     if: >-
-      (github.event_name == 'pull_request_target' && github.event.action != 'edited') ||
+      (github.event_name == 'pull_request_target' &&
+       (github.event.action != 'edited' || github.event.changes.base != null)) ||
       github.event_name == 'pull_request_review' ||
       github.event.issue.pull_request != null
     runs-on: ubuntu-latest

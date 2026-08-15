@@ -32,6 +32,7 @@
 #   marker comment missing                      → pending
 #   JSON payload unparseable                    → failure
 #   head_sha != current PR head                 → pending (re-attest)
+#   base_ref != current PR base (or absent)     → pending (re-attest; GH-1841)
 #   tests[] empty or any exit_code != 0         → failure
 #   review.verdict != APPROVED                  → failure
 #   declared file_classes ⊉ recomputed classes  → failure (under-coverage)
@@ -59,9 +60,12 @@ out() { # out <state> <description> — single-line verdict bound to head_sha, e
 }
 
 # --- PR facts (first, so every verdict carries the validated sha) ----------
-pr_json=$(gh pr view "$PR_NUMBER" --json headRefOid,author,reviews 2>/dev/null) \
+pr_json=$(gh pr view "$PR_NUMBER" --json headRefOid,baseRefName,author,reviews 2>/dev/null) \
   || out failure "cannot read PR #$PR_NUMBER"
 head_sha=$(jq -r '.headRefOid // "unknown"' <<<"$pr_json")
+# Empty when unreadable, which SKIPS the base binding rather than failing it —
+# a field we could not read is not evidence that the base moved (GH-1841).
+base_ref=$(jq -r '.baseRefName // ""' <<<"$pr_json")
 author=$(jq -r '.author.login // ""' <<<"$pr_json")
 
 # --- policy ----------------------------------------------------------------
@@ -112,11 +116,14 @@ fi
 # script owns only the mapping from reason code to published status. Presence
 # alone is not approval — an honest REJECTED must fail (CodeRabbit, PR #1602).
 att_json=$(me_attestation_payload "$att_body")
-att_status=$(me_attestation_status "$att_body" "$head_sha")
+att_status=$(me_attestation_status "$att_body" "$head_sha" "$base_ref")
 att_sha=$(jq -r '.head_sha // ""' <<<"$att_json" 2>/dev/null || echo "")
+att_base=$(jq -r '.base_ref // ""' <<<"$att_json" 2>/dev/null || echo "")
 case "$att_status" in
   missing)    out failure "attestation JSON unparseable" ;;
   stale)      out pending "attestation stale (${att_sha:0:8} != head ${head_sha:0:8}) — re-attest" ;;
+  base-changed)
+              out pending "attestation base '${att_base:-none recorded}' != PR base '$base_ref' — re-attest against the current base" ;;
   no-tests)   out failure "test evidence missing or failing (tests[] empty or non-zero exit_code)" ;;
   no-verdict) out failure "review verdict missing from attestation" ;;
   rejected)   out failure "review verdict is '$(me_attestation_field "$att_body" .review.verdict)', not APPROVED" ;;
