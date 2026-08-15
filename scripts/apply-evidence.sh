@@ -163,20 +163,29 @@ if [[ "$KIND" == "run" ]]; then
     twins=""
     if [[ -n "$nwo" ]]; then twins=$(gh api graphql -f owner="${nwo%%/*}" -f repo="${nwo##*/}" -F n="$ISSUE" -f query='
       query($owner:String!,$repo:String!,$n:Int!){
-        repository(owner:$owner,name:$repo){ issue(number:$n){
+        repository(owner:$owner,name:$repo){ defaultBranchRef{ name } issue(number:$n){
           blockedBy(first:20){ nodes{ number
             closedByPullRequestsReferences(first:10,includeClosedPrs:true){
-              nodes{ number merged mergeCommit{ oid } } } } } } }
+              nodes{ number merged baseRefName mergeCommit{ oid } } } } } } }
       }' 2>/dev/null || echo ''); fi
     if [[ -z "$twins" ]]; then
       ancestry_reason="could not read the blocked-by twin from the API"
     else
+      # Only PRs merged into the DEFAULT branch count. Requiring every collected
+      # merge is sound for those — each one is on the default branch, so any
+      # commit at or above all of them descends from all of them, and "all" is
+      # exactly "the latest" without needing an ordering the API does not
+      # promise. A PR merged into some other base may never become an ancestor
+      # of the default branch, so counting it would refuse honest evidence
+      # forever (PR #1962 review).
       fix_shas=$(jq -r '
-        [ .data.repository.issue.blockedBy.nodes[]?
-          | .closedByPullRequestsReferences.nodes[]?
-          | select(.merged == true) | .mergeCommit.oid // empty ] | unique | .[]' <<<"$twins")
+        (.data.repository.defaultBranchRef.name // "") as $def
+        | [ .data.repository.issue.blockedBy.nodes[]?
+            | .closedByPullRequestsReferences.nodes[]?
+            | select(.merged == true and .baseRefName == $def)
+            | .mergeCommit.oid // empty ] | unique | .[]' <<<"$twins")
       fix_source="derived from blockedBy twin"
-      [[ -n "$fix_shas" ]] || ancestry_reason="no blocked-by twin with a merged closing PR"
+      [[ -n "$fix_shas" ]] || ancestry_reason="no blocked-by twin with a closing PR merged to the default branch"
     fi
   fi
 
@@ -195,7 +204,14 @@ if [[ "$KIND" == "run" ]]; then
       case "$status" in
         identical|ahead) ;;
         unknown)
-          echo "WARNING: ancestry NOT CHECKED — compare API did not answer for ${fix:0:8}." >&2 ;;
+          # A question that HAS a subject and went unanswered is not the same as
+          # one with no subject. Posting here would be the defect this whole
+          # check exists to remove — a failed read rendering as a pass, in
+          # evidence no later reader re-opens (PR #1962 review). Retry instead.
+          echo "ERROR: could not determine whether ${full_sha:0:8} descends from ${fix:0:8} — the" >&2
+          echo "       compare API did not answer (unreachable or rate-limited). Posting nothing;" >&2
+          echo "       re-run once it responds. Unverified ancestry may not reach Done (GH-1961)." >&2
+          exit 1 ;;
         *)
           echo "ERROR: the run at ${full_sha:0:8} does NOT descend from the fix merge ${fix:0:8} (compare: $status)." >&2
           echo "       It checked out the PRE-fix tree, so its green conclusion is a sample of the bug" >&2
@@ -206,9 +222,7 @@ if [[ "$KIND" == "run" ]]; then
         '$c + [{fix_merge: $fix, status: $st, source: $src}]' <<<'null')
     done <<<"$fix_shas"
     payload=$(jq -c --argjson p "$payload" --argjson c "$checked" \
-      '$p + {ancestry: {status: (if ([$c[] | select(.status == "unknown")] | length) > 0
-                                 then "partially_evaluated" else "descends" end),
-                        checked: $c}}' <<<'null')
+      '$p + {ancestry: {status: "descends", checked: $c}}' <<<'null')
   fi
 elif [[ "$CHECK_COUNT" -eq 0 ]]; then
   echo "ERROR: --kind $KIND requires at least one --check (a command whose exit code is the evidence)" >&2

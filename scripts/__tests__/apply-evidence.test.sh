@@ -155,10 +155,14 @@ expect "a SHORT --merge-sha is expanded before binding" 0 "ralph-apply-evidence:
 echo "== ancestry: the bound run must descend from the fix merge (GH-1961) =="
 
 FIX_SHA="ffffeeee11112222333344445555666677778888"
-TWINS=$(jq -nc --arg fix "$FIX_SHA" \
-  '{data:{repository:{issue:{blockedBy:{nodes:[
-     {number: 1952, closedByPullRequestsReferences:{nodes:[
-       {number: 1955, merged: true, mergeCommit:{oid: $fix}}]}}]}}}}}')
+STACKED_SHA="aaaabbbbccccddddeeeeffff0000111122223333"
+twins_json() { # twins_json <closing-pr-nodes-json>
+  jq -nc --argjson prs "$1" \
+    '{data:{repository:{defaultBranchRef:{name:"main"},issue:{blockedBy:{nodes:[
+       {number: 1952, closedByPullRequestsReferences:{nodes: $prs}}]}}}}}'
+}
+TWINS=$(twins_json "$(jq -nc --arg fix "$FIX_SHA" \
+  '[{number:1955, merged:true, baseRefName:"main", mergeCommit:{oid:$fix}}]')")
 
 ancestry_case() { # ancestry_case <compare-status> [twins-json] → dir
   local d; d=$(new_case "$GOOD_RUNS")
@@ -204,7 +208,7 @@ fi
 
 dir=$(ancestry_case identical "$(jq -nc '{data:{repository:{issue:{blockedBy:{nodes:[]}}}}}')")
 run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
-expect "no blocked-by twin ⇒ not evaluated, not refused" 0 "no blocked-by twin with a merged closing PR"
+expect "no blocked-by twin ⇒ not evaluated, not refused" 0 "no blocked-by twin with a closing PR merged"
 
 # --fix-merge makes an unevaluable unit evaluable — and is still a real gate.
 dir=$(ancestry_case behind)
@@ -219,6 +223,27 @@ if jq -e '.ancestry.checked[0].source | test("operator")' <<<"$(payload_of)" >/d
   pass "--fix-merge overrides derivation and is labelled as an operator assertion"
 else
   fail "--fix-merge provenance — payload: $(payload_of)"
+fi
+
+# A question with a subject that went unanswered is NOT the not_evaluated case.
+# Posting there would rebuild the defect this check removes: a failed read
+# rendering as a pass, in evidence no later reader re-opens (PR #1962 review).
+dir=$(new_case "$GOOD_RUNS")
+echo "$TWINS" >"$dir/twins.json"   # no compare_status ⇒ the compare API does not answer
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
+expect "an UNANSWERED compare refuses — it never renders as a pass" 1 "could not determine whether"
+
+# A PR merged into some other base may never become an ancestor of the default
+# branch; counting it would refuse honest evidence forever.
+dir=$(ancestry_case identical "$(twins_json "$(jq -nc --arg fix "$FIX_SHA" --arg st "$STACKED_SHA" \
+  '[{number:1955, merged:true, baseRefName:"main", mergeCommit:{oid:$fix}},
+    {number:1956, merged:true, baseRefName:"feat/stacked-base", mergeCommit:{oid:$st}}]')")")
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
+if [[ "$LAST_RC" -eq 0 ]] && jq -e --arg f "$FIX_SHA" --arg s "$STACKED_SHA" \
+     '([.ancestry.checked[].fix_merge] == [$f])' <<<"$(payload_of)" >/dev/null; then
+  pass "only PRs merged to the DEFAULT branch become required ancestors"
+else
+  fail "default-branch filter — rc=$LAST_RC payload: $(payload_of)"
 fi
 
 # Ancestry is a kind=run concern only: settings evidence has no run to place.
