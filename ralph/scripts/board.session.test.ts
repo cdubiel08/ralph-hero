@@ -261,8 +261,13 @@ describe("session→unit binding (GH-1948)", () => {
 
     const msg = refusalMessage(() => transition(ctx, issue2, "In Progress"));
     expect(msg).toContain("FAILED");
-    // The state came back; the claim did not clear — a stale claim, which is
-    // precisely what the message names and what release/TTL/doctor handle.
+    // The residue sits at Backlog carrying a claim, which `release` CANNOT
+    // clear (Backlog → Backlog is not a legal transition), so the message must
+    // not name it. It names what actually resolves this: TTL, doctor's
+    // anomaly line, and a re-claim from the same holder.
+    expect(msg).toContain("claim anomaly");
+    expect(msg).toContain("TTL");
+    expect(msg).not.toContain("release");
     expect(gh.issues.get(2)!.state).toBe("Backlog");
     expect(gh.issues.get(2)!.claim).toBe(encodeClaim("me@test", NOW));
   });

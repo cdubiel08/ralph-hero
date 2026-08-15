@@ -2240,8 +2240,10 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
               : moved
                 ? `The claim was NOT rolled back — #${issue.number} has moved on since (another writer holds it), ` +
                   `and undoing that would clobber work this session cannot see.`
-                : `Rolling the claim back FAILED — #${issue.number} is still claimed and needs ` +
-                  `\`board release ${issue.number}\`, or doctor will reconcile it after TTL.`) +
+                : `Rolling the claim back FAILED — #${issue.number} still carries this machine's claim ` +
+                  `(doctor surfaces it as a claim anomaly, and it expires after TTL ${ctx.cfg.lockTtlMin} min). ` +
+                  `Claiming it from a new session on this machine works regardless — same holder, so the ` +
+                  `claim refreshes rather than refusing.`) +
             ` Drive #${issue.number} from a new session.`,
         );
       }
