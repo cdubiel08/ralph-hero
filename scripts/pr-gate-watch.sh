@@ -10,7 +10,7 @@
 # recently on PR #1740 (green for ~1h; the watcher never fired).
 #
 # The second false signal is subtler and points the other way: a
-# rate-limited CodeRabbit check reports bucket=pass with description
+# rate-limited reviewer's check reports bucket=pass with description
 # "Review rate limited" and reviews nothing. So "every check is green" is
 # *also* not merge-ready — merge-pr.sh requires an external review, and
 # attest-pr.sh hard-refuses with "no prior review".
@@ -263,12 +263,15 @@ def fenced_json:
 | ($ci   | map(select(.bucket == "pending")))           as $running
 | ($att  | map(select(.bucket == "pending")))           as $att_pending
 # A rate-limited reviewer check PASSES but reviews nothing — the one case
-# where an all-green board still needs a human nudge to make progress. Only
-# CodeRabbit is known to publish its rate-limit in the check DESCRIPTION,
-# which is why the name test is literal rather than policy-derived.
+# where an all-green board still needs a human nudge to make progress.
+# Matched on the DESCRIPTION alone, exactly as merge-pr.sh gate 5 does: a
+# check-run name need not equal the configured bot login, and the earlier
+# literal `coderabbit` name test went dead when that reviewer was uninstalled
+# (GH-1847), leaving the watcher and the gate disagreeing about what counts
+# as rate-limited. $rl_is_reviewer below still decides whether the
+# rate-limited check is the one gate 5 waits on.
 | ($all | map(select(
-    ((.name // "") | test("coderabbit"; "i")) and
-    ((.description // "") | test("rate limit"; "i"))
+    ((.description // "") | ascii_downcase | test("rate limit"))
   )))                                                   as $ratelimited
 | ($ratelimited | map(.name) | join(", "))              as $rl_names
 # --- review evidence, exactly as merge-pr.sh gate 5 counts it ---------------
