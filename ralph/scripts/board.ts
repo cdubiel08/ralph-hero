@@ -2282,7 +2282,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       // session in the same worktree (GH-1956). It has to run here rather than
       // in the pre-check: two unbound sessions both read an empty directory,
       // and each writes its own file, so no exclusive create settles it.
-      if (!priorBinding) settleWorktreeRace(ctx, issue.number);
+      if (!priorBinding) settleWorktreeRace(ctx, issue.number, !!opts.steal);
     }
     // Symmetric verify for the leaving side: the same re-read must show this
     // session OUT of the claim (gone, or co-holders only) — surviving
@@ -2545,7 +2545,24 @@ function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
   // honest case, and making it wait out a TTL to say something it can already
   // say would be a second vocabulary for one assertion. It stays a deliberate
   // flag, not a default — which is the whole difference from having no guard.
-  if (steal) return;
+  //
+  // Taking the unit RETIRES the records it was just asserted about, rather
+  // than only stepping over them. Left in place, a record the operator has
+  // declared dead would refuse the NEXT claim too, so every claim in this
+  // worktree would need --steal until the TTL ran out — the flag would buy one
+  // claim instead of settling the question. Scoped to this unit and this
+  // worktree: a record about other work was not what --steal spoke to.
+  if (steal) {
+    for (const b of readPeerBindings(ctx)) {
+      if (b.issue !== number || b.worktree !== worktree) continue;
+      try {
+        unlinkSync(b.path);
+      } catch {
+        /* raced away — already the desired end state */
+      }
+    }
+    return;
+  }
   const cutoff = ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
   const peer = readPeerBindings(ctx).find(
     (b) => b.issue === number && b.worktree === worktree && b.freshMs >= cutoff,
@@ -2571,7 +2588,13 @@ function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
  *  `user@host` holder and the same claim field — the board is already correct,
  *  and a loser that "restored" it would strip the winner's claim rather than
  *  its own. Nothing to undo is the honest reading, not a gap. */
-function settleWorktreeRace(ctx: Ctx, number: number): void {
+function settleWorktreeRace(ctx: Ctx, number: number, steal: boolean): void {
+  // --steal was already honoured by the pre-check, which retired the records it
+  // spoke to. Ranking against one that survived that (a peer written in the
+  // meantime) would refuse the takeover AFTER the board mutation, which is the
+  // one place this file never leaves a refusal: the claim would already be
+  // written. The flag decides once, at the front.
+  if (steal) return;
   const worktree = ctx.repoRoot;
   const own = sessionBindingPath(ctx);
   if (!worktree || !own) return;

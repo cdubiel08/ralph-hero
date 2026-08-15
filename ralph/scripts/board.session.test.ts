@@ -471,4 +471,47 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
     expect(() => transition(first, fetchIssue(first, 1), "In Progress")).not.toThrow();
     expect(readSessionBinding(first)!.issue).toBe(1);
   });
+
+  it("--steal RETIRES the record it spoke to, so the next claim needs no flag", () => {
+    // Left in place, a record the operator declared dead would refuse the NEXT
+    // claim too — --steal would buy one claim instead of settling the question.
+    const source = makeCtx(gh, "me@test", "/repo", { session: { id: "source", dir } });
+    transition(source, fetchIssue(source, 1), "In Progress");
+    const resumed = makeCtx(gh, "me@test", "/repo", { session: { id: "resumed", dir } });
+    transition(resumed, fetchIssue(resumed, 1), "In Progress", { steal: true });
+    expect(readSessionBinding(source)).toBeNull();
+
+    // A third session is now refused by the RESUMED session's record only —
+    // proof the guard is still armed, not that --steal disabled it.
+    const third = makeCtx(gh, "me@test", "/repo", { session: { id: "third", dir } });
+    expect(refusalMessage(() => transition(third, fetchIssue(third, 1), "In Progress"))).toContain(
+      "this worktree",
+    );
+  });
+
+  it("--steal is never refused AFTER the board mutation by the post-write settle", () => {
+    // A peer record landing mid-claim must not defeat a takeover the pre-check
+    // already allowed: the claim is written by then, so a refusal here would
+    // leave the board holding a claim the refusal says was not granted.
+    const stealer = makeCtx(gh, "me@test", "/repo", { session: { id: "stealer", dir } });
+    const earlier = new Date(NOW.getTime() - 5000).toISOString();
+    const realExec = gh.exec.bind(gh);
+    let planted = false;
+    gh.exec = (argv, stdin) => {
+      const res = realExec(argv, stdin);
+      if (!planted && String(stdin ?? "").includes("mutation")) {
+        writeFileSync(
+          join(dir, "ghost-0000000000000000.json"),
+          JSON.stringify({ issue: 1, since: earlier, holder: "me@test", worktree: "/repo" }),
+        );
+        planted = true;
+      }
+      return res;
+    };
+    expect(() =>
+      transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true }),
+    ).not.toThrow();
+    expect(readSessionBinding(stealer)!.issue).toBe(1);
+    expect(gh.issues.get(1)!.state).toBe("In Progress");
+  });
 });
