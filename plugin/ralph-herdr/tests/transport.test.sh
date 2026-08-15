@@ -544,6 +544,78 @@ call agent_started agent start w1-x --kind claude --pane p1
 is "sanitize: error prose is scrubbed before it reaches a caller" "oops" \
   "$(ralph_herdr_err_message "$OUT")"
 
+# ═══ 13b. the agent-prompt route-through (GH-1868) ═══════════════════════════
+#
+# Two cockpit call sites used to hold `2>&1` and a jq of the error code
+# themselves. What the route-through has to preserve is the distinction those
+# sites got right: herdr's wait expiry ("sent, unconfirmed") is not a refusal
+# ("did not land"), and the two want opposite advice from the UI.
+prompt() {
+  RC=0
+  OUT=$(ralph_herdr_agent_prompt "$@" 2>"$TMP/err") || RC=$?
+  ERR=$(cat "$TMP/err")
+}
+
+reset
+prompt w1-x "hello"
+is "prompt: a validated success is rc 0" "0" "$RC"
+is "prompt: the result is the agent_prompted payload" "w1-x" \
+  "$(printf '%s' "$OUT" | jq -r '.agent.name')"
+
+reset
+export FAKE_HERDR_LOG="$TMP/prompt.log"
+prompt w1-x "hello" 15000
+is "prompt: a wait bound is passed through to herdr" "1" \
+  "$(grep -c -- '--wait --timeout 15000' "$FAKE_HERDR_LOG")"
+reset
+: >"$FAKE_HERDR_LOG"
+prompt w1-x "hello"
+is "prompt: no wait bound means no --wait" "0" \
+  "$(grep -c -- '--wait' "$FAKE_HERDR_LOG")"
+unset FAKE_HERDR_LOG
+
+# Wait expiry, both spellings. Neither may read as a refusal: the prompt may
+# well have landed, so the honest advice is "check the pane", not "retry".
+for code in timeout agent_prompt_stalled; do
+  reset
+  printf '{"error":{"code":"%s","message":"timed out waiting for agent status"}}\n' "$code" \
+    >"$FAKE_HERDR_FIXTURES/agent-prompt.json"
+  printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-prompt.rc"
+  prompt w1-x "hello" 15000
+  is "prompt: '$code' is wait expiry (rc 4), not a refusal" "4" "$RC"
+  is "prompt: the expiry code is still readable off stdout" "$code" \
+    "$(ralph_herdr_err_code "$OUT")"
+done
+
+# Every other refusal keeps rc 2 with its code — the caller's "did not land"
+# branch, and the reason rc 4 had to be its own number rather than a message.
+reset
+printf '{"error":{"code":"agent_not_running","message":"gone"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-prompt.json"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-prompt.rc"
+prompt w1-x "hello" 15000
+is "prompt: an ordinary refusal stays rc 2" "2" "$RC"
+is "prompt: its code survives the route-through" "agent_not_running" \
+  "$(ralph_herdr_err_code "$OUT")"
+
+# The capture the header names as the one that must never be written: a chatty
+# but SUCCESSFUL call. With `2>&1` the diagnostic prepends itself to the body
+# and jq rejects the whole value; through the adapter it cannot.
+reset
+printf 'warning: something on stderr\n' >"$FAKE_HERDR_FIXTURES/agent-prompt.err"
+prompt w1-x "hello" 15000
+is "prompt: stderr noise on a successful call does not corrupt the result" "0" "$RC"
+is "prompt: the result is still parseable" "w1-x" \
+  "$(printf '%s' "$OUT" | jq -r '.agent.name')"
+
+# A non-numeric wait is treated as no wait rather than passed to herdr as one.
+reset
+export FAKE_HERDR_LOG="$TMP/prompt2.log"
+prompt w1-x "hello" "soon"
+is "prompt: a non-numeric wait degrades to no wait" "0" \
+  "$(grep -c -- '--wait' "$FAKE_HERDR_LOG")"
+unset FAKE_HERDR_LOG
+
 # ═══ 14. session keys ════════════════════════════════════════════════════════
 k_default=$(RALPH_HERDR_SESSION= HERDR_SOCKET_PATH= HERDR_SESSION= ralph_session_key)
 k_named=$(RALPH_HERDR_SESSION=other ralph_session_key)

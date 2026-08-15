@@ -346,7 +346,26 @@ line_lacks "reply: herdr rc 1 → NO checkmark, never an optimistic ack" "$out" 
 line_has "reply: the failure is said" "$out" "NOT delivered"
 line_has "reply: the typed text is preserved on screen" "$out" "do not lose me"
 line_has "reply: the manual retry is printed" "$out" "agent prompt w42-fix-the-flux"
-rm -f "$FAKE_HERDR_FIXTURES/agent-prompt.rc"
+
+# GH-1868: the two nonzero answers are not the same fact. A refusal means the
+# prompt did NOT land; herdr's own wait expiry means it may have, so the
+# advice is the pane rather than the retry.
+printf '{"error":{"code":"agent_not_found","message":"no such agent"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-prompt.json"
+clear_logs
+out=$(printf 'refused text\n' | run_verb reply 42 w42-fix-the-flux 2>&1)
+line_has "reply: a refusal names its code" "$out" "herdr refused (agent_not_found)"
+line_lacks "reply: a refusal is not reported as unconfirmed" "$out" "not confirmed"
+
+printf '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-prompt.json"
+clear_logs
+out=$(printf 'unconfirmed text\n' | run_verb reply 42 w42-fix-the-flux 2>&1)
+line_has "reply: a wait expiry says sent-but-unconfirmed" "$out" \
+  "sent but not confirmed within 15000ms"
+line_lacks "reply: a wait expiry is not reported as a refusal" "$out" "refused"
+line_lacks "reply: still no checkmark on an unconfirmed send" "$out" "✓ delivered"
+rm -f "$FAKE_HERDR_FIXTURES/agent-prompt.rc" "$FAKE_HERDR_FIXTURES/agent-prompt.json"
 
 clear_logs
 out=$(printf '   \n' | run_verb reply 42 w42-fix-the-flux 2>&1)

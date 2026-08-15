@@ -138,16 +138,18 @@ if [ -z "$live" ]; then
   exit 0
 fi
 
-out=$("$HERDR" agent prompt "$live" "answered on issue — re-read #$n and resume" \
-  --wait --timeout "${RALPH_HERDR_ANSWER_NUDGE_MS:-15000}" 2>&1) && rc=0 || rc=$?
+out=$(ralph_herdr_agent_prompt "$live" "answered on issue — re-read #$n and resume" \
+  "${RALPH_HERDR_ANSWER_NUDGE_MS:-15000}" 2>/dev/null) && rc=0 || rc=$?
 if [ "$rc" -eq 0 ]; then
   echo "nudged $live — prompt delivered and the session moved on"
 else
-  code=$(jq -r '.error.code // empty' <<<"$out" 2>/dev/null) || code=""
-  if [ -n "$code" ]; then
-    echo "nudge to $live refused ($code) — the answer IS on the issue; by hand:"
-  else
+  # rc 4 is herdr's wait expiry: submitted, unconfirmed. Every other nonzero
+  # means the prompt did not land — a refusal or a transport fault.
+  if [ "$rc" -eq 4 ]; then
     echo "nudge to $live sent but not confirmed within ${RALPH_HERDR_ANSWER_NUDGE_MS:-15000}ms — check its pane; the answer IS on the issue. By hand:"
+  else
+    code=$(ralph_herdr_err_code "$out")
+    echo "nudge to $live refused (${code:-transport failure}) — the answer IS on the issue; by hand:"
   fi
   echo "  herdr agent prompt $live 'answered on issue — re-read #$n and resume'"
 fi

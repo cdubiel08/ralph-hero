@@ -213,16 +213,18 @@ run_verb() {
       # typed text is preserved on screen, and wait expiry reports "sent but
       # not confirmed", never "delivered".
       rc=0
-      out=$("$HERDR" agent prompt "$agent" "$text" \
-        --wait --timeout 15000 2>&1) || rc=$?
+      out=$(ralph_herdr_agent_prompt "$agent" "$text" 15000 2>/dev/null) || rc=$?
       if [ "$rc" -eq 0 ]; then
         echo "✓ delivered to $agent"
       else
-        code=$(jq -r '.error.code // empty' <<<"$out" 2>/dev/null) || code=""
-        if [ -n "$code" ]; then
-          echo "NOT delivered — herdr refused ($code). Your text, kept:"
-        else
+        # rc 4 is herdr's own wait expiry — submitted, not confirmed. Anything
+        # else is a refusal or a transport fault, where the prompt did not
+        # land at all; only the first of those is "check the pane".
+        if [ "$rc" -eq 4 ]; then
           echo "NOT delivered — sent but not confirmed within 15000ms (check the pane). Your text, kept:"
+        else
+          code=$(ralph_herdr_err_code "$out")
+          echo "NOT delivered — herdr refused (${code:-transport failure}). Your text, kept:"
         fi
         printf '  %s\n' "$text"
         echo "retry by hand: $HERDR agent prompt $agent '<text>' --wait"
