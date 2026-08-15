@@ -3922,6 +3922,7 @@ import {
   deliverQueue,
   parseDeliverMarker,
   parseDeliverOpts,
+  parseConvergenceVerdict,
   parseMergeGateVerdict,
 } from "./board.js";
 
@@ -4160,6 +4161,87 @@ describe("deliver-queue: classification (spec §4.2)", () => {
     const res = classify([cand(1)], () => null);
     expect(res.next).toMatchObject({ reason: "actionable", verdict: null });
   });
+
+  // --- convergence stop (GH-1977) ---------------------------------------
+  const conv = (verdict: string) => () => ({ verdict, detail: `d:${verdict}` });
+  const classifyConv = (
+    cands: DeliverCandidate[],
+    convergence: Parameters<typeof classifyDeliver>[4],
+    opts = DELIVER_DEFAULTS,
+  ) =>
+    classifyDeliver(cands, opts, NOW, () => ({ verdict: "PASS", gate: null }), convergence);
+
+  it.each(["stalled", "cap-reached"])(
+    "%s holds the row OUT of the queue as its own blocked row — never silently withheld",
+    (verdict) => {
+      const res = classifyConv([cand(1)], conv(verdict));
+      expect(res.next).toBeNull();
+      expect(res.queue).toHaveLength(0);
+      expect(res.blocked).toContainEqual(
+        expect.objectContaining({
+          number: 1,
+          pr: 101,
+          reason: "convergence-stalled",
+          convergence: verdict,
+          detail: `d:${verdict}`,
+          windowExpiresAt: null,
+        }),
+      );
+    },
+  );
+
+  it.each(["converged", "converging", "insufficient-data", "no-passes"])(
+    "%s is a live loop — the row stays in the queue",
+    (verdict) => {
+      const res = classifyConv([cand(1)], conv(verdict));
+      expect(res.next).toMatchObject({ number: 1, reason: "actionable" });
+    },
+  );
+
+  it("not-evaluated never invents a block: a null convergence probe leaves the queue as it was", () => {
+    expect(classifyConv([cand(1)], () => null).next).toMatchObject({ number: 1 });
+    // and no probe at all is the pre-GH-1977 selector, unchanged
+    expect(classifyConv([cand(1)], null).next).toMatchObject({ number: 1 });
+  });
+
+  it("the check is budgeted: rows past the budget keep their classification (the rule gates nothing)", () => {
+    const calls: number[] = [];
+    const res = classifyConv(
+      [1, 2, 3].map((n) => cand(n, { prs: [dpr(100 + n)] })),
+      (pr) => {
+        calls.push(pr);
+        return { verdict: "stalled", detail: "d" };
+      },
+      { ...DELIVER_DEFAULTS, convergenceMax: 2 },
+    );
+    expect(calls).toHaveLength(2);
+    expect(res.queue).toHaveLength(1);
+    expect(res.blocked.filter((b) => b.reason === "convergence-stalled")).toHaveLength(2);
+  });
+
+  it("item-level rows carrying no PR are never checked — there is no loop to score", () => {
+    const calls: number[] = [];
+    const res = classifyConv([cand(1, { prs: [dpr(101, { state: "MERGED" })] })], (pr) => {
+      calls.push(pr);
+      return { verdict: "stalled", detail: "d" };
+    });
+    expect(calls).toHaveLength(0);
+    expect(res.next).toMatchObject({ reason: "no-open-pr", pr: null });
+  });
+});
+
+describe("convergence verdict parsing (GH-1977)", () => {
+  it("reads the verdict and detail off the script's JSON line", () => {
+    expect(
+      parseConvergenceVerdict('{"ok":true,"verdict":"stalled","detail":"did not decrease"}\n'),
+    ).toEqual({ verdict: "stalled", detail: "did not decrease" });
+  });
+
+  it("ok:false is NOT a verdict — an unreadable history must not read as a healthy loop", () => {
+    expect(parseConvergenceVerdict('{"ok":false,"verdict":"not-evaluated","detail":"x"}')).toBeNull();
+    expect(parseConvergenceVerdict("gh: command not found")).toBeNull();
+    expect(parseConvergenceVerdict("")).toBeNull();
+  });
 });
 
 describe("deliver-queue: marker + verdict parsing", () => {
@@ -4194,10 +4276,15 @@ describe("deliver-queue: marker + verdict parsing", () => {
   });
 
   it("parseDeliverOpts: defaults, env overrides, invalid warns to default", () => {
-    expect(parseDeliverOpts({})).toEqual({ settleMin: 5, retryMin: 60, dryrunMax: 3 });
+    expect(parseDeliverOpts({})).toEqual({ settleMin: 5, retryMin: 60, dryrunMax: 3, convergenceMax: 3 });
     expect(
-      parseDeliverOpts({ RALPH_SETTLE_MIN: "10", RALPH_RETRY_MIN: "30", RALPH_DELIVER_DRYRUN_MAX: "1" }),
-    ).toEqual({ settleMin: 10, retryMin: 30, dryrunMax: 1 });
+      parseDeliverOpts({
+        RALPH_SETTLE_MIN: "10",
+        RALPH_RETRY_MIN: "30",
+        RALPH_DELIVER_DRYRUN_MAX: "1",
+        RALPH_DELIVER_CONVERGENCE_MAX: "2",
+      }),
+    ).toEqual({ settleMin: 10, retryMin: 30, dryrunMax: 1, convergenceMax: 2 });
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
       expect(parseDeliverOpts({ RALPH_SETTLE_MIN: "banana" }).settleMin).toBe(5);

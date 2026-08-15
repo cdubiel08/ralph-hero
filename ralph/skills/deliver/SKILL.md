@@ -83,8 +83,18 @@ failure**: the work may be perfectly good, it is the loop that is out of budget,
 and a human choosing to split the diff or accept the findings is the cheap move
 the 33rd round is not. `converged` (no blocking findings at the latest pass) is
 the terminal *success* and outranks the cap — a clean review is never blocked
-for having been pushed often. The rule measures; it gates nothing, and the
-judgment stays yours.
+for having been pushed often.
+
+The rule still gates **nothing at the merge path**; what it now does gate is
+which work the lane PICKS UP (GH-1977). `board deliver-queue` runs the same
+script on the rows that reach the queue (budget `RALPH_DELIVER_CONVERGENCE_MAX`,
+3) and holds a `stalled`/`cap-reached` PR out of `queue` as its own
+**`convergence-stalled`** blocked row, carrying the verdict and detail. It is
+surfaced rather than withheld — a stalled PR that simply vanished would read
+exactly like one that merged — and the selector never escalates on its own: the
+`board move NNN human-needed` is still yours. An unreadable verdict blocks
+nothing. That check exists for the *unattended* lane, which is the population
+the cap protects, since prose cannot stop a lane nobody is watching.
 
 ## Close-out, demotion, safety rails
 
@@ -105,4 +115,4 @@ judgment stays yours.
    ```
 
 2. `mkdir -p "$RALPH_HOME"` (default `~/.ralph`) first, then append `<iso8601> deliver GH-<n> rc=<code> checked=<N> acted=<M>` to `$RALPH_HOME/deliver.outcomes.log` and touch `$RALPH_HOME/deliver.heartbeat` — surface a write failure rather than swallowing it; a lane always logging `checked=0` must be visibly dead, never silently green. An empty pass (no item selected) writes `GH-none` in the subject slot; the line still lands.
-3. Report, as your final output: `checked`/`acted` counts, the blocked-reason set from the queue read, and the earliest `windowExpiresAt` among time-bounded rows (`settling`, `retry-window`, `deferred`). The lane's goal state — for whatever invoked you — is: empty `next` AND no time-bounded blocked rows; rows only a human can clear (`no-pr`, Human Needed) don't count against it.
+3. Report, as your final output: `checked`/`acted` counts, the blocked-reason set from the queue read, and the earliest `windowExpiresAt` among time-bounded rows (`settling`, `retry-window`, `deferred`). The lane's goal state — for whatever invoked you — is: empty `next` AND no time-bounded blocked rows; rows only a human can clear (`no-pr`, `convergence-stalled`, Human Needed) don't count against it.

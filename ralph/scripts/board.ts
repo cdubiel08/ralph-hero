@@ -3991,12 +3991,17 @@ export interface DeliverOpts {
   retryMin: number;
   /** Dry-run probes per pass — the only non-trivial cost this selector has. */
   dryrunMax: number;
+  /** Convergence checks per pass (GH-1977), spent on queue rows in queue
+   *  order. Each is 3 REST/GraphQL reads, so it is budgeted like the dry-run
+   *  probe rather than run across the ranking walk. */
+  convergenceMax: number;
 }
 
 export const DELIVER_DEFAULTS: Readonly<DeliverOpts> = Object.freeze({
   settleMin: 5,
   retryMin: 60,
   dryrunMax: 3,
+  convergenceMax: 3,
 });
 
 export function parseDeliverOpts(
@@ -4014,6 +4019,7 @@ export function parseDeliverOpts(
     settleMin: positive("RALPH_SETTLE_MIN", DELIVER_DEFAULTS.settleMin),
     retryMin: positive("RALPH_RETRY_MIN", DELIVER_DEFAULTS.retryMin),
     dryrunMax: positive("RALPH_DELIVER_DRYRUN_MAX", DELIVER_DEFAULTS.dryrunMax),
+    convergenceMax: positive("RALPH_DELIVER_CONVERGENCE_MAX", DELIVER_DEFAULTS.convergenceMax),
   };
 }
 
@@ -4110,6 +4116,11 @@ export interface DeliverRow {
   /** Time-bounded blocked rows: when to look again. The lane's pacing input —
    *  rows without one (`no-pr`) only a human can clear. */
   windowExpiresAt?: string | null;
+  /** GH-1977: the convergence verdict that held this row out of the queue
+   *  (`stalled` / `cap-reached`), plus the script's own detail line. Present
+   *  only on `convergence-stalled` rows. */
+  convergence?: string | null;
+  detail?: string | null;
 }
 
 export interface DeliverQueueResult {
@@ -4142,6 +4153,30 @@ export function parseMergeGateVerdict(
  *  the session runs the gates itself and finds out. */
 export type DeliverProbe = (pr: number) => { verdict: string; gate: string | null } | null;
 
+/** GH-1977. Answers "is this PR's review loop still converging" for one PR —
+ *  `scripts/review-convergence.sh`, parsed. Null = not evaluated (the script
+ *  is absent, crashed, or answered `ok:false`), and not-evaluated NEVER holds
+ *  a row back: the rule gates nothing at the merge path (#1849's split), so an
+ *  unreadable answer must leave the queue exactly as it was rather than
+ *  inventing a block nobody can clear. */
+export type ConvergenceProbe = (pr: number) => { verdict: string; detail: string } | null;
+
+/** The two terminal verdicts that mean "stop iterating and escalate" — the
+ *  only ones this selector acts on. Every other verdict (`converged`,
+ *  `converging`, `insufficient-data`, `no-passes`) is a live loop. */
+const CONVERGENCE_STOP = new Set(["stalled", "cap-reached"]);
+
+export function parseConvergenceVerdict(out: string): { verdict: string; detail: string } | null {
+  try {
+    const j = JSON.parse(out.trim().split("\n").filter(Boolean).pop() ?? "");
+    if (!j || typeof j !== "object" || j.ok !== true) return null;
+    if (typeof j.verdict !== "string") return null;
+    return { verdict: j.verdict, detail: typeof j.detail === "string" ? j.detail : "" };
+  } catch {
+    return null;
+  }
+}
+
 /** Pure classification per spec §4.2 — deterministic given candidates, opts,
  *  clock, and probe. `probe === null` means the host repo ships no merge gate:
  *  cheap-delta candidates are actionable unprobed (native-flow degrade). */
@@ -4150,6 +4185,7 @@ export function classifyDeliver(
   opts: DeliverOpts,
   now: Date,
   probe: DeliverProbe | null,
+  convergence: ConvergenceProbe | null = null,
 ): DeliverQueueResult {
   const ms = (iso: string | null | undefined): number | null => {
     if (!iso) return null;
@@ -4318,7 +4354,51 @@ export function classifyDeliver(
     const tb = b.deltaAt ? new Date(b.deltaAt).getTime() : 0;
     return ta - tb;
   });
-  const queue = [...closeouts, ...confirmed, ...retries];
+  const ordered = [...closeouts, ...confirmed, ...retries];
+
+  // Convergence stop (GH-1977). A stalled or cap-spent review loop is work an
+  // unattended lane must stop PICKING UP — it will otherwise re-request a
+  // review every retry window forever, which is the budget #1849 measured and
+  // could not stop with prose. It is held out of `queue` and surfaced as its
+  // own blocked row rather than withheld silently: a stalled PR that simply
+  // vanished would read exactly like one that merged.
+  //
+  // Nothing here touches the merge path — #1849's split is intact. `next` is
+  // still the driver's judgment; this only stops a lane nobody is watching
+  // from spending its budget on a loop that has already stopped converging.
+  //
+  // Budgeted, in queue order, and only rows carrying a PR: the check is 3 API
+  // reads per PR and the ranking walk runs at the 1-pt floor (GH-1803). Rows
+  // past the budget keep their classification — the status quo, which is what
+  // an ungated rule means.
+  const queue: DeliverRow[] = [];
+  let convBudget = convergence === null ? 0 : opts.convergenceMax;
+  for (const row of ordered) {
+    if (convBudget <= 0 || row.pr === null) {
+      queue.push(row);
+      continue;
+    }
+    convBudget--;
+    const v = convergence!(row.pr);
+    if (v === null || !CONVERGENCE_STOP.has(v.verdict)) {
+      queue.push(row);
+      continue;
+    }
+    blocked.push({
+      number: row.number,
+      title: row.title,
+      pr: row.pr,
+      reason: "convergence-stalled",
+      verdict: row.verdict ?? null,
+      gate: row.gate ?? null,
+      deltaAt: row.deltaAt ?? null,
+      // Only a human clears it — the remedy is `board move NNN human-needed`,
+      // which is the driver's call and not a window that expires.
+      windowExpiresAt: null,
+      convergence: v.verdict,
+      detail: v.detail,
+    });
+  }
   return { next: queue[0] ?? null, queue, blocked };
 }
 
@@ -4560,6 +4640,7 @@ export function deliverQueue(
   ctx: Ctx,
   opts: DeliverOpts = parseDeliverOpts(),
   probeOverride?: DeliverProbe | null,
+  convergenceOverride?: ConvergenceProbe | null,
 ): DeliverQueueResult {
   // The lane filters on board state and hands {number, title} to the
   // candidate fetch — neither labels nor dependency edges are ever read, so
@@ -4583,7 +4664,23 @@ export function deliverQueue(
         }
       : null;
   }
-  return classifyDeliver(cands, opts, ctx.now(), probe);
+  let conv: ConvergenceProbe | null;
+  if (convergenceOverride !== undefined) {
+    conv = convergenceOverride;
+  } else {
+    // Detect-if-present, like the merge gate above: a host repo that does not
+    // ship the rule gets the pre-GH-1977 selector unchanged.
+    const convSh =
+      process.env.RALPH_REVIEW_CONVERGENCE_SH ??
+      join(ctx.repoRoot, "scripts", "review-convergence.sh");
+    conv = existsSync(convSh)
+      ? (pr: number) => {
+          const r = ctx.exec(["bash", convSh, String(pr)]);
+          return parseConvergenceVerdict(r.stdout);
+        }
+      : null;
+  }
+  return classifyDeliver(cands, opts, ctx.now(), probe, conv);
 }
 
 // ---------------------------------------------------------------------------
@@ -6847,7 +6944,13 @@ reads
                               gated per PR. {next, queue, blocked}; empty next
                               means spawn nothing (idle-exit is the caller's
                               contract). Knobs: RALPH_SETTLE_MIN (5),
-                              RALPH_RETRY_MIN (60), RALPH_DELIVER_DRYRUN_MAX (3)
+                              RALPH_RETRY_MIN (60), RALPH_DELIVER_DRYRUN_MAX (3).
+                              A PR whose review loop has stalled or spent its
+                              round cap (scripts/review-convergence.sh, GH-1977)
+                              is held OUT of the queue as a convergence-stalled
+                              blocked row — visible, and out of an unattended
+                              lane's reach. Budget: RALPH_DELIVER_CONVERGENCE_MAX
+                              (3); cap: RALPH_REVIEW_ROUND_CAP
   tend-queue [--json]         tend lane (GH-1712): Backlog hygiene + Done audit
                               — pending closure proposals, stale bodies,
                               cleared/truncated deps, unformed intake,
@@ -7350,6 +7453,17 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "deliver-queue": {
       const res = deliverQueue(ctx);
+      // A stalled loop is the one blocked row whose remedy is a human's, so it
+      // gets its detail line rather than a bare `←reason` (GH-1977).
+      const stalledLines = (): void => {
+        for (const b of res.blocked) {
+          if (b.reason !== "convergence-stalled") continue;
+          out(
+            `  #${b.number} pr#${b.pr} review loop ${b.convergence}: ${b.detail ?? ""}` +
+              `\n    → board move ${b.number} human-needed --why "<decision>" (do not request another review)`,
+          );
+        }
+      };
       if (flags.json) json(res);
       else if (!res.next) {
         const why = res.blocked.length
@@ -7358,6 +7472,7 @@ export function run(argv: string[], ctx: Ctx): number {
               .join(" ")})`
           : "";
         out(`deliver queue empty${why}`);
+        stalledLines();
       } else {
         const rowLine = (r: DeliverRow): string =>
           `#${r.number}${r.pr ? ` pr#${r.pr}` : ""} [${r.reason}${
@@ -7371,6 +7486,7 @@ export function run(argv: string[], ctx: Ctx): number {
               .map((b) => `#${b.number}${b.pr ? ` pr#${b.pr}` : ""}←${b.reason}`)
               .join(" ")}`,
           );
+        stalledLines();
       }
       return 0;
     }
