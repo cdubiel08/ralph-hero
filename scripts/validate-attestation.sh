@@ -44,7 +44,13 @@ PR_NUMBER="${1:?Usage: $0 PR_NUMBER}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$REPO_ROOT/.github/ralph-merge-policy.json}"
+# One reader of the policy and of the attestation payload, shared with
+# merge-pr.sh and pr-gate-watch.sh (GH-1843). This script publishes the
+# required commit status, so a divergence from gate 4/5 would let one say PASS
+# while the other says PENDING — which is the failure the shared lib removes.
+# shellcheck source=lib/merge-evidence.sh
+. "$SCRIPT_DIR/lib/merge-evidence.sh"
+POLICY_FILE="$(me_policy_file "$REPO_ROOT")"
 MARKER='<!-- ralph-attestation:v1 -->'
 
 head_sha="unknown"
@@ -64,32 +70,25 @@ if [[ ! -f "$POLICY_FILE" ]]; then
   out success "no merge policy file — attestation not required"
 fi
 # Fail CLOSED on a malformed policy file — a corrupt policy must not
-# silently disable the gate (CodeRabbit finding, PR #1602).
-if ! jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
+# silently disable the gate (CodeRabbit finding, PR #1602). Exit 2 from the
+# loader is that case and only that case.
+set +e
+policy=$(me_policy_load "$POLICY_FILE")
+policy_rc=$?
+set -e
+if [[ "$policy_rc" -eq 2 ]]; then
   out failure "merge policy file is not valid JSON: $POLICY_FILE"
 fi
-attestation_required=$(jq -r '.attestation.required // false | tostring' "$POLICY_FILE")
-external_required=$(jq -r '.external_review.required // false | tostring' "$POLICY_FILE")
-external_bot=$(jq -r '.external_review.bot // "chatgpt-codex-connector[bot]"' "$POLICY_FILE")
-external_head_marker=$(jq -r '.external_review.head_marker // ""' "$POLICY_FILE")
-# Evidence mode, DERIVED — mirrors scripts/merge-pr.sh exactly. `review` (a
-# formal APPROVED review) is the default so policies naming a formal-review bot
-# keep validating; `findings` is opted into by naming head_marker.
-# The two scripts MUST agree: this one publishes the required commit status,
-# so a divergence would let one say PASS while the other says PENDING.
-external_evidence_mode="review"
-if [[ -n "$external_head_marker" ]]; then
-  external_evidence_mode="findings"
-fi
+attestation_required=$(me_policy_get "$policy" attestationRequired)
+external_required=$(me_policy_get "$policy" externalRequired)
+external_bot=$(me_policy_get "$policy" bot)
+external_evidence_mode=$(me_policy_get "$policy" mode)
 
 if [[ "$attestation_required" != "true" ]]; then
   out success "attestation not required by policy"
 fi
 
-exempt=$(jq -r --arg a "$author" '
-  def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-  (((.exempt_authors // []) | map(norm)) | index($a | norm)) != null | tostring
-' "$POLICY_FILE" 2>/dev/null || echo "false")
+exempt=$(me_is_exempt "$policy" "$author")
 if [[ "$exempt" == "true" ]]; then
   out success "exempt author ($author) — CI checks are the evidence"
 fi
@@ -101,29 +100,19 @@ if [[ -z "$att_body" ]]; then
   out pending "awaiting attestation (scripts/attest-pr.sh)"
 fi
 
-att_json=$(awk '/^```json[[:space:]]*$/{f=1; next} f && /^```[[:space:]]*$/{exit} f' <<<"$att_body")
-if ! jq -e . >/dev/null 2>&1 <<<"$att_json"; then
-  out failure "attestation JSON unparseable"
-fi
-
-att_sha=$(jq -r '.head_sha // ""' <<<"$att_json")
-if [[ "$att_sha" != "$head_sha" ]]; then
-  out pending "attestation stale (${att_sha:0:8} != head ${head_sha:0:8}) — re-attest"
-fi
-
-tests_ok=$(jq -r '(.tests // []) | ((length > 0) and all(.exit_code == 0)) | tostring' <<<"$att_json")
-if [[ "$tests_ok" != "true" ]]; then
-  out failure "test evidence missing or failing (tests[] empty or non-zero exit_code)"
-fi
-
-att_verdict=$(jq -r '.review.verdict // ""' <<<"$att_json")
-if [[ -z "$att_verdict" ]]; then
-  out failure "review verdict missing from attestation"
-elif [[ "$att_verdict" != "APPROVED" ]]; then
-  # Presence alone is not approval — an honest REJECTED must fail
-  # (CodeRabbit finding, PR #1602).
-  out failure "review verdict is '$att_verdict', not APPROVED"
-fi
+# Payload extraction and validation are the shared reader's (GH-1843); this
+# script owns only the mapping from reason code to published status. Presence
+# alone is not approval — an honest REJECTED must fail (CodeRabbit, PR #1602).
+att_json=$(me_attestation_payload "$att_body")
+att_status=$(me_attestation_status "$att_body" "$head_sha")
+att_sha=$(jq -r '.head_sha // ""' <<<"$att_json" 2>/dev/null || echo "")
+case "$att_status" in
+  missing)    out failure "attestation JSON unparseable" ;;
+  stale)      out pending "attestation stale (${att_sha:0:8} != head ${head_sha:0:8}) — re-attest" ;;
+  no-tests)   out failure "test evidence missing or failing (tests[] empty or non-zero exit_code)" ;;
+  no-verdict) out failure "review verdict missing from attestation" ;;
+  rejected)   out failure "review verdict is '$(me_attestation_field "$att_body" .review.verdict)', not APPROVED" ;;
+esac
 
 # --- class coverage: recompute from the live diff --------------------------
 computed=$("$SCRIPT_DIR/pr-file-classes.sh" --pr "$PR_NUMBER" | sort -u)
@@ -141,33 +130,30 @@ if [[ "$external_required" == "true" ]]; then
   # pipefail (set at the top) is load-bearing in the `if !` guard below:
   # without it the status recorded would be jq's, and a failed `gh api` would
   # read as "no evidence yet" rather than an unavailable API.
-  evidence_ok=false
   if [[ "$external_evidence_mode" == "review" ]]; then
-    if ext_reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null | jq -s 'add // []'); then
-      ext_approved=$(jq -r --arg bot "$external_bot" --arg sha "$head_sha" '
-        def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-        [ .[]
-          | select(((.user.login // "") | norm) == ($bot | norm))
-          | select((.state // "") == "APPROVED")
-          | select((.commit_id // "") == $sha)
-        ] | length' <<<"$ext_reviews")
-      [[ "${ext_approved:-0}" -gt 0 ]] && evidence_ok=true
+    set +e
+    me_review_mode_approved "$PR_NUMBER" "$external_bot" "$head_sha"
+    ext_rc=$?
+    set -e
+    # rc 3 is an unreadable reviews API, not an absent review: both are pending
+    # here, but they must not be collapsed at the predicate — "no evidence yet"
+    # and "could not read" have opposite correct responses (CodeRabbit, #1839).
+    if [[ "$ext_rc" -eq 3 ]]; then
+      out pending "external review evidence could not be read (reviews API unavailable)"
+    elif [[ "$ext_rc" -ne 0 ]]; then
+      out pending "awaiting external review by $external_bot at ${head_sha:0:8}"
     fi
-    [[ "$evidence_ok" == "true" ]] || out pending "awaiting external review by $external_bot at ${head_sha:0:8}"
   else
     codex_evidence_sh="${RALPH_CODEX_EVIDENCE_SH:-$SCRIPT_DIR/codex-review-evidence.sh}"
     if [[ ! -x "$codex_evidence_sh" ]]; then
       out failure "external_review names head_marker (findings mode) but $codex_evidence_sh is missing"
     fi
-    # Captured, not inherited: under `set -e` a crashed predicate would exit
-    # this script with no verdict line, and the workflow would publish a bare
-    # "validator error". An unusable answer is pending — retry-able — never a
-    # silent success.
+    # An unusable answer is pending — retry-able — never a silent success.
     set +e
-    ext_evidence=$("$codex_evidence_sh" "$PR_NUMBER" "$head_sha" 2>&1)
+    ext_evidence=$(me_run_evidence_script "$codex_evidence_sh" "$PR_NUMBER" "$head_sha")
     ext_rc=$?
     set -e
-    if [[ "$ext_rc" -ne 0 ]] || ! jq -e 'type == "object" and has("ok")' >/dev/null 2>&1 <<<"$ext_evidence"; then
+    if [[ "$ext_rc" -ne 0 ]]; then
       out pending "external review evidence could not be evaluated (exit $ext_rc)"
     fi
     if [[ "$(jq -r '.ok' <<<"$ext_evidence")" != "true" ]]; then

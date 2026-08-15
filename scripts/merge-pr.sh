@@ -130,7 +130,13 @@ if [[ -z "$PROJECT_ROOT" ]]; then
   exit 1
 fi
 
-POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$PROJECT_ROOT/.github/ralph-merge-policy.json}"
+# The policy reader, the login-normalization rule and the attestation payload
+# rules are shared with validate-attestation.sh and pr-gate-watch.sh (GH-1843)
+# — three readers of the same evidence with three copies of the rules is how a
+# gate and its watcher come to disagree about the same bytes.
+# shellcheck source=lib/merge-evidence.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/merge-evidence.sh"
+POLICY_FILE="$(me_policy_file "$PROJECT_ROOT")"
 
 # Gate-skip accumulator for --force (bash-3.2-safe counter + newline list).
 SKIPPED_GATES=""
@@ -166,42 +172,22 @@ soft_gate() { # soft_gate <gate> <detail> — blocks unless --force
 # ---------------------------------------------------------------------------
 # Policy
 # ---------------------------------------------------------------------------
-ATTESTATION_REQUIRED="false"
-EXTERNAL_REQUIRED="false"
-EXTERNAL_BOT="chatgpt-codex-connector[bot]"
-EXTERNAL_TRIGGER="@codex review"
-EXTERNAL_HEAD_MARKER=""
-# Evidence mode, DERIVED from the policy — never defaulted (codex P2, PR #1839).
-#
-#   review   — the reviewer files formal APPROVED review objects (CodeRabbit
-#              and every other v1 reviewer). The ORIGINAL gate-5 behavior, and
-#              the default, so a policy naming a formal-review bot keeps
-#              merging instead of silently inheriting a protocol its reviewer
-#              does not speak.
-#   findings — the reviewer has no APPROVED verb and emits severity-tagged
-#              findings instead (Codex). Opted into by naming head_marker,
-#              which is what binds the one scoped review to this head.
-#
-# Deriving the mode from what the policy DECLARES is what keeps this backward
-# compatible: absent the marker there is no request protocol to bind, so
-# demanding one could only ever produce a permanent pending — the exact
-# failure this gate exists to remove.
-EXTERNAL_EVIDENCE_MODE="review"
-if [[ -f "$POLICY_FILE" ]]; then
-  # Fail CLOSED on a malformed policy file — a truncated/corrupt policy must
-  # not silently disable the evidence gates (CodeRabbit finding, PR #1602).
-  if ! jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
-    block "policy" "merge policy file is not valid JSON: $POLICY_FILE"
-  fi
-  ATTESTATION_REQUIRED=$(jq -r '.attestation.required // false | tostring' "$POLICY_FILE")
-  EXTERNAL_REQUIRED=$(jq -r '.external_review.required // false | tostring' "$POLICY_FILE")
-  EXTERNAL_BOT=$(jq -r '.external_review.bot // "chatgpt-codex-connector[bot]"' "$POLICY_FILE")
-  EXTERNAL_TRIGGER=$(jq -r '.external_review.trigger // "@codex review"' "$POLICY_FILE")
-  EXTERNAL_HEAD_MARKER=$(jq -r '.external_review.head_marker // ""' "$POLICY_FILE")
-  if [[ -n "$EXTERNAL_HEAD_MARKER" ]]; then
-    EXTERNAL_EVIDENCE_MODE="findings"
-  fi
+# Fail CLOSED on a malformed policy file — a truncated/corrupt policy must not
+# silently disable the evidence gates (CodeRabbit finding, PR #1602). Exit 2
+# from the shared loader is that case and only that case. The defaults and the
+# mode derivation (review vs findings) live in the loader, not here.
+set +e
+POLICY=$(me_policy_load "$POLICY_FILE")
+POLICY_RC=$?
+set -e
+if [[ "$POLICY_RC" -eq 2 ]]; then
+  block "policy" "merge policy file is not valid JSON: $POLICY_FILE"
 fi
+ATTESTATION_REQUIRED=$(me_policy_get "$POLICY" attestationRequired)
+EXTERNAL_REQUIRED=$(me_policy_get "$POLICY" externalRequired)
+EXTERNAL_BOT=$(me_policy_get "$POLICY" bot)
+EXTERNAL_TRIGGER=$(me_policy_get "$POLICY" trigger)
+EXTERNAL_EVIDENCE_MODE=$(me_policy_get "$POLICY" mode)
 
 # ---------------------------------------------------------------------------
 # Gate 0: PR core facts (single fetch)
@@ -217,14 +203,8 @@ author=$(jq -r '.author.login // ""' <<<"$pr_json")
 
 [[ "$state" == "OPEN" ]] || block "state" "PR #$PR_NUMBER is $state, not OPEN"
 
-# Exempt author? Normalize the app/ prefix and [bot] suffix on both sides.
-EXEMPT="false"
-if [[ -f "$POLICY_FILE" ]]; then
-  EXEMPT=$(jq -r --arg a "$author" '
-    def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-    (((.exempt_authors // []) | map(norm)) | index($a | norm)) != null | tostring
-  ' "$POLICY_FILE" 2>/dev/null || echo "false")
-fi
+# Exempt author? Normalizes the app/ prefix and [bot] suffix on both sides.
+EXEMPT=$(me_is_exempt "$POLICY" "$author")
 
 # ---------------------------------------------------------------------------
 # Gate 1: CHANGES_REQUESTED — unconditional, --force does not apply
@@ -308,25 +288,24 @@ if [[ "$ATTESTATION_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
   if [[ -z "$att_body" ]]; then
     soft_gate "attestation" "no $ATTESTATION_MARKER comment on PR #$PR_NUMBER (run scripts/attest-pr.sh)"
   else
-    att_json=$(awk '/^```json[[:space:]]*$/{f=1; next} f && /^```[[:space:]]*$/{exit} f' <<<"$att_body")
-    if ! jq -e . >/dev/null 2>&1 <<<"$att_json"; then
-      soft_gate "attestation" "attestation comment present but JSON payload unparseable"
-    else
-      att_sha=$(jq -r '.head_sha // ""' <<<"$att_json")
-      tests_ok=$(jq -r '(.tests // []) | ((length > 0) and all(.exit_code == 0)) | tostring' <<<"$att_json")
-      att_verdict=$(jq -r '.review.verdict // ""' <<<"$att_json")
-      if [[ "$att_sha" != "$head_sha" ]]; then
-        soft_gate "attestation" "attestation head_sha ${att_sha:0:8} != PR head ${head_sha:0:8} — re-attest after the latest push"
-      elif [[ "$tests_ok" != "true" ]]; then
-        soft_gate "attestation" "attestation lacks passing test evidence (tests[] empty or non-zero exit_code)"
-      elif [[ -z "$att_verdict" ]]; then
-        soft_gate "attestation" "attestation lacks a review verdict"
-      elif [[ "$att_verdict" != "APPROVED" ]]; then
+    # Payload extraction and the three validity checks are the shared reader's
+    # (GH-1843); this gate owns only the mapping from reason code to refusal.
+    att_status=$(me_attestation_status "$att_body" "$head_sha")
+    att_sha=$(me_attestation_field "$att_body" .head_sha)
+    case "$att_status" in
+      missing)
+        soft_gate "attestation" "attestation comment present but JSON payload unparseable" ;;
+      stale)
+        soft_gate "attestation" "attestation head_sha ${att_sha:0:8} != PR head ${head_sha:0:8} — re-attest after the latest push" ;;
+      no-tests)
+        soft_gate "attestation" "attestation lacks passing test evidence (tests[] empty or non-zero exit_code)" ;;
+      no-verdict)
+        soft_gate "attestation" "attestation lacks a review verdict" ;;
+      rejected)
         # An honest non-approving verdict is evidence AGAINST merging
         # (CodeRabbit finding, PR #1602: presence-only check let REJECTED pass).
-        soft_gate "attestation" "attestation review verdict is '$att_verdict', not APPROVED"
-      fi
-    fi
+        soft_gate "attestation" "attestation review verdict is '$(me_attestation_field "$att_body" .review.verdict)', not APPROVED" ;;
+    esac
   fi
 fi
 
@@ -340,24 +319,22 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
   if [[ "$EXTERNAL_EVIDENCE_MODE" == "review" ]]; then
     # --- review mode: the reviewer files a formal APPROVED review -----------
     # Head-bound and DISMISSED-excluded, exactly as gate 5 has always behaved
-    # for reviewers that speak this protocol. Policy strings are passed with
-    # --arg because every one of them is untrusted jq data.
+    # for reviewers that speak this protocol. The predicate is the shared
+    # reader's, which is also what pr-gate-watch.sh classifies against.
     #
-    # pipefail (set at the top of this script) is what makes the `if !` guard
-    # real: without it the recorded status would be jq's, so a failed `gh api`
-    # would read as EMPTY EVIDENCE — "no review yet" — instead of an
-    # unavailable API. Pinned by a regression test (CodeRabbit, #1839).
-    if ext_reviews=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null | jq -s 'add // []'); then
-      ext_approved=$(jq -r --arg bot "$EXTERNAL_BOT" --arg sha "$head_sha" '
-        def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-        [ .[]
-          | select(((.user.login // "") | norm) == ($bot | norm))
-          | select((.state // "") == "APPROVED")
-          | select((.commit_id // "") == $sha)
-        ] | length' <<<"$ext_reviews")
-      [[ "${ext_approved:-0}" -gt 0 ]] && evidence_ok=true
+    # rc 3 is a failed reviews API, kept distinct from rc 1 (no review yet):
+    # collapsing them would make an unavailable API read as EMPTY EVIDENCE.
+    # Pinned by a regression test (CodeRabbit, #1839).
+    set +e
+    me_review_mode_approved "$PR_NUMBER" "$EXTERNAL_BOT" "$head_sha"
+    ext_rc=$?
+    set -e
+    [[ "$ext_rc" -eq 0 ]] && evidence_ok=true
+    if [[ "$ext_rc" -eq 3 ]]; then
+      evidence_detail="external-review evidence could not be read (reviews API unavailable)"
+    else
+      evidence_detail="no current APPROVED $EXTERNAL_BOT review at head ${head_sha:0:8} yet — comment '$EXTERNAL_TRIGGER' to trigger one"
     fi
-    evidence_detail="no current APPROVED $EXTERNAL_BOT review at head ${head_sha:0:8} yet — comment '$EXTERNAL_TRIGGER' to trigger one"
   else
     # --- findings mode: one scoped review per head, P0-clean ---------------
     # The predicate lives in ONE script, which validate-attestation.sh and
@@ -372,11 +349,11 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
     # no MERGE GATE token at all — indistinguishable from a gate that passed
     # and then died. An unusable answer is PENDING, never silently ok.
     set +e
-    ext_evidence=$("$CODEX_EVIDENCE_SH" "$PR_NUMBER" "$head_sha" 2>&1)
+    ext_evidence=$(me_run_evidence_script "$CODEX_EVIDENCE_SH" "$PR_NUMBER" "$head_sha")
     ext_rc=$?
     set -e
-    if [[ "$ext_rc" -ne 0 ]] || ! jq -e 'type == "object" and has("ok")' >/dev/null 2>&1 <<<"$ext_evidence"; then
-      evidence_detail="external-review evidence could not be evaluated (${CODEX_EVIDENCE_SH##*/} exit $ext_rc): $(head -1 <<<"$ext_evidence")"
+    if [[ "$ext_rc" -ne 0 ]]; then
+      evidence_detail="external-review $ext_evidence"
     else
       [[ "$(jq -r '.ok' <<<"$ext_evidence")" == "true" ]] && evidence_ok=true
       evidence_detail=$(jq -r '.detail' <<<"$ext_evidence")

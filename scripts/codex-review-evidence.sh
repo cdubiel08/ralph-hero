@@ -70,16 +70,30 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$REPO_ROOT/.github/ralph-merge-policy.json}"
+# shellcheck source=lib/merge-evidence.sh
+. "$SCRIPT_DIR/lib/merge-evidence.sh"
+POLICY_FILE="$(me_policy_file "$REPO_ROOT")"
 
-BOT="chatgpt-codex-connector[bot]"
-TRIGGER="@codex review"
-HEAD_MARKER_KEY="ralph-review-head"
-if [[ -f "$POLICY_FILE" ]] && jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
-  BOT=$(jq -r '.external_review.bot // "chatgpt-codex-connector[bot]"' "$POLICY_FILE")
-  TRIGGER=$(jq -r '.external_review.trigger // "@codex review"' "$POLICY_FILE")
-  HEAD_MARKER_KEY=$(jq -r '.external_review.head_marker // "ralph-review-head"' "$POLICY_FILE")
-fi
+# A malformed or absent policy falls back to the defaults rather than failing
+# closed: this script is a PREDICATE its callers run, and gates 4-5 already
+# refuse an unreadable policy before they ever reach it. Failing closed twice
+# would only replace their precise refusal with this script's vaguer one.
+set +e
+POLICY=$(me_policy_load "$POLICY_FILE")
+POLICY_RC=$?
+set -e
+[[ "$POLICY_RC" -eq 0 ]] || POLICY=$(jq -n "$ME_JQ_LIB me_policy_none")
+BOT=$(me_policy_get "$POLICY" bot)
+TRIGGER=$(me_policy_get "$POLICY" trigger)
+HEAD_MARKER_KEY=$(me_policy_get "$POLICY" headMarker)
+# The shared loader leaves headMarker EMPTY when the policy names none, because
+# emptiness is exactly what derives `review` mode for its other callers. This
+# script is only ever invoked in findings mode, where a marker exists — so an
+# empty one here means it was run standalone with no policy, and matching on ""
+# would match every comment. Floor it to the conventional key instead.
+[[ -n "$BOT" ]] || BOT="chatgpt-codex-connector[bot]"
+[[ -n "$TRIGGER" ]] || TRIGGER="@codex review"
+[[ -n "$HEAD_MARKER_KEY" ]] || HEAD_MARKER_KEY="ralph-review-head"
 
 # The one place the severity taxonomy is named. Codex renders severity as a
 # shields.io badge whose ALT TEXT is the tier ("![P0 Badge](...)"), so match the

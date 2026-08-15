@@ -84,7 +84,9 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$REPO_ROOT/.github/ralph-merge-policy.json}"
+# shellcheck source=lib/merge-evidence.sh
+. "$SCRIPT_DIR/lib/merge-evidence.sh"
+POLICY_FILE="$(me_policy_file "$REPO_ROOT")"
 
 # The gating reviewer, read from the same policy file gate 5 reads, so "what
 # the gate already blocks on" cannot drift from what this script subtracts.
@@ -95,14 +97,17 @@ POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$REPO_ROOT/.github/ralph-merge-policy.js
 # for an APPROVED review object and never looks at a thread, so a bot P0 left
 # open under an approval is blocked by nothing; subtracting it there would hide
 # the highest-severity finding on the PR from the one line reporting findings
-# (Greptile P1, PR #1946). Mode is derived exactly as pr-gate-watch.sh and
-# validate-attestation.sh derive it: a head_marker means findings mode.
-BOT="chatgpt-codex-connector[bot]"
-MODE="review"
-if [[ -f "$POLICY_FILE" ]] && jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
-  BOT=$(jq -r '.external_review.bot // "chatgpt-codex-connector[bot]"' "$POLICY_FILE")
-  [[ -n "$(jq -r '.external_review.head_marker // ""' "$POLICY_FILE")" ]] && MODE="findings"
-fi
+# (Greptile P1, PR #1946). Mode is not derived here at all any more — it comes
+# from the shared reader gates 4-5 use (GH-1843). This script gates nothing, so
+# an unreadable policy falls back to the defaults rather than failing closed.
+set +e
+POLICY=$(me_policy_load "$POLICY_FILE")
+POLICY_RC=$?
+set -e
+[[ "$POLICY_RC" -eq 0 ]] || POLICY=$(jq -n "$ME_JQ_LIB me_policy_none")
+BOT=$(me_policy_get "$POLICY" bot)
+MODE=$(me_policy_get "$POLICY" mode)
+[[ -n "$BOT" ]] || BOT="chatgpt-codex-connector[bot]"
 
 REVIEWED="unknown"
 
