@@ -146,19 +146,22 @@ if [[ "$KIND" == "run" ]]; then
   #
   # Derivation, not prose: `board dep` records the ship↔apply twin as GitHub's
   # native blockedBy relation, and the ship issue names its own closing PR.
-  # --fix-merge overrides it, for a unit whose twin was never wired.
+  # --fix-merge ADDS to that derivation for a unit whose twin was never wired;
+  # it may never replace it. An override that suppressed the derived commit
+  # would let an operator name a weak ancestor and skip the real fix, which is
+  # this issue's own defect handed a flag (PR #1962 review).
   #
   # The ancestry test is the compare API rather than the more idiomatic
   # `git merge-base --is-ancestor`, which needs BOTH commits in the local
   # object store — in a fresh worktree or in CI that fails for a reason
   # unrelated to ancestry, which is precisely the fail-open being closed here.
   ancestry_reason=""
-  fix_shas=""
-  fix_source=""
+  derived_shas=""
+  operator_shas=""
   if [[ -n "$FIX_MERGE" ]]; then
-    fix_shas=$(git rev-parse "$FIX_MERGE^{commit}" 2>/dev/null || echo "$FIX_MERGE")
-    fix_source="operator (--fix-merge)"
-  else
+    operator_shas=$(git rev-parse "$FIX_MERGE^{commit}" 2>/dev/null || echo "$FIX_MERGE")
+  fi
+  {
     nwo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo '')
     twins=""
     if [[ -n "$nwo" ]]; then twins=$(gh api graphql -f owner="${nwo%%/*}" -f repo="${nwo##*/}" -F n="$ISSUE" -f query='
@@ -171,23 +174,47 @@ if [[ "$KIND" == "run" ]]; then
     if [[ -z "$twins" ]]; then
       ancestry_reason="could not read the blocked-by twin from the API"
     else
-      # Only PRs merged into the DEFAULT branch count. Requiring every collected
-      # merge is sound for those — each one is on the default branch, so any
-      # commit at or above all of them descends from all of them, and "all" is
-      # exactly "the latest" without needing an ordering the API does not
-      # promise. A PR merged into some other base may never become an ancestor
-      # of the default branch, so counting it would refuse honest evidence
-      # forever (PR #1962 review).
-      fix_shas=$(jq -r '
-        (.data.repository.defaultBranchRef.name // "") as $def
-        | [ .data.repository.issue.blockedBy.nodes[]?
-            | .closedByPullRequestsReferences.nodes[]?
-            | select(.merged == true and .baseRefName == $def)
-            | .mergeCommit.oid // empty ] | unique | .[]' <<<"$twins")
-      fix_source="derived from blockedBy twin"
-      [[ -n "$fix_shas" ]] || ancestry_reason="no blocked-by twin with a closing PR merged to the default branch"
+      # Requiring EVERY collected merge is sound once they are all on the
+      # default branch: each is reachable from it, so any commit at or above
+      # all of them descends from all of them — "all" is exactly "the latest",
+      # without needing an ordering the API does not promise.
+      #
+      # The candidates are filtered by REACHABILITY from the default branch,
+      # not by the PR's recorded `baseRefName`. Base name was a proxy for the
+      # property actually wanted — did this land? — and it breaks under a
+      # branch rename, discarding a real fix merge and silently downgrading to
+      # not_evaluated (PR #1962 review). Reachability survives the rename,
+      # because history does; and a merge into a stacked base that never
+      # landed is still excluded, which is what the proxy was there for.
+      def_branch=$(jq -r '.data.repository.defaultBranchRef.name // empty' <<<"$twins")
+      candidates=$(jq -r '
+        [ .data.repository.issue.blockedBy.nodes[]?
+          | .closedByPullRequestsReferences.nodes[]?
+          | select(.merged == true) | .mergeCommit.oid // empty ] | unique | .[]' <<<"$twins")
+      if [[ -z "$candidates" ]]; then
+        ancestry_reason="no blocked-by twin with a merged closing PR"
+      elif [[ -z "$def_branch" ]]; then
+        ancestry_reason="could not read the default branch to test which fixes landed"
+      else
+        while read -r cand; do
+          [[ -n "$cand" ]] || continue
+          landed=$(gh api "repos/{owner}/{repo}/compare/$cand...$def_branch" --jq '.status' 2>/dev/null || echo "unknown")
+          case "$landed" in
+            identical|ahead) derived_shas+="$cand"$'\n' ;;
+            unknown)
+              echo "ERROR: could not determine whether ${cand:0:8} landed on $def_branch — the compare" >&2
+              echo "       API did not answer. Posting nothing; re-run once it responds (GH-1961)." >&2
+              exit 1 ;;
+            *) echo "--- ancestry: ${cand:0:8} is not reachable from $def_branch ($landed) — not a required ancestor" ;;
+          esac
+        done <<<"$candidates"
+        [[ -n "$derived_shas" ]] || ancestry_reason="no blocked-by twin whose closing PR landed on $def_branch"
+      fi
     fi
-  fi
+  }
+
+  # Operator assertions are added to the derived set, never substituted for it.
+  fix_shas=$(printf '%s\n%s\n' "$derived_shas" "$operator_shas" | sed '/^$/d' | sort -u)
 
   if [[ -z "$fix_shas" ]]; then
     echo "WARNING: ancestry NOT CHECKED — $ancestry_reason." >&2
@@ -199,6 +226,8 @@ if [[ "$KIND" == "run" ]]; then
     checked='[]'
     while read -r fix; do
       [[ -n "$fix" ]] || continue
+      fix_source="derived from blockedBy twin"
+      if ! grep -qxF "$fix" <<<"$derived_shas"; then fix_source="operator (--fix-merge)"; fi
       status=$(gh api "repos/{owner}/{repo}/compare/$fix...$full_sha" --jq '.status' 2>/dev/null || echo "unknown")
       echo "--- ancestry: $fix -> ${full_sha:0:8} = $status ($fix_source)"
       case "$status" in
@@ -221,8 +250,12 @@ if [[ "$KIND" == "run" ]]; then
       checked=$(jq -c --argjson c "$checked" --arg fix "$fix" --arg st "$status" --arg src "$fix_source" \
         '$c + [{fix_merge: $fix, status: $st, source: $src}]' <<<'null')
     done <<<"$fix_shas"
-    payload=$(jq -c --argjson p "$payload" --argjson c "$checked" \
-      '$p + {ancestry: {status: "descends", checked: $c}}' <<<'null')
+    # A derivation that failed while an operator sha carried the check is still
+    # recorded: the reader must be able to see that only half the question was
+    # answerable from board data.
+    payload=$(jq -c --argjson p "$payload" --argjson c "$checked" --arg why "$ancestry_reason" \
+      '$p + {ancestry: ({status: "descends", checked: $c}
+                        | if $why == "" then . else . + {derivation_note: $why} end)}' <<<'null')
   fi
 elif [[ "$CHECK_COUNT" -eq 0 ]]; then
   echo "ERROR: --kind $KIND requires at least one --check (a command whose exit code is the evidence)" >&2
