@@ -1570,6 +1570,13 @@ export interface Issue {
   labels: string[];
   labelsTruncated: boolean; // >LABEL_PAGE labels — apply detection fails closed
   parent: { number: number; title: string } | null;
+  /** Same field, same rule, same name as the queue shapes (QueueItem,
+   *  ClosedEdge): own-repo parent number, else null. `get` carried the edge
+   *  only as `parent`, so `parentNumber` was an ABSENT key — and an absent key
+   *  reads as `null`, which is exactly what a genuinely parentless issue
+   *  reads as (GH-1791). Two names for one fact is what let a reader conclude
+   *  `get` and `tree` disagreed when they never did. */
+  parentNumber: number | null;
   children: Array<{
     number: number;
     title: string;
@@ -1623,7 +1630,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
           issue(number: $number) {
             id title url number state stateReason
             labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
-            parent { number title }
+            parent { number title repository { nameWithOwner } }
             subIssues(first: 50) {
               pageInfo { hasNextPage }
               nodes {
@@ -1665,6 +1672,12 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
       labelsTruncated: issue.labels?.pageInfo?.hasNextPage ?? false,
       parent: issue.parent ? { number: issue.parent.number, title: issue.parent.title } : null,
+      parentNumber:
+        issue.parent &&
+        issue.parent.repository?.nameWithOwner?.toLowerCase() ===
+          `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase()
+          ? issue.parent.number
+          : null,
       children: (issue.subIssues?.nodes ?? []).map((c: any) => {
         const cItem = (c.projectItems?.nodes ?? []).find(
           (n: any) => n.project?.id === cache.projectId,

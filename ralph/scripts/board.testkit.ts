@@ -186,7 +186,13 @@ export class FakeGh {
         pageInfo: { hasNextPage: fi.labelsTruncated ?? false },
         nodes: (fi.labels ?? []).map((name) => ({ name })),
       },
-      parent: fi.parent ? { number: fi.parent, title: `Issue ${fi.parent}` } : null,
+      parent: fi.parent
+        ? {
+            number: fi.parent,
+            title: `Issue ${fi.parent}`,
+            repository: { nameWithOwner: fi.parentRepo ?? "cdubiel08/ralph-hero" },
+          }
+        : null,
       subIssues: {
         pageInfo: { hasNextPage: fi.childrenTruncated ?? false },
         nodes: (fi.children ?? []).map((c) => ({
