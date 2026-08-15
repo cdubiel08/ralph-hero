@@ -165,6 +165,12 @@ else
   fail "subdirectory cwd (gated-only) -> expected root-relative paths + no attest mention, got: $LAST_ERR"
 fi
 
+
+# Quoted vs run (GH-1930): a doc edit or issue body that mentions the guarded
+# command merges nothing, and refusing it makes this rail unwritable-about.
+run_hook "$ATTEST_REPO" "gh issue comment 1 --body 'never use bare gh pr merge here'"
+expect_rc "quoted mention of the guarded command passes" 0
+
 # ---------------------------------------------------------------------------
 echo
 echo "Results: $PASS passed, $FAIL failed"

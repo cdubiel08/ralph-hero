@@ -48,6 +48,17 @@ SEGMENTS=${SEGMENTS//&/$'\n'}
 SEGMENTS=${SEGMENTS//|/$'\n'}
 
 while IFS= read -r seg; do
+  # What is QUOTED is usually an argument, not a command being run (GH-1930):
+  # filing an issue whose body describes `gh project item-edit` mutates no
+  # board, and refusing it makes this rail unable to be written about. The
+  # exception is exact and load-bearing: `gh api` carries its GraphQL mutation
+  # INSIDE quotes (`-f query='mutation { addSubIssue(...) }'`), so a segment
+  # invoking it is matched whole. Everywhere else the quoted spans are
+  # stripped, which can only under-redirect — the safe direction here.
+  case "$seg" in
+    *"gh api"*) ;;
+    *) seg=$(printf '%s' "$seg" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g') ;;
+  esac
   [ -n "${seg//[[:space:]]/}" ] || continue
   [[ "$seg" =~ $BOARD_INVOKE ]] && continue
   for p in "${BLOCKED_PATTERNS[@]}"; do
