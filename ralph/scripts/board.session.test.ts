@@ -401,3 +401,74 @@ describe("second writer in one worktree (GH-1956)", () => {
     expect(readSessionBinding(resumed)!.issue).toBe(1);
   });
 });
+
+/**
+ * The race the pre-check cannot see (GH-1956, review finding).
+ *
+ * Two DISTINCT sessions in one worktree both read the binding directory before
+ * either record exists, so both pass the pre-check — and each then writes its
+ * OWN file, so the exclusive create that settles the GH-1948 sibling race
+ * (one file, two writers) never fires. Settled after the write instead, by a
+ * total order both sessions compute identically.
+ */
+describe("worktree race between distinct sessions (GH-1956)", () => {
+  let gh: FakeGh;
+  let dir: string;
+  beforeEach(() => {
+    gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    dir = mkdtempSync(join(tmpdir(), "board-session-"));
+  });
+
+  it("refuses the session that bound SECOND, and leaves it no record behind", () => {
+    // The first session's record is planted mid-claim — after the second
+    // session's pre-check has already read an empty directory.
+    const second = makeCtx(gh, "me@test", "/repo", { session: { id: "second", dir } });
+    const first = makeCtx(gh, "me@test", "/repo", { session: { id: "first", dir } });
+    const earlier = new Date(NOW.getTime() - 1000).toISOString();
+
+    const realExec = gh.exec.bind(gh);
+    let planted = false;
+    gh.exec = (argv, stdin) => {
+      const res = realExec(argv, stdin);
+      if (!planted && String(stdin ?? "").includes("mutation")) {
+        writeFileSync(
+          sessionBindingPath(first)!,
+          JSON.stringify({ issue: 1, since: earlier, holder: "me@test", worktree: "/repo" }),
+        );
+        planted = true;
+      }
+      return res;
+    };
+
+    const msg = refusalMessage(() => transition(second, fetchIssue(second, 1), "In Progress"));
+    expect(msg).toContain("this worktree");
+    // The loser must leave NO binding: a record from a refused session would
+    // read as a live driver and refuse a third session on its behalf.
+    expect(readSessionBinding(second)).toBeNull();
+    // The winner is untouched, and the board is correct as-is — same holder,
+    // same claim field, so there was never anything to unwind.
+    expect(readSessionBinding(first)!.since).toBe(earlier);
+    expect(gh.issues.get(1)!.state).toBe("In Progress");
+  });
+
+  it("the session that bound FIRST is not refused by the record that arrived after it", () => {
+    const first = makeCtx(gh, "me@test", "/repo", { session: { id: "first", dir } });
+    const later = new Date(NOW.getTime() + 1000).toISOString();
+    const realExec = gh.exec.bind(gh);
+    let planted = false;
+    gh.exec = (argv, stdin) => {
+      const res = realExec(argv, stdin);
+      if (!planted && String(stdin ?? "").includes("mutation")) {
+        writeFileSync(
+          join(dir, "second-0000000000000000.json"),
+          JSON.stringify({ issue: 1, since: later, holder: "me@test", worktree: "/repo" }),
+        );
+        planted = true;
+      }
+      return res;
+    };
+    expect(() => transition(first, fetchIssue(first, 1), "In Progress")).not.toThrow();
+    expect(readSessionBinding(first)!.issue).toBe(1);
+  });
+});

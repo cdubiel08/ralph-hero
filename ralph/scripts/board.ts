@@ -2278,6 +2278,11 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
             ` Drive #${issue.number} from a new session.`,
         );
       }
+      // Now that this session's record exists, settle any race with a DISTINCT
+      // session in the same worktree (GH-1956). It has to run here rather than
+      // in the pre-check: two unbound sessions both read an empty directory,
+      // and each writes its own file, so no exclusive create settles it.
+      if (!priorBinding) settleWorktreeRace(ctx, issue.number);
     }
     // Symmetric verify for the leaving side: the same re-read must show this
     // session OUT of the claim (gone, or co-holders only) — surviving
@@ -2502,6 +2507,7 @@ export function readSessionBinding(ctx: Ctx): SessionBinding | null {
 // would mean a fork could steal on the board and still be refused here.
 interface PeerBinding extends SessionBinding {
   freshMs: number;
+  path: string; // the tiebreak when two records carry the same `since`
 }
 
 /** Every binding in the session dir that is NOT this session's own. */
@@ -2522,7 +2528,7 @@ function readPeerBindings(ctx: Ctx): PeerBinding[] {
     try {
       const b = JSON.parse(readFileSync(p, "utf8"));
       if (!Number.isInteger(b?.issue) || typeof b?.worktree !== "string") continue;
-      out.push({ ...(b as SessionBinding), freshMs: statSync(p).mtimeMs });
+      out.push({ ...(b as SessionBinding), freshMs: statSync(p).mtimeMs, path: p });
     } catch {
       /* garbled or raced away — a record we cannot read asserts nothing */
     }
@@ -2545,8 +2551,49 @@ function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
     (b) => b.issue === number && b.worktree === worktree && b.freshMs >= cutoff,
   );
   if (!peer) return;
-  throw new RefusalError(
-    `another live session in this worktree (${worktree}) is already driving #${number} (since ${peer.since}). ` +
+  throw peerRefusal(ctx, number, worktree, peer.since);
+}
+
+/** Settle a RACE between two distinct sessions in one worktree — the case the
+ *  pre-check above cannot see, because both read the directory before either
+ *  binding exists and each then writes its OWN file, so the exclusive create
+ *  that settles the GH-1948 sibling race (one file, two writers) never fires.
+ *
+ *  Run after our own binding lands, so the peer set is complete: whoever wrote
+ *  second sees the first, and whoever wrote first sees the second. Both then
+ *  order the same candidates the same way — earliest `since`, path breaking a
+ *  tie — so exactly one is the loser, with no coordination.
+ *
+ *  The loser drops its BINDING and refuses; it deliberately does NOT unwind the
+ *  board claim, unlike the GH-1948 sibling unwind. There, the claim belonged to
+ *  a session being refused outright and would have been left driving nothing.
+ *  Here the winner is a live session holding the same unit under the SAME
+ *  `user@host` holder and the same claim field — the board is already correct,
+ *  and a loser that "restored" it would strip the winner's claim rather than
+ *  its own. Nothing to undo is the honest reading, not a gap. */
+function settleWorktreeRace(ctx: Ctx, number: number): void {
+  const worktree = ctx.repoRoot;
+  const own = sessionBindingPath(ctx);
+  if (!worktree || !own) return;
+  const mine = readSessionBinding(ctx);
+  if (!mine || mine.issue !== number) return;
+  const cutoff = ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
+  const rank = (since: string, path: string) => `${since} ${path}`;
+  const winner = readPeerBindings(ctx)
+    .filter((b) => b.issue === number && b.worktree === worktree && b.freshMs >= cutoff)
+    .find((b) => rank(b.since, b.path) < rank(mine.since, own));
+  if (!winner) return;
+  try {
+    unlinkSync(own); // not the winner: leave no record that would refuse a third session
+  } catch {
+    /* already gone — the desired end state */
+  }
+  throw peerRefusal(ctx, number, worktree, winner.since);
+}
+
+function peerRefusal(ctx: Ctx, number: number, worktree: string, since: string): RefusalError {
+  return new RefusalError(
+    `another live session in this worktree (${worktree}) is already driving #${number} (since ${since}). ` +
       `Two harnesses in one checkout race on the index, the branch and each other's uncommitted files, ` +
       `and the board claim cannot see it: the holder is \`${ctx.cfg.holder}\` for both. ` +
       `If this pane is a fork, use it to read and think from that session's context, not to drive its unit. ` +
