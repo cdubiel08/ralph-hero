@@ -1693,6 +1693,59 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
   });
 }
 
+/** A merged PR reaching #number through the branch convention rather than a
+ *  closing keyword (GH-1732) — the second half of deliver-queue's linkage
+ *  predicate, reused here so the Done gate and the close-out lane agree on
+ *  what "linked" means.
+ *
+ *  FAILS CLOSED by construction: every unreadable path returns null, and null
+ *  is the refusal. That is the whole safety argument — a rate limit, a revoked
+ *  scope or a malformed response may not manufacture evidence for a close,
+ *  because evidence is the artifact no later reader re-derives.
+ *
+ *  Honest limit: this reads live refs, so a head branch deleted at merge is
+ *  invisible to it and the issue still needs `--why`. `merge-pr.sh` does not
+ *  delete branches (GH-1873), which is why the cheap ref read is enough here;
+ *  a repo that deletes on merge simply keeps the flag.
+ *
+ *  Costed as one nested connection product (10 refs x 10 PRs = 100 nodes,
+ *  the same bucket deliver's b-alias sits in) and only ever asked when the
+ *  closing-reference half already came up empty on a Done move. */
+function branchLinkedMergedPr(ctx: Ctx, number: number): { number: number; url: string } | null {
+  let data: any;
+  try {
+    data = ghGraphQL(
+      ctx,
+      `query($owner: String!, $repo: String!, $q: String!) {
+        repository(owner: $owner, name: $repo) {
+          refs(refPrefix: "refs/heads/", query: $q, first: 10) {
+            nodes {
+              name
+              associatedPullRequests(first: 10, states: [MERGED]) { nodes { number url merged } }
+            }
+          }
+        }
+      }`,
+      // The bare number: GitHub's ref filter is a SUBSTRING match, so it
+      // covers both grammars (`fix/1732-slug`, legacy `feature/GH-1732`) in
+      // one connection. It also returns coincidences of digits, which
+      // parseBranchName rejects below.
+      { owner: ctx.cfg.owner, repo: ctx.cfg.repo, q: String(number) },
+    );
+  } catch {
+    return null;
+  }
+  for (const ref of data?.repository?.refs?.nodes ?? []) {
+    if (parseBranchName(ref?.name ?? "")?.issue !== number) continue;
+    for (const p of ref?.associatedPullRequests?.nodes ?? []) {
+      if (p?.merged && typeof p.number === "number") {
+        return { number: p.number, url: p.url ?? "" };
+      }
+    }
+  }
+  return null;
+}
+
 /** Body + comment bodies for ONE issue. Deliberately a separate query rather
  *  than extra fields on `fetchIssue`: it is needed only when an apply issue is
  *  closed or swept (a handful of issues), and bodies are the largest payload
@@ -2045,10 +2098,18 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     const doneWithoutMergedPr = to === "Done" && !issue.prs.some((p) => p.merged);
     const applyKind = isApplyIssue(ctx.cfg, issue.labels, issue.labelsTruncated);
     if (doneWithoutMergedPr && !opts.why && !applyKind) {
-      throw new UsageError(
-        `moving #${issue.number} to Done requires a merged linked PR — none found. ` +
-          `Pass --why "<how this was completed>" to complete without one.`,
-      );
+      // Parity with deliver-queue's linkage (GH-1732): a merged PR reaches the
+      // issue through the closing reference OR the branch convention. The
+      // no-closing-keyword population is exactly the one the close-out lane
+      // exists for, so refusing it here made `--why` the routine path and
+      // drained the flag of meaning.
+      if (!branchLinkedMergedPr(ctx, issue.number)) {
+        throw new UsageError(
+          `moving #${issue.number} to Done requires a merged linked PR — none found ` +
+            `(neither a closing reference nor a merged PR on this issue's branch — see \`board name ${issue.number}\`). ` +
+            `Pass --why "<how this was completed>" to complete without one.`,
+        );
+      }
     }
     // Apply-kind close gate (GH-1693). PREVENTIVE, not advisory: an apply unit
     // reaches Done only on shape-valid `ralph-apply-evidence:v1`.
