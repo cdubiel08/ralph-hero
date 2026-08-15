@@ -536,7 +536,7 @@ not here.
   moment it blocked. Since GH-1774 an event's *own* reach is narrower still: it
   can record a snapshot-confirmed status against an identity the ledger already
   holds, and otherwise only mark the scope dirty.
-- **A reconcile pass only sweeps ledgers its own server owns (GH-1863).** herdr
+- **A reconcile pass only sweeps records its own server owns (GH-1863, GH-1944).** herdr
   runs `[[startup]]` for *every* server that starts, so an isolated named session
   (`herdr --session probe server`) used to run this pass against the operator's
   real ledgers while answering about a herd it had never had — observed live on
@@ -545,7 +545,19 @@ not here.
   of two facts: the server's snapshot holds a pane one of the ledger's open
   records names, **or** one of those open records carries this server's own
   session key (GH-1933). The absence-driven phases (exit-lost, the orphan pass)
-  skip every other ledger and say so in the log.
+  skip every other record and say so in the log.
+- **That verdict is per RECORD, not per ledger (GH-1944).** One ledger path is
+  shared by every server working the same repository, so a whole-ledger boolean
+  let *one* matching record hand this server the right to sweep a sibling
+  server's records — whose workers are live but absent from *this* server's
+  snapshot, so the absence-driven phases read them as gone and exit them
+  `lost`. That is the GH-1863 failure re-entered through the back door, and a
+  `lost` worker cannot be re-discovered. Each record now answers on its own
+  pane and its own writer, which keeps both proofs intact: a foreign server
+  matches nothing, and a fully-quiesced own ledger is still swept whole
+  because every record in it carries our key. The cost is honest and
+  fail-closed: a legacy record with no session stamp is no longer swept on a
+  live sibling's proof, and needs `--adopt`.
 - **The second proof exists because the first is a liveness test (GH-1933).** A
   pane proves ownership only while it lives, so a fully-retired fleet made its
   own ledger permanently unsweepable: sweeping is *safe* only when no worker is
@@ -555,7 +567,10 @@ not here.
   with `ralph_session_key`, so the writer's identity outlives the last pane.
   What still fails closed: records written *before* the stamp existed, whose
   writer is unknowable from the ledger. Only an operator can assert those —
-  `reconcile.sh --adopt`, which logs that it overrode the verdict — and
+  `reconcile.sh --adopt PATH`, which logs that it overrode the verdict. It
+  takes the path of the *one* ledger the operator inspected (GH-1944): a bare
+  `--adopt` used to apply that single assertion to every unproven ledger the
+  walk found, and now refuses rather than meaning more than was typed. And
   `--dry-run` performs every read and decision while withholding every write,
   so the sweep can be read before it happens.
 - **Repository containment is only as good as the provenance herdr reports.** A

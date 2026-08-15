@@ -28,6 +28,7 @@
 // logs + the ledger JSONL. No server, no GitHub, no writes outside tmp.
 import { After, setDefaultTimeout, setWorldConstructor, World } from '@cucumber/cucumber';
 import { execFileSync, spawnSync, type SpawnSyncOptionsWithStringEncoding } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -368,6 +369,21 @@ export function firstIndex(lines: string[], substr: string): number {
   return lines.findIndex((l) => l.includes(substr));
 }
 
+/**
+ * The `ralph_session_key` this world's scripts compute (ledger.sh). `env()`
+ * scrubs every inherited `HERDR_`/`RALPH_` key, so the key always falls back
+ * to the `session:default` branch — mirrored here rather than shelled out to,
+ * so a seeded ledger costs no subprocess per line.
+ *
+ * Records carry it because reconcile's ownership verdict is PER RECORD since
+ * GH-1944: a record with no writer stamp is unprovable on its own, and a
+ * ledger seeded without one describes a legacy world, not this one.
+ */
+export const WORLD_SESSION_KEY = createHash('sha256')
+  .update('session:default')
+  .digest('hex')
+  .slice(0, 12);
+
 /** A grammar-B worker spawn line with the full C8 token map, from ref + pane. */
 export function spawnLineFor(ref: string, pane: string): string {
   const name = ref.split('#')[0];
@@ -380,6 +396,7 @@ export function spawnLineFor(ref: string, pane: string): string {
     ev: 'spawn',
     agent_ref: ref,
     pane_id: pane,
+    session: WORLD_SESSION_KEY,
     tokens: {
       role: 'w',
       issue,

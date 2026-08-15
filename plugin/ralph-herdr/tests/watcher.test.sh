@@ -465,9 +465,13 @@ RROOT="$TMP/rroot"
 RLEDGER="$RROOT/acme/demo/ledger.jsonl"
 mkdir -p "$RROOT/acme/demo" "$TMP/repo"
 printf '{"owner":"acme","repo":"demo"}\n' >"$TMP/repo/.ralph.json"
-cat >"$RLEDGER" <<'EOF'
-{"ts":"t0","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"role":"w","issue":"123","slug":"fix","root":"w123-fix#aaaa","depth":"0","state":"spawned","branch":"feature/GH-123","harness":"claude","spawn_epoch":"aaaa"}}
-{"ts":"t1","ev":"spawn","agent_ref":"w9-gone#ffff","pane_id":"p9","tokens":{"role":"w","issue":"9","slug":"gone","depth":"0","state":"spawned"}}
+# Both records carry THIS server's session key, which is what a ledger written
+# by a current ralph looks like — and since GH-1944 that stamp is what makes
+# w9-gone sweepable. It used to inherit the verdict from its live sibling; a
+# record now answers for itself.
+cat >"$RLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","session":"$(ralph_session_key)","tokens":{"role":"w","issue":"123","slug":"fix","root":"w123-fix#aaaa","depth":"0","state":"spawned","branch":"feature/GH-123","harness":"claude","spawn_epoch":"aaaa"}}
+{"ts":"t1","ev":"spawn","agent_ref":"w9-gone#ffff","pane_id":"p9","session":"$(ralph_session_key)","tokens":{"role":"w","issue":"9","slug":"gone","depth":"0","state":"spawned"}}
 EOF
 herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"},{"name":"w5-alpha","agent_status":"idle","pane_id":"p5"},{"name":"ralph-deliver","agent_status":"working","pane_id":"p7"},{"name":"random-agent","agent_status":"working","pane_id":"p8"}]'
 printf '{"result":{"pane":{"pane_id":"p5","foreground_cwd":"%s"}}}\n' "$TMP/repo" \
@@ -557,16 +561,59 @@ run_reconcile "$FROOT"
 is "foreign herd: nothing marked lost" "0" "$(lcount "$FLEDGER" '.ev=="exit"')"
 is "foreign herd: no token pushed onto our panes" "0" "$(log_count '^pane report-metadata p[19] ')"
 
-# (c) the control: one recorded pane back in the snapshot proves the ledger
-# ours, and the ordinary sweep resumes — the guard is scoped, not a mute.
+# (c) the control: a record whose pane IS in this snapshot is ours, and the
+# ordinary sweep resumes for it — the guard is scoped, not a mute. Its
+# unproven sibling is NOT swept along with it (GH-1944): the verdict belongs
+# to the record, and w9-gone's writer is unknowable from this legacy ledger.
 foreign_ledger
 herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
 : >"$FAKE_HERDR_LOG"
 run_reconcile "$FROOT"
-is "owned ledger: the absent worker is marked lost again" "1" \
-  "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost"')"
-is "owned ledger: the live worker is left open" "0" \
+is "owned record: the live worker is left open" "0" \
   "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w123-fix#aaaa"')"
+is "mixed ledger: the unproven sibling is NOT swept on the live one's proof" "0" \
+  "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff"')"
+case "$OUT" in
+  *"are not this server's"*) ok "mixed ledger: says how many records it declined" ;;
+  *) not_ok "mixed ledger: says how many records it declined — got '$OUT'" ;;
+esac
+
+# (c2) THE REGRESSION (GH-1944). Two servers share one repository's ledger.
+# Ours has a live pane; theirs has a live worker we cannot see, because it is
+# absent from OUR snapshot. Under a whole-ledger verdict our single matching
+# record handed us the right to sweep theirs, and a live worker exited `lost`
+# cannot be re-discovered. It must survive.
+MROOT="$TMP/mroot"
+MLEDGER="$MROOT/acme/demo/ledger.jsonl"
+mkdir -p "$MROOT/acme/demo"
+cat >"$MLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"w1-ours#aaaa","pane_id":"p1","session":"$(ralph_session_key)","tokens":{"role":"w","issue":"1","slug":"ours","depth":"0","state":"spawned"}}
+{"ts":"t1","ev":"spawn","agent_ref":"w2-theirs#bbbb","pane_id":"pX","session":"another-server","tokens":{"role":"w","issue":"2","slug":"theirs","depth":"0","state":"spawned"}}
+EOF
+herd_fixture '[{"name":"w1-ours","agent_status":"working","pane_id":"p1"}]'
+: >"$FAKE_HERDR_LOG"
+run_reconcile "$MROOT"
+is "shared ledger: exits 0" "0" "$RC"
+is "shared ledger: the foreign server's live worker is NOT marked lost" "0" \
+  "$(lcount "$MLEDGER" '.ev=="exit" and .agent_ref=="w2-theirs#bbbb"')"
+is "shared ledger: no token pushed onto the foreign server's pane" "0" \
+  "$(log_count '^pane report-metadata pX ')"
+is "shared ledger: our own live worker is untouched too" "0" \
+  "$(lcount "$MLEDGER" '.ev=="exit" and .agent_ref=="w1-ours#aaaa"')"
+
+# and the other half of the same verdict: OUR retired record in that shared
+# ledger is still swept. Per-record ownership must not cost us our own sweep.
+cat >"$MLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"w1-ours#aaaa","pane_id":"p1","session":"$(ralph_session_key)","tokens":{"role":"w","issue":"1","slug":"ours","depth":"0","state":"spawned"}}
+{"ts":"t1","ev":"spawn","agent_ref":"w2-theirs#bbbb","pane_id":"pX","session":"another-server","tokens":{"role":"w","issue":"2","slug":"theirs","depth":"0","state":"spawned"}}
+EOF
+herd_fixture '[]'
+: >"$FAKE_HERDR_LOG"
+run_reconcile "$MROOT"
+is "shared ledger: our own absent record is still swept" "1" \
+  "$(lcount "$MLEDGER" '.ev=="exit" and .agent_ref=="w1-ours#aaaa" and .reason=="lost"')"
+is "shared ledger: theirs still is not, even with no herd at all" "0" \
+  "$(lcount "$MLEDGER" '.ev=="exit" and .agent_ref=="w2-theirs#bbbb"')"
 
 # ═══ 6c. reconcile: a QUIESCED ledger of ours is sweepable (GH-1933) ═════════
 # The catch-22 6b's guard created: sweeping is safe only when no worker is
@@ -604,9 +651,10 @@ esac
 # (c) a record from before the stamp existed has no discoverable writer, so it
 # stays unknown — and --adopt is the operator asserting what evidence cannot.
 foreign_ledger # legacy shape: no session field on either record
+herd_fixture '[]'
 : >"$FAKE_HERDR_LOG"
 RC=0
-OUT=$(RALPH_HERDR_LEDGER_ROOT="$FROOT" bash "$SCRIPTS/reconcile.sh" --adopt 2>&1) || RC=$?
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$FROOT" bash "$SCRIPTS/reconcile.sh" --adopt "$FLEDGER" 2>&1) || RC=$?
 is "--adopt: exits 0" "0" "$RC"
 case "$OUT" in
   *"on the operator's assertion"*) ok "--adopt: says out loud that it overrode the verdict" ;;
@@ -614,6 +662,73 @@ case "$OUT" in
 esac
 is "--adopt: the legacy stale record is swept" "1" \
   "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost"')"
+
+# (c2) --adopt is scoped to the ledger NAMED (GH-1944). It used to sit inside
+# the ledger walk, so one assertion about one inspected ledger silently
+# adopted every unproven ledger the walk found — writing lost-exits into
+# unrelated, possibly foreign, ledgers.
+AROOT="$TMP/aroot"
+A1="$AROOT/acme/one/ledger.jsonl"
+A2="$AROOT/acme/two/ledger.jsonl"
+mkdir -p "$AROOT/acme/one" "$AROOT/acme/two"
+adopt_ledgers() {
+  cat >"$A1" <<'EOF'
+{"ts":"t0","ev":"spawn","agent_ref":"w1-one#aaaa","pane_id":"p1","tokens":{"role":"w","issue":"1","slug":"one","depth":"0","state":"spawned"}}
+EOF
+  cat >"$A2" <<'EOF'
+{"ts":"t0","ev":"spawn","agent_ref":"w2-two#bbbb","pane_id":"p2","tokens":{"role":"w","issue":"2","slug":"two","depth":"0","state":"spawned"}}
+EOF
+}
+adopt_ledgers
+herd_fixture '[]'
+: >"$FAKE_HERDR_LOG"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$AROOT" bash "$SCRIPTS/reconcile.sh" --adopt "$A1" 2>&1) || RC=$?
+is "--adopt PATH: exits 0" "0" "$RC"
+is "--adopt PATH: the named ledger is swept" "1" \
+  "$(lcount "$A1" '.ev=="exit" and .agent_ref=="w1-one#aaaa" and .reason=="lost"')"
+is "--adopt PATH: the OTHER unproven ledger is untouched" "0" \
+  "$(lcount "$A2" '.ev=="exit"')"
+
+# and the flag refuses to mean more than was typed: a bare --adopt is an
+# error, not a global assertion.
+adopt_ledgers
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$AROOT" bash "$SCRIPTS/reconcile.sh" --adopt 2>&1) || RC=$?
+is "bare --adopt: refused" "2" "$RC"
+is "bare --adopt: swept nothing" "0" "$(lcount "$A1" '.ev=="exit"')"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$AROOT" bash "$SCRIPTS/reconcile.sh" --adopt "$AROOT/nope.jsonl" 2>&1) || RC=$?
+is "--adopt of a non-ledger: refused" "2" "$RC"
+
+# a path that resolves to no walked ledger is REFUSED, not ignored: adopting
+# nothing while sweeping on regardless reads exactly like a successful
+# adoption, so a typo or a stale root would silently do nothing.
+adopt_ledgers
+OTHER="$TMP/elsewhere"
+mkdir -p "$OTHER/acme/one"
+: >"$OTHER/acme/one/ledger.jsonl"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$AROOT" bash "$SCRIPTS/reconcile.sh" --adopt "$OTHER/acme/one/ledger.jsonl" 2>&1) || RC=$?
+is "--adopt outside the walked root: refused" "2" "$RC"
+case "$OUT" in
+  *"nothing to adopt"*) ok "--adopt outside the root: says the assertion matched nothing" ;;
+  *) not_ok "--adopt outside the root: says the assertion matched nothing — got '$OUT'" ;;
+esac
+
+# and a symlink IS the same ledger by any honest reading — matched with -ef,
+# so neither the directory nor the final component has to be spelled
+# canonically (Greptile, PR #1947).
+adopt_ledgers
+herd_fixture '[]'
+ln -sf "$A1" "$TMP/link-to-one.jsonl"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$AROOT" bash "$SCRIPTS/reconcile.sh" --adopt "$TMP/link-to-one.jsonl" 2>&1) || RC=$?
+is "--adopt via a symlinked basename: exits 0" "0" "$RC"
+is "--adopt via a symlinked basename: the named ledger is swept" "1" \
+  "$(lcount "$A1" '.ev=="exit" and .agent_ref=="w1-one#aaaa" and .reason=="lost"')"
+is "--adopt via a symlinked basename: the other ledger is still untouched" "0" \
+  "$(lcount "$A2" '.ev=="exit"')"
 
 # (d) --dry-run computes the same verdict and writes nothing.
 quiesced_ledger "$(ralph_session_key)"

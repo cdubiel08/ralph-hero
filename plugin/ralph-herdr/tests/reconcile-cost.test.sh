@@ -164,7 +164,7 @@ done < <(ralph_ledger_open_rows)
 EMPTYCOLS="$TMP/parity/empty.jsonl"
 printf '{"ts":"1","ev":"spawn","agent_ref":"w9-z#9999","tokens":{"issue":"9"}}\n' >"$EMPTYCOLS"
 RALPH_HERDR_LEDGER="$EMPTYCOLS"
-is "open-rows: a record with no pane/pid/harness still yields 9 columns" "9" \
+is "open-rows: a record with no pane/pid/harness still yields 10 columns" "10" \
   "$(ralph_ledger_open_rows | awk -F'\037' '{print NF}')"
 is "open-rows: and the issue lands in column 7, not shifted left" "9" \
   "$(ralph_ledger_open_rows | cut -d"$(printf '\037')" -f7)"
