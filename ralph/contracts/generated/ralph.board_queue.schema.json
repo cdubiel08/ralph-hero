@@ -1119,6 +1119,150 @@
         "result"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "type": "string",
+          "const": "ralph.board_queue"
+        },
+        "contract_version": {
+          "type": "number",
+          "const": 1
+        },
+        "selector": {
+          "type": "string",
+          "const": "frontier"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "frontier": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "parentNumber": {
+                    "type": "integer"
+                  },
+                  "via": {
+                    "type": "integer"
+                  },
+                  "childrenBlocked": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "blockers": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "integer"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "OPEN",
+                            "CLOSED"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "number",
+                        "state"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "eligible": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "blockers",
+                  "eligible"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "blocked": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "blockers_open": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "truncated": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "number",
+                  "blockers_open"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "cache": {
+              "type": "object",
+              "properties": {
+                "cached": {
+                  "type": "boolean"
+                },
+                "fetchedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "ageSec": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "cached",
+                "fetchedAt",
+                "ageSec"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "frontier",
+            "blocked"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract",
+        "contract_version",
+        "selector",
+        "result"
+      ],
+      "additionalProperties": false
     }
   ],
   "$schema": "http://json-schema.org/draft-07/schema#"
