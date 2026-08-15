@@ -4175,6 +4175,27 @@ describe("board name: the one place a transport reads the convention (GH-1807)",
     expect(JSON.parse(say(["name", "2", "--json"], on)).branch).toBe("apply/2-deploy-the-ruleset");
   });
 
+  it("peer resolves the harness-owned address from the unit's own prefix, and exits nonzero rather than guessing", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1918, { number: 1918, state: "In Progress", title: "One session, two identities" });
+    const ctx = makeCtx(gh);
+    const prefix = "feat-1918-one-session-two";
+    expect(JSON.parse(say(["name", "1918", "--json"], ctx)).peerPrefix).toBe(prefix);
+
+    const hit = JSON.parse(
+      say(["peer", "1918", "--candidates", `ralph-hero-23,${prefix}-c6`, "--json"], ctx),
+    );
+    expect(hit).toMatchObject({ kind: "resolved", address: `${prefix}-c6`, peerPrefix: prefix });
+
+    // Absence and ambiguity are both refusals — a caller reading only stdout
+    // must not mistake either for an address.
+    const miss = JSON.parse(say(["peer", "1918", "--candidates", "ralph-hero-23", "--json"], ctx));
+    expect(miss.kind).toBe("none");
+    expect(run(["peer", "1918", "--candidates", "ralph-hero-23", "--json"], ctx)).toBe(1);
+    expect(run(["peer", "1918", "--candidates", `${prefix}-c6,${prefix}-3b`, "--json"], ctx)).toBe(1);
+    expect(run(["peer", "1918", "--candidates", `${prefix}-c6`, "--json"], ctx)).toBe(0);
+  });
+
   it("--lane picks the agent lane and refuses one outside the closed registry", () => {
     const gh = new FakeGh();
     gh.issues.set(1807, { number: 1807, state: "Backlog", title: "Review sweep" });

@@ -60,6 +60,12 @@ You may be one of several agents running at once. The edge between you is scoped
 | **Newly-created knowledge** — a reproducer, evidence you gathered, a correction, a design objection | **Direct peer message** — or a board comment where the artifact should outlive the session. It did not exist until you made it, so no amount of polling finds it. |
 | **A question a peer might answer** | **The board** — the item's own thread. Durable, and it degrades to a human answer for free. |
 
+**Addressing a peer (GH-1918).** A session has two identities: its herdr agent name (`w1918-one-session-two`) and the peer address the messaging transport lists (`feat-1918-one-session-two-c6`). **The herdr name does not resolve** — sending to it fails. The peer address is the unit's *worktree leaf* plus a suffix the harness assigns at session start, so it can be recognised but never constructed:
+
+1. Reply to the sender's own `from` address when there is one. It is always correct and needs no lookup.
+2. Initiating: enumerate the live peers, then `board peer NNN --candidates <the names>` — it holds the prefix rule so you don't restate it, prints the one address, and **exits 1 with a reason** rather than choosing. `board name NNN` prints the same prefix if you want to see it.
+3. No match means that session is not running — file the message on the board instead. Two matches means two sessions share one worktree; name one explicitly rather than picking.
+
 Three lines bound it:
 
 - **You may answer another agent's Human Needed item** — `board answer NNN -m "…"` — when the question is *knowable*: a fact about the codebase, a constraint you already hit. Never when it is an *authorization*. Spend, production, and scope are the human's decision and stay escalated.

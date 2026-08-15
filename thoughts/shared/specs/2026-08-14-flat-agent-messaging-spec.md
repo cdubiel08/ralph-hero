@@ -414,6 +414,14 @@ ungoverned namespace is that defect recurring. But it is **adjacent to GH-1890, 
 this issue is about the message path; that is about the name — so it is filed separately (§14)
 rather than absorbed.
 
+> **Resolved in GH-1918 (2026-08-15), at the floor this section names.** The peer namespace is
+> harness-owned and stays that way — the suffix is assigned at session start, so an address is
+> still *enumerated, never constructed*, and the interim rule above holds unchanged. What changed
+> is that the enumeration now has a predicate: the address root is exactly the unit's worktree
+> leaf, declared once as `peerPrefix()` and resolved by `board peer NNN` against the enumerated
+> names. Holding the issue number is enough to *recognise* the address; zero or two matches are
+> refusals, not guesses.
+
 *Provenance:* found by tripping over it, not proposed in the abstract — the orchestrator hit the
 collision live while sending the message that produced §12, addressing this session by its herdr
 agent name and bouncing. That is the stronger provenance and it is why the defect is stated as
