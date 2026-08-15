@@ -831,6 +831,13 @@ unset RALPH_HERDR_LEDGER
 # answer `agent list`, so without it the capacity check counts the very workers
 # phase E just proved dead and this phase spawns nothing.
 #
+# OWNED RUNS ONLY (GH-1905). This is the one phase that starts processes, so a
+# foreign server reaching it is worse than the ledger noise GH-1863 fixed. It
+# cannot reuse record_is_ours — a fleet whose workers all exited cleanly has no
+# open record to prove anything — so refill_all_to_capacity gates on the run's
+# own provenance instead (the arming server's session key in fleet.json) and
+# fails closed on an unrecorded one. The argument is in refill.sh.
+#
 # Safe to reach a sick server: the pass already aborted above if the herdr
 # snapshot or scope resolution failed, and refill.sh's own herd and frontier
 # reads fail closed — an unreadable answer leaves the run armed for the next

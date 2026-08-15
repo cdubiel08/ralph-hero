@@ -919,6 +919,43 @@ is "restart M: the arming survives intact for the next pass" "true 7" \
   "$(jq -r '"\(.armed) \(.budget_left)"' "$RFF")"
 rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.rc"
 
+# ── row N: a FOREIGN server does not refill someone else's fleet (GH-1905) ───
+# The startup hook fires for every server, including a scratch one, and points
+# it at the real ledger root. Phase F is the phase that starts processes, so an
+# ungated pass here spawns real workers into the scratch server. The run's
+# provenance is what settles it: fleet.json records the arming server's session
+# key, and this pass's key is a different one.
+mk_restart_row n
+run_reconcile_as() {
+  RC=0
+  OUT=$(RALPH_HERDR_LEDGER_ROOT="$1" RALPH_HERDR_BOARD="$BIN/board" \
+    RALPH_HERDR_SESSION="$2" ANTHROPIC_API_KEY= bash "$SCRIPTS/reconcile.sh" 2>&1) || RC=$?
+}
+run_reconcile_as "$ROW" scratch-server
+is "restart N: the foreign pass still completes" "0" "$RC"
+is "restart N: a foreign server spawns nothing" "0" "$(log_count "$FAKE_HERDR_LOG" '^worktree create ')"
+is "restart N: and never reads the frontier for it" "0" \
+  "$(log_count "$FAKE_BOARD_LOG" '^frontier --json$')"
+is "restart N: the arming survives untouched — the owner still gets its re-arm" "true 7" \
+  "$(jq -r '"\(.armed) \(.budget_left)"' "$RFF")"
+# Matched on a phrase only phase F's refusal carries — GH-1863's ledger refusal
+# uses similar words, and this row must not pass on that one.
+line_has "restart N: the refusal names the provenance it read" "$OUT" "not refilling it here"
+# Row H is the other half of this claim: the OWNING server, same fixture shape,
+# refills both seats.
+
+# ── row O: a legacy arming with no provenance arms nothing ───────────────────
+# Unknown is not ours. The cost is one TTL for one pre-GH-1905 run; the
+# alternative is the row-N spawn against a server nobody can name.
+mk_restart_row o
+jq -c 'del(.session)' "$RFF" >"$RFF.t" && mv "$RFF.t" "$RFF"
+run_reconcile "$ROW"
+is "restart O: an unprovenanced arming spawns nothing" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" '^worktree create ')"
+is "restart O: and is left armed rather than disarmed — the edge path still owns it" "true" \
+  "$(jqf "$RFF" '.armed')"
+line_has "restart O: the refusal says no provenance was recorded" "$OUT" "none recorded"
+
 rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
 
 echo "1..$n"
