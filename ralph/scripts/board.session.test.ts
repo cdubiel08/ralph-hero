@@ -14,10 +14,17 @@
  */
 
 import { mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { encodeClaim, fetchIssue, readSessionBinding, transition } from "./board.js";
+import {
+  encodeClaim,
+  fetchIssue,
+  readSessionBinding,
+  sessionBindingPath,
+  transition,
+} from "./board.js";
 import { FakeGh, makeCtx, NOW, refusalMessage } from "./board.testkit.js";
 
 function sessionOpts(id: string | null) {
@@ -94,9 +101,11 @@ describe("session→unit binding (GH-1948)", () => {
 
   it("a garbled binding record reads as not-evaluated rather than blocking the session", () => {
     const opts = sessionOpts("sess-a");
-    writeFileSync(join(opts.session.dir, "sess-a.json"), "{ truncated");
     const ctx = makeCtx(gh, "me@test", "/repo", opts);
+    writeFileSync(sessionBindingPath(ctx)!, "{ truncated");
     expect(readSessionBinding(ctx)).toBeNull();
+    // A garbled record must not wedge the session either: the exclusive create
+    // finds it present, re-reads it as unusable, and lets the claim stand.
     expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).not.toThrow();
   });
 
@@ -132,7 +141,7 @@ describe("session→unit binding (GH-1948)", () => {
 
     const ctx = makeCtx(gh, "me@test", "/repo", opts);
     transition(ctx, fetchIssue(ctx, 1), "In Progress");
-    expect(readdirSync(opts.session.dir)).toEqual(["sess-a.json"]);
+    expect(readdirSync(opts.session.dir)).toEqual([basename(sessionBindingPath(ctx)!)]);
   });
 
   it("a session id carrying path separators cannot escape the binding directory", () => {
@@ -140,7 +149,45 @@ describe("session→unit binding (GH-1948)", () => {
     const ctx = makeCtx(gh, "me@test", "/repo", opts);
     transition(ctx, fetchIssue(ctx, 1), "In Progress");
     const [written] = readdirSync(opts.session.dir);
-    expect(written).toBe(".._.._etc_passwd.json");
+    expect(written).toMatch(/^\.\._\.\._etc_passwd-[0-9a-f]{16}\.json$/);
     expect(JSON.parse(readFileSync(join(opts.session.dir, written), "utf8")).issue).toBe(1);
+  });
+
+  it("ids that SANITIZE alike still get distinct records — a collision is a false refusal", () => {
+    const dir = mkdtempSync(join(tmpdir(), "board-session-"));
+    const slash = makeCtx(gh, "me@test", "/repo", { session: { id: "a/b", dir } });
+    const under = makeCtx(gh, "me@test", "/repo", { session: { id: "a_b", dir } });
+    expect(sessionBindingPath(slash)).not.toBe(sessionBindingPath(under));
+    transition(slash, fetchIssue(slash, 1), "In Progress");
+    expect(() => transition(under, fetchIssue(under, 2), "In Progress")).not.toThrow();
+  });
+
+  it("a concurrent claim that races the guard is refused by the exclusive create, not last-write-wins", () => {
+    // Both siblings read an ABSENT binding and pass the guard; the sibling's
+    // record lands while this one is mid-claim. Without the exclusive create
+    // the later write would silently overwrite it, leaving one session holding
+    // two claimed issues and a record naming only one — rule 9 defeated by a
+    // race rather than by prose. Replayed by writing the sibling's record from
+    // inside the claim's own exec, which is exactly that interleaving.
+    const opts = sessionOpts("sess-a");
+    const ctx = makeCtx(gh, "me@test", "/repo", opts);
+    const siblingRecord = JSON.stringify({ issue: 1, since: NOW.toISOString(), holder: "me@test" });
+    const issue2 = fetchIssue(ctx, 2); // fetched BEFORE the hook — the guard
+    const realExec = gh.exec.bind(gh); // must still read an absent binding
+    let raced = false;
+    gh.exec = (argv, stdin) => {
+      const res = realExec(argv, stdin);
+      if (!raced) {
+        raced = true;
+        writeFileSync(sessionBindingPath(ctx)!, siblingRecord);
+      }
+      return res;
+    };
+
+    const msg = refusalMessage(() => transition(ctx, issue2, "In Progress"));
+    expect(msg).toContain("CONCURRENT claim");
+    expect(msg).toContain("bound it to #1");
+    expect(msg).toContain("board release 2"); // the refusal hands back the recovery
+    expect(readSessionBinding(ctx)!.issue).toBe(1); // the sibling's record survives
   });
 });

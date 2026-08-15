@@ -18,7 +18,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2359,14 +2360,17 @@ export interface SessionBinding {
   holder: string;
 }
 
-function sessionBindingPath(ctx: Ctx): string | null {
+export function sessionBindingPath(ctx: Ctx): string | null {
   const id = ctx.session?.id;
   if (!id) return null;
   // The id becomes a filename: anything outside the safe set — a "/" above all
-  // — would write outside the directory or collide with another session.
-  const safe = id.replace(/[^A-Za-z0-9._-]/g, "_");
-  if (!safe || /^\.+$/.test(safe)) return null;
-  return join(ctx.session!.dir, `${safe}.json`);
+  // — would write outside the directory. Sanitizing ALONE is lossy ("a/b" and
+  // "a_b" land on one file), and a collision here is a FALSE REFUSAL of a guard
+  // that has no --force, so the digest of the raw id carries the identity and
+  // the readable half is only there to make the directory greppable.
+  const safe = id.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 64);
+  const digest = createHash("sha256").update(id).digest("hex").slice(0, 16);
+  return join(ctx.session!.dir, `${safe}-${digest}.json`);
 }
 
 export function readSessionBinding(ctx: Ctx): SessionBinding | null {
@@ -2394,18 +2398,50 @@ function guardSessionUnit(bound: SessionBinding | null, number: number): void {
   );
 }
 
+/** Bind — with the O_EXCL create doing the compare-and-swap the read in
+ *  guardSessionUnit cannot. Without it, two overlapping claims from ONE session
+ *  both read an absent binding, both pass the guard, and the last write silently
+ *  decides which unit the session "has" while both issues stay claimed by it —
+ *  the exact outcome rule 9 exists to prevent, reached by racing the guard.
+ *
+ *  Unlike the board claim (Projects V2 has no CAS, so races are made VISIBLE
+ *  rather than impossible), a local file can actually win this one: first
+ *  writer takes the binding, and the loser is refused by name. */
 function writeSessionBinding(ctx: Ctx, number: number, prior: SessionBinding | null): void {
   const path = sessionBindingPath(ctx);
   if (!path) return;
+  const since = prior?.issue === number ? prior.since : ctx.now().toISOString();
+  const record = JSON.stringify({ issue: number, since, holder: ctx.cfg.holder });
   try {
     mkdirSync(ctx.session!.dir, { recursive: true });
-    const since = prior?.issue === number ? prior.since : ctx.now().toISOString();
-    writeFileSync(path, JSON.stringify({ issue: number, since, holder: ctx.cfg.holder }));
+    writeFileSync(path, record, { flag: "wx" });
     pruneSessionBindings(ctx);
-  } catch {
-    // Best-effort: an unwritable state dir must not fail a claim the board has
-    // already granted. The claim is the durable half; this is a local rule.
+    return;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") return; // unwritable: see below
   }
+  // A record already exists — either this session's own earlier claim of the
+  // SAME unit (a heartbeat: leave it, its `since` is the one worth keeping,
+  // and touch it so the pruner does not reap a long-lived session), or a
+  // concurrent sibling that won the binding first.
+  const won = readSessionBinding(ctx);
+  if (!won || won.issue === number) {
+    try {
+      const t = ctx.now();
+      utimesSync(path, t, t);
+    } catch {
+      /* best-effort */
+    }
+    return;
+  }
+  // (An unwritable state dir returned silently above: it must not fail a claim
+  // the board already granted. The claim is the durable half; this is a local
+  // rule, and a machine that cannot write ~/.ralph has a louder problem.)
+  throw new RefusalError(
+    `#${number} was claimed on the board, but a CONCURRENT claim in this session bound it to #${won.issue} first — ` +
+      `contract rule 9 is one unit per session. #${number} is now claimed by a session that may not drive it: ` +
+      `release it (\`board release ${number}\`) or leave it to TTL, and drive #${number} from a new session.`,
+  );
 }
 
 /** Session ids are unique per session, so the records would accumulate forever.
@@ -6352,7 +6388,7 @@ mutations
                               rule 9). Re-claiming the same unit always passes;
                               a fresh session is the only remedy — there is no
                               --force. Inert where no session id is published
-  claim leave NNN --holder Hremove a holder from an existing shared claim;
+  claim leave NNN --holder H  remove a holder from an existing shared claim;
                               non-member leave is a no-op; the LAST one out
                               clears the field. Never transitions state — board
                               moves stay the skills' job. (\`claim join\` was
