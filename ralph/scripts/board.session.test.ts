@@ -231,6 +231,39 @@ describe("session→unit binding (GH-1948)", () => {
     expect(gh.issues.get(2)!.claim).toBe(rival); // the rival's claim survives
   });
 
+  it("the unwind matches the claim it WROTE, not merely the holder — a sibling refresh survives", () => {
+    // Every session on this machine writes the same `user@host` holder, so a
+    // holder test cannot tell our own write from a sibling's refresh landing
+    // between the verify and the unwind. The claim's `since` can: any refresh
+    // replaces it. Without that, the sibling's claim is cleared and its work
+    // regressed to Backlog.
+    const opts = sessionOpts("sess-a");
+    const ctx = makeCtx(gh, "me@test", "/repo", opts);
+    const siblingRecord = JSON.stringify({ issue: 1, since: NOW.toISOString(), holder: "me@test" });
+    const refreshed = encodeClaim("me@test", new Date(NOW.getTime() + 60_000));
+    const issue2 = fetchIssue(ctx, 2);
+    const realExec = gh.exec.bind(gh);
+    let mutated = false;
+    let bound = false;
+    gh.exec = (argv, stdin) => {
+      // Same holder, same In Progress state — only `since` differs.
+      if (bound) gh.issues.get(2)!.claim = refreshed;
+      const isMutation = String(stdin ?? "").includes("mutation");
+      const res = realExec(argv, stdin);
+      if (isMutation) mutated = true;
+      else if (mutated && !bound) {
+        writeFileSync(sessionBindingPath(ctx)!, siblingRecord);
+        bound = true;
+      }
+      return res;
+    };
+
+    const msg = refusalMessage(() => transition(ctx, issue2, "In Progress"));
+    expect(msg).toContain("NOT rolled back");
+    expect(gh.issues.get(2)!.claim).toBe(refreshed); // the sibling keeps it
+    expect(gh.issues.get(2)!.state).toBe("In Progress"); // and is not regressed
+  });
+
   it("a half-failed unwind leaves a STALE CLAIM, never claimless work in progress", () => {
     // The unwind is two writes. If the claim were cleared first and the state
     // restore then failed, the item would sit In Progress holding no claim —

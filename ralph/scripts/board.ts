@@ -2193,6 +2193,9 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     // The claim is verifiably this session's: bind the session to the unit
     // (GH-1948). Deliberately after the verify — see the binding block.
     if (enteringInProgress) {
+      // The exact claim the read-back just verified as ours — the fingerprint
+      // the unwind below matches on.
+      const wroteClaimSince = after.claim!.since.getTime();
       const wonBySibling = writeSessionBinding(ctx, issue.number, priorBinding);
       if (wonBySibling) {
         // A sibling in this session bound first, so this claim must not stand.
@@ -2208,7 +2211,18 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
           // regressing the state of work someone else is now doing. Only undo
           // what is still recognisably OURS.
           const now = fetchIssue(ctx, issue.number);
-          moved = !(now.claim && isMember(now.claim, ctx.cfg.holder) && now.state === to);
+          // Identity is the claim's `since`, NOT its holder. The holder is
+          // `user@host` — every session on this machine writes the same one —
+          // so a sibling that refreshed this issue between the verify and here
+          // would look identical to our own write and get clobbered. The
+          // timestamp is what our write actually stamped, and any refresh
+          // (ours or a sibling's) replaces it.
+          moved = !(
+            now.claim &&
+            now.claim.since.getTime() === wroteClaimSince &&
+            isMember(now.claim, ctx.cfg.holder) &&
+            now.state === to
+          );
           if (!moved) {
             // STATE FIRST, claim second. The unwind is two writes and either
             // can fail; this order makes the survivable half survive. Clearing
