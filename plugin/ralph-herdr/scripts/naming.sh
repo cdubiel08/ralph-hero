@@ -6,6 +6,7 @@
 #   ^([a-z])([0-9]+)-([a-z][a-z0-9]*(-[a-z0-9]+)*)(--[2-9])?$  and <= 32 chars
 #
 #   lane   one char from the registry: w=work r=review o=orchestrator
+#          i=investigation t=tending (GH-1808)
 #          d=disposable s=watcher x=relay. Issue 0 is reserved for infra
 #          (s0-watch, x0-relay).
 #   slug   lowercase alnum words, hyphen-separated, starts with a letter,
@@ -95,9 +96,9 @@ _ralph_truncate_slug() {
 ralph_agent_name() {
   local lane="${1-}" issue="${2-}" slug budget
   case "$lane" in
-    w | r | o | d | s | x) : ;;
+    w | r | o | d | s | x | i | t) : ;;
     *)
-      echo "ralph_agent_name: unknown lane '$lane' (registry: w r o d s x)" >&2
+      echo "ralph_agent_name: unknown lane '$lane' (registry: w r o d s x i t)" >&2
       return 1
       ;;
   esac
@@ -178,7 +179,7 @@ ralph_agent_parse() {
     printf "w %s '' ''\n" "${BASH_REMATCH[1]}"
     return 0
   fi
-  re='^([wrodsx])([0-9]+)-([a-z][a-z0-9]*(-[a-z0-9]+)*)(--([2-9]))?$'
+  re='^([wrodsxit])([0-9]+)-([a-z][a-z0-9]*(-[a-z0-9]+)*)(--([2-9]))?$'
   [[ $name =~ $re ]] || return 1
   gen="${BASH_REMATCH[6]}"
   [ -n "$gen" ] || gen="''"

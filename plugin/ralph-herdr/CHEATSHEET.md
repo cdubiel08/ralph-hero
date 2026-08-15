@@ -193,8 +193,15 @@ worktree) was removed in GH-1774: siblings raced on the index, the branch, and
 each other's uncommitted files, and no amount of claim bookkeeping made that
 tree safe. `claim show` / `claim leave` remain on the board CLI for reading and
 cleaning claims already written; nothing creates shared claims now — `claim
-join`, the last path that grew a holder set, was removed in GH-1869. To
-parallelize one issue, decompose it into separate issues.
+join`, the last path that grew a holder set, was removed in GH-1869.
+
+To parallelize one issue **read-only**, GH-1808 reopened the shared checkout
+under a role model: `spawn_investigator_fleet N K <question>…` puts one driver
+(the only role that may write a tree) plus K investigators in tabs on the
+driver's checkout, each held to `ralph/agents/investigator.md`'s tool allowlist
+by the harness. A second WRITER on one issue is still refused, and still
+decomposes into separate issues — git will not check one branch out twice
+anyway.
 
 Refill (`work-fleet --refill`, or `RALPH_HERDR_REFILL=1`) is opt-in per run,
 TTL-capped (120 min) and budget-capped (8 spawns), tops up only when a w-lane

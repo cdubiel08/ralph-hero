@@ -2,7 +2,7 @@
   "contract": "ralph.token_vocabulary",
   "contract_version": 1,
   "tokens": {
-    "role": "w",
+    "role": "driver",
     "issue": "1743",
     "state": "sleeping",
     "harness": "claude"

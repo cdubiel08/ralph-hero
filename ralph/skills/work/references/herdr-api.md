@@ -48,7 +48,10 @@ gate on them; the board comment trail is the record.
 **Tokens** (`herdr pane report-metadata`) carry the C8 vocabulary from
 contracts.ts `TOKENS`: `role issue slug parent root depth state branch claim
 pr spawn_epoch harness inner fresh` (names ≤32 chars of `[A-Za-z0-9_-]`,
-values ≤80, no newlines). The `state` token takes the C8 lifecycle enum:
+values ≤80, no newlines). `role` is the FLEET role — `orchestrator driver
+investigator tender relay watcher` — not the lane letter it held before
+GH-1808; the lane is the name's first character and needs no token of its own.
+Only a **driver** may write a worktree, and only one per worktree. The `state` token takes the C8 lifecycle enum:
 `spawned briefed working blocked reporting interrupted indeterminate orphaned
 adopted`. The last four are written ABOUT a session, never by it — `orphaned`
 when its pane is gone (GH-1888), and `interrupted`/`indeterminate` when its
@@ -106,6 +109,18 @@ any hand-driven spawn must also honor:
   `ralph_depth_guard`); inner-plane subagents (`Agent(...)`) are free and
   never counted. Prefer inner subagents — herdr-plane children are for work
   that must outlive your session.
+- **Edge rules (GH-1808).** Who may spawn whom is enforced at the spawn path,
+  not asked of prose: human → orchestrator or driver; orchestrator → driver,
+  investigator or tender; driver → **investigator only**; investigators,
+  tenders, relays and watchers are leaves. A driver spawning a driver is
+  refused — that is a second writer, and the remedy is decomposition into
+  board issues with their own worktrees.
+- **One driver per tree.** A second driver in an occupied checkout is refused
+  with the live driver named (`ralph_driver_guard`) — a structural refusal,
+  not a lock to wait on. Read-only fan-out on one issue is
+  `spawn_investigator_fleet ISSUE K <question>…`: one driver plus K
+  investigators in tabs on the driver's checkout, each restricted to
+  `ralph/agents/investigator.md`'s tool allowlist by the harness itself.
 - **No board writes.** The spawn claims nothing; the spawned session claims
   its own issue via `board claim`.
 

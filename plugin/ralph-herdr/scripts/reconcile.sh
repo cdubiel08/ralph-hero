@@ -68,6 +68,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/transport.sh"
 # shellcheck source=naming.sh
 . "$SCRIPT_DIR/naming.sh"
+# The role model (GH-1808) — the discover path needs the lane->role default;
+# pure functions, and its two reading helpers are not called from here.
+# shellcheck source=roles.sh
+. "$SCRIPT_DIR/roles.sh"
 # shellcheck source=ledger.sh
 . "$SCRIPT_DIR/ledger.sh"
 # shellcheck source=tokens.sh
@@ -641,10 +645,18 @@ while IFS=$'\037' read -r name _status pane agent_scope cwd; do
     ralph_ledger_unlock "$file"
     continue
   fi
+  # GH-1808: the C8 `role` token is the FLEET role. A discovered agent has no
+  # spawn record to read one from, so it takes the lane's default — the only
+  # thing knowable about an agent nobody ledgered. An unmappable lane leaves
+  # the token off rather than inventing a role: a wrong role here would be
+  # read as permission to write a tree.
+  discovered_role=$(ralph_role_for_lane "$lane" 2>/dev/null) || discovered_role=""
   ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg p "$pane" \
-    --arg lane "$lane" --arg issue "$issue" --arg slug "$slug" \
+    --arg role "$discovered_role" --arg issue "$issue" --arg slug "$slug" \
     '{ts: $ts, ev: "discover", agent_ref: $ref, pane_id: $p, via: "reconcile",
-      tokens: ({role: $lane, issue: $issue} + (if $slug == "" then {} else {slug: $slug} end))}')" ||
+      tokens: ({issue: $issue}
+               + (if $role == "" then {} else {role: $role} end)
+               + (if $slug == "" then {} else {slug: $slug} end))}')" ||
     { log "discover append failed for $name"; ralph_ledger_unlock "$file"; continue; }
   ralph_ledger_unlock "$file"
   log "discover $ref (pane $pane) in $file"

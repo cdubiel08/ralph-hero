@@ -651,6 +651,44 @@ is "issue fleet: never joins a shared claim" "0" \
 # passing anything at all gets the migration message, never a spawn.
 rc=0; spawn_issue_fleet >/dev/null 2>&1 || rc=$?
 is "issue fleet: refuses with no arguments at all" "1" "$rc"
+line_has "issue fleet: the refusal names the SAFE replacement (GH-1808)" \
+  "$out" "spawn_investigator_fleet"
+
+# ═══ 7b. spawn_investigator_fleet — one driver, N read-only children ═════════
+# GH-1808 narrows GH-1774's finding without weakening it: what was unfixable is
+# K sibling WRITERS. One driver plus N investigators is not concurrent writing,
+# so it is allowed — and every part of that sentence is enforced rather than
+# promised. Dry run only: the shape is what is under test, not herdr.
+# The agent definition resolves from $BOARD in production; here $BOARD is the
+# fake shim, so point the override at the real file — the binding's whole point
+# is that the tool list comes from THAT file and nowhere else.
+export RALPH_INVESTIGATOR_AGENT="$ROOT/ralph/agents/investigator.md"
+rc=0
+out=$(RALPH_HERDR_DRY_RUN=true spawn_investigator "700" "w700-alpha#aaaaaaaa" "$TMP/tree-x" \
+  "Where is the retry loop?" 2>&1) || rc=$?
+is "investigator: a driver's investigator is planned (rc 0)" "0" "$rc"
+line_has "investigator: named in the investigation lane"  "$out" "agent: i700-"
+line_has "investigator: opens a TAB in the driver's tree, never a new worktree" \
+  "$out" "tab create --cwd $TMP/tree-x"
+line_has "investigator: the harness carries the tool allowlist" "$out" "--tools"
+case "$out" in
+  *"worktree create"*) not_ok "investigator: must not cut a second worktree" ;;
+  *) ok "investigator: cuts no second worktree" ;;
+esac
+
+# The edge rule, at the spawn path rather than in prose: the parent's role is
+# READ from the ledger, so a non-driver parent is refused even when the caller
+# asks nicely.
+printf '%s\n' '{"ts":"2026-08-15T00:00:00Z","ev":"spawn","agent_ref":"i900-leaf#cccccccc","tokens":{"role":"investigator","issue":"900","depth":"1"}}' \
+  >>"$RALPH_HERDR_LEDGER"
+rc=0
+out=$(RALPH_HERDR_DRY_RUN=true spawn_investigator "900" "i900-leaf#cccccccc" "$TMP/tree-x" "q" 2>&1) || rc=$?
+is "investigator: an investigator may not spawn one (leaf rule)" "1" "$rc"
+line_has "investigator: the refusal names the edge it refused" "$out" "may not spawn"
+
+rc=0
+out=$(spawn_investigator_fleet 700 0 2>&1) || rc=$?
+is "investigator fleet: K must be positive" "1" "$rc"
 
 # ═══ 8. work-fleet.sh — refill arming is opt-in plumbing ═════════════════════
 printf '{"frontier":[{"number":501,"title":"One"},{"number":502,"title":"Two"}],"blocked":[]}\n' \

@@ -94,9 +94,82 @@ export const LANES = {
   d: "disposable",
   s: "watcher",
   x: "relay",
+  i: "investigation",
+  t: "tending",
 } as const;
 export type Lane = keyof typeof LANES;
 export const LANE_CHARS = Object.keys(LANES) as Lane[];
+
+// ---------------------------------------------------------------------------
+// Fleet roles (GH-1808) — the one-writer invariant, made structural
+// ---------------------------------------------------------------------------
+
+/** The role registry. A role answers ONE question the lane letter cannot:
+ *  may this agent write the working tree it was spawned into?
+ *
+ *  `writesTree` is the invariant's whole surface. Exactly one agent per
+ *  worktree may carry a role with `writesTree: true` — that is what makes a
+ *  shared checkout safe where GH-1774's K sibling writers were not, and it is
+ *  enforced at the spawn path (ralph_driver_guard), not asked of prose.
+ *
+ *  `spawns` is the edge rule: which roles this role may spawn on the herdr
+ *  plane. An empty list is a LEAF — investigators, tenders, relays and
+ *  watchers spawn nothing. (The watcher's refill is not a counterexample: a
+ *  refill spawn is recorded as a depth-0 ROOT with no parent ref, the same
+ *  shape a human click produces, so it crosses no edge here.) */
+export const ROLES = {
+  orchestrator: {
+    doc: "plans and dispatches; owns no tree",
+    writesTree: false,
+    spawns: ["driver", "investigator", "tender"],
+  },
+  driver: {
+    doc: "the one writer in a worktree — holds the board claim, cuts the branch",
+    writesTree: true,
+    spawns: ["investigator"],
+  },
+  investigator: {
+    doc: "read-only fan-out worker (ralph/agents/investigator.md); a leaf",
+    writesTree: false,
+    spawns: [],
+  },
+  tender: { doc: "board metadata hygiene; writes no tree", writesTree: false, spawns: [] },
+  relay: { doc: "message transport; writes no tree", writesTree: false, spawns: [] },
+  watcher: { doc: "observes and reconciles; writes no tree", writesTree: false, spawns: [] },
+} as const satisfies Record<string, { doc: string; writesTree: boolean; spawns: readonly string[] }>;
+export type Role = keyof typeof ROLES;
+export const ROLE_NAMES = Object.keys(ROLES) as Role[];
+
+/** What a human may spawn directly. A human is not a role — it is the only
+ *  spawner with no record of its own — so it is named here rather than given
+ *  a row in ROLES it could never satisfy (`writesTree` is meaningless for it). */
+export const HUMAN_SPAWNS = ["orchestrator", "driver"] as const satisfies readonly Role[];
+
+/** Lane → role, for records that have no spawn-time role to read. The lane
+ *  letter is recoverable from the agent name, so this is a DEFAULT for the
+ *  discover path (reconcile), never an override: a spawn writes its role
+ *  explicitly. `r` and `d` map to driver because both write a checkout — a
+ *  review worker edits, and a fork is a second session in a real tree. */
+export const LANE_ROLES = {
+  w: "driver",
+  r: "driver",
+  d: "driver",
+  o: "orchestrator",
+  s: "watcher",
+  x: "relay",
+  i: "investigator",
+  t: "tender",
+} as const satisfies Record<Lane, Role>;
+
+/** May PARENT spawn CHILD on the herdr plane? PARENT is a role or "human".
+ *  Unknown names are refused rather than waved through: an edge check that
+ *  fails open is not a check. */
+export function spawnEdgeAllowed(parent: string, child: string): boolean {
+  if (!(child in ROLES)) return false;
+  if (parent === "human") return (HUMAN_SPAWNS as readonly string[]).includes(child);
+  if (!(parent in ROLES)) return false;
+  return (ROLES[parent as Role].spawns as readonly string[]).includes(child);
+}
 
 export const NAME_MAX = 32;
 /** Chars reserved at format time for a possible collision suffix (--2..--9). */
@@ -814,6 +887,14 @@ function buildLineageRecord(mode: Mode) {
     agent_ref: zAgentRef,
     issue: zIssue,
     parent_issue: zIssue.optional(),
+    /** GH-1808 — required of a PRODUCER (strict), optional for a CONSUMER
+     *  (loose), because every record written before this field existed is
+     *  still a valid record and a reader that refused them would lose the
+     *  history the ledger exists to keep. */
+    role:
+      mode === "strict"
+        ? z.enum(ROLE_NAMES as [Role, ...Role[]])
+        : z.enum(ROLE_NAMES as [Role, ...Role[]]).optional(),
     spawner: obj(mode, {
       script: zNonEmpty,
       invoked_by: z.enum(INVOKED_BY),
@@ -872,7 +953,11 @@ const freeForm = (doc: string): TokenSpec => ({ doc, validate: () => true });
 
 /** The token vocabulary — tokens are ATTRIBUTES; the name is identity. */
 export const TOKENS = {
-  role: { doc: "lane letter from the LANES registry", validate: (v) => v in LANES },
+  // GH-1808: role is the FLEET role, not the lane letter it used to hold. The
+  // lane is the agent name's first char and was therefore already derivable
+  // from agent_ref; the role is not derivable from anything, because it is a
+  // spawn-time decision about who may write the tree.
+  role: { doc: "fleet role from the ROLES registry", validate: (v) => v in ROLES },
   issue: { doc: "board issue number (0 = infra)", validate: (v) => /^(0|[1-9][0-9]*)$/.test(v) },
   slug: { doc: "the name's slug part", validate: (v) => SLUG_RE.test(v) },
   parent: freeForm("parent agent name or durable ref"),
