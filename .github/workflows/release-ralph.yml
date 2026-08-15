@@ -214,7 +214,19 @@ jobs:
           REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
           if [ -n "${NEW_VERSION:-}" ]; then
             TAG="ralph-v${NEW_VERSION}"
-            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            # `--exit-code` distinguishes the two answers that must not be
+            # conflated: 0 = the tag is there, 2 = it is definitively absent,
+            # anything else (128 on network/auth/service trouble) = we do not
+            # know. Treating "could not ask" as "absent" would advise a re-run
+            # off an unknown, which is the one instruction that can strand a
+            # pushed tag with no release — the defect this workflow exists to
+            # stop, relocated into its own failure path.
+            LS_RC=0
+            git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1 || LS_RC=$?
+            if [ "$LS_RC" -ne 0 ] && [ "$LS_RC" -ne 2 ]; then
+              STATE="version \`${NEW_VERSION}\` was computed, but **whether \`${TAG}\` reached origin could not be determined** (\`git ls-remote\` exited ${LS_RC})"
+              REMEDY="Check for the tag by hand first — \`git ls-remote --tags origin 'refs/tags/${TAG}'\`. **Do not re-run the workflow until you know**: if the tag is in fact pushed, a re-run computes the next version and leaves \`${TAG}\` with no release forever."
+            elif [ "$LS_RC" -eq 0 ]; then
               if gh release view "$TAG" >/dev/null 2>&1; then
                 STATE="\`${TAG}\` and its release both exist — the run failed after publishing"
                 REMEDY="Check what ran after the release step. **Do not re-run**: the version is already published."
