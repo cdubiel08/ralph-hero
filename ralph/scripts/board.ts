@@ -2282,7 +2282,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       // session in the same worktree (GH-1956). It has to run here rather than
       // in the pre-check: two unbound sessions both read an empty directory,
       // and each writes its own file, so no exclusive create settles it.
-      if (!priorBinding) settleWorktreeRace(ctx, issue.number, !!opts.steal);
+      if (!priorBinding) settleWorktreeRace(ctx, issue.number);
     }
     // Symmetric verify for the leaving side: the same re-read must show this
     // session OUT of the claim (gone, or co-holders only) — surviving
@@ -2588,13 +2588,17 @@ function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
  *  `user@host` holder and the same claim field — the board is already correct,
  *  and a loser that "restored" it would strip the winner's claim rather than
  *  its own. Nothing to undo is the honest reading, not a gap. */
-function settleWorktreeRace(ctx: Ctx, number: number, steal: boolean): void {
-  // --steal was already honoured by the pre-check, which retired the records it
-  // spoke to. Ranking against one that survived that (a peer written in the
-  // meantime) would refuse the takeover AFTER the board mutation, which is the
-  // one place this file never leaves a refusal: the claim would already be
-  // written. The flag decides once, at the front.
-  if (steal) return;
+function settleWorktreeRace(ctx: Ctx, number: number): void {
+  // Runs under --steal too, and needs no exemption to be safe: the pre-check
+  // RETIRED every same-unit record the flag spoke to, so anything for this unit
+  // still present here was written after that — a CONCURRENT stealer, which is
+  // the one thing --steal does not authorize. Two operators taking one unit in
+  // one checkout at the same moment is still two writers in one checkout.
+  //
+  // Exempting steal instead would reopen exactly that hole, and would buy
+  // nothing: the case an exemption protects (a pre-existing record outranking
+  // the taker and refusing it after the board write) cannot arise once those
+  // records are gone.
   const worktree = ctx.repoRoot;
   const own = sessionBindingPath(ctx);
   if (!worktree || !own) return;

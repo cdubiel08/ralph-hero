@@ -489,10 +489,11 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
     );
   });
 
-  it("--steal is never refused AFTER the board mutation by the post-write settle", () => {
-    // A peer record landing mid-claim must not defeat a takeover the pre-check
-    // already allowed: the claim is written by then, so a refusal here would
-    // leave the board holding a claim the refusal says was not granted.
+  it("a CONCURRENT stealer is still settled — --steal authorizes one taker, not two", () => {
+    // The pre-check retired the records --steal spoke to, so a same-unit record
+    // present at settle time was written after that: another session taking the
+    // same unit in the same checkout at the same moment. That is still two
+    // writers in one checkout, which is the thing the flag does not authorize.
     const stealer = makeCtx(gh, "me@test", "/repo", { session: { id: "stealer", dir } });
     const earlier = new Date(NOW.getTime() - 5000).toISOString();
     const realExec = gh.exec.bind(gh);
@@ -501,17 +502,17 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
       const res = realExec(argv, stdin);
       if (!planted && String(stdin ?? "").includes("mutation")) {
         writeFileSync(
-          join(dir, "ghost-0000000000000000.json"),
+          join(dir, "rival-0000000000000000.json"),
           JSON.stringify({ issue: 1, since: earlier, holder: "me@test", worktree: "/repo" }),
         );
         planted = true;
       }
       return res;
     };
-    expect(() =>
+    const msg = refusalMessage(() =>
       transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true }),
-    ).not.toThrow();
-    expect(readSessionBinding(stealer)!.issue).toBe(1);
-    expect(gh.issues.get(1)!.state).toBe("In Progress");
+    );
+    expect(msg).toContain("this worktree");
+    expect(readSessionBinding(stealer)).toBeNull();
   });
 });
