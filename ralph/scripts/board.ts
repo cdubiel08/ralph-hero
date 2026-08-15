@@ -2072,14 +2072,13 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     // Read the binding before the guard so the post-verify write can preserve
     // its `since` on a heartbeat re-claim of the same unit.
     const priorBinding = enteringInProgress ? readSessionBinding(ctx) : null;
-    let retirable: string[] = [];
     if (enteringInProgress) {
       guardSessionUnit(priorBinding, issue.number);
       // Second only to the rule-9 guard, and for the same reason: a PRE-check,
       // so a refused claim leaves #N exactly as it found it. Skipped when this
       // session already holds the binding — that is a heartbeat, and the peer
       // it would find could only be a stale record of itself.
-      retirable = priorBinding ? [] : guardWorktreePeer(ctx, issue.number, !!opts.steal);
+      if (!priorBinding) guardWorktreePeer(ctx, issue.number, !!opts.steal);
       const claim = issue.claim;
       if (claim && !isMember(claim, ctx.cfg.holder)) {
         const stale = claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin);
@@ -2283,7 +2282,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       // session in the same worktree (GH-1956). It has to run here rather than
       // in the pre-check: two unbound sessions both read an empty directory,
       // and each writes its own file, so no exclusive create settles it.
-      if (!priorBinding) settleWorktreeRace(ctx, issue.number, retirable);
+      takeWorktreeLock(ctx, issue.number, !!opts.steal);
     }
     // Symmetric verify for the leaving side: the same re-read must show this
     // session OUT of the claim (gone, or co-holders only) — surviving
@@ -2505,127 +2504,140 @@ export function readSessionBinding(ctx: Ctx): SessionBinding | null {
 // heartbeat re-claim touches it (see writeSessionBinding), so a live source
 // stays fresh and a dead one frees its unit locally at the exact moment it
 // frees it on the board. One clock, not two — a second, longer local clock
-// would mean a fork could steal on the board and still be refused here.
-interface PeerBinding extends SessionBinding {
-  freshMs: number;
-  path: string; // the tiebreak when two records carry the same `since`
+// would mean a fork could steal on the board and still be refused here.// THE MECHANISM IS A LOCK, NOT A RANKING. An earlier draft compared peer
+// records and let the lower-ranked one win, which is not a compare-and-swap:
+// two sessions can each publish after the other has already scanned, and both
+// then read a directory that justifies their own success. What settles it is a
+// single file whose NAME is derived from (worktree, unit) and whose creation is
+// exclusive — one path, so exactly one creator, decided by the filesystem
+// rather than by two processes agreeing about an order they cannot both see.
+//
+// Unlike the board claim — where Projects V2 offers no CAS, so races are made
+// visible and refused rather than impossible — a local file can actually win
+// this, the same asymmetry GH-1948's binding already relies on.
+
+/** The lock's identity: (worktree, unit). Digested, because a worktree path is
+ *  not a safe filename and is unbounded; `.json` so the 7-day pruner reaps it
+ *  along with everything else in this directory. */
+export function worktreeLockPath(ctx: Ctx, number: number): string | null {
+  // No session id is not a policy choice, same as everywhere in this block:
+  // not evaluated. A lock with no owner name could never be read back.
+  if (!ctx.session?.id || !ctx.repoRoot) return null;
+  const digest = createHash("sha256")
+    .update(`${ctx.repoRoot}\u0000${number}`)
+    .digest("hex")
+    .slice(0, 16);
+  return join(ctx.session.dir, `wt-${number}-${digest}.json`);
 }
 
-/** Every binding in the session dir that is NOT this session's own. */
-function readPeerBindings(ctx: Ctx): PeerBinding[] {
-  const own = sessionBindingPath(ctx);
-  if (!own) return [];
-  const out: PeerBinding[] = [];
-  let names: string[];
+interface WorktreeLock {
+  session: string;
+  issue: number;
+  worktree: string;
+  since: string;
+}
+
+function readWorktreeLock(path: string): { lock: WorktreeLock; freshMs: number } | null {
   try {
-    names = readdirSync(ctx.session!.dir);
+    const lock = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof lock?.session !== "string") return null;
+    return { lock: lock as WorktreeLock, freshMs: statSync(path).mtimeMs };
   } catch {
-    return []; // no dir yet: no peers
+    return null; // absent, or a record we cannot read — asserts nothing
   }
-  for (const name of names) {
-    if (!name.endsWith(".json")) continue;
-    const p = join(ctx.session!.dir, name);
-    if (p === own) continue;
+}
+
+/** Publish atomically AND exclusively: write a complete temp file, then link it
+ *  into place. link(2) fails EEXIST, which is the compare-and-swap, and is
+ *  atomic, so a concurrent reader never sees a half-written record and scores
+ *  it as "no owner". A plain `wx` write gives the first property but not the
+ *  second. */
+function publishWorktreeLock(ctx: Ctx, path: string, lock: WorktreeLock): boolean {
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    mkdirSync(ctx.session!.dir, { recursive: true });
+    writeFileSync(tmp, JSON.stringify(lock));
+    linkSync(tmp, path);
+    return true;
+  } catch {
+    return false;
+  } finally {
     try {
-      const b = JSON.parse(readFileSync(p, "utf8"));
-      if (!Number.isInteger(b?.issue) || typeof b?.worktree !== "string") continue;
-      out.push({ ...(b as SessionBinding), freshMs: statSync(p).mtimeMs, path: p });
+      unlinkSync(tmp);
     } catch {
-      /* garbled or raced away — a record we cannot read asserts nothing */
+      /* best-effort */
     }
   }
-  return out;
 }
 
-/** Returns the peer records a successful --steal should retire. Deliberately
- *  DELETES NOTHING: a steal that then loses the claim race, or dies in the
- *  board write, would otherwise have erased the incumbent's record on its way
- *  out — disarming the guard for the next session while the incumbent is still
- *  driving the checkout. Retirement happens only once the claim is verifiably
- *  ours (see settleWorktreeRace), which is the same check-early/act-late shape
- *  the GH-1948 binding already uses. */
-function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): string[] {
-  // No repo root is not a policy choice, same as no session id: not evaluated.
-  const worktree = ctx.repoRoot;
-  if (!worktree) return [];
-  // --steal already MEANS "the previous driver is gone, I am taking this over".
-  // A session killed mid-unit and resumed in its own worktree is the common
-  // honest case, and making it wait out a TTL to say something it can already
-  // say would be a second vocabulary for one assertion. It stays a deliberate
-  // flag, not a default — which is the whole difference from having no guard.
-  //
-  // Taking the unit RETIRES the records it was just asserted about, rather
-  // than only stepping over them. Left in place, a record the operator has
-  // declared dead would refuse the NEXT claim too, so every claim in this
-  // worktree would need --steal until the TTL ran out — the flag would buy one
-  // claim instead of settling the question. Scoped to this unit and this
-  // worktree: a record about other work was not what --steal spoke to.
-  if (steal) {
-    return readPeerBindings(ctx)
-      .filter((b) => b.issue === number && b.worktree === worktree)
-      .map((b) => b.path);
-  }
-  const cutoff = ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
-  const peer = readPeerBindings(ctx).find(
-    (b) => b.issue === number && b.worktree === worktree && b.freshMs >= cutoff,
-  );
-  if (!peer) return [];
-  throw peerRefusal(ctx, number, worktree, peer.since);
+/** The read-only half, run BEFORE any mutation so the common refusal costs
+ *  nothing and leaves the board untouched. It cannot be the whole guard — the
+ *  owner may appear between this and the write — which is what takeWorktreeLock
+ *  is for. */
+function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
+  const path = worktreeLockPath(ctx, number);
+  if (!path) return; // no session dir or no repo root: not evaluated
+  const held = readWorktreeLock(path);
+  if (!held) return;
+  if (held.lock.session === ctx.session!.id) return; // our own earlier claim
+  // --steal is the operator asserting the other driver is gone. It stays a
+  // deliberate flag, not a default — the whole difference from having no guard.
+  if (steal) return;
+  if (held.freshMs < ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000) return; // aged out
+  throw peerRefusal(ctx, number, ctx.repoRoot, held.lock.since);
 }
 
-/** Settle a RACE between two distinct sessions in one worktree — the case the
- *  pre-check above cannot see, because both read the directory before either
- *  binding exists and each then writes its OWN file, so the exclusive create
- *  that settles the GH-1948 sibling race (one file, two writers) never fires.
+/** Take the lock, once the claim is verifiably ours — check early, act late.
+ *  Acting in the pre-check would let a steal that then LOSES the claim race
+ *  erase the incumbent's lock on its way out, disarming the guard while the
+ *  incumbent is still driving.
  *
- *  Run after our own binding lands, so the peer set is complete: whoever wrote
- *  second sees the first, and whoever wrote first sees the second. Both then
- *  order the same candidates the same way — earliest `since`, path breaking a
- *  tie — so exactly one is the loser, with no coordination.
+ *  Every path ends in a READ-BACK: whatever the create did, the lock is re-read
+ *  and its session id must be ours. That is what makes two concurrent stealers
+ *  settle — both may unlink and both may create, but the file that survives
+ *  names exactly one session, and everyone else refuses.
  *
- *  The loser drops its BINDING and refuses; it deliberately does NOT unwind the
- *  board claim, unlike the GH-1948 sibling unwind. There, the claim belonged to
- *  a session being refused outright and would have been left driving nothing.
- *  Here the winner is a live session holding the same unit under the SAME
- *  `user@host` holder and the same claim field — the board is already correct,
- *  and a loser that "restored" it would strip the winner's claim rather than
- *  its own. Nothing to undo is the honest reading, not a gap. */
-function settleWorktreeRace(ctx: Ctx, number: number, retire: string[]): void {
-  // Retire what --steal spoke to, now that the claim is verifiably ours.
-  for (const path of retire) {
-    try {
-      unlinkSync(path);
-    } catch {
-      /* raced away — already the desired end state */
+ *  A loser does NOT unwind the board claim, unlike the GH-1948 sibling unwind:
+ *  there the refused session's claim would have been left driving nothing,
+ *  whereas here the winner is a live session holding the same unit under the
+ *  same `user@host` holder and the same claim field. The board is already
+ *  correct, and a "restore" would strip the winner's claim rather than its own. */
+function takeWorktreeLock(ctx: Ctx, number: number, steal: boolean): void {
+  const path = worktreeLockPath(ctx, number);
+  if (!path) return;
+  const mine: WorktreeLock = {
+    session: ctx.session!.id!,
+    issue: number,
+    worktree: ctx.repoRoot,
+    since: ctx.now().toISOString(),
+  };
+  if (!publishWorktreeLock(ctx, path, mine)) {
+    // Occupied. Displace it only when this session may: it is ours already, it
+    // has aged out on the claim TTL, or --steal said so.
+    const held = readWorktreeLock(path);
+    const ours = held?.lock.session === ctx.session!.id;
+    const aged = !held || held.freshMs < ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
+    if (ours) {
+      try {
+        const t = ctx.now();
+        utimesSync(path, t, t); // heartbeat: keep a long-lived session fresh
+      } catch {
+        /* best-effort */
+      }
+      return;
+    }
+    if (steal || aged) {
+      try {
+        unlinkSync(path);
+      } catch {
+        /* raced away — already the desired end state */
+      }
+      publishWorktreeLock(ctx, path, mine);
     }
   }
-  // Runs under --steal too, and needs no exemption to be safe: the pre-check
-  // RETIRED every same-unit record the flag spoke to, so anything for this unit
-  // still present here was written after that — a CONCURRENT stealer, which is
-  // the one thing --steal does not authorize. Two operators taking one unit in
-  // one checkout at the same moment is still two writers in one checkout.
-  //
-  // Exempting steal instead would reopen exactly that hole, and would buy
-  // nothing: the case an exemption protects (a pre-existing record outranking
-  // the taker and refusing it after the board write) cannot arise once those
-  // records are gone.
-  const worktree = ctx.repoRoot;
-  const own = sessionBindingPath(ctx);
-  if (!worktree || !own) return;
-  const mine = readSessionBinding(ctx);
-  if (!mine || mine.issue !== number) return;
-  const cutoff = ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
-  const rank = (since: string, path: string) => `${since} ${path}`;
-  const winner = readPeerBindings(ctx)
-    .filter((b) => b.issue === number && b.worktree === worktree && b.freshMs >= cutoff)
-    .find((b) => rank(b.since, b.path) < rank(mine.since, own));
-  if (!winner) return;
-  try {
-    unlinkSync(own); // not the winner: leave no record that would refuse a third session
-  } catch {
-    /* already gone — the desired end state */
-  }
-  throw peerRefusal(ctx, number, worktree, winner.since);
+  const won = readWorktreeLock(path);
+  if (won && won.lock.session === ctx.session!.id) return;
+  throw peerRefusal(ctx, number, ctx.repoRoot, won?.lock.since ?? "unknown");
 }
 
 function peerRefusal(ctx: Ctx, number: number, worktree: string, since: string): RefusalError {

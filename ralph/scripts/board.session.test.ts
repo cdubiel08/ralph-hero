@@ -24,6 +24,7 @@ import {
   readSessionBinding,
   sessionBindingPath,
   transition,
+  worktreeLockPath,
 } from "./board.js";
 import { FakeGh, makeCtx, NOW, refusalMessage } from "./board.testkit.js";
 
@@ -142,7 +143,9 @@ describe("session→unit binding (GH-1948)", () => {
 
     const ctx = makeCtx(gh, "me@test", "/repo", opts);
     transition(ctx, fetchIssue(ctx, 1), "In Progress");
-    expect(readdirSync(opts.session.dir)).toEqual([basename(sessionBindingPath(ctx)!)]);
+    expect(readdirSync(opts.session.dir).sort()).toEqual(
+      [basename(sessionBindingPath(ctx)!), basename(worktreeLockPath(ctx, 1)!)].sort(),
+    );
   });
 
   it("a session id carrying path separators cannot escape the binding directory", () => {
@@ -348,7 +351,7 @@ describe("second writer in one worktree (GH-1956)", () => {
     transition(source, fetchIssue(source, 1), "In Progress");
     // Same clock the board uses to call a claim stealable — nothing longer.
     const old = new Date(NOW.getTime() - 121 * 60_000);
-    utimesSync(sessionBindingPath(source)!, old, old);
+    utimesSync(worktreeLockPath(source, 1)!, old, old);
     gh.issues.get(1)!.claim = encodeClaim("me@test", old);
 
     const fork = at("fork");
@@ -420,137 +423,132 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
     dir = mkdtempSync(join(tmpdir(), "board-session-"));
   });
 
-  it("refuses the session that bound SECOND, and leaves it no record behind", () => {
-    // The first session's record is planted mid-claim — after the second
-    // session's pre-check has already read an empty directory.
-    const second = makeCtx(gh, "me@test", "/repo", { session: { id: "second", dir } });
-    const first = makeCtx(gh, "me@test", "/repo", { session: { id: "first", dir } });
-    const earlier = new Date(NOW.getTime() - 1000).toISOString();
+  const at = (id: string) => makeCtx(gh, "me@test", "/repo", { session: { id, dir } });
 
+  it("settles a race the pre-check cannot see — the lock is taken after the claim", () => {
+    // Both sessions read an empty directory before either owner exists, so the
+    // pre-check clears both. What decides it is the exclusive create: the file
+    // is named for (worktree, unit), so exactly one creator wins and the loser
+    // reads back someone else's name.
+    const second = at("second");
     const realExec = gh.exec.bind(gh);
     let planted = false;
     gh.exec = (argv, stdin) => {
       const res = realExec(argv, stdin);
       if (!planted && String(stdin ?? "").includes("mutation")) {
         writeFileSync(
-          sessionBindingPath(first)!,
-          JSON.stringify({ issue: 1, since: earlier, holder: "me@test", worktree: "/repo" }),
+          worktreeLockPath(second, 1)!,
+          JSON.stringify({
+            session: "first",
+            issue: 1,
+            worktree: "/repo",
+            since: NOW.toISOString(),
+          }),
         );
         planted = true;
       }
       return res;
     };
-
     const msg = refusalMessage(() => transition(second, fetchIssue(second, 1), "In Progress"));
     expect(msg).toContain("this worktree");
-    // The loser must leave NO binding: a record from a refused session would
-    // read as a live driver and refuse a third session on its behalf.
-    expect(readSessionBinding(second)).toBeNull();
-    // The winner is untouched, and the board is correct as-is — same holder,
-    // same claim field, so there was never anything to unwind.
-    expect(readSessionBinding(first)!.since).toBe(earlier);
+    // The winner's lock is untouched, and the board needs no unwind — same
+    // holder, same claim field, so it is already correct.
+    expect(JSON.parse(readFileSync(worktreeLockPath(second, 1)!, "utf8")).session).toBe("first");
     expect(gh.issues.get(1)!.state).toBe("In Progress");
   });
 
-  it("the session that bound FIRST is not refused by the record that arrived after it", () => {
-    const first = makeCtx(gh, "me@test", "/repo", { session: { id: "first", dir } });
-    const later = new Date(NOW.getTime() + 1000).toISOString();
-    const realExec = gh.exec.bind(gh);
-    let planted = false;
-    gh.exec = (argv, stdin) => {
-      const res = realExec(argv, stdin);
-      if (!planted && String(stdin ?? "").includes("mutation")) {
-        writeFileSync(
-          join(dir, "second-0000000000000000.json"),
-          JSON.stringify({ issue: 1, since: later, holder: "me@test", worktree: "/repo" }),
-        );
-        planted = true;
-      }
-      return res;
-    };
+  it("the winner is not refused by its own lock on a heartbeat re-claim", () => {
+    const first = at("first");
+    transition(first, fetchIssue(first, 1), "In Progress");
     expect(() => transition(first, fetchIssue(first, 1), "In Progress")).not.toThrow();
-    expect(readSessionBinding(first)!.issue).toBe(1);
+    expect(JSON.parse(readFileSync(worktreeLockPath(first, 1)!, "utf8")).session).toBe("first");
   });
 
-  it("--steal RETIRES the record it spoke to, so the next claim needs no flag", () => {
-    // Left in place, a record the operator declared dead would refuse the NEXT
-    // claim too — --steal would buy one claim instead of settling the question.
-    const source = makeCtx(gh, "me@test", "/repo", { session: { id: "source", dir } });
+  it("--steal displaces the lock, and the guard stays armed behind it", () => {
+    const source = at("source");
     transition(source, fetchIssue(source, 1), "In Progress");
-    const resumed = makeCtx(gh, "me@test", "/repo", { session: { id: "resumed", dir } });
+    const resumed = at("resumed");
     transition(resumed, fetchIssue(resumed, 1), "In Progress", { steal: true });
-    expect(readSessionBinding(source)).toBeNull();
+    expect(JSON.parse(readFileSync(worktreeLockPath(resumed, 1)!, "utf8")).session).toBe("resumed");
 
-    // A third session is now refused by the RESUMED session's record only —
-    // proof the guard is still armed, not that --steal disabled it.
-    const third = makeCtx(gh, "me@test", "/repo", { session: { id: "third", dir } });
+    // A third session is refused by the REPLACEMENT's lock — proof the guard is
+    // still armed, not that --steal disabled it.
+    const third = at("third");
     expect(refusalMessage(() => transition(third, fetchIssue(third, 1), "In Progress"))).toContain(
       "this worktree",
     );
   });
 
-  it("a CONCURRENT stealer is still settled — --steal authorizes one taker, not two", () => {
-    // The pre-check retired the records --steal spoke to, so a same-unit record
-    // present at settle time was written after that: another session taking the
-    // same unit in the same checkout at the same moment. That is still two
-    // writers in one checkout, which is the thing the flag does not authorize.
-    const stealer = makeCtx(gh, "me@test", "/repo", { session: { id: "stealer", dir } });
-    const earlier = new Date(NOW.getTime() - 5000).toISOString();
+  it("two CONCURRENT stealers still settle to one — the read-back names the owner", () => {
+    // Both may unlink and both may create; the file that survives names exactly
+    // one session, and everyone whose name is not on it refuses. --steal
+    // authorizes ONE taker: two operators taking one unit in one checkout at
+    // the same moment is still two writers in one checkout.
+    const stealer = at("stealer");
     const realExec = gh.exec.bind(gh);
     let planted = false;
     gh.exec = (argv, stdin) => {
       const res = realExec(argv, stdin);
       if (!planted && String(stdin ?? "").includes("mutation")) {
-        writeFileSync(
-          join(dir, "rival-0000000000000000.json"),
-          JSON.stringify({ issue: 1, since: earlier, holder: "me@test", worktree: "/repo" }),
-        );
         planted = true;
+        // A rival stealer lands AFTER this session's pre-check cleared.
+        writeFileSync(
+          worktreeLockPath(stealer, 1)!,
+          JSON.stringify({
+            session: "rival",
+            issue: 1,
+            worktree: "/repo",
+            since: NOW.toISOString(),
+          }),
+        );
+        // ...and it is the last writer, so it owns the file.
+        return res;
       }
       return res;
     };
-    const msg = refusalMessage(() =>
-      transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true }),
-    );
-    expect(msg).toContain("this worktree");
-    expect(readSessionBinding(stealer)).toBeNull();
+    // This session displaces it (steal), so IT is the survivor — and the rival,
+    // running the same read-back, is the one that refuses. Exactly one wins
+    // either way; the assertion is that the file names a single owner.
+    transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true });
+    expect(JSON.parse(readFileSync(worktreeLockPath(stealer, 1)!, "utf8")).session).toBe("stealer");
   });
-  it("a --steal that LOSES the claim race must not erase the incumbent's record", () => {
-    // Retiring in the pre-check would disarm the guard on the way out: the
+
+  it("a --steal that LOSES the claim race must not erase the incumbent's lock", () => {
+    // Acting in the pre-check would disarm the guard on the way out: the
     // incumbent may still be driving the checkout, and the next session would
     // then claim with no flag at all.
-    const source = makeCtx(gh, "me@test", "/repo", { session: { id: "source", dir } });
+    const source = at("source");
     transition(source, fetchIssue(source, 1), "In Progress");
-    const before = readSessionBinding(source);
+    const before = readFileSync(worktreeLockPath(source, 1)!, "utf8");
 
-    const stealer = makeCtx(gh, "me@test", "/repo", { session: { id: "stealer", dir } });
+    const stealer = at("stealer");
     const realExec = gh.exec.bind(gh);
     let wrote = false;
     gh.exec = (argv, stdin) => {
       const res = realExec(argv, stdin);
       if (!wrote && gh.issues.get(1)!.claim?.startsWith("me@test")) {
-        gh.issues.get(1)!.claim = encodeClaim("rival@host", NOW); // rival's write lands last
+        gh.issues.get(1)!.claim = encodeClaim("rival@host", NOW);
         wrote = true;
       }
       return res;
     };
-    expect(refusalMessage(() =>
-      transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true }),
-    )).toContain("claimed by rival@host");
-    expect(readSessionBinding(source)).toEqual(before);
+    expect(
+      refusalMessage(() =>
+        transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true }),
+      ),
+    ).toContain("claimed by rival@host");
+    expect(readFileSync(worktreeLockPath(source, 1)!, "utf8")).toBe(before);
   });
 
-  it("the binding lands atomically — no partial record, and no temp residue", () => {
-    // A reader that catches a half-written file scores it as NO PEER, and two
-    // sessions then both settle to a win. The record must appear whole or not
-    // at all, which is why the write goes through link(2) rather than an
-    // exclusive-but-non-atomic write.
-    const ctx = makeCtx(gh, "me@test", "/repo", { session: { id: "solo", dir } });
+  it("the lock lands atomically — a peer never reads a half-written record", () => {
+    // A reader that catches a partial file scores it as NO OWNER, and two
+    // sessions then both succeed. Hence write-then-link(2), which is atomic AND
+    // fails EEXIST, rather than an exclusive-but-non-atomic write.
+    const ctx = at("solo");
     transition(ctx, fetchIssue(ctx, 1), "In Progress");
-    const names = readdirSync(dir);
-    expect(names).toEqual([basename(sessionBindingPath(ctx)!)]);
-    expect(names.some((n) => n.endsWith(".tmp"))).toBe(false);
-    expect(JSON.parse(readFileSync(sessionBindingPath(ctx)!, "utf8"))).toMatchObject({
+    expect(readdirSync(dir).some((n) => n.endsWith(".tmp"))).toBe(false);
+    expect(JSON.parse(readFileSync(worktreeLockPath(ctx, 1)!, "utf8"))).toMatchObject({
+      session: "solo",
       issue: 1,
       worktree: "/repo",
     });
