@@ -429,13 +429,19 @@ def _load_sqlite_vec(conn: sqlite3.Connection) -> None:
 
 
 def fetch_recent_raw_memories(
-    db_path: Path, since: datetime
+    db_path: Path, since: datetime, *, include_undated: bool = False
 ) -> list[RawMemoryRow]:
     """Return raw memories newer than ``since`` with mean-pooled embeddings.
 
     Joins ``documents`` -> ``chunks`` -> ``documents_vec`` and averages
     the per-chunk embeddings into a single per-document vector. Only
     rows where ``documents.memory_tier = 'raw'`` are considered.
+
+    ``include_undated`` also returns rows with a NULL/empty ``date`` (GH-1518).
+    Off for the nightly windowed path, where an undated row has no claim to be
+    inside the window; on for backfill, whose contract is every raw with no
+    reflection yet — there the date filter was silently excluding rows before
+    :func:`_bucket_by_days`'s undated trailing bucket could catch them.
     """
     import numpy as np  # noqa: WPS433 (lazy-import to keep module light)
 
@@ -451,15 +457,20 @@ def fetch_recent_raw_memories(
         # We fetch one row per chunk (chunks.id is the vector-table key)
         # and mean-pool in Python. Doing the mean in SQL would require
         # aggregating raw blobs which sqlite-vec doesn't support.
+        date_clause = (
+            "(d.date >= ? OR d.date IS NULL OR d.date = '')"
+            if include_undated
+            else "d.date >= ?"
+        )
         rows = conn.execute(
-            """
+            f"""
             SELECT d.id, d.path, d.date, d.content,
                    v.embedding
               FROM documents d
               JOIN chunks c ON c.document_id = d.id
               JOIN documents_vec v ON v.id = c.id
              WHERE d.memory_tier = 'raw'
-               AND d.date >= ?
+               AND {date_clause}
             """,
             (since_iso,),
         ).fetchall()
@@ -897,7 +908,7 @@ def run_backfill(
     Returns the number of reflections written.
     """
     far_back = datetime.now(tz=timezone.utc) - timedelta(days=365 * 20)
-    all_memories = fetch_recent_raw_memories(db_path, far_back)
+    all_memories = fetch_recent_raw_memories(db_path, far_back, include_undated=True)
     reflected = already_reflected_ids(base_dir)
     candidates = [m for m in all_memories if m.id not in reflected]
     log.info(

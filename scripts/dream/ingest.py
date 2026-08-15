@@ -181,25 +181,78 @@ def content_sha256(content: str) -> str:
     return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
 
 
-def dedup_memories(memories: list[RawMemory]) -> list[RawMemory]:
-    """Drop memories whose content is byte-identical to an earlier one.
+def _memory_body(text: str) -> str:
+    """Return a raw memory file's body — everything after the frontmatter block.
+
+    Mirrors :func:`write_memory`'s layout (``---`` block, blank line, body) so
+    the hash of an on-disk memory is comparable with ``content_sha256`` of the
+    in-memory :class:`RawMemory` it was written from.
+    """
+    if not text.startswith("---\n"):
+        return text.strip("\n")
+    end = text.find("\n---\n", 3)
+    if end == -1:
+        return text.strip("\n")
+    return text[end + len("\n---\n") :].strip("\n")
+
+
+def existing_content_hashes(base_dir: Path) -> dict[str, Path]:
+    """Map content hash -> path for every raw memory already on disk.
+
+    Read by walking the tree rather than kept as a sidecar index: an index is
+    a second copy of a fact the files already carry, and it can drift from
+    them (a hand-deleted memory, an interrupted run) with no way to notice.
+    The walk is O(corpus) small reads once per ingest run, and it cannot be
+    stale. Unreadable files are skipped — a raw we can't hash must not be
+    allowed to suppress a write.
+    """
+    out: dict[str, Path] = {}
+    base_dir = Path(base_dir)
+    if not base_dir.exists():
+        return out
+    for path in sorted(base_dir.rglob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            log.warning("Could not read existing memory %s: %s", path, exc)
+            continue
+        out.setdefault(content_sha256(_memory_body(text)), path)
+    return out
+
+
+def dedup_memories(
+    memories: list[RawMemory],
+    *,
+    base_dir: Path | None = None,
+) -> list[RawMemory]:
+    """Drop memories whose content is byte-identical to one already kept.
 
     Complements the ``(source, source_id)`` filename idempotency: that
     dedupes re-emits of the SAME memory across runs; this dedupes DISTINCT
     source ids that happen to carry identical content (the GBrain/Cognee
     content-hash idiom), so a wide/overlapping ingest window can't explode
     into duplicate raws. First occurrence wins; order is preserved.
+
+    With ``base_dir`` the comparison also spans *previous* runs (GH-1518):
+    the raw tier's own content hashes seed the seen-set. A memory whose hash
+    matches the file it would itself write is still kept, so re-running the
+    ingester over the same window rewrites its own byte-identical files
+    exactly as before.
     """
-    seen: set[str] = set()
+    seen: dict[str, Path | None] = {}
+    if base_dir is not None:
+        seen.update(existing_content_hashes(base_dir))
     out: list[RawMemory] = []
     for m in memories:
         h = content_sha256(m.content)
         if h in seen:
-            log.info(
-                "Skipping duplicate-content memory %s:%s", m.source, m.source_id
-            )
-            continue
-        seen.add(h)
+            own_path = _memory_path(m, base_dir) if base_dir is not None else None
+            if own_path is None or seen[h] != own_path:
+                log.info(
+                    "Skipping duplicate-content memory %s:%s", m.source, m.source_id
+                )
+                continue
+        seen[h] = _memory_path(m, base_dir) if base_dir is not None else None
         out.append(m)
     return out
 
@@ -909,7 +962,9 @@ def main(argv: list[str] | None = None) -> int:
         print(_summarize(memories_by_source) + " (dry-run, nothing written)")
         return 0
 
-    collected = dedup_memories(list(_iter_collected(memories_by_source)))
+    collected = dedup_memories(
+        list(_iter_collected(memories_by_source)), base_dir=base_dir
+    )
     total_collected = sum(len(mems) for mems in memories_by_source.values())
     written = 0
     for m in collected:

@@ -228,6 +228,103 @@ def _existing_hashes(candidates_file: Path) -> set[str]:
     return out
 
 
+def _rejected_hashes(wiki_dir: Path) -> set[str]:
+    """Hashes of claims the human rejected in ``_rejected.jsonl`` (GH-1518).
+
+    The curate skill's rejection log keys the claim as ``claim``; hashing it
+    under :func:`_candidate_hash` is what lets a rejection actually stick,
+    instead of the same axiom being re-staged every week for the human gate
+    to absorb again.
+    """
+    out: set[str] = set()
+    path = Path(wiki_dir).expanduser() / "_rejected.jsonl"
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        claim = str(rec.get("claim") or rec.get("axiom") or "").strip()
+        if claim:
+            out.add(_candidate_hash(claim))
+    return out
+
+
+def _promoted_hashes(wiki_dir: Path) -> set[str]:
+    """Hashes of axioms already promoted to wiki entries (GH-1518).
+
+    A wiki entry's H1 *is* the axiom in declarative form — that is the curate
+    skill's own body contract — so the title is the comparable text. Entries
+    are matched on the H1 only; a paraphrase still slips through, which is the
+    lexical limit tracked separately.
+    """
+    out: set[str] = set()
+    wiki_dir = Path(wiki_dir).expanduser()
+    if not wiki_dir.exists():
+        return out
+    for path in sorted(wiki_dir.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            log.warning("Could not read wiki entry %s: %s", path, exc)
+            continue
+        for line in text.splitlines():
+            if line.startswith("# "):
+                title = line[2:].strip()
+                if title:
+                    out.add(_candidate_hash(title))
+                break
+    return out
+
+
+def _read_candidate_records(candidates_file: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not candidates_file.exists():
+        return out
+    for line in candidates_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def prune_candidates(wiki_dir: Path) -> int:
+    """Drop staged candidates the human has since consumed (GH-1518).
+
+    Consumed means exactly promoted-or-rejected — the same predicate that
+    keeps them from being re-staged — so the staging file stays a queue of
+    *pending* candidates rather than growing forever with entries curate has
+    already dispositioned. Returns the number of records removed.
+    """
+    wiki_dir = Path(wiki_dir).expanduser()
+    candidates_file = wiki_dir / "_candidates.jsonl"
+    records = _read_candidate_records(candidates_file)
+    if not records:
+        return 0
+    consumed = _promoted_hashes(wiki_dir) | _rejected_hashes(wiki_dir)
+    if not consumed:
+        return 0
+    kept = [r for r in records if str(r.get("hash", "")) not in consumed]
+    removed = len(records) - len(kept)
+    if removed:
+        body = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in kept)
+        candidates_file.write_text(body, encoding="utf-8")
+        log.info("Pruned %d consumed candidate(s) from %s", removed, candidates_file)
+    return removed
+
+
 def stage_candidates(
     candidates: list[dict[str, Any]],
     wiki_dir: Path,
@@ -236,8 +333,10 @@ def stage_candidates(
 ) -> int:
     """Append new candidates to ``<wiki_dir>/_candidates.jsonl`` and return the
     count of newly-staged entries. Idempotent: an axiom already present (by
-    hash) is skipped. NEVER writes a wiki ``*.md`` entry — promotion to the
-    wiki tier stays human-gated in /ralph-knowledge:curate.
+    hash) is skipped — as is one already promoted to a wiki entry or logged in
+    ``_rejected.jsonl`` (GH-1518), so a disposition the human already made is
+    not put back in front of them. NEVER writes a wiki ``*.md`` entry —
+    promotion to the wiki tier stays human-gated in /ralph-knowledge:curate.
     """
     if not candidates:
         return 0
@@ -245,6 +344,8 @@ def stage_candidates(
     wiki_dir.mkdir(parents=True, exist_ok=True)
     candidates_file = wiki_dir / "_candidates.jsonl"
     seen = _existing_hashes(candidates_file)
+    seen |= _promoted_hashes(wiki_dir)
+    seen |= _rejected_hashes(wiki_dir)
 
     new_lines: list[str] = []
     for c in candidates:
@@ -289,9 +390,13 @@ def run_meta_reflect(
 
     Returns the number of newly-staged candidates. Defers (returns 0) when
     fewer than ``min_reflections`` are in the window. Fail-open on LLM errors.
+
+    Consumed candidates are pruned first, before the defer gate — the staging
+    file's hygiene does not depend on there being enough reflections to run.
     """
     if now is None:
         now = datetime.now(tz=timezone.utc)
+    prune_candidates(wiki_dir)
     since = now - timedelta(days=window_days)
     reflections = fetch_recent_reflections(db_path, since)
     log.info(

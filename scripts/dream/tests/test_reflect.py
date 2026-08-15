@@ -260,6 +260,43 @@ class TestFetchRecentRawMemories:
 
         assert np.allclose(got[0].embedding, 0.5)
 
+    def test_undated_raws_excluded_by_default_included_on_request(
+        self, tmp_path: Path, patch_vec_loader: None
+    ) -> None:
+        # GH-1518: the date filter pre-empted _bucket_by_days' undated net, so
+        # backfill could never reach a raw with a NULL/empty date.
+        db = tmp_path / "knowledge.db"
+        rows = [
+            {
+                "id": "raw-in",
+                "date": "2026-04-19T12:00:00+00:00",
+                "content": "dated",
+                "memory_tier": "raw",
+                "chunks": [[0.1] * 384],
+            },
+            {
+                "id": "raw-null-date",
+                "date": None,
+                "content": "undated",
+                "memory_tier": "raw",
+                "chunks": [[0.2] * 384],
+            },
+            {
+                "id": "raw-empty-date",
+                "date": "",
+                "content": "undated too",
+                "memory_tier": "raw",
+                "chunks": [[0.3] * 384],
+            },
+        ]
+        _seed_db(db, rows)
+        since = datetime(2026, 4, 18, 0, 0, tzinfo=timezone.utc)
+        assert [m.id for m in reflect.fetch_recent_raw_memories(db, since)] == ["raw-in"]
+        assert [
+            m.id
+            for m in reflect.fetch_recent_raw_memories(db, since, include_undated=True)
+        ] == ["raw-empty-date", "raw-in", "raw-null-date"]
+
 
 # ---------------------------------------------------------------------------
 # cluster_memories

@@ -164,3 +164,91 @@ class TestRunMetaReflect:
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=offline
         )
         assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# GH-1518: dedup vs promoted wiki entries + rejection log, and prune-on-consume
+# ---------------------------------------------------------------------------
+
+
+class TestConsumedCandidates:
+    def test_skips_an_axiom_already_promoted_to_the_wiki(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "sparse-streams.md").write_text(
+            "---\nmemory_tier: wiki\n---\n\n# Prefer agglomerative for sparse streams\n\nlede.\n",
+            encoding="utf-8",
+        )
+        n = meta_reflect.stage_candidates(
+            [{"axiom": "prefer   Agglomerative for sparse streams", "rationale": "r"}],
+            wiki,
+            now=NOW,
+        )
+        # Normalization is whitespace+case, same as _candidate_hash.
+        assert n == 0
+
+    def test_skips_an_axiom_the_human_rejected(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "_rejected.jsonl").write_text(
+            json.dumps({"date": "2026-06-01", "claim": "A1", "reason": "code-shadow"}) + "\n",
+            encoding="utf-8",
+        )
+        assert meta_reflect.stage_candidates([{"axiom": "A1"}], wiki, now=NOW) == 0
+
+    def test_unrelated_axiom_still_stages(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "_rejected.jsonl").write_text(
+            json.dumps({"claim": "A1"}) + "\n", encoding="utf-8"
+        )
+        assert meta_reflect.stage_candidates([{"axiom": "A2"}], wiki, now=NOW) == 1
+
+    def test_prune_removes_consumed_and_keeps_pending(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        meta_reflect.stage_candidates(
+            [{"axiom": "promoted one"}, {"axiom": "rejected one"}, {"axiom": "pending one"}],
+            wiki,
+            now=NOW,
+        )
+        (wiki / "promoted-one.md").write_text("# promoted one\n", encoding="utf-8")
+        (wiki / "_rejected.jsonl").write_text(
+            json.dumps({"claim": "rejected one"}) + "\n", encoding="utf-8"
+        )
+        assert meta_reflect.prune_candidates(wiki) == 2
+        records = [
+            json.loads(line)
+            for line in (wiki / "_candidates.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        assert [r["axiom"] for r in records] == ["pending one"]
+
+    def test_prune_is_a_noop_with_nothing_consumed(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        meta_reflect.stage_candidates([{"axiom": "pending"}], wiki, now=NOW)
+        before = (wiki / "_candidates.jsonl").read_text()
+        assert meta_reflect.prune_candidates(wiki) == 0
+        assert (wiki / "_candidates.jsonl").read_text() == before
+
+    def test_prune_on_missing_files_is_zero(self, tmp_path: Path) -> None:
+        assert meta_reflect.prune_candidates(tmp_path / "nope") == 0
+
+    def test_run_prunes_even_when_it_defers(self, tmp_path: Path) -> None:
+        db = tmp_path / "k.db"
+        _seed(db, [
+            {"id": "r0", "date": "2026-06-25T00:00:00+00:00", "content": "only one",
+             "memory_tier": "reflection"}
+        ])
+        wiki = tmp_path / "wiki"
+        meta_reflect.stage_candidates([{"axiom": "rejected one"}], wiki, now=NOW)
+        (wiki / "_rejected.jsonl").write_text(
+            json.dumps({"claim": "rejected one"}) + "\n", encoding="utf-8"
+        )
+
+        def boom(*a, **k):  # noqa: ANN001, ARG001
+            raise AssertionError("must not call the LLM below min_reflections")
+
+        assert meta_reflect.run_meta_reflect(
+            db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=boom
+        ) == 0
+        assert (wiki / "_candidates.jsonl").read_text().strip() == ""
