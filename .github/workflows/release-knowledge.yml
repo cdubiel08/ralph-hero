@@ -96,30 +96,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Classify changes
-        id: classify
-        working-directory: .
-        env:
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] || echo "$BEFORE" | grep -qE '^0+$'; then
-            echo "mcp_changed=true" >> "$GITHUB_OUTPUT"
-            echo "Classification: mcp_changed=true (dispatch or new branch)"
-            exit 0
-          fi
-
-          DIFF=$(git diff --name-only "$BEFORE" "$AFTER")
-          echo "Changed files:"
-          echo "$DIFF"
-
-          MCP_CHANGED=false
-          echo "$DIFF" | grep -qE '^plugin/ralph-knowledge/(src/|package\.json|package-lock\.json|tsconfig\.json)' && MCP_CHANGED=true
-
-          echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
-          echo "Classification: mcp_changed=$MCP_CHANGED"
-
       # Read the bump annotation off the TRIGGERING merge commit, before the
       # advance step below moves HEAD to main's tip — which may be a later
       # commit carrying a different (or no) `#minor`/`#major` marker.
@@ -160,6 +136,46 @@ jobs:
           set -euo pipefail
           git fetch --force --tags origin main
           git checkout --force -B release-bump FETCH_HEAD
+
+      # Classification runs AFTER the advance and over `BEFORE..HEAD`, not
+      # `BEFORE..AFTER`. The advance is what makes this necessary: the tree
+      # this run publishes and tags is main's tip, so classifying the
+      # triggering merge alone could tag a tree containing MCP changes while
+      # skipping the npm publish for them. Widening the range to the advanced
+      # tip is a SUPERSET of the triggering merge, which fails the safe way —
+      # at worst it publishes a version whose MCP source is unchanged, where
+      # the narrow range could ship source that npm never received.
+      - name: Classify changes
+        id: classify
+        working-directory: .
+        env:
+          BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || echo "$BEFORE" | grep -qE '^0+$'; then
+            echo "mcp_changed=true" >> "$GITHUB_OUTPUT"
+            echo "Classification: mcp_changed=true (dispatch or new branch)"
+            exit 0
+          fi
+
+          # The advance may have fast-forwarded past commits this checkout's
+          # `before` predates; if `before` is unreachable, publish rather than
+          # guess.
+          if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "mcp_changed=true" >> "$GITHUB_OUTPUT"
+            echo "Classification: mcp_changed=true (before-commit unreachable)"
+            exit 0
+          fi
+
+          DIFF=$(git diff --name-only "$BEFORE" HEAD)
+          echo "Changed files (BEFORE..advanced tip):"
+          echo "$DIFF"
+
+          MCP_CHANGED=false
+          echo "$DIFF" | grep -qE '^plugin/ralph-knowledge/(src/|package\.json|package-lock\.json|tsconfig\.json)' && MCP_CHANGED=true
+
+          echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "Classification: mcp_changed=$MCP_CHANGED"
 
       # Node 24 ships with npm 11.x natively, which is required for OIDC
       # trusted publishing (npm CLI >= 11.5.1). Earlier attempts with Node 22
@@ -228,6 +244,14 @@ jobs:
             PATCH=$((PATCH + 1))
           done
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          # The loop can exit by exhaustion as well as by finding a free slot,
+          # and the candidate it exits holding was never checked. Fail here
+          # rather than carrying an occupied version into publish or tagging.
+          if git -C "$GITHUB_WORKSPACE" rev-parse -q --verify "refs/tags/knowledge-v${NEW_VERSION}" >/dev/null \
+             || npm view "ralph-hero-knowledge-index@${NEW_VERSION}" version --json >/dev/null 2>&1; then
+            echo "::error::Could not find a free version after 20 attempts (last tried $NEW_VERSION)"
+            exit 1
+          fi
           npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version >/dev/null
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           PLUGIN_JSON=".claude-plugin/plugin.json"
@@ -350,6 +374,8 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           MERGE_SHA: ${{ github.sha }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
+          REPUBLISH: ${{ inputs.republish }}
+          MCP_CHANGED: ${{ steps.classify.outputs.mcp_changed }}
         run: |
           set -euo pipefail
           TITLE="Release Knowledge failed — plugin/ralph-knowledge merged but unreleased"
@@ -360,39 +386,74 @@ jobs:
           # and never report "could not ask" as "absent".
           STATE="the run failed before computing a version; nothing was published or pushed"
           REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
-          if [ -n "${NEW_VERSION:-}" ]; then
-            TAG="knowledge-v${NEW_VERSION}"
-            NPM_HTTP=$(curl -sS -o /dev/null -w '%{http_code}' \
-              "https://registry.npmjs.org/ralph-hero-knowledge-index/${NEW_VERSION}" || echo 000)
-            LS_RC=0
+
+          npm_status() {
+            curl -sS -o /dev/null -w '%{http_code}' \
+              "https://registry.npmjs.org/ralph-hero-knowledge-index/$1" || echo 000
+          }
+          # Tag + release probing, shared by the paths that can have pushed one.
+          # Sets STATE and REMEDY. $1 = tag, $2 = a clause naming what else is
+          # known to have landed (or "").
+          probe_tag_and_release() {
+            local TAG="$1" LEAD="$2" LS_RC=0 REL_HTTP
             git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1 || LS_RC=$?
-            if [ "$NPM_HTTP" != "200" ] && [ "$NPM_HTTP" != "404" ]; then
-              STATE="version \`${NEW_VERSION}\` was computed, but **whether it reached npm could not be determined** (HTTP ${NPM_HTTP})"
-              REMEDY="Check by hand — \`npm view ralph-hero-knowledge-index@${NEW_VERSION} version\`. A re-run is safe either way: the version floor now reads npm, so it will skip anything already published."
-            elif [ "$NPM_HTTP" = "404" ]; then
-              STATE="version \`${NEW_VERSION}\` was computed but nothing was published; main is unchanged"
-              REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
-            elif [ "$LS_RC" -ne 0 ] && [ "$LS_RC" -ne 2 ]; then
-              STATE="\`${NEW_VERSION}\` is published on npm, but **whether \`${TAG}\` reached origin could not be determined** (\`git ls-remote\` exited ${LS_RC})"
-              REMEDY="Check for the tag by hand — \`git ls-remote --tags origin 'refs/tags/${TAG}'\` — then follow the matching case below."
+            if [ "$LS_RC" -ne 0 ] && [ "$LS_RC" -ne 2 ]; then
+              STATE="${LEAD}whether \`${TAG}\` reached origin **could not be determined** (\`git ls-remote\` exited ${LS_RC})"
+              REMEDY="Check for the tag by hand — \`git ls-remote --tags origin 'refs/tags/${TAG}'\` — then follow the matching case. **Do not re-run until you know**: if the tag is in fact pushed, a re-run computes the next version and leaves \`${TAG}\` without a release forever."
             elif [ "$LS_RC" -eq 2 ]; then
-              STATE="\`${NEW_VERSION}\` is **published on npm but absent from main** — no bump commit, no \`${TAG}\`"
-              REMEDY="Re-run the workflow (\`workflow_dispatch\`). It will floor the next version above the published one and land manifest, tag and release together; \`${NEW_VERSION}\` stays on npm as an orphan and is harmless."
+              STATE="${LEAD}no tag reached origin — main is unchanged"
+              REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
             else
               REL_HTTP=$(curl -sS -o /dev/null -w '%{http_code}' \
                 -H "Authorization: Bearer ${GH_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
                 "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" || echo 000)
               if [ "$REL_HTTP" = "200" ]; then
-                STATE="\`${TAG}\`, its release and the npm publish all exist — the run failed after everything landed"
-                REMEDY="Check what ran after the release step. **Do not re-run**: the version is already published."
+                STATE="${LEAD}\`${TAG}\` and its GitHub Release both exist — the run failed after everything landed"
+                REMEDY="Check what ran after the release step. **Do not re-run**: the version is already released."
               elif [ "$REL_HTTP" = "404" ]; then
-                STATE="\`${NEW_VERSION}\` is published and \`${TAG}\` is pushed, but there is **no GitHub Release**"
+                STATE="${LEAD}\`${TAG}\` is pushed but there is **no GitHub Release**"
                 REMEDY="Create the missing release only — \`gh release create ${TAG} --generate-notes\`. **Do not re-run the workflow**: it would compute the next version and leave \`${TAG}\` without a release forever."
               else
-                STATE="\`${NEW_VERSION}\` is published and \`${TAG}\` is pushed, but **whether it has a GitHub Release could not be determined** (HTTP ${REL_HTTP})"
-                REMEDY="Check by hand — \`gh release view ${TAG}\` — and create it only if it is genuinely missing. **Do not re-run the workflow** either way: the version is already published. An HTTP ${REL_HTTP} here usually means a GitHub outage rather than anything wrong with this release."
+                STATE="${LEAD}\`${TAG}\` is pushed, but **whether it has a GitHub Release could not be determined** (HTTP ${REL_HTTP})"
+                REMEDY="Check by hand — \`gh release view ${TAG}\` — and create it only if it is genuinely missing. **Do not re-run the workflow** either way: the tag is already pushed. An HTTP ${REL_HTTP} here usually means a GitHub outage rather than anything wrong with this release."
               fi
+            fi
+          }
+
+          if [ "${REPUBLISH:-false}" = "true" ]; then
+            # Republish skips both version-producing steps, so NEW_VERSION is
+            # empty by design — reading it as "nothing was computed" would
+            # advise a re-run that re-publishes an immutable version and dies.
+            # The version is whatever the manifest already holds.
+            RV=$(jq -r .version plugin/ralph-knowledge/package.json)
+            RV_HTTP=$(npm_status "$RV")
+            if [ "$RV_HTTP" = "200" ]; then
+              STATE="this was a \`republish\` run for \`${RV}\`, which **is present on npm** — the failure came after the publish itself (registry verification, most likely)"
+              REMEDY="Confirm with \`npm view ralph-hero-knowledge-index@${RV} version\`. **Do not re-run with \`republish\`**: npm versions are immutable and a second publish of \`${RV}\` will be rejected. Republish exists to recover a missing publish, and \`${RV}\` is not missing."
+            elif [ "$RV_HTTP" = "404" ]; then
+              STATE="this was a \`republish\` run for \`${RV}\`, which is **still absent from npm**; nothing was pushed (republish never commits or tags)"
+              REMEDY="Re-run with \`republish=true\` once the cause is fixed."
+            else
+              STATE="this was a \`republish\` run for \`${RV}\`, but **whether it reached npm could not be determined** (HTTP ${RV_HTTP})"
+              REMEDY="Check by hand — \`npm view ralph-hero-knowledge-index@${RV} version\` — and re-run with \`republish=true\` only if it is genuinely absent."
+            fi
+          elif [ -n "${NEW_VERSION:-}" ] && [ "${MCP_CHANGED:-}" != "true" ]; then
+            # Skill-only: this path never publishes, so npm's 404 says nothing
+            # about how far the run got. Only the tag and release do.
+            probe_tag_and_release "knowledge-v${NEW_VERSION}" \
+              "version \`${NEW_VERSION}\` was computed for a skill-only release (no npm publish on this path); "
+          elif [ -n "${NEW_VERSION:-}" ]; then
+            TAG="knowledge-v${NEW_VERSION}"
+            NPM_HTTP=$(npm_status "$NEW_VERSION")
+            if [ "$NPM_HTTP" != "200" ] && [ "$NPM_HTTP" != "404" ]; then
+              STATE="version \`${NEW_VERSION}\` was computed, but **whether it reached npm could not be determined** (HTTP ${NPM_HTTP})"
+              REMEDY="Check by hand — \`npm view ralph-hero-knowledge-index@${NEW_VERSION} version\`. A re-run is safe either way: the version floor now reads npm, so it will skip anything already published."
+            elif [ "$NPM_HTTP" = "404" ]; then
+              STATE="version \`${NEW_VERSION}\` was computed but nothing was published; main is unchanged (this workflow publishes before it commits)"
+              REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
+            else
+              probe_tag_and_release "$TAG" "\`${NEW_VERSION}\` is published on npm and "
             fi
           fi
           BODY=$(printf '%s\n' \
