@@ -2224,6 +2224,16 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
             now.state === to
           );
           if (!moved) {
+            // A residual window remains between this check and the writes
+            // below, and it is IRREDUCIBLE, not unhandled: Projects V2 has no
+            // compare-and-swap, so every mutation in this file — including the
+            // claim protocol itself — makes races visible and refused rather
+            // than impossible. The two narrowings that were available are
+            // taken (re-read, and a `since` fingerprint rather than a
+            // machine-wide holder); closing it entirely needs a primitive
+            // GitHub does not offer. Doctor's claim-anomaly sweep is the
+            // backstop, as it is for the state-write rollback above.
+            //
             // STATE FIRST, claim second. The unwind is two writes and either
             // can fail; this order makes the survivable half survive. Clearing
             // the claim first would leave a claimless item sitting In Progress
