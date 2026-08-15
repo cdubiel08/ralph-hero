@@ -151,14 +151,50 @@ ralph_agents_json() {
 # tree (.ralph.json > tracked .claude/settings.json env) — only the CLI path
 # needs discovering here. Nothing found anywhere = not a ralph-equipped
 # machine — refuse, naming every location tried.
-# herdr-setup.sh's board-cli check mirrors this order; change them together.
-installed_board_cli() {
+# herdr-setup.sh's board-cli check and cockpit/main.go mirror this order;
+# change them together.
+#
+# Within the installed tier the registry wins (GH-1865). `installed_plugins.json`
+# RECORDS which copy Claude Code executes; the cache glob merely finds the
+# highest-versioned directory that exists, and this machine's cache holds 29 of
+# them. They coincide only while the newest install is also the newest
+# directory — a downgrade, a second marketplace, or a project-scoped install
+# breaks that and the glob then names a plausible path nobody runs. The glob
+# survives as a last resort because it answers when the registry cannot (no jq,
+# no registry, a vendored layout), but it is labelled a guess wherever it is
+# reported, so a wrong path is visibly a guess rather than silently a record.
+ralph_installed_plugins_file() {
+  printf '%s\n' "${RALPH_INSTALLED_PLUGINS_FILE:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json}"
+}
+
+# Prints "<source>\t<path>" — source is `registry` or `guess`. Empty output
+# means no board CLI was found by either route.
+installed_board_cli_tagged() {
+  local file best=""
+  file=$(ralph_installed_plugins_file)
+  if [ -r "$file" ] && command -v jq >/dev/null 2>&1; then
+    # Keys are "<name>@<marketplace>", so match the name half only. The
+    # recorded version is a TIE-BREAK between several registered copies, never
+    # the reason to prefer the registry — being recorded is.
+    best=$(jq -r '
+        (.plugins // {}) | to_entries[]
+        | select((.key | split("@")[0]) == "ralph")
+        | .value[]? | select(.installPath != null)
+        | ((.version // "0") + "\t" + .installPath + "/scripts/board")' "$file" 2>/dev/null |
+      while IFS=$'\t' read -r ver path; do
+        [ -x "$path" ] && printf '%s\t%s\n' "$ver" "$path"
+      done | sort -V -k1,1 | tail -1 | cut -f2-)
+    [ -n "$best" ] && { printf 'registry\t%s\n' "$best"; return 0; }
+  fi
   # Sort by the VERSION component (…/ralph/<version>/scripts/board), not the
   # whole path — full-path sort would rank marketplace namespace above version.
   # shellcheck disable=SC2012  # glob over versioned plugin dirs is the point
-  ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null |
-    awk -F/ '{ print $(NF-2) "\t" $0 }' | sort -V -k1,1 | tail -1 | cut -f2-
+  best=$(ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null |
+    awk -F/ '{ print $(NF-2) "\t" $0 }' | sort -V -k1,1 | tail -1 | cut -f2-)
+  [ -n "$best" ] && [ -x "$best" ] && printf 'guess\t%s\n' "$best"
 }
+
+installed_board_cli() { installed_board_cli_tagged | cut -f2-; }
 if [ -n "${RALPH_HERDR_BOARD:-}" ]; then
   BOARD="$RALPH_HERDR_BOARD"
   [ -x "$BOARD" ] || die "RALPH_HERDR_BOARD=$BOARD is not an executable board CLI"
@@ -166,7 +202,7 @@ elif [ -x "$REPO/ralph/scripts/board" ]; then
   BOARD="$REPO/ralph/scripts/board"
 else
   BOARD=$(installed_board_cli || true)
-  [ -n "$BOARD" ] && [ -x "$BOARD" ] || die "no board CLI found — tried \$RALPH_HERDR_BOARD (unset), $REPO/ralph/scripts/board, and ~/.claude/plugins/cache/*/ralph/*/scripts/board (is the ralph Claude Code plugin installed?)"
+  [ -n "$BOARD" ] && [ -x "$BOARD" ] || die "no board CLI found — tried \$RALPH_HERDR_BOARD (unset), $REPO/ralph/scripts/board, $(ralph_installed_plugins_file), and ~/.claude/plugins/cache/*/ralph/*/scripts/board (is the ralph Claude Code plugin installed?)"
 fi
 
 # Billing guard (tick.sh parity): a pane env with a stray API key would

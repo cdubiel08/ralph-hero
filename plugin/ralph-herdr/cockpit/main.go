@@ -21,6 +21,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -73,17 +74,21 @@ func resolveConfig(args []string, getenv func(string) string) (Config, error) {
 		candidate := filepath.Join(cfg.Repo, "ralph", "scripts", "board")
 		if isExecutable(candidate) {
 			cfg.Board = candidate
-		} else if p := installedBoardCLI(getenv("HOME")); p != "" {
-			// Tier 3, GH-1761: a herdr pane inherits the SERVER's env, so a
-			// cockpit opened outside a ralph checkout has no vendored board.
-			// Order mirrors lib.sh installed_board_cli() and
+		} else if p := registryBoardCLI(installedPluginsFile(
+			getenv("HOME"), getenv("CLAUDE_CONFIG_DIR"), getenv("RALPH_INSTALLED_PLUGINS_FILE"))); p != "" {
+			// Tier 3, GH-1761/GH-1865: a herdr pane inherits the SERVER's env,
+			// so a cockpit opened outside a ralph checkout has no vendored
+			// board. Order mirrors lib.sh installed_board_cli_tagged() and
 			// herdr-setup.sh's board check — change all three together.
+			cfg.Board = p
+		} else if p := installedBoardCLI(getenv("HOME")); p != "" {
 			cfg.Board = p
 		}
 	}
 	if cfg.Board == "" {
-		return cfg, fmt.Errorf("no board CLI — tried argv[1] (unset), RALPH_HERDR_BOARD (unset), %s, and ~/.claude/plugins/cache/*/ralph/*/scripts/board (is the ralph Claude Code plugin installed?)",
-			filepath.Join(cfg.Repo, "ralph", "scripts", "board"))
+		return cfg, fmt.Errorf("no board CLI — tried argv[1] (unset), RALPH_HERDR_BOARD (unset), %s, %s, and ~/.claude/plugins/cache/*/ralph/*/scripts/board (is the ralph Claude Code plugin installed?)",
+			filepath.Join(cfg.Repo, "ralph", "scripts", "board"),
+			installedPluginsFile(getenv("HOME"), getenv("CLAUDE_CONFIG_DIR"), getenv("RALPH_INSTALLED_PLUGINS_FILE")))
 	}
 	if !isExecutable(cfg.Board) {
 		return cfg, fmt.Errorf("board CLI %q is not executable", cfg.Board)
@@ -151,13 +156,76 @@ func maxPollInterval(raw string, floor time.Duration) time.Duration {
 	return max
 }
 
-// installedBoardCLI returns the newest executable board CLI from the installed
-// ralph plugin cache, or "" when none is usable. Ranking is by the VERSION path
-// component (…/ralph/<version>/scripts/board), NOT the whole path — a full-path
-// sort would rank the marketplace namespace above the version, exactly the trap
-// lib.sh's `awk -F/ '{print $(NF-2)}' | sort -V` avoids. Callers must only reach
-// this after an explicit path was absent: an explicit-but-broken path is an
-// error, never a reason to fall back.
+// installedPluginsFile resolves Claude Code's install registry, honouring
+// $CLAUDE_CONFIG_DIR. Empty when there is no HOME to root it in.
+func installedPluginsFile(home, configDir, override string) string {
+	if override != "" {
+		return override
+	}
+	if configDir == "" {
+		if home == "" {
+			return ""
+		}
+		configDir = filepath.Join(home, ".claude")
+	}
+	return filepath.Join(configDir, "plugins", "installed_plugins.json")
+}
+
+// registryBoardCLI returns the board CLI of the ralph copy Claude Code has
+// RECORDED as installed, or "" when the registry cannot answer. This is the
+// authority (GH-1865): the cache glob below only finds the highest-versioned
+// directory that exists, and the two coincide only while the newest install is
+// also the newest directory — a downgrade, a second marketplace, or a
+// project-scoped install breaks that and the glob then names a plausible path
+// nobody runs. The recorded version is a tie-break between several registered
+// copies, never the reason to prefer the registry — being recorded is.
+func registryBoardCLI(file string) string {
+	if file == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return ""
+	}
+	var reg struct {
+		Plugins map[string][]struct {
+			InstallPath string `json:"installPath"`
+			Version     string `json:"version"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(raw, &reg); err != nil {
+		return ""
+	}
+	best, bestVer := "", ""
+	for key, entries := range reg.Plugins {
+		if strings.SplitN(key, "@", 2)[0] != "ralph" { // keys are "<name>@<marketplace>"
+			continue
+		}
+		for _, e := range entries {
+			if e.InstallPath == "" {
+				continue
+			}
+			p := filepath.Join(e.InstallPath, "scripts", "board")
+			if !isExecutable(p) {
+				continue
+			}
+			if best == "" || compareVersions(e.Version, bestVer) > 0 {
+				best, bestVer = p, e.Version
+			}
+		}
+	}
+	return best
+}
+
+// installedBoardCLI returns the newest executable board CLI found by globbing
+// the plugin cache, or "" when none is usable. LAST RESORT only — it answers
+// when the registry cannot (absent, unreadable, no ralph entry), and its answer
+// is a guess, which every caller that reports a path must say. Ranking is by
+// the VERSION path component (…/ralph/<version>/scripts/board), NOT the whole
+// path — a full-path sort would rank the marketplace namespace above the
+// version, exactly the trap lib.sh's `awk -F/ '{print $(NF-2)}' | sort -V`
+// avoids. Callers must only reach this after an explicit path was absent: an
+// explicit-but-broken path is an error, never a reason to fall back.
 func installedBoardCLI(home string) string {
 	if home == "" {
 		return ""

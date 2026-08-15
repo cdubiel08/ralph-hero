@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -665,6 +666,127 @@ func TestResolveConfigFallsBackToInstalledPluginButNotForExplicitPaths(t *testin
 	}
 	if _, err := resolveConfig(nil, envBad); err == nil {
 		t.Error("explicit broken RALPH_HERDR_BOARD must error, not fall back")
+	}
+}
+
+// ── installed copy: the registry, not the cache glob (GH-1865) ──────────────
+
+// mkRegistry writes an installed_plugins.json recording `entries` as
+// "<version>: <installPath>" pairs under the ralph@<namespace> key.
+func mkRegistry(t *testing.T, dir string, entries map[string]string) string {
+	t.Helper()
+	var vals []string
+	for ver, path := range entries {
+		vals = append(vals, fmt.Sprintf(`{"installPath":%q,"version":%q}`, path, ver))
+	}
+	body := fmt.Sprintf(`{"plugins":{"ralph@ralph-hero":[%s],"other@m":[{"installPath":"/nope","version":"9.9.9"}]}}`,
+		strings.Join(vals, ","))
+	p := filepath.Join(dir, "installed_plugins.json")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestRegistryBeatsCacheGlobEvenWhenGlobHasNewerVersions(t *testing.T) {
+	home := t.TempDir()
+	// The recorded install is the OLDER directory. The glob would pick 9.9.9 —
+	// a path that exists but is not the copy Claude Code runs.
+	recorded := mkBoard(t, home, "ns", "0.1.0", true)
+	glob := mkBoard(t, home, "ns", "9.9.9", true)
+	reg := mkRegistry(t, t.TempDir(), map[string]string{"0.1.0": filepath.Dir(filepath.Dir(recorded))})
+	if got := registryBoardCLI(reg); got != recorded {
+		t.Errorf("registryBoardCLI = %q, want recorded %q", got, recorded)
+	}
+	if got := installedBoardCLI(home); got != glob {
+		t.Errorf("glob fallback should still rank by version: got %q, want %q", got, glob)
+	}
+	repo := t.TempDir()
+	env := func(k string) string {
+		switch k {
+		case "HOME":
+			return home
+		case "RALPH_HERDR_REPO":
+			return repo
+		case "RALPH_INSTALLED_PLUGINS_FILE":
+			return reg
+		}
+		return ""
+	}
+	cfg, err := resolveConfig(nil, env)
+	if err != nil {
+		t.Fatalf("resolveConfig: %v", err)
+	}
+	if cfg.Board != recorded {
+		t.Errorf("resolveConfig Board = %q, want the recorded copy %q", cfg.Board, recorded)
+	}
+}
+
+func TestRegistryUnreadableFallsBackToGlobRatherThanFailing(t *testing.T) {
+	home := t.TempDir()
+	glob := mkBoard(t, home, "ns", "1.2.3", true)
+	repo := t.TempDir()
+	bad := filepath.Join(t.TempDir(), "installed_plugins.json")
+	if err := os.WriteFile(bad, []byte("not json {"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{bad, filepath.Join(t.TempDir(), "absent.json")} {
+		env := func(k string) string {
+			switch k {
+			case "HOME":
+				return home
+			case "RALPH_HERDR_REPO":
+				return repo
+			case "RALPH_INSTALLED_PLUGINS_FILE":
+				return file
+			}
+			return ""
+		}
+		cfg, err := resolveConfig(nil, env)
+		if err != nil || cfg.Board != glob {
+			t.Errorf("registry %q: Board = %q err = %v, want glob fallback %q", file, cfg.Board, err, glob)
+		}
+	}
+}
+
+func TestRegistrySkipsRecordedCopiesThatAreGone(t *testing.T) {
+	// A registry entry whose tree was deleted must not win — and must not
+	// suppress the glob, which may still hold a usable copy.
+	home := t.TempDir()
+	glob := mkBoard(t, home, "ns", "1.0.0", true)
+	reg := mkRegistry(t, t.TempDir(), map[string]string{"5.0.0": filepath.Join(home, "gone")})
+	if got := registryBoardCLI(reg); got != "" {
+		t.Errorf("missing recorded copy must not resolve, got %q", got)
+	}
+	env := func(k string) string {
+		switch k {
+		case "HOME":
+			return home
+		case "RALPH_HERDR_REPO":
+			return t.TempDir()
+		case "RALPH_INSTALLED_PLUGINS_FILE":
+			return reg
+		}
+		return ""
+	}
+	cfg, err := resolveConfig(nil, env)
+	if err != nil || cfg.Board != glob {
+		t.Errorf("Board = %q err = %v, want glob fallback %q", cfg.Board, err, glob)
+	}
+}
+
+func TestInstalledPluginsFileHonoursConfigDir(t *testing.T) {
+	if got := installedPluginsFile("/h", "/cfg", ""); got != "/cfg/plugins/installed_plugins.json" {
+		t.Errorf("CLAUDE_CONFIG_DIR ignored: %q", got)
+	}
+	if got := installedPluginsFile("/h", "", ""); got != "/h/.claude/plugins/installed_plugins.json" {
+		t.Errorf("default path wrong: %q", got)
+	}
+	if got := installedPluginsFile("", "", ""); got != "" {
+		t.Errorf("no HOME must not root at /: %q", got)
+	}
+	if got := installedPluginsFile("/h", "/cfg", "/x.json"); got != "/x.json" {
+		t.Errorf("override ignored: %q", got)
 	}
 }
 

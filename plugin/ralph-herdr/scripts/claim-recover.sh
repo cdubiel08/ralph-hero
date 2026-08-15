@@ -118,6 +118,21 @@ ralph_board_cli() {
     printf '%s\n' "$root/ralph/scripts/board"
     return 0
   fi
+  # Registry first, cache glob as last resort (GH-1865) — mirrors lib.sh's
+  # installed_board_cli_tagged(); this file stays standalone by design, so the
+  # two are duplicated deliberately and change together.
+  local reg
+  reg="${RALPH_INSTALLED_PLUGINS_FILE:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json}"
+  if [ -r "$reg" ] && command -v jq >/dev/null 2>&1; then
+    cand=$(jq -r '
+        (.plugins // {}) | to_entries[]
+        | select((.key | split("@")[0]) == "ralph")
+        | .value[]? | select(.installPath != null)
+        | ((.version // "0") + "\t" + .installPath + "/scripts/board")' "$reg" 2>/dev/null |
+      while IFS=$'\t' read -r v p; do [ -x "$p" ] && printf '%s\t%s\n' "$v" "$p"; done |
+      sort -V -k1,1 | tail -1 | cut -f2-)
+    if [ -n "$cand" ] && [ -x "$cand" ]; then printf '%s\n' "$cand"; return 0; fi
+  fi
   # shellcheck disable=SC2012  # glob over versioned plugin dirs is the point
   cand=$(ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null |
     awk -F/ '{ print $(NF-2) "\t" $0 }' | sort -V -k1,1 | tail -1 | cut -f2-)

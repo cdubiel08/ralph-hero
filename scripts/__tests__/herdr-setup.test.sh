@@ -172,6 +172,51 @@ out=$(run "$(partial_json '{"kind":"github","owner":"cdubiel08","repo":"ralph-he
 expect "empty ref normalizes to main" "$out" \
   'GAP  ralph-herdr-version — .*herdr plugin install cdubiel08/ralph-hero/plugin/ralph-herdr --ref main -y'
 
+# --- board-cli resolution: the registry, not the cache glob (GH-1865) --------
+# The cache holds every ralph version ever installed; installed_plugins.json
+# RECORDS the one Claude Code executes. Reporting the glob's highest-versioned
+# directory as "the installed copy" is how `check` passes a path the cockpit
+# does not run.
+BHOME="$TMP_ROOT/bhome"
+mk_board() { # mk_board <namespace> <version> -> prints the board path
+  local d="$BHOME/.claude/plugins/cache/$1/ralph/$2/scripts"
+  mkdir -p "$d"
+  printf '#!/bin/sh\n' >"$d/board"
+  chmod +x "$d/board"
+  echo "$d/board"
+}
+mk_registry() { # mk_registry <version> <installPath> -> prints the file
+  local out="$TMP_ROOT/installed_plugins.json"
+  jq -n --arg v "$1" --arg p "$2" '
+    { plugins: { "ralph@ralph-hero": [{ installPath: $p, version: $v }],
+                 "other@m": [{ installPath: "/nope", version: "9.9.9" }] } }' >"$out"
+  echo "$out"
+}
+
+recorded=$(mk_board ns 0.1.0)
+newest=$(mk_board ns 9.9.9)   # the glob's pick — exists, but is not installed
+reg=$(mk_registry 0.1.0 "$(dirname "$(dirname "$recorded")")")
+
+out=$(run "" HOME="$BHOME" RALPH_INSTALLED_PLUGINS_FILE="$reg")
+expect "board-cli takes the recorded install, not the newest cache dir" "$out" \
+  "ok   board-cli — ${recorded//\//\\/} \(installed plugin copy, recorded in"
+refute "board-cli never reports the unrecorded newest dir" "$out" "${newest//\//\\/}"
+
+# An unreadable registry must still find a board — and must SAY the path is a
+# guess, so a wrong path is visibly a guess rather than silently a record.
+out=$(run "" HOME="$BHOME" RALPH_INSTALLED_PLUGINS_FILE="$TMP_ROOT/absent.json")
+expect "unreadable registry falls back to the glob" "$out" "ok   board-cli — ${newest//\//\\/} \(GUESS:"
+
+# A recorded copy whose tree is gone must not win, and must not suppress the glob.
+gone=$(mk_registry 5.0.0 "$BHOME/gone")
+out=$(run "" HOME="$BHOME" RALPH_INSTALLED_PLUGINS_FILE="$gone")
+expect "vanished recorded copy falls through to the glob" "$out" "ok   board-cli — ${newest//\//\\/} \(GUESS:"
+
+# Nothing anywhere is a gap that names both places it looked.
+out=$(run "" HOME="$TMP_ROOT/empty-home" RALPH_INSTALLED_PLUGINS_FILE="$TMP_ROOT/absent.json")
+expect "no board CLI anywhere gaps, naming the registry" "$out" \
+  'GAP  board-cli — no board CLI found .*no ralph install recorded in'
+
 echo
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
