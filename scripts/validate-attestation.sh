@@ -51,7 +51,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/merge-evidence.sh
 . "$SCRIPT_DIR/lib/merge-evidence.sh"
 POLICY_FILE="$(me_policy_file "$REPO_ROOT")"
-MARKER='<!-- ralph-attestation:v1 -->'
 
 head_sha="unknown"
 out() { # out <state> <description> — single-line verdict bound to head_sha, exit 0
@@ -60,7 +59,7 @@ out() { # out <state> <description> — single-line verdict bound to head_sha, e
 }
 
 # --- PR facts (first, so every verdict carries the validated sha) ----------
-pr_json=$(gh pr view "$PR_NUMBER" --json headRefOid,author,comments,reviews 2>/dev/null) \
+pr_json=$(gh pr view "$PR_NUMBER" --json headRefOid,author,reviews 2>/dev/null) \
   || out failure "cannot read PR #$PR_NUMBER"
 head_sha=$(jq -r '.headRefOid // "unknown"' <<<"$pr_json")
 author=$(jq -r '.author.login // ""' <<<"$pr_json")
@@ -94,8 +93,17 @@ if [[ "$exempt" == "true" ]]; then
 fi
 
 # --- attestation comment ---------------------------------------------------
-att_body=$(jq -r --arg m "$MARKER" \
-  '[.comments[] | select(.body | contains($m))] | last | .body // ""' <<<"$pr_json")
+# Paginated, via the shared reader (GH-1842): the comment window `gh pr view`
+# returns can omit a valid attestation on a long PR, publishing a red status
+# for evidence that exists. An unreadable list stays PENDING — a failed read
+# is not a missing attestation.
+set +e
+att_body=$(me_attestation_comment "$PR_NUMBER")
+att_rc=$?
+set -e
+if [[ "$att_rc" -eq 3 ]]; then
+  out pending "cannot read the comments on PR #$PR_NUMBER — retry"
+fi
 if [[ -z "$att_body" ]]; then
   out pending "awaiting attestation (scripts/attest-pr.sh)"
 fi

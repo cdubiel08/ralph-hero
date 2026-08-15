@@ -69,9 +69,8 @@
 # human, exit 75 means come back later with the work still claimed. Do not
 # collapse them.
 #
-# Caveat: attestation lookup reads the PR comment list via `gh pr view
-# --json comments` (first ~100 comments). Attestations are posted at
-# close-out so `last` matching is correct in practice.
+# Attestation lookup reads the comment list paginated, through the shared
+# reader (GH-1842); `last` matching picks the newest attestation.
 
 set -euo pipefail
 
@@ -280,11 +279,18 @@ fi
 # ---------------------------------------------------------------------------
 # Gate 4: attestation
 # ---------------------------------------------------------------------------
-ATTESTATION_MARKER='<!-- ralph-attestation:v1 -->'
+ATTESTATION_MARKER="$ME_ATTESTATION_MARKER"
 if [[ "$ATTESTATION_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
-  att_body=$(gh pr view "$PR_NUMBER" --json comments \
-    --jq "[.comments[] | select(.body | contains(\"$ATTESTATION_MARKER\"))] | last | .body // \"\"" \
-    2>/dev/null || echo "")
+  # Paginated, via the shared reader (GH-1842): an unpaginated window drops a
+  # valid attestation on a long PR. An unreadable comment list is PENDING, not
+  # a missing attestation — retry the read rather than re-run attest-pr.sh.
+  _me_noerrexit
+  att_body=$(me_attestation_comment "$PR_NUMBER")
+  att_rc=$?
+  _me_errexit_restore
+  if [[ "$att_rc" -eq 3 ]]; then
+    pending "attestation" "could not read the comments on PR #$PR_NUMBER (gh api failed) — retry"
+  fi
   if [[ -z "$att_body" ]]; then
     soft_gate "attestation" "no $ATTESTATION_MARKER comment on PR #$PR_NUMBER (run scripts/attest-pr.sh)"
   else

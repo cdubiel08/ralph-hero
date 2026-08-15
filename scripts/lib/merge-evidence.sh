@@ -114,6 +114,17 @@ def me_attestation_status($head):
 
 def me_attestation_ok($head): me_attestation_status($head) == "ok";
 
+# The marker attest-pr.sh writes. Defined here so the three readers stop
+# hardcoding the same literal beside a comment asking them to stay in sync.
+def me_attestation_marker: "<!-- ralph-attestation:v1 -->";
+
+# Comments array (REST issue comments, or gh pr view --json comments) -> the
+# body of the LAST comment carrying the marker, or "". Both payload shapes
+# spell the body `.body`, which is the only field this reads.
+def me_attestation_body:
+  [ (. // [])[] | select(((.body // "")) | contains(me_attestation_marker)) ]
+  | last | (.body // "");
+
 # Review-mode evidence: a formal APPROVED review by the policy bot, bound to
 # this head and not dismissed. Input is the REST reviews array.
 def me_approved_reviews($bot; $head):
@@ -173,6 +184,30 @@ me_policy_get() { jq -r --arg k "$2" '.[$k] | if type == "array" then tojson els
 # me_is_exempt <policy_json> <author> — "true" / "false"
 me_is_exempt() {
   jq -r "$ME_JQ_LIB"' me_exempt($a) | tostring' --arg a "$2" <<<"$1" 2>/dev/null || echo "false"
+}
+
+# The marker as a bash constant, same definition as the jq def above.
+ME_ATTESTATION_MARKER='<!-- ralph-attestation:v1 -->'
+
+# me_attestation_comment <pr_number> — NETWORK. The attestation comment body
+# on stdout, or empty when the PR carries none.
+#   exit 0  read succeeded (empty output means no attestation comment)
+#   exit 3  the comments API could not be read
+#
+# GH-1842: the three readers used `gh pr view --json comments`, which returns
+# a bounded window — on a PR with more comments than that window (PR #1764
+# accumulated 40+ across seven review rounds) a VALID attestation falls
+# outside it and reads as absent. `--paginate` is what gate 5 already does.
+#
+# Exit 3 is distinct for the same reason it is in me_review_mode_approved: a
+# failed read is not "no attestation yet", and the two have different correct
+# responses (retry the read vs. run attest-pr.sh).
+me_attestation_comment() {
+  local pr="$1" raw comments
+  raw=$(gh api "repos/{owner}/{repo}/issues/$pr/comments?per_page=100" --paginate 2>/dev/null) || return 3
+  # --paginate emits one array per page; slurp + add flattens them.
+  comments=$(jq -s 'add // []' <<<"$raw" 2>/dev/null) || return 3
+  jq -r "$ME_JQ_LIB"' me_attestation_body' <<<"$comments" 2>/dev/null || return 3
 }
 
 # me_attestation_payload <comment_body> — the fenced JSON, or empty.

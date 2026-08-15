@@ -82,7 +82,7 @@ case "${1:-} ${2:-}" in
     # Gate-5-shaped evidence lives on two endpoints: formal review objects and
     # issue comments (findings mode's head-bound request).
     n=$(cat "$GH_STUB_DIR/view_calls" 2>/dev/null || echo 0)
-    if [[ "$2" == */issues/*/comments ]]; then
+    if [[ "$2" == */issues/*/comments* ]]; then
       if [[ "$n" -ge 3 && -f "$GH_STUB_DIR/issue_comments_second.json" ]]; then
         cat "$GH_STUB_DIR/issue_comments_second.json"
       else serve issue_comments.json '[]'; fi
@@ -123,7 +123,13 @@ scenario() {
   printf '%s' "$2" >"$dir/pr_checks.json"
   printf '%s' "$3" >"$dir/pr_view.json"
   printf '%s' "$4" >"$dir/pr_reviews.json"
-  printf '%s' "${5:-[]}" >"$dir/issue_comments.json"
+  # The attestation is read from the PAGINATED issue-comments endpoint
+  # (GH-1842), not from the PR view's bounded window — so whatever a case puts
+  # in the PR view's comments is also served there. Union, not replacement:
+  # cases that pass their own list (a head-bound review request) still get the
+  # attestation comment the PR view carries.
+  jq -nc --argjson explicit "${5:-[]}" --argjson pr "$3" \
+    '$explicit + ($pr.comments // [])' >"$dir/issue_comments.json"
 }
 
 HEAD_SHA="306c13de306c13de306c13de306c13de306c13de"
@@ -862,6 +868,16 @@ expect "without the second page the same fixture waits" "$D" "GATE-WAIT review" 
 # clear the gate.
 ########################################################################
 
+echo "=== GH-1842: the attestation is read from the paginated comment list ==="
+# The old read was `gh pr view --json comments`, a bounded window: on a long PR
+# a valid attestation fell outside it and the verdict demanded an attestation
+# that already existed. Here the PR view carries NO comments at all — the
+# attestation is only where attest-pr.sh actually posts it.
+D="$TMP_ROOT/att-paginated-only"
+scenario "$D" "$READY_CHECKS" "$(pr_state OPEN APPROVED '[]')" "$APPROVAL" \
+  "[$(attestation_comment "$HEAD_SHA")]"
+expect "an attestation outside the PR-view window still reads as attested" "$D" "GATE-READY" 0
+
 echo "=== P2/10: a failed evidence fetch is not an empty review list ==="
 # The dangerous asymmetry is partial: comments succeed, reviews fail. A stale
 # clean marker plus a green attestation then reads as GATE-READY because the
@@ -881,7 +897,9 @@ expect "control: P0-clean evidence + attestation is READY" "$D" "GATE-READY" 0
 touch "$D/fail_reviews"
 expect "a failed reviews fetch withholds the verdict" "$D" "GATE-WAIT review" 10
 rm "$D/fail_reviews"; touch "$D/fail_comments"
-expect "a failed comments fetch withholds it too" "$D" "GATE-WAIT review" 10
+# In findings mode gate 5 does not read the comments — but gate 4's attestation
+# does (GH-1842), so the same outage withholds the verdict under its own name.
+expect "a failed comments fetch withholds it too" "$D" "GATE-WAIT attestation" 10
 rm "$D/fail_comments"
 
 # REVIEW mode must fetch the same evidence gate 5 fetches. Gate 5 requests
@@ -1201,7 +1219,7 @@ mkdir -p "$D"
 printf 'gh: could not resolve host' >"$D/pr_checks.json"
 printf '%s' "$(pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" >"$D/pr_view.json"
 printf '%s' "$APPROVAL" >"$D/pr_reviews.json"
-printf '[]' >"$D/issue_comments.json"
+printf '[%s]' "$(attestation_comment "$HEAD_SHA")" >"$D/issue_comments.json"
 expect "an unreadable checks payload never reaches READY" "$D" "GATE-WAIT ci" 10
 run "$D"
 if [[ "$LAST_OUT" == *"withheld"* ]] && [ "$LAST_RC" -eq 10 ]; then
@@ -1890,7 +1908,10 @@ echo "=== GH-1945: sub-P0 findings are visible at the decision point ==="
 POLICY="$POLICY_FINDINGS"
 D="$TMP_ROOT/advisory"
 setup_ready "$D"
-printf '%s' "$(codex_request "$HEAD_SHA")" >"$D/issue_comments.json"
+# Appended to what scenario() seeded: gate 4's attestation comment is read
+# from this same paginated list (GH-1842).
+jq -nc --argjson req "$(codex_request "$HEAD_SHA")" --argjson seeded "$(cat "$D/issue_comments.json")" \
+  '$req + $seeded' >"$D/issue_comments.json.next" && mv "$D/issue_comments.json.next" "$D/issue_comments.json"
 printf '%s' "$CODEX_REVIEW_AT_HEAD" >"$D/pr_reviews.json"
 
 # Greptile's rendering specifically: it is what every finding in GH-1945's
@@ -1948,7 +1969,10 @@ fi
 # the rest of this script applies to its own evidence.
 D="$TMP_ROOT/advisory-unreadable"
 setup_ready "$D"
-printf '%s' "$(codex_request "$HEAD_SHA")" >"$D/issue_comments.json"
+# Appended to what scenario() seeded: gate 4's attestation comment is read
+# from this same paginated list (GH-1842).
+jq -nc --argjson req "$(codex_request "$HEAD_SHA")" --argjson seeded "$(cat "$D/issue_comments.json")" \
+  '$req + $seeded' >"$D/issue_comments.json.next" && mv "$D/issue_comments.json.next" "$D/issue_comments.json"
 printf '%s' "$CODEX_REVIEW_AT_HEAD" >"$D/pr_reviews.json"
 printf '#!/usr/bin/env bash\nexit 3\n' >"$TMP_ROOT/bin/broken-advisory"
 chmod +x "$TMP_ROOT/bin/broken-advisory"
@@ -2167,7 +2191,10 @@ fi
 # round count is noise beside a decision to merge.
 D="$TMP_ROOT/convergence-not-on-ready"
 setup_ready "$D"
-printf '%s' "$(codex_request "$HEAD_SHA")" >"$D/issue_comments.json"
+# Appended to what scenario() seeded: gate 4's attestation comment is read
+# from this same paginated list (GH-1842).
+jq -nc --argjson req "$(codex_request "$HEAD_SHA")" --argjson seeded "$(cat "$D/issue_comments.json")" \
+  '$req + $seeded' >"$D/issue_comments.json.next" && mv "$D/issue_comments.json.next" "$D/issue_comments.json"
 printf '%s' "$CODEX_REVIEW_AT_HEAD" >"$D/pr_reviews.json"
 LAST_OUT=$(conv_run "$D" "$(conv_stub stalled)")
 if [[ "$LAST_OUT" == "GATE-READY"* ]] && [[ "$LAST_OUT" != *"STOP ITERATING"* ]]; then
@@ -2197,7 +2224,10 @@ DRIFT_BAD='{"ok":false,"count":0,"drift":[],"summary":"","detail":"gh api graphq
 
 D="$TMP_ROOT/drift-ready"
 setup_ready "$D"
-printf '%s' "$(codex_request "$HEAD_SHA")" >"$D/issue_comments.json"
+# Appended to what scenario() seeded: gate 4's attestation comment is read
+# from this same paginated list (GH-1842).
+jq -nc --argjson req "$(codex_request "$HEAD_SHA")" --argjson seeded "$(cat "$D/issue_comments.json")" \
+  '$req + $seeded' >"$D/issue_comments.json.next" && mv "$D/issue_comments.json.next" "$D/issue_comments.json"
 printf '%s' "$CODEX_REVIEW_AT_HEAD" >"$D/pr_reviews.json"
 
 LAST_OUT=$(drift_run "$D" "$(drift_stub one "$DRIFT_ONE")")

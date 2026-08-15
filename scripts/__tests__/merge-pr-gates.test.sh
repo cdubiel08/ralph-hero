@@ -78,7 +78,7 @@ case "${1:-} ${2:-}" in
     ;;
   "api repos/"*)
     # Gate 5 reads the head-bound request comment and the review objects.
-    if [[ "$2" == */issues/*/comments ]]; then
+    if [[ "$2" == */issues/*/comments* ]]; then
       reviews_file="$GH_STUB_DIR/issue_comments.json"
     else
       reviews_file="$GH_STUB_DIR/pr_reviews.json"
@@ -141,7 +141,6 @@ write_pr_view() {
     codex_evidence=true
   fi
   echo "$reviews" >"$dir/pr_reviews.json"
-  echo '[]' >"$dir/issue_comments.json"
   local comments='[]'
   if [[ -n "$att" ]]; then
     comments=$(jq -n --arg b "$att" '[{body: $b}]')
@@ -149,6 +148,8 @@ write_pr_view() {
   if [[ -n "$extra" ]]; then
     comments=$(jq -n --argjson c "$comments" --arg b "$extra" '$c + [{body: $b}]')
   fi
+  # Gate 4 reads the PAGINATED issue-comments endpoint (GH-1842).
+  echo "$comments" >"$dir/issue_comments.json"
   jq -n \
     --arg decision "$decision" --arg mergeable "$mergeable" \
     --arg author "$author" --arg sha "$SHA" \
@@ -169,7 +170,11 @@ write_pr_view() {
 # which is the whole reason this mode exists.
 add_codex_evidence() { # add_codex_evidence <dir> <head-sha>
   local dir="$1" sha="$2"
-  jq -n --arg sha "$sha" '[
+  local prior='[]'
+  [[ -f "$dir/issue_comments.json" ]] && prior=$(cat "$dir/issue_comments.json")
+  # Appended, never overwritten: the attestation comment is read from this same
+  # paginated list (GH-1842), so replacing it would hide the evidence.
+  jq -n --arg sha "$sha" --argjson prior "$prior" '$prior + [
     {user:{login:"cdubiel08"},
      body:("@codex review for P0 issues only\n<!-- ralph-review-head: " + $sha + " -->"),
      created_at:"2026-08-13T04:00:00Z"}
@@ -354,7 +359,8 @@ expect_merged "P0-clean external-review evidence"
 setup_stale_request() {
   setup_codex_ext "$1"
   jq --arg stale "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
-    '.[0].body = ("@codex review for P0 issues only\n<!-- ralph-review-head: " + $stale + " -->")' \
+    'map(if (.body // "") | contains("ralph-review-head") then
+       .body = ("@codex review for P0 issues only\n<!-- ralph-review-head: " + $stale + " -->") else . end)' \
     "$1/issue_comments.json" >"$1/issue_comments.next"
   mv "$1/issue_comments.next" "$1/issue_comments.json"
 }
@@ -363,7 +369,8 @@ run_case "a review requested at a stale full SHA does not satisfy gate 5" 75 "$P
 setup_prefix_collision_request() {
   setup_codex_ext "$1"
   jq --arg stale "${SHA:0:39}b" \
-    '.[0].body = ("@codex review for P0 issues only\n<!-- ralph-review-head: " + $stale + " -->")' \
+    'map(if (.body // "") | contains("ralph-review-head") then
+       .body = ("@codex review for P0 issues only\n<!-- ralph-review-head: " + $stale + " -->") else . end)' \
     "$1/issue_comments.json" >"$1/issue_comments.next"
   mv "$1/issue_comments.next" "$1/issue_comments.json"
 }
@@ -371,7 +378,9 @@ run_case "a different full SHA sharing the head prefix does not satisfy gate 5" 
 
 setup_review_without_request() {
   setup_codex_ext "$1"
-  echo '[]' >"$1/issue_comments.json"
+  jq 'map(select(((.body // "") | contains("ralph-review-head")) | not))' \
+    "$1/issue_comments.json" >"$1/issue_comments.next"
+  mv "$1/issue_comments.next" "$1/issue_comments.json"
 }
 run_case "a review with no head-bound request stays pending" 75 "$POLICY" setup_review_without_request
 expect_out "no-request pending names the marker" "<!-- ralph-review-head:"
@@ -387,8 +396,9 @@ run_case "a review older than the head-bound request stays pending" 75 "$POLICY"
 # rewritten with the current SHA and inherit a review from before the edit.
 setup_old_request_edited_to_current_head() {
   setup_codex_ext "$1"
-  jq '.[0].created_at = "2026-08-13T03:59:00Z" |
-      .[0].updated_at = "2026-08-13T04:00:20Z"' \
+  jq 'map(if (.body // "") | contains("ralph-review-head")
+          then .created_at = "2026-08-13T03:59:00Z"
+             | .updated_at = "2026-08-13T04:00:20Z" else . end)' \
     "$1/issue_comments.json" >"$1/issue_comments.next"
   mv "$1/issue_comments.next" "$1/issue_comments.json"
 }
@@ -435,7 +445,8 @@ expect_merged "clean-comment answer with no review object"
 # names no commit — a rate-limit or status note — is not an answer.
 setup_comment_without_head() {
   setup_clean_comment_only "$1"
-  jq '.[1].body = "Codex is rate limited. Try again later."' \
+  jq 'map(if (.user.login // "") == "chatgpt-codex-connector[bot]"
+          then .body = "Codex is rate limited. Try again later." else . end)' \
     "$1/issue_comments.json" >"$1/issue_comments.next"
   mv "$1/issue_comments.next" "$1/issue_comments.json"
 }
@@ -443,7 +454,8 @@ run_case "a bot comment naming no commit is not an answer" 75 "$POLICY" setup_co
 
 setup_comment_before_request() {
   setup_clean_comment_only "$1"
-  jq '.[1].created_at = "2026-08-13T03:00:00Z"' \
+  jq 'map(if (.user.login // "") == "chatgpt-codex-connector[bot]"
+          then .created_at = "2026-08-13T03:00:00Z" else . end)' \
     "$1/issue_comments.json" >"$1/issue_comments.next"
   mv "$1/issue_comments.next" "$1/issue_comments.json"
 }
@@ -1028,6 +1040,32 @@ expect_last_gate_line "dry-run: last gate line is PASS despite WARN" "MERGE GATE
 # D8.5 --dry-run and --force are mutually exclusive.
 run_case "dry-run: --force is refused" 1 "$POLICY" setup_green --dry-run --force "why not"
 expect_not_merged "dry-run + force"
+
+# --- GH-1842: gate 4 reads the PAGINATED comment list ----------------------
+# The old lookup was `gh pr view --json comments`, a bounded window. On a long
+# PR a valid attestation fell outside it and gate 4 refused the merge, naming
+# an attestation that was there all along. The fixture puts it ONLY on the
+# paginated endpoint, which is where attest-pr.sh's comment actually lives.
+setup_attestation_paginated_only() {
+  setup_green "$1"
+  jq '.comments = []' "$1/pr_view.json" >"$1/pr_view.next"
+  mv "$1/pr_view.next" "$1/pr_view.json"
+}
+run_case "an attestation outside the PR-view window still passes gate 4" 0 "$POLICY" \
+  setup_attestation_paginated_only
+expect_merged "attestation found only on the paginated endpoint"
+
+# An unreadable comment list is PENDING (exit 75, retry-able), not a FAIL: a
+# failed read is not a missing attestation, and refusing outright sends the
+# caller to re-attest work already attested.
+setup_comments_unreadable() {
+  setup_green "$1"
+  echo "1" >"$1/gh_api_repos_exit"
+}
+run_case "an unreadable comment list is retry-able, not a refusal" 75 "$POLICY" \
+  setup_comments_unreadable
+expect_not_merged "unreadable comment list"
+expect_out "the refusal names the attestation gate, not the reviewer" "PENDING — attestation"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
