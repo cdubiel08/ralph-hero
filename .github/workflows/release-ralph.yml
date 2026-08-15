@@ -227,12 +227,24 @@ jobs:
               STATE="version \`${NEW_VERSION}\` was computed, but **whether \`${TAG}\` reached origin could not be determined** (\`git ls-remote\` exited ${LS_RC})"
               REMEDY="Check for the tag by hand first — \`git ls-remote --tags origin 'refs/tags/${TAG}'\`. **Do not re-run the workflow until you know**: if the tag is in fact pushed, a re-run computes the next version and leaves \`${TAG}\` with no release forever."
             elif [ "$LS_RC" -eq 0 ]; then
-              if gh release view "$TAG" >/dev/null 2>&1; then
+              # Same rule for the release lookup, and the HTTP status is read
+              # rather than an exit code because `gh release view` returns 1
+              # for "no such release" and for "the API is down" alike. 404 is
+              # the only answer that means absent; 000 (no connection) and 5xx
+              # mean we could not ask.
+              REL_HTTP=$(curl -sS -o /dev/null -w '%{http_code}' \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" || echo 000)
+              if [ "$REL_HTTP" = "200" ]; then
                 STATE="\`${TAG}\` and its release both exist — the run failed after publishing"
                 REMEDY="Check what ran after the release step. **Do not re-run**: the version is already published."
-              else
+              elif [ "$REL_HTTP" = "404" ]; then
                 STATE="\`${TAG}\` is pushed but has **no GitHub Release**"
                 REMEDY="Create the missing release only — \`gh release create ${TAG} --generate-notes --title ${TAG}\`. **Do not re-run the workflow**: it would compute the next version and leave \`${TAG}\` released-but-unpublished forever."
+              else
+                STATE="\`${TAG}\` is pushed, but **whether it has a GitHub Release could not be determined** (HTTP ${REL_HTTP})"
+                REMEDY="Check the release by hand — \`gh release view ${TAG}\` — and create it only if it is genuinely missing. **Do not re-run the workflow** either way: the tag is already published. An HTTP ${REL_HTTP} here usually means a GitHub outage rather than anything wrong with this release."
               fi
             else
               STATE="version \`${NEW_VERSION}\` was computed but no tag reached origin"
