@@ -5721,6 +5721,17 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   // herdr-setup.sh (the same script /ralph:help herdr drives); doctor only
   // relays its one-line verdict. Any failure to run it degrades to
   // "not evaluated" — an advisory hint is never worth an exit-code change.
+  //
+  // GH-1911: the level stays info — deliberately, and for the same reason
+  // `installed-plugin` is only ever ok|info: severity here would buy nothing an
+  // operator can act on and would cost the property that keeps CI green on a
+  // machine with no cockpit. What was actually broken was the RELAY. The line
+  // used to carry a count and a check name, so a genuine deploy gap ("the
+  // cockpit is running plugin code older than this ralph expects") rendered
+  // identically to setup drift and was read as cosmetic for a working day. The
+  // fix is in `--oneline`, which now carries each gap's detail — both versions
+  // and the remedy command — and this relay passes it through whole. A line
+  // that cannot carry its finding should not claim to have reported it.
   try {
     const setupSh =
       process.env.RALPH_HERDR_SETUP_SH ??

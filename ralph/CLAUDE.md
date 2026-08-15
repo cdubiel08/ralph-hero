@@ -17,7 +17,9 @@ ralph/
 │                       #   claims with TTL, scope gate, doctor, and the lane
 │                       #   selectors (next / deliver-queue / tend-queue)
 ├── scripts/herdr-setup.sh  # herdr-cockpit wiring truth: /ralph:help herdr drives
-│                       #   it; doctor relays its `check --oneline` verdict
+│                       #   it; doctor relays its `check --oneline` verdict —
+│                       #   one line, carrying each gap's DETAIL (versions +
+│                       #   remedy), never just a count and a check name
 ├── scripts/tick.sh     # ONE scheduler-transport example of driving the work
 │                       #   lane (+ install-loop.sh) — a recipe, not THE loop
 ├── examples/README.md  # transport recipes: /loop, routines, scheduler — copy and own

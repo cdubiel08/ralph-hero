@@ -13,7 +13,9 @@
 #                                        print exact manual commands for the rest
 #
 # Exit codes (check): 0 fully wired · 1 gaps found · 2 herdr not installed.
-# --oneline prints exactly one machine-readable line ("herdr: …") for doctor.
+# --oneline prints exactly one machine-readable line ("herdr: …") for doctor,
+# carrying each gap's full detail — versions and remedy included, not just its
+# name (GH-1911: a count plus a check identifier is not triageable).
 #
 # Knobs (same names the cockpit scripts use):
 #   HERDR_BIN_PATH      herdr binary (default: `herdr` on PATH)
@@ -166,9 +168,9 @@ else
     else
       reinstall="herdr plugin install $PLUGIN_SPEC -y (herdr records incomplete source coordinates for this install — verify the spec before running)"
     fi
-    gap "ralph-herdr-version" "$plugin_ver < $stamp_ver expected by this ralph — herdr has no auto-update; reinstall: $reinstall"
+    gap "ralph-herdr-version" "$plugin_ver < $stamp_ver expected by this ralph, so the cockpit is EXECUTING PLUGIN CODE OLDER than this ralph relies on — fixes released since $stamp_ver are not in effect in the copy it runs; herdr has no auto-update, reinstall: $reinstall"
   else
-    note "ralph-herdr-version" "$plugin_ver < $stamp_ver expected by this ralph — local source at ${PLUGIN_ROOT:-unknown}; update that checkout"
+    note "ralph-herdr-version" "$plugin_ver < $stamp_ver expected by this ralph, so the cockpit is executing plugin code older than this ralph relies on — local source at ${PLUGIN_ROOT:-unknown}; update that checkout"
   fi
 fi
 
@@ -301,9 +303,27 @@ gapnames() {
   echo "${names[*]}"
 }
 
+# GH-1911: --oneline carries each gap's DETAIL, not just its name. A count plus
+# a check identifier is not triageable — the reader learns which check fired and
+# how many, but not what it found, so every fact needed to act on it (the two
+# versions, the remedy command) required re-running the sub-check by hand. That
+# is how a stale-plugin deploy gap was read as cosmetic setup drift for a day.
+# Still exactly one line: gap details are single-line by construction, and any
+# stray newline is folded so the machine-readable contract holds.
+gapdetails() {
+  local out="" g
+  if [ "${#GAPS[@]}" -gt 0 ]; then
+    for g in "${GAPS[@]}"; do
+      [ -n "$out" ] && out+="; "
+      out+="${g%%|*}: $(tr '\n' ' ' <<<"${g#*|}" | sed 's/[[:space:]]*$//')"
+    done
+  fi
+  echo "$out"
+}
+
 if [ -n "$ONELINE" ]; then
   if [ "${#GAPS[@]}" -eq 0 ]; then echo "herdr: wired"
-  else echo "herdr: ${#GAPS[@]} gap(s) — $(gapnames)"; fi
+  else echo "herdr: ${#GAPS[@]} gap(s) — $(gapdetails)"; fi
 fi
 
 if [ "$MODE" = "check" ]; then
