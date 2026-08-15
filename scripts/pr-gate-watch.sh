@@ -32,6 +32,13 @@
 #   GATE-WAIT merge         GitHub has not computed mergeability yet  exit 10
 #   GATE-READY              green + reviewed + attested → merge       exit 0
 #
+# GATE-YOURS review carries one further annotation (GH-1849): when the review
+# loop has stopped converging — blocking findings not decreasing across the
+# last two passes, or the round cap spent — it appends STOP ITERATING and names
+# Human Needed as the move. It changes no verdict; the loop's own termination
+# condition is the driver's call, and there is no code path at "decide to
+# re-request" for a gate to sit in front of.
+#
 # GATE-YOURS review outranks GATE-YOURS attestation deliberately:
 # attest-pr.sh refuses when no review verdict exists, so reporting
 # attestation first would send the caller into a guaranteed failure.
@@ -177,6 +184,7 @@ POLICY_EXTERNAL=$(jq -r '.externalRequired | tostring' <<<"$POLICY")
 APPLY_KEYWORDS_SH="${RALPH_APPLY_KEYWORDS_SH:-$PROJECT_ROOT/scripts/apply-keywords.sh}"
 CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review-evidence.sh}"
 ADVISORY_SH="${RALPH_ADVISORY_FINDINGS_SH:-$PROJECT_ROOT/scripts/advisory-findings.sh}"
+CONVERGENCE_SH="${RALPH_CONVERGENCE_SH:-$PROJECT_ROOT/scripts/review-convergence.sh}"
 # The "not evaluated" evidence value: review mode, an exempt author, or a PR
 # that is already closed. ok=false is inert wherever the ladder waives review.
 CODEX_NONE='{"ok":false,"turn":"reviewer","detail":"review evidence not evaluated","reviewer":"","review_url":""}'
@@ -783,6 +791,40 @@ gather() {
           else " | \(.count) unresolved advisory finding(s): \(.summary) — read them before merging: \(.first_url)"
           end' <<<"$adv")
         verdict="${verdict}${adv_line}"
+      fi
+      ;;
+  esac
+
+  # Convergence stopping rule (GH-1849), appended to the ONE verdict whose next
+  # move is "go fix these and request another review". That is the moment the
+  # decision is actually taken, and it is the moment #1764 took 33 times.
+  #
+  # Deliberately not attached to GATE-READY or GATE-YOURS attestation: those
+  # verdicts point at merging, where the loop is already over and a round count
+  # is noise. Deliberately not a verdict of its own, either — a GATE-STALLED
+  # would have to outrank GATE-YOURS review to be seen, and it would then be
+  # telling a driver "do not act" from a classifier whose entire contract is
+  # naming whose turn it is. The judgment stays with the driver; only the
+  # invisibility is fixed. Same split GH-1945 settled for advisory findings.
+  case "$verdict" in
+    "GATE-YOURS review"*)
+      if [ -x "$CONVERGENCE_SH" ]; then
+        local conv conv_line
+        conv=$("$CONVERGENCE_SH" "$PR" 2>/dev/null) || conv=''
+        printf '%s' "$conv" | jq -e 'type == "object"' >/dev/null 2>&1 \
+          || conv='{"ok":false,"verdict":"not-evaluated","passes":0,"series":[],"pending":false,"cap":0,"detail":"review-convergence.sh returned nothing usable"}'
+        # Only the two stopping verdicts print. A healthy loop needs no line —
+        # this is the surface a driver reads on every single round, and a
+        # per-round "still converging" note is the kind of chrome that gets
+        # skimmed past, taking the two lines that matter with it.
+        conv_line=$(jq -r '
+          if .ok != true then ""
+          elif .verdict == "stalled" then
+            " | STOP ITERATING — blocking findings not decreasing across passes (\(.series | map(tostring) | join(", "))); escalate to Human Needed rather than requesting another review"
+          elif .verdict == "cap-reached" then
+            " | STOP ITERATING — round cap reached (\(.passes) of \(.cap)); escalate to Human Needed rather than requesting another review"
+          else "" end' <<<"$conv")
+        verdict="${verdict}${conv_line}"
       fi
       ;;
   esac
