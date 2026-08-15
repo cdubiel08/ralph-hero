@@ -40,6 +40,13 @@ case "${1:-} ${2:-}" in
     if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$GH_STUB_DIR/pr_view.json"; else cat "$GH_STUB_DIR/pr_view.json"; fi
     ;;
   "pr comment")
+    # GH-1817: the observed failure — gh prints the rate-limit refusal and
+    # EXITS 0, so the body is deliberately NOT recorded here. A guard that
+    # only checked the exit code would let the caller announce a post that
+    # never happened.
+    if [[ -f "$GH_STUB_DIR/rate_limited" ]]; then
+      echo "GraphQL: API rate limit already exceeded"; exit 0
+    fi
     printf '%s' "$body_val" >"$GH_STUB_DIR/posted_body.txt"
     ;;
   "api --method")
@@ -313,6 +320,22 @@ payload=$(extract_payload "$CASE_DIR/posted_body.txt")
 digest=$(jq -r '.tests[0].summary' <<<"$payload")
 [[ "${#digest}" -eq 120 && "$digest" != *$'\033'* ]] \
   && pass "long coloured line truncates to 120 clean chars" || fail "truncation wrong: len=${#digest}"
+
+# ---------------------------------------------------------------------------
+# 14. GH-1817: a rate-limited post exits 0 out of gh. The script must NOT
+#     announce ATTESTATION POSTED over a comment that does not exist — the
+#     driver would then wait on a gate that can never go green.
+# ---------------------------------------------------------------------------
+echo
+echo "=== rate-limited posts are not silent successes (GH-1817) ==="
+
+new_case
+: >"$CASE_DIR/rate_limited"
+run_attest 123 --test "npm test::0::ok" \
+  --review-verdict APPROVED --reviewer "r" --generated-by "t"
+[[ "$LAST_RC" -eq 75 ]] && pass "rate-limited post exits 75 (EX_TEMPFAIL)" || fail "rate-limited post rc=$LAST_RC out=$LAST_OUT"
+grep -qF "ATTESTATION NOT POSTED" <<<"$LAST_OUT" && pass "rate-limited post is named, not announced as success" || fail "no refusal token: $LAST_OUT"
+grep -qF "ATTESTATION POSTED —" <<<"$LAST_OUT" && fail "announced a post that never landed" || pass "does not claim a post that never landed"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"

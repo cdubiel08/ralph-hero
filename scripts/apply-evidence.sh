@@ -38,6 +38,13 @@
 
 set -euo pipefail
 
+# GH-1817: this comment IS the close gate's evidence. A rate-limited `gh`
+# exiting 0 would print APPLY EVIDENCE POSTED over a comment that never landed,
+# and `board move N done` would then refuse for a reason the operator has just
+# been told is satisfied.
+# shellcheck source=lib/gh-budget.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/gh-budget.sh"
+
 MARKER='<!-- ralph-apply-evidence:v1 -->'
 
 # Prints the usage block only — lines 4..12, i.e. up to and including the
@@ -271,6 +278,12 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
-gh issue comment "$ISSUE" --body "$body" >/dev/null
+rc=0
+gb_gh issue comment "$ISSUE" --body "$body" >/dev/null || rc=$?
+if [[ $rc -eq 4 ]]; then
+  echo "APPLY EVIDENCE NOT POSTED — rate limited; re-run this command after the reset" >&2
+  exit 75
+fi
+[[ $rc -ne 0 ]] && exit "$rc"
 echo "APPLY EVIDENCE POSTED — #$ISSUE (kind=$KIND, actor=$ACTOR)"
 echo "Close it with: board move $ISSUE done"
