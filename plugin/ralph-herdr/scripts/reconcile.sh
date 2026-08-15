@@ -145,18 +145,6 @@ if [ -n "$ADOPT_LEDGER" ]; then
   fi
 fi
 
-# abs_ledger PATH — PATH with its directory resolved. Both sides of the
-# --adopt comparison go through it: the walk emits
-# "$(ledger_root)/owner/repo/ledger.jsonl" verbatim — doubled slashes,
-# unresolved symlinks and all — while an operator types whatever their shell
-# expanded, so a string compare would silently match nothing.
-abs_ledger() {
-  printf '%s/%s\n' "$(cd "$(dirname "$1")" && pwd -P)" "$(basename "$1")"
-}
-if [ -n "$ADOPT_LEDGER" ]; then
-  ADOPT_LEDGER=$(abs_ledger "$ADOPT_LEDGER")
-fi
-
 # Dry run is enforced by replacing the mutating primitives, not by an `if` at
 # each call site: a guard the phases have to remember is a guard one of them
 # will forget. These five are the whole write surface of this pass.
@@ -234,6 +222,33 @@ done
 # below goes through this guard rather than "${ledgers[@]}" directly.
 walk_ledgers() { printf '%s\n' ${ledgers[@]+"${ledgers[@]}"}; }
 
+# --adopt names a ledger, so it must name one THIS walk found. Matched with
+# `-ef` (same file) rather than by string: the walk emits
+# "$(ledger_root)/owner/repo/ledger.jsonl" verbatim — doubled slashes,
+# unresolved symlinks and all — while an operator types whatever their shell
+# expanded, and a symlink anywhere in the path (final component included) is
+# the same ledger by any honest reading.
+#
+# A path that matches nothing is REFUSED, not ignored. The operator asserted
+# ownership of something; adopting nothing and sweeping on regardless would
+# turn a typo, a stale root, or an unresolvable symlink into a silent no-op
+# that reads exactly like a successful adoption.
+if [ -n "$ADOPT_LEDGER" ]; then
+  adopt_match=""
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ "$f" -ef "$ADOPT_LEDGER" ]; then
+      adopt_match="$f"
+      break
+    fi
+  done < <(walk_ledgers)
+  if [ -z "$adopt_match" ]; then
+    echo "reconcile.sh: --adopt '$ADOPT_LEDGER' is not one of the ledgers under $(ledger_root) — nothing to adopt" >&2
+    exit 2
+  fi
+  ADOPT_LEDGER="$adopt_match"
+fi
+
 # ── Ownership: which of these ledgers is THIS server's to sweep (GH-1863) ────
 # herdr runs the [[startup]] hook for EVERY server that starts, including a
 # scratch server from an isolated named session (`herdr --session x server`).
@@ -290,7 +305,9 @@ while IFS= read -r f; do
   export RALPH_HERDR_LEDGER="$f"
   key=$(scope_key "$f")
   adopt_this=0
-  if [ -n "$ADOPT_LEDGER" ] && [ "$(abs_ledger "$f")" = "$ADOPT_LEDGER" ]; then
+  # Both sides came out of the SAME walk (the flag was resolved to its matching
+  # entry above), so this is a plain string compare on identical values.
+  if [ -n "$ADOPT_LEDGER" ] && [ "$f" = "$ADOPT_LEDGER" ]; then
     adopt_this=1
   fi
   n_ours=0

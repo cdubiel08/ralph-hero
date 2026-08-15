@@ -701,6 +701,35 @@ RC=0
 OUT=$(RALPH_HERDR_LEDGER_ROOT="$AROOT" bash "$SCRIPTS/reconcile.sh" --adopt "$AROOT/nope.jsonl" 2>&1) || RC=$?
 is "--adopt of a non-ledger: refused" "2" "$RC"
 
+# a path that resolves to no walked ledger is REFUSED, not ignored: adopting
+# nothing while sweeping on regardless reads exactly like a successful
+# adoption, so a typo or a stale root would silently do nothing.
+adopt_ledgers
+OTHER="$TMP/elsewhere"
+mkdir -p "$OTHER/acme/one"
+: >"$OTHER/acme/one/ledger.jsonl"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$AROOT" bash "$SCRIPTS/reconcile.sh" --adopt "$OTHER/acme/one/ledger.jsonl" 2>&1) || RC=$?
+is "--adopt outside the walked root: refused" "2" "$RC"
+case "$OUT" in
+  *"nothing to adopt"*) ok "--adopt outside the root: says the assertion matched nothing" ;;
+  *) not_ok "--adopt outside the root: says the assertion matched nothing — got '$OUT'" ;;
+esac
+
+# and a symlink IS the same ledger by any honest reading — matched with -ef,
+# so neither the directory nor the final component has to be spelled
+# canonically (Greptile, PR #1947).
+adopt_ledgers
+herd_fixture '[]'
+ln -sf "$A1" "$TMP/link-to-one.jsonl"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$AROOT" bash "$SCRIPTS/reconcile.sh" --adopt "$TMP/link-to-one.jsonl" 2>&1) || RC=$?
+is "--adopt via a symlinked basename: exits 0" "0" "$RC"
+is "--adopt via a symlinked basename: the named ledger is swept" "1" \
+  "$(lcount "$A1" '.ev=="exit" and .agent_ref=="w1-one#aaaa" and .reason=="lost"')"
+is "--adopt via a symlinked basename: the other ledger is still untouched" "0" \
+  "$(lcount "$A2" '.ev=="exit"')"
+
 # (d) --dry-run computes the same verdict and writes nothing.
 quiesced_ledger "$(ralph_session_key)"
 before=$(wc -l <"$QLEDGER" | tr -d ' ')
