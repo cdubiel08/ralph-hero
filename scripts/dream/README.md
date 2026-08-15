@@ -197,6 +197,16 @@ uv run meta_reflect.py                         # last 7 days of reflections
 uv run meta_reflect.py --window-days 14 --min-reflections 8
 ```
 
+**Scheduling is the gate's, not ours** (GH-1519). Like the nightly loop, the
+weekly cadence is owned by the sibling **model-gate** repo so ralph-hero stays
+gate-agnostic: `model-gate/bin/dream-weekly` brings the model up and invokes
+this script with the gate-resolved `served_id` as `--model`, and
+`launchd/com.dubiel.dream-weekly.plist.template` fires it Sundays 04:00 — after
+the nightly `dream-now`, so the week's last reflections are already in the DB.
+Passing `--model` explicitly matters: `DEFAULT_LLM_MODEL` here is a hardcoded
+name that a differently-loaded gate would 404 on, and fail-open means such a run
+stages nothing while still exiting 0.
+
 It **never writes the wiki tier**. Candidates are staged for the human-gated
 `/ralph-knowledge:curate` skill (a sibling of curate's `_rejected.jsonl`),
 which reads them as pre-distilled suggestions and still runs each through its
@@ -207,7 +217,11 @@ so a disposition the human already made is not put back in front of them. The
 same predicate prunes consumed entries out of `_candidates.jsonl` at the start
 of every run, keeping it a queue of pending candidates rather than a log. The
 match is lexical (whitespace + case), so a paraphrase of a rejected axiom can
-still be re-staged; curate's human gate remains the backstop. Fail-open: if the local model is
+still be re-staged; curate's human gate remains the backstop. Under the weekly
+schedule that limit compounds — two back-to-back runs over the same 44
+reflections restaged one paraphrase of an already-pending candidate (measured
+2026-08-15) — so an unreviewed queue accrues near-duplicates at up to
+`RALPH_META_MAX_CANDIDATES` per week until someone runs curate. Fail-open: if the local model is
 offline it stages nothing. Knobs: `RALPH_META_WINDOW_DAYS` (7),
 `RALPH_META_MIN_REFLECTIONS` (5), `RALPH_META_MAX_CANDIDATES` (3). This is the
 hierarchy level that finally seeds the wiki tier and resolves the
