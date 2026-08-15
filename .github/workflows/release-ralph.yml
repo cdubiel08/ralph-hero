@@ -201,16 +201,41 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           MERGE_SHA: ${{ github.sha }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
         run: |
           set -euo pipefail
           TITLE="Release Ralph failed — ralph/** merged but unreleased"
+          # How far the run got decides the remedy, and getting this wrong is
+          # the same defect class as GH-1952 itself: if the tag is already
+          # pushed and only `gh release create` failed, a workflow re-run
+          # computes the NEXT version and strands the pushed tag with no
+          # release forever. Measure the remote rather than assuming.
+          STATE="the run failed before computing a version; nothing was pushed"
+          REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
+          if [ -n "${NEW_VERSION:-}" ]; then
+            TAG="ralph-v${NEW_VERSION}"
+            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              if gh release view "$TAG" >/dev/null 2>&1; then
+                STATE="\`${TAG}\` and its release both exist — the run failed after publishing"
+                REMEDY="Check what ran after the release step. **Do not re-run**: the version is already published."
+              else
+                STATE="\`${TAG}\` is pushed but has **no GitHub Release**"
+                REMEDY="Create the missing release only — \`gh release create ${TAG} --generate-notes --title ${TAG}\`. **Do not re-run the workflow**: it would compute the next version and leave \`${TAG}\` released-but-unpublished forever."
+              fi
+            else
+              STATE="version \`${NEW_VERSION}\` was computed but no tag reached origin"
+              REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
+            fi
+          fi
           BODY=$(printf '%s\n' \
-            "\`Release Ralph\` failed; the merge landed on main but no tag or release was produced." \
+            "\`Release Ralph\` failed. The merge landed on main; ${STATE}." \
             "" \
             "- Failing run: ${RUN_URL}" \
             "- Triggering commit: \`${MERGE_SHA}\`" \
             "" \
-            "Until this is resolved the plugin agents install is behind main. Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed.")
+            "Until this is resolved the plugin agents install is behind main." \
+            "" \
+            "${REMEDY}")
           EXISTING=$(gh issue list --state open --search "\"${TITLE}\" in:title" \
             --json number,title --jq "[.[] | select(.title == \"${TITLE}\")] | .[0].number // empty")
           if [ -n "$EXISTING" ]; then
