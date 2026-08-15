@@ -61,6 +61,31 @@ rate-limiting from the reviewer's check *description*, never its state. Thread
 replies are evidence-only — commit link, line link, test output link; anything
 argumentative is a rework signal, not a reply.
 
+**Stop when the findings stop shrinking (GH-1849).** One review per head bounds
+each round; nothing bounded the number of rounds, and PR #1764 ran 33 of them
+(#1755 ran 17) with findings growing 5 → 19 → 22 as each fix pass widened the
+blast radius. Before posting another nudge, run
+`bash scripts/review-convergence.sh PR` — `pr-gate-watch.sh` already appends its
+two stopping verdicts to `GATE-YOURS review`, so in the normal flow you will
+have read it without asking:
+
+- **`stalled`** — blocking findings did not strictly decrease across the last
+  two completed passes.
+- **`cap-reached`** — the round budget is spent (`--cap`, else
+  `$RALPH_REVIEW_ROUND_CAP`, else 5; **set 2 in an unattended lane**, where the
+  budget being burned is a session nobody is watching).
+
+Either one means **stop iterating and escalate** — `board move NNN human-needed`
+with the series quoted, composed per
+[../work/references/escalation.md](../work/references/escalation.md) — rather
+than requesting another review. Hitting the cap is an escalation, **not a
+failure**: the work may be perfectly good, it is the loop that is out of budget,
+and a human choosing to split the diff or accept the findings is the cheap move
+the 33rd round is not. `converged` (no blocking findings at the latest pass) is
+the terminal *success* and outranks the cap — a clean review is never blocked
+for having been pushed often. The rule measures; it gates nothing, and the
+judgment stays yours.
+
 ## Close-out, demotion, safety rails
 
 - **`no-open-pr` rows**: verify at least one linked PR actually MERGED, then `board move NNN done` (a closing-reference merged PR satisfies the Done-evidence guard; a convention-linked one needs `--why` naming the merged PR). A linked PR closed *unmerged* → Human Needed with the finding, the escalation composed per [../work/references/escalation.md](../work/references/escalation.md). This lane is the only thing that un-strands these. **Apply units are different by design**: on an apply-labeled item the close gate refuses Done without `ralph-apply-evidence:v1` — that refusal means the deploy, not the merge, is the outcome; leave it open (or escalate), never route around the gate.

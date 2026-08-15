@@ -2001,5 +2001,87 @@ fi
 POLICY="$POLICY_REVIEW"
 
 echo
+
+# --- convergence stopping rule (GH-1849) ------------------------------------
+#
+# The line attaches to GATE-YOURS review and nowhere else: that is the verdict
+# whose next move is "fix these and request another review", which is the move
+# #1764 made 33 times. Only the two STOPPING verdicts print — a per-round
+# "still converging" note on the surface a driver reads every round is chrome,
+# and chrome is what gets skimmed past.
+conv_stub() { # conv_stub <verdict> [passes] [cap] -> path to a stub emitting it
+  local v="${1}" p="${2:-3}" c="${3:-5}"
+  printf '#!/usr/bin/env bash\nprintf %%s %s\n' \
+    "'{\"ok\":true,\"verdict\":\"$v\",\"passes\":$p,\"series\":[2,3],\"pending\":false,\"cap\":$c,\"detail\":\"d\"}'" \
+    >"$TMP_ROOT/bin/conv-$v"
+  chmod +x "$TMP_ROOT/bin/conv-$v"
+  echo "$TMP_ROOT/bin/conv-$v"
+}
+conv_run() { # conv_run <dir> <script-path>
+  PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$1" \
+    RALPH_MERGE_POLICY_FILE="$POLICY_FINDINGS" \
+    RALPH_CONVERGENCE_SH="$2" bash "$SCRIPT" 1740 2>&1 || true
+}
+
+D="$TMP_ROOT/convergence"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$CODEX_REVIEW_AT_HEAD" "$(codex_request "$HEAD_SHA")"
+p0_threads false false >"$D/review_threads.json"
+
+LAST_OUT=$(conv_run "$D" "$(conv_stub stalled)")
+if [[ "$LAST_OUT" == "GATE-YOURS review"* ]] && [[ "$LAST_OUT" == *"STOP ITERATING"* ]] \
+   && [[ "$LAST_OUT" == *"not decreasing"* ]] && [[ "$LAST_OUT" == *"Human Needed"* ]]; then
+  pass "a stalled loop says stop, and names the escalation"
+else
+  fail "stalled annotation (out=${LAST_OUT:0:260})"
+fi
+
+LAST_OUT=$(conv_run "$D" "$(conv_stub cap-reached 9 5)")
+if [[ "$LAST_OUT" == *"STOP ITERATING"* ]] && [[ "$LAST_OUT" == *"round cap reached (9 of 5)"* ]]; then
+  pass "the round cap is reported with the budget it spent"
+else
+  fail "cap annotation (out=${LAST_OUT:0:260})"
+fi
+
+# A healthy loop is silent. So is a converged one, and so is the case where the
+# rule could not be evaluated — an unreadable series must not print STOP.
+for v in converging converged insufficient-data no-passes; do
+  LAST_OUT=$(conv_run "$D" "$(conv_stub "$v")")
+  if [[ "$LAST_OUT" == "GATE-YOURS review"* ]] && [[ "$LAST_OUT" != *"STOP ITERATING"* ]]; then
+    pass "a $v loop is not interrupted"
+  else
+    fail "$v should be silent (out=${LAST_OUT:0:260})"
+  fi
+done
+
+printf '#!/usr/bin/env bash\nexit 3\n' >"$TMP_ROOT/bin/broken-conv"
+chmod +x "$TMP_ROOT/bin/broken-conv"
+LAST_OUT=$(conv_run "$D" "$TMP_ROOT/bin/broken-conv")
+if [[ "$LAST_OUT" == "GATE-YOURS review"* ]] && [[ "$LAST_OUT" != *"STOP ITERATING"* ]]; then
+  pass "an unevaluable rule never fabricates a stop"
+else
+  fail "broken convergence script (out=${LAST_OUT:0:260})"
+fi
+
+LAST_OUT=$(conv_run "$D" "$TMP_ROOT/no-such-convergence")
+if [[ "$LAST_OUT" == "GATE-YOURS review"* ]] && [[ "$LAST_OUT" != *"STOP ITERATING"* ]]; then
+  pass "a repo without the rule is unchanged"
+else
+  fail "absent convergence script (out=${LAST_OUT:0:260})"
+fi
+
+# The merge-bound verdicts are NOT annotated: the loop is over there, and a
+# round count is noise beside a decision to merge.
+D="$TMP_ROOT/convergence-not-on-ready"
+setup_ready "$D"
+printf '%s' "$(codex_request "$HEAD_SHA")" >"$D/issue_comments.json"
+printf '%s' "$CODEX_REVIEW_AT_HEAD" >"$D/pr_reviews.json"
+LAST_OUT=$(conv_run "$D" "$(conv_stub stalled)")
+if [[ "$LAST_OUT" == "GATE-READY"* ]] && [[ "$LAST_OUT" != *"STOP ITERATING"* ]]; then
+  pass "GATE-READY carries no round count"
+else
+  fail "ready should not be annotated (out=${LAST_OUT:0:260})"
+fi
+
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
