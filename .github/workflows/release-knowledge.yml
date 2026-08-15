@@ -215,7 +215,24 @@ jobs:
           # `set -euo pipefail` the empty grep would otherwise abort the step.
           HIGHEST_TAG=$(git -C "$GITHUB_WORKSPACE" tag --list 'knowledge-v*' | sed 's/^knowledge-v//' \
             | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
-          NPM_LATEST=$(npm view ralph-hero-knowledge-index version 2>/dev/null || true)
+          # One conclusive registry read, by HTTP status rather than by an
+          # exit code: `npm view` exits nonzero for "no such version" and for
+          # a network / auth / rate-limit failure alike, so reading it would
+          # let a registry hiccup be mistaken for a free version. 200 and 404
+          # are answers; anything else means we could not ask, and that fails
+          # the step rather than guessing. The packument carries `dist-tags`
+          # AND every published version, so this replaces the per-candidate
+          # probes in the collision walk below too.
+          PACKUMENT=$(mktemp)
+          NPM_HTTP=$(curl -sS -o "$PACKUMENT" -w '%{http_code}' \
+            https://registry.npmjs.org/ralph-hero-knowledge-index || echo 000)
+          if [ "$NPM_HTTP" = "404" ]; then
+            echo '{"dist-tags":{},"versions":{}}' > "$PACKUMENT"
+          elif [ "$NPM_HTTP" != "200" ]; then
+            echo "::error::Could not read the npm registry (HTTP ${NPM_HTTP}); refusing to compute a version without it"
+            exit 1
+          fi
+          NPM_LATEST=$(jq -r '.["dist-tags"].latest // empty' "$PACKUMENT")
           echo "$NPM_LATEST" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || NPM_LATEST=""
           CURRENT=$(printf '%s\n%s\n%s\n' "$MANIFEST" "${HIGHEST_TAG:-0.0.0}" "${NPM_LATEST:-0.0.0}" | sort -V | tail -1)
           echo "Manifest: $MANIFEST  Highest tag: ${HIGHEST_TAG:-none}  npm latest: ${NPM_LATEST:-none}  Floor: $CURRENT"
@@ -236,7 +253,7 @@ jobs:
                  "refs/tags/knowledge-v${MAJOR}.${MINOR}.${PATCH}" >/dev/null; then
               COLLIDES=true
             fi
-            if npm view "ralph-hero-knowledge-index@${MAJOR}.${MINOR}.${PATCH}" version --json >/dev/null 2>&1; then
+            if jq -e --arg v "${MAJOR}.${MINOR}.${PATCH}" '.versions | has($v)' "$PACKUMENT" >/dev/null; then
               COLLIDES=true
             fi
             if [ "$COLLIDES" = false ]; then break; fi
@@ -248,7 +265,7 @@ jobs:
           # and the candidate it exits holding was never checked. Fail here
           # rather than carrying an occupied version into publish or tagging.
           if git -C "$GITHUB_WORKSPACE" rev-parse -q --verify "refs/tags/knowledge-v${NEW_VERSION}" >/dev/null \
-             || npm view "ralph-hero-knowledge-index@${NEW_VERSION}" version --json >/dev/null 2>&1; then
+             || jq -e --arg v "$NEW_VERSION" '.versions | has($v)' "$PACKUMENT" >/dev/null; then
             echo "::error::Could not find a free version after 20 attempts (last tried $NEW_VERSION)"
             exit 1
           fi
@@ -432,8 +449,14 @@ jobs:
               STATE="this was a \`republish\` run for \`${RV}\`, which **is present on npm** — the failure came after the publish itself (registry verification, most likely)"
               REMEDY="Confirm with \`npm view ralph-hero-knowledge-index@${RV} version\`. **Do not re-run with \`republish\`**: npm versions are immutable and a second publish of \`${RV}\` will be rejected. Republish exists to recover a missing publish, and \`${RV}\` is not missing."
             elif [ "$RV_HTTP" = "404" ]; then
-              STATE="this was a \`republish\` run for \`${RV}\`, which is **still absent from npm**; nothing was pushed (republish never commits or tags)"
-              REMEDY="Re-run with \`republish=true\` once the cause is fixed."
+              STATE="this was a \`republish\` run for \`${RV}\`, which the registry **reports as absent**; nothing was pushed (republish never commits or tags)"
+              # A 404 here is the registry's answer at one instant, and npm's
+              # publish endpoint is eventually consistent with the CDN that
+              # serves it — the same lag the verify step polls for. Treating
+              # this one read as proof of absence is what would advise a
+              # re-publish of an immutable version, so the remedy asks for a
+              # second look rather than asserting.
+              REMEDY="Re-check before acting — \`npm view ralph-hero-knowledge-index@${RV} version\` — since npm's publish endpoint lags the CDN and a publish that succeeded can still read as absent for a while. Re-run with \`republish=true\` only once it is still absent on a second look; a re-publish of a version that did land is rejected as immutable."
             else
               STATE="this was a \`republish\` run for \`${RV}\`, but **whether it reached npm could not be determined** (HTTP ${RV_HTTP})"
               REMEDY="Check by hand — \`npm view ralph-hero-knowledge-index@${RV} version\` — and re-run with \`republish=true\` only if it is genuinely absent."
