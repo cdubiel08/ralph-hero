@@ -224,7 +224,15 @@ jobs:
           # AND every published version, so this replaces the per-candidate
           # probes in the collision walk below too.
           PACKUMENT=$(mktemp)
+          # `no-cache` because the packument is CDN-served and can lag a
+          # publish that has already completed — the same eventual consistency
+          # the verify step polls for, and reading a stale copy here would pick
+          # an occupied version. The tag list is the primary guard against that
+          # (the concurrency group means a run ahead has finished, so its tag
+          # is already fetched); this header covers the residue, a publish that
+          # landed without its tag.
           NPM_HTTP=$(curl -sS -o "$PACKUMENT" -w '%{http_code}' \
+            -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' \
             https://registry.npmjs.org/ralph-hero-knowledge-index || echo 000)
           if [ "$NPM_HTTP" = "404" ]; then
             echo '{"dist-tags":{},"versions":{}}' > "$PACKUMENT"
