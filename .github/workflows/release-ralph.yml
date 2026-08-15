@@ -159,10 +159,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add ralph/.claude-plugin/plugin.json
           git commit -m "chore(ralph): release ralph-v${NEW_VERSION} [skip ci]"
-          # Rebase BEFORE tagging (GH-1952): an unrelated push to main between
-          # this job's fetch and its push would otherwise leave the tag on a
-          # commit that the rebase then rewrites away. The concurrency group
-          # prevents two release jobs interleaving, not unrelated pushes.
+          # Rebase BEFORE tagging (GH-1952). This is not hypothetical: on
+          # 2026-08-15 the winning run tagged 43aa4ce8, then rebased onto a
+          # main that had advanced — moving the commit and leaving the tag on
+          # the pre-rebase one. `ralph-v0.1.134` is still unreachable from main
+          # because of it. The concurrency group prevents two release jobs
+          # interleaving, not unrelated pushes.
           git pull --rebase origin main
           git tag "ralph-v${NEW_VERSION}"
           # GH-1589: push via the release deploy key — the sole bypass actor
