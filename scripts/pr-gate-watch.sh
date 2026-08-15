@@ -176,6 +176,7 @@ POLICY_EXTERNAL=$(jq -r '.externalRequired | tostring' <<<"$POLICY")
 # Test-only override, same pattern merge-pr.sh gate 6 uses.
 APPLY_KEYWORDS_SH="${RALPH_APPLY_KEYWORDS_SH:-$PROJECT_ROOT/scripts/apply-keywords.sh}"
 CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review-evidence.sh}"
+ADVISORY_SH="${RALPH_ADVISORY_FINDINGS_SH:-$PROJECT_ROOT/scripts/advisory-findings.sh}"
 # The "not evaluated" evidence value: review mode, an exempt author, or a PR
 # that is already closed. ok=false is inert wherever the ladder waives review.
 CODEX_NONE='{"ok":false,"turn":"reviewer","detail":"review evidence not evaluated","reviewer":"","review_url":""}'
@@ -743,6 +744,38 @@ gather() {
           printf 'GATE-FAIL apply: %s — fix the closing keywords before merging' "$apply_first"
           return 0
         fi
+      fi
+      ;;
+  esac
+
+  # Sub-P0 findings, appended to the verdict (GH-1945). Not a gate: the count
+  # changes no verdict and blocks no merge. It exists because the two states
+  # this line now distinguishes — findings outstanding vs none — used to render
+  # IDENTICALLY here, and this is the one surface a driver reads before
+  # merging. Three PRs merged over valid open P1s that way (#1939/#1941/#1942).
+  #
+  # Only on the two verdicts whose next move is toward merge. On the rest the
+  # caller is not deciding anything yet, so the extra query buys nothing, and a
+  # GATE-FAIL already names a different job.
+  #
+  # A zero is PRINTED rather than left as silence, because silence is what this
+  # is fixing: "no findings" and "the count never ran" must not look alike. By
+  # the same rule an unreadable count says so instead of reading as clean, and
+  # an absent script (a host repo that does not ship it) says nothing at all —
+  # there was never a count to be silent about.
+  case "$verdict" in
+    GATE-READY*|"GATE-YOURS attestation"*)
+      if [ -x "$ADVISORY_SH" ]; then
+        local adv adv_line
+        adv=$("$ADVISORY_SH" "$PR" 2>/dev/null) || adv=''
+        printf '%s' "$adv" | jq -e 'type == "object"' >/dev/null 2>&1 \
+          || adv='{"ok":false,"count":0,"summary":"","first_url":"","detail":"advisory-findings.sh returned nothing usable"}'
+        adv_line=$(jq -r '
+          if .ok != true then " | advisory findings NOT COUNTED (\(.detail)) — not the same as none"
+          elif .count == 0 then " | no unresolved advisory findings"
+          else " | \(.count) unresolved advisory finding(s): \(.summary) — read them before merging: \(.first_url)"
+          end' <<<"$adv")
+        verdict="${verdict}${adv_line}"
       fi
       ;;
   esac

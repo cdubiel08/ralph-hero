@@ -10,7 +10,7 @@ This is ralph v2 (GH-1662). Design record (normative): [`../thoughts/shared/idea
 
 | Surface | Purpose |
 |---|---|
-| `/ralph:work` | The only execution verb: claim → work (no prescribed phase order) → PR → gates → close-out, under an 8-rule contract |
+| `/ralph:work` | The only execution verb: claim → work (no prescribed phase order) → PR → gates → close-out, under a 9-rule contract |
 | `/ralph:deliver` | Follow-through lane: shepherds In Review PRs to merged — concluded checks, review deltas, re-attestation (`--carry-review` only), rework demotion, close-outs. Mechanical remediation only, never `--force` |
 | `/ralph:tend` | Hygiene lane: Backlog shape + Done audit — dedup, dependency wiring, stale-body detection against the live tree, observation intake with provenance. Metadata-only; closures are proposals via Human Needed |
 | `/ralph:board` | Human surface: orientation ("what's going on"), intake ("make a ticket"), answering blocked items, doctor, readiness |

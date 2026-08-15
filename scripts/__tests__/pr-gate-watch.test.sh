@@ -1870,6 +1870,97 @@ else
 fi
 POLICY="$POLICY_REVIEW"
 
+echo "=== GH-1945: sub-P0 findings are visible at the decision point ==="
+# Three PRs merged over valid open P1s because a PR with findings and a PR with
+# none produced byte-identical verdict lines here. The count changes no verdict
+# — that is the whole design — so every case below asserts the PREFIX is
+# unchanged and only the annotation differs.
+POLICY="$POLICY_FINDINGS"
+D="$TMP_ROOT/advisory"
+setup_ready "$D"
+printf '%s' "$(codex_request "$HEAD_SHA")" >"$D/issue_comments.json"
+printf '%s' "$CODEX_REVIEW_AT_HEAD" >"$D/pr_reviews.json"
+
+# Greptile's rendering specifically: it is what every finding in GH-1945's
+# evidence table was filed as, and its status check reports `pass` regardless,
+# so this line is the only place it can appear.
+jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[
+  {isResolved:false, isOutdated:false, comments:{nodes:[{author:{login:"greptile-apps"},
+    body:"<a href=\"#\"><img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\"></a> **Finding**",
+    url:"https://example.test/d/7"}]}}
+]}}}}}' >"$D/review_threads.json"
+expect "findings do not change the verdict — still READY" "$D" "GATE-READY" 0
+run "$D"
+if [[ "$LAST_OUT" == *"1 unresolved advisory finding(s): 1xP1"* ]] \
+   && [[ "$LAST_OUT" == *"https://example.test/d/7"* ]]; then
+  pass "GATE-READY names the count, the tiers and where to read them"
+else
+  fail "advisory annotation (out=${LAST_OUT:0:220})"
+fi
+
+# The zero case is PRINTED, not left as silence: silence is indistinguishable
+# from a count that never ran, which is the defect being fixed.
+rm "$D/review_threads.json"
+run "$D"
+if [[ "$LAST_OUT" == "GATE-READY"* ]] && [[ "$LAST_OUT" == *"no unresolved advisory findings"* ]]; then
+  pass "zero findings is stated, not implied by silence"
+else
+  fail "zero annotation (out=${LAST_OUT:0:220})"
+fi
+
+# Same treatment on the other verdict whose next move is toward merge.
+D="$TMP_ROOT/advisory-attest"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$CODEX_REVIEW_AT_HEAD" "$(codex_request "$HEAD_SHA")"
+expect "GATE-YOURS attestation is annotated too" "$D" "GATE-YOURS attestation" 0
+run "$D"
+if [[ "$LAST_OUT" == *"advisory finding"* ]]; then
+  pass "the pre-attestation verdict carries the count as well"
+else
+  fail "attestation annotation (out=${LAST_OUT:0:220})"
+fi
+
+# A blocked verdict is not annotated: the caller is not deciding a merge yet,
+# and GATE-FAIL already names a different job.
+D="$TMP_ROOT/advisory-not-on-fail"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" '$g + [{name:"ci", bucket:"fail", description:""}]')" \
+  "$OPEN_PR" "$CODEX_REVIEW_AT_HEAD" "$(codex_request "$HEAD_SHA")"
+run "$D"
+if [[ "$LAST_OUT" == "GATE-FAIL ci"* ]] && [[ "$LAST_OUT" != *"advisory"* ]]; then
+  pass "a blocked verdict is left alone"
+else
+  fail "no annotation on GATE-FAIL (out=${LAST_OUT:0:220})"
+fi
+
+# An unreadable count says so. It must not read as a clean PR — the same rule
+# the rest of this script applies to its own evidence.
+D="$TMP_ROOT/advisory-unreadable"
+setup_ready "$D"
+printf '%s' "$(codex_request "$HEAD_SHA")" >"$D/issue_comments.json"
+printf '%s' "$CODEX_REVIEW_AT_HEAD" >"$D/pr_reviews.json"
+printf '#!/usr/bin/env bash\nexit 3\n' >"$TMP_ROOT/bin/broken-advisory"
+chmod +x "$TMP_ROOT/bin/broken-advisory"
+LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" \
+  RALPH_MERGE_POLICY_FILE="$POLICY_FINDINGS" \
+  RALPH_ADVISORY_FINDINGS_SH="$TMP_ROOT/bin/broken-advisory" bash "$SCRIPT" 1740 2>&1) || true
+if [[ "$LAST_OUT" == "GATE-READY"* ]] && [[ "$LAST_OUT" == *"NOT COUNTED"* ]]; then
+  pass "an unreadable count is reported as unread, never as none"
+else
+  fail "unreadable count (out=${LAST_OUT:0:220})"
+fi
+
+# A host repo that does not ship the counter says nothing — there was never a
+# count to be silent about, and a missing script must not print a scary line.
+LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" \
+  RALPH_MERGE_POLICY_FILE="$POLICY_FINDINGS" \
+  RALPH_ADVISORY_FINDINGS_SH="$TMP_ROOT/no-such-script" bash "$SCRIPT" 1740 2>&1) || true
+if [[ "$LAST_OUT" == "GATE-READY"* ]] && [[ "$LAST_OUT" != *"advisory"* ]]; then
+  pass "a repo without the counter is unchanged"
+else
+  fail "absent counter (out=${LAST_OUT:0:220})"
+fi
+POLICY="$POLICY_REVIEW"
+
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
