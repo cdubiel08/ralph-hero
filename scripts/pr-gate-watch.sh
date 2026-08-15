@@ -156,6 +156,8 @@ PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # second copy of their rules is the one thing it must not hold.
 # shellcheck source=lib/merge-evidence.sh
 . "$PROJECT_ROOT/scripts/lib/merge-evidence.sh"
+# shellcheck source=lib/gh-budget.sh
+. "$PROJECT_ROOT/scripts/lib/gh-budget.sh"
 POLICY_FILE="$(me_policy_file "$PROJECT_ROOT")"
 
 # POLICY is the one object handed to jq. No policy file at all → gates 4-5 are
@@ -977,6 +979,24 @@ while :; do
       echo "GATE-ERROR: gh unreachable for $fails consecutive polls — giving up"
       exit 1
     fi
+  fi
+  # GH-1817: this is the repo's one sanctioned poll loop, and a poll loop on
+  # this token is what drove the budget to 0/5000 on 2026-08-12, blocking every
+  # other ralph surface for ~15 minutes. Bounding each read (#1785, #1803,
+  # #1814) caps one consumer's cost; only a pre-spend check caps the aggregate.
+  # So when the budget is starved, sleep through the reset instead of spending
+  # into it — and SAY SO on stderr, because a backoff nobody can see is the
+  # same silent degradation this issue is about. stderr deliberately: stdout is
+  # the verdict stream a Monitor parses, and this is not a verdict.
+  backoff=$(gb_backoff_seconds)
+  if [ "${backoff:-0}" -gt 0 ]; then
+    gb_report_low
+    # The reset can be up to an hour out; cap the nap so a watcher stays
+    # interruptible and re-reports rather than going dark until the top of the
+    # hour. It re-checks and naps again if the budget is still starved.
+    [ "$backoff" -gt 300 ] && backoff=300
+    sleep "$backoff"
+    continue
   fi
   sleep "$INTERVAL"
 done

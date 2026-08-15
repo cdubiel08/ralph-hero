@@ -104,6 +104,13 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# GH-1817: the attestation post is a write nobody re-reads in this invocation,
+# so a rate-limited `gh` exiting 0 would print "ATTESTATION POSTED" over a
+# comment that never existed — and the driver would then wait on a gate that
+# can never go green.
+# shellcheck source=lib/gh-budget.sh
+. "$SCRIPT_DIR/lib/gh-budget.sh"
+
 # Retry-able refusal, distinct from a failing test run (which posts an honest
 # failing attestation, exit 0). 75 is EX_TEMPFAIL, matching merge-pr.sh's
 # PENDING. Consumers key on the token, never the shared exit code.
@@ -318,10 +325,29 @@ if [[ "$comments_fetched" == "true" ]]; then
 fi
 
 if [[ -n "$existing_id" ]]; then
-  gh api --method PATCH "repos/{owner}/{repo}/issues/comments/$existing_id" \
-    -f body="$body" >/dev/null
+  # Rate limiting is EX_TEMPFAIL, not a bad request: the attestation is
+  # unchanged and re-running this command is the whole remedy. Mapping it onto
+  # REFUSED_EXIT keeps that indistinguishable-from-nothing case out of the
+  # success line above.
+  # `$?` inside `if ! cmd` is the NEGATED status, so the code is captured on the
+  # `||` branch instead — reading it after the inversion would see 0 and route
+  # every failure to the success line.
+  rc=0
+  gb_gh api --method PATCH "repos/{owner}/{repo}/issues/comments/$existing_id" \
+    -f body="$body" >/dev/null || rc=$?
+  if [[ $rc -eq 4 ]]; then
+    echo "ATTESTATION NOT UPDATED — rate limited; re-run this command after the reset" >&2
+    exit "$REFUSED_EXIT"
+  fi
+  [[ $rc -ne 0 ]] && exit "$rc"
   echo "ATTESTATION UPDATED — PR #$PR_NUMBER @ ${head_sha:0:8} (comment $existing_id)"
 else
-  gh pr comment "$PR_NUMBER" --body "$body" >/dev/null
+  rc=0
+  gb_gh pr comment "$PR_NUMBER" --body "$body" >/dev/null || rc=$?
+  if [[ $rc -eq 4 ]]; then
+    echo "ATTESTATION NOT POSTED — rate limited; re-run this command after the reset" >&2
+    exit "$REFUSED_EXIT"
+  fi
+  [[ $rc -ne 0 ]] && exit "$rc"
   echo "ATTESTATION POSTED — PR #$PR_NUMBER @ ${head_sha:0:8}"
 fi
