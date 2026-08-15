@@ -221,7 +221,12 @@ still be re-staged; curate's human gate remains the backstop. Under the weekly
 schedule that limit compounds — two back-to-back runs over the same 44
 reflections restaged one paraphrase of an already-pending candidate (measured
 2026-08-15) — so an unreviewed queue accrues near-duplicates at up to
-`RALPH_META_MAX_CANDIDATES` per week until someone runs curate. Fail-open: if the local model is
+`RALPH_META_MAX_CANDIDATES` per week until someone runs curate. That per-week
+ceiling is **enforced, not requested**: the prompt asks the model for at most
+N, and `synthesize_candidates` truncates the parsed list to N (warning when it
+does) at the single boundary every staging path crosses — so an over-producing
+model cannot widen the bound, and since dedup only ever removes more, weekly
+growth stays ≤ N. Fail-open: if the local model is
 offline it stages nothing. Knobs: `RALPH_META_WINDOW_DAYS` (7),
 `RALPH_META_MIN_REFLECTIONS` (5), `RALPH_META_MAX_CANDIDATES` (3). This is the
 hierarchy level that finally seeds the wiki tier and resolves the

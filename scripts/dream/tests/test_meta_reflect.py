@@ -131,6 +131,34 @@ class TestRunMetaReflect:
         )
         assert n2 == 0  # same axiom hash already staged
 
+    def test_caps_an_over_producing_model(self, tmp_path: Path) -> None:
+        """The cap is enforced, not merely requested in the prompt (GH-1519).
+
+        A model that ignores "propose at most N" must not grow the unreviewed
+        queue past N — the weekly schedule makes that a compounding cost.
+        """
+        db = tmp_path / "k.db"
+        _seed(db, [
+            {"id": f"r{i}", "date": "2026-06-25T00:00:00+00:00", "content": f"reflection {i}",
+             "memory_tier": "reflection"}
+            for i in range(5)
+        ])
+        wiki = tmp_path / "wiki"
+        post = _candidates_post([
+            {"axiom": f"Axiom number {i}", "rationale": "x", "source_reflection_ids": ["r0"]}
+            for i in range(7)
+        ])
+        n = meta_reflect.run_meta_reflect(
+            db, wiki, "u", "m", window_days=30, min_reflections=3,
+            max_candidates=2, now=NOW, http_post=post,
+        )
+        assert n == 2
+        staged = (wiki / "_candidates.jsonl").read_text(encoding="utf-8").splitlines()
+        assert [json.loads(line)["axiom"] for line in staged if line.strip()] == [
+            "Axiom number 0",
+            "Axiom number 1",
+        ]
+
     def test_defers_below_min_reflections(self, tmp_path: Path) -> None:
         db = tmp_path / "k.db"
         _seed(db, [
