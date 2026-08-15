@@ -571,6 +571,7 @@ export const DELIVER_REASONS = [
   "marker-current",
   "retry-window",
   "deferred",
+  "convergence-stalled", // GH-1977: review-convergence.sh says `stalled`/`cap-reached` — held OUT of the queue so an unattended lane stops re-requesting, surfaced as its own blocked row so it never reads as "merged"
 ] as const;
 /** THE tend-lane category list (same single-declaration rule): board.ts
  *  derives its TendCategory type from this tuple. */
@@ -821,6 +822,9 @@ function zDeliverRow(mode: Mode) {
     gate: z.string().nullable().optional(),
     deltaAt: zIsoUtc.nullable().optional(),
     windowExpiresAt: zIsoUtc.nullable().optional(),
+    // GH-1977 — present only on `convergence-stalled` rows.
+    convergence: z.string().nullable().optional(),
+    detail: z.string().nullable().optional(),
   });
 }
 
