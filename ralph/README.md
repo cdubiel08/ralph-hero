@@ -18,7 +18,7 @@ This is ralph v2 (GH-1662). Design record (normative): [`../thoughts/shared/idea
 | `scripts/deliver-push.sh` | The deliver lane's branch-write gate (GH-1917): a pinned `--force-with-lease` push, so a work session that pushed first wins atomically instead of being silently clobbered. No `--force` exists |
 | `examples/README.md` | Transport recipes for driving the lanes — `/loop` (fixed and self-paced), scheduled routines, scheduler scripts. Copy and own; ralph executes none of them |
 | `agents/investigator.md` | Read-only fan-out worker (Read/Grep/Glob hard allowlist) for parallel investigation |
-| `hooks/funnel-{board,merge}.sh` | Courtesy redirects: raw board mutations → the CLI; bare `gh pr merge` → the merge gate, when the host repo ships one. **Not** enforcement |
+| `hooks/funnel-{board,merge,push}.sh` | Courtesy redirects: raw board mutations → the CLI; bare `gh pr merge` → the merge gate, when the host repo ships one; a raw **force** push on a branch with an open PR → `scripts/deliver-push.sh` (GH-1930). A quoted mention of a guarded command is an argument, not a run, and passes. **Not** enforcement |
 | `scripts/tick.sh` + `scripts/install-loop.sh` | The scheduler-transport recipe for the work lane: one iteration per invocation, typed opt-in — one transport among several (see `examples/README.md`), not *the* loop |
 | `skills/using-html` | Vendored utility (byte-identical upstream; do not edit) |
 

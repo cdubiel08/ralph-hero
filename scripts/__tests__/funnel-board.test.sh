@@ -153,6 +153,17 @@ set -e
 LAST_ERR=$(<"$TMP_ROOT/stderr")
 expect_rc "payload without command passes through" 0
 
+
+# 16. Quoted vs run (GH-1930): a command that merely QUOTES a blocked token as
+# an argument — an issue body describing this rail — mutates nothing.
+run_hook "gh issue create --title 'funnel' --body 'redirect gh project item-edit to the CLI'"
+expect_rc "quoted blocked token in an issue body passes" 0
+
+# 17. ...but the `gh api` exception holds: a GraphQL mutation lives INSIDE the
+# quotes, so that segment is still matched whole.
+run_hook "gh api graphql -f query='mutation { addSubIssue(input:{}) }'"
+expect_rc "gh api keeps matching inside quotes" 2
+
 # ---------------------------------------------------------------------------
 echo
 echo "Results: $PASS passed, $FAIL failed"

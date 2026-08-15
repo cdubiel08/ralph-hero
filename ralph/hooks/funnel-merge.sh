@@ -13,7 +13,14 @@ INPUT=$(cat)
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [ -n "$CMD" ] || exit 0
 
-if [[ "$CMD" == *"gh pr merge"* && "$CMD" != *"scripts/merge-pr.sh"* ]]; then
+# What is QUOTED is an argument, not a command being run (GH-1930): an issue
+# body, a doc edit, or a commit message that mentions `gh pr merge` mutates
+# nothing, and refusing it makes this rail unable to be written about. Strip
+# quoted spans before matching; that can only under-redirect, which is the
+# safe direction for a courtesy rail.
+UNQUOTED=$(printf '%s' "$CMD" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
+
+if [[ "$UNQUOTED" == *"gh pr merge"* && "$CMD" != *"scripts/merge-pr.sh"* ]]; then
   case " $CMD" in *" -R "* | *" --repo "* | *" --repo="*) exit 0 ;; esac
   # gh also accepts -R with its value attached, no space (`-Rowner/repo`,
   # gh's own short-flag shorthand — GH-1684). Require a slash in the token
