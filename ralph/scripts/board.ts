@@ -2201,16 +2201,25 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         // state-write rollback above already treats as an anomaly to undo.
         // Best-effort, like that one — doctor remains the backstop.
         let unwound = false;
+        let moved = false;
         try {
-          if (cache.fields[CLAIM_FIELD]) clearField(ctx, cache, itemId, CLAIM_FIELD);
-          // A null `from` is an item that had no Workflow State to begin with;
-          // there is nothing to restore, and dropping the claim is the whole
-          // unwind. Writing some invented state would be the worse repair.
-          if (from) {
-            setSingleSelect(ctx, cache, itemId, STATE_FIELD, from);
-            syncStatus(ctx, cache, itemId, from);
+          // Re-read first: an unconditional restore would clobber whatever
+          // landed after the read-back verify — clearing a newer claim and
+          // regressing the state of work someone else is now doing. Only undo
+          // what is still recognisably OURS.
+          const now = fetchIssue(ctx, issue.number);
+          moved = !(now.claim && isMember(now.claim, ctx.cfg.holder) && now.state === to);
+          if (!moved) {
+            if (cache.fields[CLAIM_FIELD]) clearField(ctx, cache, itemId, CLAIM_FIELD);
+            // A null `from` is an item that had no Workflow State to begin
+            // with; there is nothing to restore, and dropping the claim is the
+            // whole unwind. Inventing a state would be the worse repair.
+            if (from) {
+              setSingleSelect(ctx, cache, itemId, STATE_FIELD, from);
+              syncStatus(ctx, cache, itemId, from);
+            }
+            unwound = true;
           }
-          unwound = true;
         } catch {
           /* best-effort */
         }
@@ -2219,8 +2228,11 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
             `#${wonBySibling.issue} first — contract rule 9 is one unit per session. ` +
             (unwound
               ? `The claim has been rolled back${from ? ` to "${from}"` : ""}.`
-              : `Rolling the claim back FAILED — #${issue.number} is still claimed and needs ` +
-                `\`board release ${issue.number}\`, or doctor will reconcile it after TTL.`) +
+              : moved
+                ? `The claim was NOT rolled back — #${issue.number} has moved on since (another writer holds it), ` +
+                  `and undoing that would clobber work this session cannot see.`
+                : `Rolling the claim back FAILED — #${issue.number} is still claimed and needs ` +
+                  `\`board release ${issue.number}\`, or doctor will reconcile it after TTL.`) +
             ` Drive #${issue.number} from a new session.`,
         );
       }

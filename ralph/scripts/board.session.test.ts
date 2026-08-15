@@ -194,4 +194,40 @@ describe("session→unit binding (GH-1948)", () => {
     expect(gh.issues.get(2)!.state).toBe("Backlog");
     expect(gh.issues.get(2)!.claim).toBeNull();
   });
+
+  it("the unwind refuses to clobber an item another writer took over in the meantime", () => {
+    // Same race, but a rival's claim lands between the read-back verify and
+    // the unwind. Restoring unconditionally would clear a claim that is not
+    // ours and regress work this session cannot see.
+    const opts = sessionOpts("sess-a");
+    const ctx = makeCtx(gh, "me@test", "/repo", opts);
+    const siblingRecord = JSON.stringify({ issue: 1, since: NOW.toISOString(), holder: "me@test" });
+    const rival = encodeClaim("rival@host", NOW);
+    const issue2 = fetchIssue(ctx, 2);
+    // Ordering matters and is exact. The sibling's record must land AFTER the
+    // read-back verify (before it, the existing lost-the-race guard fires and
+    // the unwind never runs), and the rival must take the item after that —
+    // on the fetch the UNWIND itself makes. Both are keyed off the read/write
+    // shape of the call rather than a call index, which drifts.
+    const realExec = gh.exec.bind(gh);
+    let mutated = false; // the claim/state writes have gone out
+    let bound = false; // the sibling's record is on disk
+    gh.exec = (argv, stdin) => {
+      const isMutation = String(stdin ?? "").includes("mutation");
+      if (bound) gh.issues.get(2)!.claim = rival; // the unwind's fetch sees a rival
+      const res = realExec(argv, stdin);
+      if (isMutation) mutated = true;
+      else if (mutated && !bound) {
+        // The first READ after the writes is the read-back verify: it has just
+        // confirmed our claim, so the bind is next and must collide.
+        writeFileSync(sessionBindingPath(ctx)!, siblingRecord);
+        bound = true;
+      }
+      return res;
+    };
+
+    const msg = refusalMessage(() => transition(ctx, issue2, "In Progress"));
+    expect(msg).toContain("NOT rolled back");
+    expect(gh.issues.get(2)!.claim).toBe(rival); // the rival's claim survives
+  });
 });
