@@ -100,7 +100,7 @@ RALPH_HERDR_LEDGER="$TMP/unit/ledger.jsonl"
 rc=0; ralph_ledger_append '{"ts": "2026-08-11T00:00:00Z", "ev": "spawn", "agent_ref": "w1-a#0001"}' || rc=$?
 is "append: valid JSON lands (rc 0)" "0" "$rc"
 is "append: stored compact, one line" \
-  '{"ts":"2026-08-11T00:00:00Z","ev":"spawn","agent_ref":"w1-a#0001"}' \
+  "{\"ts\":\"2026-08-11T00:00:00Z\",\"ev\":\"spawn\",\"agent_ref\":\"w1-a#0001\",\"session\":\"$(ralph_session_key)\"}" \
   "$(cat "$RALPH_HERDR_LEDGER")"
 
 fails "append: refuses non-JSON" ralph_ledger_append 'not json'
@@ -115,6 +115,20 @@ rc=0; ralph_ledger_append '{"ev":"state","agent_ref":"w1-a#0001","note":"line1\n
 is "append: an ESCAPED newline in a value is fine (rc 0)" "0" "$rc"
 is "append: refused writes never touched the file (2 lines)" "2" \
   "$(wc -l <"$RALPH_HERDR_LEDGER" | tr -d ' ')"
+
+# GH-1933: the writer's session key rides on EVERY record, stamped by append so
+# no call site can forget it. It is what proves a ledger ours once its last
+# pane is gone.
+ralph_ledger_append '{"ts":"t","ev":"spawn","agent_ref":"w2-b#0002","session":"theirs"}'
+is "append: a caller-supplied session is preserved, not overwritten" "theirs" \
+  "$(jq -r 'select(.agent_ref=="w2-b#0002") | .session' <"$RALPH_HERDR_LEDGER")"
+is "append: open sessions are the OPENING records' writers" "$(ralph_session_key) theirs" \
+  "$(ralph_ledger_open_sessions | sort | tr '\n' ' ' | sed 's/ *$//')"
+# An exit written by a DIFFERENT server must not hand that server ownership of
+# a record it never opened.
+ralph_ledger_append '{"ts":"t","ev":"exit","agent_ref":"w2-b#0002","reason":"lost","session":"stranger"}'
+is "append: a foreign exit closes the record without claiming it" "$(ralph_session_key)" \
+  "$(ralph_ledger_open_sessions | sort | tr '\n' ' ' | sed 's/ *$//')"
 
 # ═══ 2. open-agents reduction — spawn→exit lifecycle ═════════════════════════
 RALPH_HERDR_LEDGER="$TMP/unit2/ledger.jsonl"
@@ -553,6 +567,71 @@ is "owned ledger: the absent worker is marked lost again" "1" \
   "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost"')"
 is "owned ledger: the live worker is left open" "0" \
   "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w123-fix#aaaa"')"
+
+# ═══ 6c. reconcile: a QUIESCED ledger of ours is sweepable (GH-1933) ═════════
+# The catch-22 6b's guard created: sweeping is safe only when no worker is
+# live, and was possible only when at least one was. A record written by this
+# server proves the ledger ours after its last pane is gone.
+QROOT="$TMP/qroot"
+QLEDGER="$QROOT/acme/quiet/ledger.jsonl"
+mkdir -p "$QROOT/acme/quiet"
+quiesced_ledger() {
+  local sess="${1:?}"
+  cat >"$QLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"w9-gone#ffff","pane_id":"p9","session":"$sess","tokens":{"role":"w","issue":"9","slug":"gone","depth":"0","state":"spawned"}}
+EOF
+}
+
+# (a) ours, fully retired: no live pane anywhere, and the sweep runs.
+quiesced_ledger "$(ralph_session_key)"
+herd_fixture '[]'
+: >"$FAKE_HERDR_LOG"
+run_reconcile "$QROOT"
+is "quiesced ledger: reconcile exits 0" "0" "$RC"
+is "quiesced ledger: the stale record is finally swept" "1" \
+  "$(lcount "$QLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost"')"
+
+# (b) the guard is not weakened: another server's key is no proof at all.
+quiesced_ledger "someone-else"
+: >"$FAKE_HERDR_LOG"
+run_reconcile "$QROOT"
+is "foreign session key: nothing swept" "0" "$(lcount "$QLEDGER" '.ev=="exit"')"
+case "$OUT" in
+  *"not this server's ledger"*) ok "foreign session key: declines the sweep loudly" ;;
+  *) not_ok "foreign session key: declines the sweep loudly — got '$OUT'" ;;
+esac
+
+# (c) a record from before the stamp existed has no discoverable writer, so it
+# stays unknown — and --adopt is the operator asserting what evidence cannot.
+foreign_ledger # legacy shape: no session field on either record
+: >"$FAKE_HERDR_LOG"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$FROOT" bash "$SCRIPTS/reconcile.sh" --adopt 2>&1) || RC=$?
+is "--adopt: exits 0" "0" "$RC"
+case "$OUT" in
+  *"on the operator's assertion"*) ok "--adopt: says out loud that it overrode the verdict" ;;
+  *) not_ok "--adopt: says out loud that it overrode the verdict — got '$OUT'" ;;
+esac
+is "--adopt: the legacy stale record is swept" "1" \
+  "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost"')"
+
+# (d) --dry-run computes the same verdict and writes nothing.
+quiesced_ledger "$(ralph_session_key)"
+before=$(wc -l <"$QLEDGER" | tr -d ' ')
+: >"$FAKE_HERDR_LOG"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$QROOT" bash "$SCRIPTS/reconcile.sh" --dry-run 2>&1) || RC=$?
+is "--dry-run: exits 0" "0" "$RC"
+is "--dry-run: the ledger is untouched" "$before" "$(wc -l <"$QLEDGER" | tr -d ' ')"
+case "$OUT" in
+  *'would append:'*'"reason":"lost"'*) ok "--dry-run: reports the exact sweep it withheld" ;;
+  *) not_ok "--dry-run: reports the exact sweep it withheld — got '$OUT'" ;;
+esac
+is "--dry-run: no token pushed" "0" "$(log_count '^pane report-metadata ')"
+
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$QROOT" bash "$SCRIPTS/reconcile.sh" --nonsense 2>&1) || RC=$?
+is "unknown flag: refused, not silently ignored" "2" "$RC"
 
 # ═══ 7. depth guard: refusal at depth 2 ══════════════════════════════════════
 DLEDGER="$TMP/depth/ledger.jsonl"

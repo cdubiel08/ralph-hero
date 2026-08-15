@@ -25,44 +25,9 @@
 # where provenance is ambiguous, the agent stays invisible too — an unknown
 # owner is not this repository's to touch. Fail closed, in that exact order.
 
-# ralph_session_key — a stable identifier for the Herdr server being talked to.
-#
-# Resolution mirrors Herdr's own socket selection: an explicit --session (which
-# callers pass through RALPH_HERDR_SESSION), then HERDR_SOCKET_PATH, then
-# HERDR_SESSION, then the default session. The result is hashed rather than
-# used raw because it becomes a ledger path component and a socket path is
-# neither length- nor charset-bounded.
-#
-# Why a key at all: the durable identity of a worker has to survive the socket
-# being re-pointed. Two servers can host identically-named agents, and a ledger
-# that cannot tell them apart will let one session's reconcile close the
-# other's workers.
-ralph_session_key() {
-  local sock
-
-  if [ -n "${RALPH_HERDR_SESSION:-}" ]; then
-    sock="session:$RALPH_HERDR_SESSION"
-  elif [ -n "${HERDR_SOCKET_PATH:-}" ]; then
-    sock="socket:$HERDR_SOCKET_PATH"
-  elif [ -n "${HERDR_SESSION:-}" ]; then
-    sock="session:$HERDR_SESSION"
-  else
-    sock="session:default"
-  fi
-
-  # Normalized before hashing so "session:foo" reached by two different routes
-  # produces one key. Truncated to 12 hex chars: this is a namespace tag inside
-  # an already-scoped ledger path, not a security boundary.
-  if command -v shasum >/dev/null 2>&1; then
-    printf '%s' "$sock" | shasum -a 256 | cut -c1-12
-  elif command -v sha256sum >/dev/null 2>&1; then
-    printf '%s' "$sock" | sha256sum | cut -c1-12
-  else
-    # No hasher anywhere is not a reason to lose scoping — degrade to a
-    # slugified literal, which is still unique per socket, only longer.
-    printf '%s' "$sock" | LC_ALL=C tr -c 'A-Za-z0-9' '-' | cut -c1-12
-  fi
-}
+# The session dimension — ralph_session_key — lives in ledger.sh (GH-1933),
+# because ralph_ledger_append stamps it on every record and ledger.sh is
+# sourced first everywhere. It is the same key this file's doctrine describes.
 
 # ralph_repo_scope [REPO_ROOT] — print "host/owner/repo", the canonical
 # repository identity, read from the same board config board.ts itself reads

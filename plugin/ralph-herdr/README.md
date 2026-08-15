@@ -541,13 +541,23 @@ not here.
   (`herdr --session probe server`) used to run this pass against the operator's
   real ledgers while answering about a herd it had never had — observed live on
   2026-08-13, five running workers marked `reason=lost` in one sweep. Ownership
-  is now proven positively, in the same spirit as `claim-recover.sh`: a ledger is
-  this server's when the server's snapshot holds a pane one of the ledger's open
-  records names. The absence-driven phases (exit-lost, the orphan pass) skip
-  every other ledger and say so in the log. The honest limit: a ledger whose
-  workers' panes are *all* gone supplies no such evidence either, so its stale
-  records wait for a pass in which at least one pane is back rather than being
-  closed on the spot — a delay, and the fail-closed side of the trade.
+  is now proven positively, in the same spirit as `claim-recover.sh`, by either
+  of two facts: the server's snapshot holds a pane one of the ledger's open
+  records names, **or** one of those open records carries this server's own
+  session key (GH-1933). The absence-driven phases (exit-lost, the orphan pass)
+  skip every other ledger and say so in the log.
+- **The second proof exists because the first is a liveness test (GH-1933).** A
+  pane proves ownership only while it lives, so a fully-retired fleet made its
+  own ledger permanently unsweepable: sweeping is *safe* only when no worker is
+  live, and was *possible* only when at least one was. Observed 2026-08-14 — 13
+  stale records growing with every retirement, whose named remedy was the
+  command that declined to run. `ralph_ledger_append` now stamps every record
+  with `ralph_session_key`, so the writer's identity outlives the last pane.
+  What still fails closed: records written *before* the stamp existed, whose
+  writer is unknowable from the ledger. Only an operator can assert those —
+  `reconcile.sh --adopt`, which logs that it overrode the verdict — and
+  `--dry-run` performs every read and decision while withholding every write,
+  so the sweep can be read before it happens.
 - **Repository containment is only as good as the provenance herdr reports.** A
   workspace with no worktree provenance falls back to matching cwds, which a
   session can change under us; a checkout that resolves to no board config is
