@@ -92,6 +92,7 @@ export class FakeGh {
   comments: Array<{ body: string }> = [];
   issues = new Map<number, FakeIssue>();
   failNextStateWrite = false; // transport-failure injection
+  failBranchLinkage = false; // GH-1732: the branch-linkage read is unreadable
   raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
   vanishClaim = false; // simulate a concurrent clear landing after our write
   stickyClaim = false; // simulate a claim clear silently not sticking
@@ -404,6 +405,39 @@ export class FakeGh {
               : this.deliverPrNode(p);
       }
       return data(out);
+    }
+
+    // Done-evidence branch linkage (GH-1732): a bare refs read with no issue
+    // alias beside it. Same fixtures as the deliver b-alias, same substring
+    // filter, so the two readers are exercised against one source of truth.
+    if (query.includes("refs(refPrefix") && !query.includes("issue(number")) {
+      if (this.failBranchLinkage) throw new Error("gh api graphql failed: rate limit exceeded");
+      const needle = String((variables as any).q ?? "");
+      const fi = this.issues.get(Number(needle));
+      const refs = fi
+        ? [
+            ...(fi.branchPrs ? [{ name: `feature/GH-${fi.number}`, prs: fi.branchPrs }] : []),
+            ...(fi.branchRefs ?? []),
+          ].filter((r) => needle !== "" && r.name.includes(needle))
+        : [];
+      return data({
+        repository: {
+          refs: {
+            nodes: refs.map((r) => ({
+              name: r.name,
+              associatedPullRequests: {
+                nodes: (r.prs ?? [])
+                  .filter((p) => p.merged || p.prState === "MERGED")
+                  .map((p) => ({
+                    number: p.number,
+                    url: `https://github.com/cdubiel08/ralph-hero/pull/${p.number}`,
+                    merged: true,
+                  })),
+              },
+            })),
+          },
+        },
+      });
     }
 
     // Deliver-lane detail fetch (GH-1712): dK/bK alias pairs. Matched before

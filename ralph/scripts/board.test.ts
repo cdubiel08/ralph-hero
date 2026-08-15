@@ -832,6 +832,51 @@ describe("transition engine", () => {
     expect(gh.mutations).toEqual([]);
   });
 
+  it("Done accepts a merged PR reaching the issue through the branch convention (GH-1732)", () => {
+    // No closing reference at all — exactly the population deliver's
+    // no-open-pr close-out serves, and which used to need --why.
+    gh.issues.set(1, { number: 1, state: "In Review", branchPrs: [{ number: 101, merged: true }] });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(after.state).toBe("Done");
+    expect(gh.comments).toEqual([]); // evidence, not an unevidenced completion
+  });
+
+  it("a merged PR on a branch that merely contains the digits is not linkage", () => {
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      branchRefs: [{ name: "chore/fix-1-typo-10", prs: [{ number: 101, merged: true }] }],
+    });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(/merged linked PR/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("an unmerged PR on the convention branch is not evidence", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", branchPrs: [{ number: 101, merged: false }] });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(/merged linked PR/);
+  });
+
+  it("an unreadable branch-linkage read refuses — it may never manufacture evidence", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", branchPrs: [{ number: 101, merged: true }] });
+    gh.failBranchLinkage = true;
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(/merged linked PR/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("the branch-linkage read is not made when the closing reference already answers", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", prs: [{ number: 101, merged: true }] });
+    const referenced = fetchIssue(ctx, 1);
+    const a = gh.graphqlCalls;
+    transition(ctx, referenced, "Done");
+    const referencedCost = gh.graphqlCalls - a;
+
+    gh.issues.set(2, { number: 2, state: "In Review", branchPrs: [{ number: 102, merged: true }] });
+    const conventional = fetchIssue(ctx, 2);
+    const b = gh.graphqlCalls;
+    transition(ctx, conventional, "Done");
+    expect(gh.graphqlCalls - b).toBe(referencedCost + 1);
+  });
+
   it("Done with a merged linked PR proceeds without --why and posts no extra comment", () => {
     gh.issues.set(1, { number: 1, state: "In Review", prs: [{ number: 101, merged: true }] });
     const after = transition(ctx, fetchIssue(ctx, 1), "Done");
