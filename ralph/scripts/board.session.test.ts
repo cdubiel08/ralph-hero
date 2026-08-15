@@ -187,7 +187,11 @@ describe("session→unit binding (GH-1948)", () => {
     const msg = refusalMessage(() => transition(ctx, issue2, "In Progress"));
     expect(msg).toContain("CONCURRENT claim");
     expect(msg).toContain("bound it to #1");
-    expect(msg).toContain("board release 2"); // the refusal hands back the recovery
     expect(readSessionBinding(ctx)!.issue).toBe(1); // the sibling's record survives
+    // And the claim this command took is UNWOUND: leaving #2 In Progress under
+    // a claim nobody drives would cost the queue a full TTL.
+    expect(msg).toContain('rolled back to "Backlog"');
+    expect(gh.issues.get(2)!.state).toBe("Backlog");
+    expect(gh.issues.get(2)!.claim).toBeNull();
   });
 });

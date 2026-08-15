@@ -2192,7 +2192,39 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     }
     // The claim is verifiably this session's: bind the session to the unit
     // (GH-1948). Deliberately after the verify — see the binding block.
-    if (enteringInProgress) writeSessionBinding(ctx, issue.number, priorBinding);
+    if (enteringInProgress) {
+      const wonBySibling = writeSessionBinding(ctx, issue.number, priorBinding);
+      if (wonBySibling) {
+        // A sibling in this session bound first, so this claim must not stand.
+        // Unwind it here: leaving the issue In Progress under a claim nobody
+        // drives would cost the queue a full TTL, and it is the same shape the
+        // state-write rollback above already treats as an anomaly to undo.
+        // Best-effort, like that one — doctor remains the backstop.
+        let unwound = false;
+        try {
+          if (cache.fields[CLAIM_FIELD]) clearField(ctx, cache, itemId, CLAIM_FIELD);
+          // A null `from` is an item that had no Workflow State to begin with;
+          // there is nothing to restore, and dropping the claim is the whole
+          // unwind. Writing some invented state would be the worse repair.
+          if (from) {
+            setSingleSelect(ctx, cache, itemId, STATE_FIELD, from);
+            syncStatus(ctx, cache, itemId, from);
+          }
+          unwound = true;
+        } catch {
+          /* best-effort */
+        }
+        throw new RefusalError(
+          `#${issue.number} was claimed on the board, but a CONCURRENT claim in this session bound it to ` +
+            `#${wonBySibling.issue} first — contract rule 9 is one unit per session. ` +
+            (unwound
+              ? `The claim has been rolled back${from ? ` to "${from}"` : ""}.`
+              : `Rolling the claim back FAILED — #${issue.number} is still claimed and needs ` +
+                `\`board release ${issue.number}\`, or doctor will reconcile it after TTL.`) +
+            ` Drive #${issue.number} from a new session.`,
+        );
+      }
+    }
     // Symmetric verify for the leaving side: the same re-read must show this
     // session OUT of the claim (gone, or co-holders only) — surviving
     // membership means the clear did not stick and this session would
@@ -2407,22 +2439,29 @@ function guardSessionUnit(bound: SessionBinding | null, number: number): void {
  *  Unlike the board claim (Projects V2 has no CAS, so races are made VISIBLE
  *  rather than impossible), a local file can actually win this one: first
  *  writer takes the binding, and the loser is refused by name. */
-function writeSessionBinding(ctx: Ctx, number: number, prior: SessionBinding | null): void {
+function writeSessionBinding(
+  ctx: Ctx,
+  number: number,
+  prior: SessionBinding | null,
+): SessionBinding | null {
   const path = sessionBindingPath(ctx);
-  if (!path) return;
+  if (!path) return null;
   const since = prior?.issue === number ? prior.since : ctx.now().toISOString();
   const record = JSON.stringify({ issue: number, since, holder: ctx.cfg.holder });
   try {
     mkdirSync(ctx.session!.dir, { recursive: true });
     writeFileSync(path, record, { flag: "wx" });
     pruneSessionBindings(ctx);
-    return;
+    return null;
   } catch (e) {
-    if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") return; // unwritable: see below
+    // An unwritable state dir must not fail a claim the board already granted:
+    // the claim is the durable half, this is a local rule, and a machine that
+    // cannot write ~/.ralph has a louder problem than rule 9.
+    if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") return null;
   }
   // A record already exists — either this session's own earlier claim of the
   // SAME unit (a heartbeat: leave it, its `since` is the one worth keeping,
-  // and touch it so the pruner does not reap a long-lived session), or a
+  // and touch it so the pruner cannot reap a long-lived session), or a
   // concurrent sibling that won the binding first.
   const won = readSessionBinding(ctx);
   if (!won || won.issue === number) {
@@ -2432,16 +2471,9 @@ function writeSessionBinding(ctx: Ctx, number: number, prior: SessionBinding | n
     } catch {
       /* best-effort */
     }
-    return;
+    return null;
   }
-  // (An unwritable state dir returned silently above: it must not fail a claim
-  // the board already granted. The claim is the durable half; this is a local
-  // rule, and a machine that cannot write ~/.ralph has a louder problem.)
-  throw new RefusalError(
-    `#${number} was claimed on the board, but a CONCURRENT claim in this session bound it to #${won.issue} first — ` +
-      `contract rule 9 is one unit per session. #${number} is now claimed by a session that may not drive it: ` +
-      `release it (\`board release ${number}\`) or leave it to TTL, and drive #${number} from a new session.`,
-  );
+  return won; // caller unwinds the claim it just took, then refuses
 }
 
 /** Session ids are unique per session, so the records would accumulate forever.
