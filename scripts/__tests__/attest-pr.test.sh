@@ -274,6 +274,46 @@ run_attest_in "$RUN_REPO" 123 --run "echo ok" --carry-review --review-verdict AP
 [[ "$LAST_RC" -eq 1 ]] && grep -q "mutually exclusive" <<<"$LAST_OUT" \
   && pass "--carry-review + --review-verdict rejected" || fail "carry + typed verdict accepted (rc=$LAST_RC)"
 
+# ---------------------------------------------------------------------------
+# 13. Coloured run output (GH-1742): every modern test runner colours by
+#     default, and the raw escape bytes made the posted payload unparseable —
+#     the merge gate then refused honest, passing evidence.
+# ---------------------------------------------------------------------------
+echo
+echo "=== --run digests survive colour (GH-1742) ==="
+
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 \
+  --run "printf '\033[32m✓ 212 passed\033[0m \033[2m(1.20s)\033[22m\n'" \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+jq -e . >/dev/null 2>&1 <<<"$payload" \
+  && pass "coloured output still yields a parseable payload" || fail "coloured payload unparseable: $payload"
+digest=$(jq -r '.tests[0].summary' <<<"$payload")
+[[ "$digest" == "✓ 212 passed (1.20s)" ]] \
+  && pass "digest is the stripped line, escapes and all removed" || fail "digest wrong: $(printf '%q' "$digest")"
+
+# A pipe belongs to the markdown row, never to the stored value: the payload
+# carries it bare, the table row carries it escaped.
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 --run "echo 'a|b passed'" \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+[[ "$(jq -r '.tests[0].summary' <<<"$payload")" == "a|b passed" ]] \
+  && pass "payload stores the pipe unescaped" || fail "payload pipe escaped: $(jq -c .tests <<<"$payload")"
+grep -qF 'a\|b passed |' "$CASE_DIR/posted_body.txt" \
+  && pass "table row escapes the pipe" || fail "table row did not escape the pipe"
+
+# Truncation happens after stripping, so it can never bisect an escape.
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 \
+  --run "printf '\033[32m%s\033[0m\n' \"\$(printf 'x%.0s' \$(seq 1 200))\"" \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+digest=$(jq -r '.tests[0].summary' <<<"$payload")
+[[ "${#digest}" -eq 120 && "$digest" != *$'\033'* ]] \
+  && pass "long coloured line truncates to 120 clean chars" || fail "truncation wrong: len=${#digest}"
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

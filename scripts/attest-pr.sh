@@ -109,6 +109,21 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # PENDING. Consumers key on the token, never the shared exit code.
 REFUSED_EXIT=75
 
+# Colour and cursor control are the default for every modern test runner, and
+# a raw control byte in the digest is a payload no downstream reader can be
+# asked to survive. CSI/OSC sequences first, then any remaining C0/C1 control
+# byte except tab.
+# perl, not sed: BSD sed has no \xNN escape, so a sed written against GNU
+# silently passes the pattern through as literal text on the mac this runs on.
+strip_ansi() {
+  LC_ALL=C perl -pe '
+    s/\e\][^\a\e]*(?:\a|\e\\)//g;
+    s/\e\[[0-9;?]*[ -\/]*[@-~]//g;
+    s/\e[@-Z\\-_]//g;
+    s/[\x00-\x08\x0b-\x1f\x7f]//g;
+  '
+}
+
 # --- observed runs (--run mode) --------------------------------------------
 # Executed BEFORE the head fetch: the binding compares the sha each command
 # actually ran at against the PR head as of posting time, so a push landing
@@ -126,12 +141,13 @@ for cmd in ${RUNS[@]+"${RUNS[@]}"}; do
     exit 1
   fi
   # Digest: the last non-empty output line, truncated — enough to recognize
-  # the run ("212 passed"), never a transcript. Pipes escaped for the
-  # markdown table row.
+  # the run ("212 passed"), never a transcript. Colour is stripped BEFORE the
+  # truncation, so the cut can never land inside an escape sequence; markdown
+  # pipe-escaping happens at row render, never on the stored payload value.
   # `|| true`: a silent success (shellcheck clean, a bare `true`) has no
   # output lines, grep -v exits 1, and pipefail would kill the whole
   # attestation over an empty digest.
-  digest=$(printf '%s\n' "$run_out" | sed -e 's/\r$//' | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-120 | sed 's/|/\\|/g' || true)
+  digest=$(printf '%s\n' "$run_out" | strip_ansi | sed -e 's/\r$//' | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-120 || true)
   [[ -z "$digest" ]] && digest="(no output)"
   RUN_RESULTS=$(jq --arg c "$cmd" --argjson e "$run_rc" --arg s "$digest" --arg sha "$ran_at_sha" \
     '. + [{command: $c, exit_code: $e, summary: $s, ran_at_sha: $sha}]' <<<"$RUN_RESULTS")
@@ -267,7 +283,10 @@ if [[ "$CARRY_REVIEW" == "true" ]]; then
   payload=$(jq --argjson r "$carried_review" '.review = $r' <<<"$payload")
 fi
 
-tests_rows=$(jq -r '.[] | "| `\(.command)` | \(.exit_code) | \(.summary) |"' <<<"$tests_json")
+# Pipe escaping is a markdown-table concern only: it happens here, on the way
+# into the row, never on the value stored in the JSON payload (GH-1742).
+tests_rows=$(jq -r 'def md: tostring | gsub("\\|"; "\\|");
+  .[] | "| `\(.command|md)` | \(.exit_code) | \(.summary|md) |"' <<<"$tests_json")
 classes_rows=$(jq -r '.[] | "| \(.class) | \(.reviewed_by) |"' <<<"$classes_json")
 
 body="$MARKER
