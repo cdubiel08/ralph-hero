@@ -769,9 +769,16 @@ gather() {
         local adv adv_line
         adv=$("$ADVISORY_SH" "$PR" 2>/dev/null) || adv=''
         printf '%s' "$adv" | jq -e 'type == "object"' >/dev/null 2>&1 \
-          || adv='{"ok":false,"count":0,"summary":"","first_url":"","detail":"advisory-findings.sh returned nothing usable"}'
+          || adv='{"ok":false,"count":0,"summary":"","first_url":"","reviewed":"unknown","detail":"advisory-findings.sh returned nothing usable"}'
+        # Three states, not two (GH-1971). A count of zero from a PR nobody
+        # reviewed is not a clean PR, and until now it printed the same words
+        # as one — which is this line's own founding defect, one layer in.
         adv_line=$(jq -r '
           if .ok != true then " | advisory findings NOT COUNTED (\(.detail)) — not the same as none"
+          elif .count == 0 and (.reviewed // "unknown") == "false" then
+            " | NO ADVISORY REVIEW AT THIS HEAD — nobody looked; zero findings is not a clean PR"
+          elif .count == 0 and (.reviewed // "unknown") != "true" then
+            " | no unresolved advisory findings (whether anyone reviewed this head: NOT DETERMINED)"
           elif .count == 0 then " | no unresolved advisory findings"
           else " | \(.count) unresolved advisory finding(s): \(.summary) — read them before merging: \(.first_url)"
           end' <<<"$adv")

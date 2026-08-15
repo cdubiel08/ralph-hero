@@ -35,6 +35,18 @@ case "${1:-} ${2:-}" in
     [[ -f "$GH_STUB_DIR/fail" ]] && exit 1
     cat "$GH_STUB_DIR/threads.json"
     ;;
+  "api repos/{owner}/{repo}/pulls/1740")
+    [[ -f "$GH_STUB_DIR/pr.json" ]] || exit 1
+    cat "$GH_STUB_DIR/pr.json"
+    ;;
+  "api repos/{owner}/{repo}/pulls/1740/reviews")
+    [[ -f "$GH_STUB_DIR/reviews.json" ]] || exit 1
+    cat "$GH_STUB_DIR/reviews.json"
+    ;;
+  "api repos/{owner}/{repo}/issues/1740/comments")
+    [[ -f "$GH_STUB_DIR/comments.json" ]] || exit 1
+    cat "$GH_STUB_DIR/comments.json"
+    ;;
   *) echo "stub: unhandled gh $*" >&2; exit 64 ;;
 esac
 STUB
@@ -131,6 +143,42 @@ printf 'not json' >"$D/threads.json"
 expect_json "an unparseable payload reports ok=false" '.ok == false'
 HAS_NEXT=true threads "$(thread greptile-apps "$(greptile P1)")" >"$D/threads.json"
 expect_json "more than 100 threads is not counted rather than undercounted" '.ok == false and (.detail | test("100"))'
+
+echo "=== zero findings is not proof anyone looked (GH-1971) ==="
+HEAD="8430effbdd1111111111111111111111111111aa"
+mk_pr() { jq -nc --arg s "$HEAD" '{head:{sha:$s}, user:{login:"cdubiel08"}}' >"$D/pr.json"; }
+threads >"$D/threads.json"   # no findings at all — the quota-exhausted PR
+
+mk_pr; echo '[]' >"$D/reviews.json"; echo '[]' >"$D/comments.json"
+expect_json "no review and no comment at head reads as unreviewed, not clean" \
+  '.ok == true and .count == 0 and .reviewed == "false"'
+
+jq -nc --arg s "$HEAD" '[{commit_id:$s, state:"COMMENTED", user:{login:"greptile-apps[bot]"}}]' >"$D/reviews.json"
+expect_json "a review object at the head is proof someone looked" '.reviewed == "true"'
+
+jq -nc --arg s "$HEAD" '[{commit_id:$s, state:"DISMISSED", user:{login:"greptile-apps[bot]"}}]' >"$D/reviews.json"
+echo '[]' >"$D/comments.json"
+expect_json "a dismissed review is not a look" '.reviewed == "false"'
+
+# The comment shape gate 5 accepts: the reviewer reports the commit it read.
+echo '[]' >"$D/reviews.json"
+jq -nc --arg s "${HEAD:0:10}" '[{body:"**Reviewed commit:** `\($s)`", user:{login:"chatgpt-codex-connector[bot]"}}]' >"$D/comments.json"
+expect_json "a reviewer comment naming the head counts" '.reviewed == "true"'
+
+# The trap this bound exists for: the driver's own request comment names the
+# head. Counting it would make every PR prove its own review.
+jq -nc --arg s "$HEAD" '[{body:"@codex review for P0 issues only\n<!-- ralph-review-head: \($s) -->", user:{login:"cdubiel08"}}]' >"$D/comments.json"
+expect_json "the author's own head-marker request does not prove a review" '.reviewed == "false"'
+
+# A review at an OLDER head is not a review of this one.
+jq -nc '[{commit_id:"deadbeef00000000000000000000000000000000", state:"COMMENTED", user:{login:"greptile-apps[bot]"}}]' >"$D/reviews.json"
+echo '[]' >"$D/comments.json"
+expect_json "a review at an older head does not carry forward" '.reviewed == "false"'
+
+# An unreadable history must not read as either verdict.
+rm -f "$D/pr.json" "$D/reviews.json" "$D/comments.json"
+expect_json "an unreadable review history is unknown, never false" \
+  '.ok == true and .count == 0 and .reviewed == "unknown"'
 
 echo
 echo "advisory-findings: $PASS passed, $FAIL failed"

@@ -1949,6 +1949,45 @@ else
   fail "unreadable count (out=${LAST_OUT:0:220})"
 fi
 
+# GH-1971: zero findings from a PR nobody reviewed is a THIRD state. It used to
+# print the words a clean PR prints, which is this line's own founding defect
+# one layer in — live during the capped Greptile trial, where the advisory
+# reviewer simply stops answering.
+adv_stub() { # adv_stub <reviewed> -> path to a counter emitting count 0
+  printf '#!/usr/bin/env bash\nprintf %%s %s\n' \
+    "'{\"ok\":true,\"count\":0,\"summary\":\"\",\"first_url\":\"\",\"reviewed\":\"$1\",\"detail\":\"\"}'" \
+    >"$TMP_ROOT/bin/adv-$1"
+  chmod +x "$TMP_ROOT/bin/adv-$1"
+  echo "$TMP_ROOT/bin/adv-$1"
+}
+LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" \
+  RALPH_MERGE_POLICY_FILE="$POLICY_FINDINGS" \
+  RALPH_ADVISORY_FINDINGS_SH="$(adv_stub false)" bash "$SCRIPT" 1740 2>&1) || true
+if [[ "$LAST_OUT" == "GATE-READY"* ]] && [[ "$LAST_OUT" == *"NO ADVISORY REVIEW AT THIS HEAD"* ]] \
+   && [[ "$LAST_OUT" != *"no unresolved advisory findings"* ]]; then
+  pass "an unreviewed head does not borrow the words a clean PR prints"
+else
+  fail "unreviewed rendering (out=${LAST_OUT:0:220})"
+fi
+
+LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" \
+  RALPH_MERGE_POLICY_FILE="$POLICY_FINDINGS" \
+  RALPH_ADVISORY_FINDINGS_SH="$(adv_stub unknown)" bash "$SCRIPT" 1740 2>&1) || true
+if [[ "$LAST_OUT" == *"NOT DETERMINED"* ]]; then
+  pass "an undetermined review state is said out loud, not rounded to clean"
+else
+  fail "unknown rendering (out=${LAST_OUT:0:220})"
+fi
+
+LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" \
+  RALPH_MERGE_POLICY_FILE="$POLICY_FINDINGS" \
+  RALPH_ADVISORY_FINDINGS_SH="$(adv_stub true)" bash "$SCRIPT" 1740 2>&1) || true
+if [[ "$LAST_OUT" == *"no unresolved advisory findings"* ]] && [[ "$LAST_OUT" != *"NOT DETERMINED"* ]]; then
+  pass "a reviewed-and-clean PR still reads clean"
+else
+  fail "reviewed-clean rendering (out=${LAST_OUT:0:220})"
+fi
+
 # A host repo that does not ship the counter says nothing — there was never a
 # count to be silent about, and a missing script must not print a scary line.
 LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" \
