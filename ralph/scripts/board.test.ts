@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BRANCH_KIND_CHARS } from "./contracts.js";
 import {
   adopt,
   answer,
@@ -841,14 +842,38 @@ describe("transition engine", () => {
     expect(gh.comments).toEqual([]); // evidence, not an unevidenced completion
   });
 
-  it("a merged PR on a branch that merely contains the digits is not linkage", () => {
+  it("a merged PR on a branch that merely PREFIXES the digits is not linkage (GH-1996)", () => {
+    // `head:` is a prefix match, so search itself returns `feat/10-…` for #1.
+    // parseBranchName is what rejects it — the same re-validation the old
+    // substring read needed, for the same reason.
     gh.issues.set(1, {
       number: 1,
       state: "In Review",
-      branchRefs: [{ name: "chore/fix-1-typo-10", prs: [{ number: 101, merged: true }] }],
+      branchRefs: [{ name: "feat/10-unrelated-work", prs: [{ number: 101, merged: true }] }],
     });
     expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(/merged linked PR/);
     expect(gh.mutations).toEqual([]);
+  });
+
+  it("the linkage read survives a head branch deleted at merge (GH-1996)", () => {
+    // The defect: merge-pr.sh deletes the head ref, so a refs-rooted read
+    // found nothing for the whole population this gate exists to serve.
+    // Search's `head:` qualifier is what survives the deletion.
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      branchRefs: [{ name: "fix/1-a-deleted-branch", prs: [{ number: 101, merged: true }] }],
+    });
+    expect(transition(ctx, fetchIssue(ctx, 1), "Done").state).toBe("Done");
+    const q = gh.queries.find((s) => s.includes("search(type: ISSUE"))!;
+    expect(q).toBeDefined();
+    expect(q).not.toContain("refs(refPrefix");
+    // One qualifier per grammar: every live kind, plus the legacy shape.
+    for (const kind of BRANCH_KIND_CHARS) {
+      expect(gh.lastSearchQuery).toContain(`head:${kind}/1`);
+    }
+    expect(gh.lastSearchQuery).toContain("head:feature/GH-1");
+    expect(gh.lastSearchQuery).toContain("is:merged");
   });
 
   it("an unmerged PR on the convention branch is not evidence", () => {

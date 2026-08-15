@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import {
   BOARD_STATES,
   type BranchKind,
+  BRANCH_KIND_CHARS,
   branchKindFor,
   CLAIM_MAX_HOLDERS,
   type ClaimV2,
@@ -1703,45 +1704,50 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
  *  scope or a malformed response may not manufacture evidence for a close,
  *  because evidence is the artifact no later reader re-derives.
  *
- *  Honest limit: this reads live refs, so a head branch deleted at merge is
- *  invisible to it and the issue still needs `--why`. `merge-pr.sh` does not
- *  delete branches (GH-1873), which is why the cheap ref read is enough here;
- *  a repo that deletes on merge simply keeps the flag.
+ *  Read through SEARCH, not live refs (GH-1996). The refs read this replaced
+ *  assumed the head branch survives the merge; `merge-pr.sh` deletes it
+ *  (merge-pr.sh:565, observed on #1995 — GH-1732's own PR), so for every PR
+ *  merged through the gate the ref is already gone by the time a close-out
+ *  asks, and the evidence path found nothing for the exact population it was
+ *  built to serve. Search's `head:` qualifier survives branch deletion.
  *
- *  Costed as one nested connection product (10 refs x 10 PRs = 100 nodes,
- *  the same bucket deliver's b-alias sits in) and only ever asked when the
- *  closing-reference half already came up empty on a Done move. */
+ *  `head:` is a PREFIX match and needs the kind, so `head:1996` matches
+ *  nothing — hence one qualifier per grammar (the closed BRANCH_KINDS set plus
+ *  the legacy `feature/GH-N`), OR'd inside a single query. Being a prefix
+ *  match it also accepts `feat/19960-…`, which parseBranchName rejects below —
+ *  the same re-validation the substring read needed, for the same reason.
+ *
+ *  Honest limits: search is eventually consistent, so a PR merged seconds ago
+ *  may not be indexed yet — that reads as no evidence, which is the fail-closed
+ *  direction. deliver-queue's own ref read is untouched: it runs against OPEN
+ *  PRs, whose branches still exist.
+ *
+ *  One query, the same slot the refs read occupied, and only ever asked when
+ *  the closing-reference half already came up empty on a Done move. */
 function branchLinkedMergedPr(ctx: Ctx, number: number): { number: number; url: string } | null {
+  const heads = [...BRANCH_KIND_CHARS.map((k) => `${k}/${number}`), `feature/GH-${number}`];
   let data: any;
   try {
     data = ghGraphQL(
       ctx,
-      `query($owner: String!, $repo: String!, $q: String!) {
-        repository(owner: $owner, name: $repo) {
-          refs(refPrefix: "refs/heads/", query: $q, first: 10) {
-            nodes {
-              name
-              associatedPullRequests(first: 10, states: [MERGED]) { nodes { number url merged } }
-            }
-          }
+      `query($q: String!) {
+        search(type: ISSUE, query: $q, first: 20) {
+          nodes { ... on PullRequest { number url merged headRefName } }
         }
       }`,
-      // The bare number: GitHub's ref filter is a SUBSTRING match, so it
-      // covers both grammars (`fix/1732-slug`, legacy `feature/GH-1732`) in
-      // one connection. It also returns coincidences of digits, which
-      // parseBranchName rejects below.
-      { owner: ctx.cfg.owner, repo: ctx.cfg.repo, q: String(number) },
+      {
+        q:
+          `repo:${ctx.cfg.owner}/${ctx.cfg.repo} is:pr is:merged ` +
+          heads.map((h) => `head:${h}`).join(" "),
+      },
     );
   } catch {
     return null;
   }
-  for (const ref of data?.repository?.refs?.nodes ?? []) {
-    if (parseBranchName(ref?.name ?? "")?.issue !== number) continue;
-    for (const p of ref?.associatedPullRequests?.nodes ?? []) {
-      if (p?.merged && typeof p.number === "number") {
-        return { number: p.number, url: p.url ?? "" };
-      }
-    }
+  for (const p of data?.search?.nodes ?? []) {
+    if (!p?.merged || typeof p.number !== "number") continue;
+    if (parseBranchName(p.headRefName ?? "")?.issue !== number) continue;
+    return { number: p.number, url: p.url ?? "" };
   }
   return null;
 }
