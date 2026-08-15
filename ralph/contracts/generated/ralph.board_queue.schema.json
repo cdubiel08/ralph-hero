@@ -679,7 +679,8 @@
                         "no-pr",
                         "marker-current",
                         "retry-window",
-                        "deferred"
+                        "deferred",
+                        "convergence-stalled"
                       ]
                     },
                     "verdict": {
@@ -714,6 +715,18 @@
                         {
                           "type": "null"
                         }
+                      ]
+                    },
+                    "convergence": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "detail": {
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     }
                   },
@@ -762,7 +775,8 @@
                       "no-pr",
                       "marker-current",
                       "retry-window",
-                      "deferred"
+                      "deferred",
+                      "convergence-stalled"
                     ]
                   },
                   "verdict": {
@@ -797,6 +811,18 @@
                       {
                         "type": "null"
                       }
+                    ]
+                  },
+                  "convergence": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "detail": {
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   }
                 },
@@ -841,7 +867,8 @@
                       "no-pr",
                       "marker-current",
                       "retry-window",
-                      "deferred"
+                      "deferred",
+                      "convergence-stalled"
                     ]
                   },
                   "verdict": {
@@ -876,6 +903,18 @@
                       {
                         "type": "null"
                       }
+                    ]
+                  },
+                  "convergence": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "detail": {
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   }
                 },
