@@ -54,6 +54,12 @@ conventions before changing a component.
   missing reviews, stale attestations, and unknown mergeability may be pending,
   but must never be treated as passing.
 
+### Script conventions
+
+- Every script under `scripts/` that mutates a pull request must support a
+  `--dry-run` flag that prints the mutations it would perform without
+  performing them. Flag any mutating script that lacks one.
+
 ### Durable compatibility
 
 - Prefer behavioral and schema compatibility over implementation details.
