@@ -185,6 +185,7 @@ APPLY_KEYWORDS_SH="${RALPH_APPLY_KEYWORDS_SH:-$PROJECT_ROOT/scripts/apply-keywor
 CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review-evidence.sh}"
 ADVISORY_SH="${RALPH_ADVISORY_FINDINGS_SH:-$PROJECT_ROOT/scripts/advisory-findings.sh}"
 CONVERGENCE_SH="${RALPH_CONVERGENCE_SH:-$PROJECT_ROOT/scripts/review-convergence.sh}"
+LINKAGE_DRIFT_SH="${RALPH_LINKAGE_DRIFT_SH:-$PROJECT_ROOT/scripts/pr-linkage-drift.sh}"
 # The "not evaluated" evidence value: review mode, an exempt author, or a PR
 # that is already closed. ok=false is inert wherever the ladder waives review.
 CODEX_NONE='{"ok":false,"turn":"reviewer","detail":"review evidence not evaluated","reviewer":"","review_url":""}'
@@ -794,6 +795,34 @@ gather() {
           else " | \(.count) unresolved advisory finding(s): \(.summary) — read them before merging: \(.first_url)"
           end' <<<"$adv")
         verdict="${verdict}${adv_line}"
+      fi
+      ;;
+  esac
+
+  # Closing-keyword linkage drift (GH-1940), on the same two merge-ward
+  # verdicts and under the same rule: it changes no verdict and blocks no
+  # merge. Once a review app with write scope is installed the PR BODY is
+  # app-writable, and `closingIssuesReferences` — which gate 6 reads, rightly,
+  # instead of regexing the body — is DERIVED from it. If an app ever drops the
+  # author's `Closes #N`, the gate evaluates a PR that closes nothing and
+  # passes it: the merge folds nothing back into the board and nothing shouts.
+  #
+  # Only drift and not-evaluated print. A PR whose linkage is intact is the
+  # normal case, and a per-PR "linkage fine" line is chrome that trains the eye
+  # to skip the block it lives in — the opposite of what GH-1945 was for.
+  case "$verdict" in
+    GATE-READY*|"GATE-YOURS attestation"*)
+      if [ -x "$LINKAGE_DRIFT_SH" ]; then
+        local drift drift_line
+        drift=$("$LINKAGE_DRIFT_SH" "$PR" 2>/dev/null) || drift=''
+        printf '%s' "$drift" | jq -e 'type == "object"' >/dev/null 2>&1 \
+          || drift='{"ok":false,"count":0,"drift":[],"summary":"","detail":"pr-linkage-drift.sh returned nothing usable"}'
+        drift_line=$(jq -r '
+          if .ok != true then " | closing-keyword linkage NOT CHECKED (\(.detail))"
+          elif .count == 0 then ""
+          else " | LINKAGE DRIFT — \(.summary). GitHub'"'"'s closing linkage is what the merge gate reads; the merge will fold nothing back into the board. Restore the keyword before merging"
+          end' <<<"$drift")
+        verdict="${verdict}${drift_line}"
       fi
       ;;
   esac

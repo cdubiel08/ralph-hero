@@ -2095,5 +2095,79 @@ else
   fail "ready should not be annotated (out=${LAST_OUT:0:260})"
 fi
 
+# --- linkage drift (GH-1940) ------------------------------------------------
+# The PR body is app-writable once a review app with write scope is installed,
+# and the closing linkage the merge gate reads is derived from it. Drift is
+# surfaced on the two merge-ward verdicts and gates nothing.
+echo
+drift_stub() { # drift_stub <name> <json>
+  printf '#!/usr/bin/env bash\nprintf %%s %s\n' "'$2'" >"$TMP_ROOT/bin/drift-$1"
+  chmod +x "$TMP_ROOT/bin/drift-$1"
+  echo "$TMP_ROOT/bin/drift-$1"
+}
+drift_run() { # drift_run <dir> <script-path>
+  PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$1" \
+    RALPH_MERGE_POLICY_FILE="$POLICY_FINDINGS" \
+    RALPH_LINKAGE_DRIFT_SH="$2" bash "$SCRIPT" 1740 2>&1 || true
+}
+DRIFT_ONE='{"ok":true,"count":1,"drift":[{"issue":1893,"where":"the commits but NOT the body"}],"summary":"#1893 (keyword in the commits but NOT the body, not in GitHub linkage)","detail":""}'
+DRIFT_NONE='{"ok":true,"count":0,"drift":[],"summary":"","detail":""}'
+DRIFT_BAD='{"ok":false,"count":0,"drift":[],"summary":"","detail":"gh api graphql failed"}'
+
+D="$TMP_ROOT/drift-ready"
+setup_ready "$D"
+printf '%s' "$(codex_request "$HEAD_SHA")" >"$D/issue_comments.json"
+printf '%s' "$CODEX_REVIEW_AT_HEAD" >"$D/pr_reviews.json"
+
+LAST_OUT=$(drift_run "$D" "$(drift_stub one "$DRIFT_ONE")")
+if [[ "$LAST_OUT" == "GATE-READY"* ]] && [[ "$LAST_OUT" == *"LINKAGE DRIFT"* ]] \
+   && [[ "$LAST_OUT" == *"#1893"* ]]; then
+  pass "drift is named on GATE-READY and does not change the verdict"
+else
+  fail "drift annotation (out=${LAST_OUT:0:260})"
+fi
+
+LAST_OUT=$(drift_run "$D" "$(drift_stub none "$DRIFT_NONE")")
+if [[ "$LAST_OUT" == "GATE-READY"* ]] && [[ "$LAST_OUT" != *"LINKAGE"* ]]; then
+  pass "intact linkage prints nothing"
+else
+  fail "no-drift should be silent (out=${LAST_OUT:0:260})"
+fi
+
+LAST_OUT=$(drift_run "$D" "$(drift_stub bad "$DRIFT_BAD")")
+if [[ "$LAST_OUT" == *"NOT CHECKED"* ]]; then
+  pass "an unreadable linkage check says so rather than reading as intact"
+else
+  fail "not-evaluated drift (out=${LAST_OUT:0:260})"
+fi
+
+printf '#!/usr/bin/env bash\nexit 3\n' >"$TMP_ROOT/bin/broken-drift"
+chmod +x "$TMP_ROOT/bin/broken-drift"
+LAST_OUT=$(drift_run "$D" "$TMP_ROOT/bin/broken-drift")
+if [[ "$LAST_OUT" == *"NOT CHECKED"* ]]; then
+  pass "a crashed linkage check is reported, not swallowed"
+else
+  fail "crashed drift script (out=${LAST_OUT:0:260})"
+fi
+
+LAST_OUT=$(drift_run "$D" "$TMP_ROOT/no-such-drift-script")
+if [[ "$LAST_OUT" == "GATE-READY"* ]] && [[ "$LAST_OUT" != *"LINKAGE"* ]]; then
+  pass "a repo that ships no linkage check is unchanged"
+else
+  fail "absent drift script (out=${LAST_OUT:0:260})"
+fi
+
+# Not on a blocked verdict: nobody is deciding a merge there.
+D="$TMP_ROOT/drift-not-on-fail"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" '$g + [{name:"ci", bucket:"fail", description:""}]')" \
+  "$OPEN_PR" "$CODEX_REVIEW_AT_HEAD" "$(codex_request "$HEAD_SHA")"
+LAST_OUT=$(drift_run "$D" "$(drift_stub one "$DRIFT_ONE")")
+if [[ "$LAST_OUT" == "GATE-FAIL ci"* ]] && [[ "$LAST_OUT" != *"LINKAGE"* ]]; then
+  pass "a blocked verdict carries no linkage line"
+else
+  fail "drift on GATE-FAIL (out=${LAST_OUT:0:260})"
+fi
+
+echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
