@@ -11,5 +11,8 @@
       "Bash(bash scripts/merge-pr.sh:*)",
       "Bash(./scripts/merge-pr.sh:*)"
     ]
+  },
+  "enabledPlugins": {
+    "greptile@claude-plugins-official": false
   }
 }
