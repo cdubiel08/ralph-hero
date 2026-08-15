@@ -29,15 +29,27 @@
 # for transport failures, the body in case a future CLI version reports a
 # refusal with rc 0.
 #
-# Token vocabulary (names, value shapes) is C8 in ralph/scripts/contracts.ts —
-# semantic validation belongs to producers and `board contract` lints; this
-# wrapper only enforces the wire shape (NAME=VALUE, name <=32 [A-Za-z0-9_-],
-# value <=80, no newlines).
+# Token vocabulary (names, value shapes) is C8 in ralph/scripts/contracts.ts.
+# This wrapper enforces the wire shape (NAME=VALUE, name <=32 [A-Za-z0-9_-],
+# value <=80, no newlines) AND, for `state`, the C8 lifecycle enum (GH-1880).
+#
+# Why `state` and nothing else: it is the only token with a closed vocabulary —
+# every other name is free-form by declaration, so there is nothing to check.
+# The enum is spelled once here, as a bash literal, and cross-checked against
+# contracts.ts's AGENT_STATES by ralph/scripts/contracts.test.ts, the same
+# executable-parity shape the naming golden table uses across the two planes:
+# a value added on either side and not the other fails CI. A bad state token is
+# bookkeeping, never the one-writer invariant — so an unknown value DROPS the
+# push with a warning and still returns 0, like every other failure path here.
 #
 # No top-level side effects, no set/shopt (callers own their shell options).
 # bash 3.2 compatible.
 
 _RALPH_TOKENS_WARNED=""
+
+# The C8 `state` enum (contracts.ts AGENT_STATES). Space-delimited, bash 3.2:
+# no arrays. Cross-checked against contracts.ts in CI — edit both or neither.
+RALPH_TOKEN_STATES="spawned briefed working blocked reporting interrupted indeterminate orphaned adopted"
 
 _ralph_tokens_warn_once() {
   if [ -z "$_RALPH_TOKENS_WARNED" ]; then
@@ -80,6 +92,15 @@ ralph_tokens_push() {
     if [ "${#name}" -gt 32 ] || [ "${#value}" -gt 80 ]; then
       _ralph_tokens_warn_once "token '$name' out of size budget (name <=32, value <=80)"
       return 0
+    fi
+    if [ "$name" = state ]; then
+      case " $RALPH_TOKEN_STATES " in
+        *" $value "*) : ;;
+        *)
+          _ralph_tokens_warn_once "state '$value' is outside the C8 lifecycle enum ($RALPH_TOKEN_STATES)"
+          return 0
+          ;;
+      esac
     fi
   done
   # Rebuild the positional params as --token pairs: the for-loop list is

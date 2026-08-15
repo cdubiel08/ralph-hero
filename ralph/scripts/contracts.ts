@@ -599,6 +599,14 @@ function obj<T extends ZodRawShape>(mode: Mode, shape: T) {
 // Contracts C1–C9 (C5 is deliberately absent from the locked spec)
 // ---------------------------------------------------------------------------
 
+/** The herdr-plane spawn-depth cap: depths 0..DEPTH_MAX, so DEPTH_MAX+1 nested
+ *  levels. Spelled ONCE here (C1's field and C8's `depth` token both read it)
+ *  and cross-checked against the bash predicate that enforces it —
+ *  `ralph_depth_guard` in plugin/ralph-herdr/scripts/lib.sh — by
+ *  contracts.test.ts, the naming golden table's shape applied to a number
+ *  (GH-1880). Inner-plane subagents are free and never counted. */
+export const DEPTH_MAX = 3;
+
 export const CONTRACT_IDS = [
   "ralph.spawn_request",
   "ralph.completion_report",
@@ -624,7 +632,7 @@ function buildSpawnRequest(mode: Mode) {
     branch: zNonEmpty,
     base: zNonEmpty,
     parent_ref: zAgentRef.optional(),
-    depth: z.number().int().min(0).max(3),
+    depth: z.number().int().min(0).max(DEPTH_MAX),
     invoked_by: z.enum(INVOKED_BY),
   }).superRefine((v, ctx) => {
     // The assembled name must obey the grammar's length cap with the gen
@@ -800,15 +808,20 @@ function zNextResult(mode: Mode) {
     humanNeededCount: z.number().int().min(0),
     staleBlockedEdges: z.array(obj(mode, { number: zIssue, blockers: z.array(z.number().int()) })),
     inFlightEpics: z.array(obj(mode, { root: zIssue, child: zIssue, holder: z.string().nullable() })),
-    // Item-cache staleness facts (GH-1806). OPTIONAL in both modes: a payload
-    // produced before the cache existed, or by a `--fresh` run, is still valid
-    // — and a strict producer that passes `board next --json` through verbatim
-    // must not start failing because the read was answered from disk.
-    cache: obj(mode, {
-      cached: z.boolean(),
-      fetchedAt: zIsoUtc,
-      ageSec: z.number().int().min(0),
-    }).optional(),
+    cache: zCacheFacts(mode).optional(),
+  });
+}
+
+/** Item-cache staleness facts (GH-1806). OPTIONAL wherever it appears, in both
+ *  modes: a payload produced before the cache existed, or by a `--fresh` run,
+ *  is still valid — and a strict producer that passes a selector's `--json`
+ *  through verbatim must not start failing because the read was answered from
+ *  disk. */
+function zCacheFacts(mode: Mode) {
+  return obj(mode, {
+    cached: z.boolean(),
+    fetchedAt: zIsoUtc,
+    ageSec: z.number().int().min(0),
   });
 }
 
@@ -854,6 +867,45 @@ function zTendResult(mode: Mode) {
   });
 }
 
+// GH-1880 — `board frontier --json`. The one herdr-facing wire shape (its help
+// text names ralph-herdr fleets as the consumer) that had no contract at all:
+// it lived on `tsc` and behavioural tests, so a fleet-side consumer had nothing
+// to validate against. Declared field-for-field from board.ts's FrontierItem /
+// FrontierBlockedItem / FrontierResult; the CLI parity test below drives the
+// real selector, so a rename fails the same day.
+function zFrontierItem(mode: Mode) {
+  return obj(mode, {
+    number: zIssue,
+    title: z.string(),
+    // Emitted only when present — board.ts spreads these conditionally, and
+    // "absent" is the honest encoding of "no own-repo parent / not under an
+    // epic", which `null` would blur.
+    parentNumber: z.number().int().optional(),
+    via: z.number().int().optional(),
+    childrenBlocked: z.array(z.number().int()).optional(),
+    blockers: z.array(obj(mode, { number: z.number().int(), state: z.enum(["OPEN", "CLOSED"]) })),
+    eligible: z.literal(true),
+  });
+}
+
+function zFrontierBlockedRow(mode: Mode) {
+  return obj(mode, {
+    number: zIssue,
+    blockers_open: z.array(z.number().int()),
+    // Present only as `true`: a truncated read is the fail-closed assertion,
+    // and `false` would let a reader that never checked look like one that did.
+    truncated: z.literal(true).optional(),
+  });
+}
+
+function zFrontierResult(mode: Mode) {
+  return obj(mode, {
+    frontier: z.array(zFrontierItem(mode)),
+    blocked: z.array(zFrontierBlockedRow(mode)),
+    cache: zCacheFacts(mode).optional(),
+  });
+}
+
 function buildBoardQueue(mode: Mode) {
   const head = {
     contract: z.literal("ralph.board_queue"),
@@ -864,8 +916,40 @@ function buildBoardQueue(mode: Mode) {
       obj(mode, { ...head, selector: z.literal("next"), result: zNextResult(mode) }),
       obj(mode, { ...head, selector: z.literal("deliver-queue"), result: zDeliverResult(mode) }),
       obj(mode, { ...head, selector: z.literal("tend-queue"), result: zTendResult(mode) }),
+      obj(mode, { ...head, selector: z.literal("frontier"), result: zFrontierResult(mode) }),
     ])
     .superRefine((v, ctx) => {
+      // frontier is a re-projection, not a ranked queue: it has no `next`
+      // head, so the queue-integrity rules below do not apply to it. Its own
+      // invariants — one row per issue, and eligibility MEANING every listed
+      // blocker is closed — are checked here instead.
+      if (v.selector === "frontier") {
+        const f = v.result as { frontier: Array<{ number: number; blockers: Array<{ state: string }> }>; blocked: Array<{ number: number }> };
+        const nums = f.frontier.map((i) => i.number);
+        if (new Set(nums).size !== nums.length)
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["result", "frontier"],
+            message: "frontier numbers must be unique",
+          });
+        const blockedNums = new Set(f.blocked.map((b) => b.number));
+        for (const n of nums)
+          if (blockedNums.has(n))
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["result", "frontier"],
+              message: `issue ${n} is both eligible and blocked`,
+            });
+        f.frontier.forEach((i, idx) => {
+          if (i.blockers.some((b) => b.state === "OPEN"))
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["result", "frontier", idx, "blockers"],
+              message: "an eligible frontier item may not carry an OPEN blocker",
+            });
+        });
+        return;
+      }
       const r = v.result as { next: unknown; queue: Array<{ number: number }> };
       if (r.next !== null && r.queue.length > 0 && JSON.stringify(r.next) !== JSON.stringify(r.queue[0]))
         ctx.addIssue({
@@ -966,7 +1050,10 @@ export const TOKENS = {
   slug: { doc: "the name's slug part", validate: (v) => SLUG_RE.test(v) },
   parent: freeForm("parent agent name or durable ref"),
   root: freeForm("root of this agent's spawn tree"),
-  depth: { doc: "herdr-plane spawn depth (inner subagents are free)", validate: (v) => /^[0-3]$/.test(v) },
+  depth: {
+    doc: "herdr-plane spawn depth (inner subagents are free)",
+    validate: (v) => /^[0-9]+$/.test(v) && Number(v) <= DEPTH_MAX,
+  },
   state: {
     doc: "agent lifecycle state",
     validate: (v) => (AGENT_STATES as readonly string[]).includes(v),

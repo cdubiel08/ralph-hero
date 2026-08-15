@@ -12,7 +12,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { encodeClaim } from "./board.js";
 import {
+  AGENT_STATES,
   BRANCH_KIND_CHARS,
+  DEPTH_MAX,
   type BranchKind,
   branchIssue,
   branchKindFor,
@@ -448,6 +450,40 @@ describe("naming: golden table — the executable TS/bash mirror", () => {
   });
 });
 
+describe("C8: the bash push site mirrors the state enum (GH-1880)", () => {
+  const tokensSh = fileURLToPath(new URL("../../plugin/ralph-herdr/scripts/tokens.sh", import.meta.url));
+
+  it("tokens.sh's RALPH_TOKEN_STATES is exactly AGENT_STATES", () => {
+    const src = readFileSync(tokensSh, "utf8");
+    const m = src.match(/^RALPH_TOKEN_STATES="([^"]*)"/m);
+    expect(m, "tokens.sh must declare RALPH_TOKEN_STATES").not.toBeNull();
+    expect(m![1].split(/\s+/).filter(Boolean)).toEqual([...AGENT_STATES]);
+  });
+
+  it("the guard runs at the push site, not only in the declaration", () => {
+    // Cheap structural proof that the enum is CONSULTED: a literal beside the
+    // wire-shape checks would satisfy the mirror test above while validating
+    // nothing. (tokens.test.sh drives the behaviour itself.)
+    const src = readFileSync(tokensSh, "utf8");
+    expect(src).toMatch(/\$RALPH_TOKEN_STATES /);
+  });
+});
+
+describe("C1: the bash depth guard mirrors DEPTH_MAX (GH-1880)", () => {
+  it("ralph_depth_guard's refusal threshold is exactly DEPTH_MAX - 1", () => {
+    // The guard refuses a CHILD when the parent is already at DEPTH_MAX - 1,
+    // which is what "depths 0..DEPTH_MAX" means at the spawn site. The two
+    // agreed before this test; nothing made them keep agreeing.
+    const src = readFileSync(
+      fileURLToPath(new URL("../../plugin/ralph-herdr/scripts/lib.sh", import.meta.url)),
+      "utf8",
+    );
+    const m = src.match(/\[ "\$d" -ge (\d+) \]/);
+    expect(m, "lib.sh must guard on a numeric depth threshold").not.toBeNull();
+    expect(Number(m![1])).toBe(DEPTH_MAX - 1);
+  });
+});
+
 describe("naming: durable refs", () => {
   it("name#epoch round-trips; the epoch is 4-8 lowercase hex", () => {
     const ref = formatRef("w1743-claim", "a3f2");
@@ -801,6 +837,44 @@ describe("C6 parity: real `board … --json` output validates against the schema
     expect(parsed.observationSlot).toBe(true);
     const res = validateContract("ralph.board_queue", envelope("tend-queue", parsed));
     expect(res.success, issuesOf(res)).toBe(true);
+  });
+
+  it("frontier --json (an eligible row with a closed blocker, a blocked row) is exactly the declared shape", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Done", closedAt: "2026-08-01T00:00:00Z" });
+    gh.issues.set(2, { number: 2, state: "Backlog", blockedBy: [{ number: 1, state: "CLOSED" }] });
+    gh.issues.set(3, { number: 3, state: "Backlog", blockedBy: [{ number: 4, state: "OPEN" }] });
+    gh.issues.set(4, { number: 4, state: "Backlog" });
+    const parsed = capture(["frontier", "--json"], ctx) as {
+      frontier: Array<{ number: number; blockers: unknown[]; eligible: boolean }>;
+      blocked: unknown[];
+    };
+    // Non-vacuous: a real eligible row carrying its closed-blocker explanation.
+    expect(parsed.frontier.some((f) => f.number === 2 && f.blockers.length > 0)).toBe(true);
+    expect(parsed.blocked.length).toBeGreaterThan(0);
+    const res = validateContract("ralph.board_queue", envelope("frontier", parsed));
+    expect(res.success, issuesOf(res)).toBe(true);
+  });
+
+  it("frontier refinements are semantic, not shape: an OPEN blocker on an eligible row is refused", () => {
+    const payload = envelope("frontier", {
+      frontier: [{ number: 7, title: "t", blockers: [{ number: 6, state: "OPEN" }], eligible: true }],
+      blocked: [],
+    });
+    const res = validateContract("ralph.board_queue", payload);
+    expect(res.success).toBe(false);
+    expect(issuesOf(res)).toMatch(/eligible frontier item may not carry an OPEN blocker/);
+  });
+
+  it("frontier refuses an issue that is both eligible and blocked", () => {
+    const payload = envelope("frontier", {
+      frontier: [{ number: 7, title: "t", blockers: [], eligible: true }],
+      blocked: [{ number: 7, blockers_open: [6] }],
+    });
+    const res = validateContract("ralph.board_queue", payload);
+    expect(res.success).toBe(false);
+    expect(issuesOf(res)).toMatch(/issue 7 is both eligible and blocked/);
   });
 });
 
