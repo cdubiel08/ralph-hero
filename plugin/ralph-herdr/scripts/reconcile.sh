@@ -92,6 +92,46 @@ trap ralph_ledger_unlock_held EXIT
 
 log() { echo "$(date -u +%FT%TZ) reconcile: $*"; }
 
+# ── flags (GH-1933) ──────────────────────────────────────────────────────────
+#   --dry-run  run every read and every decision, perform no write. The pass
+#              logs what it WOULD do. Exists because the one irreversible
+#              outcome here — a live worker exited `lost`, which leaves a
+#              zombie pane no later pass can re-discover — previously had no
+#              way to be inspected before it happened.
+#   --adopt    treat a ledger with no ownership proof as this server's, for
+#              this pass only. The escape hatch for records written BEFORE
+#              records carried a session key: their writer is unknowable, so
+#              no evidence can ever be found for them and only an operator can
+#              assert it. It does not weaken the guard — the guard's verdict is
+#              still computed and logged, this flag overrides it out loud.
+DRY_RUN=0
+ADOPT=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --adopt) ADOPT=1 ;;
+    *)
+      echo "reconcile.sh: unknown argument '$arg' (accepts --dry-run, --adopt)" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# Dry run is enforced by replacing the mutating primitives, not by an `if` at
+# each call site: a guard the phases have to remember is a guard one of them
+# will forget. These five are the whole write surface of this pass.
+if [ "$DRY_RUN" = 1 ]; then
+  log "DRY RUN — every decision below is computed for real; no write is performed"
+  ralph_ledger_append() { log "would append: $1"; }
+  # Prints an OUTCOME, like the real one — recover_claim logs it verbatim, so
+  # the dry run reports the release it would have attempted, checkout scoping
+  # and all, through the same line the real pass would print.
+  ralph_claim_release() { echo "dry-run (would release)"; }
+  ralph_tokens_push() { log "would push tokens onto pane $1: ${*:2}"; }
+  refill_all_to_capacity() { log "would evaluate fleet refill for $1"; }
+  ralph_dirty_clear() { log "would clear the dirty mark for $(dirname "$1")"; }
+fi
+
 # Ledgers nest as <root>/<owner>/<repo>/ledger.jsonl (see ledger.sh).
 ledger_root() { printf '%s\n' "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"; }
 
@@ -164,36 +204,66 @@ walk_ledgers() { printf '%s\n' ${ledgers[@]+"${ledgers[@]}"}; }
 # including the session writing the fix.
 #
 # The evidence is POSITIVE, matching claim-recover.sh's doctrine that an
-# absence proves nothing: a ledger is this server's when the server's own
-# snapshot holds a pane that one of the ledger's open records names. A foreign
-# server holds none of them, so it sweeps nothing. Everything else — a ledger
-# with no open records, or open records that recorded no pane — is UNKNOWN and
-# fails closed the same way: the absence-driven phases skip it, and the next
-# pass from the server that does own it reconciles as before.
+# absence proves nothing. There are TWO positive proofs, and either suffices:
+#
+#   pane     the server's own snapshot holds a pane that one of the ledger's
+#            open records names. The original proof (GH-1863).
+#   session  one of the ledger's open records was WRITTEN by this server —
+#            `.session` equals our ralph_session_key (GH-1933).
+#
+# The second exists because the first is only true while a worker is alive. On
+# a fully-retired fleet no open record names a live pane, so a ledger became
+# unsweepable in exactly the condition where sweeping it is safest: the
+# operator had to keep a worker running to earn the right to sweep, and a
+# mis-swept live worker is the irreversible outcome the guard exists to
+# prevent. Observed 2026-08-14: 13 stale records, monotonically growing, whose
+# named remedy was the command that declined to run.
+#
+# A foreign server satisfies neither — it holds none of those panes and it
+# wrote none of those records — so GH-1863's refusal is unchanged. What is
+# still UNKNOWN, and still fails closed: records written before the session
+# stamp existed, and open records carrying neither a pane nor a session. Their
+# writer is unknowable from the ledger, so only an operator can assert it
+# (--adopt), and --dry-run is there to inspect the sweep first.
 #
 # Computed ONCE here, from the pass-start open rows, because phase E closes
 # records: a ledger asked again after E could have lost the very row that
 # proved it ours.
 server_panes=$(printf '%s' "$snapshot" |
   jq -r '(.panes // [])[] | .pane_id // empty' 2>/dev/null | tr '\n' ' ') || server_panes=""
-owned="" # ledger paths this server's snapshot proves it owns
+this_session=$(ralph_session_key)
+owned="" # ledger paths this pass may sweep
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
+  proof=""
   while IFS=$'\037' read -r ref pane _pid _harness _parent _state _issue _checkout _toks; do
     [ -n "$ref" ] || continue
     [ -n "$pane" ] || continue
     case " $server_panes " in
       *" $pane "*)
-        owned="$owned $f"
+        proof="an open record names pane $pane, which this server holds"
         break
         ;;
     esac
   done < <(ralph_ledger_open_rows || true)
-  case " $owned " in
-    *" $f "*) : ;;
-    *) log "not this server's ledger — no open record names a pane this server holds; sweeping nothing in $f" ;;
-  esac
+  if [ -z "$proof" ]; then
+    while IFS= read -r s; do
+      [ -n "$s" ] || continue
+      if [ "$s" = "$this_session" ]; then
+        proof="this server wrote an open record (session $s)"
+        break
+      fi
+    done < <(ralph_ledger_open_sessions || true)
+  fi
+  if [ -n "$proof" ]; then
+    owned="$owned $f"
+  elif [ "$ADOPT" = 1 ]; then
+    owned="$owned $f"
+    log "--adopt: no ownership proof for $f — sweeping it anyway on the operator's assertion"
+  else
+    log "not this server's ledger — no open record names a pane this server holds, and none carries this server's session key ($this_session); sweeping nothing in $f (re-run with --dry-run --adopt to inspect, --adopt to assert it is yours)"
+  fi
 done < <(walk_ledgers)
 unset RALPH_HERDR_LEDGER
 

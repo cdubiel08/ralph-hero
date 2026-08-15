@@ -14,7 +14,10 @@
 #   the main checkout and every worktree of one repo resolve the SAME ledger.
 #
 #   Every line is one event object:
-#     {ts, ev, agent_ref, ...ev-specific}
+#     {ts, ev, agent_ref, session, ...ev-specific}
+#   `session` is ralph_session_key — the server that WROTE the record, stamped
+#   by ralph_ledger_append. It is how reconcile proves a ledger is its own once
+#   the last pane that would have proven it is gone (GH-1933).
 #   ev vocabulary: spawn | state | adopt | exit | discover | lost ("lost" is
 #   reserved; today a lost agent is recorded as ev=exit reason=lost).
 #     spawn     appended by lib.sh's spawn path AT SPAWN TIME — the one
@@ -121,6 +124,50 @@ ralph_ledger_path() {
   printf '%s\n' "$dir/ledger.jsonl"
 }
 
+# ralph_session_key — a stable identifier for the Herdr server being talked to.
+#
+# Resolution mirrors Herdr's own socket selection: an explicit --session (which
+# callers pass through RALPH_HERDR_SESSION), then HERDR_SOCKET_PATH, then
+# HERDR_SESSION, then the default session. The result is hashed rather than
+# used raw because it is written into ledger records and a socket path is
+# neither length- nor charset-bounded.
+#
+# Why a key at all: the durable identity of a worker has to survive the socket
+# being re-pointed. Two servers can host identically-named agents, and a ledger
+# that cannot tell them apart will let one session's reconcile close the
+# other's workers.
+#
+# It lives HERE, not in scope.sh, because ralph_ledger_append stamps it on
+# every record and ledger.sh is sourced before scope.sh everywhere. A key that
+# was merely usually-defined would degrade to an unstamped record — which reads
+# as a legacy record, i.e. as ownership evidence that was never written.
+ralph_session_key() {
+  local sock
+
+  if [ -n "${RALPH_HERDR_SESSION:-}" ]; then
+    sock="session:$RALPH_HERDR_SESSION"
+  elif [ -n "${HERDR_SOCKET_PATH:-}" ]; then
+    sock="socket:$HERDR_SOCKET_PATH"
+  elif [ -n "${HERDR_SESSION:-}" ]; then
+    sock="session:$HERDR_SESSION"
+  else
+    sock="session:default"
+  fi
+
+  # Normalized before hashing so "session:foo" reached by two different routes
+  # produces one key. Truncated to 12 hex chars: this is a namespace tag inside
+  # an already-scoped ledger, not a security boundary.
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$sock" | shasum -a 256 | cut -c1-12
+  elif command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$sock" | sha256sum | cut -c1-12
+  else
+    # No hasher anywhere is not a reason to lose scoping — degrade to a
+    # slugified literal, which is still unique per socket, only longer.
+    printf '%s' "$sock" | LC_ALL=C tr -c 'A-Za-z0-9' '-' | cut -c1-12
+  fi
+}
+
 # ralph_ledger_append JSON — validate and append ONE event as one line.
 # Refuses: invalid JSON, anything that compacts to more than one line
 # (multiple documents), and lines whose write (line + newline) would reach
@@ -133,10 +180,21 @@ ralph_ledger_path() {
 # sub-line remnants; the identical run through `env printf` produced zero
 # tears), so the builtin would tear exactly the concurrent hook appends this
 # budget exists to protect.
+#
+# Every record carries `.session`, the ralph_session_key of the server that
+# wrote it (GH-1933). It is stamped HERE rather than at each of the ~dozen call
+# sites so no appender can forget it, and it is what lets reconcile prove a
+# ledger is its own after the last pane is gone: a pane proves ownership only
+# while it lives, but the record outlives it. A caller that already supplied
+# `.session` keeps it — replay and migration paths must be able to preserve the
+# original writer.
+_RALPH_SESSION_KEY=""
 ralph_ledger_append() {
   local raw="${1-}" file line bytes
   file=$(ralph_ledger_path) || return 1
-  line=$(jq -ec . <<<"$raw" 2>/dev/null) || {
+  [ -n "$_RALPH_SESSION_KEY" ] || _RALPH_SESSION_KEY=$(ralph_session_key)
+  line=$(jq -ec --arg s "$_RALPH_SESSION_KEY" \
+    'if type == "object" and (.session // "") == "" then .session = $s else . end' <<<"$raw" 2>/dev/null) || {
     echo "ralph_ledger_append: not valid JSON: ${raw:0:120}" >&2
     return 1
   }
@@ -390,6 +448,34 @@ ralph_ledger_open_rows() {
        ($v.parent|col), ($v.state|col), ($v.issue|col), ($v.checkout|col),
        ($v.tokens|col)]
     | join("\u001f")' <"$file"
+}
+
+# ralph_ledger_open_sessions [REPO_ROOT] — the distinct session keys that
+# OPENED the still-open records (one per line, empty keys omitted). Ownership
+# evidence for reconcile (GH-1933): a pane proves a ledger ours only while it
+# lives, so a fully-retired fleet became permanently unsweepable; the writer's
+# key survives the last pane closing.
+#
+# Read from the spawn/discover record only, never kept-latest across the ref's
+# whole history: a later event appended by a DIFFERENT server (an exit written
+# by whichever pass observed the death) would otherwise hand that server
+# ownership of a record it did not open. Missing/empty ledger: rc 0, no output.
+# shellcheck disable=SC2120  # REPO_ROOT is optional, as in the helpers above
+ralph_ledger_open_sessions() {
+  local file
+  file=$(ralph_ledger_path "$@") || return 1
+  [ -s "$file" ] || return 0
+  jq -rs '
+    reduce .[] as $e ({open: {}, s: {}};
+      (($e.agent_ref // "")) as $ref
+      | if $ref == "" then .
+        elif $e.ev == "spawn" or $e.ev == "discover" then
+          .open[$ref] = true | .s[$ref] = (($e.session // "") | tostring)
+        elif $e.ev == "exit" then .open[$ref] = false
+        else . end)
+    | .s as $s
+    | [.open | to_entries[] | select(.value) | ($s[.key] // "")]
+    | map(select(. != "")) | unique | .[]' <"$file"
 }
 
 # Latest parent edge for a ref (adopt events win over the spawn/discover

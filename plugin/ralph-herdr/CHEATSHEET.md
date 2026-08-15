@@ -80,6 +80,8 @@ herdr plugin action invoke deliver-pass --plugin ralph-herdr   # shepherd In Rev
 herdr plugin action invoke tend-pass    --plugin ralph-herdr   # hygiene pass
 herdr plugin action invoke doctor       --plugin ralph-herdr   # invariant sweep, popup
 herdr plugin action invoke reconcile    --plugin ralph-herdr   # heal the watcher ledger (also runs at server start)
+bash scripts/reconcile.sh --dry-run                            # same pass, every write withheld
+bash scripts/reconcile.sh --adopt                              # sweep a ledger too old to prove it is yours
 ```
 
 Clicking a `github.com/<owner>/<repo>/issues|pull/N` URL in any pane routes
