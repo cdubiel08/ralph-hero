@@ -379,7 +379,15 @@ _ralph_ledger_latest() {
 # fields, in ONE pass over the file. One line per open ref, fields separated by
 # US (0x1f), in this order:
 #
-#   ref  pane  shell_pid  harness  parent  state  issue  checkout  tokens
+#   ref  pane  shell_pid  harness  parent  state  issue  checkout  tokens  session
+#
+# `session` is the ONLY column that is not "last non-empty wins": it is read
+# from the spawn/discover record alone, for the same reason
+# ralph_ledger_open_sessions does (a later exit written by whichever server
+# observed the death must not hand that server the record). It is the
+# per-record half of reconcile's ownership proof (GH-1944) — the ledger-wide
+# `ralph_ledger_open_sessions` answers "did this server write ANY open record
+# here", which is a different and much wider question.
 #
 # Read it with `IFS=$'\037' read -r ...`. The separator is US and not a tab
 # because tab is IFS *whitespace*: bash collapses runs of it and strips it from
@@ -419,11 +427,12 @@ ralph_ledger_open_rows() {
   jq -rs '
     def keep($cur; $new): if ($new == null or $new == "") then $cur else $new end;
     def col: (. // "") | tostring | gsub("[\u001f\t\r\n]"; " ");
-    reduce .[] as $e ({open: {}, f: {}};
+    reduce .[] as $e ({open: {}, f: {}, s: {}};
       (($e.agent_ref // "")) as $ref
       | if $ref == "" then .
         else
-          (if $e.ev == "spawn" or $e.ev == "discover" then .open[$ref] = true
+          (if $e.ev == "spawn" or $e.ev == "discover" then
+             .open[$ref] = true | .s[$ref] = (($e.session // "") | tostring)
            elif $e.ev == "exit" then .open[$ref] = false
            else . end)
           | (.f[$ref] // {}) as $c
@@ -439,6 +448,7 @@ ralph_ledger_open_rows() {
             }
         end)
     | .f as $f
+    | .s as $s
     | .open
     | to_entries[]
     | select(.value)
@@ -446,7 +456,7 @@ ralph_ledger_open_rows() {
     | ($f[$ref] // {}) as $v
     | [$ref, ($v.pane|col), ($v.shell_pid|col), ($v.harness|col),
        ($v.parent|col), ($v.state|col), ($v.issue|col), ($v.checkout|col),
-       ($v.tokens|col)]
+       ($v.tokens|col), (($s[$ref] // "")|col)]
     | join("\u001f")' <"$file"
 }
 
@@ -540,9 +550,10 @@ ralph_ledger_children() {
     | .key' <"$file"
 }
 
-# ralph_ledger_orphan_pass DEAD_REF LIVE_NAMES — the adoption policy, run when
-# DEAD_REF is gone (pane exited/closed, or exit reason=lost at reconcile).
-# LIVE_NAMES is a space-separated list of currently live herdr agent names.
+# ralph_ledger_orphan_pass DEAD_REF LIVE_NAMES [ONLY_REFS] — the adoption
+# policy, run when DEAD_REF is gone (pane exited/closed, or exit reason=lost at
+# reconcile). LIVE_NAMES is a space-separated list of currently live herdr agent
+# names. ONLY_REFS, when non-empty, restricts the pass to those child refs.
 #
 # For each open child of DEAD_REF:
 #   grandparent live AND ledger-open  → append adopt (child re-parents to the
@@ -558,7 +569,8 @@ ralph_ledger_children() {
 # token pushes go through ralph_tokens_push when tokens.sh is sourced, and are
 # skipped (decoration, never load-bearing) when it isn't.
 ralph_ledger_orphan_pass() {
-  local dead="${1-}" live="${2-}" herdr children child gp gp_name gp_ok pane ts state
+  local dead="${1-}" live="${2-}" only="${3-}"
+  local herdr children child gp gp_name gp_ok pane ts state
   [ -n "$dead" ] || return 0
   children=$(ralph_ledger_children "$dead") || children=""
   [ -n "$children" ] || return 0
@@ -580,6 +592,18 @@ ralph_ledger_orphan_pass() {
   fi
   ts=$(date -u +%FT%TZ)
   for child in $children; do
+    # ONLY, when given, is the set of child refs the caller is entitled to
+    # write (GH-1944). A dead parent's children can include another server's
+    # records — one ledger per repository is shared by every server working it
+    # — and re-parenting or orphan-marking those is exactly the cross-session
+    # write this filter exists to refuse. Empty ONLY means "no filter", which
+    # is watch-event.sh: it acts on a pane death this server observed.
+    if [ -n "$only" ]; then
+      case " $only " in
+        *" $child "*) : ;;
+        *) continue ;;
+      esac
+    fi
     pane=$(_ralph_ledger_latest_pane "$child") || pane=""
     if [ -n "$gp_ok" ]; then
       ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg c "$child" --arg gp "$gp" --arg prev "$dead" \

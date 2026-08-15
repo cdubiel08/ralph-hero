@@ -12,7 +12,8 @@
 #                  {ev: exit, reason: restart_killed|crashed} and its board
 #                  claim RELEASED. Runs first, so phase A only sees what it
 #                  does not already explain. The ONLY board write in this file
-#   A  exit lost   every open ledger agent with no live herdr agent of that
+#   A  exit lost   every open ledger agent THIS SERVER OWNS with no live
+#                  herdr agent of that
 #                  name gets {ev: exit, reason: lost} — after a FRESH
 #                  agent-list re-probe, so a spawn that completed mid-pass
 #                  (ledger-open, absent from the pass-start snapshot) is
@@ -98,24 +99,63 @@ log() { echo "$(date -u +%FT%TZ) reconcile: $*"; }
 #              outcome here — a live worker exited `lost`, which leaves a
 #              zombie pane no later pass can re-discover — previously had no
 #              way to be inspected before it happened.
-#   --adopt    treat a ledger with no ownership proof as this server's, for
-#              this pass only. The escape hatch for records written BEFORE
-#              records carried a session key: their writer is unknowable, so
-#              no evidence can ever be found for them and only an operator can
-#              assert it. It does not weaken the guard — the guard's verdict is
-#              still computed and logged, this flag overrides it out loud.
+#   --adopt PATH
+#              treat the unproven records of the ONE ledger at PATH as this
+#              server's, for this pass only. The escape hatch for records
+#              written BEFORE records carried a session key: their writer is
+#              unknowable, so no evidence can ever be found for them and only
+#              an operator can assert it. It does not weaken the guard — the
+#              guard's verdict is still computed and logged, this flag
+#              overrides it out loud.
+#
+#              It takes a PATH because the assertion is about a ledger the
+#              operator actually inspected (GH-1944). A bare `--adopt` used to
+#              apply that one assertion to every unproven ledger the walk
+#              found, writing lost-exits into unrelated — possibly foreign —
+#              ledgers; the flag now refuses without a path rather than
+#              silently meaning more than was typed.
 DRY_RUN=0
-ADOPT=0
-for arg in "$@"; do
-  case "$arg" in
+ADOPT_LEDGER=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --dry-run) DRY_RUN=1 ;;
-    --adopt) ADOPT=1 ;;
+    --adopt=*) ADOPT_LEDGER="${1#--adopt=}" ;;
+    --adopt)
+      _next="${2-}"
+      case "$_next" in
+        '' | --*)
+          echo "reconcile.sh: --adopt needs the ledger path to adopt (e.g. --adopt \$HOME/.ralph/owner/repo/ledger.jsonl)" >&2
+          exit 2
+          ;;
+      esac
+      ADOPT_LEDGER="$_next"
+      shift
+      ;;
     *)
-      echo "reconcile.sh: unknown argument '$arg' (accepts --dry-run, --adopt)" >&2
+      echo "reconcile.sh: unknown argument '$1' (accepts --dry-run, --adopt PATH)" >&2
       exit 2
       ;;
   esac
+  shift
 done
+if [ -n "$ADOPT_LEDGER" ]; then
+  if [ ! -f "$ADOPT_LEDGER" ]; then
+    echo "reconcile.sh: --adopt '$ADOPT_LEDGER' is not a ledger file" >&2
+    exit 2
+  fi
+fi
+
+# abs_ledger PATH — PATH with its directory resolved. Both sides of the
+# --adopt comparison go through it: the walk emits
+# "$(ledger_root)/owner/repo/ledger.jsonl" verbatim — doubled slashes,
+# unresolved symlinks and all — while an operator types whatever their shell
+# expanded, so a string compare would silently match nothing.
+abs_ledger() {
+  printf '%s/%s\n' "$(cd "$(dirname "$1")" && pwd -P)" "$(basename "$1")"
+}
+if [ -n "$ADOPT_LEDGER" ]; then
+  ADOPT_LEDGER=$(abs_ledger "$ADOPT_LEDGER")
+fi
 
 # Dry run is enforced by replacing the mutating primitives, not by an `if` at
 # each call site: a guard the phases have to remember is a guard one of them
@@ -224,56 +264,82 @@ walk_ledgers() { printf '%s\n' ${ledgers[@]+"${ledgers[@]}"}; }
 # still UNKNOWN, and still fails closed: records written before the session
 # stamp existed, and open records carrying neither a pane nor a session. Their
 # writer is unknowable from the ledger, so only an operator can assert it
-# (--adopt), and --dry-run is there to inspect the sweep first.
+# (--adopt PATH), and --dry-run is there to inspect the sweep first.
+#
+# The verdict is PER RECORD, not per ledger (GH-1944). One ledger path is
+# shared by every server that works the same repository, so a whole-ledger
+# boolean let ONE matching record hand this server the right to sweep a
+# sibling server's records — and those workers are live but absent from THIS
+# server's snapshot, so the absence-driven phases read them as gone and exit
+# them `lost`. That is the exact GH-1863 failure, re-entered through the back
+# door, and a `lost` worker cannot be re-discovered. Deciding each record on
+# its own pane and its own writer preserves both proofs and removes the blast
+# radius: a foreign server still matches nothing, and a fully-quiesced own
+# ledger is still entirely sweepable because every one of its records carries
+# our key.
 #
 # Computed ONCE here, from the pass-start open rows, because phase E closes
 # records: a ledger asked again after E could have lost the very row that
-# proved it ours.
+# proved a record ours.
 server_panes=$(printf '%s' "$snapshot" |
   jq -r '(.panes // [])[] | .pane_id // empty' 2>/dev/null | tr '\n' ' ') || server_panes=""
 this_session=$(ralph_session_key)
-owned="" # ledger paths this pass may sweep
+owned_refs="" # "owner/repo|ref" entries this pass may sweep
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
-  proof=""
-  while IFS=$'\037' read -r ref pane _pid _harness _parent _state _issue _checkout _toks; do
-    [ -n "$ref" ] || continue
-    [ -n "$pane" ] || continue
-    case " $server_panes " in
-      *" $pane "*)
-        proof="an open record names pane $pane, which this server holds"
-        break
-        ;;
-    esac
-  done < <(ralph_ledger_open_rows || true)
-  if [ -z "$proof" ]; then
-    while IFS= read -r s; do
-      [ -n "$s" ] || continue
-      if [ "$s" = "$this_session" ]; then
-        proof="this server wrote an open record (session $s)"
-        break
-      fi
-    done < <(ralph_ledger_open_sessions || true)
+  key=$(scope_key "$f")
+  adopt_this=0
+  if [ -n "$ADOPT_LEDGER" ] && [ "$(abs_ledger "$f")" = "$ADOPT_LEDGER" ]; then
+    adopt_this=1
   fi
-  if [ -n "$proof" ]; then
-    owned="$owned $f"
-  elif [ "$ADOPT" = 1 ]; then
-    owned="$owned $f"
-    log "--adopt: no ownership proof for $f — sweeping it anyway on the operator's assertion"
-  else
-    log "not this server's ledger — no open record names a pane this server holds, and none carries this server's session key ($this_session); sweeping nothing in $f (re-run with --dry-run --adopt to inspect, --adopt to assert it is yours)"
+  n_ours=0
+  n_foreign=0
+  n_adopted=0
+  while IFS=$'\037' read -r ref pane _pid _harness _parent _state _issue _checkout _toks session; do
+    [ -n "$ref" ] || continue
+    proof=""
+    if [ -n "$pane" ]; then
+      case " $server_panes " in
+        *" $pane "*) proof="pane $pane, which this server holds" ;;
+      esac
+    fi
+    if [ -z "$proof" ] && [ -n "$session" ] && [ "$session" = "$this_session" ]; then
+      proof="this server wrote it (session $session)"
+    fi
+    if [ -n "$proof" ]; then
+      owned_refs="$owned_refs $key|$ref"
+      n_ours=$((n_ours + 1))
+    elif [ "$adopt_this" = 1 ]; then
+      owned_refs="$owned_refs $key|$ref"
+      n_adopted=$((n_adopted + 1))
+    else
+      n_foreign=$((n_foreign + 1))
+    fi
+  done < <(ralph_ledger_open_rows || true)
+  if [ "$n_adopted" -gt 0 ]; then
+    log "--adopt: $n_adopted open record(s) in $f have no ownership proof — sweeping them anyway on the operator's assertion"
+  fi
+  if [ "$n_foreign" -gt 0 ] && [ "$n_ours" -eq 0 ]; then
+    log "not this server's ledger — no open record names a pane this server holds, and none carries this server's session key ($this_session); sweeping nothing in $f (re-run with --dry-run --adopt $f to inspect, --adopt $f to assert it is yours)"
+  elif [ "$n_foreign" -gt 0 ]; then
+    log "$n_foreign of $((n_ours + n_foreign)) open record(s) in $f are not this server's — sweeping the $n_ours that are, leaving the rest untouched"
   fi
 done < <(walk_ledgers)
 unset RALPH_HERDR_LEDGER
 
-# ledger_is_ours FILE — the prepass verdict. Gates the phases whose evidence is
-# an ABSENCE (A's exit-lost sweep, D's orphan pass); phase E asks the pane
-# directly and is already safe against a foreign server, and phase C writes
-# only where the herd matched a record, which a foreign server never does.
-ledger_is_ours() {
-  case " $owned " in
-    *" $1 "*) return 0 ;;
+# record_is_ours FILE REF — the prepass verdict, per record. Gates the phases
+# whose evidence is an ABSENCE (A's exit-lost sweep, D's orphan pass); phase E
+# asks the pane directly and is already safe against a foreign server, and
+# phase C writes only where the herd matched a record, which a foreign server
+# never does.
+#
+# Keyed on "owner/repo|ref" rather than the ledger path, for the reason
+# scope_key documents: two repositories in one session both hold a `w42-fix`,
+# and a bare ref is not unique across them.
+record_is_ours() {
+  case " $owned_refs " in
+    *" $(scope_key "$1")|$2 "*) return 0 ;;
   esac
   return 1
 }
@@ -368,7 +434,7 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
   ralph_ledger_lock "$f"
-  while IFS=$'\037' read -r ref pane pid harness _parent _state issue checkout _toks; do
+  while IFS=$'\037' read -r ref pane pid harness _parent _state issue checkout _toks _session; do
     [ -n "$ref" ] || continue
     verdict=$(ralph_worker_verdict "$pane" "$pid" "$harness")
     case "$verdict" in
@@ -438,22 +504,18 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
   ralph_ledger_lock "$f"
-  if ! ledger_is_ours "$f"; then
-    # Not ours to sweep (GH-1863). Every open name still counts as open, so
-    # phase B does not mint a second epoch for a worker this pass declined to
-    # judge.
-    while IFS= read -r ref; do
-      [ -n "$ref" ] || continue
-      open_all="$open_all $(scope_key "$f")|${ref%%#*}"
-    done < <(ralph_ledger_open_agents || true)
-    ralph_ledger_unlock "$f"
-    continue
-  fi
   live_names=$(ralph_names_for_ledger "$live_json" "$f")
   candidates=""
-  while IFS= read -r ref; do
+  while IFS=$'\037' read -r ref _pane _pid _harness _parent _state _issue _checkout _toks _session; do
     [ -n "$ref" ] || continue
     name=${ref%%#*}
+    # Not ours to sweep (GH-1863, narrowed to the record by GH-1944). Every
+    # open name still counts as open, so phase B does not mint a second epoch
+    # for a worker this pass declined to judge.
+    if ! record_is_ours "$f" "$ref"; then
+      open_all="$open_all $(scope_key "$f")|$name"
+      continue
+    fi
     case " $live_names " in
       *" $name "*)
         open_all="$open_all $(scope_key "$f")|$name"
@@ -461,7 +523,7 @@ while IFS= read -r f; do
         ;;
     esac
     candidates="$candidates $ref"
-  done < <(ralph_ledger_open_agents || true)
+  done < <(ralph_ledger_open_rows || true)
   if [ -n "$candidates" ]; then
     reprobe
     if [ "$fresh_state" = ok ]; then
@@ -603,7 +665,7 @@ while IFS= read -r f; do
     | map({key: (.[0].name // ""), value: [(.[0].pane // ""), (.[0].status // "")]})
     | from_entries' <<<"$live_json" 2>/dev/null) || herd_index='{}'
   [ -n "$herd_index" ] || herd_index='{}'
-  while IFS=$'\037' read -r ref _pane _pid _harness par state _issue _checkout toks; do
+  while IFS=$'\037' read -r ref _pane _pid _harness par state _issue _checkout toks _session; do
     [ -n "$ref" ] || continue
     name=${ref%%#*}
     hit=$(jq -r --arg n "$name" '(.[$n] // []) | join("\u001f")' <<<"$herd_index" 2>/dev/null) || hit=""
@@ -665,12 +727,6 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
   ralph_ledger_lock "$f"
-  if ! ledger_is_ours "$f"; then
-    # Same guard as phase A (GH-1863): adoption is decided against live_names,
-    # and a foreign server's live_names is empty for every ledger.
-    ralph_ledger_unlock "$f"
-    continue
-  fi
   # Re-scoped per ledger: phase A's loop variable belongs to phase A's
   # iteration, and reusing it here would hand this repository's orphan pass
   # whichever repository happened to be last in that earlier loop.
@@ -682,19 +738,28 @@ while IFS= read -r f; do
   # the child stays silently parented to a worker that no longer exists, which
   # is the ghost this phase exists to clear.
   open_refs=""
-  while IFS=$'\037' read -r ref _p _pid _h _par _st _i _co _t; do
+  while IFS=$'\037' read -r ref _p _pid _h _par _st _i _co _t _s; do
     [ -n "$ref" ] || continue
     open_refs="$open_refs $ref"
   done <<EOF
 $rows
 EOF
+  # Per-record again (GH-1944): the orphan decision is a WRITE onto the CHILD
+  # — a re-parent or an orphaned mark plus a notification — so the record that
+  # must be ours is the child, not the dead parent and not the ledger. A
+  # sibling server's child of the same dead parent is left alone, and
+  # `ours_children` carries that entitlement into the pass itself so a child
+  # discovered there (rather than here) cannot slip past it.
   deads=""
-  while IFS=$'\037' read -r ref _pane _pid _harness p _state _issue _checkout _toks; do
+  ours_children=""
+  while IFS=$'\037' read -r ref _pane _pid _harness p _state _issue _checkout _toks _session; do
     [ -n "$ref" ] || continue
     [ -n "$p" ] || continue
+    record_is_ours "$f" "$ref" || continue
     case " $open_refs " in
       *" $p "*) continue ;; # parent still open — not an orphan edge
     esac
+    ours_children="$ours_children $ref"
     case " $deads " in
       *" $p "*) : ;;
       *) deads="$deads $p" ;;
@@ -703,7 +768,7 @@ EOF
 $rows
 EOF
   for d in $deads; do
-    ralph_ledger_orphan_pass "$d" "$live_names"
+    ralph_ledger_orphan_pass "$d" "$live_names" "$ours_children"
   done
   ralph_ledger_unlock "$f"
 done < <(walk_ledgers)
