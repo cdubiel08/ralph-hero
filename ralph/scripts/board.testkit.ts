@@ -118,6 +118,21 @@ export class FakeGh {
    *  revoked scope), a number fails only the first N (isolated faults). */
   failRemovals: number | "all" = 0;
 
+  /** GH-1973 create-dedupe fixtures: the issues the twin search can see, who
+   *  the viewer is, and the two failure injections — a create whose response
+   *  is lost after the write landed, and a twin search that cannot be read. */
+  createdIssues: Array<{
+    id: string;
+    number: number;
+    url: string;
+    title: string;
+    createdAt: string;
+    author: { login: string };
+  }> = [];
+  viewerLogin = "me-bot";
+  loseCreateResponse = false;
+  failTwinSearch = false;
+
   expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
 
   exec: (argv: string[], stdin?: string) => ExecResult = (argv, stdin) => {
@@ -353,6 +368,23 @@ export class FakeGh {
     this.graphqlCalls++;
     const { query, variables } = payload;
     this.queries.push(query);
+
+    // GH-1973: the create-dedupe twin search. Keyed on `viewer` — no other
+    // document in board.ts asks for it — and placed first so no generic
+    // repository branch can shadow it.
+    if (query.includes("viewer { login }")) {
+      if (this.failTwinSearch) return { code: 1, stdout: "", stderr: "twin search: i/o timeout" };
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          data: {
+            viewer: { login: this.viewerLogin },
+            repository: { issues: { nodes: [...this.createdIssues].reverse() } },
+          },
+        }),
+        stderr: "",
+      };
+    }
 
     // Deliver-lane phase B (GH-1811): pK alias per OPEN PR, facts only. Keyed
     // by node id and NOT nested under `repository` — the whole point is that a
@@ -728,6 +760,21 @@ export class FakeGh {
     if (query.includes("createIssue")) {
       const number = 900 + this.issues.size;
       this.issues.set(number, { number, state: null });
+      const url = `https://github.com/cdubiel08/ralph-hero/issues/${number}`;
+      // Recorded BEFORE the response is (possibly) lost — that ordering is the
+      // whole scenario: the write lands, the caller never learns it did.
+      this.createdIssues.push({
+        id: `I_${number}`,
+        number,
+        url,
+        title: String(variables.title),
+        createdAt: new Date().toISOString(),
+        author: { login: this.viewerLogin },
+      });
+      if (this.loseCreateResponse) {
+        this.loseCreateResponse = false;
+        return { code: 1, stdout: "", stderr: 'Post "https://api.github.com/graphql": i/o timeout' };
+      }
       // A real issue URL, not a stub: GH-1815's add guard reads the repo off
       // it, and a fixture that shortens what GitHub actually returns would
       // make the guard look broken instead of the fixture.

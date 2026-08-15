@@ -1037,6 +1037,69 @@ describe("guards at the CLI boundary", () => {
     expect(() => createIssue(ctx, { title: "x", state: "Done" })).toThrow(UsageError);
   });
 
+  describe("create is retry-safe (GH-1973)", () => {
+    it("a caller retry adopts its own recent twin instead of filing a duplicate", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      const first = createIssue(ctx, { title: "same title" });
+      const second = createIssue(ctx, { title: "same title" });
+      expect(second.number).toBe(first.number);
+      expect(gh.createdIssues.length).toBe(1);
+    });
+
+    it("a lost mutation response is read back, not reported as a failure", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.loseCreateResponse = true;
+      const issue = createIssue(ctx, { title: "lost response" });
+      expect(gh.createdIssues.length).toBe(1);
+      expect(issue.number).toBe(gh.createdIssues[0].number);
+    });
+
+    it("a lost response with no readable twin says the write MAY have landed", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.loseCreateResponse = true;
+      gh.failTwinSearch = true;
+      expect(() => createIssue(ctx, { title: "unknowable" })).toThrow(/may or may not have been created/);
+    });
+
+    it("a foreign author's identical title is never adopted", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      createIssue(ctx, { title: "shared title" });
+      gh.createdIssues[0].author = { login: "someone-else" };
+      const mine = createIssue(ctx, { title: "shared title" });
+      expect(gh.createdIssues.length).toBe(2);
+      expect(mine.number).not.toBe(gh.createdIssues[0].number);
+    });
+
+    it("an out-of-window twin is not adopted — the guard is bounded, not a title lock", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      createIssue(ctx, { title: "old title" });
+      gh.createdIssues[0].createdAt = new Date(Date.now() - 3600_000).toISOString();
+      createIssue(ctx, { title: "old title" });
+      expect(gh.createdIssues.length).toBe(2);
+    });
+
+    it("--allow-duplicate files anyway", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      createIssue(ctx, { title: "on purpose" });
+      createIssue(ctx, { title: "on purpose", allowDuplicate: true });
+      expect(gh.createdIssues.length).toBe(2);
+    });
+
+    it("an unreadable duplicate check warns and files — intake survives the outage", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.failTwinSearch = true;
+      const issue = createIssue(ctx, { title: "during a flap" });
+      expect(issue.number).toBe(gh.createdIssues[0].number);
+    });
+  });
+
   it("run(): scope gate covers mutations AND doctor --fix, not plain reads", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
