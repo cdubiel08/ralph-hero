@@ -1935,11 +1935,25 @@ describe("doctor: herdr-cockpit (GH-1759) — advisory by construction", () => {
   it("gaps relay the script's one-line verdict at info, even under --strict", () => {
     const gh = new FakeGh();
     const baseline = doctor(makeCtx(new FakeGh()), { strict: true }).ok;
-    withSetupSh(gh, { code: 1, stdout: "herdr: 2 gap(s) — board-cli,gh-auth\n" });
+    withSetupSh(gh, { code: 1, stdout: "herdr: 1 gap(s) — gh-auth: not authenticated\n" });
     const r = doctor(makeCtx(gh), { strict: true });
     expect(cockpit(r).level).toBe("info");
-    expect(cockpit(r).detail).toContain("board-cli,gh-auth");
+    expect(cockpit(r).detail).toContain("gh-auth");
     expect(r.ok).toBe(baseline);
+  });
+
+  it("relays the gap's DETAIL whole — no truncation of the payload (GH-1911)", () => {
+    const gh = new FakeGh();
+    const verdict =
+      "herdr: 1 gap(s) — ralph-herdr-version: 0.5.1 < 0.5.2 expected by this ralph, so the cockpit is " +
+      "EXECUTING PLUGIN CODE OLDER than this ralph relies on — fixes released since 0.5.2 are not in " +
+      "effect in the copy it runs; herdr has no auto-update, reinstall: herdr plugin install " +
+      "cdubiel08/ralph-hero/plugin/ralph-herdr --ref main -y";
+    withSetupSh(gh, { code: 1, stdout: `${verdict}\n` });
+    const c = cockpit(doctor(makeCtx(gh), { strict: true }));
+    expect(c.level).toBe("info"); // severity is deliberately unchanged
+    expect(c.detail).toContain("0.5.1 < 0.5.2"); // both versions survive the relay
+    expect(c.detail).toContain("herdr plugin install cdubiel08/ralph-hero/plugin/ralph-herdr --ref main -y");
   });
 
   it("a script that fails to run degrades to not-evaluated info (the fake's default exec)", () => {
