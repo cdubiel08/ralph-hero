@@ -195,8 +195,12 @@ Deterministic hygiene queue over own-repo items:
 2. **Dependency anomalies**: Backlog items whose blockers are all closed, and
    truncated-blocker Backlog items (scoped to Backlog — §4.1 keeps tend out of In
    Progress / In Review beyond comments).
-3. **Formation candidates**: items with no estimate, no parent, and no dependencies, older
-   than 7 days (likely unformed intake).
+3. **Formation candidates**: items missing an estimate *or* a priority, with no parent and
+   no dependencies, older than 7 days (likely unformed intake). Priority joined the
+   predicate in GH-1796: `rankNext` sorts a null priority behind every real one, so an
+   estimated-but-unprioritized item is ranked last by `next` and named by no lane at all.
+   Truncated field values fail closed — an absence GitHub never asserted is not evidence of
+   an unset field.
 4. **Done-audit candidates**: issues closed within the last `RALPH_AUDIT_DAYS` (default 14),
    fetched via `gh` closed-since query, that carry no `ralph-tend:v1 audited` marker comment
    (§4.6). The marker is the cursor; no local state.
