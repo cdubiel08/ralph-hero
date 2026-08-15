@@ -46,6 +46,7 @@ describe("session→unit binding (GH-1948)", () => {
       issue: 1,
       since: NOW.toISOString(),
       holder: "me@test",
+      worktree: "/repo",
     });
   });
 
@@ -303,5 +304,100 @@ describe("session→unit binding (GH-1948)", () => {
     expect(msg).not.toContain("release");
     expect(gh.issues.get(2)!.state).toBe("Backlog");
     expect(gh.issues.get(2)!.claim).toBe(encodeClaim("me@test", NOW));
+  });
+});
+
+/**
+ * The second writer in one worktree (GH-1956).
+ *
+ * A fork pane (`claude --resume <id> --fork-session`) is a NEW session id in
+ * the SOURCE'S worktree, so the rule-9 binding above sees an unbound session
+ * and the board's `user@host` holder is identical for both panes. These pin
+ * the rule that closes it — keyed on the WORKTREE, because that is what is
+ * actually shared, and expiring on the CLAIM TTL, because "the source is gone"
+ * already has exactly one definition on this board.
+ */
+describe("second writer in one worktree (GH-1956)", () => {
+  let gh: FakeGh;
+  let dir: string;
+  beforeEach(() => {
+    gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(2, { number: 2, state: "Backlog" });
+    dir = mkdtempSync(join(tmpdir(), "board-session-"));
+  });
+
+  const at = (id: string, repoRoot = "/repo") =>
+    makeCtx(gh, "me@test", repoRoot, { session: { id, dir } });
+
+  it("refuses a fork claiming the unit its source is driving — and mutates nothing", () => {
+    const source = at("source");
+    transition(source, fetchIssue(source, 1), "In Progress");
+    const fork = at("fork");
+    const msg = refusalMessage(() => transition(fork, fetchIssue(fork, 1), "In Progress"));
+    expect(msg).toContain("this worktree");
+    expect(msg).toContain("/repo");
+    expect(msg).toContain("--steal");
+    // A pre-check: the source's claim and state are untouched by the refusal.
+    expect(gh.issues.get(1)!.state).toBe("In Progress");
+    expect(readSessionBinding(fork)).toBeNull();
+  });
+
+  it("permits the fork once the source's record has aged past the claim TTL", () => {
+    const source = at("source");
+    transition(source, fetchIssue(source, 1), "In Progress");
+    // Same clock the board uses to call a claim stealable — nothing longer.
+    const old = new Date(NOW.getTime() - 121 * 60_000);
+    utimesSync(sessionBindingPath(source)!, old, old);
+    gh.issues.get(1)!.claim = encodeClaim("me@test", old);
+
+    const fork = at("fork");
+    expect(() => transition(fork, fetchIssue(fork, 1), "In Progress")).not.toThrow();
+    expect(readSessionBinding(fork)!.issue).toBe(1);
+  });
+
+  it("does not refuse a session in a DIFFERENT worktree", () => {
+    const source = at("source", "/repo-a");
+    transition(source, fetchIssue(source, 1), "In Progress");
+    const other = at("other", "/repo-b");
+    expect(() => transition(other, fetchIssue(other, 1), "In Progress")).not.toThrow();
+  });
+
+  it("does not refuse the source's own heartbeat re-claim", () => {
+    const source = at("source");
+    transition(source, fetchIssue(source, 1), "In Progress");
+    expect(() => transition(source, fetchIssue(source, 1), "In Progress")).not.toThrow();
+  });
+
+  it("is not evaluated against a pre-GH-1956 record that names no worktree", () => {
+    // A record written by an older board.ts asserts nothing about where it ran,
+    // and inferring one would be a guess that costs a false refusal.
+    const source = at("source");
+    writeFileSync(
+      sessionBindingPath(source)!,
+      JSON.stringify({ issue: 1, since: NOW.toISOString(), holder: "me@test" }),
+    );
+    const fork = at("fork");
+    expect(() => transition(fork, fetchIssue(fork, 1), "In Progress")).not.toThrow();
+  });
+
+  it("says nothing about a peer driving a DIFFERENT unit from the same worktree", () => {
+    const source = at("source");
+    transition(source, fetchIssue(source, 1), "In Progress");
+    const fork = at("fork");
+    expect(() => transition(fork, fetchIssue(fork, 2), "In Progress")).not.toThrow();
+  });
+
+  it("--steal is the escape hatch — the operator asserting the other driver is gone", () => {
+    // A session killed mid-unit and resumed in its own worktree is the common
+    // honest case. It must not have to wait out a TTL to say something the
+    // claim vocabulary already lets it say.
+    const source = at("source");
+    transition(source, fetchIssue(source, 1), "In Progress");
+    const resumed = at("resumed");
+    expect(() =>
+      transition(resumed, fetchIssue(resumed, 1), "In Progress", { steal: true }),
+    ).not.toThrow();
+    expect(readSessionBinding(resumed)!.issue).toBe(1);
   });
 });

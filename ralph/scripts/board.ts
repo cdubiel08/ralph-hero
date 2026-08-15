@@ -2074,6 +2074,11 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     const priorBinding = enteringInProgress ? readSessionBinding(ctx) : null;
     if (enteringInProgress) {
       guardSessionUnit(priorBinding, issue.number);
+      // Second only to the rule-9 guard, and for the same reason: a PRE-check,
+      // so a refused claim leaves #N exactly as it found it. Skipped when this
+      // session already holds the binding — that is a heartbeat, and the peer
+      // it would find could only be a stale record of itself.
+      if (!priorBinding) guardWorktreePeer(ctx, issue.number, !!opts.steal);
       const claim = issue.claim;
       if (claim && !isMember(claim, ctx.cfg.holder)) {
         const stale = claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin);
@@ -2439,6 +2444,7 @@ export interface SessionBinding {
   issue: number;
   since: string; // when this session FIRST claimed it (a heartbeat re-claim keeps it)
   holder: string;
+  worktree: string; // the checkout the claim was driven from (GH-1956)
 }
 
 export function sessionBindingPath(ctx: Ctx): string | null {
@@ -2463,6 +2469,91 @@ export function readSessionBinding(ctx: Ctx): SessionBinding | null {
   } catch {
     return null; // absent or garbled: not evaluated (see above)
   }
+}
+
+// ── The second writer in one worktree (GH-1956) ─────────────────────────────
+// The binding above is keyed on the SESSION, so it is blind to the case that
+// motivated this: a fork pane (`claude --resume <id> --fork-session`) is a NEW
+// session id in the SOURCE'S WORKTREE. It reads as unbound, and the board's
+// holder is `user@host` for both panes, so nothing in either guard sees two
+// harnesses about to race on one index, one branch, and one set of uncommitted
+// files — the hazard GH-1774 removed sibling fleets over.
+//
+// The rule is keyed on the WORKTREE, not on fork-ness. A fork is merely the
+// cheapest way to reach this state; a second `claude` started by hand in the
+// same checkout is the identical hazard and an env marker set by fork.sh
+// would miss it (and would vanish on a `/clear` besides). The worktree is the
+// thing actually being shared, so it is the thing the rule names.
+//
+// SAME UNIT ONLY. A second session in one checkout claiming a DIFFERENT unit
+// is also wrong — branch mixing — but that shape has a legitimate reading
+// (a worktree reused after its first unit shipped) and refusing it would cost
+// false refusals to catch a case nobody has hit. This refuses exactly the
+// reported one.
+//
+// IS A FORK EVER LEGITIMATELY THE DRIVER? Yes — when the source is gone and
+// the fork is its continuation. That question already has an answer on this
+// board, and it is the claim TTL: a claim nobody refreshes goes stale and
+// `--steal` is honest after it. So this rule expires on the SAME clock. A peer
+// binding counts only while it is fresh within `RALPH_LOCK_TTL_MIN`, and a
+// heartbeat re-claim touches it (see writeSessionBinding), so a live source
+// stays fresh and a dead one frees its unit locally at the exact moment it
+// frees it on the board. One clock, not two — a second, longer local clock
+// would mean a fork could steal on the board and still be refused here.
+interface PeerBinding extends SessionBinding {
+  freshMs: number;
+}
+
+/** Every binding in the session dir that is NOT this session's own. */
+function readPeerBindings(ctx: Ctx): PeerBinding[] {
+  const own = sessionBindingPath(ctx);
+  if (!own) return [];
+  const out: PeerBinding[] = [];
+  let names: string[];
+  try {
+    names = readdirSync(ctx.session!.dir);
+  } catch {
+    return []; // no dir yet: no peers
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const p = join(ctx.session!.dir, name);
+    if (p === own) continue;
+    try {
+      const b = JSON.parse(readFileSync(p, "utf8"));
+      if (!Number.isInteger(b?.issue) || typeof b?.worktree !== "string") continue;
+      out.push({ ...(b as SessionBinding), freshMs: statSync(p).mtimeMs });
+    } catch {
+      /* garbled or raced away — a record we cannot read asserts nothing */
+    }
+  }
+  return out;
+}
+
+function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
+  // No repo root is not a policy choice, same as no session id: not evaluated.
+  const worktree = ctx.repoRoot;
+  if (!worktree) return;
+  // --steal already MEANS "the previous driver is gone, I am taking this over".
+  // A session killed mid-unit and resumed in its own worktree is the common
+  // honest case, and making it wait out a TTL to say something it can already
+  // say would be a second vocabulary for one assertion. It stays a deliberate
+  // flag, not a default — which is the whole difference from having no guard.
+  if (steal) return;
+  const cutoff = ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
+  const peer = readPeerBindings(ctx).find(
+    (b) => b.issue === number && b.worktree === worktree && b.freshMs >= cutoff,
+  );
+  if (!peer) return;
+  throw new RefusalError(
+    `another live session in this worktree (${worktree}) is already driving #${number} (since ${peer.since}). ` +
+      `Two harnesses in one checkout race on the index, the branch and each other's uncommitted files, ` +
+      `and the board claim cannot see it: the holder is \`${ctx.cfg.holder}\` for both. ` +
+      `If this pane is a fork, use it to read and think from that session's context, not to drive its unit. ` +
+      `If that session is gone — killed, crashed — say so with \`board claim ${number} --steal\`; ` +
+      `otherwise its record ages out after ${ctx.cfg.lockTtlMin} min on the same clock as the board claim, ` +
+      `or take a different unit in its own worktree (\`board next\`, then \`board name NNN\`).`,
+  );
 }
 
 /** Refuse a SECOND, distinct unit driven from one session. Re-claiming the
@@ -2496,7 +2587,12 @@ function writeSessionBinding(
   const path = sessionBindingPath(ctx);
   if (!path) return null;
   const since = prior?.issue === number ? prior.since : ctx.now().toISOString();
-  const record = JSON.stringify({ issue: number, since, holder: ctx.cfg.holder });
+  const record = JSON.stringify({
+    issue: number,
+    since,
+    holder: ctx.cfg.holder,
+    worktree: ctx.repoRoot,
+  });
   try {
     mkdirSync(ctx.session!.dir, { recursive: true });
     writeFileSync(path, record, { flag: "wx" });
