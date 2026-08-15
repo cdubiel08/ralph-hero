@@ -8,7 +8,8 @@
 #       --check "gh label list | grep ralph:apply" [--check "..."]
 #   ./scripts/apply-evidence.sh ISSUE --kind observation --notes "..." --check "..."
 #
-#   --dry-run   print the comment instead of posting it
+#   --fix-merge SHA   assert the run descends from this commit (else derived)
+#   --dry-run         print the comment instead of posting it
 #
 # This is the ONLY sanctioned way to close an apply unit: `board move N done`
 # refuses without a shape-valid comment (ralph/scripts/board.ts). The shape is
@@ -20,6 +21,14 @@
 #     successful run of that workflow exists at that SHA, this exits nonzero
 #     and posts nothing. That is the whole point: a green run of the PRE-merge
 #     code is not proof the merged change is live.
+#   * kind=run also checks ANCESTRY (GH-1961): the bound run must descend from
+#     the fix merge. Binding head_sha to merge_sha proves the run checked out
+#     that tree; it does not prove the operator named the right tree. A run
+#     triggered before the fix landed is recent, green, and produces a healthy
+#     artifact — and ran the OLD workflow file, because actions/checkout pins to
+#     the run's own event SHA. Observed as a near-miss on GH-1953. The fix merge
+#     is DERIVED, not typed: the apply unit's `blockedBy` twin is the ship
+#     issue, and its merged closing PR carries the merge commit.
 #   * --check RUNS the command and records its real exit code. A failing check
 #     is recorded truthfully and the evidence will be refused by the close gate.
 #
@@ -43,6 +52,7 @@ ISSUE=""
 KIND=""
 WORKFLOW=""
 MERGE_SHA=""
+FIX_MERGE=""
 NOTES=""
 DRY_RUN=false
 CHECK_CMDS=()
@@ -57,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     --kind)      needs_value "$@"; KIND="$2"; shift 2 ;;
     --workflow)  needs_value "$@"; WORKFLOW="$2"; shift 2 ;;
     --merge-sha) needs_value "$@"; MERGE_SHA="$2"; shift 2 ;;
+    --fix-merge) needs_value "$@"; FIX_MERGE="$2"; shift 2 ;;
     --notes)     needs_value "$@"; NOTES="$2"; shift 2 ;;
     --check)     needs_value "$@"; CHECK_CMDS+=("$2"); shift 2 ;;
     --dry-run)   DRY_RUN=true; shift ;;
@@ -130,6 +141,75 @@ if [[ "$KIND" == "run" ]]; then
     '$p + {merge_sha: $sha,
            run: {workflow: $r.workflowName, id: $r.databaseId,
                  conclusion: $r.conclusion, head_sha: $r.headSha}}' <<<'null')
+
+  # --- ancestry: the bound run must descend from the fix merge (GH-1961) ----
+  #
+  # Derivation, not prose: `board dep` records the ship↔apply twin as GitHub's
+  # native blockedBy relation, and the ship issue names its own closing PR.
+  # --fix-merge overrides it, for a unit whose twin was never wired.
+  #
+  # The ancestry test is the compare API rather than the more idiomatic
+  # `git merge-base --is-ancestor`, which needs BOTH commits in the local
+  # object store — in a fresh worktree or in CI that fails for a reason
+  # unrelated to ancestry, which is precisely the fail-open being closed here.
+  ancestry_reason=""
+  fix_shas=""
+  fix_source=""
+  if [[ -n "$FIX_MERGE" ]]; then
+    fix_shas=$(git rev-parse "$FIX_MERGE^{commit}" 2>/dev/null || echo "$FIX_MERGE")
+    fix_source="operator (--fix-merge)"
+  else
+    nwo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo '')
+    twins=""
+    if [[ -n "$nwo" ]]; then twins=$(gh api graphql -f owner="${nwo%%/*}" -f repo="${nwo##*/}" -F n="$ISSUE" -f query='
+      query($owner:String!,$repo:String!,$n:Int!){
+        repository(owner:$owner,name:$repo){ issue(number:$n){
+          blockedBy(first:20){ nodes{ number
+            closedByPullRequestsReferences(first:10,includeClosedPrs:true){
+              nodes{ number merged mergeCommit{ oid } } } } } } }
+      }' 2>/dev/null || echo ''); fi
+    if [[ -z "$twins" ]]; then
+      ancestry_reason="could not read the blocked-by twin from the API"
+    else
+      fix_shas=$(jq -r '
+        [ .data.repository.issue.blockedBy.nodes[]?
+          | .closedByPullRequestsReferences.nodes[]?
+          | select(.merged == true) | .mergeCommit.oid // empty ] | unique | .[]' <<<"$twins")
+      fix_source="derived from blockedBy twin"
+      [[ -n "$fix_shas" ]] || ancestry_reason="no blocked-by twin with a merged closing PR"
+    fi
+  fi
+
+  if [[ -z "$fix_shas" ]]; then
+    echo "WARNING: ancestry NOT CHECKED — $ancestry_reason." >&2
+    echo "         Recency and a green conclusion are not ancestry (GH-1961). Pass" >&2
+    echo "         --fix-merge <sha> to make this checkable." >&2
+    payload=$(jq -c --argjson p "$payload" --arg why "$ancestry_reason" \
+      '$p + {ancestry: {status: "not_evaluated", reason: $why}}' <<<'null')
+  else
+    checked='[]'
+    while read -r fix; do
+      [[ -n "$fix" ]] || continue
+      status=$(gh api "repos/{owner}/{repo}/compare/$fix...$full_sha" --jq '.status' 2>/dev/null || echo "unknown")
+      echo "--- ancestry: $fix -> ${full_sha:0:8} = $status ($fix_source)"
+      case "$status" in
+        identical|ahead) ;;
+        unknown)
+          echo "WARNING: ancestry NOT CHECKED — compare API did not answer for ${fix:0:8}." >&2 ;;
+        *)
+          echo "ERROR: the run at ${full_sha:0:8} does NOT descend from the fix merge ${fix:0:8} (compare: $status)." >&2
+          echo "       It checked out the PRE-fix tree, so its green conclusion is a sample of the bug" >&2
+          echo "       not firing, not proof the fix works (GH-1961). Posting nothing." >&2
+          exit 1 ;;
+      esac
+      checked=$(jq -c --argjson c "$checked" --arg fix "$fix" --arg st "$status" --arg src "$fix_source" \
+        '$c + [{fix_merge: $fix, status: $st, source: $src}]' <<<'null')
+    done <<<"$fix_shas"
+    payload=$(jq -c --argjson p "$payload" --argjson c "$checked" \
+      '$p + {ancestry: {status: (if ([$c[] | select(.status == "unknown")] | length) > 0
+                                 then "partially_evaluated" else "descends" end),
+                        checked: $c}}' <<<'null')
+  fi
 elif [[ "$CHECK_COUNT" -eq 0 ]]; then
   echo "ERROR: --kind $KIND requires at least one --check (a command whose exit code is the evidence)" >&2
   exit 2

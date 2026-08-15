@@ -27,6 +27,21 @@ cat >"$STUB_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "gh $*" >>"$GH_STUB_DIR/gh.log"
+
+# Ancestry stubs (GH-1961). Absent fixture files mean "the API did not answer",
+# which is the not_evaluated path — so every pre-GH-1961 case keeps working.
+if [[ "${1:-} ${2:-}" == "api graphql" ]]; then
+  [[ -f "$GH_STUB_DIR/twins.json" ]] || exit 1
+  cat "$GH_STUB_DIR/twins.json"; exit 0
+fi
+if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
+  echo "testowner/testrepo"; exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == *"/compare/"* ]]; then
+  [[ -f "$GH_STUB_DIR/compare_status" ]] || exit 1
+  cat "$GH_STUB_DIR/compare_status"; exit 0
+fi
+
 case "${1:-} ${2:-}" in
   "api user") echo "testuser" ;;
   "run list") cat "$GH_STUB_DIR/runs.json" ;;
@@ -136,6 +151,84 @@ dir=$(new_case "$GOOD_RUNS")
 echo "$MERGE_SHA" >"$dir/expand_to"
 run_ev "$dir" 1697 --kind run --workflow release-ralph.yml --merge-sha "a1b2c3d" --notes "x" --dry-run
 expect "a SHORT --merge-sha is expanded before binding" 0 "ralph-apply-evidence:v1"
+
+echo "== ancestry: the bound run must descend from the fix merge (GH-1961) =="
+
+FIX_SHA="ffffeeee11112222333344445555666677778888"
+TWINS=$(jq -nc --arg fix "$FIX_SHA" \
+  '{data:{repository:{issue:{blockedBy:{nodes:[
+     {number: 1952, closedByPullRequestsReferences:{nodes:[
+       {number: 1955, merged: true, mergeCommit:{oid: $fix}}]}}]}}}}}')
+
+ancestry_case() { # ancestry_case <compare-status> [twins-json] → dir
+  local d; d=$(new_case "$GOOD_RUNS")
+  echo "$1" >"$d/compare_status"
+  [[ $# -lt 2 ]] || echo "$2" >"$d/twins.json"
+  echo "$d"
+}
+
+payload_of() { sed -n '/```json/,/```/p' <<<"$LAST_OUT" | sed '1d;$d'; }
+
+dir=$(ancestry_case behind "$TWINS")
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
+expect "a run that PREDATES the fix merge posts nothing" 1 "does NOT descend from the fix merge"
+
+dir=$(ancestry_case diverged "$TWINS")
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
+expect "a diverged run is refused too" 1 "does NOT descend from the fix merge"
+
+dir=$(ancestry_case identical "$TWINS")
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
+expect "a run AT the fix merge is accepted" 0 "ralph-apply-evidence:v1"
+if jq -e --arg f "$FIX_SHA" '.ancestry.status == "descends" and .ancestry.checked[0].fix_merge == $f
+      and (.ancestry.checked[0].source | test("derived"))' <<<"$(payload_of)" >/dev/null; then
+  pass "the fix merge is DERIVED from the blockedBy twin, not typed"
+else
+  fail "derived fix merge — payload: $(payload_of)"
+fi
+
+dir=$(ancestry_case ahead "$TWINS")
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
+expect "a run above the fix merge is accepted" 0 "ralph-apply-evidence:v1"
+
+# An unwired twin must not fail the check — settings-only apply units legitimately
+# have no ship issue. But it must SAY so, in the payload, not go quiet.
+dir=$(ancestry_case behind)
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
+expect "an unreadable twin does not block, but warns" 0 "ancestry NOT CHECKED"
+if jq -e '.ancestry.status == "not_evaluated" and (.ancestry.reason | length) > 0' <<<"$(payload_of)" >/dev/null; then
+  pass "not_evaluated is RECORDED with a reason — never silence"
+else
+  fail "not_evaluated recording — payload: $(payload_of)"
+fi
+
+dir=$(ancestry_case identical "$(jq -nc '{data:{repository:{issue:{blockedBy:{nodes:[]}}}}}')")
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
+expect "no blocked-by twin ⇒ not evaluated, not refused" 0 "no blocked-by twin with a merged closing PR"
+
+# --fix-merge makes an unevaluable unit evaluable — and is still a real gate.
+dir=$(ancestry_case behind)
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" \
+  --fix-merge "$FIX_SHA" --notes "x" --dry-run
+expect "--fix-merge is checked, not merely recorded" 1 "does NOT descend from the fix merge"
+
+dir=$(ancestry_case ahead "$TWINS")
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" \
+  --fix-merge "$FIX_SHA" --notes "x" --dry-run
+if jq -e '.ancestry.checked[0].source | test("operator")' <<<"$(payload_of)" >/dev/null; then
+  pass "--fix-merge overrides derivation and is labelled as an operator assertion"
+else
+  fail "--fix-merge provenance — payload: $(payload_of)"
+fi
+
+# Ancestry is a kind=run concern only: settings evidence has no run to place.
+dir=$(new_case '[]')
+run_ev "$dir" 1953 --kind settings --notes "label exists" --check "true" --dry-run
+if [[ "$LAST_RC" -eq 0 ]] && ! grep -q 'ancestry' <<<"$LAST_OUT"; then
+  pass "kind=settings carries no ancestry claim"
+else
+  fail "kind=settings ancestry — rc=$LAST_RC out: $LAST_OUT"
+fi
 
 echo "== checks record REAL exit codes =="
 
