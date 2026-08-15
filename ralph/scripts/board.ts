@@ -18,7 +18,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1161,6 +1162,11 @@ export interface Ctx {
    *  write-guard carve-out is expressed by handing a mutating path a Ctx with
    *  this zeroed. Fail-safe is the only safe default direction for a cache. */
   itemCacheTtlSec?: number;
+  /** Session→unit binding (GH-1948): who this process is, and where the
+   *  binding records live. Absent — like a null `id` — leaves the guard
+   *  inert, which is the honest reading of "this runner told us nothing"
+   *  rather than a policy choice (see guardSessionUnit). */
+  session?: { id: string | null; dir: string };
 }
 
 /** The probe is ALIASED: a caller that selects `rateLimit` itself keeps its own
@@ -2061,7 +2067,11 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     const enteringInProgress = to === "In Progress";
 
     if (leavingInProgress) guardHolder(ctx, issue);
+    // Read the binding before the guard so the post-verify write can preserve
+    // its `since` on a heartbeat re-claim of the same unit.
+    const priorBinding = enteringInProgress ? readSessionBinding(ctx) : null;
     if (enteringInProgress) {
+      guardSessionUnit(priorBinding, issue.number);
       const claim = issue.claim;
       if (claim && !isMember(claim, ctx.cfg.holder)) {
         const stale = claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin);
@@ -2179,6 +2189,88 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
           ? `lost the claim race on #${issue.number} to ${after.claim.holders.join("+")} — pick other work`
           : `claim on #${issue.number} vanished after the write (concurrent clear) — pick other work`,
       );
+    }
+    // The claim is verifiably this session's: bind the session to the unit
+    // (GH-1948). Deliberately after the verify — see the binding block.
+    if (enteringInProgress) {
+      // The exact claim the read-back just verified as ours — the fingerprint
+      // the unwind below matches on.
+      const wroteClaimSince = after.claim!.since.getTime();
+      const wonBySibling = writeSessionBinding(ctx, issue.number, priorBinding);
+      if (wonBySibling) {
+        // A sibling in this session bound first, so this claim must not stand.
+        // Unwind it here: leaving the issue In Progress under a claim nobody
+        // drives would cost the queue a full TTL, and it is the same shape the
+        // state-write rollback above already treats as an anomaly to undo.
+        // Best-effort, like that one — doctor remains the backstop.
+        let unwound = false;
+        let moved = false;
+        try {
+          // Re-read first: an unconditional restore would clobber whatever
+          // landed after the read-back verify — clearing a newer claim and
+          // regressing the state of work someone else is now doing. Only undo
+          // what is still recognisably OURS.
+          const now = fetchIssue(ctx, issue.number);
+          // Identity is the claim's `since`, NOT its holder. The holder is
+          // `user@host` — every session on this machine writes the same one —
+          // so a sibling that refreshed this issue between the verify and here
+          // would look identical to our own write and get clobbered. The
+          // timestamp is what our write actually stamped, and any refresh
+          // (ours or a sibling's) replaces it.
+          moved = !(
+            now.claim &&
+            now.claim.since.getTime() === wroteClaimSince &&
+            isMember(now.claim, ctx.cfg.holder) &&
+            now.state === to
+          );
+          if (!moved) {
+            // A residual window remains between this check and the writes
+            // below, and it is IRREDUCIBLE, not unhandled: Projects V2 has no
+            // compare-and-swap, so every mutation in this file — including the
+            // claim protocol itself — makes races visible and refused rather
+            // than impossible. The two narrowings that were available are
+            // taken (re-read, and a `since` fingerprint rather than a
+            // machine-wide holder); closing it entirely needs a primitive
+            // GitHub does not offer. Doctor's claim-anomaly sweep is the
+            // backstop, as it is for the state-write rollback above.
+            //
+            // STATE FIRST, claim second. The unwind is two writes and either
+            // can fail; this order makes the survivable half survive. Clearing
+            // the claim first would leave a claimless item sitting In Progress
+            // — work nobody holds and no sweep repairs — and the refusal below
+            // would then say "still claimed", which would be false. This way a
+            // half-unwind leaves the item back at `from` still holding our
+            // claim: a stale claim, which is exactly what the message names
+            // and what release / TTL / doctor already handle.
+            //
+            // A null `from` is an item that had no Workflow State to begin
+            // with; there is nothing to restore, and dropping the claim is the
+            // whole unwind. Inventing a state would be the worse repair.
+            if (from) {
+              setSingleSelect(ctx, cache, itemId, STATE_FIELD, from);
+              syncStatus(ctx, cache, itemId, from);
+            }
+            if (cache.fields[CLAIM_FIELD]) clearField(ctx, cache, itemId, CLAIM_FIELD);
+            unwound = true;
+          }
+        } catch {
+          /* best-effort */
+        }
+        throw new RefusalError(
+          `#${issue.number} was claimed on the board, but a CONCURRENT claim in this session bound it to ` +
+            `#${wonBySibling.issue} first — contract rule 9 is one unit per session. ` +
+            (unwound
+              ? `The claim has been rolled back${from ? ` to "${from}"` : ""}.`
+              : moved
+                ? `The claim was NOT rolled back — #${issue.number} has moved on since (another writer holds it), ` +
+                  `and undoing that would clobber work this session cannot see.`
+                : `Rolling the claim back FAILED — #${issue.number} still carries this machine's claim ` +
+                  `(doctor surfaces it as a claim anomaly, and it expires after TTL ${ctx.cfg.lockTtlMin} min). ` +
+                  `Claiming it from a new session on this machine works regardless — same holder, so the ` +
+                  `claim refreshes rather than refusing.`) +
+            ` Drive #${issue.number} from a new session.`,
+        );
+      }
     }
     // Symmetric verify for the leaving side: the same re-read must show this
     // session OUT of the claim (gone, or co-holders only) — surviving
@@ -2311,6 +2403,140 @@ export function claimLeave(
   clearField(ctx, cache, itemId, CLAIM_FIELD);
   if (rest) setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(rest));
   return { issue: verifyClaimEcho(ctx, number, holder), changed: true };
+}
+
+// ── Session→unit binding (GH-1948) ──────────────────────────────────────────
+// Contract rule 9 — "one unit per session, and a finished session stops" —
+// shipped in GH-1924 as prose, which refuses nothing. This is the code half.
+//
+// The binding is LOCAL because the fact is local. The board's holder is
+// `user@host`, shared by every session on the machine, so a board-side rule
+// keyed on it would refuse legitimate concurrent panes — the opposite of what
+// rule 9 says. The session id is the only identity at the right granularity,
+// and it exists only in this process's environment.
+//
+// The claim path is the enforcement point because contract rule 1 puts every
+// sanctioned session through it before anything mutates. That makes this
+// strictly wider than a spawn-path counter: it also catches the session that
+// reached a second unit without passing the spawner at all, which is exactly
+// the case a spawn-path count is blind to.
+//
+// Check EARLY, bind LATE. The binding is written only after the claim's
+// read-back verify passes: binding first would strand a session that lost a
+// claim race — bound to an issue it never held, then refused the other work
+// it was correctly told to go pick.
+//
+// No resolvable session id, no readable record → NOT EVALUATED. Unlike this
+// repo's opt-in flags, an absent value here is not a policy choice, and
+// refusing every claim on a runner that publishes no session id would break
+// the tool over a fact it was never told.
+
+const SESSION_BINDING_TTL_DAYS = 7;
+
+export interface SessionBinding {
+  issue: number;
+  since: string; // when this session FIRST claimed it (a heartbeat re-claim keeps it)
+  holder: string;
+}
+
+export function sessionBindingPath(ctx: Ctx): string | null {
+  const id = ctx.session?.id;
+  if (!id) return null;
+  // The id becomes a filename: anything outside the safe set — a "/" above all
+  // — would write outside the directory. Sanitizing ALONE is lossy ("a/b" and
+  // "a_b" land on one file), and a collision here is a FALSE REFUSAL of a guard
+  // that has no --force, so the digest of the raw id carries the identity and
+  // the readable half is only there to make the directory greppable.
+  const safe = id.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 64);
+  const digest = createHash("sha256").update(id).digest("hex").slice(0, 16);
+  return join(ctx.session!.dir, `${safe}-${digest}.json`);
+}
+
+export function readSessionBinding(ctx: Ctx): SessionBinding | null {
+  const path = sessionBindingPath(ctx);
+  if (!path) return null;
+  try {
+    const b = JSON.parse(readFileSync(path, "utf8"));
+    return Number.isInteger(b?.issue) ? (b as SessionBinding) : null;
+  } catch {
+    return null; // absent or garbled: not evaluated (see above)
+  }
+}
+
+/** Refuse a SECOND, distinct unit driven from one session. Re-claiming the
+ *  same issue (heartbeat, resume after Human Needed) is not a second unit and
+ *  always passes. There is deliberately no --force: a fresh session is the
+ *  remedy, and it is one the caller can always take. */
+function guardSessionUnit(bound: SessionBinding | null, number: number): void {
+  if (!bound || bound.issue === number) return;
+  throw new RefusalError(
+    `this session already drove #${bound.issue} (claimed ${bound.since}) — contract rule 9 is one unit per session. ` +
+      `#${number} needs a NEW session: branch, worktree and lineage all derive from the unit, so a second unit here ` +
+      `inherits the first's three, and the fleet bound is counted at the spawn path only, so nobody sees it. ` +
+      `File follow-ups with \`board create\` and let whoever spawns the next session rank them.`,
+  );
+}
+
+/** Bind — with the O_EXCL create doing the compare-and-swap the read in
+ *  guardSessionUnit cannot. Without it, two overlapping claims from ONE session
+ *  both read an absent binding, both pass the guard, and the last write silently
+ *  decides which unit the session "has" while both issues stay claimed by it —
+ *  the exact outcome rule 9 exists to prevent, reached by racing the guard.
+ *
+ *  Unlike the board claim (Projects V2 has no CAS, so races are made VISIBLE
+ *  rather than impossible), a local file can actually win this one: first
+ *  writer takes the binding, and the loser is refused by name. */
+function writeSessionBinding(
+  ctx: Ctx,
+  number: number,
+  prior: SessionBinding | null,
+): SessionBinding | null {
+  const path = sessionBindingPath(ctx);
+  if (!path) return null;
+  const since = prior?.issue === number ? prior.since : ctx.now().toISOString();
+  const record = JSON.stringify({ issue: number, since, holder: ctx.cfg.holder });
+  try {
+    mkdirSync(ctx.session!.dir, { recursive: true });
+    writeFileSync(path, record, { flag: "wx" });
+    pruneSessionBindings(ctx);
+    return null;
+  } catch (e) {
+    // An unwritable state dir must not fail a claim the board already granted:
+    // the claim is the durable half, this is a local rule, and a machine that
+    // cannot write ~/.ralph has a louder problem than rule 9.
+    if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") return null;
+  }
+  // A record already exists — either this session's own earlier claim of the
+  // SAME unit (a heartbeat: leave it, its `since` is the one worth keeping,
+  // and touch it so the pruner cannot reap a long-lived session), or a
+  // concurrent sibling that won the binding first.
+  const won = readSessionBinding(ctx);
+  if (!won || won.issue === number) {
+    try {
+      const t = ctx.now();
+      utimesSync(path, t, t);
+    } catch {
+      /* best-effort */
+    }
+    return null;
+  }
+  return won; // caller unwinds the claim it just took, then refuses
+}
+
+/** Session ids are unique per session, so the records would accumulate forever.
+ *  Swept on write — the only moment we are already touching the directory. */
+function pruneSessionBindings(ctx: Ctx): void {
+  const dir = ctx.session!.dir;
+  const cutoff = ctx.now().getTime() - SESSION_BINDING_TTL_DAYS * 86_400_000;
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const p = join(dir, name);
+      if (statSync(p).mtimeMs < cutoff) unlinkSync(p);
+    } catch {
+      /* raced away by a concurrent sweep — already the desired end state */
+    }
+  }
 }
 
 /** What `claim show` reports — the claim exactly as the board holds it, plus
@@ -6246,7 +6472,12 @@ mutations
                               hardcoded P0..P3 — a host repo owns its scheme,
                               and \`next\` orders a custom one by the field's
                               option ORDER (a trailing digit is the fallback)
-  claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
+  claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim.
+                              Binds this session to the unit (GH-1948): a second
+                              DISTINCT unit from one session is refused (contract
+                              rule 9). Re-claiming the same unit always passes;
+                              a fresh session is the only remedy — there is no
+                              --force. Inert where no session id is published
   claim leave NNN --holder H  remove a holder from an existing shared claim;
                               non-member leave is a no-op; the LAST one out
                               clears the field. Never transitions state — board
@@ -7183,6 +7414,12 @@ if (isMain) {
       cacheDir: join(homedir(), ".ralph", "cache"),
       now: () => new Date(),
       itemCacheTtlSec: parseItemCacheTtlSec(process.env.RALPH_ITEM_CACHE_TTL_SEC),
+      session: {
+        // RALPH_SESSION_ID first so a non-Claude runner can publish the fact
+        // itself; CLAUDE_CODE_SESSION_ID is the one every session here has.
+        id: process.env.RALPH_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID || null,
+        dir: join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "sessions"),
+      },
     };
     process.exit(run(process.argv.slice(2), ctx));
   } catch (e) {
