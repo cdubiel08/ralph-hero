@@ -50,6 +50,13 @@ const exportTargets = (exports_) => {
   return out.filter((t) => !t.includes("*"));
 };
 
+// A compiled payload, by filename. The version suffix is not optional: Linux
+// ships shared objects as libvips-cpp.so.42, and an anchored `.so$` reported
+// @img/sharp-libvips-linux-x64 and -linuxmusl-x64 as damaged on every Linux
+// launch — found by running this check against a real Linux tree in CI, on a
+// platform the local measurement could not see.
+const BINARY = /\.(node|dylib|dll)$|\.so(\.\d+)*$/;
+
 // Bounded, short-circuiting search for a compiled binary payload. Depth-limited
 // because this runs on the warm path.
 const hasBinary = (root, depth) => {
@@ -62,7 +69,7 @@ const hasBinary = (root, depth) => {
     return false;
   }
   for (const e of entries) {
-    if (e.isFile() && /\.(node|so|dylib|dll)$/.test(e.name)) return true;
+    if (e.isFile() && BINARY.test(e.name)) return true;
     if (e.isDirectory() && e.name !== "node_modules" && e.name !== "src") {
       if (hasBinary(path.join(root, e.name), depth + 1)) return true;
     }
@@ -94,7 +101,13 @@ function requiredPackages(root, platform, arch) {
       // absence may not force a reinstall. One that names THIS platform is the
       // sqlite-vec-<platform>-<arch> case: its whole purpose is to carry the
       // binary, and without it sqliteVec.load() fails at runtime.
-      optional: !!entry.optional && !entry.os && !entry.cpu,
+      //
+      // A `libc` constraint is tolerated for a different reason: os/cpu are
+      // facts Node reports, libc is not, so demanding a glibc-or-musl variant
+      // we cannot confirm applies here risks a permanent reinstall loop — the
+      // one outcome worse than the corruption being guarded against. A libc
+      // package that IS installed is still validated.
+      optional: (!!entry.optional && !entry.os && !entry.cpu) || !!entry.libc,
       lockOs: entry.os,
       lockCpu: entry.cpu,
     });

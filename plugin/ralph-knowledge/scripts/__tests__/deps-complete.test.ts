@@ -173,6 +173,39 @@ describe("tolerates what a healthy tree legitimately contains", () => {
     expect(checkTree(dir, "darwin", "arm64")).toEqual([]);
   });
 
+  it("accepts a versioned shared object", () => {
+    // @img/sharp-libvips-linux-x64 ships lib/libvips-cpp.so.42. An anchored
+    // `.so$` reported it as damaged on every Linux launch — caught by the
+    // real-tree test above running in CI, not by any fixture written here.
+    const dir = tree(
+      { "": {}, "node_modules/@img/sharp-libvips-linux-x64": { os: ["linux"], cpu: ["x64"] } },
+      {
+        "node_modules/@img/sharp-libvips-linux-x64/package.json": manifest({
+          exports: { "./lib": "./lib" },
+        }),
+        "node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.42": "",
+      },
+    );
+    expect(checkTree(dir, "linux", "x64")).toEqual([]);
+  });
+
+  it("tolerates a libc-constrained package that is absent", () => {
+    // npm resolves glibc vs musl; Node reports no libc, so requiring a variant
+    // we cannot confirm applies here would reinstall forever.
+    const dir = tree(
+      {
+        "": {},
+        "node_modules/@img/sharp-libvips-linuxmusl-x64": {
+          os: ["linux"],
+          cpu: ["x64"],
+          libc: ["musl"],
+        },
+      },
+      {},
+    );
+    expect(checkTree(dir, "linux", "x64")).toEqual([]);
+  });
+
   it("ignores dev dependencies, which are pruned after the build", () => {
     const dir = tree({ "": {}, "node_modules/typescript": { dev: true } }, {});
     expect(checkTree(dir, "darwin", "arm64")).toEqual([]);
