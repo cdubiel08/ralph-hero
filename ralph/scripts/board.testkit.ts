@@ -67,10 +67,11 @@ export interface FakeIssue {
     pushedAt?: string;
   }>;
   branchPrs?: FakeIssue["prs"]; // sugar: PRs on the LEGACY feature/GH-NNN branch
-  /** Branch-convention refs by name. The fake applies GitHub's own SUBSTRING
-   *  filter to these, so a ref that merely contains the digits reaches
-   *  board.ts exactly as it would in production — and its rejection is the
-   *  linkage predicate under test, not the fixture's politeness. */
+  /** Branch-convention refs by name. Both linkage readers see these: the
+   *  deliver b-alias applies GitHub's SUBSTRING ref filter, and the Done
+   *  gate's merged-PR search applies its PREFIX `head:` match (GH-1996). Each
+   *  returns names the grammar does not own, so their rejection is the linkage
+   *  predicate under test, not the fixture's politeness. */
   branchRefs?: Array<{ name: string; prs: FakeIssue["prs"] }>;
   commentTimes?: Array<string | null>; // createdAt aligned with comments[]
   stateUpdatedAt?: string | null; // when the board last wrote Workflow State
@@ -93,6 +94,10 @@ export class FakeGh {
   issues = new Map<number, FakeIssue>();
   failNextStateWrite = false; // transport-failure injection
   failBranchLinkage = false; // GH-1732: the branch-linkage read is unreadable
+  /** The `query:` VARIABLE of the last linkage search (GH-1996). The `head:`
+   *  qualifiers live there, not in the document, so a test asserting the
+   *  grammar coverage has to read this rather than `queries`. */
+  lastSearchQuery: string | null = null;
   raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
   vanishClaim = false; // simulate a concurrent clear landing after our write
   stickyClaim = false; // simulate a claim clear silently not sticking
@@ -407,37 +412,35 @@ export class FakeGh {
       return data(out);
     }
 
-    // Done-evidence branch linkage (GH-1732): a bare refs read with no issue
-    // alias beside it. Same fixtures as the deliver b-alias, same substring
-    // filter, so the two readers are exercised against one source of truth.
-    if (query.includes("refs(refPrefix") && !query.includes("issue(number")) {
+    // Done-evidence branch linkage (GH-1996): a merged-PR search keyed on
+    // `head:` qualifiers. Same fixtures as the deliver b-alias, and the fake
+    // applies GitHub's own PREFIX semantics — so a branch that merely starts
+    // with the digits (`feat/19960-…`) reaches board.ts exactly as it would in
+    // production, and its rejection is the linkage predicate under test.
+    if (query.includes("search(type: ISSUE")) {
       if (this.failBranchLinkage) throw new Error("gh api graphql failed: rate limit exceeded");
-      const needle = String((variables as any).q ?? "");
-      const fi = this.issues.get(Number(needle));
-      const refs = fi
-        ? [
-            ...(fi.branchPrs ? [{ name: `feature/GH-${fi.number}`, prs: fi.branchPrs }] : []),
-            ...(fi.branchRefs ?? []),
-          ].filter((r) => needle !== "" && r.name.includes(needle))
-        : [];
-      return data({
-        repository: {
-          refs: {
-            nodes: refs.map((r) => ({
-              name: r.name,
-              associatedPullRequests: {
-                nodes: (r.prs ?? [])
-                  .filter((p) => p.merged || p.prState === "MERGED")
-                  .map((p) => ({
-                    number: p.number,
-                    url: `https://github.com/cdubiel08/ralph-hero/pull/${p.number}`,
-                    merged: true,
-                  })),
-              },
-            })),
-          },
-        },
-      });
+      const q = String((variables as any).q ?? "");
+      this.lastSearchQuery = q;
+      const prefixes = [...q.matchAll(/head:(\S+)/g)].map((m) => m[1]);
+      const nodes: any[] = [];
+      for (const fi of this.issues.values()) {
+        const refs = [
+          ...(fi.branchPrs ? [{ name: `feature/GH-${fi.number}`, prs: fi.branchPrs }] : []),
+          ...(fi.branchRefs ?? []),
+        ].filter((r) => prefixes.some((p) => r.name.startsWith(p)));
+        for (const r of refs) {
+          for (const p of r.prs ?? []) {
+            if (!(p.merged || p.prState === "MERGED")) continue;
+            nodes.push({
+              number: p.number,
+              url: `https://github.com/cdubiel08/ralph-hero/pull/${p.number}`,
+              merged: true,
+              headRefName: r.name,
+            });
+          }
+        }
+      }
+      return data({ search: { nodes } });
     }
 
     // Deliver-lane detail fetch (GH-1712): dK/bK alias pairs. Matched before
