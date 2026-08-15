@@ -152,30 +152,26 @@ fi
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # Same resolution and same test-only override as scripts/merge-pr.sh — the
 # whole point is to read the identical file the gate reads.
-POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$PROJECT_ROOT/.github/ralph-merge-policy.json}"
+# The policy reader, the login-normalization rule and the attestation payload
+# rules come from the shared library merge-pr.sh and validate-attestation.sh
+# also use (GH-1843) — this script's whole job is to predict those gates, so a
+# second copy of their rules is the one thing it must not hold.
+# shellcheck source=lib/merge-evidence.sh
+. "$PROJECT_ROOT/scripts/lib/merge-evidence.sh"
+POLICY_FILE="$(me_policy_file "$PROJECT_ROOT")"
 
 # POLICY is the one object handed to jq. No policy file at all → gates 4-5 are
 # off in merge-pr.sh, so external review is not required here either.
-POLICY='{"attestationRequired":false,"externalRequired":false,"bot":"","trigger":"","headMarker":"","mode":"review","exemptAuthors":[]}'
 POLICY_ERROR=""
-if [ -f "$POLICY_FILE" ]; then
-  if ! jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
-    # Fail CLOSED, like merge-pr.sh: a corrupt policy must not read as
-    # "no external review required" and green-light a merge.
-    POLICY_ERROR="merge policy file is not valid JSON: $POLICY_FILE"
-  else
-    POLICY=$(jq -c '{
-      attestationRequired: (.attestation.required // false),
-      externalRequired: (.external_review.required // false),
-      bot:             (.external_review.bot // "chatgpt-codex-connector[bot]"),
-      trigger:         (.external_review.trigger // "@codex review"),
-      headMarker:      (.external_review.head_marker // ""),
-      exemptAuthors:   (.exempt_authors // [])
-    }
-    # Mode derivation, byte-for-byte the rule in merge-pr.sh and
-    # validate-attestation.sh: a head_marker means findings mode.
-    | .mode = (if .headMarker != "" then "findings" else "review" end)' "$POLICY_FILE")
-  fi
+set +e
+POLICY=$(me_policy_load "$POLICY_FILE")
+POLICY_RC=$?
+set -e
+if [ "$POLICY_RC" -eq 2 ]; then
+  # Fail CLOSED, like merge-pr.sh: a corrupt policy must not read as
+  # "no external review required" and green-light a merge.
+  POLICY_ERROR="merge policy file is not valid JSON: $POLICY_FILE"
+  POLICY=$(jq -n "$ME_JQ_LIB me_policy_none")
 fi
 POLICY_MODE=$(jq -r '.mode' <<<"$POLICY")
 POLICY_EXTERNAL=$(jq -r '.externalRequired | tostring' <<<"$POLICY")
@@ -211,6 +207,9 @@ ATTEST_MARKER='<!-- ralph-attestation:v1 -->'
 # single place and the shell holds no branching logic of its own. Kept in a
 # quoted heredoc: the program contains single quotes, which cannot appear
 # inside a single-quoted shell string.
+# ME_JQ_LIB is prepended below rather than pasted in: this program calls
+# me_norm / me_fenced_json / me_attestation_status, and they must be the very
+# defs gates 4 and 5 run (GH-1843).
 read -r -d '' CLASSIFY_JQ <<'JQ' || true
 # The attestation status is identified by NAME ONLY, which is how gate 3
 # identifies it (an exact `ralph-attestation` comparison, merge-pr.sh:287-295).
@@ -223,23 +222,10 @@ read -r -d '' CLASSIFY_JQ <<'JQ' || true
 # Renaming the status is a change to the gate (gate 3 + validate-attestation
 # + this script together), not something this script can absorb alone.
 def is_attest: .name == $attest;
-# Login normalization, identical to gate 5: GitHub spells the same identity
-# "codex[bot]" via REST and "app/codex" in some payloads.
-def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-# The attestation payload, extracted the way gate 4 extracts it
-# (merge-pr.sh:319-321, an awk with both fences anchored to their own lines).
-# `split("```json")` accepted an INLINE fence anywhere in the body, so a
-# comment gate 4 calls unparseable could read as valid here and produce
-# GATE-READY into a merge that immediately rejects it (codex P2, PR #1764).
-# No closing fence means "to the end", which is what the awk does too.
-def fenced_json:
-  (. / "\n") as $lines
-  | ($lines | map(test("^```json[[:space:]]*$")) | index(true)) as $start
-  | if $start == null then null
-    else ($lines[($start + 1):]) as $rest
-      | ($rest | map(test("^```[[:space:]]*$")) | index(true)) as $end
-      | (if $end == null then $rest else $rest[0:$end] end | join("\n"))
-    end;
+# me_norm, me_fenced_json and me_attestation_status come from
+# scripts/lib/merge-evidence.sh, prepended to this program — the SAME defs
+# gates 4 and 5 run (GH-1843). They used to be copies here, and every copy was
+# a place this classifier could come to disagree with the gate it predicts.
 
 ($checks // [])                                        as $all
 | ($all | map(select(is_attest)))                       as $att
@@ -284,8 +270,8 @@ def fenced_json:
 # review of the CURRENT head (codex P2, PR #1764). Reviews by identities the
 # policy did not name are likewise not the evidence gate 5 requires.
 | ($pr.headRefOid // "")                                as $head
-| (($pr.author.login // "") | norm)                     as $author
-| (($policy.exemptAuthors // []) | map(norm) | index($author) != null) as $exempt
+| (($pr.author.login // "") | me_norm)                     as $author
+| (($policy.exemptAuthors // []) | map(me_norm) | index($author) != null) as $exempt
 | ($policy.externalRequired == true)                    as $ext_required
 # Is the rate-limited reviewer the one GATE 5 is waiting for? Nudging
 # CodeRabbit on a repo whose configured reviewer is Codex answers "whose turn
@@ -303,7 +289,7 @@ def fenced_json:
 # evidence. With no policy (or external review not required) there is no
 # configured identity to filter on, so any approval counts — still head-bound.
 | ($reviews | map(select(
-    ($ext_required | not) or (((.user.login // "") | norm) == (($policy.bot // "") | norm))
+    ($ext_required | not) or (((.user.login // "") | me_norm) == (($policy.bot // "") | me_norm))
   )))                                                   as $reviewer_reviews
 | ($reviewer_reviews | map(select(
     (.state // "") != "DISMISSED" and ((.commit_id // "") == $head)
@@ -417,17 +403,14 @@ def fenced_json:
 | (($pr.comments // [])
    | map(select((.body // "") | contains($marker)))
    | last | (.body // "")
-   | (try (fenced_json | fromjson) catch null))          as $att_json
+   | (try (me_fenced_json | fromjson) catch null))          as $att_json
 | (($att_json.head_sha // ""))                          as $attested_sha
-# The WHOLE payload, not just the sha. Gate 4 re-reads the live comment and
-# checks three things, and an edit can preserve head_sha while breaking either
-# of the others — so a sha-only check calls a rejected attestation valid and
-# ends --watch on a merge that fails immediately (codex P2, PR #1764).
-# Mirrors merge-pr.sh:323-335 term for term, including `tests` being non-empty
-# (an attestation with no test evidence is not evidence) and the verdict being
-# exactly APPROVED (an honest REJECTED is evidence AGAINST merging, so
-# presence alone must not satisfy it).
-| ((($att_json.tests // []) | (length > 0) and all(.exit_code == 0))) as $att_tests_ok
+# The WHOLE payload, not just the sha. Gate 4 checks three things, and an edit
+# can preserve head_sha while breaking either of the others — so a sha-only
+# check calls a rejected attestation valid and ends --watch on a merge that
+# fails immediately (codex P2, PR #1764). This is not a mirror of gate 4's
+# terms any more: it IS gate 4's predicate, from the shared lib (GH-1843).
+| ($att_json | me_attestation_status($pr.headRefOid // "")) as $att_status
 | (($att_json.review.verdict // ""))                    as $att_verdict
 # --carry-review is only offerable when there is something to carry:
 # attest-pr.sh:173-190 refuses it unless a PRIOR attestation with a review
@@ -450,13 +433,13 @@ def fenced_json:
      # runs as-typed would be this script inventing the verdict again.
      "--review-verdict <VERDICT> --reviewer <who reviewed>   # no evidence on this PR and no prior attestation to carry: fill these from a real review"
    end)                                                   as $review_flags
-| (($attested_sha != "") and ($attested_sha == ($pr.headRefOid // ""))
-   and $att_tests_ok and ($att_verdict == "APPROVED"))   as $attested_current
+| ($att_status == "ok")                                 as $attested_current
 # Attested at this head but otherwise invalid: worth naming precisely, because
 # "re-attest" and "your attestation records a failing test" are different jobs.
-| (($attested_sha != "") and ($attested_sha == ($pr.headRefOid // ""))
-   and (($att_tests_ok | not) or ($att_verdict != "APPROVED")))
-                                                        as $att_invalid_here
+# The reason codes ARE that distinction — "stale" and "missing" are the two
+# that mean re-attest, so everything else at this head is invalid-here.
+| (($att_status == "no-tests") or ($att_status == "no-verdict")
+   or ($att_status == "rejected"))                      as $att_invalid_here
 
 | if $policy_error != "" then
     "GATE-FAIL policy: \($policy_error)"
@@ -560,7 +543,7 @@ def fenced_json:
   # verdict degrades to GATE-YOURS attestation, and re-attesting is idempotent
   # because attest-pr.sh updates its existing comment.
   elif $attest_required and $att_invalid_here then
-    "GATE-YOURS attestation: the attestation at \($head[0:8]) is invalid (\(if ($att_tests_ok | not) then "tests[] is empty or records a non-zero exit_code" else "review verdict \($att_verdict | tojson) is not APPROVED" end)) — gate 4 re-reads this live and rejects it; re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" \($review_flags)"
+    "GATE-YOURS attestation: the attestation at \($head[0:8]) is invalid (\(if $att_status == "no-tests" then "tests[] is empty or records a non-zero exit_code" else "review verdict \($att_verdict | tojson) is not APPROVED" end)) — gate 4 re-reads this live and rejects it; re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" \($review_flags)"
   elif $attest_required and ($attested_current | not) then
     "GATE-YOURS attestation: \($attest) is green but no valid attestation is visible at \($head[0:8]) — re-run bash scripts/attest-pr.sh \($num) --run \"<test cmd>\" \($review_flags)"
   # Gate 2's shape exactly (merge-pr.sh:256-269): MERGEABLE passes, CONFLICTING
@@ -575,6 +558,7 @@ def fenced_json:
     "GATE-READY: green + reviewed + attested — bash scripts/merge-pr.sh \($num)"
   end
 JQ
+CLASSIFY_JQ="$ME_JQ_LIB$CLASSIFY_JQ"
 
 # classify <checks-json> <pr-json> <reviews-json> <comments-json>
 #          <fetch-ok> <checks-ok> <codex-evidence-json> -> a verdict.
@@ -699,10 +683,7 @@ gather() {
   # costs would buy an answer the ladder discards.
   local codex="$CODEX_NONE"
   if [ "$POLICY_EXTERNAL" = "true" ] && [ "$POLICY_MODE" = "findings" ] \
-     && [ "$(jq -r --argjson p "$POLICY" '
-            def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-            ((.author.login // "") | norm) as $a
-            | (($p.exemptAuthors // []) | map(norm) | index($a)) != null' <<<"$pr_json")" != "true" ]; then
+     && [ "$(me_is_exempt "$POLICY" "$(jq -r '.author.login // ""' <<<"$pr_json")")" != "true" ]; then
     codex=$("$CODEX_EVIDENCE_SH" "$PR" "$head_before" 2>/dev/null) \
       || codex='{"ok":false,"turn":"reviewer","detail":"review evidence could not be evaluated — retry","reviewer":"","review_url":""}'
     printf '%s' "$codex" | jq -e 'type == "object"' >/dev/null 2>&1 \
