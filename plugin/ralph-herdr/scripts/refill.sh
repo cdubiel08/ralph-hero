@@ -60,12 +60,55 @@ maybe_refill() {
 
 # refill_all_to_capacity LEDGER_FILE — the LEVEL trigger: maybe_refill's shape,
 # filling every seat rather than one. reconcile.sh phase F's entry point.
+#
+# OWNERSHIP (GH-1905). herdr runs the [[startup]] hook for EVERY server that
+# starts, including a scratch one from an isolated named session, and that pass
+# is pointed at the real ledger root. GH-1863 gated the two ABSENCE-driven
+# phases on a positive ownership proof; this one was not gated, and it is the
+# phase that starts processes: on a foreign server the herd read is empty, every
+# seat looks free, and an armed fleet.json is topped back up to k — real workers
+# spawned into a scratch server, taking real claims.
+#
+# It cannot reuse GH-1863's predicate. That proof is read off the ledger's OPEN
+# records (a pane this server holds, or a record this server wrote), and the
+# scenario phase F exists for — a restart of a fleet whose workers all exited
+# cleanly — has zero open records, so the predicate would refuse the re-arm in
+# precisely the case it is needed. The run's own provenance answers instead:
+# fleet.json records the arming server's session key (ralph_fleet_arm), which is
+# a fact about the RUN and outlives every worker in it.
+#
+# Fail closed, on both unknowns. A fleet.json with no `session` is a legacy
+# arming whose server is unknowable — and unknown may not spawn. A missing
+# ralph_session_key (this file is sourced by callers that need not have loaded
+# ledger.sh) is the same answer for the same reason. Both cost at most one
+# armed run one TTL, which is the bound GH-1809 already established; the
+# alternative costs a foreign server a fleet.
+#
+# The EDGE trigger needs no such gate: it fires from watch-event.sh on a w-lane
+# session's own exit event, which only the server hosting that session receives.
 refill_all_to_capacity() {
-  local file="$1" runs ff
+  local file="$1" runs ff this_session ff_session
   runs="$(dirname "$file")/runs"
   [ -d "$runs" ] || return 0
+  this_session=""
+  if command -v ralph_session_key >/dev/null 2>&1; then
+    this_session=$(ralph_session_key 2>/dev/null) || this_session=""
+  fi
   for ff in "$runs"/*/fleet.json; do
     [ -f "$ff" ] || continue
+    # Read straight from the file, not ralph_fleet_state: this decides whether
+    # to look at the run at all, and an unarmed or lapsed run is refill_one's
+    # to report (it writes the TTL disarm down). A run we do not own is one we
+    # must not touch either way.
+    ff_session=$(jq -r '.session // ""' "$ff" 2>/dev/null) || ff_session=""
+    if [ -z "$this_session" ] || [ -z "$ff_session" ] || [ "$ff_session" != "$this_session" ]; then
+      # Silent unless it would otherwise have acted — an unarmed fleet.json is
+      # the common case and phase F is supposed to be inert against it.
+      if [ "$(jq -r '.armed // false' "$ff" 2>/dev/null)" = "true" ]; then
+        log "refill: $ff was armed by session '${ff_session:-none recorded}', not this server ('${this_session:-unresolved}') — not refilling it here"
+      fi
+      continue
+    fi
     refill_to_capacity "$file" "$ff" || true
   done
   return 0

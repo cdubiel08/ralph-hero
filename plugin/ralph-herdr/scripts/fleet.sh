@@ -125,7 +125,7 @@ _ralph_fleet_scope_ledger() {
 # read them as octal — validate_pos_int's rule, restated for sourcing order).
 ralph_fleet_arm() {
   local k="${1-}" refill="${2-}" id="${RALPH_HERDR_RUN_ID:-}"
-  local dir file tmp ttl budget left expires repo n
+  local dir file tmp ttl budget left expires repo session n
   case "$k" in '' | *[!0-9]* | 0 | 0*) echo "ralph_fleet_arm: k must be a positive integer (got '$k')" >&2; return 1 ;; esac
   case "$refill" in 0 | 1) : ;; *) echo "ralph_fleet_arm: refill must be 0 or 1 (got '$refill')" >&2; return 1 ;; esac
   if [ -z "$id" ]; then
@@ -147,13 +147,25 @@ ralph_fleet_arm() {
   tmp="$file.tmp.$$"
   expires=$(_ralph_fleet_expiry "$ttl") || return 1
   repo="${REPO:-$PWD}"
+  # `session` is the arming server's ralph_session_key (GH-1905) — the run's
+  # provenance, stamped once, here, where it is free and unambiguous. Phase F
+  # of reconcile is the only reader: it must know whether the server about to
+  # top this fleet back up is the one the fleet belongs to, and no ledger
+  # record can answer that (a fully-retired fleet has none, which is exactly
+  # the restart GH-1862 exists for). No hasher / no ledger.sh leaves it empty,
+  # and an empty answer arms nothing on the level path — fail closed.
+  session=""
+  if command -v ralph_session_key >/dev/null 2>&1; then
+    session=$(ralph_session_key 2>/dev/null) || session=""
+  fi
   jq -nc \
     --arg id "$id" --arg expires "$expires" --arg repo "$repo" \
+    --arg session "$session" \
     --arg now "$(date -u +%FT%TZ)" \
     --argjson k "$k" --argjson refill "$refill" --argjson left "$left" \
     --args '
     {run_id: $id, armed: ($refill == 1), k: $k, refill: ($refill == 1),
-     budget_left: $left, expires_at: $expires, repo: $repo,
+     budget_left: $left, expires_at: $expires, repo: $repo, session: $session,
      spawned: ($ARGS.positional | map(tonumber)), created_at: $now}' \
     -- "$@" >"$tmp" || { rm -f "$tmp"; return 1; }
   mv "$tmp" "$file" || { rm -f "$tmp"; return 1; }
