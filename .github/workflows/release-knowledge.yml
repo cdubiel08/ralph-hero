@@ -24,9 +24,10 @@ name: Release Knowledge
 #   → create GitHub Release
 #
 # If `npm publish` or the verification step fails, the workflow exits with
-# nothing landed on main. The package.json bump is also not pushed, so the
-# next merge will retry at the same patch number (npm version is idempotent
-# from a clean working tree).
+# nothing landed on main. The package.json bump is also not pushed — so npm
+# can hold a version main knows nothing about, which is why the version floor
+# (GH-1954) reads the registry as well as the manifest and the tag list: the
+# next merge skips past the orphan rather than colliding with it.
 #
 # Skill-only changes (mcp_changed=false) still bump + commit + tag + push
 # without touching npm — that path is unaffected.
@@ -89,6 +90,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      issues: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -118,6 +120,47 @@ jobs:
           echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
           echo "Classification: mcp_changed=$MCP_CHANGED"
 
+      # Read the bump annotation off the TRIGGERING merge commit, before the
+      # advance step below moves HEAD to main's tip — which may be a later
+      # commit carrying a different (or no) `#minor`/`#major` marker.
+      - name: Determine version bump
+        id: bump
+        if: inputs.republish != true
+        working-directory: .
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_BUMP: ${{ inputs.bump }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "type=$MANUAL_BUMP" >> "$GITHUB_OUTPUT"
+          else
+            COMMIT_MSG=$(git log -1 --pretty=%B)
+            if echo "$COMMIT_MSG" | grep -qiE '\b#major\b'; then
+              echo "type=major" >> "$GITHUB_OUTPUT"
+            elif echo "$COMMIT_MSG" | grep -qiE '\b#minor\b'; then
+              echo "type=minor" >> "$GITHUB_OUTPUT"
+            else
+              echo "type=patch" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      # GH-1954 (same defect as GH-1952): the concurrency group serializes
+      # execution, but `checkout` pins to the push event's own SHA — so a
+      # queued run reads package.json as of *its* merge commit, never the tip
+      # the run ahead of it just pushed. Two merges landing close together
+      # therefore computed the same version; here the loser dies on npm's
+      # duplicate-version rejection rather than a duplicate tag, having built
+      # and tested for nothing. Advance onto the real tip before reading (or
+      # building) anything: the merge commit is always an ancestor of it, so
+      # no work is lost. Tags are refetched with --force because a run ahead
+      # may have created one this checkout has never seen.
+      - name: Advance to current main
+        working-directory: .
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin main
+          git checkout --force -B release-bump FETCH_HEAD
+
       # Node 24 ships with npm 11.x natively, which is required for OIDC
       # trusted publishing (npm CLI >= 11.5.1). Earlier attempts with Node 22
       # + in-place `npm install -g npm@latest` hit MODULE_NOT_FOUND on
@@ -138,36 +181,59 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Determine version bump
-        id: bump
-        if: inputs.republish != true
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          MANUAL_BUMP: ${{ inputs.bump }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "type=$MANUAL_BUMP" >> "$GITHUB_OUTPUT"
-          else
-            COMMIT_MSG=$(git log -1 --pretty=%B)
-            if echo "$COMMIT_MSG" | grep -qiE '\b#major\b'; then
-              echo "type=major" >> "$GITHUB_OUTPUT"
-            elif echo "$COMMIT_MSG" | grep -qiE '\b#minor\b'; then
-              echo "type=minor" >> "$GITHUB_OUTPUT"
-            else
-              echo "type=patch" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
       - name: Bump version (working tree only)
         id: version
         if: inputs.republish != true
         env:
           BUMP_TYPE: ${{ steps.bump.outputs.type }}
         run: |
-          NEW_VERSION=$(npm version "$BUMP_TYPE" --no-git-tag-version | tr -d 'v')
+          set -euo pipefail
+          MANIFEST=$(jq -r .version package.json)
+          # Three independent claims on "what is already released": the
+          # manifest on main, the tag list, and npm itself. They disagree when
+          # a prior run landed one without the others — and this workflow
+          # publishes BEFORE it commits, so npm leading the manifest is its
+          # normal partial-failure state, not an anomaly. Take the highest of
+          # the three as the floor rather than trusting any one.
+          # `|| true`: no matching tag is an answer, not an error — under
+          # `set -euo pipefail` the empty grep would otherwise abort the step.
+          HIGHEST_TAG=$(git -C "$GITHUB_WORKSPACE" tag --list 'knowledge-v*' | sed 's/^knowledge-v//' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          NPM_LATEST=$(npm view ralph-hero-knowledge-index version 2>/dev/null || true)
+          echo "$NPM_LATEST" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || NPM_LATEST=""
+          CURRENT=$(printf '%s\n%s\n%s\n' "$MANIFEST" "${HIGHEST_TAG:-0.0.0}" "${NPM_LATEST:-0.0.0}" | sort -V | tail -1)
+          echo "Manifest: $MANIFEST  Highest tag: ${HIGHEST_TAG:-none}  npm latest: ${NPM_LATEST:-none}  Floor: $CURRENT"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "$BUMP_TYPE" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+            *) echo "::error::Unknown bump type: $BUMP_TYPE"; exit 1 ;;
+          esac
+          # Belt and braces: if the floor still collides — a hand-cut tag, or a
+          # version npm holds that `latest` does not point at — walk the patch
+          # forward rather than dying on a duplicate-version rejection after a
+          # full build and test.
+          for _ in $(seq 1 20); do
+            COLLIDES=false
+            if git -C "$GITHUB_WORKSPACE" rev-parse -q --verify \
+                 "refs/tags/knowledge-v${MAJOR}.${MINOR}.${PATCH}" >/dev/null; then
+              COLLIDES=true
+            fi
+            if npm view "ralph-hero-knowledge-index@${MAJOR}.${MINOR}.${PATCH}" version --json >/dev/null 2>&1; then
+              COLLIDES=true
+            fi
+            if [ "$COLLIDES" = false ]; then break; fi
+            echo "::notice::knowledge-v${MAJOR}.${MINOR}.${PATCH} already exists — trying next patch"
+            PATCH=$((PATCH + 1))
+          done
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version >/dev/null
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           PLUGIN_JSON=".claude-plugin/plugin.json"
           jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > tmp.json && mv tmp.json "$PLUGIN_JSON"
+          jq -e --arg v "$NEW_VERSION" '.version == $v' "$PLUGIN_JSON" > /dev/null
+          echo "Floor: $CURRENT  →  New: $NEW_VERSION"
 
       # ── PUBLISH-FIRST GATE ────────────────────────────────────────────────
       # Everything below this comment depends on `npm publish` succeeding.
@@ -236,8 +302,13 @@ jobs:
           git add plugin/ralph-knowledge/package-lock.json
           git add plugin/ralph-knowledge/.claude-plugin/plugin.json
           git commit -m "chore(release): knowledge-v${NEW_VERSION} [skip ci]"
-          git tag "knowledge-v${NEW_VERSION}"
+          # Rebase BEFORE tagging (GH-1954, observed on release-ralph.yml in
+          # GH-1952): tagging first and rebasing after moves the commit and
+          # leaves the tag on the pre-rebase one, so the published tag is
+          # unreachable from main. The concurrency group prevents two release
+          # jobs interleaving, not unrelated pushes.
           git pull --rebase origin main
+          git tag "knowledge-v${NEW_VERSION}"
           # GH-1589: push via the release deploy key — the sole bypass actor
           # on the protected-main ruleset. GITHUB_TOKEN pushes are blocked by
           # the pull_request rule, and the github-actions app cannot be a
@@ -255,7 +326,7 @@ jobs:
             'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
             >> "$HOME/.ssh/known_hosts"
           GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes" \
-            git push "git@github.com:${GITHUB_REPOSITORY}.git" main --tags
+            git push "git@github.com:${GITHUB_REPOSITORY}.git" HEAD:main --tags
 
       - name: Create GitHub Release
         if: inputs.republish != true
@@ -264,3 +335,79 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
         run: gh release create "knowledge-v${NEW_VERSION}" --generate-notes
+
+      # GH-1954 (ported from GH-1952): a failed release is silent to the
+      # driver — the merge gate has already passed and pr-gate-watch is
+      # already done, so nothing between "merged" and "released" says the
+      # release did not happen. File an issue, which state-guard adopts onto
+      # the board: a surface a driver already reads, rather than a
+      # `gh run list` they have to remember to run.
+      - name: Surface release failure
+        if: failure()
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MERGE_SHA: ${{ github.sha }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          set -euo pipefail
+          TITLE="Release Knowledge failed — plugin/ralph-knowledge merged but unreleased"
+          # How far the run got decides the remedy. This workflow publishes to
+          # npm BEFORE it commits, so the partial state that matters is the
+          # inverse of release-ralph.yml's: npm may hold a version that main
+          # knows nothing about. Measure both remotes rather than assuming,
+          # and never report "could not ask" as "absent".
+          STATE="the run failed before computing a version; nothing was published or pushed"
+          REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
+          if [ -n "${NEW_VERSION:-}" ]; then
+            TAG="knowledge-v${NEW_VERSION}"
+            NPM_HTTP=$(curl -sS -o /dev/null -w '%{http_code}' \
+              "https://registry.npmjs.org/ralph-hero-knowledge-index/${NEW_VERSION}" || echo 000)
+            LS_RC=0
+            git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1 || LS_RC=$?
+            if [ "$NPM_HTTP" != "200" ] && [ "$NPM_HTTP" != "404" ]; then
+              STATE="version \`${NEW_VERSION}\` was computed, but **whether it reached npm could not be determined** (HTTP ${NPM_HTTP})"
+              REMEDY="Check by hand — \`npm view ralph-hero-knowledge-index@${NEW_VERSION} version\`. A re-run is safe either way: the version floor now reads npm, so it will skip anything already published."
+            elif [ "$NPM_HTTP" = "404" ]; then
+              STATE="version \`${NEW_VERSION}\` was computed but nothing was published; main is unchanged"
+              REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
+            elif [ "$LS_RC" -ne 0 ] && [ "$LS_RC" -ne 2 ]; then
+              STATE="\`${NEW_VERSION}\` is published on npm, but **whether \`${TAG}\` reached origin could not be determined** (\`git ls-remote\` exited ${LS_RC})"
+              REMEDY="Check for the tag by hand — \`git ls-remote --tags origin 'refs/tags/${TAG}'\` — then follow the matching case below."
+            elif [ "$LS_RC" -eq 2 ]; then
+              STATE="\`${NEW_VERSION}\` is **published on npm but absent from main** — no bump commit, no \`${TAG}\`"
+              REMEDY="Re-run the workflow (\`workflow_dispatch\`). It will floor the next version above the published one and land manifest, tag and release together; \`${NEW_VERSION}\` stays on npm as an orphan and is harmless."
+            else
+              REL_HTTP=$(curl -sS -o /dev/null -w '%{http_code}' \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" || echo 000)
+              if [ "$REL_HTTP" = "200" ]; then
+                STATE="\`${TAG}\`, its release and the npm publish all exist — the run failed after everything landed"
+                REMEDY="Check what ran after the release step. **Do not re-run**: the version is already published."
+              elif [ "$REL_HTTP" = "404" ]; then
+                STATE="\`${NEW_VERSION}\` is published and \`${TAG}\` is pushed, but there is **no GitHub Release**"
+                REMEDY="Create the missing release only — \`gh release create ${TAG} --generate-notes\`. **Do not re-run the workflow**: it would compute the next version and leave \`${TAG}\` without a release forever."
+              else
+                STATE="\`${NEW_VERSION}\` is published and \`${TAG}\` is pushed, but **whether it has a GitHub Release could not be determined** (HTTP ${REL_HTTP})"
+                REMEDY="Check by hand — \`gh release view ${TAG}\` — and create it only if it is genuinely missing. **Do not re-run the workflow** either way: the version is already published. An HTTP ${REL_HTTP} here usually means a GitHub outage rather than anything wrong with this release."
+              fi
+            fi
+          fi
+          BODY=$(printf '%s\n' \
+            "\`Release Knowledge\` failed. The merge landed on main; ${STATE}." \
+            "" \
+            "- Failing run: ${RUN_URL}" \
+            "- Triggering commit: \`${MERGE_SHA}\`" \
+            "" \
+            "Until this is resolved the ralph-knowledge plugin agents install is behind main." \
+            "" \
+            "${REMEDY}")
+          EXISTING=$(gh issue list --state open --search "\"${TITLE}\" in:title" \
+            --json number,title --jq "[.[] | select(.title == \"${TITLE}\")] | .[0].number // empty")
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
