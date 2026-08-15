@@ -92,7 +92,9 @@ Model tiers (stated once in work/SKILL.md): sonnet default, haiku for mechanical
 
 Six workflows in `.github/workflows/` — read their `on:` blocks for triggers. `state-guard.yml` is the corrective wall (see above); the rest are CI, the weekly doctor sweep, attestation republishing, and the two release jobs.
 
-**Verify release fired after merging `ralph/**`** — push-event workflows have silently not fired here before: `gh run list --commit <merge-sha>`; `workflow_dispatch` is the manual backup.
+**Verify release fired after merging `ralph/**`** — push-event workflows have silently not fired here before: `gh run list --commit <merge-sha>`; `workflow_dispatch` is the manual backup. A release that *ran and failed* now files its own issue (GH-1952) — adopted onto the board by state-guard, so it reaches a driver without anyone remembering to look. A release that never fired at all still does not, which is why the manual check survives.
+
+**The release version is computed from main's tip, not the merge commit (GH-1952).** `concurrency: release-ralph` serializes *execution*, but `actions/checkout` pins to the push event's own SHA — so a queued run read the manifest as of its own merge, computed the version the run ahead had just taken, and died on `tag already exists` having shipped nothing (observed 2026-08-15: `ralph-v0.1.134` tags a commit that does not contain #1951). The job now fetches and advances onto main's tip before reading anything, floors the version at `max(manifest, highest ralph-v tag)` — the two disagree exactly when a prior run pushed one without the other — and walks the patch forward on a collision rather than exiting 128. `release-knowledge.yml` has the same checkout shape and is tracked separately.
 
 ## Configuration
 
