@@ -167,6 +167,17 @@ else
   fail "inline stripping swallowed a real keyword: $out"
 fi
 
+# A commit MESSAGE quoting the keyword is prose too. Also not hypothetical:
+# #1985's fix commit quoted it while describing the bug, and tripped the check
+# a second time. GitHub did not link that issue from that commit.
+pr_payload "" '[]' 'fix: strip spans — a body writing `Closes #1893` is not a link'
+out=$(run)
+if [[ "$(jq -r '.count' <<<"$out")" == "0" ]]; then
+  pass "a keyword quoted in a commit message is not linkage"
+else
+  fail "quoted commit keyword reported as drift: $out"
+fi
+
 # --- foreign repo is not our linkage ----------------------------------------
 pr_payload "Closes other/repo#1893" '[]' "feat: thing"
 out=$(run)

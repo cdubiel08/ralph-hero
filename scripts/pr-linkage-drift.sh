@@ -172,7 +172,14 @@ extract_refs() { # stdin -> one own-repo issue number per line
 }
 
 BODY_REFS=$(printf '%s\n' "$BODY" | strip_code | extract_refs || true)
-COMMIT_REFS=$(printf '%s\n' "$COMMIT_TEXT" | extract_refs || true)
+# The same stripper on the commit text, and for the same reason rather than for
+# symmetry: this repo's commit messages quote code in backticks exactly as its
+# PR bodies do, and PR #1985's second commit — the one FIXING the inline-span
+# false positive — quoted `Closes #123` in its own message and tripped the
+# check a second time. Measured beside it: GitHub did not link #123 from that
+# commit, so treating a quoted keyword as linkage models GitHub wrongly in the
+# noisy direction, which an advisory line cannot afford.
+COMMIT_REFS=$(printf '%s\n' "$COMMIT_TEXT" | strip_code | extract_refs || true)
 
 CANDIDATES=$(printf '%s\n%s\n' "$BODY_REFS" "$COMMIT_REFS" | grep -E '^[0-9]+$' | awk '!seen[$0]++' || true)
 [[ -n "$CANDIDATES" ]] || emit true '[]' ""
