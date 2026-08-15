@@ -323,8 +323,12 @@ jobs:
         continue-on-error: true
         run: |
           set -uo pipefail
+          # `|| true`: grep exits 1 on no match, and GitHub runs this block as
+          # `bash -e {0}` — the `set -uo pipefail` above does not clear that
+          # `-e` (GH-1827), so an unmatched grep would abort here instead of
+          # reaching the "nothing to compare" notice below.
           pinned="$(grep -rhoE 'AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/=]+' \
-            .github/workflows/ | sort -u)"
+            .github/workflows/ | sort -u || true)"
           if [ -z "$pinned" ]; then
             echo "::notice::No pinned Ed25519 host key found under .github/workflows/ — nothing to compare."
             exit 0
