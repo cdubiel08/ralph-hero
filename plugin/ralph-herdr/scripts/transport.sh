@@ -344,6 +344,63 @@ ralph_herdr_call() {
   printf '%s' "$out" | jq -c '.result'
 }
 
+# ralph_herdr_agent_prompt AGENT TEXT [WAIT_MS] — the one way to prompt an
+# agent. Wraps ralph_herdr_call so no caller has to hold `2>&1` and a jq of the
+# error code in its own hand (GH-1868; the same class GH-1855 closed).
+#
+# Return codes extend the adapter's rather than replacing them:
+#   0  submitted — and, when WAIT_MS is given, CONFIRMED by an observed state
+#      change; the validated agent_prompted result is on stdout
+#   4  submitted but NOT confirmed within WAIT_MS — herdr's own wait expiry
+#   1/2/3  exactly as ralph_herdr_call
+#
+# rc 4 exists because flattening it into rc 2 would lose a distinction the UI
+# gets right today: a refusal means the prompt did NOT land, while a wait
+# expiry means it may well have — the pane is the place to look, not the retry
+# button. Herdr spells that answer two ways, and both mean the same thing to a
+# caller: `timeout` (the --timeout elapsed with no matching state) and
+# `agent_prompt_stalled` (submitted from a non-working state with no lifecycle
+# change inside herdr's own 5s floor). The error body is still printed on
+# stdout, so a caller that wants to name the code can.
+#
+# WAIT_MS also sets the adapter's OUTER bound above the inner one, because the
+# two answer different questions and the inner one is the answer we want: an
+# outer expiry is rc 3 ("may or may not have been applied"), which is strictly
+# less than what herdr will tell us if we let it finish. A caller that has
+# already set a larger RALPH_HERDR_TIMEOUT_SEC keeps it.
+ralph_herdr_agent_prompt() {
+  local agent="$1" text="$2" wait_ms="${3:-}"
+  local rc=0 out code secs bound
+
+  case "$wait_ms" in
+    '' | *[!0-9]*)
+      ralph_herdr_call agent_prompted agent prompt "$agent" "$text"
+      return $?
+      ;;
+  esac
+
+  # Ceiling division plus a grace margin: the inner wait must be able to expire
+  # and be REPORTED before the outer clock fires, and the report is a round
+  # trip. Losing that race would turn every wait expiry back into rc 3.
+  secs=$(((wait_ms + 999) / 1000 + 10))
+  bound="${RALPH_HERDR_TIMEOUT_SEC:-30}"
+  case "$bound" in '' | *[!0-9]* | 0) bound=30 ;; esac
+  [ "$secs" -gt "$bound" ] || secs="$bound"
+
+  out=$(RALPH_HERDR_TIMEOUT_SEC="$secs" ralph_herdr_call agent_prompted \
+    agent prompt "$agent" "$text" --wait --timeout "$wait_ms") || rc=$?
+
+  if [ "$rc" -eq 2 ]; then
+    code=$(ralph_herdr_err_code "$out")
+    case "$code" in
+      timeout | agent_prompt_stalled) rc=4 ;;
+    esac
+  fi
+
+  printf '%s' "$out"
+  return "$rc"
+}
+
 # ralph_diag_file — a private temp file for one call's stderr. Callers that
 # want the diagnostic on failure use this instead of `2>&1`.
 #

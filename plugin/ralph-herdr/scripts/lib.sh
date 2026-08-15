@@ -836,7 +836,7 @@ spawn_work_session() {
     echo "no durable ref derivable for $agent — spawning unledgered (reconcile will discover it)" >&2
   fi
 
-  ralph_herdr_call agent_prompted agent prompt "$agent" "/ralph:work $n" >/dev/null || {
+  ralph_herdr_agent_prompt "$agent" "/ralph:work $n" >/dev/null || {
     echo "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:work $n\"" >&2
     return 1
   }

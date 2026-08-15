@@ -493,7 +493,11 @@ line_has "answer absent: the wait is named" "$OUT" "no live session for #123"
 # Nudge refused (agent vanished between list and prompt): the answer stands,
 # the refusal names the manual command.
 herd_fixture '[{"name":"w123-fix","agent_status":"blocked","pane_id":"p1"}]'
-printf '{"error":{"code":"agent_not_found"}}\n' >"$FAKE_HERDR_FIXTURES/agent-prompt.json"
+# A COMPLETE protocol-19 refusal — code AND message. The adapter refuses to
+# read a half-shaped envelope as a refusal (an empty code is nothing to branch
+# on), so a fixture missing `message` would model a server herdr is not.
+printf '{"error":{"code":"agent_not_found","message":"no such agent"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-prompt.json"
 printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-prompt.rc"
 : >"$CLOG"
 run_answer '1
@@ -505,10 +509,13 @@ is "answer nudge-refused: still rc 0 (the answer IS durable)" "0" "$RC"
 line_has "answer nudge-refused: the code is surfaced" "$OUT" "nudge to w123-fix refused (agent_not_found)"
 line_has "answer nudge-refused: the manual prompt is printed" "$OUT" \
   "herdr agent prompt w123-fix"
-rm -f "$FAKE_HERDR_FIXTURES/agent-prompt.json"
 
-# Nudge unconfirmed (--wait timed out, no error envelope): reported as sent-
-# but-unconfirmed, never as delivered.
+# Nudge unconfirmed: herdr's OWN wait expiry, which it answers as a `timeout`
+# refusal (GH-1868 — `agent_prompt_stalled` is the other spelling). Distinct
+# from every other refusal because the prompt may well have LANDED, so the
+# advice is "check the pane", never "it did not go".
+printf '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-prompt.json"
 : >"$CLOG"
 run_answer '1
 Timeout case.
@@ -517,7 +524,8 @@ Timeout case.
 '
 is "answer nudge-timeout: rc 0" "0" "$RC"
 line_has "answer nudge-timeout: honesty about non-confirmation" "$OUT" "sent but not confirmed"
-rm -f "$FAKE_HERDR_FIXTURES/agent-prompt.rc"
+line_lacks "answer nudge-timeout: a wait expiry is not reported as a refusal" "$OUT" "refused"
+rm -f "$FAKE_HERDR_FIXTURES/agent-prompt.rc" "$FAKE_HERDR_FIXTURES/agent-prompt.json"
 
 # board answer refused: rc 1, and the retry guidance names the MOVE (never
 # re-answering — the comment may already be on the record).
