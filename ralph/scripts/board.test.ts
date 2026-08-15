@@ -260,6 +260,23 @@ describe("rankNext", () => {
     ).toEqual([2, 1]);
   });
 
+  it("null priority sorts LAST, never as a default rank — the decision, not an accident (GH-1796)", () => {
+    // The rejected alternative was ranking null as P2-equivalent so that
+    // pre-existing unprioritized items stop parking behind P3s. It was rejected
+    // because it FABRICATES a judgment: a null item would tie an item someone
+    // deliberately called P2, and the tie-break (issue number) would hand the
+    // older unjudged item the head of the queue over the newer judged one.
+    // Ranking last says the true thing — nobody has judged this — and the
+    // remedy is one flag. Visibility is tend's `unformed` category, not a
+    // ranking default.
+    const items = [item(1), item(2, { priority: "P3" }), item(3, { priority: "P2" })];
+    expect(rankNext(items).eligible.map((i) => i.number)).toEqual([3, 2, 1]);
+    // Inheritance is the ONE sanctioned way a null item ranks above last: a
+    // priority its parent chain actually asserts. That path is unchanged.
+    const tree = [item(1, { priority: "P0" }), item(2, { priority: "P3" }), child(5, 1)];
+    expect(rankNext(tree).eligible[0].number).toBe(5);
+  });
+
   it("a seeded P0..P3 board ranks identically with and without the live order", () => {
     const items = [item(1, { priority: "P10" }), item(2, { priority: "P2" }), item(3), item(4, { priority: "P0" })];
     const expected = [4, 2, 1, 3];
@@ -4456,7 +4473,7 @@ describe("tend-queue (spec §4.3)", () => {
     repo: "cdubiel08/ralph-hero",
     title: `t${n}`,
     state: "Backlog",
-    priority: null,
+    priority: "P2", // formed by default; absence is opt-in per case (GH-1796)
     hasParent: false,
     parentNumber: null,
     openBlockers: [],
@@ -4502,19 +4519,27 @@ describe("tend-queue (spec §4.3)", () => {
     ]);
   });
 
-  it("formation candidates: no estimate, no parent, no deps, older than 7 days", () => {
+  it("formation candidates: missing estimate OR priority, no parent, no deps, older than 7 days", () => {
     const res = classifyTend(
       [
         item(1, { estimate: null, createdAt: days(8) }),
         item(2, { estimate: null, createdAt: days(6) }), // too young
         item(3, { estimate: null, createdAt: days(8), hasParent: true }), // parented = formed enough
-        item(4, { createdAt: days(8) }), // has an estimate
+        item(4, { createdAt: days(8) }), // estimate + priority = formed
+        // GH-1796: estimated but unprioritized — `next` ranks it behind every
+        // P3, so the lane must name it or it is lost, not deprioritized.
+        item(5, { priority: null, createdAt: days(8) }),
+        // Field values truncated: the null priority is unasserted, not unset.
+        item(6, { priority: null, createdAt: days(8), fieldValuesTruncated: true }),
       ],
       [],
       TEND_DEFAULTS,
       NOW,
     );
-    expect(res.queue.map((r) => [r.number, r.category])).toEqual([[1, "unformed"]]);
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+      [1, "unformed"],
+      [5, "unformed"],
+    ]);
   });
 
   it("done-audit marker cursor: recent closes without the marker queue; marked or old ones don't", () => {

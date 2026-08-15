@@ -303,6 +303,11 @@ export type SelectedQueueItem<S extends QueueSelect> = QueueItemCore &
  *  relative order against other stale values.
  *  A seeded P0..P3 board ranks identically under both sources, so the default
  *  board's behavior is unchanged either way. */
+/** Null ranks LAST, deliberately (GH-1796). Defaulting it to a mid rank would
+ *  fabricate a judgment nobody made — a null item would tie a deliberate P2 and
+ *  win the head on the issue-number tie-break for being older. The tail is made
+ *  visible by tend's `unformed` category rather than by a ranking default, and
+ *  inheritance still lets a parent chain assert a rank on a null item's behalf. */
 function priorityRank(p: string | null, order: readonly string[] = []): number {
   if (p === null) return Number.MAX_SAFE_INTEGER;
   const idx = order.indexOf(p);
@@ -4746,13 +4751,23 @@ export function classifyTend(
   for (const i of backlog) {
     if (i.blockersTruncated) push("deps-truncated", i, i.updatedAt ?? null);
   }
-  // 3. Formation candidates: likely unformed intake.
+  // 3. Formation candidates: likely unformed intake. A MISSING PRIORITY counts
+  //    equally with a missing estimate (GH-1796): `priorityRank` sorts null
+  //    behind every real priority, which is the honest reading — nobody judged
+  //    this item — but it is a forcing function only if something forces. A
+  //    null-priority item that already has an estimate is ranked last by `next`
+  //    and named by no lane, so it is not deprioritized, it is lost. The
+  //    remedy is one flag (`board priority NNN P2`), which is exactly why the
+  //    ranking does not need to invent a default on the item's behalf.
+  //    Truncated field values fail closed: absence GitHub never asserted is not
+  //    evidence of an unset field.
   for (const i of backlog) {
     const t = ms(i.createdAt);
     const old = t !== null && now.getTime() - t > UNFORMED_DAYS * dayMs;
     if (
       old &&
-      !i.estimate &&
+      (!i.estimate || !i.priority) &&
+      !i.fieldValuesTruncated &&
       !i.hasParent &&
       i.openBlockers.length === 0 &&
       i.closedBlockers.length === 0 &&
