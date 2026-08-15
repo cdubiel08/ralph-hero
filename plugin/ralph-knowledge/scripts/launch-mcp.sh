@@ -21,8 +21,13 @@
 #     never taken from its holder — see the note on reclamation below.
 set -euo pipefail
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 cd "$PLUGIN_ROOT"
+
+# Resolved from the script's own directory, not PLUGIN_ROOT: the two differ when
+# CLAUDE_PLUGIN_ROOT is set, and the checker ships beside this launcher.
+CHECK_DEPS="$SCRIPT_DIR/deps-complete.cjs"
 
 MARKER="$PLUGIN_ROOT/.bootstrap-complete"
 # Which Node identity built the tree. Kept beside the marker (which is an
@@ -100,111 +105,25 @@ node_compat_boundary() {
   echo "node-unknown-$$-${RANDOM:-0}"
 }
 
-# True (0) when EVERY runtime dependency declared in package.json is present.
+# True (0) when the installed tree can actually run the server.
 #
-# Hand-listing a few packages was not enough (codex P2, PR #1755): `zod` is
-# imported at the top of src/index.ts and was not among them, so a tree missing
-# it — partial cache cleanup, a half-finished delete — passed as complete and
-# the final `exec` failed instead of repairing itself. That contradicts the
-# recovery invariant the check exists to uphold.
+# The rules live in scripts/deps-complete.cjs, which documents each one and is
+# tested against this package's REAL node_modules (GH-1846) — every version of
+# this check validated against fixtures instead shipped a false positive, and a
+# false "missing" forces a destructive `npm ci` + rebuild on every launch.
 #
-# The list therefore comes from package.json itself, so a dependency added
-# later is covered without anyone remembering to update this. Only
-# `dependencies` are checked: devDependencies are pruned after the build by
-# design, and demanding them would force a rebuild on every launch.
+# Required set and install paths come from package-lock.json, so the walk
+# reaches transitive and platform packages: one removed beneath its wrapper
+# (sqlite-vec-<platform>-<arch>, onnxruntime-node under
+# @huggingface/transformers) left the wrapper intact and the marker trusted,
+# and the server then died resolving a binary instead of repairing the tree.
 #
-# If node cannot answer, fail closed and rebuild — a node that cannot run a
-# one-liner cannot run the server either.
-# A dependency counts as present only when its INSTALLATION is usable, not when
-# a directory of its name exists (codex P2, PR #1755). Partial cache cleanup
-# leaves empty package directories behind, and a name-only check reports those
-# as complete — so the marker is trusted and the server dies on its static
-# import instead of repairing the tree. The manifest must be readable, and
-# where an entry point can be determined it must exist on disk.
-#
-# Entry resolution is deliberately lenient in one direction: if the manifest
-# declares only conditional `exports` we cannot reduce to a single path, the
-# package is accepted rather than rebuilt. A false "missing" costs a full
-# destructive reinstall on every launch, which is worse than the narrow case it
-# would catch — and the empty-directory case, which is the one that actually
-# occurs, is caught by the manifest check regardless.
+# Fails closed: a node that cannot run this script, or a checker that is
+# missing, re-bootstraps rather than claiming the tree is healthy.
 deps_complete() {
-  node -e '
-    const fs = require("fs"), path = require("path");
-    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-
-    // `main`/`module` only, NOT the "." export. An exports map may legitimately
-    // point at a file the package does not ship when consumers import subpaths
-    // instead: @modelcontextprotocol/sdk declares "." -> ./dist/esm/index.js,
-    // does not ship it, and imports perfectly well via ./server/index.js.
-    // Enforcing that would report a healthy tree as broken and trigger a
-    // destructive reinstall on EVERY launch — measured against the real
-    // node_modules of this package, which is how it was caught.
-    const entryOf = (m) => {
-      const e = m.main || m.module;
-      return typeof e === "string" ? e : undefined;
-    };
-
-    // Bounded recursive search for a compiled addon. Depth-limited and
-    // short-circuiting, because this runs on the warm path of every launch.
-    const hasAddon = (root, depth) => {
-      depth = depth || 0;
-      if (depth > 4) return false;
-      let entries;
-      try { entries = fs.readdirSync(root, { withFileTypes: true }); }
-      catch { return false; }
-      for (const e of entries) {
-        if (e.isFile() && e.name.endsWith(".node")) return true;
-        if (e.isDirectory() && e.name !== "node_modules" && e.name !== "src") {
-          if (hasAddon(path.join(root, e.name), depth + 1)) return true;
-        }
-      }
-      return false;
-    };
-
-    const missing = [];
-    for (const d of Object.keys(pkg.dependencies || {})) {
-      const dir = path.join("node_modules", d);
-      const manifest = path.join(dir, "package.json");
-      if (!fs.existsSync(manifest)) { missing.push(d); continue; }
-      let m;
-      try { m = JSON.parse(fs.readFileSync(manifest, "utf8")); }
-      catch { missing.push(d); continue; }
-      // Only a DETERMINABLE entry is enforced; see the note above. A manifest
-      // that declares none (or only a conditional exports map we cannot reduce
-      // to one path) is accepted, because a false "missing" would reinstall on
-      // every single launch.
-      // Node appends an extension and falls back to <entry>/index.js, and real
-      // packages rely on it: ms declares "./index", function-bind "index".
-      // An exact existsSync reported three healthy packages in this very tree
-      // as missing, which would have forced a full reinstall on EVERY launch.
-      const entryPresent = (base) => {
-        const p0 = path.join(dir, base);
-        for (const c of [p0, p0 + ".js", p0 + ".json", p0 + ".node",
-                         path.join(p0, "index.js")]) {
-          if (fs.existsSync(c)) return true;
-        }
-        return false;
-      };
-      const entry = entryOf(m);
-      if (entry && !entryPresent(entry)) { missing.push(d); continue; }
-
-      // A native package needs its COMPILED ADDON, not just its JavaScript
-      // (codex P2, PR #1755). better-sqlite3 is the case that bites: its JS
-      // entry survives a partial cleanup while build/Release/*.node does not,
-      // and startup then dies constructing the database rather than repairing
-      // the tree. A binding.gyp (or a gypfile flag) is what marks a package as
-      // needing one, so exactly those are required to carry a .node somewhere.
-      // Only binding.gyp/gypfile. A `binary` field is NOT a reliable signal —
-      // napi-build-utils ships one whose own note reads "is not an N-API
-      // module. This entry is for unit testing", and requiring an addon there
-      // reinstalls a healthy tree on every launch.
-      const isNative = m.gypfile === true || fs.existsSync(path.join(dir, "binding.gyp"));
-      if (isNative && !hasAddon(dir)) missing.push(d);
-    }
-    if (missing.length) { console.error(missing.join(" ")); process.exit(1); }
-  ' 2>/dev/null
+  node "$CHECK_DEPS" 2>/dev/null
 }
+
 
 # True (0) when bootstrap must run.
 bootstrap_needed() {

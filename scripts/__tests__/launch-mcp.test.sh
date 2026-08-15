@@ -46,8 +46,16 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); [ -n "${2:-}" ] && echo "$2" | s
 # per-case ABI so the fingerprint boundary is drivable from the test.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
-cat >"$BIN/node" <<'STUB'
+# The integrity check runs as a real script under the real node (GH-1846). The
+# stub fakes the VERSION and ABI probes and nothing else — re-implementing the
+# check here in bash is what the `-e` emulation used to do, and a second copy
+# of the rules cannot disagree with the shipped ones if it does not exist.
+REAL_NODE="$(command -v node || true)"
+cat >"$BIN/node" <<STUB
 #!/usr/bin/env bash
+REAL_NODE="$REAL_NODE"
+STUB
+cat >>"$BIN/node" <<'STUB'
 echo "node $*" >>"$CALL_LOG"
 case "${1:-}" in
   --version) echo "${FAKE_NODE_VERSION:-v22.11.0}" ;;
@@ -60,23 +68,11 @@ case "${1:-}" in
       *) exit 1 ;;
     esac
     ;;
-  -e)
-    # Emulates deps_complete(). A directory of the right NAME is not enough —
-    # that was the defect — so the manifest must exist and its entry file must
-    # be present. Derived from package.json, since hand-listing packages here
-    # would defeat the finding this covers.
-    miss=0
-    for d in $(sed -n '/"dependencies"/,/}/p' package.json 2>/dev/null \
-      | grep -oE '"[^"]+"[[:space:]]*:' | sed 's/"//g; s/[[:space:]]*:$//' \
-      | grep -v '^dependencies$'); do
-      manifest="node_modules/$d/package.json"
-      if [ ! -f "$manifest" ]; then miss=1; continue; fi
-      entry=$(grep -oE '"main"[[:space:]]*:[[:space:]]*"[^"]+"' "$manifest" \
-        | sed 's/.*"main"[[:space:]]*:[[:space:]]*"//; s/"$//')
-      [ -n "$entry" ] || entry="index.js"
-      [ -f "node_modules/$d/$entry" ] || miss=1
-    done
-    [ "$miss" -eq 0 ] || exit 1
+  *deps-complete.cjs)
+    # The shipped integrity check, run for real. Faking it here would test the
+    # fake; every case below turns on what the real rules decide.
+    [ -n "$REAL_NODE" ] || exit 1
+    exec "$REAL_NODE" "$@"
     ;;
   *) exit 0 ;;   # stands in for `exec node dist/index.js`
 esac
@@ -142,6 +138,10 @@ fake_root() {
   done
   cp "$SRC" "$root/scripts/launch-mcp.sh"
   chmod +x "$root/scripts/launch-mcp.sh"
+  # The integrity check ships beside the launcher (GH-1846) and the launcher
+  # resolves it from its own directory, so a fixture root without it is not the
+  # thing being tested — every case would fail closed for the wrong reason.
+  cp "$(dirname "$SRC")/deps-complete.cjs" "$root/scripts/deps-complete.cjs"
   echo 'console.log("server")' >"$root/dist/index.js"
   # Dependencies are declared, because the completeness check reads them from
   # here rather than from a hand-maintained list in the launcher.
@@ -721,6 +721,9 @@ else
   # eval rather than `. <(...)`: process substitution did not reliably deliver
   # the function here, and a silently unsourced function would make every case
   # below fail for the wrong reason.
+  # deps_complete delegates to the checker the launcher resolves from its own
+  # directory; the launcher's own resolution is not sourced here, so bind it.
+  CHECK_DEPS="$(dirname "$SRC")/deps-complete.cjs"
   eval "$(sed -n '/^deps_complete() {/,/^}/p' "$SRC")"
 
   if ! type deps_complete >/dev/null 2>&1; then
@@ -831,15 +834,34 @@ PKG
   # @modelcontextprotocol/sdk declares "." -> ./dist/esm/index.js, does not
   # ship that file, and imports fine via ./server/index.js. Enforcing it
   # reported this very repo's tree as broken.
+  # GH-1846 narrowed this deliberately. #1755 accepted an exports-only package
+  # unconditionally, because enforcing @modelcontextprotocol/sdk's "." export —
+  # which it declares and does not ship — reported a healthy tree as broken.
+  # That leniency also accepted a package whose dist/ had been deleted whole,
+  # which is the damage the check exists to find. The rule is now "at least one
+  # declared target resolves": both cases below, and neither is the other.
   root=$(dep_fixture real_subpath)
   cat >"$root/node_modules/zod/package.json" <<'PKG'
 { "name": "zod", "exports": { ".": { "import": "./dist/esm/index.js" }, "./sub": "./dist/sub.js" } }
 PKG
   rm -f "$root/node_modules/zod/index.js"
+  mkdir -p "$root/node_modules/zod/dist"
+  echo 'module.exports = {}' >"$root/node_modules/zod/dist/sub.js"
   if ( cd "$root" && deps_complete ); then
-    pass "a subpath-only exports map is not enforced (no false rebuild)"
+    pass "an unshipped root export is not enforced when a subpath resolves"
   else
-    fail "an exports-only package was reported incomplete — a healthy tree would reinstall forever"
+    fail "an exports map with a live subpath was reported incomplete — a healthy tree would reinstall forever"
+  fi
+
+  root=$(dep_fixture real_subpath_gutted)
+  cat >"$root/node_modules/zod/package.json" <<'PKG'
+{ "name": "zod", "exports": { ".": { "import": "./dist/esm/index.js" }, "./sub": "./dist/sub.js" } }
+PKG
+  rm -f "$root/node_modules/zod/index.js"
+  if ( cd "$root" && deps_complete ); then
+    fail "an exports-only package with NO surviving target passed — the static import would fail instead of repairing"
+  else
+    pass "an exports-only package whose targets are all gone re-bootstraps"
   fi
 
   # Lenient in the documented direction: a manifest with only a conditional
