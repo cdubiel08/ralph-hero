@@ -506,7 +506,7 @@ export const TEND_CATEGORIES = [
   "stale-body", // Backlog, no updates in staleDays — grep the live tree before trusting it
   "deps-cleared", // Backlog, every blocker closed — the wait is over (or the edge is stale)
   "deps-truncated", // Backlog, blocker list truncated — the board cannot see its own edges
-  "unformed", // no estimate, no parent, no dependencies, older than 7 days — likely raw intake
+  "unformed", // no estimate OR no priority, no parent, no deps, older than 7 days — likely raw intake
   "done-audit", // closed recently, no audit marker — the cursor is the marker comment
 ] as const;
 
