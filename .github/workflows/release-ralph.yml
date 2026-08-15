@@ -52,6 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -80,6 +81,23 @@ jobs:
             fi
           fi
 
+      # GH-1952: the concurrency group serializes execution, but `checkout`
+      # pins to the push event's own SHA — so a queued run reads the manifest
+      # as of *its* merge commit, never the tip the run ahead of it just
+      # pushed. Two merges landing close together therefore computed the same
+      # version and the loser died on `tag ... already exists`, having shipped
+      # nothing. Fetch the real tip and advance onto it before reading
+      # anything: the merge commit is always an ancestor of it, so no work is
+      # lost. Tags are refetched with --force because a run ahead may have
+      # created one this checkout has never seen. This step must stay AFTER
+      # "Determine version bump", which reads the `#minor`/`#major` annotation
+      # off the triggering merge commit — main's tip may be a later one.
+      - name: Advance to current main
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin main
+          git checkout --force -B release-bump FETCH_HEAD
+
       - name: Compute next version
         id: version
         env:
@@ -87,7 +105,15 @@ jobs:
         run: |
           set -euo pipefail
           PLUGIN_JSON="ralph/.claude-plugin/plugin.json"
-          CURRENT=$(jq -r .version "$PLUGIN_JSON")
+          MANIFEST=$(jq -r .version "$PLUGIN_JSON")
+          # Two independent claims on "what is already released": the manifest
+          # on main, and the tag list. They disagree when a prior run pushed
+          # one without the other (exactly the state GH-1952 left behind), so
+          # take the higher of the two as the floor rather than trusting either.
+          HIGHEST_TAG=$(git tag --list 'ralph-v*' | sed 's/^ralph-v//' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          CURRENT=$(printf '%s\n%s\n' "$MANIFEST" "${HIGHEST_TAG:-0.0.0}" | sort -V | tail -1)
+          echo "Manifest: $MANIFEST  Highest tag: ${HIGHEST_TAG:-none}  Floor: $CURRENT"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
           case "$BUMP_TYPE" in
             major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
@@ -95,7 +121,19 @@ jobs:
             patch) PATCH=$((PATCH + 1)) ;;
             *) echo "::error::Unknown bump type: $BUMP_TYPE"; exit 1 ;;
           esac
+          # Belt and braces: if the floor still collides (a tag exists that
+          # neither source ranked highest, e.g. a hand-cut one), walk the patch
+          # forward rather than exiting 128 and shipping nothing.
+          for _ in $(seq 1 20); do
+            git rev-parse -q --verify "refs/tags/ralph-v${MAJOR}.${MINOR}.${PATCH}" >/dev/null || break
+            echo "::notice::ralph-v${MAJOR}.${MINOR}.${PATCH} already exists — trying next patch"
+            PATCH=$((PATCH + 1))
+          done
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          if git rev-parse -q --verify "refs/tags/ralph-v${NEW_VERSION}" >/dev/null; then
+            echo "::error::Could not find a free version after 20 attempts (last tried $NEW_VERSION)"
+            exit 1
+          fi
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           echo "Current: $CURRENT  →  New: $NEW_VERSION"
@@ -121,11 +159,14 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add ralph/.claude-plugin/plugin.json
           git commit -m "chore(ralph): release ralph-v${NEW_VERSION} [skip ci]"
-          git tag "ralph-v${NEW_VERSION}"
-          # Use pull --rebase to handle the rare case of a concurrent push between
-          # this workflow's checkout and the commit; the concurrency group above
-          # prevents two release jobs from interleaving but not unrelated pushes.
+          # Rebase BEFORE tagging (GH-1952). This is not hypothetical: on
+          # 2026-08-15 the winning run tagged 43aa4ce8, then rebased onto a
+          # main that had advanced — moving the commit and leaving the tag on
+          # the pre-rebase one. `ralph-v0.1.134` is still unreachable from main
+          # because of it. The concurrency group prevents two release jobs
+          # interleaving, not unrelated pushes.
           git pull --rebase origin main
+          git tag "ralph-v${NEW_VERSION}"
           # GH-1589: push via the release deploy key — the sole bypass actor
           # on the protected-main ruleset. GITHUB_TOKEN pushes are blocked by
           # the pull_request rule, and the github-actions app cannot be a
@@ -141,10 +182,88 @@ jobs:
             'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
             >> "$HOME/.ssh/known_hosts"
           GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes" \
-            git push "git@github.com:${GITHUB_REPOSITORY}.git" main --tags
+            git push "git@github.com:${GITHUB_REPOSITORY}.git" HEAD:main --tags
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
         run: gh release create "ralph-v${NEW_VERSION}" --generate-notes --title "ralph-v${NEW_VERSION}"
+
+      # GH-1952: a failed release is silent to the driver — the merge gate has
+      # already passed and pr-gate-watch is already done, so nothing between
+      # "merged" and "released" says the release did not happen. File an issue,
+      # which state-guard adopts onto the board: a surface a driver already
+      # reads, rather than a `gh run list` they have to remember to run.
+      - name: Surface release failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MERGE_SHA: ${{ github.sha }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          set -euo pipefail
+          TITLE="Release Ralph failed — ralph/** merged but unreleased"
+          # How far the run got decides the remedy, and getting this wrong is
+          # the same defect class as GH-1952 itself: if the tag is already
+          # pushed and only `gh release create` failed, a workflow re-run
+          # computes the NEXT version and strands the pushed tag with no
+          # release forever. Measure the remote rather than assuming.
+          STATE="the run failed before computing a version; nothing was pushed"
+          REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
+          if [ -n "${NEW_VERSION:-}" ]; then
+            TAG="ralph-v${NEW_VERSION}"
+            # `--exit-code` distinguishes the two answers that must not be
+            # conflated: 0 = the tag is there, 2 = it is definitively absent,
+            # anything else (128 on network/auth/service trouble) = we do not
+            # know. Treating "could not ask" as "absent" would advise a re-run
+            # off an unknown, which is the one instruction that can strand a
+            # pushed tag with no release — the defect this workflow exists to
+            # stop, relocated into its own failure path.
+            LS_RC=0
+            git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1 || LS_RC=$?
+            if [ "$LS_RC" -ne 0 ] && [ "$LS_RC" -ne 2 ]; then
+              STATE="version \`${NEW_VERSION}\` was computed, but **whether \`${TAG}\` reached origin could not be determined** (\`git ls-remote\` exited ${LS_RC})"
+              REMEDY="Check for the tag by hand first — \`git ls-remote --tags origin 'refs/tags/${TAG}'\`. **Do not re-run the workflow until you know**: if the tag is in fact pushed, a re-run computes the next version and leaves \`${TAG}\` with no release forever."
+            elif [ "$LS_RC" -eq 0 ]; then
+              # Same rule for the release lookup, and the HTTP status is read
+              # rather than an exit code because `gh release view` returns 1
+              # for "no such release" and for "the API is down" alike. 404 is
+              # the only answer that means absent; 000 (no connection) and 5xx
+              # mean we could not ask.
+              REL_HTTP=$(curl -sS -o /dev/null -w '%{http_code}' \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" || echo 000)
+              if [ "$REL_HTTP" = "200" ]; then
+                STATE="\`${TAG}\` and its release both exist — the run failed after publishing"
+                REMEDY="Check what ran after the release step. **Do not re-run**: the version is already published."
+              elif [ "$REL_HTTP" = "404" ]; then
+                STATE="\`${TAG}\` is pushed but has **no GitHub Release**"
+                REMEDY="Create the missing release only — \`gh release create ${TAG} --generate-notes --title ${TAG}\`. **Do not re-run the workflow**: it would compute the next version and leave \`${TAG}\` released-but-unpublished forever."
+              else
+                STATE="\`${TAG}\` is pushed, but **whether it has a GitHub Release could not be determined** (HTTP ${REL_HTTP})"
+                REMEDY="Check the release by hand — \`gh release view ${TAG}\` — and create it only if it is genuinely missing. **Do not re-run the workflow** either way: the tag is already published. An HTTP ${REL_HTTP} here usually means a GitHub outage rather than anything wrong with this release."
+              fi
+            else
+              STATE="version \`${NEW_VERSION}\` was computed but no tag reached origin"
+              REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
+            fi
+          fi
+          BODY=$(printf '%s\n' \
+            "\`Release Ralph\` failed. The merge landed on main; ${STATE}." \
+            "" \
+            "- Failing run: ${RUN_URL}" \
+            "- Triggering commit: \`${MERGE_SHA}\`" \
+            "" \
+            "Until this is resolved the plugin agents install is behind main." \
+            "" \
+            "${REMEDY}")
+          EXISTING=$(gh issue list --state open --search "\"${TITLE}\" in:title" \
+            --json number,title --jq "[.[] | select(.title == \"${TITLE}\")] | .[0].number // empty")
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
