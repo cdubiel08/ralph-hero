@@ -267,6 +267,25 @@ jobs:
           fi
           echo "All .mcp.json pins resolve on the npm registry."
 
+  # GH-1976. The herdr half of the cockpit has no `plugin update`, so the
+  # version in plugin/ralph-herdr/herdr-plugin.toml is the ONLY thing that
+  # tells an installed cockpit to reinstall — and GH-1808 changed the spawn
+  # path without moving it. The existing check compares the two stamps to each
+  # other, which says nothing about whether either tracks the code.
+  #
+  # pull_request only: on a push to main the range is the merge itself, which
+  # has already been judged here. fetch-depth 0 because the guard needs the
+  # base commit, and it errors (never passes) when it cannot resolve one.
+  herdr-version-bump:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+      - name: Guard the ralph-herdr version stamp
+        run: bash scripts/check-herdr-version-bump.sh "${{ github.event.pull_request.base.sha }}" HEAD
+
   lint-workflows:
     runs-on: ubuntu-latest
     permissions:
