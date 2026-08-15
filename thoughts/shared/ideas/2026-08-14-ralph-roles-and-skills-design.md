@@ -68,6 +68,17 @@ Keep it.
    same pattern already chosen for the envelope, one layer down. **Experiment:**
    check whether one non-Claude harness herdr supports (codex, pi) has an equivalent
    composition mechanism. If not, argv cannot be the source of truth.
+
+   **ANSWERED 2026-08-15 (GH-1902) — recommendation confirmed, argv cannot be the
+   source of truth.** No non-Claude harness tested (codex, pi, gemini) has a named-role
+   primitive; ralph also does not own the argv grammar it would write into
+   (`RALPH_TICK_RUNNER` is *any command accepting a prompt*). Role is declared in the
+   envelope; `--agent` is Claude Code's materialization. New constraint the experiment
+   surfaced: **materialization is lossy and uneven** — pi enforces a tools allowlist at
+   spawn (proven), codex and gemini cannot, so `investigator` degrades to prose there
+   while its label survives. A spawn must record the *fidelity* it achieved, not just
+   the role. Evidence:
+   `thoughts/shared/research/2026-08-15-role-declaration-argv-vs-envelope.md`.
 2. **Per-role tool boundaries.** Deferred deliberately. Only `investigator` is
    meaningfully constrained today; a worker needs near-arbitrary Bash to build and
    test, so a "boundary" for it would look real without being real. Tighten from
