@@ -2072,13 +2072,14 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     // Read the binding before the guard so the post-verify write can preserve
     // its `since` on a heartbeat re-claim of the same unit.
     const priorBinding = enteringInProgress ? readSessionBinding(ctx) : null;
+    let spokeTo: WorktreeLock | null = null;
     if (enteringInProgress) {
       guardSessionUnit(priorBinding, issue.number);
       // Second only to the rule-9 guard, and for the same reason: a PRE-check,
       // so a refused claim leaves #N exactly as it found it. Skipped when this
       // session already holds the binding — that is a heartbeat, and the peer
       // it would find could only be a stale record of itself.
-      if (!priorBinding) guardWorktreePeer(ctx, issue.number, !!opts.steal);
+      if (!priorBinding) spokeTo = guardWorktreePeer(ctx, issue.number, !!opts.steal);
       const claim = issue.claim;
       if (claim && !isMember(claim, ctx.cfg.holder)) {
         const stale = claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin);
@@ -2282,7 +2283,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       // session in the same worktree (GH-1956). It has to run here rather than
       // in the pre-check: two unbound sessions both read an empty directory,
       // and each writes its own file, so no exclusive create settles it.
-      takeWorktreeLock(ctx, issue.number, !!opts.steal);
+      takeWorktreeLock(ctx, issue.number, spokeTo);
     }
     // Symmetric verify for the leaving side: the same re-read must show this
     // session OUT of the claim (gone, or co-holders only) — surviving
@@ -2574,16 +2575,17 @@ function publishWorktreeLock(ctx: Ctx, path: string, lock: WorktreeLock): boolea
  *  nothing and leaves the board untouched. It cannot be the whole guard — the
  *  owner may appear between this and the write — which is what takeWorktreeLock
  *  is for. */
-function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
+function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): WorktreeLock | null {
   const path = worktreeLockPath(ctx, number);
-  if (!path) return; // no session dir or no repo root: not evaluated
+  if (!path) return null; // no session dir or no repo root: not evaluated
   const held = readWorktreeLock(path);
-  if (!held) return;
-  if (held.lock.session === ctx.session!.id) return; // our own earlier claim
-  // --steal is the operator asserting the other driver is gone. It stays a
+  if (!held) return null;
+  if (held.lock.session === ctx.session!.id) return null; // our own earlier claim
+  // --steal is the operator asserting THIS driver is gone. It stays a
   // deliberate flag, not a default — the whole difference from having no guard.
-  if (steal) return;
-  if (held.freshMs < ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000) return; // aged out
+  // The lock seen here is returned, and is the ONLY one the steal may displace.
+  if (steal) return held.lock;
+  if (held.freshMs < ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000) return null; // aged out
   throw peerRefusal(ctx, number, ctx.repoRoot, held.lock.since);
 }
 
@@ -2602,7 +2604,7 @@ function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
  *  whereas here the winner is a live session holding the same unit under the
  *  same `user@host` holder and the same claim field. The board is already
  *  correct, and a "restore" would strip the winner's claim rather than its own. */
-function takeWorktreeLock(ctx: Ctx, number: number, steal: boolean): void {
+function takeWorktreeLock(ctx: Ctx, number: number, spoke: WorktreeLock | null): void {
   const path = worktreeLockPath(ctx, number);
   if (!path) return;
   const mine: WorktreeLock = {
@@ -2617,6 +2619,16 @@ function takeWorktreeLock(ctx: Ctx, number: number, steal: boolean): void {
     const held = readWorktreeLock(path);
     const ours = held?.lock.session === ctx.session!.id;
     const aged = !held || held.freshMs < ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
+    // A steal displaces ONLY the lock the pre-check actually saw. A different
+    // one now present belongs to a CONCURRENT stealer — a session --steal never
+    // spoke to, since it did not exist when the operator made the assertion.
+    // Without this, two concurrent stealers each unlink the other's lock after
+    // the other's read-back has already returned, and both succeed.
+    const spokeTo =
+      !!spoke &&
+      !!held &&
+      held.lock.session === spoke.session &&
+      held.lock.since === spoke.since;
     if (ours) {
       try {
         const t = ctx.now();
@@ -2626,7 +2638,7 @@ function takeWorktreeLock(ctx: Ctx, number: number, steal: boolean): void {
       }
       return;
     }
-    if (steal || aged) {
+    if (spokeTo || aged) {
       try {
         unlinkSync(path);
       } catch {

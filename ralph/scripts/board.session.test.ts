@@ -479,19 +479,18 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
     );
   });
 
-  it("two CONCURRENT stealers still settle to one — the read-back names the owner", () => {
-    // Both may unlink and both may create; the file that survives names exactly
-    // one session, and everyone whose name is not on it refuses. --steal
-    // authorizes ONE taker: two operators taking one unit in one checkout at
-    // the same moment is still two writers in one checkout.
-    const stealer = at("stealer");
+  it("--steal displaces only the lock it SAW — a concurrent stealer is refused", () => {
+    // Two stealers otherwise each unlink the other's lock after the other's
+    // read-back has already returned, and both succeed. A lock that appeared
+    // after the pre-check belongs to a session --steal never spoke to: it did
+    // not exist when the operator made the assertion, so it is not displaced.
+    const stealer = at("stealer"); // pre-check sees an EMPTY directory
     const realExec = gh.exec.bind(gh);
     let planted = false;
     gh.exec = (argv, stdin) => {
       const res = realExec(argv, stdin);
       if (!planted && String(stdin ?? "").includes("mutation")) {
         planted = true;
-        // A rival stealer lands AFTER this session's pre-check cleared.
         writeFileSync(
           worktreeLockPath(stealer, 1)!,
           JSON.stringify({
@@ -501,16 +500,14 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
             since: NOW.toISOString(),
           }),
         );
-        // ...and it is the last writer, so it owns the file.
-        return res;
       }
       return res;
     };
-    // This session displaces it (steal), so IT is the survivor — and the rival,
-    // running the same read-back, is the one that refuses. Exactly one wins
-    // either way; the assertion is that the file names a single owner.
-    transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true });
-    expect(JSON.parse(readFileSync(worktreeLockPath(stealer, 1)!, "utf8")).session).toBe("stealer");
+    const msg = refusalMessage(() =>
+      transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true }),
+    );
+    expect(msg).toContain("this worktree");
+    expect(JSON.parse(readFileSync(worktreeLockPath(stealer, 1)!, "utf8")).session).toBe("rival");
   });
 
   it("a --steal that LOSES the claim race must not erase the incumbent's lock", () => {
