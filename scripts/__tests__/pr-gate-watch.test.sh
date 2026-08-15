@@ -331,6 +331,18 @@ else
 fi
 POLICY="$POLICY_CODERABBIT"
 
+echo "=== the rate-limit predicate is bot-agnostic (GH-1894) ==="
+# The predicate used to require a literal `coderabbit` check NAME, which went
+# dead when that reviewer was uninstalled (GH-1847) while merge-pr.sh gate 5
+# matched the description alone. A rate-limited Codex must fire the same way.
+POLICY="$POLICY_REVIEW"   # bot = chatgpt-codex-connector[bot]
+D="$TMP_ROOT/yours-review-ratelimit-codex"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" \
+  --argjson c "$(check Codex pass 'Review rate limited')" '$g + [$a, $c]')" \
+  "$OPEN_PR" "$NO_REVIEWS"
+expect "GATE-YOURS review on a rate-limited Codex pass" "$D" "GATE-YOURS review" 0
+POLICY="$POLICY_CODERABBIT"
+
 echo "=== precedence: review outranks attestation ==="
 # Same fixture as above: attestation IS pending, but no review exists, so
 # attest-pr.sh would refuse. Reporting attestation here would be a dead end.
