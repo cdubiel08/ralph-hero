@@ -34,8 +34,9 @@
 #
 # Biased toward silence, because a false alarm on a non-gating advisory line is
 # the expensive way to be wrong and a missed hint is the cheap one:
-#   - keywords inside fenced code blocks are stripped before matching (a body
-#     quoting `Closes #123` in an example is not a link);
+#   - keywords inside code — fenced blocks AND inline spans — are stripped
+#     before matching — a body quoting `Closes #123` in an example is not a
+#     link, and this script's own PR proved the inline half is not theoretical;
 #   - only OWN-REPO references count — a bare `#N`, an `owner/repo#N` naming
 #     this repo, or an issue URL under this repo. GitHub does not create
 #     closing linkage across repositories, so a foreign reference is expected
@@ -123,14 +124,24 @@ BODY=$(jq -r '.data.repository.pullRequest.body // ""' <<<"$pr_json")
 COMMIT_TEXT=$(jq -r '[.data.repository.pullRequest.commits.nodes[].commit
                       | ((.messageHeadline // "") + "\n" + (.messageBody // ""))] | join("\n")' <<<"$pr_json")
 
-# Fenced code blocks are prose about keywords, not keywords. Toggle on any line
-# whose first non-space run is a ``` or ~~~ fence; an unterminated fence eats
-# the rest of the body, which is the silent direction.
-strip_fences() {
+# Code is prose about keywords, not keywords. BOTH spellings, because only one
+# of them is hypothetical: this script's own PR (#1985) tripped on a body that
+# wrote `Closes #123` in an INLINE span while explaining the fenced-block rule,
+# and #123 is a real issue, so every downstream guard passed it through. A
+# fenced-only stripper is exactly half the rule.
+#
+# Fences toggle on any line whose first non-space run is ``` or ~~~; an
+# unterminated fence eats the rest of the body, which is the silent direction.
+# Inline spans are removed AFTER the fence pass, never before: the span pattern
+# eats the first two backticks of a ``` fence marker, so stripping inline first
+# would leave the fence unrecognisable and disable the half that already worked.
+# Each span matches the shortest run between single backticks, so a lone
+# unmatched backtick leaves its line intact rather than swallowing the rest.
+strip_code() {
   awk '
     /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
     !infence { print }
-  '
+  ' | sed 's/`[^`]*`//g'
 }
 
 # Own-repo references only. Three spellings reach the same issue: `#N`,
@@ -160,7 +171,7 @@ extract_refs() { # stdin -> one own-repo issue number per line
   done | awk '!seen[$0]++'
 }
 
-BODY_REFS=$(printf '%s\n' "$BODY" | strip_fences | extract_refs || true)
+BODY_REFS=$(printf '%s\n' "$BODY" | strip_code | extract_refs || true)
 COMMIT_REFS=$(printf '%s\n' "$COMMIT_TEXT" | extract_refs || true)
 
 CANDIDATES=$(printf '%s\n%s\n' "$BODY_REFS" "$COMMIT_REFS" | grep -E '^[0-9]+$' | awk '!seen[$0]++' || true)

@@ -136,6 +136,37 @@ else
   fail "fenced example reported as drift: $out"
 fi
 
+# --- inline code is prose too -----------------------------------------------
+# Not hypothetical: this script's own PR (#1985) tripped on its own body, which
+# wrote the keyword in an inline span while explaining the fenced-block rule.
+pr_payload 'A body quoting `Closes #1893` in an example is not a link' '[]' "feat: thing"
+out=$(run)
+if [[ "$(jq -r '.count' <<<"$out")" == "0" ]]; then
+  pass "a keyword inside an inline code span is not linkage"
+else
+  fail "inline span reported as drift: $out"
+fi
+
+# ...and stripping inline spans must not disarm the fence pass: the span
+# pattern eats the first two backticks of a ``` marker if it runs first.
+pr_payload $'`inline`\n```bash\nCloses #1893\n```\nnothing else' '[]' "feat: thing"
+out=$(run)
+if [[ "$(jq -r '.count' <<<"$out")" == "0" ]]; then
+  pass "a body with both span and fence still strips the fence"
+else
+  fail "fence pass disarmed by inline stripping: $out"
+fi
+
+# A real keyword on the same line as an inline span still counts — stripping
+# code must not become a way to launder the whole line away.
+pr_payload 'Closes #1893 (see `git log`)' '[]' "feat: thing"
+out=$(run)
+if [[ "$(jq -r '.count' <<<"$out")" == "1" ]]; then
+  pass "a live keyword beside an inline span is still read"
+else
+  fail "inline stripping swallowed a real keyword: $out"
+fi
+
 # --- foreign repo is not our linkage ----------------------------------------
 pr_payload "Closes other/repo#1893" '[]' "feat: thing"
 out=$(run)
