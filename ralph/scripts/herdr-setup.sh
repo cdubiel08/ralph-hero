@@ -203,14 +203,39 @@ if [ -n "${RALPH_HERDR_BOARD:-}" ]; then
 elif [ -x "$REPO/ralph/scripts/board" ]; then
   pass "board-cli" "$REPO/ralph/scripts/board (vendored-checkout layout)"
 else
-  # Sorted by the VERSION component, not the whole path (namespace would win).
-  # shellcheck disable=SC2012  # glob over versioned plugin dirs is the point
-  installed=$(ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null |
-    awk -F/ '{ print $(NF-2) "\t" $0 }' | sort -V -k1,1 | tail -1 | cut -f2- || true)
-  if [ -n "$installed" ] && [ -x "$installed" ]; then
-    pass "board-cli" "$installed (installed plugin copy — the cockpit scripts discover this automatically)"
+  # Registry first (GH-1865): installed_plugins.json RECORDS the copy Claude
+  # Code executes, while the cache glob only finds the highest-versioned
+  # directory that exists — this machine's cache holds 29. They coincide only
+  # while the newest install is also the newest directory, so reporting a glob
+  # hit as "the installed copy" is how `check` passes a path the cockpit does
+  # not run. The glob stays as a last resort (no jq, no registry) but says so.
+  INSTALLED_PLUGINS_FILE="${RALPH_INSTALLED_PLUGINS_FILE:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json}"
+  installed=""
+  if [ -r "$INSTALLED_PLUGINS_FILE" ] && command -v jq >/dev/null 2>&1; then
+    # Keys are "<name>@<marketplace>". The recorded version is a TIE-BREAK
+    # between several registered copies, never the reason to prefer the
+    # registry — being recorded is.
+    installed=$(jq -r '
+        (.plugins // {}) | to_entries[]
+        | select((.key | split("@")[0]) == "ralph")
+        | .value[]? | select(.installPath != null)
+        | ((.version // "0") + "\t" + .installPath + "/scripts/board")' \
+      "$INSTALLED_PLUGINS_FILE" 2>/dev/null |
+      while IFS=$'\t' read -r v p; do [ -x "$p" ] && printf '%s\t%s\n' "$v" "$p"; done |
+      sort -V -k1,1 | tail -1 | cut -f2- || true)
+  fi
+  if [ -n "$installed" ]; then
+    pass "board-cli" "$installed (installed plugin copy, recorded in $INSTALLED_PLUGINS_FILE — the cockpit scripts discover this automatically)"
   else
-    gap "board-cli" "no board CLI found (no ralph/ tree in $REPO, no installed ralph plugin under ~/.claude/plugins/cache) — install the ralph Claude Code plugin"
+    # Sorted by the VERSION component, not the whole path (namespace would win).
+    # shellcheck disable=SC2012  # glob over versioned plugin dirs is the point
+    installed=$(ls "$HOME"/.claude/plugins/cache/*/ralph/*/scripts/board 2>/dev/null |
+      awk -F/ '{ print $(NF-2) "\t" $0 }' | sort -V -k1,1 | tail -1 | cut -f2- || true)
+    if [ -n "$installed" ] && [ -x "$installed" ]; then
+      pass "board-cli" "$installed (GUESS: highest version under ~/.claude/plugins/cache — no ralph install recorded in $INSTALLED_PLUGINS_FILE, so this may not be the copy that runs)"
+    else
+      gap "board-cli" "no board CLI found (no ralph/ tree in $REPO, no ralph install recorded in $INSTALLED_PLUGINS_FILE, nothing under ~/.claude/plugins/cache) — install the ralph Claude Code plugin"
+    fi
   fi
 fi
 

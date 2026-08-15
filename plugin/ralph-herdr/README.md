@@ -20,10 +20,15 @@ spawns does.
   both from the repo tree, so panes need no scope env), `gh` authed with
   `repo,project` scopes. The board CLI is discovered in order (GH-1761):
   `RALPH_HERDR_BOARD` override → `ralph/scripts/board` in the repo tree (the
-  vendored-checkout layout, i.e. ralph-hero itself) → the newest installed ralph
-  Claude Code plugin copy (`~/.claude/plugins/cache/*/ralph/*/scripts/board`), so
-  host repos that install ralph as a plugin work with no configuration. The
-  scripts die loudly when none of the three exists.
+  vendored-checkout layout, i.e. ralph-hero itself) → the installed ralph plugin
+  copy Claude Code **records** in `installed_plugins.json` (`$CLAUDE_CONFIG_DIR`
+  honoured) → as a last resort, the highest-versioned directory under
+  `~/.claude/plugins/cache/*/ralph/*/scripts/board`. Host repos that install
+  ralph as a plugin work with no configuration. The cache glob is a labelled
+  guess, not a record (GH-1865): the cache accumulates every version ever
+  installed, so it matches the running copy only while the newest install is
+  also the newest directory — a downgrade, a second marketplace, or a
+  project-scoped install breaks that. The scripts die loudly when none exists.
 - optional but recommended: `herdr integration install claude` (session-identity
   restore after server restart; it does not change how `blocked` is detected)
 
@@ -149,7 +154,7 @@ of each script:
 
 | Var | Default | Meaning |
 |---|---|---|
-| `RALPH_HERDR_BOARD` | auto-discovered | board CLI override — authoritative when set: only that path is validated, and a broken value dies loudly with no fallback. Unset, the scripts try `<repo>/ralph/scripts/board`, then the newest installed ralph plugin copy under `~/.claude/plugins/cache`. Honest caveat: herdr panes inherit the herdr **server's** environment, not your shell's — an export only reaches panes if the server itself was started with it |
+| `RALPH_HERDR_BOARD` | auto-discovered | board CLI override — authoritative when set: only that path is validated, and a broken value dies loudly with no fallback. Unset, the scripts try `<repo>/ralph/scripts/board`, then the plugin copy recorded in `installed_plugins.json`, then a labelled guess from `~/.claude/plugins/cache`. Honest caveat: herdr panes inherit the herdr **server's** environment, not your shell's — an export only reaches panes if the server itself was started with it |
 | `RALPH_COCKPIT_INTERVAL` | `30` | Go cockpit TUI tick + board-poll **floor**, seconds (min 10): the fastest the board is ever walked, and the fixed cadence of the (free, local) agent-overlay refresh. The fzf rung ignores it — it re-reads the board on every interaction instead of on a timer |
 | `RALPH_COCKPIT_INTERVAL_MAX` | `300` | hard staleness bound on the cockpit's adaptive board cadence (GH-1805), seconds. On a quiet board the walk backs off ×1.5 per unchanged read up to this ceiling and no further; any evidence of a write — an agent appearing/blocking/leaving, the cockpit's own `a`/`s`, a keypress, the pane regaining focus — snaps it back to the floor in one step, and the pane *losing* focus jumps straight to this ceiling (GH-1876: herdr forwards focus events, probed). Set it **at or below** the floor to turn backoff off (a constant cadence — and with it, the blur backoff) |
 | `RALPH_HERDR_PEEK_LINES` | `40` | fzf-rung peek/preview depth: pane-tail lines (`herdr agent read`) or latest-comment lines (`gh issue view --comments` tail) |
