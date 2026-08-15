@@ -487,7 +487,7 @@ esac
 is "reconcile: open agent with no live counterpart marked lost" "1" \
   "$(lcount "$RLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost" and .via=="reconcile"')"
 is "reconcile: unledgered live agent discovered (fresh ref + tokens)" "1" \
-  "$(lcount "$RLEDGER" '.ev=="discover" and (.agent_ref | test("^w5-alpha#[0-9a-f]{8}$")) and .pane_id=="p5" and .via=="reconcile" and .tokens.role=="w" and .tokens.issue=="5" and .tokens.slug=="alpha"')"
+  "$(lcount "$RLEDGER" '.ev=="discover" and (.agent_ref | test("^w5-alpha#[0-9a-f]{8}$")) and .pane_id=="p5" and .via=="reconcile" and .tokens.role=="driver" and .tokens.issue=="5" and .tokens.slug=="alpha"')"
 is "reconcile: legacy singleton never ledgered" "0" \
   "$(grep -c 'ralph-deliver' "$RLEDGER" || true)"
 is "reconcile: non-ralph agent never ledgered" "0" \
@@ -495,6 +495,9 @@ is "reconcile: non-ralph agent never ledgered" "0" \
 
 p1line=$(grep '^pane report-metadata p1 ' "$FAKE_HERDR_LOG" || true)
 is "re-push: exactly one push for the live pane p1" "1" "$(log_count '^pane report-metadata p1 ')"
+# The fixture record predates GH-1808 and carries the old lane-letter role.
+# Left as-is deliberately: re-push replays what the LEDGER holds, and records
+# written before the vocabulary changed are exactly what a real ledger has.
 line_has  "re-push: spawn tokens replayed (role)"   "$p1line" "--token role=w"
 line_has  "re-push: spawn tokens replayed (issue)"  "$p1line" "--token issue=123"
 line_has  "re-push: spawn tokens replayed (branch)" "$p1line" "--token branch=feature/GH-123"

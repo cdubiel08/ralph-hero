@@ -2,7 +2,7 @@
   "contract": "ralph.token_vocabulary",
   "contract_version": 1,
   "tokens": {
-    "role": "w",
+    "role": "driver",
     "issue": "1743",
     "slug": "claim-v2-multi-holder",
     "parent": "o1700-herdr-v2-rollout#a3f2",

@@ -12,7 +12,10 @@ ralph/
 ├── skills/board/       # human surface — orientation, intake, answers, doctor
 ├── skills/help/        # topic-routed setup help (herdr cockpit wiring, GH-1759)
 ├── skills/using-html/  # vendored utility (byte-identical upstream; do not edit)
-├── agents/investigator.md  # read-only fan-out worker (hard tools: allowlist)
+├── agents/investigator.md  # read-only fan-out worker (hard tools: allowlist) —
+│                       #   also the herdr-plane investigator's binding: its
+│                       #   `tools:` block IS the `claude --tools` allowlist a
+│                       #   spawned investigator runs under (GH-1808)
 ├── scripts/board(.ts)  # THE board mutation path — typed 6-state machine,
 │                       #   claims with TTL, scope gate, doctor, and the lane
 │                       #   selectors (next / deliver-queue / tend-queue)

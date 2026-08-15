@@ -462,6 +462,62 @@ claims can be read and cleaned. Nothing creates them any more: `claim join` was
 the last path that grew a holder set and was removed in GH-1869. A legacy
 shared claim is surfaced by doctor, not extended.
 
+## The one-writer invariant, and the role model (GH-1808)
+
+> **Only one agent may WRITE a worktree at a time.**
+
+That is this plugin's single safety property. Every change here is tested
+against it: does this protect the invariant, or is it bookkeeping? Bookkeeping
+may be wrong without producing an unsafe state — it produces bad diagnostics.
+The ledger, agent refs, lineage records and reconcile are all bookkeeping.
+
+GH-1808 narrows GH-1774's finding above without weakening it. The hazard was
+never several *agents* in one tree — it was several *writers*. So the ban moves
+from "no shared checkouts" to "no second writer", and the difference is a
+**role**, carried on every spawn.
+
+| role | writes the tree | may spawn |
+|---|---|---|
+| orchestrator | no | driver, investigator, tender |
+| **driver** | **yes** | investigator |
+| investigator | no | — (leaf) |
+| tender | no | — |
+| relay | no | — |
+| watcher | no | — |
+
+A human may spawn an orchestrator or a driver. Three consequences:
+
+- **`role` is the FLEET role, not the lane letter** it held before GH-1808.
+  The lane is the agent name's first character and was therefore already
+  derivable from `agent_ref`; the role is derivable from nothing, because it is
+  a spawn-time decision about who may write. `LANE_ROLES` supplies a default
+  for the *discover* path only, which has no spawn record to read.
+- **One driver per worktree is structural, not a lock.** `ralph_driver_guard`
+  reads the ledger for drivers spawned into a checkout, confirms liveness
+  against `agent list`, and refuses a second one *naming the live driver*.
+  Nothing is taken and nothing expires: a tree whose driver is gone is free
+  again. It fails closed on an unreadable herd, and it deliberately ignores a
+  driver on the *same* issue — that case belongs to the atomic, server-side
+  agent-name mutex, which this eventually-honest ledger read must not preempt.
+- **Read-only is a harness allowlist, not a promise.** An investigator's pane
+  runs `claude` with `--tools` set from `ralph/agents/investigator.md`'s own
+  `tools:` block (Read, Grep, Glob) plus the agent definition itself, built
+  inline so it resolves whatever the install layout is. No definition readable
+  = no investigator: an investigator that could not be restricted is a second
+  writer wearing the wrong token.
+
+`spawn_investigator_fleet ISSUE K <question>…` is the shape that lifts the ban:
+one driver through the normal sanctioned path (so it takes the claim and cuts
+the branch exactly as a lone worker does), plus K investigators as herdr-plane
+children in the driver's checkout — each in a **tab**, never a second worktree.
+Two *drivers* on one issue is still refused, and still a decomposition signal:
+git itself agrees, since one branch cannot be checked out in two worktrees.
+
+The vocabulary lives in `contracts.ts` (`ROLES`, `LANE_ROLES`, `HUMAN_SPAWNS`,
+`spawnEdgeAllowed`); `scripts/roles.sh` mirrors it and `tests/roles.test.sh`
+diffs the mirror against the registry, so a role added on one side fails rather
+than drifting.
+
 ## Forking a session (GH-1892)
 
 `fork-right` / `fork-down` / `fork-tab` open a pane that already holds a

@@ -36,6 +36,12 @@ _RALPH_HERDR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=naming.sh
 . "$_RALPH_HERDR_LIB_DIR/naming.sh"
 
+# The fleet role model (GH-1808): lane->role defaults, the spawn edge graph,
+# the one-driver-per-worktree guard, and the investigator's harness binding.
+# Pure functions plus two reads (ledger, herd); no side effects at source time.
+# shellcheck source=roles.sh
+. "$_RALPH_HERDR_LIB_DIR/roles.sh"
+
 # The Herdr boundary (GH-1774), sourced before anything that talks to the
 # server: sanitize.sh first because transport.sh scrubs error prose through it,
 # then the strict adapter, then the session/repository scoping that decides
@@ -348,7 +354,7 @@ notify() {
 # depth-0 roots from a human, so depth=0, root=self, and no parent token.
 _ralph_spawn_record() {
   local ref="$1" n="$2" parent_issue="$3" branch="$4" label="$5" pane="$6" ts="$7"
-  local shell_pid="${8-}" checkout="${9-}"
+  local shell_pid="${8-}" checkout="${9-}" role="${10-}" parent_ref="${11-}" depth="${12-}" root_ref="${13-}"
   local parsed lane slug epoch by
   parsed=$(ralph_agent_parse "${ref%%#*}") || return 1
   # shellcheck disable=SC2086  # intentional: parse output is space-separated
@@ -356,6 +362,14 @@ _ralph_spawn_record() {
   lane="$1" slug="$3"
   [ "$slug" = "''" ] && slug=""
   epoch="${ref##*#}"
+  # GH-1808: the role is stated by the caller and only DEFAULTED from the lane
+  # — the lane is the name's first char, so a lane-derived role asserts nothing
+  # the ref did not already say. depth/parent/root carry a child spawn (a
+  # driver's investigator); absent, this is a depth-0 root and root is self,
+  # which is what every work-next/work-fleet spawn is by construction.
+  [ -n "$role" ] || role=$(ralph_role_for_lane "$lane") || role="driver"
+  case "$depth" in '' | *[!0-9]*) depth=0 ;; esac
+  [ -n "$root_ref" ] || root_ref="$ref"
   case "${RALPH_HERDR_INVOKED_BY:-}" in
     agent | scheduler) by="$RALPH_HERDR_INVOKED_BY" ;;
     *) by="human" ;;
@@ -365,7 +379,9 @@ _ralph_spawn_record() {
     --argjson n "$n" --arg pi "$parent_issue" \
     --arg script "${0##*/}" --arg branch "$branch" --arg label "$label" \
     --arg lane "$lane" --arg slug "$slug" --arg epoch "$epoch" \
-    --arg by "$by" --arg shell "$shell_pid" --arg checkout "$checkout" '
+    --arg by "$by" --arg shell "$shell_pid" --arg checkout "$checkout" \
+    --arg role "$role" --arg parent "$parent_ref" --arg depth "$depth" \
+    --arg root "$root_ref" '
     {ts: $ts, ev: "spawn", agent_ref: $ref}
     + (if $pane == "" then {} else {pane_id: $pane} end)
     + (if $shell == "" then {} else {shell_pid: $shell} end)
@@ -374,15 +390,16 @@ _ralph_spawn_record() {
         ({contract: "ralph.lineage", contract_version: 1,
           agent_ref: $ref, issue: $n}
          + (if $pi == "" then {} else {parent_issue: ($pi | tonumber)} end)
-         + {spawner: {script: $script, invoked_by: $by},
+         + {role: $role, spawner: {script: $script, invoked_by: $by},
             herdr: ({worktree_branch: $branch}
               + (if $pane == "" then {} else {pane_id: $pane} end)
               + (if $label == "" then {} else {workspace_label: $label} end)),
             plane: "herdr", spawned_at: $ts}),
        tokens:
-        ({role: $lane, issue: ($n | tostring)}
+        ({role: $role, issue: ($n | tostring)}
          + (if $slug == "" then {} else {slug: $slug} end)
-         + {root: $ref, depth: "0", state: "spawned", branch: $branch,
+         + (if $parent == "" then {} else {parent: $parent} end)
+         + {root: $root, depth: $depth, state: "spawned", branch: $branch,
             harness: "claude", spawn_epoch: $epoch})}'
 }
 
@@ -559,8 +576,13 @@ spawn_work_session() {
   # (never predicted; empty in dry runs).
   RALPH_HERDR_SPAWNED_PANE=""
   RALPH_HERDR_SPAWNED_WORKTREE=""
+  # The workspace the worktree landed in, so a child spawn (GH-1808's
+  # investigators) opens its tab beside the driver rather than wherever herdr
+  # would otherwise put it.
+  RALPH_HERDR_SPAWNED_WORKSPACE=""
   export RALPH_HERDR_SPAWNED_AGENT RALPH_HERDR_SPAWNED_REF
   export RALPH_HERDR_SPAWNED_PANE RALPH_HERDR_SPAWNED_WORKTREE
+  export RALPH_HERDR_SPAWNED_WORKSPACE
   case "$n" in ''|*[!0-9]*) echo "spawn_work_session: bad issue number '$n'" >&2; return 1 ;; esac
   branch=$(ralph_branch_for_issue "$n") || return 1
 
@@ -696,6 +718,23 @@ spawn_work_session() {
   RALPH_HERDR_SPAWNED_PANE="$pane"
   RALPH_HERDR_SPAWNED_WORKTREE=$(jq -r '.worktree.path // .workspace.worktree.checkout_path // empty' <<<"$out" 2>/dev/null) ||
     RALPH_HERDR_SPAWNED_WORKTREE=""
+  RALPH_HERDR_SPAWNED_WORKSPACE=$(jq -r '.workspace.workspace_id // .workspace.id // empty' <<<"$out" 2>/dev/null) ||
+    RALPH_HERDR_SPAWNED_WORKSPACE=""
+
+  # One driver owns a tree (GH-1808). The w<N>-* pre-check above refuses a
+  # second session on one ISSUE; this refuses a second WRITER in one CHECKOUT,
+  # which is a different question — a reused worktree, a fork resumed in place,
+  # or any path that reaches an occupied tree under a name the issue check
+  # cannot see. Asked here because the checkout is only knowable from the
+  # worktree response, and before `agent start` so the refusal costs a pane at
+  # most, never a live second writer. rc 2, not 1: like every other
+  # already-owned outcome on this path, a fleet caller keeps going.
+  if [ -n "$RALPH_HERDR_SPAWNED_WORKTREE" ]; then
+    if ! ralph_driver_guard "$RALPH_HERDR_SPAWNED_WORKTREE" "$n" >/dev/null; then
+      echo "SKIP $RALPH_HERDR_SPAWNED_WORKTREE already has a live driver — not adding a second writer for GH-$n"
+      return 2
+    fi
+  fi
 
   # A confirmed-live name collision at start means a session already owns
   # issue N: the name is always w<N>-<slug>, so any live agent holding it

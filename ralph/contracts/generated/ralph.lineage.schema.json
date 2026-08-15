@@ -21,6 +21,17 @@
       "type": "integer",
       "exclusiveMinimum": 0
     },
+    "role": {
+      "type": "string",
+      "enum": [
+        "orchestrator",
+        "driver",
+        "investigator",
+        "tender",
+        "relay",
+        "watcher"
+      ]
+    },
     "spawner": {
       "type": "object",
       "properties": {
@@ -78,6 +89,7 @@
     "contract_version",
     "agent_ref",
     "issue",
+    "role",
     "spawner",
     "herdr",
     "plane",

@@ -4,6 +4,7 @@
   "agent_ref": "w1743-claim-v2-multi-holder#a3f2",
   "issue": 1743,
   "parent_issue": 1700,
+  "role": "driver",
   "spawner": {
     "script": "plugin/ralph-herdr/scripts/lib.sh",
     "invoked_by": "agent"

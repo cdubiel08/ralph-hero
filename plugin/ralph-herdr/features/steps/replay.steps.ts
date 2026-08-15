@@ -381,7 +381,8 @@ Then(
 Then('the spawn tokens were pushed onto the pane', function (this: RalphWorld) {
   const line = this.herdrLog().find((l) => l.startsWith(`pane report-metadata ${this.spawnPane} `));
   assert.ok(line, `no token push for pane ${this.spawnPane}`);
-  for (const tok of ['--token role=w', `--token issue=${s(this).issue}`, '--token state=spawned']) {
+  // GH-1808: the C8 role token is the FLEET role; a work spawn is a driver.
+  for (const tok of ['--token role=driver', `--token issue=${s(this).issue}`, '--token state=spawned']) {
     assert.ok(line.includes(tok), `token push missing '${tok}': ${line}`);
   }
 });

@@ -53,9 +53,10 @@
 #   spawn_work_session already appended (the reducers in ledger.sh ignore
 #   unknown ev values by construction, so this is additive).
 #
-# Requires naming.sh + ledger.sh sourced first (lib.sh and watch-event.sh
-# both do; the removed spawn_issue_fleet needed lib.sh for
-# agent_start_when_ready) and probes for it. All JSON through jq; writes are
+# Requires naming.sh + ledger.sh sourced first (lib.sh and watch-event.sh both
+# do); the GH-1808 spawn paths at the bottom also need lib.sh itself — for
+# spawn_work_session, agent_start_when_ready, ralph_depth_guard and roles.sh —
+# which is why they are only reachable from a lib.sh-sourced caller. All JSON through jq; writes are
 # tmp+mv (atomic rename); bash 3.2 compatible. No top-level side effects,
 # no set/shopt (callers own their shell options).
 #
@@ -373,7 +374,8 @@ ralph_fleet_frontier_json() {
   fi
   "$BOARD" next --json
 }
-# spawn_issue_fleet — REMOVED (GH-1774). Hard refusal with a migration path.
+# spawn_issue_fleet — REMOVED (GH-1774), and STILL removed (GH-1808). Hard
+# refusal with a migration path.
 #
 # This was a shared-CHECKOUT fleet: K sibling /ralph:work sessions on one
 # issue, one worktree, one branch, joined to a multi-holder Claim v2. The claim
@@ -387,22 +389,174 @@ ralph_fleet_frontier_json() {
 # bookkeeping makes concurrent writes to one checkout safe, because the claim
 # is coordinating access to the ISSUE while the damage happens to the TREE.
 #
-# It is removed rather than fixed because there is nothing here to fix: making
-# it safe means giving each sibling its own checkout, and a sibling with its
-# own checkout is just a separate worker on a separate issue — which the normal
-# spawn path already does, with the board's one-holder claim protecting it.
+# GH-1808 narrows the SUBJECT of that finding without weakening it: the hazard
+# was never several AGENTS in one tree, it was several WRITERS. What stays
+# refused is K sibling drivers. What is now possible is one driver plus N
+# read-only investigators — see spawn_investigator_fleet below, where the "one"
+# is enforced (ralph_driver_guard) and the "read-only" is a harness allowlist
+# rather than a promise.
 #
-# The replacement is decomposition: split the work into real board issues with
-# dependency edges, and let work-fleet spawn one worker per issue in its own
-# worktree. That is more parallelism than this ever safely delivered, and the
-# board can actually see it.
+# For a second WRITER the replacement is unchanged and remains decomposition:
+# split the work into real board issues with dependency edges, and let
+# work-fleet spawn one worker per issue in its own worktree. Git itself agrees
+# — one branch cannot be checked out in two worktrees.
 #
 # Readers and doctor checks may still RECOGNIZE existing Claim v2 values in
 # order to report and clean state that was already written. Nothing creates
 # them any more.
 spawn_issue_fleet() {
   local issue="${1:-<issue>}"
-  echo "spawn_issue_fleet: removed in GH-1774 — shared-checkout fleets put several agents in ONE git worktree, where they race on the index, the branch, and each other's uncommitted files. The claim protocol never protected the tree." >&2
+  echo "spawn_issue_fleet: removed in GH-1774 — shared-checkout fleets put several WRITERS in ONE git worktree, where they race on the index, the branch, and each other's uncommitted files. The claim protocol never protected the tree." >&2
   echo "Instead: decompose GH-$issue into separate board issues (board create + board dep), then run work-fleet — one worker per issue, each in its own worktree, each holding its own claim." >&2
+  echo "For read-only parallelism on ONE issue, use spawn_investigator_fleet $issue K — one driver, N investigators, no second writer." >&2
   return 1
+}
+
+# spawn_investigator_fleet ISSUE K [QUESTION...] — one driver plus K read-only
+# investigators on ISSUE, all in the DRIVER'S worktree (GH-1808).
+#
+# The shape is the whole safety argument:
+#   * the driver is spawned by the normal sanctioned path (spawn_work_session),
+#     so it takes the board claim, cuts the branch and owns the tree exactly as
+#     a lone worker does — a fleet adds no second writer to reason about;
+#   * investigators are herdr-plane CHILDREN of that driver, which the edge
+#     rules permit (driver -> investigator) and the depth guard bounds;
+#   * each investigator's pane runs `claude` under the investigator agent
+#     definition's tool allowlist, so "read-only" is what the harness will
+#     execute, not what the prompt asks for.
+#
+# Trailing QUESTION arguments are the investigators' dispatch prompts, one per
+# investigator. Fewer questions than K is not padded with a generic prompt: an
+# investigator with nothing sharp to answer is fan-out for its own sake, so K
+# is capped at the number of questions given.
+#
+# Returns 0 when the driver is live (investigator failures are reported and
+# tolerated — a driver with fewer investigators than asked is still a working
+# session); 1 when the driver could not be spawned; 2 when the driver was
+# skipped because a session already owns ISSUE or its tree.
+spawn_investigator_fleet() {
+  local issue="${1-}" k="${2-}" driver_ref driver_pane checkout rc=0
+  case "$issue" in '' | *[!0-9]*) echo "spawn_investigator_fleet: bad issue number '$issue'" >&2; return 1 ;; esac
+  case "$k" in '' | *[!0-9]* | 0 | 0*) echo "spawn_investigator_fleet: K must be a positive integer (got '$k')" >&2; return 1 ;; esac
+  shift 2
+  if [ "$#" -lt "$k" ]; then
+    echo "spawn_investigator_fleet: $# question(s) for K=$k — spawning $# investigator(s); an investigator with no sharp question is fan-out for its own sake" >&2
+    k="$#"
+  fi
+
+  spawn_work_session "$issue" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "spawn_investigator_fleet: no driver for GH-$issue — spawning no investigators (they have no tree to read)" >&2
+    return "$rc"
+  fi
+  driver_ref="$RALPH_HERDR_SPAWNED_REF"
+  driver_pane="$RALPH_HERDR_SPAWNED_PANE"
+  checkout="$RALPH_HERDR_SPAWNED_WORKTREE"
+  [ "$k" -ge 1 ] || return 0
+
+  local i=0 q
+  for q in "$@"; do
+    i=$((i + 1))
+    [ "$i" -le "$k" ] || break
+    spawn_investigator "$issue" "$driver_ref" "$checkout" "$q" ||
+      echo "spawn_investigator_fleet: investigator $i for GH-$issue did not start — the driver is unaffected" >&2
+  done
+  echo "fleet GH-$issue: driver $driver_ref in $checkout (pane $driver_pane), $k investigator(s) dispatched"
+  return 0
+}
+
+# spawn_investigator ISSUE PARENT_REF CHECKOUT QUESTION — one read-only
+# investigator child, in PARENT's checkout.
+#
+# Three refusals before anything is created, in the order that costs least:
+# the edge rule (a driver may spawn an investigator; an investigator may spawn
+# nothing), the depth cap (unchanged at 3), and the harness binding (no
+# definition readable = no investigator, because an investigator that could not
+# be restricted is a second writer in the tree wearing the wrong token).
+#
+# The pane is opened in the EXISTING checkout — `pane create --cwd` rather than
+# `worktree create`, which would cut a second tree and defeat the point.
+spawn_investigator() {
+  local issue="${1-}" parent="${2-}" checkout="${3-}" question="${4-}"
+  local parent_role depth name pane ref ts record ledger out
+  case "$issue" in '' | *[!0-9]*) echo "spawn_investigator: bad issue number '$issue'" >&2; return 1 ;; esac
+  [ -n "$parent" ] || { echo "spawn_investigator: no parent ref — an investigator is always a child" >&2; return 1; }
+  [ -n "$checkout" ] || { echo "spawn_investigator: no checkout — an investigator reads its parent's tree" >&2; return 1; }
+  [ -n "$question" ] || { echo "spawn_investigator: no question — nothing to dispatch" >&2; return 1; }
+
+  # The parent's role from the ledger, defaulted from its lane when the record
+  # predates roles. Never assumed: "the caller would not ask if it were not a
+  # driver" is the assumption an edge guard exists to stop making.
+  parent_role=$(_ralph_ledger_latest '((try .tokens.role catch null) // "")' "$parent" 2>/dev/null) || parent_role=""
+  if [ -z "$parent_role" ]; then
+    parent_role=$(ralph_role_for_lane "$(ralph_agent_parse "${parent%%#*}" | awk '{print $1}')" 2>/dev/null) || parent_role=""
+  fi
+  ralph_spawn_edge_guard "${parent_role:-unknown}" investigator || return 1
+  depth=$(ralph_depth_guard "$parent") || return 1
+
+  local -a harness=()
+  while IFS= read -r out; do harness+=("$out"); done < <(ralph_investigator_harness_args) || true
+  [ "${#harness[@]}" -ge 1 ] || {
+    echo "spawn_investigator: no investigator harness binding available — refusing to spawn an unrestricted session into $checkout" >&2
+    return 1
+  }
+
+  name=$(ralph_agent_name i "$issue" "$question" 2>/dev/null) ||
+    name=$(ralph_agent_name i "$issue" investigate) || {
+      echo "spawn_investigator: could not derive an agent name for GH-$issue" >&2
+      return 1
+    }
+
+  if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
+    echo "DRY RUN — would spawn investigator for GH-$issue:"
+    echo "  agent: $name   parent: $parent   depth: $depth   cwd: $checkout"
+    echo "  $HERDR tab create --cwd $checkout --no-focus --label \"GH-$issue investigator\""
+    echo "  $HERDR agent start $name --kind claude --pane <captured> -- ${harness[*]}"
+    echo "  $HERDR agent prompt $name <question>"
+    return 0
+  fi
+
+  # A TAB in the existing checkout, never a worktree: cutting a second tree
+  # would give the investigator its own copy of the work the driver is editing,
+  # which is the opposite of reading the driver's tree. --workspace keeps it
+  # beside the driver when the caller knows where that is.
+  set -- --cwd "$checkout" --no-focus --label "GH-$issue investigator"
+  [ -n "${RALPH_HERDR_SPAWNED_WORKSPACE:-}" ] && set -- --workspace "$RALPH_HERDR_SPAWNED_WORKSPACE" "$@"
+  out=$(ralph_herdr_call tab_created tab create "$@") || {
+    echo "spawn_investigator: could not open a tab in $checkout" >&2
+    return 1
+  }
+  pane=$(jq -r '.root_pane.pane_id // empty' <<<"$out")
+  [ -n "$pane" ] || { echo "spawn_investigator: no pane id in the tab response" >&2; return 1; }
+
+  agent_start_when_ready "$name" "$pane" "${harness[@]}" || {
+    echo "spawn_investigator: agent start $name failed" >&2
+    return 1
+  }
+
+  ts=$(date -u +%FT%TZ)
+  if ref=$(ralph_agent_ref "$name" 2>/dev/null); then
+    record=$(_ralph_spawn_record "$ref" "$issue" "" "" "" "$pane" "$ts" "" "$checkout" \
+      investigator "$parent" "$depth" "$parent") || record=""
+    ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
+    if [ -n "$record" ] && [ -n "$ledger" ]; then
+      RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" ||
+        echo "spawn_investigator: ledger append failed for $ref — reconcile will discover it" >&2
+    fi
+    if [ -n "$record" ]; then
+      set --
+      while IFS= read -r out; do
+        [ -n "$out" ] || continue
+        set -- "$@" "$out"
+      done < <(jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' <<<"$record" 2>/dev/null || true)
+      [ "$#" -ge 1 ] && ralph_tokens_push "$pane" "$@"
+    fi
+  fi
+
+  ralph_herdr_call agent_prompted agent prompt "$name" "$question" >/dev/null || {
+    echo "spawn_investigator: prompt delivery failed — $name is LIVE and idle in pane $pane" >&2
+    return 1
+  }
+  echo "spawned investigator $name for GH-$issue (pane $pane, parent $parent, depth $depth)"
+  return 0
 }

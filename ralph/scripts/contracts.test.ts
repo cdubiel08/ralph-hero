@@ -176,7 +176,7 @@ describe("naming: format/parse round-trips", () => {
         gen: null,
       });
     }
-    expect(Object.keys(LANES).sort()).toEqual(["d", "o", "r", "s", "w", "x"]);
+    expect(Object.keys(LANES).sort()).toEqual(["d", "i", "o", "r", "s", "t", "w", "x"]);
   });
 
   it("issue 0 is the infra reservation — s0-watch and x0-relay parse", () => {
