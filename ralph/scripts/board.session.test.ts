@@ -550,4 +550,45 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
       worktree: "/repo",
     });
   });
+  it("serializes displacement — a second displacer refuses rather than racing", () => {
+    // Displacement is validate-then-replace, two steps POSIX cannot fuse. Two
+    // sessions validating the same incumbent could otherwise each unlink the
+    // other's replacement after it landed, and both pass their own read-back.
+    const source = at("source");
+    transition(source, fetchIssue(source, 1), "In Progress");
+    const lock = worktreeLockPath(source, 1)!;
+    // Another displacer is mid-section.
+    writeFileSync(
+      `${lock}.mu`,
+      JSON.stringify({ session: "other", issue: 1, worktree: "/repo", since: NOW.toISOString() }),
+    );
+    const stealer = at("stealer");
+    expect(
+      refusalMessage(() =>
+        transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true }),
+      ),
+    ).toContain("this worktree");
+    expect(JSON.parse(readFileSync(lock, "utf8")).session).toBe("source");
+  });
+
+  it("a CRASHED displacer does not wedge the worktree — the mutex has its own short expiry", () => {
+    // Inheriting the claim TTL here would block every steal in this worktree
+    // for two hours behind one dead process.
+    const source = at("source");
+    transition(source, fetchIssue(source, 1), "In Progress");
+    const lock = worktreeLockPath(source, 1)!;
+    writeFileSync(
+      `${lock}.mu`,
+      JSON.stringify({ session: "dead", issue: 1, worktree: "/repo", since: NOW.toISOString() }),
+    );
+    const old = new Date(NOW.getTime() - 5 * 60_000);
+    utimesSync(`${lock}.mu`, old, old);
+
+    const stealer = at("stealer");
+    expect(() =>
+      transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true }),
+    ).not.toThrow();
+    expect(JSON.parse(readFileSync(lock, "utf8")).session).toBe("stealer");
+    expect(readdirSync(dir).some((n) => n.endsWith(".mu"))).toBe(false);
+  });
 });

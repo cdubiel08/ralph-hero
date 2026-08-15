@@ -2445,6 +2445,11 @@ export function claimLeave(
 // the tool over a fact it was never told.
 
 const SESSION_BINDING_TTL_DAYS = 7;
+/** How long a displacement section may plausibly take. It is milliseconds of
+ *  local file work, so anything older is a crashed holder — and it must NOT
+ *  inherit the claim TTL, which would wedge every steal in a worktree for two
+ *  hours behind one dead process. */
+const DISPLACE_MUTEX_TTL_MS = 60_000;
 
 export interface SessionBinding {
   issue: number;
@@ -2614,37 +2619,68 @@ function takeWorktreeLock(ctx: Ctx, number: number, spoke: WorktreeLock | null):
     since: ctx.now().toISOString(),
   };
   if (!publishWorktreeLock(ctx, path, mine)) {
-    // Occupied. Displace it only when this session may: it is ours already, it
-    // has aged out on the claim TTL, or --steal said so.
-    const held = readWorktreeLock(path);
-    const ours = held?.lock.session === ctx.session!.id;
-    const aged = !held || held.freshMs < ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
-    // A steal displaces ONLY the lock the pre-check actually saw. A different
-    // one now present belongs to a CONCURRENT stealer — a session --steal never
-    // spoke to, since it did not exist when the operator made the assertion.
-    // Without this, two concurrent stealers each unlink the other's lock after
-    // the other's read-back has already returned, and both succeed.
-    const spokeTo =
-      !!spoke &&
-      !!held &&
-      held.lock.session === spoke.session &&
-      held.lock.since === spoke.since;
-    if (ours) {
+    // Occupied, so this is a DISPLACEMENT, and displacement is validate-then-
+    // replace: two steps, which POSIX gives no way to fuse (there is no
+    // conditional unlink). Two sessions can therefore each validate the same
+    // incumbent, and the second can unlink the first's replacement after it
+    // landed — both then pass their own read-back and both drive the checkout.
+    //
+    // So the section is serialized by a second, short-lived exclusive create.
+    // Only one displacer runs at a time; anyone who cannot enter refuses rather
+    // than proceeding on a validation that may already be stale. The mutex has
+    // its own SHORT expiry (not the claim TTL): the section is milliseconds, so
+    // a file older than that is a crashed holder, and inheriting the claim
+    // TTL's window would wedge every steal in this worktree for two hours.
+    const mu = `${path}.mu`;
+    const stale = readWorktreeLock(mu);
+    if (stale && stale.freshMs < ctx.now().getTime() - DISPLACE_MUTEX_TTL_MS) {
       try {
-        const t = ctx.now();
-        utimesSync(path, t, t); // heartbeat: keep a long-lived session fresh
-      } catch {
-        /* best-effort */
-      }
-      return;
-    }
-    if (spokeTo || aged) {
-      try {
-        unlinkSync(path);
+        unlinkSync(mu);
       } catch {
         /* raced away — already the desired end state */
       }
-      publishWorktreeLock(ctx, path, mine);
+    }
+    if (!publishWorktreeLock(ctx, mu, mine)) {
+      throw peerRefusal(ctx, number, ctx.repoRoot, readWorktreeLock(path)?.lock.since ?? "unknown");
+    }
+    try {
+      // RE-READ inside the section: whatever was validated before entering may
+      // have been replaced by the displacer that just left it.
+      const held = readWorktreeLock(path);
+      const ours = held?.lock.session === ctx.session!.id;
+      const aged = !held || held.freshMs < ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
+      // A steal displaces ONLY the lock the pre-check actually saw. A different
+      // one now present belongs to a CONCURRENT stealer — a session --steal
+      // never spoke to, since it did not exist when the operator made the
+      // assertion.
+      const spokeTo =
+        !!spoke && !!held && held.lock.session === spoke.session && held.lock.since === spoke.since;
+      if (ours) {
+        try {
+          const t = ctx.now();
+          utimesSync(path, t, t); // heartbeat: keep a long-lived session fresh
+        } catch {
+          /* best-effort */
+        }
+        return;
+      }
+      if (spokeTo || aged) {
+        try {
+          unlinkSync(path);
+        } catch {
+          /* raced away — already the desired end state */
+        }
+        publishWorktreeLock(ctx, path, mine);
+      }
+      const inside = readWorktreeLock(path);
+      if (inside && inside.lock.session === ctx.session!.id) return;
+      throw peerRefusal(ctx, number, ctx.repoRoot, inside?.lock.since ?? "unknown");
+    } finally {
+      try {
+        unlinkSync(mu);
+      } catch {
+        /* best-effort */
+      }
     }
   }
   const won = readWorktreeLock(path);
