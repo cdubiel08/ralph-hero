@@ -186,6 +186,7 @@ CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review
 ADVISORY_SH="${RALPH_ADVISORY_FINDINGS_SH:-$PROJECT_ROOT/scripts/advisory-findings.sh}"
 CONVERGENCE_SH="${RALPH_CONVERGENCE_SH:-$PROJECT_ROOT/scripts/review-convergence.sh}"
 LINKAGE_DRIFT_SH="${RALPH_LINKAGE_DRIFT_SH:-$PROJECT_ROOT/scripts/pr-linkage-drift.sh}"
+STALENESS_SH="${RALPH_REVIEW_STALENESS_SH:-$PROJECT_ROOT/scripts/review-staleness.sh}"
 # The "not evaluated" evidence value: review mode, an exempt author, or a PR
 # that is already closed. ok=false is inert wherever the ladder waives review.
 CODEX_NONE='{"ok":false,"turn":"reviewer","detail":"review evidence not evaluated","reviewer":"","review_url":""}'
@@ -823,6 +824,37 @@ gather() {
           else " | LINKAGE DRIFT — \(.summary). GitHub'"'"'s closing linkage is what the merge gate reads; the merge will fold nothing back into the board. Restore the keyword before merging"
           end' <<<"$drift")
         verdict="${verdict}${drift_line}"
+      fi
+      ;;
+  esac
+
+  # Review staleness (GH-1816), appended to the ONE verdict that says "the
+  # author has rework to do". `reviewDecision` is repo-level aggregate state
+  # with no commit binding, so a CHANGES_REQUESTED keeps blocking after the
+  # findings have been fixed and pushed — until the reviewer re-reviews, which
+  # under rate limiting is hours later. Gate 1 is right to block on it either
+  # way; what it cannot say is WHOSE TURN it is, and that is the whole question
+  # the deliver lane's demotion asks. It demoted GH-1774 on 2026-08-12 reading
+  # this token, against a PR that was green and complete.
+  #
+  # Changes no verdict — GATE-FAIL review stays GATE-FAIL review, the merge
+  # still refuses, and nothing here is looser than the gate. Same split
+  # GH-1945/GH-1849 settled: the measurement is code, the decision is the
+  # driver's. Only `stale` and an unreadable answer print; `live` is what this
+  # verdict already means, and restating it is the chrome that gets skimmed.
+  case "$verdict" in
+    "GATE-FAIL review"*)
+      if [ -x "$STALENESS_SH" ]; then
+        local stale stale_line
+        stale=$("$STALENESS_SH" "$PR" 2>/dev/null) || stale=''
+        printf '%s' "$stale" | jq -e 'type == "object"' >/dev/null 2>&1 \
+          || stale='{"ok":false,"verdict":"not-evaluated","head":"","blocking":[],"detail":"review-staleness.sh returned nothing usable"}'
+        stale_line=$(jq -r '
+          if .ok != true then " | staleness NOT CHECKED (\(.detail)) — treat as live rework"
+          elif .verdict == "stale" then
+            " | STALE VERDICT — \(.detail). Awaiting a re-review, not rework: do not demote; nudge the reviewer at the current head"
+          else "" end' <<<"$stale")
+        verdict="${verdict}${stale_line}"
       fi
       ;;
   esac
