@@ -1161,6 +1161,11 @@ export interface Ctx {
    *  write-guard carve-out is expressed by handing a mutating path a Ctx with
    *  this zeroed. Fail-safe is the only safe default direction for a cache. */
   itemCacheTtlSec?: number;
+  /** Session→unit binding (GH-1948): who this process is, and where the
+   *  binding records live. Absent — like a null `id` — leaves the guard
+   *  inert, which is the honest reading of "this runner told us nothing"
+   *  rather than a policy choice (see guardSessionUnit). */
+  session?: { id: string | null; dir: string };
 }
 
 /** The probe is ALIASED: a caller that selects `rateLimit` itself keeps its own
@@ -2061,7 +2066,11 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     const enteringInProgress = to === "In Progress";
 
     if (leavingInProgress) guardHolder(ctx, issue);
+    // Read the binding before the guard so the post-verify write can preserve
+    // its `since` on a heartbeat re-claim of the same unit.
+    const priorBinding = enteringInProgress ? readSessionBinding(ctx) : null;
     if (enteringInProgress) {
+      guardSessionUnit(priorBinding, issue.number);
       const claim = issue.claim;
       if (claim && !isMember(claim, ctx.cfg.holder)) {
         const stale = claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin);
@@ -2180,6 +2189,9 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
           : `claim on #${issue.number} vanished after the write (concurrent clear) — pick other work`,
       );
     }
+    // The claim is verifiably this session's: bind the session to the unit
+    // (GH-1948). Deliberately after the verify — see the binding block.
+    if (enteringInProgress) writeSessionBinding(ctx, issue.number, priorBinding);
     // Symmetric verify for the leaving side: the same re-read must show this
     // session OUT of the claim (gone, or co-holders only) — surviving
     // membership means the clear did not stick and this session would
@@ -2311,6 +2323,105 @@ export function claimLeave(
   clearField(ctx, cache, itemId, CLAIM_FIELD);
   if (rest) setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(rest));
   return { issue: verifyClaimEcho(ctx, number, holder), changed: true };
+}
+
+// ── Session→unit binding (GH-1948) ──────────────────────────────────────────
+// Contract rule 9 — "one unit per session, and a finished session stops" —
+// shipped in GH-1924 as prose, which refuses nothing. This is the code half.
+//
+// The binding is LOCAL because the fact is local. The board's holder is
+// `user@host`, shared by every session on the machine, so a board-side rule
+// keyed on it would refuse legitimate concurrent panes — the opposite of what
+// rule 9 says. The session id is the only identity at the right granularity,
+// and it exists only in this process's environment.
+//
+// The claim path is the enforcement point because contract rule 1 puts every
+// sanctioned session through it before anything mutates. That makes this
+// strictly wider than a spawn-path counter: it also catches the session that
+// reached a second unit without passing the spawner at all, which is exactly
+// the case a spawn-path count is blind to.
+//
+// Check EARLY, bind LATE. The binding is written only after the claim's
+// read-back verify passes: binding first would strand a session that lost a
+// claim race — bound to an issue it never held, then refused the other work
+// it was correctly told to go pick.
+//
+// No resolvable session id, no readable record → NOT EVALUATED. Unlike this
+// repo's opt-in flags, an absent value here is not a policy choice, and
+// refusing every claim on a runner that publishes no session id would break
+// the tool over a fact it was never told.
+
+const SESSION_BINDING_TTL_DAYS = 7;
+
+export interface SessionBinding {
+  issue: number;
+  since: string; // when this session FIRST claimed it (a heartbeat re-claim keeps it)
+  holder: string;
+}
+
+function sessionBindingPath(ctx: Ctx): string | null {
+  const id = ctx.session?.id;
+  if (!id) return null;
+  // The id becomes a filename: anything outside the safe set — a "/" above all
+  // — would write outside the directory or collide with another session.
+  const safe = id.replace(/[^A-Za-z0-9._-]/g, "_");
+  if (!safe || /^\.+$/.test(safe)) return null;
+  return join(ctx.session!.dir, `${safe}.json`);
+}
+
+export function readSessionBinding(ctx: Ctx): SessionBinding | null {
+  const path = sessionBindingPath(ctx);
+  if (!path) return null;
+  try {
+    const b = JSON.parse(readFileSync(path, "utf8"));
+    return Number.isInteger(b?.issue) ? (b as SessionBinding) : null;
+  } catch {
+    return null; // absent or garbled: not evaluated (see above)
+  }
+}
+
+/** Refuse a SECOND, distinct unit driven from one session. Re-claiming the
+ *  same issue (heartbeat, resume after Human Needed) is not a second unit and
+ *  always passes. There is deliberately no --force: a fresh session is the
+ *  remedy, and it is one the caller can always take. */
+function guardSessionUnit(bound: SessionBinding | null, number: number): void {
+  if (!bound || bound.issue === number) return;
+  throw new RefusalError(
+    `this session already drove #${bound.issue} (claimed ${bound.since}) — contract rule 9 is one unit per session. ` +
+      `#${number} needs a NEW session: branch, worktree and lineage all derive from the unit, so a second unit here ` +
+      `inherits the first's three, and the fleet bound is counted at the spawn path only, so nobody sees it. ` +
+      `File follow-ups with \`board create\` and let whoever spawns the next session rank them.`,
+  );
+}
+
+function writeSessionBinding(ctx: Ctx, number: number, prior: SessionBinding | null): void {
+  const path = sessionBindingPath(ctx);
+  if (!path) return;
+  try {
+    mkdirSync(ctx.session!.dir, { recursive: true });
+    const since = prior?.issue === number ? prior.since : ctx.now().toISOString();
+    writeFileSync(path, JSON.stringify({ issue: number, since, holder: ctx.cfg.holder }));
+    pruneSessionBindings(ctx);
+  } catch {
+    // Best-effort: an unwritable state dir must not fail a claim the board has
+    // already granted. The claim is the durable half; this is a local rule.
+  }
+}
+
+/** Session ids are unique per session, so the records would accumulate forever.
+ *  Swept on write — the only moment we are already touching the directory. */
+function pruneSessionBindings(ctx: Ctx): void {
+  const dir = ctx.session!.dir;
+  const cutoff = ctx.now().getTime() - SESSION_BINDING_TTL_DAYS * 86_400_000;
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const p = join(dir, name);
+      if (statSync(p).mtimeMs < cutoff) unlinkSync(p);
+    } catch {
+      /* raced away by a concurrent sweep — already the desired end state */
+    }
+  }
 }
 
 /** What `claim show` reports — the claim exactly as the board holds it, plus
@@ -6235,8 +6346,13 @@ mutations
                               hardcoded P0..P3 — a host repo owns its scheme,
                               and \`next\` orders a custom one by the field's
                               option ORDER (a trailing digit is the fallback)
-  claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
-  claim leave NNN --holder H  remove a holder from an existing shared claim;
+  claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim.
+                              Binds this session to the unit (GH-1948): a second
+                              DISTINCT unit from one session is refused (contract
+                              rule 9). Re-claiming the same unit always passes;
+                              a fresh session is the only remedy — there is no
+                              --force. Inert where no session id is published
+  claim leave NNN --holder Hremove a holder from an existing shared claim;
                               non-member leave is a no-op; the LAST one out
                               clears the field. Never transitions state — board
                               moves stay the skills' job. (\`claim join\` was
@@ -7172,6 +7288,12 @@ if (isMain) {
       cacheDir: join(homedir(), ".ralph", "cache"),
       now: () => new Date(),
       itemCacheTtlSec: parseItemCacheTtlSec(process.env.RALPH_ITEM_CACHE_TTL_SEC),
+      session: {
+        // RALPH_SESSION_ID first so a non-Claude runner can publish the fact
+        // itself; CLAUDE_CODE_SESSION_ID is the one every session here has.
+        id: process.env.RALPH_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID || null,
+        dir: join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "sessions"),
+      },
     };
     process.exit(run(process.argv.slice(2), ctx));
   } catch (e) {
