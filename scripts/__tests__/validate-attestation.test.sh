@@ -90,13 +90,14 @@ cat >"$POLICY" <<'EOF'
 }
 EOF
 
-attestation_body() { # attestation_body <sha> [tests_exit] [classes_csv]
-  local sha="$1" texit="${2:-0}" classes="${3:-scripts-shell,mcp-ts}"
+attestation_body() { # attestation_body <sha> [tests_exit] [classes_csv] [base_ref]
+  local sha="$1" texit="${2:-0}" classes="${3:-scripts-shell,mcp-ts}" base="${4-main}"
   local classes_json payload
   classes_json=$(jq -n --arg csv "$classes" \
     '[($csv | split(",")[]) | {class: ., reviewed_by: ("adversarial:" + .)}]')
-  payload=$(jq -n --arg sha "$sha" --argjson texit "$texit" --argjson classes "$classes_json" '{
-    version: 1, pr: 123, head_sha: $sha,
+  payload=$(jq -n --arg sha "$sha" --argjson texit "$texit" --argjson classes "$classes_json" \
+    --arg base "$base" '{
+    version: 1, pr: 123, head_sha: $sha, base_ref: $base,
     tests: [{command: "npm test", exit_code: $texit, summary: "ok"}],
     review: {verdict: "APPROVED", reviewer: "ralph:review-agent", mode: "internal"},
     file_classes: $classes, generated_by: "test-harness"
@@ -129,7 +130,8 @@ write_pr() {
   echo "$comments" >"$dir/issue_comments.json"
   jq -n --arg sha "$SHA" --arg author "$author" \
     --argjson comments "$comments" --argjson reviews "$reviews" --argjson files "$files" \
-    '{headRefOid: $sha, author: {login: $author}, comments: $comments, reviews: $reviews, files: $files}' \
+    '{headRefOid: $sha, baseRefName: ($ENV.PR_BASE_REF // "main"),
+      author: {login: $author}, comments: $comments, reviews: $reviews, files: $files}' \
     >"$dir/pr_view.json"
   if [[ "$codex_evidence" == "true" ]]; then
     add_codex_evidence "$dir" "$SHA"
@@ -192,6 +194,17 @@ run_v "no attestation yet" pending "awaiting attestation" "$POLICY" s_missing
 
 s_stale() { write_pr "$1" "cdubiel08" "$(attestation_body "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")" "$CODEX"; }
 run_v "stale head_sha" pending "re-attest" "$POLICY" s_stale
+
+# GH-1841: retargeting the PR changes what it merges without moving the head.
+s_retargeted() {
+  PR_BASE_REF="release/2026-08" write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "$CODEX"
+}
+run_v "base retargeted after attesting" pending "re-attest against the current base" "$POLICY" s_retargeted
+
+# An attestation written before the base binding existed cannot answer the
+# question, so it gets the same pending + the same remedy — never a pass.
+s_no_base() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 0 "scripts-shell,mcp-ts" "")" "$CODEX"; }
+run_v "attestation with no base_ref" pending "none recorded" "$POLICY" s_no_base
 
 s_badtests() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 1)" "$CODEX"; }
 run_v "failing test evidence" failure "test evidence" "$POLICY" s_badtests

@@ -160,9 +160,14 @@ for cmd in ${RUNS[@]+"${RUNS[@]}"}; do
     '. + [{command: $c, exit_code: $e, summary: $s, ran_at_sha: $sha}]' <<<"$RUN_RESULTS")
 done
 
-head_sha=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
-if [[ -z "$head_sha" ]]; then
-  echo "ERROR: cannot resolve head SHA for PR #$PR_NUMBER" >&2
+pr_facts=$(gh pr view "$PR_NUMBER" --json headRefOid,baseRefName)
+head_sha=$(jq -r '.headRefOid // ""' <<<"$pr_facts")
+# The base the evidence is about (GH-1841). Retargeting a PR changes what it
+# merges without moving the head, so an attestation that records only the head
+# stays green against a diff that no longer exists.
+base_ref=$(jq -r '.baseRefName // ""' <<<"$pr_facts")
+if [[ -z "$head_sha" || -z "$base_ref" ]]; then
+  echo "ERROR: cannot resolve head SHA / base ref for PR #$PR_NUMBER" >&2
   exit 1
 fi
 
@@ -265,6 +270,7 @@ done
 payload=$(jq -n \
   --argjson pr "$PR_NUMBER" \
   --arg sha "$head_sha" \
+  --arg base "$base_ref" \
   --argjson tests "$tests_json" \
   --argjson classes "$classes_json" \
   --arg verdict "$REVIEW_VERDICT" \
@@ -277,6 +283,7 @@ payload=$(jq -n \
     version: 1,
     pr: $pr,
     head_sha: $sha,
+    base_ref: $base,
     tests: $tests,
     review: {verdict: $verdict, reviewer: $reviewer, mode: $mode, url: $url},
     file_classes: $classes,
@@ -299,7 +306,7 @@ classes_rows=$(jq -r '.[] | "| \(.class) | \(.reviewed_by) |"' <<<"$classes_json
 body="$MARKER
 ## Merge Attestation
 
-**PR:** #$PR_NUMBER · **Head:** \`${head_sha:0:8}\` · **Review:** $REVIEW_VERDICT by \`$REVIEWER\` ($REVIEW_MODE)
+**PR:** #$PR_NUMBER · **Head:** \`${head_sha:0:8}\` · **Base:** \`$base_ref\` · **Review:** $REVIEW_VERDICT by \`$REVIEWER\` ($REVIEW_MODE)
 
 | Test command | Exit | Summary |
 |---|---|---|

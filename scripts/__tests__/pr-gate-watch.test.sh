@@ -169,9 +169,10 @@ printf '{ "version": 1, "external_review": {' >"$POLICY_BROKEN"
 # verdict. An edit can preserve the sha while breaking either of the others,
 # which is why the fixture has to be able to express that.
 attestation_comment() {
-  jq -n --arg sha "$1" --argjson exit "${2:-0}" --arg verdict "${3-APPROVED}" '
+  jq -n --arg sha "$1" --argjson exit "${2:-0}" --arg verdict "${3-APPROVED}" \
+    --arg base "${4-main}" '
     {body: ("<!-- ralph-attestation:v1 -->\n## Merge Attestation\n\n```json\n"
-      + ({version: 1, head_sha: $sha,
+      + ({version: 1, head_sha: $sha, base_ref: $base,
           tests: [{cmd: "bash scripts/__tests__/pr-gate-watch.test.sh", exit_code: $exit}],
           review: {verdict: $verdict, reviewer: "chatgpt-codex-connector[bot]"}} | tojson)
       + "\n```\n")}'
@@ -192,7 +193,8 @@ pr_state() {
     --argjson comments "${3:-[]}" \
     --arg author "${4:-cdubiel08}" --arg mergeable "${5-MERGEABLE}" \
     '{state: $s, reviewDecision: (if $rd == "" then null else $rd end),
-      headRefOid: $sha, comments: $comments,
+      headRefOid: $sha, baseRefName: ($ENV.PR_BASE_REF // "main"),
+      comments: $comments,
       author: {login: $author}, mergeable: $mergeable}'
 }
 
@@ -231,7 +233,7 @@ setup_ready() {
 confirm_view() {
   jq -nc --arg sha "${3:-$HEAD_SHA}" --arg d "$1" --arg m "$2" \
     --argjson comments "[$(attestation_comment "$HEAD_SHA")]" \
-    '{state: "OPEN", headRefOid: $sha,
+    '{state: "OPEN", headRefOid: $sha, baseRefName: "main",
       reviewDecision: (if $d == "" then null else $d end),
       mergeable: $m, comments: $comments, author: {login: "cdubiel08"}}'
 }
@@ -410,6 +412,21 @@ D="$TMP_ROOT/ready"
 scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
   "$ATTESTED_PR" "$APPROVAL"
 expect "GATE-READY when green, reviewed and attested" "$D" "GATE-READY" 0
+
+# GH-1841: the same fully-green PR, retargeted after attesting. Gate 4 refuses
+# it, so a GATE-READY here would be the classifier/gate disagreement GH-1843
+# removed — the watcher must reach the same conclusion from the same predicate.
+D_RETARGET="$TMP_ROOT/ready-retargeted"
+scenario "$D_RETARGET" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PASS" '$g + [$a]')" \
+  "$(PR_BASE_REF="release/2026-08" pr_state OPEN APPROVED "[$(attestation_comment "$HEAD_SHA")]")" "$APPROVAL"
+run "$D_RETARGET"
+if [[ "$LAST_OUT" != *"GATE-READY"* ]]; then
+  pass "a retargeted PR is not GATE-READY"
+else
+  fail "a retargeted PR is not GATE-READY" "$LAST_OUT"
+fi
+
+D="$TMP_ROOT/ready"
 run "$D"
 if [[ "$LAST_OUT" == *"merge-pr.sh 1740"* ]]; then
   pass "points at the merge gate, not bare gh pr merge"

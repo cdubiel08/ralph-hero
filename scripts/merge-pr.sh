@@ -191,12 +191,15 @@ EXTERNAL_EVIDENCE_MODE=$(me_policy_get "$POLICY" mode)
 # ---------------------------------------------------------------------------
 # Gate 0: PR core facts (single fetch)
 # ---------------------------------------------------------------------------
-pr_json=$(gh pr view "$PR_NUMBER" --json state,mergeable,headRefOid,reviewDecision,author 2>/dev/null) \
+pr_json=$(gh pr view "$PR_NUMBER" --json state,mergeable,headRefOid,baseRefName,reviewDecision,author 2>/dev/null) \
   || block "fetch" "cannot read PR #$PR_NUMBER (gh pr view failed)"
 
 state=$(jq -r '.state // ""' <<<"$pr_json")
 mergeable=$(jq -r '.mergeable // ""' <<<"$pr_json")
 head_sha=$(jq -r '.headRefOid // ""' <<<"$pr_json")
+# Empty skips the base binding rather than failing it (GH-1841): a field we
+# could not read is not evidence that the PR was retargeted.
+base_ref=$(jq -r '.baseRefName // ""' <<<"$pr_json")
 decision=$(jq -r '.reviewDecision // ""' <<<"$pr_json")
 author=$(jq -r '.author.login // ""' <<<"$pr_json")
 
@@ -296,13 +299,18 @@ if [[ "$ATTESTATION_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
   else
     # Payload extraction and the three validity checks are the shared reader's
     # (GH-1843); this gate owns only the mapping from reason code to refusal.
-    att_status=$(me_attestation_status "$att_body" "$head_sha")
+    att_status=$(me_attestation_status "$att_body" "$head_sha" "$base_ref")
     att_sha=$(me_attestation_field "$att_body" .head_sha)
     case "$att_status" in
       missing)
         soft_gate "attestation" "attestation comment present but JSON payload unparseable" ;;
       stale)
         soft_gate "attestation" "attestation head_sha ${att_sha:0:8} != PR head ${head_sha:0:8} — re-attest after the latest push" ;;
+      base-changed)
+        # Retargeting changes what the PR merges without moving the head, so
+        # the head binding alone cannot see it (GH-1841). Absent base_ref
+        # lands here too: it predates the binding and has the same remedy.
+        soft_gate "attestation" "attestation base '$(me_attestation_field "$att_body" .base_ref)' != PR base '$base_ref' — re-attest against the current base" ;;
       no-tests)
         soft_gate "attestation" "attestation lacks passing test evidence (tests[] empty or non-zero exit_code)" ;;
       no-verdict)

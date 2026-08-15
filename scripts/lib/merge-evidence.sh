@@ -104,15 +104,29 @@ def me_exempt($author):
 #
 # All three of tests/verdict/sha are checked, because an edit can preserve
 # head_sha while breaking either of the others (codex P2, PR #1764).
-def me_attestation_status($head):
+#
+# `base-changed` is the base-retarget hole (GH-1841). Evidence bound to
+# head_sha alone survives a retarget, because retargeting changes what the PR
+# MERGES without moving the head — so a green status computed against base A
+# is accepted for a diff against base B. The identity is the base REF NAME,
+# not the base SHA: a base sha moves every time the target branch gains a
+# commit, so binding to it would invalidate every attestation on the repo each
+# time anything merges — churn, not a gate. A ref name changes on exactly the
+# event this catches and on no other. A payload with no `base_ref` at all is
+# the same code: it predates the binding, so it cannot answer the question,
+# and the remedy is identical (re-attest). $base == "" means the CALLER could
+# not read the base of the PR, which is not evidence against the attestation —
+# the check is skipped rather than guessed at.
+def me_attestation_status($head; $base):
   if . == null then "missing"
   elif ((.head_sha // "") != $head) then "stale"
+  elif ($base != "" and (.base_ref // "") != $base) then "base-changed"
   elif (((.tests // []) | (length > 0) and all(.exit_code == 0)) | not) then "no-tests"
   elif ((.review.verdict // "") == "") then "no-verdict"
   elif ((.review.verdict // "") != "APPROVED") then "rejected"
   else "ok" end;
 
-def me_attestation_ok($head): me_attestation_status($head) == "ok";
+def me_attestation_ok($head; $base): me_attestation_status($head; $base) == "ok";
 
 # The marker attest-pr.sh writes. Defined here so the three readers stop
 # hardcoding the same literal beside a comment asking them to stay in sync.
@@ -215,9 +229,10 @@ me_attestation_payload() {
   jq -r "$ME_JQ_LIB"' me_fenced_json // ""' -R -s <<<"$1"
 }
 
-# me_attestation_status <comment_body> <head_sha> — one reason code (see the
-# jq def). An unparseable payload is "missing", same as no payload at all:
-# both mean there is no attestation to read.
+# me_attestation_status <comment_body> <head_sha> [base_ref] — one reason code
+# (see the jq def). An unparseable payload is "missing", same as no payload at
+# all: both mean there is no attestation to read. An omitted or empty base_ref
+# skips the base binding rather than failing it.
 me_attestation_status() {
   local payload
   payload=$(me_attestation_payload "$1")
@@ -225,7 +240,8 @@ me_attestation_status() {
     echo "missing"
     return 0
   fi
-  jq -r "$ME_JQ_LIB"' me_attestation_status($h)' --arg h "$2" <<<"$payload"
+  jq -r "$ME_JQ_LIB"' me_attestation_status($h; $b)' \
+    --arg h "$2" --arg b "${3:-}" <<<"$payload"
 }
 
 # me_attestation_field <comment_body> <jq_path> — one field of the payload,
