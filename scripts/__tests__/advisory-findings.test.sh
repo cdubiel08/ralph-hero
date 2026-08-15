@@ -41,10 +41,15 @@ STUB
 chmod +x "$STUB_BIN/gh"
 
 BOT="chatgpt-codex-connector[bot]"
+# Findings mode — the mode this repo runs — is the one where gate 5 reads
+# threads, and therefore the only one where subtracting its P0 is honest.
 POLICY="$TMP_ROOT/policy.json"
 cat >"$POLICY" <<EOF
-{ "version": 1, "external_review": { "required": true, "bot": "$BOT" } }
+{ "version": 1, "external_review": { "required": true, "bot": "$BOT",
+  "head_marker": "ralph-review-head" } }
 EOF
+POLICY_REVIEW_MODE="$TMP_ROOT/policy-review-mode.json"
+jq 'del(.external_review.head_marker)' "$POLICY" >"$POLICY_REVIEW_MODE"
 
 D="$TMP_ROOT/stub"
 mkdir -p "$D"
@@ -69,7 +74,7 @@ threads() {
 }
 
 run() { # run -> sets OUT
-  OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY" \
+  OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="${POLICY_UNDER_TEST:-$POLICY}" \
     bash "$SCRIPT" 1740 2>&1)
 }
 # expect_json <label> <jq-predicate>
@@ -95,6 +100,15 @@ expect_json "the policy bot's P0 is left to gate 5" '.ok == true and .count == 0
 # be counted here or nowhere.
 threads "$(thread greptile-apps "$(greptile P0)")" >"$D/threads.json"
 expect_json "a non-policy reviewer's P0 IS counted" '.ok == true and .count == 1 and .summary == "1xP0"'
+
+# The subtraction is "gate 5 already blocks on this thread", not "the bot's
+# findings are someone else's problem" — and in review mode gate 5 asks for an
+# APPROVED review and never reads a thread. Subtracting there would hide the
+# PR's highest-severity finding behind an approval (Greptile P1, PR #1946).
+threads "$(thread chatgpt-codex-connector "$(codex_badge P0)")" >"$D/threads.json"
+POLICY_UNDER_TEST="$POLICY_REVIEW_MODE" \
+  expect_json "in review mode the bot's P0 is counted — nothing else blocks it" \
+  '.ok == true and .count == 1 and .summary == "1xP0"'
 
 echo "=== state: resolved, outdated, unbadged ==="
 threads "$(thread greptile-apps "$(greptile P1)" true false)" >"$D/threads.json"

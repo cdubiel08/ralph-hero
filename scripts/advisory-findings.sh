@@ -56,9 +56,20 @@ POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$REPO_ROOT/.github/ralph-merge-policy.js
 
 # The gating reviewer, read from the same policy file gate 5 reads, so "what
 # the gate already blocks on" cannot drift from what this script subtracts.
+#
+# And only in FINDINGS mode. The subtraction is not "the bot's P0 is someone
+# else's problem" — it is "gate 5 already blocks on exactly this thread". That
+# is true only where gate 5 reads threads at all. In review mode gate 5 asks
+# for an APPROVED review object and never looks at a thread, so a bot P0 left
+# open under an approval is blocked by nothing; subtracting it there would hide
+# the highest-severity finding on the PR from the one line reporting findings
+# (Greptile P1, PR #1946). Mode is derived exactly as pr-gate-watch.sh and
+# validate-attestation.sh derive it: a head_marker means findings mode.
 BOT="chatgpt-codex-connector[bot]"
+MODE="review"
 if [[ -f "$POLICY_FILE" ]] && jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
   BOT=$(jq -r '.external_review.bot // "chatgpt-codex-connector[bot]"' "$POLICY_FILE")
+  [[ -n "$(jq -r '.external_review.head_marker // ""' "$POLICY_FILE")" ]] && MODE="findings"
 fi
 
 emit() { # emit <ok> <count> <summary> <first_url> <detail>
@@ -88,7 +99,7 @@ if [[ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage'
   emit false 0 "" "" "more than 100 review threads — not counted"
 fi
 
-result=$(jq -c --arg bot "$BOT" '
+result=$(jq -c --arg bot "$BOT" --arg mode "$MODE" '
   def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
   # Severity from the badge, in either reviewer'"'"'s rendering. Anchored on the
   # badge markup — a bare "P1" substring also matches prose that merely
@@ -105,9 +116,9 @@ result=$(jq -c --arg bot "$BOT" '
     | .comments.nodes[0] // empty
     | { author: ((.author.login // "") | norm), url: (.url // ""), tier: tier(.body // "") }
     | select(.tier != "")
-    # The one subtraction: what gate 5 already blocks on. Everything else is
-    # advisory, which is the population this script reports.
-    | select((.author == ($bot | norm) and .tier == "P0") | not)
+    # The one subtraction: what gate 5 already blocks on — in the only mode
+    # where it blocks on threads at all.
+    | select(($mode == "findings" and .author == ($bot | norm) and .tier == "P0") | not)
   ]
   | { count: length,
       summary: ( group_by(.tier) | sort_by(.[0].tier)
