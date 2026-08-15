@@ -11,9 +11,9 @@
 
 id = "ralph-herdr"
 name = "Ralph Herdr"
-version = "0.5.2"
+version = "0.6.0"
 min_herdr_version = "0.8.0"
-description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets; v4 adds the card substrate: issue/PR link handlers (click → focus-or-offer), a comment-first Human Needed answer pane, and attend carrying the blocking question; v5 adds the cockpit pane: a three-column board TUI (Go) over a degradation ladder — fzf fallback, then the dashboard — that loses chrome, never verbs."
+description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets; v4 adds the card substrate: issue/PR link handlers (click → focus-or-offer), a comment-first Human Needed answer pane, and attend carrying the blocking question; v5 adds the cockpit pane: a three-column board TUI (Go) over a degradation ladder — fzf fallback, then the dashboard — that loses chrome, never verbs; v6 adds fork right/down/tab — open a pane already holding a running session's context, via `claude --resume <id> --fork-session`."
 platforms = ["macos", "linux"]
 
 # --- Build -------------------------------------------------------------------
@@ -157,6 +157,52 @@ command = [
   "bash",
   "-c",
   '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint answer --placement popup --cwd "$cwd" --focus'''
+]
+
+# fork-{right,down,tab}: open a pane holding the FOCUSED pane's session context
+# (GH-1892). `contexts = ["pane"]`, because the source is the pane the human is
+# looking at — the invocation context carries its id, and scripts/fork.sh reads
+# the live Claude session id off `pane get` and starts a harness with
+# `--resume <id> --fork-session`.
+#
+# Three actions, one script: placement is the only difference, and a menu
+# entry per placement is how a human says "beside this" / "under this" /
+# "somewhere else" without a prompt. They run in the ACTION process (the attend
+# pattern) — the fork's output IS a real pane, so a plugin pane would leave a
+# second empty window behind.
+#
+# A fork shares the source pane's WORKTREE. See scripts/fork.sh's header: it is
+# a place to read and think from a running session's context, not a second
+# driver of its unit.
+
+[[actions]]
+id = "fork-right"
+title = "Ralph: fork this session → right"
+contexts = ["pane"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; RALPH_FORK_PLACEMENT=right exec bash "$HERDR_PLUGIN_ROOT/scripts/fork.sh"'''
+]
+
+[[actions]]
+id = "fork-down"
+title = "Ralph: fork this session → down"
+contexts = ["pane"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; RALPH_FORK_PLACEMENT=down exec bash "$HERDR_PLUGIN_ROOT/scripts/fork.sh"'''
+]
+
+[[actions]]
+id = "fork-tab"
+title = "Ralph: fork this session → new tab"
+contexts = ["pane"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; RALPH_FORK_PLACEMENT=tab exec bash "$HERDR_PLUGIN_ROOT/scripts/fork.sh"'''
 ]
 
 # link-open runs in the ACTION process (attend pattern): focusing a live
