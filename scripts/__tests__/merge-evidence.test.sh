@@ -182,6 +182,57 @@ eq "app/ and [bot] spellings are one identity" \
   "1" "$(jq -r "$ME_JQ_LIB"' me_approved_reviews($b; $h) | length' \
         --arg b "app/chatgpt-codex-connector" --arg h "old999" <<<"$REVIEWS")"
 
+# --- the paginated attestation reader --------------------------------------
+echo "=== attestation comment lookup is paginated (GH-1842) ==="
+
+# The defect: all three readers located the attestation via `gh pr view --json
+# comments`, a BOUNDED window. On a long PR (#1764: 40+ comments over seven
+# review rounds) a valid attestation falls outside it and reads as absent. The
+# stub below therefore serves it on the LAST page only — a fixture the old
+# unpaginated read could not have passed.
+export GH_STUB_DIR="$TMP/ghstub"; mkdir -p "$GH_STUB_DIR"
+STUB_BIN="$TMP/bin"; mkdir -p "$STUB_BIN"
+cat >"$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+set -uo pipefail
+if [ -f "$GH_STUB_DIR/fail" ]; then exit 1; fi
+cat "$GH_STUB_DIR/pages.json"
+STUB
+chmod +x "$STUB_BIN/gh"
+
+att_body() { printf '<!-- ralph-attestation:v1 -->\n```json\n{"head_sha":"%s"}\n```\n' "$1"; }
+
+# --paginate emits ONE ARRAY PER PAGE, concatenated. The attestation is on the
+# second page; a reader that took only the first sees nothing.
+jq -n --arg a "$(att_body abc123)" \
+  '[{body:"chatter"},{body:"more chatter"}], [{body:$a}]' >"$GH_STUB_DIR/pages.json"
+out=$(PATH="$STUB_BIN:$PATH" me_attestation_comment 1764); rc=$?
+eq "an attestation on a later page is found"   "0" "$rc"
+eq "  and its body is returned"                "abc123" \
+  "$(jq -r '.head_sha' <<<"$(me_attestation_payload "$out")")"
+
+# Newest wins, across pages: attest-pr.sh updates in place, but a PR that has
+# carried more than one attestation comment must be judged by the last.
+jq -n --arg a "$(att_body old111)" --arg b "$(att_body new222)" \
+  '[{body:$a}], [{body:"chatter"},{body:$b}]' >"$GH_STUB_DIR/pages.json"
+eq "the LAST attestation wins across pages" "new222" \
+  "$(jq -r '.head_sha' <<<"$(me_attestation_payload "$(PATH="$STUB_BIN:$PATH" me_attestation_comment 1764)")")"
+
+# A PR with no attestation is exit 0 + empty, not an error: "not yet attested"
+# is an answer.
+jq -n '[{body:"chatter"}]' >"$GH_STUB_DIR/pages.json"
+out=$(PATH="$STUB_BIN:$PATH" me_attestation_comment 1764); rc=$?
+eq "no attestation comment is exit 0"          "0" "$rc"
+eq "  with empty output"                       ""  "$out"
+
+# An unreadable API is exit 3, NEVER an empty read: "could not read" and "not
+# attested yet" have opposite correct responses (retry vs. run attest-pr.sh),
+# and collapsing them is what makes a gate demand work already done.
+touch "$GH_STUB_DIR/fail"
+PATH="$STUB_BIN:$PATH" me_attestation_comment 1764 >/dev/null 2>&1; rc=$?
+eq "an unreadable comments API is exit 3"      "3" "$rc"
+rm -f "$GH_STUB_DIR/fail"
+
 # --- evidence-script runner ------------------------------------------------
 echo "=== evidence-script runner fails loud, never silently ok ==="
 

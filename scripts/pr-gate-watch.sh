@@ -90,12 +90,10 @@
 # The attestation status is `ralph-attestation`, hardcoded, because gate 3
 # hardcodes it. Renaming it is a change to the gate, not to this script.
 #
-# Honest limit: the attested-at-this-head check reads `gh pr view --json
-# comments`, so on a PR with more comments than that window returns, the
-# attestation comment can fall outside it and the verdict reverts to
-# GATE-YOURS attestation. That errs in the safe direction — attest-pr.sh
-# updates its existing comment rather than duplicating it, so acting on the
-# stale verdict is idempotent. validate-attestation.sh reads the same window.
+# The attested-at-this-head check reads the comment list PAGINATED (GH-1842),
+# as gates 4 and 5 do: the window `gh pr view --json comments` returns can omit
+# a valid attestation on a long PR, and an unreadable list is a GATE-WAIT
+# rather than an absent attestation.
 
 set -euo pipefail
 
@@ -175,6 +173,7 @@ if [ "$POLICY_RC" -eq 2 ]; then
 fi
 POLICY_MODE=$(jq -r '.mode' <<<"$POLICY")
 POLICY_EXTERNAL=$(jq -r '.externalRequired | tostring' <<<"$POLICY")
+POLICY_ATTESTATION=$(jq -r '.attestationRequired | tostring' <<<"$POLICY")
 
 # Test-only override, same pattern merge-pr.sh gate 6 uses.
 APPLY_KEYWORDS_SH="${RALPH_APPLY_KEYWORDS_SH:-$PROJECT_ROOT/scripts/apply-keywords.sh}"
@@ -199,9 +198,6 @@ CODEX_NONE='{"ok":false,"turn":"reviewer","detail":"review evidence not evaluate
 # validate-attestation.sh and this script changed together, so all three agree.
 # A watcher-only override cannot be anything but a disagreement.
 ATTEST_CHECK="ralph-attestation"
-# Must stay in sync with MARKER in attest-pr.sh and validate-attestation.sh,
-# which hardcode the same literal.
-ATTEST_MARKER='<!-- ralph-attestation:v1 -->'
 
 # The precedence ladder, as one jq program so it reads top-to-bottom in a
 # single place and the shell holds no branching logic of its own. Kept in a
@@ -400,9 +396,11 @@ def is_attest: .name == $attest;
 # and during that window the next move is to wait, not to attest again. The
 # same comparison covers the other direction: after a new push the recorded
 # sha no longer matches, so re-attesting is correctly demanded.
-| (($pr.comments // [])
-   | map(select((.body // "") | contains($marker)))
-   | last | (.body // "")
+# Read from the PAGINATED comment list, not $pr.comments (GH-1842): the
+# window `gh pr view --json comments` returns can omit a valid attestation on
+# a long PR, and the verdict then demanded an attestation that already exists.
+| ($comments
+   | me_attestation_body
    | (try (me_fenced_json | fromjson) catch null))          as $att_json
 | (($att_json.head_sha // ""))                          as $attested_sha
 # The WHOLE payload, not just the sha. Gate 4 checks three things, and an edit
@@ -458,6 +456,12 @@ def is_attest: .name == $attest;
   # terminal verdict is a decision to STOP LOOKING. A wait costs one more poll
   # and self-heals; a wrong GATE-READY recommends a merge over CI nobody read
   # (codex P2, PR #1764). Non-terminal precisely so it cannot strand anyone.
+  # Same rule for gate 4's evidence: an unreadable comment list is not an
+  # absent attestation (GH-1842). Withholding a verdict costs one more poll;
+  # calling it absent tells a caller to re-attest work already attested.
+  elif $comments_ok != "true" and $attest_required
+       and ($pr.state // "OPEN") == "OPEN" then
+    "GATE-WAIT attestation: could not read the comments on #\($num) (gh api failed) — verdict withheld rather than guessed"
   elif $checks_ok != "true" and ($pr.state // "OPEN") == "OPEN" then
     "GATE-WAIT ci: could not read the checks for #\($num) (gh pr checks returned no usable payload) — verdict withheld rather than guessed"
   elif ($pr.state // "OPEN") != "OPEN" then
@@ -574,11 +578,11 @@ classify() {
     --argjson comments "$4" \
     --arg fetch_ok "$5" \
     --arg checks_ok "$6" \
+    --arg comments_ok "$8" \
     --argjson codex "$7" \
     --argjson policy "$POLICY" \
     --arg policy_error "$POLICY_ERROR" \
     --arg attest "$ATTEST_CHECK" \
-    --arg marker "$ATTEST_MARKER" \
     --arg num "$PR" \
     "$CLASSIFY_JQ"
 }
@@ -598,7 +602,7 @@ json_array_or_empty() {
 # how much to trust that verdict.
 gather() {
 
-  local checks pr_json reviews comments fetch_ok checks_ok head_before head_after
+  local checks pr_json reviews comments fetch_ok checks_ok comments_ok head_before head_after
   # The PR read comes FIRST so every other query is collected against a KNOWN
   # head, and the head is re-read at the end to prove it did not move
   # underneath the snapshot (codex P2, PR #1764). `gh pr checks` exposes no
@@ -612,7 +616,7 @@ gather() {
   # policy exemption; both are inputs to the ladder, so both are fetched here
   # rather than assumed.
   pr_json=$(gh pr view "$PR" \
-    --json state,reviewDecision,headRefOid,comments,author,mergeable 2>/dev/null) || return 1
+    --json state,reviewDecision,headRefOid,author,mergeable 2>/dev/null) || return 1
   [ -n "$pr_json" ] || return 1
   head_before=$(jq -r '.headRefOid // ""' <<<"$pr_json")
 
@@ -626,7 +630,7 @@ gather() {
   #     non-terminal GATE-WAIT and --watch would poll a finished PR forever.
   #   * Every remaining query is wasted on a PR nothing can act on.
   if [ "$(jq -r '.state // "OPEN"' <<<"$pr_json")" != "OPEN" ]; then
-    classify '[]' "$pr_json" '[]' '[]' true true "$CODEX_NONE"
+    classify '[]' "$pr_json" '[]' '[]' true true "$CODEX_NONE" true
     return 0
   fi
 
@@ -671,11 +675,24 @@ gather() {
   # Findings mode does not read them: codex-review-evidence.sh makes its own
   # reads and reports its own fetch failures, so a second copy here could only
   # disagree with the gate.
+  #
+  # The attestation lookup reads this SAME paginated list (GH-1842). It used
+  # to read `$pr.comments`, the bounded window `gh pr view` returns, so a valid
+  # attestation on a long PR (PR #1764: 40+ comments) fell outside it and the
+  # verdict reverted to GATE-YOURS attestation. Its failure is tracked
+  # separately from fetch_ok: gate 4's evidence and gate 5's are different
+  # questions, and one unreadable read may not be reported as the other.
   comments='[]'
-  if [ "$POLICY_EXTERNAL" = "true" ] && [ "$POLICY_MODE" = "review" ]; then
+  comments_ok=true
+  if { [ "$POLICY_EXTERNAL" = "true" ] && [ "$POLICY_MODE" = "review" ]; } \
+     || [ "$POLICY_ATTESTATION" = "true" ]; then
     comments=$(gh api "repos/{owner}/{repo}/issues/$PR/comments" --paginate 2>/dev/null \
-      | jq -s 'add // []' 2>/dev/null) || { comments='[]'; fetch_ok=false; }
+      | jq -s 'add // []' 2>/dev/null) || { comments='[]'; comments_ok=false; }
     comments=$(json_array_or_empty "$comments")
+    if [ "$comments_ok" != "true" ] && [ "$POLICY_EXTERNAL" = "true" ] \
+       && [ "$POLICY_MODE" = "review" ]; then
+      fetch_ok=false
+    fi
   fi
 
   # Findings mode: RUN the gate's own predicate rather than mirroring it. Not
@@ -713,7 +730,7 @@ gather() {
 
 
   local verdict
-  verdict=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok" "$codex") || return 1
+  verdict=$(classify "$checks" "$pr_json" "$reviews" "$comments" "$fetch_ok" "$checks_ok" "$codex" "$comments_ok") || return 1
 
   # Gate 6 is the one gate with no status to read, so it is RUN rather than
   # predicted — and it is run HERE, inside gather, because it is part of what

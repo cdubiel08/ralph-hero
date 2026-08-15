@@ -43,7 +43,7 @@ case "${1:-} ${2:-}" in
     ;;
   "api repos/"*)
     # The head-bound request comment, and the review objects.
-    if [[ "$2" == */issues/*/comments ]]; then
+    if [[ "$2" == */issues/*/comments* ]]; then
       f="$GH_STUB_DIR/issue_comments.json"
     else
       f="$GH_STUB_DIR/pr_reviews.json"
@@ -124,7 +124,9 @@ write_pr() {
     '[$r[] | {user: {login: (.author.login // "")}, state: (.state // "APPROVED"),
               commit_id: (.commit_id // $sha), submitted_at: (.submitted_at // "2026-08-13T04:00:05Z")}]' \
     >"$dir/pr_reviews.json"
-  echo '[]' >"$dir/issue_comments.json"
+  # The attestation is read from the PAGINATED issue-comments endpoint
+  # (GH-1842), so the fixture must carry it there.
+  echo "$comments" >"$dir/issue_comments.json"
   jq -n --arg sha "$SHA" --arg author "$author" \
     --argjson comments "$comments" --argjson reviews "$reviews" --argjson files "$files" \
     '{headRefOid: $sha, author: {login: $author}, comments: $comments, reviews: $reviews, files: $files}' \
@@ -141,7 +143,11 @@ write_pr() {
 # validator consults it, publishes its detail, and fails closed without it.
 add_codex_evidence() { # add_codex_evidence <dir> <head-sha>
   local dir="$1" sha="$2"
-  jq -n --arg sha "$sha" '[
+  local prior='[]'
+  [[ -f "$dir/issue_comments.json" ]] && prior=$(cat "$dir/issue_comments.json")
+  # Appended, never overwritten: the attestation comment lives in this same
+  # list (GH-1842) and replacing it would hide the evidence under test.
+  jq -n --arg sha "$sha" --argjson prior "$prior" '$prior + [
     {user:{login:"cdubiel08"},
      body:("@codex review for P0 issues only\n<!-- ralph-review-head: " + $sha + " -->"),
      created_at:"2026-08-13T04:00:00Z"}
@@ -300,6 +306,29 @@ if [[ "$out" == "success|$SHA|"* ]]; then
 else
   fail "sha binding missing from output: $out"
 fi
+
+# --- GH-1842: the attestation is read from the PAGINATED comment list -------
+# The old read was `gh pr view --json comments`, a bounded window: on a PR with
+# more comments than it returns, a VALID attestation fell outside it and this
+# validator published a red status for evidence that exists. The fixture below
+# is that PR — the attestation lives ONLY on the paginated endpoint.
+s_paginated_only() {
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "$CODEX"
+  jq '.comments = []' "$1/pr_view.json" >"$1/pr_view.next"
+  mv "$1/pr_view.next" "$1/pr_view.json"
+}
+run_v "an attestation outside the PR-view window still validates" \
+  success "attested @ ${SHA:0:8}" "$POLICY" s_paginated_only
+
+# An unreadable comment list is PENDING, never "awaiting attestation": a failed
+# read and an absent attestation have different correct responses, and calling
+# the first the second publishes a status that demands work already done.
+s_comments_unreadable() {
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "$CODEX"
+  echo "1" >"$1/gh_api_repos_exit"
+}
+run_v "an unreadable comment list is not an absent attestation" \
+  pending "cannot read the comments" "$POLICY" s_comments_unreadable
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
