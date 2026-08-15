@@ -13,6 +13,7 @@
     "test:orphans": "bash plugin/ralph-herdr/tests/doctor-orphans.test.sh",
     "test:substrate": "bash plugin/ralph-herdr/tests/substrate.test.sh",
     "test:cockpit": "bash plugin/ralph-herdr/tests/cockpit.test.sh",
+    "test:fork": "bash plugin/ralph-herdr/tests/fork.test.sh",
     "test:transport": "bash plugin/ralph-herdr/tests/transport.test.sh",
     "test:bdd": "NODE_OPTIONS=\"--import tsx\" cucumber-js --profile replay",
     "test:bdd:live": "bash -c '[ \"${RALPH_BDD_LIVE:-}\" = 1 ] || { echo \"test:bdd:live: refusing — set RALPH_BDD_LIVE=1 (live scenarios start a real herdr server in the named test session ralph-bdd)\" >&2; exit 1; }; NODE_OPTIONS=\"--import tsx\" exec cucumber-js --profile live'",

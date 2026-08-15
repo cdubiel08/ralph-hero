@@ -84,6 +84,21 @@ bash scripts/reconcile.sh --dry-run                            # same pass, ever
 bash scripts/reconcile.sh --adopt                              # sweep a ledger too old to prove it is yours
 ```
 
+Three more are **pane** actions — they act on the pane you have focused, not on
+the workspace, so invoke them from the pane you want to fork:
+
+```bash
+herdr plugin action invoke fork-right --plugin ralph-herdr   # a pane beside this one, holding its context
+herdr plugin action invoke fork-down  --plugin ralph-herdr   # …below it
+herdr plugin action invoke fork-tab   --plugin ralph-herdr   # …in a new tab
+```
+
+The new pane runs `claude --resume <this pane's session> --fork-session`, so it
+starts knowing what this session knows and writes its own transcript from
+there. It shares this pane's **worktree** — read, ask and think in it; do not
+drive it as a second writer on the same unit (README: *Forking a session*).
+By hand, on any pane: `RALPH_FORK_PANE=<pane-id> RALPH_FORK_PLACEMENT=right bash scripts/fork.sh`.
+
 Clicking a `github.com/<owner>/<repo>/issues|pull/N` URL in any pane routes
 through the plugin's link handler: in-scope with a live session → focus; no
 session → an offer to spawn one; out-of-scope → your browser.

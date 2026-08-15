@@ -75,6 +75,7 @@ herdr's shapes map onto ralph's without translation:
 | `attend` | none | no pane, no loop: finds the highest-priority `blocked` ralph agent (issue sessions — `gh-N` / w-lane — before every other lane; within a group, oldest blocked-since first from the ledger's state-record timestamps, agent-list order when the ledger can't say), `herdr agent focus` jumps you to it, and the notification **carries the question**: the pane's last non-empty tail lines (`agent read --source recent-unwrapped`), flattened to one ≤240-char line, with `#N` in the title when the name resolves to an issue. Nothing blocked → "herd calm". Safe to bind to a key |
 | `answer` | popup | walk Human Needed and answer ONE item, **comment-first**: `board list --state "Human Needed" --json` → pick → the issue's latest comments (bounded `gh issue view --comments` tail) → type the answer mail(1)-style (end with a lone `.` line) → `board answer N -m` posts the **Answer** issue comment BEFORE the Human Needed → In Progress move (board.ts owns that ordering — if the pane or herdr vanishes mid-answer, the decision is already on the record). Only then, if a live session owns N, a `herdr agent prompt … --wait` nudge — delivery reported honestly, never assumed. A board CLI predating the verb falls back to `gh issue comment` + `board move`, same ordering |
 | `link-open` | none* | the `[[link_handlers]]` target — click a `github.com/<owner>/<repo>/issues\|pull/N` URL in any pane: in-scope URL with a live session for N → `agent focus`; in-scope with no session → the `link-offer` popup (board state + `[s]` spawn via the same sanctioned `spawn_work_session` path / `[o]` browser / `[q]` close); out-of-scope or unresolvable scope → OS browser. The manifest pattern is generic on purpose; the script owns the scope judgment. *Also listed as a plain action; invoked without a clicked URL it says so in the plugin log and exits |
+| `fork-right` / `fork-down` / `fork-tab` | none* | **pane-context** actions (GH-1892): open a pane already holding the FOCUSED pane's session context. `herdr pane get` reports the live Claude session id, and the new pane starts `claude --resume <id> --fork-session` — a NEW session that begins knowing everything the source knew, rather than a second process appending to one transcript. Placement is the only difference between the three. The fork is named `d0-fork-<source slug>` — lane `d`, issue 0 — and carries `parent=<source>` / `depth=<source+1>` pane tokens. *No plugin pane: the fork's output IS a real pane. See [Forking a session](#forking-a-session-gh-1892) for what a fork is not |
 | `deliver-pass` | split (down) | `board deliver-queue` → empty means spawn nothing (the lane contract). Otherwise a new tab hosts agent `ralph-deliver` running `/ralph:deliver`; cockpit pane watches |
 | `tend-pass` | split (down) | same shape over `board tend-queue` → agent `ralph-tend` running `/ralph:tend` |
 | `doctor` | popup | runs `board doctor` once, holds the popup open until Enter |
@@ -460,6 +461,42 @@ the board can see it.
 claims can be read and cleaned. Nothing creates them any more: `claim join` was
 the last path that grew a holder set and was removed in GH-1869. A legacy
 shared claim is surfaced by doctor, not extended.
+
+## Forking a session (GH-1892)
+
+`fork-right` / `fork-down` / `fork-tab` open a pane that already holds a
+running session's context. The mechanism is two facts meeting: herdr reports a
+pane's live harness session (`pane get` → `agent_session.value`), and claude
+takes `--resume <id> --fork-session` — resume the transcript, mint a *new*
+session id for what happens next. So the fork starts knowing everything the
+source knew, and the two panes never write to one session file.
+
+It works on any claude pane, not only ones this plugin spawned; a
+hand-started `claude` simply gets its pane id in the fork's name instead of a
+slug. Other harnesses are refused by name — `--resume`/`--fork-session` is
+claude's grammar, and each harness needs its own.
+
+**A fork is not a second driver.** It shares the source pane's *worktree*, and
+that is the hazard [sibling fleets](#sibling-fleets-shared-claims--removed)
+were removed over: two harnesses in one checkout race on the index, the branch,
+and each other's uncommitted files. Nothing in the fork path prevents it —
+`--fork-session` means ralph's session→unit binding sees an unbound session,
+and the board claim holder (`user@host`) is identical for both panes, so
+`board claim` would succeed from the fork.
+
+What the fork path does instead is refuse to *look* like a worker. The name is
+`d0-fork-<slug>`: lane `d` (disposable) keeps it out of every `^w[0-9]+-` join,
+and issue `0` keeps it out of every issue join — refill's capacity count, the
+spawn path's ownership skip, the cockpit's per-issue agent overlay. It writes
+no ledger spawn record, because a C7 lineage record needs an issue number and
+the source's would assert a second owner; `reconcile` still discovers the live
+agent and files a pid-less `discover` record, which `claim-recover` reads as
+`unknown` and acts on never. So a fork is visible everywhere and authoritative
+nowhere.
+
+Use one to read, ask, and think from a running session's context — a second
+angle on the same problem, a question you don't want to spend the driver's
+context on. Enforcement of the rest is a board.ts question, tracked separately.
 
 ## The Herdr boundary (GH-1774)
 

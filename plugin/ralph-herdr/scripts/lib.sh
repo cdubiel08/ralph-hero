@@ -197,20 +197,31 @@ ralph_herdr_tab_create() {
   printf '%s' "$out"
 }
 
-# agent_start_when_ready NAME PANE — `agent start` needs the pane's shell to
+# agent_start_when_ready NAME PANE [HARNESS_ARG...] — `agent start` needs the pane's shell to
 # own the foreground at its prompt. A pane herdr just created is still sourcing
 # rc files for a beat (prompt frameworks, version managers), so herdr answers
 # agent_pane_busy — a race, not a refusal: observed live, the identical call
 # succeeds seconds later. Retry ONLY that code, and only on a pane we just
 # created, where it cannot mean "something else is working here". Every other
 # error (a taken agent name above all) is a real refusal and dies at once.
+# Trailing HARNESS_ARGs are passed to the harness itself, after `agent start`'s
+# own `--` separator (the fork path's `--resume <id> --fork-session`). They are
+# forwarded verbatim and never inspected: what claude accepts is claude's
+# contract, and a mirror of it here would be a second copy that can drift.
+#
 #   RALPH_HERDR_START_TRIES   attempts, 1s apart (default 15)
 agent_start_when_ready() {
   local name="$1" pane="$2" tries="${RALPH_HERDR_START_TRIES:-15}" n=0 out rc code
+  shift 2
   case "$tries" in '' | *[!0-9]* | 0) die "RALPH_HERDR_START_TRIES must be a positive integer (got '$tries')" ;; esac
+  # Frozen once, because the retry loop re-sends the identical argv and "$@"
+  # is what the loop body would otherwise have to preserve across the call.
+  local -a harness_args=()
+  [ "$#" -gt 0 ] && harness_args=(-- "$@")
   while :; do
     rc=0
-    out=$(ralph_herdr_call agent_started agent start "$name" --kind claude --pane "$pane") || rc=$?
+    out=$(ralph_herdr_call agent_started agent start "$name" --kind claude --pane "$pane" \
+      ${harness_args+"${harness_args[@]}"}) || rc=$?
     if [ "$rc" -eq 0 ]; then
       printf '%s\n' "$out"
       return 0
