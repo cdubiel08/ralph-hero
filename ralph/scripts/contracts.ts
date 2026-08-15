@@ -302,6 +302,69 @@ export function worktreeLeaf(branch: string): string {
   return branch.replace(/\//g, "-");
 }
 
+// ---------------------------------------------------------------------------
+// Peer addresses — the third namespace (GH-1918)
+//
+// A session carries two identities: the grammar-B agent name (`w1918-slug`)
+// and the peer address the messaging transport enumerates. The peer namespace
+// is HARNESS-owned — ralph cannot derive the whole address, because the trailing
+// discriminator is assigned at session start and is unpredictable. What ralph
+// owns is the ROOT: measured 2026-08-15, a peer address is the session's working
+// directory leaf plus `-<suffix>`, and for a ralph unit that leaf is exactly
+// worktreeLeaf(). So holding the issue number is enough to RECOGNISE the
+// address, never to construct it — enumeration stays mandatory, but it now has
+// a predicate instead of an eyeball.
+// ---------------------------------------------------------------------------
+
+/** The harness-assigned discriminator: hyphen-free by observation, and the
+ *  whole safety argument. Allowing a hyphen would let the prefix
+ *  `feat-1918-one` match `feat-1918-one-session-two-c6` — a different unit's
+ *  session, addressed silently. */
+export const PEER_SUFFIX_RE = /^[a-z0-9]+$/;
+
+/** The peer-namespace root for a branch. Same string as worktreeLeaf() today,
+ *  declared separately because it asserts something else: not "where the
+ *  worktree lives" but "what the transport roots the address on". If the
+ *  harness ever roots it elsewhere, this moves and worktreeLeaf() does not. */
+export function peerPrefix(branch: string): string {
+  return worktreeLeaf(branch);
+}
+
+export type PeerResolution =
+  | { kind: "resolved"; address: string }
+  | { kind: "none" }
+  | { kind: "ambiguous"; candidates: string[] };
+
+/** Resolve a peer address from the unit's prefixes and the enumerated live
+ *  peers. Takes prefixES because a unit can legitimately be running on either
+ *  branch grammar — "resume beats re-cut" means a session started on
+ *  `feature/GH-N` keeps leaf `GH-N` while this repo derives `feat-N-slug`, and
+ *  a single-prefix lookup would call that live session "not running".
+ *
+ *  Fails closed both ways: no match is `none` ("that session is not running"),
+ *  and more than one DISTINCT address is `ambiguous` with every candidate named
+ *  — two sessions in one worktree is a real situation, and guessing between
+ *  them addresses the wrong one. Repeats of one address are deduped first: a
+ *  caller that concatenated two enumerations has one session, not two. Never
+ *  returns a bare prefix — an address is only ever a name the transport
+ *  actually listed. */
+export function resolvePeerAddress(
+  prefixes: string | readonly string[],
+  candidates: readonly string[],
+): PeerResolution {
+  const roots = (typeof prefixes === "string" ? [prefixes] : prefixes).filter((p) => p !== "");
+  const hits = [
+    ...new Set(
+      candidates.filter((c) =>
+        roots.some((p) => c.startsWith(`${p}-`) && PEER_SUFFIX_RE.test(c.slice(p.length + 1))),
+      ),
+    ),
+  ];
+  if (hits.length === 0) return { kind: "none" };
+  if (hits.length > 1) return { kind: "ambiguous", candidates: hits };
+  return { kind: "resolved", address: hits[0] };
+}
+
 // --- durable refs: name#spawn_epoch ---------------------------------------
 
 export interface AgentRef {

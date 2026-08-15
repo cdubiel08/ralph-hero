@@ -46,7 +46,9 @@ import {
   LANE_CHARS,
   type LiveLintDeps,
   parseClaim,
+  peerPrefix,
   removeHolder,
+  resolvePeerAddress,
   runLints,
   TEND_CATEGORIES,
   validateContract,
@@ -6441,6 +6443,17 @@ reads
                               (apply label wins); --lane picks the agent lane.
                               The ONLY place a transport may read the
                               convention from — no second copy of the grammar
+  peer NNN [--candidates a,b] the unit's live PEER ADDRESS (GH-1918), resolved
+                              against candidate names on stdin (one per line)
+                              or --candidates. The peer namespace is harness-
+                              owned: the address is the unit's worktree leaf
+                              plus a suffix assigned at session start, so it
+                              can be RECOGNISED but never constructed —
+                              matched under BOTH branch grammars, so a session
+                              resuming a legacy branch is not called dead —
+                              enumerate first, then resolve here. Exit 1 (and
+                              a named reason) on no match or on two sessions
+                              in one worktree; never guesses between them
   tree NNN                    subtree with states
   claim show NNN [--json]     the claim as the board holds it: holders, shared
                               since, age vs TTL, raw text when garbled
@@ -6773,6 +6786,7 @@ export function run(argv: string[], ctx: Ctx): number {
         branch,
         worktree: worktreeLeaf(branch),
         agent: formatAgentName(lane, num, issue.title),
+        peerPrefix: peerPrefix(branch),
         legacyBranch: `feature/GH-${num}`,
       };
       if (flags.json) json(names);
@@ -6780,8 +6794,46 @@ export function run(argv: string[], ctx: Ctx): number {
         out(`branch   ${names.branch}`);
         out(`agent    ${names.agent}`);
         out(`worktree ${names.worktree}`);
+        out(`peer     ${names.peerPrefix}-<suffix> (harness-assigned; resolve with \`board peer ${num}\`)`);
       }
       return 0;
+    }
+
+    case "peer": {
+      // The peer namespace is harness-owned (GH-1918): ralph can recognise an
+      // address but never construct one, so the live names arrive on stdin —
+      // whatever the caller's transport enumerated — and this decides. Fails
+      // closed on both zero and >1: an address is a session, and the wrong
+      // session is worse than no session.
+      const num = requireNumber(positional[0]);
+      const issue = fetchIssue(ctx, num);
+      const kind = branchKindFor(issue.labels, {
+        applyLabel: ctx.cfg.apply.enabled ? ctx.cfg.apply.label : null,
+        labelsTruncated: issue.labelsTruncated,
+      });
+      // BOTH grammars, for the same reason the linkage query covers both: a
+      // session that resumed a legacy branch is running under leaf `GH-N`
+      // while this derives `feat-N-slug`, and asking about one prefix would
+      // report a live peer as not running.
+      const prefixes = [
+        peerPrefix(formatBranchName(kind, num, issue.title)),
+        peerPrefix(`feature/GH-${num}`),
+      ];
+      const prefix = prefixes[0];
+      const rawCandidates =
+        typeof flags.candidates === "string" ? flags.candidates.replace(/,/g, "\n") : readFileSync(0, "utf8");
+      const candidates = rawCandidates
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l !== "");
+      const res = resolvePeerAddress(prefixes, candidates);
+      if (flags.json) json({ number: num, peerPrefix: prefix, peerPrefixes: prefixes, candidates, ...res });
+      else if (res.kind === "resolved") out(res.address);
+      else if (res.kind === "none")
+        out(`no live peer matching ${prefixes.map((p) => `${p}-<suffix>`).join(" or ")} among ${candidates.length} candidate(s) — that session is not running`);
+      else
+        out(`ambiguous: ${res.candidates.join(", ")} are distinct live sessions for #${num} — name one explicitly`);
+      return res.kind === "resolved" ? 0 : 1;
     }
 
     case "list": {
