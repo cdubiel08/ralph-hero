@@ -19,7 +19,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2072,13 +2072,14 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     // Read the binding before the guard so the post-verify write can preserve
     // its `since` on a heartbeat re-claim of the same unit.
     const priorBinding = enteringInProgress ? readSessionBinding(ctx) : null;
+    let retirable: string[] = [];
     if (enteringInProgress) {
       guardSessionUnit(priorBinding, issue.number);
       // Second only to the rule-9 guard, and for the same reason: a PRE-check,
       // so a refused claim leaves #N exactly as it found it. Skipped when this
       // session already holds the binding — that is a heartbeat, and the peer
       // it would find could only be a stale record of itself.
-      if (!priorBinding) guardWorktreePeer(ctx, issue.number, !!opts.steal);
+      retirable = priorBinding ? [] : guardWorktreePeer(ctx, issue.number, !!opts.steal);
       const claim = issue.claim;
       if (claim && !isMember(claim, ctx.cfg.holder)) {
         const stale = claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin);
@@ -2282,7 +2283,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       // session in the same worktree (GH-1956). It has to run here rather than
       // in the pre-check: two unbound sessions both read an empty directory,
       // and each writes its own file, so no exclusive create settles it.
-      if (!priorBinding) settleWorktreeRace(ctx, issue.number);
+      if (!priorBinding) settleWorktreeRace(ctx, issue.number, retirable);
     }
     // Symmetric verify for the leaving side: the same re-read must show this
     // session OUT of the claim (gone, or co-holders only) — surviving
@@ -2536,10 +2537,17 @@ function readPeerBindings(ctx: Ctx): PeerBinding[] {
   return out;
 }
 
-function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
+/** Returns the peer records a successful --steal should retire. Deliberately
+ *  DELETES NOTHING: a steal that then loses the claim race, or dies in the
+ *  board write, would otherwise have erased the incumbent's record on its way
+ *  out — disarming the guard for the next session while the incumbent is still
+ *  driving the checkout. Retirement happens only once the claim is verifiably
+ *  ours (see settleWorktreeRace), which is the same check-early/act-late shape
+ *  the GH-1948 binding already uses. */
+function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): string[] {
   // No repo root is not a policy choice, same as no session id: not evaluated.
   const worktree = ctx.repoRoot;
-  if (!worktree) return;
+  if (!worktree) return [];
   // --steal already MEANS "the previous driver is gone, I am taking this over".
   // A session killed mid-unit and resumed in its own worktree is the common
   // honest case, and making it wait out a TTL to say something it can already
@@ -2553,21 +2561,15 @@ function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
   // claim instead of settling the question. Scoped to this unit and this
   // worktree: a record about other work was not what --steal spoke to.
   if (steal) {
-    for (const b of readPeerBindings(ctx)) {
-      if (b.issue !== number || b.worktree !== worktree) continue;
-      try {
-        unlinkSync(b.path);
-      } catch {
-        /* raced away — already the desired end state */
-      }
-    }
-    return;
+    return readPeerBindings(ctx)
+      .filter((b) => b.issue === number && b.worktree === worktree)
+      .map((b) => b.path);
   }
   const cutoff = ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
   const peer = readPeerBindings(ctx).find(
     (b) => b.issue === number && b.worktree === worktree && b.freshMs >= cutoff,
   );
-  if (!peer) return;
+  if (!peer) return [];
   throw peerRefusal(ctx, number, worktree, peer.since);
 }
 
@@ -2588,7 +2590,15 @@ function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): void {
  *  `user@host` holder and the same claim field — the board is already correct,
  *  and a loser that "restored" it would strip the winner's claim rather than
  *  its own. Nothing to undo is the honest reading, not a gap. */
-function settleWorktreeRace(ctx: Ctx, number: number): void {
+function settleWorktreeRace(ctx: Ctx, number: number, retire: string[]): void {
+  // Retire what --steal spoke to, now that the claim is verifiably ours.
+  for (const path of retire) {
+    try {
+      unlinkSync(path);
+    } catch {
+      /* raced away — already the desired end state */
+    }
+  }
   // Runs under --steal too, and needs no exemption to be safe: the pre-check
   // RETIRED every same-unit record the flag spoke to, so anything for this unit
   // still present here was written after that — a CONCURRENT stealer, which is
@@ -2669,7 +2679,25 @@ function writeSessionBinding(
   });
   try {
     mkdirSync(ctx.session!.dir, { recursive: true });
-    writeFileSync(path, record, { flag: "wx" });
+    // Write-then-LINK, not a plain exclusive write. `wx` is exclusive but not
+    // atomic: a concurrent reader can open the file between the create and the
+    // write and see zero or partial bytes, which readPeerBindings would score
+    // as "no peer" — two sessions then both settle to a win and both drive the
+    // checkout. link(2) is atomic AND fails EEXIST, so it keeps the
+    // compare-and-swap GH-1948 needs while making the record appear complete or
+    // not at all. The temp name carries the pid so two processes cannot collide
+    // on it.
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, record);
+    try {
+      linkSync(tmp, path);
+    } finally {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* best-effort */
+      }
+    }
     pruneSessionBindings(ctx);
     return null;
   } catch (e) {

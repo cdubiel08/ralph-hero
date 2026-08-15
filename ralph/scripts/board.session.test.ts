@@ -515,4 +515,44 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
     expect(msg).toContain("this worktree");
     expect(readSessionBinding(stealer)).toBeNull();
   });
+  it("a --steal that LOSES the claim race must not erase the incumbent's record", () => {
+    // Retiring in the pre-check would disarm the guard on the way out: the
+    // incumbent may still be driving the checkout, and the next session would
+    // then claim with no flag at all.
+    const source = makeCtx(gh, "me@test", "/repo", { session: { id: "source", dir } });
+    transition(source, fetchIssue(source, 1), "In Progress");
+    const before = readSessionBinding(source);
+
+    const stealer = makeCtx(gh, "me@test", "/repo", { session: { id: "stealer", dir } });
+    const realExec = gh.exec.bind(gh);
+    let wrote = false;
+    gh.exec = (argv, stdin) => {
+      const res = realExec(argv, stdin);
+      if (!wrote && gh.issues.get(1)!.claim?.startsWith("me@test")) {
+        gh.issues.get(1)!.claim = encodeClaim("rival@host", NOW); // rival's write lands last
+        wrote = true;
+      }
+      return res;
+    };
+    expect(refusalMessage(() =>
+      transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true }),
+    )).toContain("claimed by rival@host");
+    expect(readSessionBinding(source)).toEqual(before);
+  });
+
+  it("the binding lands atomically — no partial record, and no temp residue", () => {
+    // A reader that catches a half-written file scores it as NO PEER, and two
+    // sessions then both settle to a win. The record must appear whole or not
+    // at all, which is why the write goes through link(2) rather than an
+    // exclusive-but-non-atomic write.
+    const ctx = makeCtx(gh, "me@test", "/repo", { session: { id: "solo", dir } });
+    transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    const names = readdirSync(dir);
+    expect(names).toEqual([basename(sessionBindingPath(ctx)!)]);
+    expect(names.some((n) => n.endsWith(".tmp"))).toBe(false);
+    expect(JSON.parse(readFileSync(sessionBindingPath(ctx)!, "utf8"))).toMatchObject({
+      issue: 1,
+      worktree: "/repo",
+    });
+  });
 });
