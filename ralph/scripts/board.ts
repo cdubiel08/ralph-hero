@@ -4908,6 +4908,60 @@ export interface CreateOpts {
   priority?: string;
   state?: State;
   labels?: string[];
+  /** Skip the duplicate guard — the operator asserts a second issue with this
+   *  exact title, filed minutes after the first, is what they meant. */
+  allowDuplicate?: boolean;
+}
+
+/** How far back the create-dedupe guard looks. Observed duplicate gaps were
+ *  62/75/122 s (GH-1973); 300 covers a caller that retried after a long
+ *  timeout. 0 disables the guard entirely. */
+export function createDedupeWindowSec(): number {
+  const raw = process.env.RALPH_CREATE_DEDUPE_SEC;
+  if (raw === undefined || raw.trim() === "") return 300;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 300;
+}
+
+/** An OPEN issue in this repo with a byte-identical title, filed by US inside
+ *  the window. That conjunction is the whole safety argument: title alone
+ *  collides on legitimately-repeated intake, and a foreign author's issue is
+ *  never ours to adopt. Returns null on ANY doubt.
+ *
+ *  Restricted to OPEN deliberately — a twin closed within the window is a
+ *  deliberate act, and adopting it would hand `create` a terminal issue it is
+ *  forbidden to file into. */
+export function findRecentTwin(
+  ctx: Ctx,
+  title: string,
+  windowSec: number,
+): { id: string; number: number; url: string; createdAt: string } | null {
+  if (windowSec <= 0) return null;
+  const data = ghGraphQL<any>(
+    ctx,
+    `query($owner: String!, $repo: String!) {
+      viewer { login }
+      repository(owner: $owner, name: $repo) {
+        issues(first: 25, states: OPEN, orderBy: { field: CREATED_AT, direction: DESC }) {
+          nodes { id number url title createdAt author { login } }
+        }
+      }
+    }`,
+    { owner: ctx.cfg.owner, repo: ctx.cfg.repo },
+  );
+  const me = data?.viewer?.login;
+  const nodes: any[] = data?.repository?.issues?.nodes ?? [];
+  const cutoff = Date.now() - windowSec * 1000;
+  for (const n of nodes) {
+    const at = Date.parse(n?.createdAt ?? "");
+    // The list is CREATED_AT DESC, so the first out-of-window node ends the
+    // scan — no later node can be newer.
+    if (!Number.isFinite(at) || at < cutoff) break;
+    if (n.title !== title) continue;
+    if (!me || n?.author?.login !== me) continue;
+    return { id: n.id, number: n.number, url: n.url, createdAt: n.createdAt };
+  }
+  return null;
 }
 
 /** Validate a priority against the board's LIVE options rather than a hardcoded
@@ -5118,16 +5172,73 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
   const cache = mutationCache(ctx, needs, [], wantsPriority ? [PRIORITY_FIELD] : []);
   if (wantsPriority) assertPriorityOption(cache, opts.priority!);
   {
-    const created = ghGraphQL(
-      ctx,
-      `mutation($repositoryId: ID!, $title: String!, $body: String) {
-        createIssue(input: { repositoryId: $repositoryId, title: $title, body: $body }) {
-          issue { id number url }
+    // GH-1973: a lost RESPONSE and a failed WRITE are indistinguishable to the
+    // caller, and the safe-looking response — retry — is the one that files a
+    // duplicate. `create` owns that hazard rather than exporting it, the same
+    // way transition() read-backs its claim because GitHub has no CAS.
+    //
+    // Two guards, both keyed on the same predicate. The PRE search catches a
+    // caller that already retried (the observed incident: three duplicate
+    // pairs, 62-122 s apart). The POST read-back catches the lost response
+    // inside this very invocation, so a retry is never needed for it.
+    const window = opts.allowDuplicate ? 0 : createDedupeWindowSec();
+    const adopt = (
+      twin: { id: string; number: number; url: string },
+      how: string,
+    ): { id: string; number: number; url: string } => {
+      process.stderr.write(
+        `note: adopted existing #${twin.number} (${how}) instead of filing a duplicate — ` +
+          `pass --allow-duplicate if a second issue with this title is intended\n`,
+      );
+      return twin;
+    };
+    let issue: { id: string; number: number; url: string };
+    let pre: ReturnType<typeof findRecentTwin> = null;
+    try {
+      pre = findRecentTwin(ctx, opts.title, window);
+    } catch (e) {
+      // A failed guard may not block intake: the outage that loses a response
+      // is the same outage that breaks this read, and refusing here would make
+      // `create` unusable in exactly the conditions it exists to survive. The
+      // POST read-back still covers the lost-response case.
+      process.stderr.write(`warn: duplicate check failed, filing anyway: ${(e as Error).message}\n`);
+    }
+    if (pre) {
+      issue = adopt(pre, "same title, filed moments ago by you");
+    } else {
+      try {
+        const created = ghGraphQL(
+          ctx,
+          `mutation($repositoryId: ID!, $title: String!, $body: String) {
+            createIssue(input: { repositoryId: $repositoryId, title: $title, body: $body }) {
+              issue { id number url }
+            }
+          }`,
+          { repositoryId: cache.repositoryId, title: opts.title, body: opts.body ?? "" },
+        );
+        issue = created.createIssue.issue;
+      } catch (e) {
+        // The mutation may have landed. Ask the server which it was rather
+        // than reporting a failure the caller can only resolve by retrying.
+        let twin: ReturnType<typeof findRecentTwin> = null;
+        try {
+          // Always a real window here, even under --allow-duplicate or a
+          // configured 0: the only issue this can find is the one THIS
+          // invocation just wrote, and adopting it is never a dedupe decision.
+          twin = findRecentTwin(ctx, opts.title, window || 300);
+        } catch {
+          /* read-back unavailable — fall through to the honest error below */
         }
-      }`,
-      { repositoryId: cache.repositoryId, title: opts.title, body: opts.body ?? "" },
-    );
-    const issue = created.createIssue.issue;
+        if (!twin)
+          throw new Error(
+            `${(e as Error).message}\n` +
+              `The issue may or may not have been created — the mutation was sent and its ` +
+              `outcome could not be read back. Check \`gh issue list --search ${JSON.stringify(opts.title)}\` ` +
+              `before retrying; a blind retry is how duplicates get filed.`,
+          );
+        issue = adopt(twin, "mutation response was lost; the write had landed");
+      }
+    }
 
     // The issue already exists by the time the URL it is judged on exists, so
     // a refusal here has a durable half — say so, like answer() does, rather
@@ -6748,6 +6859,14 @@ reads
 mutations
   create --title T [--body B] [--parent NNN] [--estimate XS..XL] [--state S]
                               [--priority P0..P3] [--label L[,L2]] [--apply]
+                              [--allow-duplicate]
+                              Retry-safe: an OPEN issue with a byte-identical
+                              title, filed by you inside
+                              RALPH_CREATE_DEDUPE_SEC (300, 0 disables), is
+                              ADOPTED rather than duplicated — and a lost
+                              mutation response is read back rather than
+                              reported as a failure the caller can only fix by
+                              retrying. --allow-duplicate files anyway.
                               --apply files an APPLY unit under the configured
                               label: it closes only on deployed-and-verified
                               evidence, never on a merge.
@@ -6897,7 +7016,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state", "all-repos", "fresh", "clear"].includes(key)) {
+      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state", "all-repos", "fresh", "clear", "allow-duplicate"].includes(key)) {
         flags[key] = next;
         i++;
       } else {
@@ -7286,6 +7405,7 @@ export function run(argv: string[], ctx: Ctx): number {
         estimate: typeof flags.estimate === "string" ? flags.estimate : undefined,
         priority: typeof flags.priority === "string" ? flags.priority : undefined,
         state: state ?? undefined,
+        allowDuplicate: flags["allow-duplicate"] === true,
         // --apply resolves the CONFIGURED label rather than a literal, so a
         // repo that renamed it (apply.label) cannot end up with apply units
         // carrying a label none of its own gates recognise.
