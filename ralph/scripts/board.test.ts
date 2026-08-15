@@ -674,6 +674,36 @@ import {
 } from "./board.testkit.js";
 
 
+describe("fetchIssue parentage (GH-1791)", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("reports parentNumber under the same name and rule the queue shapes use", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", parent: 7 });
+    const issue = fetchIssue(ctx, 1);
+    expect(issue.parent?.number).toBe(7);
+    expect(issue.parentNumber).toBe(7);
+  });
+
+  it("a foreign parent is null in parentNumber while `parent` still shows the edge", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", parent: 7, parentRepo: "other/repo" });
+    const issue = fetchIssue(ctx, 1);
+    expect(issue.parent?.number).toBe(7);
+    expect(issue.parentNumber).toBeNull();
+  });
+
+  it("parentNumber is present-and-null for a root, never an absent key", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const issue = fetchIssue(ctx, 1);
+    expect(Object.keys(issue)).toContain("parentNumber");
+    expect(issue.parentNumber).toBeNull();
+  });
+});
+
 describe("transition engine", () => {
   let gh: FakeGh;
   let ctx: Ctx;
