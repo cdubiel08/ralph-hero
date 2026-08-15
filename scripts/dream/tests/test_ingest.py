@@ -831,3 +831,97 @@ class TestContentDedup:
         files = list(out_dir.glob("*.md"))
         # Two identical-content memories collapse to a single file.
         assert len(files) == 1
+
+
+# ---------------------------------------------------------------------------
+# GH-1518: cross-run content-hash dedup against the raw tier on disk
+# ---------------------------------------------------------------------------
+
+
+class TestCrossRunContentDedup:
+    def test_body_hash_round_trips_through_a_written_file(self, tmp_path: Path) -> None:
+        m = ingest.RawMemory("git-commit", "sha1", "2026-04-19T10:00:00+00:00", "body text")
+        path = ingest.write_memory(m, tmp_path)
+        body = ingest._memory_body(path.read_text(encoding="utf-8"))
+        # The on-disk hash must equal the in-memory one, or nothing matches.
+        assert ingest.content_sha256(body) == ingest.content_sha256(m.content)
+
+    def test_existing_hashes_indexes_the_tree(self, tmp_path: Path) -> None:
+        m = ingest.RawMemory("git-commit", "sha1", "2026-04-19T10:00:00+00:00", "body text")
+        path = ingest.write_memory(m, tmp_path)
+        index = ingest.existing_content_hashes(tmp_path)
+        assert index[ingest.content_sha256("body text")] == path
+
+    def test_missing_base_dir_is_empty_not_an_error(self, tmp_path: Path) -> None:
+        assert ingest.existing_content_hashes(tmp_path / "nope") == {}
+
+    def test_drops_a_duplicate_written_by_an_earlier_run(self, tmp_path: Path) -> None:
+        earlier = ingest.RawMemory(
+            "git-commit", "sha-a", "2026-04-19T10:00:00+00:00", "DUP BODY"
+        )
+        ingest.write_memory(earlier, tmp_path)
+        later = ingest.RawMemory(
+            "git-commit", "sha-b", "2026-04-20T10:00:00+00:00", "DUP BODY"
+        )
+        out = ingest.dedup_memories([later], base_dir=tmp_path)
+        assert out == []
+
+    def test_re_emitting_the_same_memory_still_writes_its_own_file(
+        self, tmp_path: Path
+    ) -> None:
+        m = ingest.RawMemory("git-commit", "sha-a", "2026-04-19T10:00:00+00:00", "BODY")
+        ingest.write_memory(m, tmp_path)
+        # Own-path exemption: (source, source_id) idempotency is unchanged by
+        # the cross-run check — the memory rewrites its own byte-identical file.
+        assert ingest.dedup_memories([m], base_dir=tmp_path) == [m]
+
+    def test_without_base_dir_only_intra_run_dedup_applies(self, tmp_path: Path) -> None:
+        earlier = ingest.RawMemory(
+            "git-commit", "sha-a", "2026-04-19T10:00:00+00:00", "DUP BODY"
+        )
+        ingest.write_memory(earlier, tmp_path)
+        later = ingest.RawMemory(
+            "git-commit", "sha-b", "2026-04-20T10:00:00+00:00", "DUP BODY"
+        )
+        assert ingest.dedup_memories([later]) == [later]
+
+    def test_main_dedupes_against_a_previous_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import yaml
+
+        base_dir = tmp_path / "dream"
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            yaml.safe_dump(
+                {
+                    "base_dir": str(base_dir),
+                    "gemma_lab_sessions": str(tmp_path / "sessions"),
+                    "git_repos": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(ingest, "ingest_git_commits", lambda *a, **k: [])
+        monkeypatch.setattr(ingest, "ingest_llm_cli_logs", lambda *a, **k: [])
+        monkeypatch.setattr(ingest, "ingest_claude_code_sessions", lambda *a, **k: [])
+
+        first = ingest.RawMemory(
+            "git-commit", "sha-a", "2026-04-19T10:00:00+00:00", "DUP BODY"
+        )
+        monkeypatch.setattr(ingest, "ingest_gemma_lab_sessions", lambda *a, **k: [first])
+        assert ingest.main(
+            ["--config", str(cfg_path), "--since", "2026-04-18", "--no-reindex"]
+        ) == 0
+
+        second = ingest.RawMemory(
+            "git-commit", "sha-b", "2026-04-20T10:00:00+00:00", "DUP BODY"
+        )
+        monkeypatch.setattr(ingest, "ingest_gemma_lab_sessions", lambda *a, **k: [second])
+        assert ingest.main(
+            ["--config", str(cfg_path), "--since", "2026-04-18", "--no-reindex"]
+        ) == 0
+
+        assert list(base_dir.rglob("*.md")) == [
+            base_dir / "2026" / "04" / "19" / f"git-commit-{ingest._memory_hash('git-commit', 'sha-a')}.md"
+        ]

@@ -38,6 +38,12 @@ transcript root via `claude_code_projects` in `config.yaml` (default
 The pipeline is three scripts:
 
 - `ingest.py` — pulls raw memories, writes markdown under `memory_tier=raw`.
+  Two independent idempotency mechanisms: the filename is a hash of
+  `(source, source_id)`, so re-emitting the same memory rewrites its own
+  byte-identical file; and a content hash drops memories whose body already
+  exists in the raw tier under a *different* source id — including one written
+  by an earlier run, read by walking the tree rather than from a sidecar index
+  that could drift from it.
 - `reflect.py` — clusters raw memories, writes `memory_tier=reflection` synthesis docs.
 - `logrotate.sh` — caps `/tmp/dream-loop.out` and `/tmp/dream-loop.err` at 1000 lines each.
 
@@ -74,7 +80,10 @@ uv run reflect.py --backfill --backfill-batch-days 60
 
 It is idempotent: every reflection records the raw `source_ids` it consumed,
 so a second `--backfill` run skips already-reflected raws and writes nothing.
-Requires the local model to be up (it calls the LLM per cluster).
+Requires the local model to be up (it calls the LLM per cluster). Unlike the
+nightly windowed pass it also picks up raws with no usable `date` — "everything
+unreflected" is backfill's whole contract, and they cluster into a trailing
+bucket of their own.
 
 ## Reflection tuning
 
@@ -192,7 +201,13 @@ It **never writes the wiki tier**. Candidates are staged for the human-gated
 `/ralph-knowledge:curate` skill (a sibling of curate's `_rejected.jsonl`),
 which reads them as pre-distilled suggestions and still runs each through its
 full gate. Idempotent: a candidate already staged (by normalized-axiom hash) is
-skipped, so weekly re-runs don't pile up. Fail-open: if the local model is
+skipped, so weekly re-runs don't pile up — as is one already **promoted** (an
+axiom matching a wiki entry's H1) or **rejected** (a claim in `_rejected.jsonl`),
+so a disposition the human already made is not put back in front of them. The
+same predicate prunes consumed entries out of `_candidates.jsonl` at the start
+of every run, keeping it a queue of pending candidates rather than a log. The
+match is lexical (whitespace + case), so a paraphrase of a rejected axiom can
+still be re-staged; curate's human gate remains the backstop. Fail-open: if the local model is
 offline it stages nothing. Knobs: `RALPH_META_WINDOW_DAYS` (7),
 `RALPH_META_MIN_REFLECTIONS` (5), `RALPH_META_MAX_CANDIDATES` (3). This is the
 hierarchy level that finally seeds the wiki tier and resolves the
