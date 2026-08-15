@@ -196,7 +196,20 @@ def synthesize_candidates(
     except (KeyError, IndexError, TypeError) as exc:
         log.warning("Unexpected meta-reflect payload shape: %s", exc)
         return []
-    return parse_candidates(content)
+    parsed = parse_candidates(content)
+    # The prompt ASKS for at most max_candidates; nothing makes the model
+    # comply. Enforce the cap here, at the single boundary every downstream
+    # path crosses, so the documented weekly upper bound on queue growth is a
+    # property of the code rather than of the model's cooperation (GH-1519).
+    # Dedup downstream only ever removes more, so growth <= cap still holds.
+    if len(parsed) > max_candidates:
+        log.warning(
+            "meta-reflect model returned %d candidates over the cap of %d; truncating",
+            len(parsed),
+            max_candidates,
+        )
+        parsed = parsed[:max_candidates]
+    return parsed
 
 
 # ---------------------------------------------------------------------------
