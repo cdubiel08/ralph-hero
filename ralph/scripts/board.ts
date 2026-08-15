@@ -2445,11 +2445,6 @@ export function claimLeave(
 // the tool over a fact it was never told.
 
 const SESSION_BINDING_TTL_DAYS = 7;
-/** How long a displacement section may plausibly take. It is milliseconds of
- *  local file work, so anything older is a crashed holder — and it must NOT
- *  inherit the claim TTL, which would wedge every steal in a worktree for two
- *  hours behind one dead process. */
-const DISPLACE_MUTEX_TTL_MS = 60_000;
 
 export interface SessionBinding {
   issue: number;
@@ -2632,16 +2627,22 @@ function takeWorktreeLock(ctx: Ctx, number: number, spoke: WorktreeLock | null):
     // a file older than that is a crashed holder, and inheriting the claim
     // TTL's window would wedge every steal in this worktree for two hours.
     const mu = `${path}.mu`;
-    const stale = readWorktreeLock(mu);
-    if (stale && stale.freshMs < ctx.now().getTime() - DISPLACE_MUTEX_TTL_MS) {
-      try {
-        unlinkSync(mu);
-      } catch {
-        /* raced away — already the desired end state */
-      }
-    }
+    // NO EXPIRY, and therefore no takeover. An expiring mutex needs fencing to
+    // be safe: recovering one by unlinking the PATH lets two recoverers each
+    // delete the other's fresh mutex and both enter — the very race the mutex
+    // exists to remove, reintroduced by its own escape hatch. A section that
+    // never expires needs no recovery, so this is a pure exclusive create.
+    //
+    // The price is honest and bounded: a displacer killed mid-section leaves a
+    // file that blocks further DISPLACEMENT in this one worktree — never a
+    // first claim, never another unit, never another worktree. It fails CLOSED,
+    // and the remedy is naming the file, which the refusal does.
     if (!publishWorktreeLock(ctx, mu, mine)) {
-      throw peerRefusal(ctx, number, ctx.repoRoot, readWorktreeLock(path)?.lock.since ?? "unknown");
+      throw new RefusalError(
+        `another session is taking over #${number} in this worktree (${ctx.repoRoot}) right now — re-run in a moment. ` +
+          `If this persists, a previous takeover was killed mid-way: delete ${mu} to clear it. ` +
+          `(That file is only ever held for the few milliseconds of a takeover, so it should never be seen twice.)`,
+      );
     }
     try {
       // RE-READ inside the section: whatever was validated before entering may

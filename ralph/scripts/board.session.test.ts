@@ -571,9 +571,13 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
     expect(JSON.parse(readFileSync(lock, "utf8")).session).toBe("source");
   });
 
-  it("a CRASHED displacer does not wedge the worktree — the mutex has its own short expiry", () => {
-    // Inheriting the claim TTL here would block every steal in this worktree
-    // for two hours behind one dead process.
+  it("a killed displacer fails CLOSED, and the refusal names the file that clears it", () => {
+    // The mutex deliberately has NO expiry: recovering one by unlinking the
+    // path lets two recoverers each delete the other's fresh mutex and both
+    // enter — the race the mutex exists to remove, reintroduced by its own
+    // escape hatch. The bounded price is this: displacement in ONE worktree
+    // blocks until a human deletes one named file. First claims, other units
+    // and other worktrees are untouched.
     const source = at("source");
     transition(source, fetchIssue(source, 1), "In Progress");
     const lock = worktreeLockPath(source, 1)!;
@@ -585,10 +589,16 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
     utimesSync(`${lock}.mu`, old, old);
 
     const stealer = at("stealer");
-    expect(() =>
+    const msg = refusalMessage(() =>
       transition(stealer, fetchIssue(stealer, 1), "In Progress", { steal: true }),
-    ).not.toThrow();
-    expect(JSON.parse(readFileSync(lock, "utf8")).session).toBe("stealer");
-    expect(readdirSync(dir).some((n) => n.endsWith(".mu"))).toBe(false);
+    );
+    expect(msg).toContain(`${lock}.mu`); // the remedy is named, not implied
+    expect(JSON.parse(readFileSync(lock, "utf8")).session).toBe("source");
+
+    // A different unit in the same worktree is unaffected — the block is scoped
+    // to the one lock, not to the checkout.
+    gh.issues.set(2, { number: 2, state: "Backlog" });
+    const other = at("other");
+    expect(() => transition(other, fetchIssue(other, 2), "In Progress")).not.toThrow();
   });
 });
