@@ -2210,7 +2210,15 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
           const now = fetchIssue(ctx, issue.number);
           moved = !(now.claim && isMember(now.claim, ctx.cfg.holder) && now.state === to);
           if (!moved) {
-            if (cache.fields[CLAIM_FIELD]) clearField(ctx, cache, itemId, CLAIM_FIELD);
+            // STATE FIRST, claim second. The unwind is two writes and either
+            // can fail; this order makes the survivable half survive. Clearing
+            // the claim first would leave a claimless item sitting In Progress
+            // — work nobody holds and no sweep repairs — and the refusal below
+            // would then say "still claimed", which would be false. This way a
+            // half-unwind leaves the item back at `from` still holding our
+            // claim: a stale claim, which is exactly what the message names
+            // and what release / TTL / doctor already handle.
+            //
             // A null `from` is an item that had no Workflow State to begin
             // with; there is nothing to restore, and dropping the claim is the
             // whole unwind. Inventing a state would be the worse repair.
@@ -2218,6 +2226,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
               setSingleSelect(ctx, cache, itemId, STATE_FIELD, from);
               syncStatus(ctx, cache, itemId, from);
             }
+            if (cache.fields[CLAIM_FIELD]) clearField(ctx, cache, itemId, CLAIM_FIELD);
             unwound = true;
           }
         } catch {

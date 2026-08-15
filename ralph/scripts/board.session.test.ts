@@ -230,4 +230,40 @@ describe("session→unit binding (GH-1948)", () => {
     expect(msg).toContain("NOT rolled back");
     expect(gh.issues.get(2)!.claim).toBe(rival); // the rival's claim survives
   });
+
+  it("a half-failed unwind leaves a STALE CLAIM, never claimless work in progress", () => {
+    // The unwind is two writes. If the claim were cleared first and the state
+    // restore then failed, the item would sit In Progress holding no claim —
+    // work nobody owns and no sweep repairs — while the refusal claimed the
+    // opposite. State first makes the survivable half the one that survives.
+    const opts = sessionOpts("sess-a");
+    const ctx = makeCtx(gh, "me@test", "/repo", opts);
+    const siblingRecord = JSON.stringify({ issue: 1, since: NOW.toISOString(), holder: "me@test" });
+    const issue2 = fetchIssue(ctx, 2);
+    const realExec = gh.exec.bind(gh);
+    let mutated = false;
+    let bound = false;
+    gh.exec = (argv, stdin) => {
+      const body = String(stdin ?? "");
+      const isMutation = body.includes("mutation");
+      // Fail the CLAIM-clearing half of the unwind only.
+      if (bound && isMutation && body.includes("clearProjectV2ItemFieldValue")) {
+        throw new Error("simulated field-clear failure");
+      }
+      const res = realExec(argv, stdin);
+      if (isMutation) mutated = true;
+      else if (mutated && !bound) {
+        writeFileSync(sessionBindingPath(ctx)!, siblingRecord);
+        bound = true;
+      }
+      return res;
+    };
+
+    const msg = refusalMessage(() => transition(ctx, issue2, "In Progress"));
+    expect(msg).toContain("FAILED");
+    // The state came back; the claim did not clear — a stale claim, which is
+    // precisely what the message names and what release/TTL/doctor handle.
+    expect(gh.issues.get(2)!.state).toBe("Backlog");
+    expect(gh.issues.get(2)!.claim).toBe(encodeClaim("me@test", NOW));
+  });
 });
