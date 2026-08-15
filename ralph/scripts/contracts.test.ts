@@ -401,6 +401,24 @@ describe("naming: branches (GH-1807)", () => {
     });
   });
 
+  it("resolvePeerAddress covers both branch grammars, so a resumed legacy session is not called dead", () => {
+    // resume-beats-re-cut: the session runs in the GH-N worktree while this
+    // repo derives feat-N-slug. One prefix would report it as not running.
+    const both = ["feat-1918-one-session-two", "GH-1918"];
+    expect(resolvePeerAddress(both, ["GH-1918-3b"])).toEqual({ kind: "resolved", address: "GH-1918-3b" });
+    // A session under EACH grammar is two real sessions, and still refuses.
+    expect(resolvePeerAddress(both, ["GH-1918-3b", "feat-1918-one-session-two-c6"]).kind).toBe("ambiguous");
+  });
+
+  it("resolvePeerAddress dedupes: a repeated address is one session, not an ambiguity", () => {
+    const prefix = "feat-1918-one-session-two";
+    // A caller that concatenated two enumerations has one peer listed twice.
+    expect(resolvePeerAddress(prefix, [`${prefix}-c6`, `${prefix}-c6`])).toEqual({
+      kind: "resolved",
+      address: `${prefix}-c6`,
+    });
+  });
+
   it("resolvePeerAddress will not let a shorter unit's prefix claim a longer unit's session", () => {
     // The whole safety argument for the hyphen-free suffix: a plain
     // startsWith would address feat-1918-one-session-two's session from

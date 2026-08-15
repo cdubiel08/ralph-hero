@@ -4194,6 +4194,11 @@ describe("board name: the one place a transport reads the convention (GH-1807)",
     expect(run(["peer", "1918", "--candidates", "ralph-hero-23", "--json"], ctx)).toBe(1);
     expect(run(["peer", "1918", "--candidates", `${prefix}-c6,${prefix}-3b`, "--json"], ctx)).toBe(1);
     expect(run(["peer", "1918", "--candidates", `${prefix}-c6`, "--json"], ctx)).toBe(0);
+
+    // A session that resumed the legacy branch is running under leaf GH-1918.
+    const legacy = JSON.parse(say(["peer", "1918", "--candidates", "GH-1918-3b", "--json"], ctx));
+    expect(legacy).toMatchObject({ kind: "resolved", address: "GH-1918-3b" });
+    expect(legacy.peerPrefixes).toEqual([prefix, "GH-1918"]);
   });
 
   it("--lane picks the agent lane and refuses one outside the closed registry", () => {

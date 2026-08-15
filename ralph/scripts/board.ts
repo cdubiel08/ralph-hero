@@ -6223,6 +6223,8 @@ reads
                               owned: the address is the unit's worktree leaf
                               plus a suffix assigned at session start, so it
                               can be RECOGNISED but never constructed —
+                              matched under BOTH branch grammars, so a session
+                              resuming a legacy branch is not called dead —
                               enumerate first, then resolve here. Exit 1 (and
                               a named reason) on no match or on two sessions
                               in one worktree; never guesses between them
@@ -6578,20 +6580,28 @@ export function run(argv: string[], ctx: Ctx): number {
         applyLabel: ctx.cfg.apply.enabled ? ctx.cfg.apply.label : null,
         labelsTruncated: issue.labelsTruncated,
       });
-      const prefix = peerPrefix(formatBranchName(kind, num, issue.title));
+      // BOTH grammars, for the same reason the linkage query covers both: a
+      // session that resumed a legacy branch is running under leaf `GH-N`
+      // while this derives `feat-N-slug`, and asking about one prefix would
+      // report a live peer as not running.
+      const prefixes = [
+        peerPrefix(formatBranchName(kind, num, issue.title)),
+        peerPrefix(`feature/GH-${num}`),
+      ];
+      const prefix = prefixes[0];
       const rawCandidates =
         typeof flags.candidates === "string" ? flags.candidates.replace(/,/g, "\n") : readFileSync(0, "utf8");
       const candidates = rawCandidates
         .split("\n")
         .map((l) => l.trim())
         .filter((l) => l !== "");
-      const res = resolvePeerAddress(prefix, candidates);
-      if (flags.json) json({ number: num, peerPrefix: prefix, candidates, ...res });
+      const res = resolvePeerAddress(prefixes, candidates);
+      if (flags.json) json({ number: num, peerPrefix: prefix, peerPrefixes: prefixes, candidates, ...res });
       else if (res.kind === "resolved") out(res.address);
       else if (res.kind === "none")
-        out(`no live peer matching ${prefix}-<suffix> among ${candidates.length} candidate(s) — that session is not running`);
+        out(`no live peer matching ${prefixes.map((p) => `${p}-<suffix>`).join(" or ")} among ${candidates.length} candidate(s) — that session is not running`);
       else
-        out(`ambiguous: ${res.candidates.join(", ")} all match ${prefix}-<suffix> — name one explicitly`);
+        out(`ambiguous: ${res.candidates.join(", ")} are distinct live sessions for #${num} — name one explicitly`);
       return res.kind === "resolved" ? 0 : 1;
     }
 

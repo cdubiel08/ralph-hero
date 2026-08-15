@@ -335,17 +335,31 @@ export type PeerResolution =
   | { kind: "none" }
   | { kind: "ambiguous"; candidates: string[] };
 
-/** Resolve a peer address from the prefix and the enumerated live peers.
+/** Resolve a peer address from the unit's prefixes and the enumerated live
+ *  peers. Takes prefixES because a unit can legitimately be running on either
+ *  branch grammar — "resume beats re-cut" means a session started on
+ *  `feature/GH-N` keeps leaf `GH-N` while this repo derives `feat-N-slug`, and
+ *  a single-prefix lookup would call that live session "not running".
+ *
  *  Fails closed both ways: no match is `none` ("that session is not running"),
- *  and more than one is `ambiguous` with every candidate named — two sessions
- *  in one worktree is a real situation, and guessing between them addresses the
- *  wrong one. Never returns a bare prefix: an address is only ever a name the
- *  transport actually listed. */
-export function resolvePeerAddress(prefix: string, candidates: readonly string[]): PeerResolution {
-  const hits = candidates.filter((c) => {
-    if (!c.startsWith(`${prefix}-`)) return false;
-    return PEER_SUFFIX_RE.test(c.slice(prefix.length + 1));
-  });
+ *  and more than one DISTINCT address is `ambiguous` with every candidate named
+ *  — two sessions in one worktree is a real situation, and guessing between
+ *  them addresses the wrong one. Repeats of one address are deduped first: a
+ *  caller that concatenated two enumerations has one session, not two. Never
+ *  returns a bare prefix — an address is only ever a name the transport
+ *  actually listed. */
+export function resolvePeerAddress(
+  prefixes: string | readonly string[],
+  candidates: readonly string[],
+): PeerResolution {
+  const roots = (typeof prefixes === "string" ? [prefixes] : prefixes).filter((p) => p !== "");
+  const hits = [
+    ...new Set(
+      candidates.filter((c) =>
+        roots.some((p) => c.startsWith(`${p}-`) && PEER_SUFFIX_RE.test(c.slice(p.length + 1))),
+      ),
+    ),
+  ];
   if (hits.length === 0) return { kind: "none" };
   if (hits.length > 1) return { kind: "ambiguous", candidates: hits };
   return { kind: "resolved", address: hits[0] };
