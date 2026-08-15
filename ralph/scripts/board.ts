@@ -19,7 +19,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2072,8 +2072,14 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     // Read the binding before the guard so the post-verify write can preserve
     // its `since` on a heartbeat re-claim of the same unit.
     const priorBinding = enteringInProgress ? readSessionBinding(ctx) : null;
+    let spokeTo: WorktreeLock | null = null;
     if (enteringInProgress) {
       guardSessionUnit(priorBinding, issue.number);
+      // Second only to the rule-9 guard, and for the same reason: a PRE-check,
+      // so a refused claim leaves #N exactly as it found it. Skipped when this
+      // session already holds the binding — that is a heartbeat, and the peer
+      // it would find could only be a stale record of itself.
+      if (!priorBinding) spokeTo = guardWorktreePeer(ctx, issue.number, !!opts.steal);
       const claim = issue.claim;
       if (claim && !isMember(claim, ctx.cfg.holder)) {
         const stale = claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin);
@@ -2273,6 +2279,11 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
             ` Drive #${issue.number} from a new session.`,
         );
       }
+      // Now that this session's record exists, settle any race with a DISTINCT
+      // session in the same worktree (GH-1956). It has to run here rather than
+      // in the pre-check: two unbound sessions both read an empty directory,
+      // and each writes its own file, so no exclusive create settles it.
+      takeWorktreeLock(ctx, issue.number, spokeTo);
     }
     // Symmetric verify for the leaving side: the same re-read must show this
     // session OUT of the claim (gone, or co-holders only) — surviving
@@ -2439,6 +2450,7 @@ export interface SessionBinding {
   issue: number;
   since: string; // when this session FIRST claimed it (a heartbeat re-claim keeps it)
   holder: string;
+  worktree: string; // the checkout the claim was driven from (GH-1956)
 }
 
 export function sessionBindingPath(ctx: Ctx): string | null {
@@ -2463,6 +2475,230 @@ export function readSessionBinding(ctx: Ctx): SessionBinding | null {
   } catch {
     return null; // absent or garbled: not evaluated (see above)
   }
+}
+
+// ── The second writer in one worktree (GH-1956) ─────────────────────────────
+// The binding above is keyed on the SESSION, so it is blind to the case that
+// motivated this: a fork pane (`claude --resume <id> --fork-session`) is a NEW
+// session id in the SOURCE'S WORKTREE. It reads as unbound, and the board's
+// holder is `user@host` for both panes, so nothing in either guard sees two
+// harnesses about to race on one index, one branch, and one set of uncommitted
+// files — the hazard GH-1774 removed sibling fleets over.
+//
+// The rule is keyed on the WORKTREE, not on fork-ness. A fork is merely the
+// cheapest way to reach this state; a second `claude` started by hand in the
+// same checkout is the identical hazard and an env marker set by fork.sh
+// would miss it (and would vanish on a `/clear` besides). The worktree is the
+// thing actually being shared, so it is the thing the rule names.
+//
+// SAME UNIT ONLY. A second session in one checkout claiming a DIFFERENT unit
+// is also wrong — branch mixing — but that shape has a legitimate reading
+// (a worktree reused after its first unit shipped) and refusing it would cost
+// false refusals to catch a case nobody has hit. This refuses exactly the
+// reported one.
+//
+// IS A FORK EVER LEGITIMATELY THE DRIVER? Yes — when the source is gone and
+// the fork is its continuation. That question already has an answer on this
+// board, and it is the claim TTL: a claim nobody refreshes goes stale and
+// `--steal` is honest after it. So this rule expires on the SAME clock. A peer
+// binding counts only while it is fresh within `RALPH_LOCK_TTL_MIN`, and a
+// heartbeat re-claim touches it (see writeSessionBinding), so a live source
+// stays fresh and a dead one frees its unit locally at the exact moment it
+// frees it on the board. One clock, not two — a second, longer local clock
+// would mean a fork could steal on the board and still be refused here.// THE MECHANISM IS A LOCK, NOT A RANKING. An earlier draft compared peer
+// records and let the lower-ranked one win, which is not a compare-and-swap:
+// two sessions can each publish after the other has already scanned, and both
+// then read a directory that justifies their own success. What settles it is a
+// single file whose NAME is derived from (worktree, unit) and whose creation is
+// exclusive — one path, so exactly one creator, decided by the filesystem
+// rather than by two processes agreeing about an order they cannot both see.
+//
+// Unlike the board claim — where Projects V2 offers no CAS, so races are made
+// visible and refused rather than impossible — a local file can actually win
+// this, the same asymmetry GH-1948's binding already relies on.
+
+/** The lock's identity: (worktree, unit). Digested, because a worktree path is
+ *  not a safe filename and is unbounded; `.json` so the 7-day pruner reaps it
+ *  along with everything else in this directory. */
+export function worktreeLockPath(ctx: Ctx, number: number): string | null {
+  // No session id is not a policy choice, same as everywhere in this block:
+  // not evaluated. A lock with no owner name could never be read back.
+  if (!ctx.session?.id || !ctx.repoRoot) return null;
+  const digest = createHash("sha256")
+    .update(`${ctx.repoRoot}\u0000${number}`)
+    .digest("hex")
+    .slice(0, 16);
+  return join(ctx.session.dir, `wt-${number}-${digest}.json`);
+}
+
+interface WorktreeLock {
+  session: string;
+  issue: number;
+  worktree: string;
+  since: string;
+}
+
+function readWorktreeLock(path: string): { lock: WorktreeLock; freshMs: number } | null {
+  try {
+    const lock = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof lock?.session !== "string") return null;
+    return { lock: lock as WorktreeLock, freshMs: statSync(path).mtimeMs };
+  } catch {
+    return null; // absent, or a record we cannot read — asserts nothing
+  }
+}
+
+/** Publish atomically AND exclusively: write a complete temp file, then link it
+ *  into place. link(2) fails EEXIST, which is the compare-and-swap, and is
+ *  atomic, so a concurrent reader never sees a half-written record and scores
+ *  it as "no owner". A plain `wx` write gives the first property but not the
+ *  second. */
+function publishWorktreeLock(ctx: Ctx, path: string, lock: WorktreeLock): boolean {
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    mkdirSync(ctx.session!.dir, { recursive: true });
+    writeFileSync(tmp, JSON.stringify(lock));
+    linkSync(tmp, path);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+/** The read-only half, run BEFORE any mutation so the common refusal costs
+ *  nothing and leaves the board untouched. It cannot be the whole guard — the
+ *  owner may appear between this and the write — which is what takeWorktreeLock
+ *  is for. */
+function guardWorktreePeer(ctx: Ctx, number: number, steal: boolean): WorktreeLock | null {
+  const path = worktreeLockPath(ctx, number);
+  if (!path) return null; // no session dir or no repo root: not evaluated
+  const held = readWorktreeLock(path);
+  if (!held) return null;
+  if (held.lock.session === ctx.session!.id) return null; // our own earlier claim
+  // --steal is the operator asserting THIS driver is gone. It stays a
+  // deliberate flag, not a default — the whole difference from having no guard.
+  // The lock seen here is returned, and is the ONLY one the steal may displace.
+  if (steal) return held.lock;
+  if (held.freshMs < ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000) return null; // aged out
+  throw peerRefusal(ctx, number, ctx.repoRoot, held.lock.since);
+}
+
+/** Take the lock, once the claim is verifiably ours — check early, act late.
+ *  Acting in the pre-check would let a steal that then LOSES the claim race
+ *  erase the incumbent's lock on its way out, disarming the guard while the
+ *  incumbent is still driving.
+ *
+ *  Every path ends in a READ-BACK: whatever the create did, the lock is re-read
+ *  and its session id must be ours. That is what makes two concurrent stealers
+ *  settle — both may unlink and both may create, but the file that survives
+ *  names exactly one session, and everyone else refuses.
+ *
+ *  A loser does NOT unwind the board claim, unlike the GH-1948 sibling unwind:
+ *  there the refused session's claim would have been left driving nothing,
+ *  whereas here the winner is a live session holding the same unit under the
+ *  same `user@host` holder and the same claim field. The board is already
+ *  correct, and a "restore" would strip the winner's claim rather than its own. */
+function takeWorktreeLock(ctx: Ctx, number: number, spoke: WorktreeLock | null): void {
+  const path = worktreeLockPath(ctx, number);
+  if (!path) return;
+  const mine: WorktreeLock = {
+    session: ctx.session!.id!,
+    issue: number,
+    worktree: ctx.repoRoot,
+    since: ctx.now().toISOString(),
+  };
+  if (!publishWorktreeLock(ctx, path, mine)) {
+    // Occupied, so this is a DISPLACEMENT, and displacement is validate-then-
+    // replace: two steps, which POSIX gives no way to fuse (there is no
+    // conditional unlink). Two sessions can therefore each validate the same
+    // incumbent, and the second can unlink the first's replacement after it
+    // landed — both then pass their own read-back and both drive the checkout.
+    //
+    // So the section is serialized by a second, short-lived exclusive create.
+    // Only one displacer runs at a time; anyone who cannot enter refuses rather
+    // than proceeding on a validation that may already be stale. The mutex has
+    // its own SHORT expiry (not the claim TTL): the section is milliseconds, so
+    // a file older than that is a crashed holder, and inheriting the claim
+    // TTL's window would wedge every steal in this worktree for two hours.
+    const mu = `${path}.mu`;
+    // NO EXPIRY, and therefore no takeover. An expiring mutex needs fencing to
+    // be safe: recovering one by unlinking the PATH lets two recoverers each
+    // delete the other's fresh mutex and both enter — the very race the mutex
+    // exists to remove, reintroduced by its own escape hatch. A section that
+    // never expires needs no recovery, so this is a pure exclusive create.
+    //
+    // The price is honest and bounded: a displacer killed mid-section leaves a
+    // file that blocks further DISPLACEMENT in this one worktree — never a
+    // first claim, never another unit, never another worktree. It fails CLOSED,
+    // and the remedy is naming the file, which the refusal does.
+    if (!publishWorktreeLock(ctx, mu, mine)) {
+      throw new RefusalError(
+        `another session is taking over #${number} in this worktree (${ctx.repoRoot}) right now — re-run in a moment. ` +
+          `If this persists, a previous takeover was killed mid-way: delete ${mu} to clear it. ` +
+          `(That file is only ever held for the few milliseconds of a takeover, so it should never be seen twice.)`,
+      );
+    }
+    try {
+      // RE-READ inside the section: whatever was validated before entering may
+      // have been replaced by the displacer that just left it.
+      const held = readWorktreeLock(path);
+      const ours = held?.lock.session === ctx.session!.id;
+      const aged = !held || held.freshMs < ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
+      // A steal displaces ONLY the lock the pre-check actually saw. A different
+      // one now present belongs to a CONCURRENT stealer — a session --steal
+      // never spoke to, since it did not exist when the operator made the
+      // assertion.
+      const spokeTo =
+        !!spoke && !!held && held.lock.session === spoke.session && held.lock.since === spoke.since;
+      if (ours) {
+        try {
+          const t = ctx.now();
+          utimesSync(path, t, t); // heartbeat: keep a long-lived session fresh
+        } catch {
+          /* best-effort */
+        }
+        return;
+      }
+      if (spokeTo || aged) {
+        try {
+          unlinkSync(path);
+        } catch {
+          /* raced away — already the desired end state */
+        }
+        publishWorktreeLock(ctx, path, mine);
+      }
+      const inside = readWorktreeLock(path);
+      if (inside && inside.lock.session === ctx.session!.id) return;
+      throw peerRefusal(ctx, number, ctx.repoRoot, inside?.lock.since ?? "unknown");
+    } finally {
+      try {
+        unlinkSync(mu);
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+  const won = readWorktreeLock(path);
+  if (won && won.lock.session === ctx.session!.id) return;
+  throw peerRefusal(ctx, number, ctx.repoRoot, won?.lock.since ?? "unknown");
+}
+
+function peerRefusal(ctx: Ctx, number: number, worktree: string, since: string): RefusalError {
+  return new RefusalError(
+    `another live session in this worktree (${worktree}) is already driving #${number} (since ${since}). ` +
+      `Two harnesses in one checkout race on the index, the branch and each other's uncommitted files, ` +
+      `and the board claim cannot see it: the holder is \`${ctx.cfg.holder}\` for both. ` +
+      `If this pane is a fork, use it to read and think from that session's context, not to drive its unit. ` +
+      `If that session is gone — killed, crashed — say so with \`board claim ${number} --steal\`; ` +
+      `otherwise its record ages out after ${ctx.cfg.lockTtlMin} min on the same clock as the board claim, ` +
+      `or take a different unit in its own worktree (\`board next\`, then \`board name NNN\`).`,
+  );
 }
 
 /** Refuse a SECOND, distinct unit driven from one session. Re-claiming the
@@ -2496,10 +2732,33 @@ function writeSessionBinding(
   const path = sessionBindingPath(ctx);
   if (!path) return null;
   const since = prior?.issue === number ? prior.since : ctx.now().toISOString();
-  const record = JSON.stringify({ issue: number, since, holder: ctx.cfg.holder });
+  const record = JSON.stringify({
+    issue: number,
+    since,
+    holder: ctx.cfg.holder,
+    worktree: ctx.repoRoot,
+  });
   try {
     mkdirSync(ctx.session!.dir, { recursive: true });
-    writeFileSync(path, record, { flag: "wx" });
+    // Write-then-LINK, not a plain exclusive write. `wx` is exclusive but not
+    // atomic: a concurrent reader can open the file between the create and the
+    // write and see zero or partial bytes, which readPeerBindings would score
+    // as "no peer" — two sessions then both settle to a win and both drive the
+    // checkout. link(2) is atomic AND fails EEXIST, so it keeps the
+    // compare-and-swap GH-1948 needs while making the record appear complete or
+    // not at all. The temp name carries the pid so two processes cannot collide
+    // on it.
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, record);
+    try {
+      linkSync(tmp, path);
+    } finally {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* best-effort */
+      }
+    }
     pruneSessionBindings(ctx);
     return null;
   } catch (e) {

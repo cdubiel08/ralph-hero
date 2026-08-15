@@ -25,11 +25,17 @@
 #   (`user@host`) is identical for both panes, so `board claim` would succeed
 #   from the fork.
 #
-#   The mitigation is honesty, not enforcement: the fork is named in lane `d`
-#   (disposable), carries `parent=<source>` as a pane token, and the pane's
-#   first line says what it is. Treat a fork as a place to read, ask, and
-#   think from a running session's context — not as a second driver of its
-#   unit. Enforcement is a board.ts question (GH-1956).
+#   The naming half is honesty: the fork is in lane `d` (disposable), carries
+#   `parent=<source>` as a pane token, and the pane's first line says what it
+#   is. The ENFORCING half now lives in board.ts (GH-1956), and deliberately
+#   not here — it is keyed on the WORKTREE, not on fork-ness, so it also
+#   catches a second `claude` started by hand in this checkout, and it cannot
+#   be lost to a `/clear` the way an env marker set here would be.
+#
+#   Net: `board claim <the source's unit>` from a fork is REFUSED while the
+#   source is live. Treat a fork as a place to read, ask, and think from a
+#   running session's context. If the source is actually gone, `--steal` says
+#   so; otherwise the record ages out on the claim TTL.
 #
 # WHY THE NAME CARRIES ISSUE 0
 #   Every issue join in this plugin keys on the issue in an agent's name:

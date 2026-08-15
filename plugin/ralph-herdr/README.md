@@ -479,10 +479,11 @@ claude's grammar, and each harness needs its own.
 **A fork is not a second driver.** It shares the source pane's *worktree*, and
 that is the hazard [sibling fleets](#sibling-fleets-shared-claims--removed)
 were removed over: two harnesses in one checkout race on the index, the branch,
-and each other's uncommitted files. Nothing in the fork path prevents it —
-`--fork-session` means ralph's session→unit binding sees an unbound session,
-and the board claim holder (`user@host`) is identical for both panes, so
-`board claim` would succeed from the fork.
+and each other's uncommitted files. Neither of the two guards that look like
+they cover it does: `--fork-session` mints a new session id, so ralph's
+session→unit binding sees an *unbound* session, and the board claim holder
+(`user@host`) is identical for both panes, so the claim reads as the same
+holder rather than a foreign one.
 
 What the fork path does instead is refuse to *look* like a worker. The name is
 `d0-fork-<slug>`: lane `d` (disposable) keeps it out of every `^w[0-9]+-` join,
@@ -494,9 +495,25 @@ agent and files a pid-less `discover` record, which `claim-recover` reads as
 `unknown` and acts on never. So a fork is visible everywhere and authoritative
 nowhere.
 
-Use one to read, ask, and think from a running session's context — a second
+**`board claim` from a fork is now refused** (GH-1956), and the rule lives in
+`board.ts` rather than here. It is keyed on the **worktree**, not on
+fork-ness: a fork is merely the cheapest way to reach two harnesses in one
+checkout, and a second `claude` started by hand there is the same hazard — an
+env marker set by `fork.sh` would miss that one and would vanish on a
+`/clear` besides. So a claim is refused while another session's binding names
+the same unit *and* the same worktree and is still fresh.
+
+Fresh means within the claim TTL, on purpose: "the source is gone and this
+fork is its continuation" already has exactly one definition on this board,
+and it is the TTL that makes a claim stealable. One clock, not two — a longer
+local clock would mean a fork could `--steal` on the board and still be
+refused locally. `board claim NNN --steal` is the explicit form of the same
+assertion and passes immediately, which is what a crashed session resumed in
+its own worktree should use.
+
+Use a fork to read, ask, and think from a running session's context — a second
 angle on the same problem, a question you don't want to spend the driver's
-context on. Enforcement of the rest is a board.ts question, tracked separately.
+context on.
 
 ## The Herdr boundary (GH-1774)
 
