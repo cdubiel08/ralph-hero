@@ -104,15 +104,19 @@ write_stub() {
     >"$D/threads.json"
 }
 
+# stderr is captured, never discarded. A jq COMPILE error (exit 3) reads as
+# "script exited nonzero" and says nothing else — which is exactly how an
+# unparenthesised object value shipped green here and red on CI's older jq.
+ERR="$TMP_ROOT/stderr"
 run() { # run [extra args...]
   PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY" \
-    RALPH_REVIEW_ROUND_CAP="" "$SCRIPT" "$PR" "$@" 2>/dev/null
+    RALPH_REVIEW_ROUND_CAP="" "$SCRIPT" "$PR" "$@" 2>"$ERR"
 }
 
 expect_json() { # expect_json <name> <jq predicate> [extra script args...]
   local name="$1" pred="$2"; shift 2
-  local out
-  if ! out=$(run "$@"); then fail "$name (script exited nonzero)"; return; fi
+  local out rc
+  out=$(run "$@") || { rc=$?; fail "$name (script exited $rc: $(tr '\n' ' ' <"$ERR" | cut -c1-200))"; return; }
   if jq -e "$pred" >/dev/null 2>&1 <<<"$out"; then pass "$name"
   else fail "$name — got: $out"; fi
 }
@@ -219,13 +223,13 @@ write_stub \
       '[$v1,$v2,$g1,$g2]')" \
   "$(jq -nc --argjson f1 "$(finding 2026-08-01T10:20:00Z greptile-apps "$greptile_p0")" \
       --argjson f2 "$(finding 2026-08-01T11:20:00Z greptile-apps "$greptile_p0")" '[$f1,$f2]')"
-out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$GPOLICY" "$SCRIPT" "$PR" 2>/dev/null)
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$GPOLICY" "$SCRIPT" "$PR" 2>"$ERR") || out="exit $? / $(tr '\n' ' ' <"$ERR")"
 if jq -e '.series == [1,1]' >/dev/null 2>&1 <<<"$out"; then
   pass "greptile alt= badge counts when greptile is the policy bot"
 else fail "greptile badge — got: $out"; fi
 # ...and the SAME reviews are invisible when it is not the policy bot: those
 # findings are advisory, and stopping a loop on them stops the wrong loop.
-out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY" "$SCRIPT" "$PR" 2>/dev/null)
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY" "$SCRIPT" "$PR" 2>"$ERR") || out="exit $? / $(tr '\n' ' ' <"$ERR")"
 if jq -e '.series == [0,0] and .verdict == "converged"' >/dev/null 2>&1 <<<"$out"; then
   pass "non-policy-bot findings are not blocking"
 else fail "non-policy bot — got: $out"; fi

@@ -192,8 +192,11 @@ series_json=$(jq -c -n --argjson req "$requests" --argjson f "$findings" --argjs
     | { lo: $req[$i].at,
         hi: (if $i + 1 < ($req | length) then $req[$i+1].at else null end) }
     | . as $w
-    | { n:        [ $f[] | select(. >= $w.lo) | select($w.hi == null or . < $w.hi) ] | length,
-        answered: ([ $a[] | select(. >= $w.lo) | select($w.hi == null or . < $w.hi) ] | length) > 0 } ]')
+    # Both values fully parenthesised. An object value carrying a bare `|` is
+    # accepted by jq 1.8 and is a COMPILE error (exit 3) on the jq CI runs, so
+    # the unparenthesised form passes locally and fails everywhere else.
+    | { n:        ([ $f[] | select(. >= $w.lo) | select($w.hi == null or . < $w.hi) ] | length),
+        answered: (([ $a[] | select(. >= $w.lo) | select($w.hi == null or . < $w.hi) ] | length) > 0) } ]')
 
 # Only completed passes carry a count. An unanswered pass in the MIDDLE of the
 # series is dropped too, not just a trailing one: a round the bot never
