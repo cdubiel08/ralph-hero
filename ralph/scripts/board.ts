@@ -4032,6 +4032,12 @@ export interface DeliverMarkerEntry {
   review_cursor: string | null;
   thread_cursor: string | null;
   at: string; // ISO — anchors this PR's bounded retry window
+  /** GH-1816: on a `FAIL — review`, which judgement the pass made —
+   *  `live` (demoted), `stale` (held at In Review), or `not-evaluated`.
+   *  Trail only: the selector's re-arm delta reads the four cursors above and
+   *  never this, so recording it can neither hold nor re-arm a row. Absent on
+   *  every verdict but review, because there was no judgement to record. */
+  review_staleness?: "live" | "stale" | "not-evaluated";
 }
 
 /** Last DELIVER_MARKER comment wins; malformed JSON reads as "no marker"

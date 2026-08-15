@@ -2014,6 +2014,87 @@ POLICY="$POLICY_REVIEW"
 
 echo
 
+# --- review staleness (GH-1816) ---------------------------------------------
+#
+# Attaches to GATE-FAIL review and nowhere else: that is the one verdict that
+# says "the author has rework to do", and it is the token a deliver pass read
+# on 2026-08-12 before demoting GH-1774 over a CHANGES_REQUESTED whose findings
+# had already been fixed and pushed. The verdict itself never changes — the
+# merge still refuses, and nothing here is looser than gate 1.
+stale_stub() { # stale_stub <verdict> [ok] -> path to a stub emitting it
+  local v="${1}" ok="${2:-true}"
+  printf '#!/usr/bin/env bash\nprintf %%s %s\n' \
+    "'{\"ok\":$ok,\"verdict\":\"$v\",\"head\":\"$HEAD_SHA\",\"blocking\":[],\"detail\":\"d\"}'" \
+    >"$TMP_ROOT/bin/stale-$v-$ok"
+  chmod +x "$TMP_ROOT/bin/stale-$v-$ok"
+  echo "$TMP_ROOT/bin/stale-$v-$ok"
+}
+stale_run() { # stale_run <dir> <script-path>
+  PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$1" \
+    RALPH_MERGE_POLICY_FILE="$POLICY_FINDINGS" \
+    RALPH_REVIEW_STALENESS_SH="$2" bash "$SCRIPT" 1740 2>&1 || true
+}
+
+D="$TMP_ROOT/staleness"
+scenario "$D" "$GREEN_CHECKS" "$(pr_state OPEN CHANGES_REQUESTED)" \
+  '[{"state":"CHANGES_REQUESTED","user":{"login":"coderabbitai[bot]"}}]'
+
+LAST_OUT=$(stale_run "$D" "$(stale_stub stale)")
+if [[ "$LAST_OUT" == "GATE-FAIL review"* ]] && [[ "$LAST_OUT" == *"STALE VERDICT"* ]] \
+   && [[ "$LAST_OUT" == *"do not demote"* ]]; then
+  pass "a stale CHANGES_REQUESTED is named, and the verdict is still GATE-FAIL"
+else
+  fail "stale annotation (out=${LAST_OUT:0:300})"
+fi
+
+# `live` is what GATE-FAIL review already means. Restating it is chrome.
+LAST_OUT=$(stale_run "$D" "$(stale_stub live)")
+if [[ "$LAST_OUT" == "GATE-FAIL review"* ]] && [[ "$LAST_OUT" != *"STALE VERDICT"* ]]; then
+  pass "a head-bound CHANGES_REQUESTED is not annotated"
+else
+  fail "live should be silent (out=${LAST_OUT:0:300})"
+fi
+
+# An unreadable answer must say so and point at the status quo — it does not
+# prove the verdict predates the head, and this fix may not become
+# under-demotion where it cannot see.
+for s in "$(stale_stub not-evaluated false)" "$TMP_ROOT/bin/broken-stale"; do
+  printf '#!/usr/bin/env bash\nexit 3\n' >"$TMP_ROOT/bin/broken-stale"
+  chmod +x "$TMP_ROOT/bin/broken-stale"
+  LAST_OUT=$(stale_run "$D" "$s")
+  if [[ "$LAST_OUT" == "GATE-FAIL review"* ]] && [[ "$LAST_OUT" == *"NOT CHECKED"* ]] \
+     && [[ "$LAST_OUT" == *"treat as live rework"* ]]; then
+    pass "an unevaluable staleness check says so rather than reading as stale"
+  else
+    fail "not-evaluated annotation (out=${LAST_OUT:0:300})"
+  fi
+done
+
+# A repo that does not ship the script says nothing at all — there was never a
+# check to be silent about.
+LAST_OUT=$(stale_run "$D" "$TMP_ROOT/no-such-staleness")
+if [[ "$LAST_OUT" == "GATE-FAIL review"* ]] && [[ "$LAST_OUT" != *"STALE"* ]] \
+   && [[ "$LAST_OUT" != *"NOT CHECKED"* ]]; then
+  pass "a repo without the staleness script is unchanged"
+else
+  fail "absent staleness script (out=${LAST_OUT:0:300})"
+fi
+
+# Not on any other verdict: GATE-FAIL ci is a different job, and GATE-READY is
+# past the question entirely.
+D="$TMP_ROOT/staleness-not-on-ci"
+scenario "$D" "$(jq -n --argjson f "$(check board-tests fail)" '[$f]')" \
+  "$(pr_state OPEN CHANGES_REQUESTED)" \
+  '[{"state":"CHANGES_REQUESTED","user":{"login":"coderabbitai[bot]"}}]'
+LAST_OUT=$(stale_run "$D" "$(stale_stub stale)")
+if [[ "$LAST_OUT" == "GATE-FAIL ci"* ]] && [[ "$LAST_OUT" != *"STALE VERDICT"* ]]; then
+  pass "staleness is not appended to GATE-FAIL ci"
+else
+  fail "staleness leaked onto ci (out=${LAST_OUT:0:300})"
+fi
+
+echo
+
 # --- convergence stopping rule (GH-1849) ------------------------------------
 #
 # The line attaches to GATE-YOURS review and nowhere else: that is the verdict
