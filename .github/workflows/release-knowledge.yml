@@ -413,7 +413,7 @@ jobs:
           REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
 
           npm_status() {
-            curl -sS -o /dev/null -w '%{http_code}' \
+            curl -sS -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' \
               "https://registry.npmjs.org/ralph-hero-knowledge-index/$1" || echo 000
           }
           # Tag + release probing, shared by the paths that can have pushed one.
@@ -481,8 +481,13 @@ jobs:
               STATE="version \`${NEW_VERSION}\` was computed, but **whether it reached npm could not be determined** (HTTP ${NPM_HTTP})"
               REMEDY="Check by hand — \`npm view ralph-hero-knowledge-index@${NEW_VERSION} version\`. A re-run is safe either way: the version floor now reads npm, so it will skip anything already published."
             elif [ "$NPM_HTTP" = "404" ]; then
-              STATE="version \`${NEW_VERSION}\` was computed but nothing was published; main is unchanged (this workflow publishes before it commits)"
-              REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
+              # A 404 is the registry's answer, but it is not the whole state:
+              # the same CDN lag the verify step polls for can 404 a publish
+              # that landed, and if the tag was then pushed, recommending a
+              # re-run strands it without a release. The tag is authoritative
+              # about how far the run got, so let it decide either way.
+              probe_tag_and_release "$TAG" \
+                "the registry reports \`${NEW_VERSION}\` as absent (a publish that landed can still read this way for a while) and "
             else
               probe_tag_and_release "$TAG" "\`${NEW_VERSION}\` is published on npm and "
             fi
