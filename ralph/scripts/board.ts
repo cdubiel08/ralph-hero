@@ -4799,6 +4799,56 @@ export const TEND_PROPOSAL_MARKER = "<!-- ralph-tend:v1 proposed -->";
  *  Payload: `{"disposition": "accepted"|"rejected", "at": iso, "note": "…"}`. */
 export const TEND_RESOLUTION_MARKER = "<!-- ralph-tend:v1 resolved -->";
 
+/** Blank every character of a span except its newlines, so masking a region
+ *  preserves every later index — marker positions within one comment are
+ *  COMPARED (last one wins), so a mask that shifted offsets would reorder them. */
+const blankKeepNewlines = (s: string): string => s.replace(/[^\n]/g, " ");
+
+/** A comment body with fenced blocks and inline code spans masked out (GH-1826).
+ *  A marker inside a code span is a comment DISCUSSING the protocol, not
+ *  speaking it — #1777, the issue that implemented the proposal marker, quoted
+ *  it three times in backticks and thereby filed a phantom proposal against
+ *  itself that no disposition could clear. */
+export function maskCode(body: string): string {
+  let fence: string | null = null;
+  return body
+    .split("\n")
+    .map((line) => {
+      const opener = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (fence !== null) {
+        if (opener && line.trim().startsWith(fence)) fence = null;
+        return blankKeepNewlines(line);
+      }
+      if (opener) {
+        fence = opener[1];
+        return blankKeepNewlines(line);
+      }
+      return line.replace(/`+[^`\n]*`+/g, blankKeepNewlines);
+    })
+    .join("\n");
+}
+
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Index of the LAST line that OPENS with `marker` (outside code), or -1
+ *  (GH-1826). Two narrowings, both load-bearing: the marker must start a line —
+ *  every marker this protocol writes leads its own comment line, while prose
+ *  reaches it mid-sentence or indented under a bullet — and code spans are
+ *  masked, since backticks are how prose quotes one. Trailing text on the
+ *  marker's own line is tolerated: it is still the protocol speaking, and
+ *  audit comments in the wild carry a word after the marker. Returning an index
+ *  rather than a boolean keeps `pendingProposal`'s within-comment ordering. */
+export function lastMarkerIndex(body: string, marker: string): number {
+  const re = new RegExp(`^${escapeRegExp(marker)}`, "gm");
+  const masked = maskCode(body);
+  let last = -1;
+  for (let m = re.exec(masked); m !== null; m = re.exec(masked)) {
+    last = m.index;
+    if (m.index === re.lastIndex) re.lastIndex++;
+  }
+  return last;
+}
+
 /** The PENDING proposal in a comment trail, or null when there is none — either
  *  no proposal was ever filed, or the newest one has been disposed of.
  *
@@ -4814,8 +4864,8 @@ export const TEND_RESOLUTION_MARKER = "<!-- ralph-tend:v1 resolved -->";
 export function pendingProposal(comments: string[]): { at: string | null } | null {
   let pending: { at: string | null } | null = null;
   for (const body of comments) {
-    const proposed = body.lastIndexOf(TEND_PROPOSAL_MARKER);
-    const resolved = body.lastIndexOf(TEND_RESOLUTION_MARKER);
+    const proposed = lastMarkerIndex(body, TEND_PROPOSAL_MARKER);
+    const resolved = lastMarkerIndex(body, TEND_RESOLUTION_MARKER);
     if (proposed < 0 && resolved < 0) continue;
     if (resolved > proposed) {
       pending = null;
@@ -4979,7 +5029,7 @@ export function classifyTend(
       push("proposed", c, p.at);
       continue;
     }
-    if (c.comments.some((b) => b.includes(TEND_MARKER))) continue;
+    if (c.comments.some((b) => lastMarkerIndex(b, TEND_MARKER) >= 0)) continue;
     push("done-audit", c, c.closedAt);
   }
 
@@ -7195,6 +7245,23 @@ interface ParsedArgs {
   flags: Record<string, string | boolean>;
 }
 
+/** Flags that take NO value (GH-1826). Deny-by-omission on this list is what
+ *  made `board resolve NNN --reject -m "why"` — the form `board help` prints —
+ *  parse as `reject: "-m"` and then refuse for want of the `-m` it was handed.
+ *  A flag reaching `run()` and absent here is a bug, and `board.test.ts` fails
+ *  on it rather than leaving the next one to be found at a call site. */
+export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
+  "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
+  "any-state", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
+]);
+
+/** Flags that take a value. Declared beside the booleans so arity is a property
+ *  of the flag rather than of the token that happens to follow it. */
+export const VALUE_FLAGS: ReadonlySet<string> = new Set([
+  "body", "candidates", "estimate", "holder", "label", "lane", "limit",
+  "message", "on", "out", "parent", "priority", "state", "title", "why",
+]);
+
 export function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
@@ -7205,7 +7272,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only", "any-state", "all-repos", "fresh", "clear", "allow-duplicate"].includes(key)) {
+      // A token that is itself a flag (`-m`, `--json`) is never a value: an
+      // undeclared flag must not swallow the next one the way `--reject` did.
+      const nextIsFlag = next !== undefined && /^-[^0-9]/.test(next);
+      if (next !== undefined && !nextIsFlag && !BOOLEAN_FLAGS.has(key)) {
         flags[key] = next;
         i++;
       } else {
