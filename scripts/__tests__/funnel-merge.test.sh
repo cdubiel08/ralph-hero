@@ -171,6 +171,19 @@ fi
 run_hook "$ATTEST_REPO" "gh issue comment 1 --body 'never use bare gh pr merge here'"
 expect_rc "quoted mention of the guarded command passes" 0
 
+# The same rule across NEWLINES (GH-2057). The stripper was line-based, so a
+# multi-line `--body "..."` — the shape every real issue filing takes — had its
+# quotes on different lines and was never stripped. This rail refused GH-2057's
+# own filing. Backticks are incidental to the case, and deliberately included:
+# what matters is that the span is quoted, not how it is marked up inside.
+run_hook "$ATTEST_REPO" "$(printf 'gh issue create --title x --body "line one\nnever run bare `gh pr merge` here\nline three"')"
+expect_rc "multi-line quoted mention of the guarded command passes" 0
+
+# Backticks OUTSIDE quotes are command substitution, which really does run what
+# is inside them. Stripping them would open a hole this rail exists to close.
+run_hook "$ATTEST_REPO" 'echo `gh pr merge 123`'
+expect_rc "command substitution invoking the guarded command still redirects" 2
+
 # ---------------------------------------------------------------------------
 echo
 echo "Results: $PASS passed, $FAIL failed"
