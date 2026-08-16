@@ -280,3 +280,135 @@ class TestConsumedCandidates:
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=boom
         ) == 0
         assert (wiki / "_candidates.jsonl").read_text().strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# GH-1967: paraphrase dedup — the hash is exact, so a restatement is a new hash
+# ---------------------------------------------------------------------------
+
+
+def _scripted_post(candidates: list[dict], duplicates: list[int]):
+    """Answer the synthesis prompt, then the paraphrase gate, in call order."""
+    calls = {"n": 0}
+
+    def post(url, body, timeout):  # noqa: ANN001, ARG001
+        calls["n"] += 1
+        payload = (
+            {"candidates": candidates} if calls["n"] == 1 else {"duplicates": duplicates}
+        )
+        return 200, {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    return post
+
+
+class TestParseDuplicateIndices:
+    def test_parses_bare_indices(self) -> None:
+        assert meta_reflect.parse_duplicate_indices('{"duplicates": [0, 2]}', 3) == {0, 2}
+
+    def test_parses_objects_carrying_an_index(self) -> None:
+        text = '{"duplicates": [{"index": 1, "of": "A"}]}'
+        assert meta_reflect.parse_duplicate_indices(text, 3) == {1}
+
+    def test_drops_out_of_range_and_non_integer(self) -> None:
+        text = '{"duplicates": [0, 9, -1, "1", true, null]}'
+        assert meta_reflect.parse_duplicate_indices(text, 3) == {0}
+
+    def test_garbage_keeps_everything(self) -> None:
+        assert meta_reflect.parse_duplicate_indices("not json at all", 3) == set()
+
+
+class TestFilterParaphrases:
+    def test_drops_the_flagged_candidate(self) -> None:
+        cands = [{"axiom": "A"}, {"axiom": "B"}]
+        post = _scripted_post([], [1])
+        post("u", {}, 1)  # burn the synthesis slot
+        kept = meta_reflect.filter_paraphrases(cands, ["known"], "u", "m", http_post=post)
+        assert [c["axiom"] for c in kept] == ["A"]
+
+    def test_no_known_axioms_skips_the_call(self) -> None:
+        def boom(url, body, timeout):  # noqa: ANN001, ARG001
+            raise AssertionError("must not call the model with nothing to compare against")
+
+        cands = [{"axiom": "A"}]
+        assert meta_reflect.filter_paraphrases(cands, [], "u", "m", http_post=boom) == cands
+
+    def test_fails_open_when_the_gate_errors(self) -> None:
+        def boom(url, body, timeout):  # noqa: ANN001, ARG001
+            raise RuntimeError("connection refused")
+
+        cands = [{"axiom": "A"}, {"axiom": "B"}]
+        kept = meta_reflect.filter_paraphrases(cands, ["known"], "u", "m", http_post=boom)
+        assert kept == cands
+
+    def test_fails_open_on_a_non_200(self) -> None:
+        def sad(url, body, timeout):  # noqa: ANN001, ARG001
+            return 503, {}
+
+        cands = [{"axiom": "A"}]
+        assert meta_reflect.filter_paraphrases(cands, ["k"], "u", "m", http_post=sad) == cands
+
+
+class TestExistingAxioms:
+    def test_orders_pending_then_promoted_then_rejected_and_dedups(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "_candidates.jsonl").write_text(
+            json.dumps({"hash": "h1", "axiom": "Pending one"}) + "\n", encoding="utf-8"
+        )
+        (wiki / "e.md").write_text("# Promoted one\n\nlede.\n", encoding="utf-8")
+        (wiki / "_rejected.jsonl").write_text(
+            json.dumps({"claim": "Rejected one"}) + "\n"
+            + json.dumps({"claim": "pending   ONE"}) + "\n",
+            encoding="utf-8",
+        )
+        assert meta_reflect._existing_axioms(wiki) == [
+            "Pending one",
+            "Promoted one",
+            "Rejected one",
+        ]
+
+    def test_truncates_to_the_limit(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "_candidates.jsonl").write_text(
+            "".join(json.dumps({"axiom": f"A{i}"}) + "\n" for i in range(10)),
+            encoding="utf-8",
+        )
+        assert meta_reflect._existing_axioms(wiki, limit=3) == ["A0", "A1", "A2"]
+
+
+class TestParaphraseAcrossRuns:
+    def test_a_restatement_of_a_pending_candidate_is_not_staged(self, tmp_path: Path) -> None:
+        """The GH-1967 measurement: a second run restates a pending candidate."""
+        db = tmp_path / "k.db"
+        _seed(db, [
+            {"id": f"r{i}", "date": "2026-06-25T00:00:00+00:00", "content": f"reflection {i}"}
+            for i in range(5)
+        ])
+        wiki = tmp_path / "wiki"
+        first = _scripted_post([{"axiom": "Empty output is never evidence of absence"}], [])
+        assert meta_reflect.run_meta_reflect(
+            db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=first
+        ) == 1
+        # A fresh hash — and the gate names it a restatement of the pending one.
+        second = _scripted_post([{"axiom": "Absence of output proves nothing"}], [0])
+        assert meta_reflect.run_meta_reflect(
+            db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=second
+        ) == 0
+        assert len(meta_reflect._read_candidate_records(wiki / "_candidates.jsonl")) == 1
+
+    def test_a_genuinely_new_axiom_still_stages(self, tmp_path: Path) -> None:
+        db = tmp_path / "k.db"
+        _seed(db, [
+            {"id": f"r{i}", "date": "2026-06-25T00:00:00+00:00", "content": f"reflection {i}"}
+            for i in range(5)
+        ])
+        wiki = tmp_path / "wiki"
+        first = _scripted_post([{"axiom": "Empty output is never evidence"}], [])
+        meta_reflect.run_meta_reflect(
+            db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=first
+        )
+        second = _scripted_post([{"axiom": "Gates are run, not predicted"}], [])
+        assert meta_reflect.run_meta_reflect(
+            db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=second
+        ) == 1

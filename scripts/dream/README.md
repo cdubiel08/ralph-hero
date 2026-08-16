@@ -215,19 +215,31 @@ skipped, so weekly re-runs don't pile up — as is one already **promoted** (an
 axiom matching a wiki entry's H1) or **rejected** (a claim in `_rejected.jsonl`),
 so a disposition the human already made is not put back in front of them. The
 same predicate prunes consumed entries out of `_candidates.jsonl` at the start
-of every run, keeping it a queue of pending candidates rather than a log. The
-match is lexical (whitespace + case), so a paraphrase of a rejected axiom can
-still be re-staged; curate's human gate remains the backstop. Under the weekly
-schedule that limit compounds — two back-to-back runs over the same 44
-reflections restaged one paraphrase of an already-pending candidate (measured
-2026-08-15) — so an unreviewed queue accrues near-duplicates at up to
-`RALPH_META_MAX_CANDIDATES` per week until someone runs curate. That per-week
+of every run, keeping it a queue of pending candidates rather than a log. That
+match is exact (whitespace + case only), so a **paraphrase** of a pending or
+dispositioned axiom is a fresh hash and used to stage again — two back-to-back
+runs over the same 44 reflections restaged one restatement of an already-pending
+candidate (measured 2026-08-15), which under the weekly schedule accrued
+near-duplicates until someone ran curate. A second gate now sits in front of
+staging (GH-1967): the same local model that wrote the candidates is shown the
+known axioms — pending first, then promoted, then rejected — and names which
+new ones restate a known claim. No embedding space of its own is needed, and a
+model too unhealthy to answer is one that synthesized nothing to de-duplicate.
+It **fails open** in every direction — an unreachable model, a non-200, an
+unparseable verdict, an out-of-range index all keep every candidate — because
+dropping a real axiom is unrecoverable while a staged duplicate costs one line
+of attention at the human gate that already exists. The comparison set is
+capped at `RALPH_META_DEDUP_MAX_EXISTING` (150); truncation drops the least
+likely match first and can only stage a duplicate. Honest limit: this is a
+model judgment, not a metric — it will miss some restatements and could drop a
+candidate it misreads, so curate's human gate remains the backstop. The per-week
 ceiling is **enforced, not requested**: the prompt asks the model for at most
 N, and `synthesize_candidates` truncates the parsed list to N (warning when it
 does) at the single boundary every staging path crosses — so an over-producing
 model cannot widen the bound, and since dedup only ever removes more, weekly
 growth stays ≤ N. Fail-open: if the local model is
 offline it stages nothing. Knobs: `RALPH_META_WINDOW_DAYS` (7),
-`RALPH_META_MIN_REFLECTIONS` (5), `RALPH_META_MAX_CANDIDATES` (3). This is the
+`RALPH_META_MIN_REFLECTIONS` (5), `RALPH_META_MAX_CANDIDATES` (3),
+`RALPH_META_DEDUP_MAX_EXISTING` (150). This is the
 hierarchy level that finally seeds the wiki tier and resolves the
 reflection→wiki catch-22.
