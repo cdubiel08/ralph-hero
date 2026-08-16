@@ -46,7 +46,7 @@ fi
 # Past this point the agent is LIVE — a prompt failure must not strand it
 # silently, and hold_pane must not claim "no session spawned" about it.
 export RALPH_HERDR_AGENT_LIVE=1
-"$HERDR" agent prompt ralph-deliver "/ralph:deliver" \
+ralph_herdr_agent_prompt ralph-deliver "/ralph:deliver" >/dev/null \
   || die "prompt delivery failed — agent ralph-deliver is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt ralph-deliver \"/ralph:deliver\""
 
 echo "spawned deliver pass (queue head #$next, pane $pane, agent ralph-deliver)"
