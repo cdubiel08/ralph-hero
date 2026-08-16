@@ -121,6 +121,19 @@ func argsSpawn(scriptsDir string, n int) []string {
 	return []string{"-c", spawnScript, "ralph-cockpit", scriptsDir, strconv.Itoa(n)}
 }
 
+// forkScript is the CONSTANT bash body for `f` — the sanctioned fork path
+// (scripts/fork.sh, GH-1892). $1 = scripts dir, $2 = the source pane id, both
+// positional, so nothing overlay-derived is shell-interpretable. Placement is
+// left to fork.sh's own RALPH_FORK_PLACEMENT default so a user's exported
+// choice still reaches it.
+const forkScript = `set -euo pipefail
+RALPH_FORK_PANE="$2" exec bash "$1/fork.sh"
+`
+
+func argsFork(scriptsDir, pane string) []string {
+	return []string{"-c", forkScript, "ralph-cockpit", scriptsDir, pane}
+}
+
 // ── messages ────────────────────────────────────────────────────────────────
 
 type tickMsg time.Time
@@ -180,6 +193,12 @@ type dagMsg struct {
 type spawnDoneMsg struct {
 	issue  int
 	rc     int // 0 spawned, 2 skipped (already owned), else failure
+	detail string
+}
+
+type forkDoneMsg struct {
+	issue  int
+	rc     int // 0 forked, else refusal/failure
 	detail string
 }
 
@@ -859,6 +878,25 @@ func spawnCmd(cfg Config, r Runner, issue int) tea.Cmd {
 			detail = firstLine(stderr+out, err)
 		}
 		return spawnDoneMsg{issue: issue, rc: rc, detail: detail}
+	}
+}
+
+// forkCmd shells to the sanctioned fork path; the session read stays in
+// fork.sh, which is why this passes a pane id and nothing else.
+func forkCmd(cfg Config, r Runner, issue int, pane string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		out, stderr, err := r.Run(ctx, "bash", argsFork(cfg.ScriptsDir, pane)...)
+		rc := 0
+		if err != nil {
+			rc = exitCode(err)
+		}
+		detail := lastNonEmptyLine(out)
+		if rc != 0 {
+			detail = firstLine(stderr+out, err)
+		}
+		return forkDoneMsg{issue: issue, rc: rc, detail: detail}
 	}
 }
 

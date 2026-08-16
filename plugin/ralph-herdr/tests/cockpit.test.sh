@@ -439,6 +439,32 @@ out=$(run_verb diff 61 "" </dev/null 2>&1)
 line_has "diff: no linked PR is said, not invented" "$out" "no PR linked on #61"
 rm -f "$FAKE_BOARD_FIXTURES/get.60.json" "$FAKE_BOARD_FIXTURES/get.61.json"
 
+# ── run_verb fork: the ISSUE row has no single fork source (GH-1957) ─────────
+# Only the refusal paths are driven here: they are the whole judgment this
+# rung adds, and none of them reaches fork.sh (which needs a live server).
+_real_agents_json=$(declare -f ralph_agents_json)
+ralph_agents_json() { printf '%s\n' "$FAKE_HERD"; }
+
+FAKE_HERD='{"name":"w42-fix-the-flux","status":"working","pane":"pA"}'
+out=$(run_verb fork 42 "" </dev/null 2>&1)
+line_has "fork: no live session points at the spawn verb" "$out" "nothing to fork"
+
+FAKE_HERD='{"name":"w42-fix-the-flux","status":"working","pane":"pA"}
+{"name":"r42-review","status":"working","pane":"pB"}'
+out=$(run_verb fork 42 w42-fix-the-flux </dev/null 2>&1)
+line_has "fork: two live sessions on one issue is a named refusal" "$out" "no single fork source"
+line_has "fork: the refusal names the second session too" "$out" "r42-review"
+line_has "fork: the refusal points at the pane actions" "$out" "fork-right"
+
+FAKE_HERD='{"name":"w42-fix-the-flux","status":"working"}'
+out=$(run_verb fork 42 w42-fix-the-flux </dev/null 2>&1)
+line_has "fork: an agent herdr reports no pane for is refused, not guessed" "$out" "no pane for w42-fix-the-flux"
+
+ralph_agents_json() { return 3; }
+out=$(run_verb fork 42 w42-fix-the-flux </dev/null 2>&1)
+line_has "fork: an unreadable herd refuses rather than forking blind" "$out" "cannot read the herd"
+eval "$_real_agents_json"
+
 # ═══ 3. __preview — executed subshell, agent tail else comment tail ══════════
 printf 'pane tail line A\npane tail line B\n' >"$FAKE_HERDR_FIXTURES/agent-read.txt"
 clear_logs

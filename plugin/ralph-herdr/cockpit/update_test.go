@@ -827,3 +827,67 @@ func TestPollInterval(t *testing.T) {
 		}
 	}
 }
+
+// The fork verb (GH-1957). The row is an ISSUE, so the source pane is only
+// unambiguous at exactly one live agent — the multi-agent case must refuse
+// and name them rather than silently picking the first.
+func TestVerbFork(t *testing.T) {
+	t.Run("one live agent forks its pane", func(t *testing.T) {
+		f := &fakeRunner{}
+		m := testModel(f)
+		m.col, m.row = 0, 0 // #10, one agent on pane p1
+		m2, cmd := updateModel(m, keyMsg("f"))
+		if cmd == nil {
+			t.Fatalf("f must dispatch a fork; status = %q", m2.status)
+		}
+		cmd()
+		if len(f.calls) == 0 {
+			t.Fatal("fork ran no command")
+		}
+		got := strings.Join(f.calls[0].args, " ")
+		if !strings.Contains(got, "p1") || !strings.Contains(got, "/plug/scripts") {
+			t.Errorf("fork args must carry the scripts dir and the source pane: %q", got)
+		}
+	})
+
+	t.Run("no live agent refuses and names spawn", func(t *testing.T) {
+		m := testModel(&fakeRunner{})
+		m.col, m.row = 0, 1 // #11, no agent
+		m2, cmd := updateModel(m, keyMsg("f"))
+		if cmd != nil {
+			t.Error("fork with no session must not exec anything")
+		}
+		if !strings.Contains(m2.status, "nothing to fork") {
+			t.Errorf("status = %q", m2.status)
+		}
+	})
+
+	t.Run("two live agents refuse and name both", func(t *testing.T) {
+		m := testModel(&fakeRunner{})
+		m.agents = setAgents([]Agent{
+			{Name: "w10-ten", Status: "working", Pane: "p1", Issue: 10, Lane: "w"},
+			{Name: "r10-review", Status: "working", Pane: "p9", Issue: 10, Lane: "r"},
+		})
+		m.col, m.row = 0, 0
+		m2, cmd := updateModel(m, keyMsg("f"))
+		if cmd != nil {
+			t.Error("an ambiguous fork source must not exec anything")
+		}
+		if !strings.Contains(m2.status, "w10-ten") || !strings.Contains(m2.status, "r10-review") {
+			t.Errorf("the refusal must name both sessions; status = %q", m2.status)
+		}
+	})
+
+	t.Run("no herdr degrades to a hint", func(t *testing.T) {
+		m := testModel(&fakeRunner{})
+		m.herdrOK = false
+		m.col, m.row = 0, 0
+		m2, cmd := updateModel(m, keyMsg("f"))
+		if cmd != nil {
+			t.Error("degraded f must not exec anything")
+		}
+		if !strings.Contains(m2.status, "no multiplexer") {
+			t.Errorf("status = %q", m2.status)
+		}
+	})
+}

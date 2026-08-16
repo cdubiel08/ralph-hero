@@ -14,7 +14,7 @@
 # Loop: read the board once (stdout-only into the parse, fail-closed on
 # unparseable — the ralph-answer.sh precedent) → one fzf pick with an
 # agent-tail / latest-comment preview → a second fzf menu of verbs
-# (observe / peek / reply / answer / spawn / diff / browser / quit) → back
+# (observe / peek / reply / answer / spawn / fork / diff / browser / quit) → back
 # to a fresh read. No poll timer: RALPH_COCKPIT_INTERVAL is the Go TUI's
 # knob; this rung refreshes on every interaction instead.
 #
@@ -162,7 +162,7 @@ cockpit_cards() {
 # joined live agent name, empty when none). Interactive input (reply/answer
 # text) comes from stdin; rc 0 always except `quit`, which exits the script.
 run_verb() {
-  local verb="$1" n="$2" agent="$3" text ans pr diff_out rc out code
+  local verb="$1" n="$2" agent="$3" text ans pr diff_out rc out code herd names count pane
   case "$verb" in
     observe)
       if [ -z "$agent" ]; then
@@ -282,6 +282,45 @@ run_verb() {
       hold
       ;;
 
+    fork)
+      # Parity with the TUI's `f` (GH-1957): fork the card's live session, and
+      # refuse rather than choose when the issue has more than one. The pane
+      # id comes from the herd read — the session read itself stays in
+      # fork.sh, which is the only thing that knows what a fork is.
+      if [ -z "$agent" ]; then
+        echo "no live session for #$n — nothing to fork (the spawn verb starts one)"
+        hold
+        return 0
+      fi
+      herd=$(ralph_agents_json 2>/dev/null) || {
+        echo "cannot read the herd — refusing to fork without knowing what is live"
+        hold
+        return 0
+      }
+      # Every grammar-B lane, not just w: the TUI's overlay joins an issue to
+      # any lane carrying its number, so a narrower count here would report one
+      # source where two exist and pick silently.
+      names=$(printf '%s\n' "$herd" |
+        jq -r --arg legacy "gh-$n" --arg re "^[wrosx]$n-" \
+          'select(.name == $legacy or (.name | test($re))) | .name' 2>/dev/null)
+      count=$(printf '%s\n' "$names" | grep -c . || true)
+      if [ "$count" -gt 1 ]; then
+        echo "#$n has $count live sessions ($(printf '%s' "$names" | tr '\n' ' ')) — no single fork source;"
+        echo "fork from the pane itself (herdr's fork-right / fork-down / fork-tab actions)"
+        hold
+        return 0
+      fi
+      pane=$(printf '%s\n' "$herd" |
+        jq -r --arg a "$agent" 'select(.name == $a) | .pane // empty' 2>/dev/null | head -1)
+      if [ -z "$pane" ]; then
+        echo "herdr reports no pane for $agent — nothing to fork"
+        hold
+        return 0
+      fi
+      RALPH_FORK_PANE="$pane" bash "$SCRIPT_DIR/fork.sh" || echo "fork failed — see above"
+      hold
+      ;;
+
     diff)
       # The TUI opens this in a herdr popup pane; this rung pages inline —
       # same verb, less chrome. PR discovery goes through the board's own
@@ -387,6 +426,7 @@ while :; do
     "reply     type a line into the session (herdr agent prompt)" \
     "answer    Human Needed exit, comment-first (board answer, then nudge)" \
     "spawn     spawn a /ralph:work session for this card" \
+    "fork      fork this card's live session into a new pane (same worktree)" \
     "diff      the card's PR diff (gh pr diff)" \
     "browser   open the issue on GitHub" \
     "quit      leave the cockpit" |

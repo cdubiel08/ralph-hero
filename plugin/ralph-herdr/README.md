@@ -532,6 +532,13 @@ takes `--resume <id> --fork-session` — resume the transcript, mint a *new*
 session id for what happens next. So the fork starts knowing everything the
 source knew, and the two panes never write to one session file.
 
+**The cockpit rungs carry the same verb** (GH-1957): `f` in the TUI, `fork` in
+the fzf menu, both shelling to `scripts/fork.sh` with the selected card's pane
+id — the session read is never reimplemented. But a cockpit row is an *issue*,
+not a pane, so it forks only where the source is unambiguous: an issue with two
+live agents is a refusal naming both, since "beside this pane" is a question
+only the three pane actions above can answer.
+
 It works on any claude pane, not only ones this plugin spawned; a
 hand-started `claude` simply gets its pane id in the fork's name instead of a
 slug. Other harnesses are refused by name — `--resume`/`--fork-session` is
