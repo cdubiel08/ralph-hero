@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/herdr-context.sh"
+            "command": "if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; exec \"${CLAUDE_PLUGIN_ROOT}/hooks/herdr-context.sh\""
           }
         ]
       }
@@ -16,19 +16,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/funnel-board.sh"
+            "command": "if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; exec \"${CLAUDE_PLUGIN_ROOT}/hooks/funnel-board.sh\""
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/funnel-merge.sh"
+            "command": "if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; exec \"${CLAUDE_PLUGIN_ROOT}/hooks/funnel-merge.sh\""
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/funnel-push.sh"
+            "command": "if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; exec \"${CLAUDE_PLUGIN_ROOT}/hooks/funnel-push.sh\""
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/funnel-gate-watch.sh"
+            "command": "if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; exec \"${CLAUDE_PLUGIN_ROOT}/hooks/funnel-gate-watch.sh\""
           }
         ]
       },
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/funnel-gate-watch.sh"
+            "command": "if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; exec \"${CLAUDE_PLUGIN_ROOT}/hooks/funnel-gate-watch.sh\""
           }
         ]
       }
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/hint-pr-linkage.sh"
+            "command": "if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; exec \"${CLAUDE_PLUGIN_ROOT}/hooks/hint-pr-linkage.sh\""
           }
         ]
       }
