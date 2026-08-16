@@ -135,6 +135,12 @@ fi
 # gate and its watcher come to disagree about the same bytes.
 # shellcheck source=lib/merge-evidence.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/merge-evidence.sh"
+# GH-1817/GH-2003: names the rate-limit failure shape for this script's one
+# gh WRITE (the --force override record). Every READ here stays unguarded and
+# fails open into a retry or a PENDING verdict — the opposite default, chosen
+# from consequence, not an inconsistency to be tidied away.
+# shellcheck source=lib/gh-budget.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/gh-budget.sh"
 POLICY_FILE="$(me_policy_file "$PROJECT_ROOT")"
 
 # Gate-skip accumulator for --force (bash-3.2-safe counter + newline list).
@@ -443,8 +449,28 @@ if [[ "$FORCE" == "true" && "$SKIPPED_COUNT" -gt 0 ]]; then
 **Gates skipped ($SKIPPED_COUNT):**
 $SKIPPED_GATES
 _Posted by scripts/merge-pr.sh --force before merging (GH-1589)._"
-  gh pr comment "$PR_NUMBER" --body "$override_body" >/dev/null 2>&1 \
-    || echo "MERGE GATE WARN — force: failed to post override comment (continuing)"
+  # GH-2003: the override record is the one gh WRITE in this script, and it was
+  # the strongest form of the shape GH-1817 was filed against — `2>/dev/null`
+  # discarded even the rate-limit text, so an audit trail with a hole in it read
+  # exactly like one without. Routed through gb_gh so a rate-limited no-op is
+  # named rather than inferred from an exit code gh does not reliably set.
+  #
+  # It does NOT block the merge, unlike attest-pr.sh's fail-closed write. That
+  # write is evidence a later gate reads, so a phantom one leaves a driver
+  # waiting forever; this one is a record of a decision the operator has already
+  # made and every gate has already been evaluated against. Turning a transient
+  # rate limit into a refusal here would invent a gate after the verdict. What
+  # the failure owes the operator is the remedy, so it prints the re-runnable
+  # command instead of a bare "continuing".
+  override_rc=0
+  gb_gh pr comment "$PR_NUMBER" --body "$override_body" >/dev/null || override_rc=$?
+  if [[ "$override_rc" -eq 4 ]]; then
+    echo "MERGE GATE WARN — force: override comment NOT posted (rate limited); merge continues, re-post after the reset:" >&2
+    printf '  gh pr comment %q --body %q\n' "$PR_NUMBER" "$override_body" >&2
+  elif [[ "$override_rc" -ne 0 ]]; then
+    echo "MERGE GATE WARN — force: failed to post override comment (gh exited $override_rc); merge continues, re-post with:" >&2
+    printf '  gh pr comment %q --body %q\n' "$PR_NUMBER" "$override_body" >&2
+  fi
 fi
 
 echo "MERGE GATE PASS — PR #$PR_NUMBER @ ${head_sha:0:8} (attestation=$ATTESTATION_REQUIRED external=$EXTERNAL_REQUIRED exempt=$EXEMPT force=$FORCE)"
