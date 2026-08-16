@@ -88,6 +88,16 @@ This is **client-side bounded staleness, not a lease** — GitHub offers no serv
 2. **Read-your-writes + monotonic reads.** Every mutation bumps an `epoch` mark (hooked in `ghGraphQL`, the one path all writes take) and unlinks every selection variant; `servedAt` is a high-water mark. `fetchedAt` is stamped at the *start* of the walk, so a ~22 s walk that began before a write cannot end-stamp its way past the epoch check.
 3. **An entry serves only a request its selection COVERS** (`selectCovers`). Since GH-1803 the walk's shape varies per caller, and an unselected group is *absent* from the item rather than empty — so serving a labels-less entry to a caller that reads labels would not lose data, it would fabricate "GitHub said there are none", and `next` would rank an item as unblocked whose dependencies were never fetched. `tsc` cannot catch this across a JSON file, so the check is at runtime and the cast on serve is honest only because it ran. The converse is free: a *wider* entry serves narrower requests, so a `list` or `doctor` walk pays for the `next`/`deliver-queue` reads after it. Entries are keyed by selection, so a lean walk cannot evict a fat one.
 
+### The walk past Δ is gated, not automatic (GH-1804)
+
+Beyond Δ the entry is on probation rather than dead: a REST conditional request against the repo's issues list may extend it up to **T_max** (`RALPH_ITEM_ORACLE_MAX_SEC`, 600, 0 disables), and a 304 costs zero rate limit on a budget measured to be independent of the GraphQL one the walk spends.
+
+The oracle sees comments, body edits, labels, open/close — and is **blind to Workflow State, Claim and dependency writes**, which is most of what this board does. So T_max, not the oracle, sets the refresh rate for an agent fleet, and it is a hard ceiling no certification overrides. Three rules keep every failure pointed at paying for the walk:
+
+1. **The verdict is the HTTP status line, never the exit code.** `gh api` exits 1 on a 304 and 0 on a 200; reading exit-1 as "unchanged" would make every network failure, auth error and rate limit look like a quiet board, and the walk would never run again — silently and permanently. Anything that is not an unambiguous 304 answering a conditional request we actually sent is CHANGED.
+2. **The etag's capture instant must precede the walk it certifies.** A 304 proves nothing changed *after* `since` and says nothing about the window before it, so an etag captured after a walk cannot vouch for that walk. The probe therefore runs on the way *into* a walk, not out of it.
+3. **It only ever extends a serve the other guarantees already permit.** Selection coverage, read-your-writes and monotonic reads are checked on the same entry, unchanged. And `doctor` is opted out entirely — even report-only, since it reads the state and claim fields the oracle cannot see and `--strict` turns that read into an exit code.
+
 The cached walk also carries `scan` (GH-1788's meter), so `board-volume` and `prune`'s dry run report the board they were actually computed from rather than a zeroed counter.
 
 ## Install model

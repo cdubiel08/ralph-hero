@@ -1170,6 +1170,10 @@ export interface Ctx {
    *  write-guard carve-out is expressed by handing a mutating path a Ctx with
    *  this zeroed. Fail-safe is the only safe default direction for a cache. */
   itemCacheTtlSec?: number;
+  /** T_max for the change oracle, seconds (GH-1804). 0 (and absent) disables
+   *  it, leaving Δ as the only window — the same fail-safe default direction
+   *  as the TTL above, and for the same reason. */
+  itemOracleMaxSec?: number;
   /** Session→unit binding (GH-1948): who this process is, and where the
    *  binding records live. Absent — like a null `id` — leaves the guard
    *  inert, which is the honest reading of "this runner told us nothing"
@@ -3386,10 +3390,176 @@ export function markLocalWrite(ctx: Ctx): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Change oracle — gate the walk, bound the staleness (GH-1804)
+//
+// Δ (the item-cache TTL) is the window inside which no question is asked. Past
+// it the walk is not automatic: a REST conditional request answers "has
+// anything ISSUE-visible changed since the etag was captured", and a 304 costs
+// ZERO rate limit on a budget that is measurably independent of the GraphQL one
+// the walk spends (#1801: GraphQL 0/5000 while REST read 4983/5000).
+//
+// What it can and cannot see — measured on #1801, not assumed:
+//
+//   visible   comments, body edits, labels, open/close
+//   INVISIBLE Workflow State transitions, Claim writes, dependency edges,
+//             cross-references — i.e. every ordinary `board move` / `board
+//             claim`, the most common write on this board
+//
+// So this is NOT "an unchanged board is free to confirm unchanged". A board
+// that is issue-quiet and transition-busy — exactly what an agent fleet
+// produces — returns 304 the whole way through a Backlog → In Progress → In
+// Review sequence. `T_max` is therefore the correctness-relevant bound rather
+// than a backstop: it, not the oracle, sets the true refresh rate for the
+// invisible writes. Foreign-repo board items live outside the probed repo and
+// are invisible to the oracle entirely; their staleness is bounded by T_max
+// alone. Both are stated here rather than discovered in production.
+//
+// Every failure direction is toward PAYING for the walk:
+//
+//  * `gh api` exits 1 on a 304 and 0 on a 200, so the verdict is read from the
+//    HTTP status LINE and never from the exit code. Reading exit-1 as
+//    "unchanged" would turn every network failure, auth error and rate-limit
+//    response into a quiet board and the walk would never run again — trap #1
+//    of the issue (fail-open-to-zero) wearing a different hat.
+//  * Anything that is not a clean 304 — including an unreadable response — is
+//    CHANGED, never "probably fine".
+//  * `since` is the instant the etag was CAPTURED, and an entry is certified
+//    only when `since <= fetchedAt`. A 304 proves nothing changed after
+//    `since`; it says nothing about the window before it, so an etag captured
+//    AFTER a walk cannot vouch for that walk.
+//  * The oracle can only EXTEND a serve that every other guarantee already
+//    permits — selection coverage, read-your-writes and monotonic reads are
+//    checked exactly as before, on the same entry.
+//
+// It never runs for a mutating path (those zero the TTL, which short-circuits
+// the whole read) and never for `doctor`, the one walk consumer that mutates
+// from what it read: correcting live state from a stale view is a correctness
+// bug, not a wasted claim attempt.
+// ---------------------------------------------------------------------------
+
+export const ITEM_ORACLE_MAX_DEFAULT_SEC = 600;
+export const ITEM_ORACLE_MAX_LIMIT_SEC = 3600;
+
+export function parseItemOracleMaxSec(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return ITEM_ORACLE_MAX_DEFAULT_SEC;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n >= 0 && n <= ITEM_ORACLE_MAX_LIMIT_SEC) return n;
+  process.stderr.write(
+    `warn: RALPH_ITEM_ORACLE_MAX_SEC="${raw}" is not a number in 0..${ITEM_ORACLE_MAX_LIMIT_SEC} — ` +
+      `using ${ITEM_ORACLE_MAX_DEFAULT_SEC}\n`,
+  );
+  return ITEM_ORACLE_MAX_DEFAULT_SEC;
+}
+
+/** T_max, seconds. Never below Δ: a ceiling under the no-question window would
+ *  read as "the oracle makes things staler", which it must never do. */
+function itemOracleMaxSec(ctx: Ctx): number {
+  const t = ctx.itemOracleMaxSec ?? 0;
+  if (!Number.isFinite(t) || t <= 0) return 0;
+  return Math.max(t, itemCacheTtlSec(ctx));
+}
+
+interface OracleMark {
+  etag: string;
+  /** ISO. When the etag was captured — the start of the window a 304 covers. */
+  since: string;
+}
+
+function itemOraclePath(ctx: Ctx): string {
+  return join(ctx.cacheDir, `items-oracle-${itemCacheKey(ctx)}.json`);
+}
+
+function readOracleMark(ctx: Ctx): OracleMark | null {
+  try {
+    const raw = JSON.parse(readFileSync(itemOraclePath(ctx), "utf8"));
+    if (typeof raw?.etag !== "string" || !raw.etag) return null;
+    if (typeof raw?.since !== "string" || !Number.isFinite(Date.parse(raw.since))) return null;
+    return { etag: raw.etag, since: raw.since };
+  } catch {
+    return null; // absent or corrupt — no certification, so: walk
+  }
+}
+
+type OracleVerdict = "unchanged" | "changed";
+
+/** One probe per Ctx, memoized: a chain of reads inside one command asks
+ *  GitHub once. Keyed by the Ctx VALUE rather than by the config it names —
+ *  the verdict is a fact about one moment, and a second Ctx is a second
+ *  moment (a later CLI invocation, a clone made with a different clock or a
+ *  different staleness policy). Sharing a verdict across those would let one
+ *  read's answer certify a chain that never asked. */
+const oracleProbes = new WeakMap<Ctx, OracleVerdict>();
+
+/** The conditional request. Returns `changed` for everything that is not an
+ *  unambiguous 304, and records a fresh etag whenever one arrives. */
+function probeOracle(ctx: Ctx): OracleVerdict {
+  const memo = oracleProbes.get(ctx);
+  if (memo) return memo;
+  const verdict = runOracleProbe(ctx);
+  oracleProbes.set(ctx, verdict);
+  return verdict;
+}
+
+function runOracleProbe(ctx: Ctx): OracleVerdict {
+  const mark = readOracleMark(ctx);
+  // Captured BEFORE the request: the window a future 304 vouches for must
+  // begin no later than the state this response describes.
+  const since = ctx.now().toISOString();
+  const argv = [
+    "gh", "api", "-i", "--hostname", ctx.cfg.host,
+    `repos/${ctx.cfg.owner}/${ctx.cfg.repo}/issues?state=all&sort=updated&direction=desc&per_page=1`,
+  ];
+  if (mark) argv.push("-H", `If-None-Match: ${mark.etag}`);
+  let r: ExecResult;
+  try {
+    r = ctx.exec(argv);
+  } catch {
+    return "changed";
+  }
+  // The status LINE, never the exit code — `gh api` exits 1 on a 304.
+  const status = /^HTTP\/[\d.]+\s+(\d{3})/im.exec(r.stdout)?.[1] ?? null;
+  if (status === "304" && mark) return "unchanged";
+  if (status === "200") {
+    const etag = /^etag:\s*(\S.*?)\s*$/im.exec(r.stdout)?.[1];
+    if (etag) writeOracleMark(ctx, { etag, since });
+  }
+  return "changed";
+}
+
+function writeOracleMark(ctx: Ctx, mark: OracleMark): void {
+  try {
+    mkdirSync(ctx.cacheDir, { recursive: true });
+    atomicWrite(itemOraclePath(ctx), JSON.stringify(mark));
+  } catch {
+    /* an etag we cannot store is an oracle that always says changed */
+  }
+}
+
+/** Called on the way to a walk, so the NEXT process has an etag whose window
+ *  opened before this walk did. Inert when the oracle is off. */
+function refreshOracle(ctx: Ctx): void {
+  // No cache write means no entry for an etag to vouch for later.
+  if (itemCacheTtlSec(ctx) === 0 || itemOracleMaxSec(ctx) === 0) return;
+  probeOracle(ctx);
+}
+
+/** May an entry older than Δ still be served? Only with a certification whose
+ *  window opened at or before the walk it is vouching for. */
+function oracleCertifies(ctx: Ctx, fetchedAtMs: number): boolean {
+  if (itemOracleMaxSec(ctx) === 0) return false;
+  const mark = readOracleMark(ctx);
+  if (!mark) return false;
+  const since = Date.parse(mark.since);
+  if (!Number.isFinite(since) || since > fetchedAtMs) return false;
+  return probeOracle(ctx) === "unchanged";
+}
+
 /** null = nothing servable. Every refusal reason is a guarantee, not a
- *  heuristic: a selection that does not cover the request, expired Δ, an entry
- *  that predates a local write (read-your-writes), or one older than something
- *  already served (monotonic reads).
+ *  heuristic: a selection that does not cover the request, expired Δ with no
+ *  oracle certification (or past T_max, where no certification is enough), an
+ *  entry that predates a local write (read-your-writes), or one older than
+ *  something already served (monotonic reads).
  *
  *  Tries the exact selection first, then any wider entry already on disk. */
 function readItemCache(ctx: Ctx, kind: ItemCacheKind, want: QueueSelect): ItemCacheEntry | null {
@@ -3435,7 +3605,11 @@ function readItemCacheAt(
   const ageSec = (ctx.now().getTime() - t) / 1000;
   // A future-dated entry (clock step, a file copied between machines) is not
   // "very fresh" — it is unreadable, so it is refused.
-  if (ageSec < 0 || ageSec > ttl) return null;
+  if (ageSec < 0) return null;
+  // Past Δ the entry is not dead, it is on probation: the oracle may extend it
+  // up to T_max, which is a HARD ceiling no certification overrides — the
+  // writes the oracle cannot see (state, claim) are bounded by nothing else.
+  if (ageSec > ttl && (ageSec > itemOracleMaxSec(ctx) || !oracleCertifies(ctx, t))) return null;
   const marks = readMarks(ctx);
   // Compared as INSTANTS, not strings. We write canonical toISOString(), but
   // these files are plain JSON in the user's cache dir — an equivalent instant
@@ -3638,6 +3812,7 @@ export function listOwnOpenWalk<S extends QueueSelect = typeof QUEUE_SELECT_FULL
       true,
     );
   }
+  refreshOracle(ctx);
   const entry = walkOwnOpen(ctx, select);
   writeItemCache(ctx, "own-open", entry);
   return serveWalk<S>(ctx, entry, false);
@@ -3911,6 +4086,7 @@ export function listItemsFull<S extends QueueSelect = typeof QUEUE_SELECT_FULL>(
 ): ItemWalk<S> {
   const hit = readItemCache(ctx, "full", select);
   if (hit) return serveWalk<S>(ctx, hit, true);
+  refreshOracle(ctx);
   const entry = walkFull(ctx, select);
   writeItemCache(ctx, "full", entry);
   return serveWalk<S>(ctx, entry, false);
@@ -6104,6 +6280,11 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   // be reconciling a board that no longer looks like that. The report-only
   // sweep is a read like any other and keeps the cache.
   if (opts.fix) ctx = { ...ctx, itemCacheTtlSec: 0 };
+  // The oracle is off for doctor even when only reporting (GH-1804): every
+  // other consumer of a stale walk pays a wasted claim attempt, while doctor's
+  // own sweeps read state and claim fields — precisely the writes the oracle
+  // cannot see — and `--strict` turns what it read into an exit code.
+  ctx = { ...ctx, itemOracleMaxSec: 0 };
   const checks: DoctorReport["checks"] = [];
   const add = (name: string, level: DoctorLevel, detail: string) =>
     checks.push({ name, level, detail });
@@ -7238,7 +7419,18 @@ item cache (GH-1806)
   doctor --fix, runs with the cache off, and every write path re-reads the
   single item it is about to guard on. What a stale entry can cost is one
   wasted claim attempt — never a wrong transition — because the claim
-  protocol is read-back verification, not read freshness.`;
+  protocol is read-back verification, not read freshness.
+
+change oracle (GH-1804)
+  Past that 90 s, a REST conditional request (a 304 costs zero rate limit,
+  on a budget independent of the GraphQL one the walk spends) may extend a
+  cached walk up to T_max — RALPH_ITEM_ORACLE_MAX_SEC, default 600, 0
+  disables, max 3600. Anything that is not a clean 304 pays for the walk.
+
+  It sees comments, body edits, labels and open/close. It does NOT see
+  Workflow State, Claim, or dependency edges — so a transition-busy board
+  returns 304 the whole way and T_max, not the oracle, is what bounds
+  staleness. doctor never uses it: it mutates from what it read.`;
 
 interface ParsedArgs {
   positional: string[];
@@ -7378,7 +7570,7 @@ export function run(argv: string[], ctx: Ctx): number {
   // The write-guard carve-out (GH-1806) and its manual override, both applied
   // before any command body runs. A mutating command reads the board only to
   // decide what to write, so it pays for truth; a read may be bounded-stale.
-  if (writes || flags.fresh) ctx = { ...ctx, itemCacheTtlSec: 0 };
+  if (writes || flags.fresh) ctx = { ...ctx, itemCacheTtlSec: 0, itemOracleMaxSec: 0 };
 
   // Scope gate before ANY command that can write — including doctor --fix,
   // which mutates. Plain reads work from any clone (doctor reports scope);
@@ -8132,6 +8324,7 @@ if (isMain) {
       cacheDir: join(homedir(), ".ralph", "cache"),
       now: () => new Date(),
       itemCacheTtlSec: parseItemCacheTtlSec(process.env.RALPH_ITEM_CACHE_TTL_SEC),
+      itemOracleMaxSec: parseItemOracleMaxSec(process.env.RALPH_ITEM_ORACLE_MAX_SEC),
       session: {
         // RALPH_SESSION_ID first so a non-Claude runner can publish the fact
         // itself; CLAUDE_CODE_SESSION_ID is the one every session here has.
