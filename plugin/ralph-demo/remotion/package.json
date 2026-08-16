@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "remotion studio",
     "compositions": "remotion compositions src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "measure": "node scripts/measure-clip.mjs",
+    "test:measure": "bash scripts/measure-clip.test.sh"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.496",

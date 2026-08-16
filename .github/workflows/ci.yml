@@ -75,6 +75,11 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      # Builds a real VP8 WebM from PNG frames and measures it, so this also
+      # proves the vendored Remotion ffmpeg/ffprobe are present (GH-2017).
+      - name: measure-clip
+        run: pnpm test:measure
+
   build-and-test-knowledge:
     runs-on: ubuntu-latest
     defaults:
