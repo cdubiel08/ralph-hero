@@ -1,7 +1,7 @@
 {
   "name": "ralph-demo",
   "version": "0.1.0",
-  "description": "Remotion scaffold for ralph demo videos — one composition, duration derived from props. Rebuilding: the v2 capture/caption/assemble pipeline lands on top of this.",
+  "description": "One judgment skill that turns something just shipped into a captioned MP4 — capture browser footage, narrate from the actual diff, assemble a bespoke Remotion composition, deliver as a release asset plus a `## Demo` comment.",
   "author": {
     "name": "Chad Dubiel",
     "url": "https://github.com/cdubiel08"

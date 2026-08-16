@@ -7,8 +7,11 @@
     "dev": "remotion studio",
     "compositions": "remotion compositions src/index.ts",
     "typecheck": "tsc --noEmit",
+    "typecheck:examples": "tsc --noEmit -p ../skills/demo/references/examples/tsconfig.json",
     "measure": "node scripts/measure-clip.mjs",
-    "test:measure": "bash scripts/measure-clip.test.sh"
+    "test:measure": "bash scripts/measure-clip.test.sh",
+    "render": "bash scripts/render.sh",
+    "test:render": "bash scripts/render.test.sh"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.496",

@@ -1,0 +1,12 @@
+{
+  "//": "The examples are what an agent copies, so they are typechecked like code rather than trusted like prose — the drift that actually happened in v1 was in the types, under a green test suite. They live outside the scaffold, so react/remotion are resolved explicitly against its node_modules.",
+  "extends": "../../../../remotion/tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "react": ["../../../../remotion/node_modules/@types/react"],
+      "react/jsx-runtime": ["../../../../remotion/node_modules/@types/react/jsx-runtime"],
+      "*": ["../../../../remotion/node_modules/*"]
+    }
+  },
+  "include": ["*.tsx"]
+}
