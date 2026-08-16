@@ -1,49 +1,47 @@
 # ralph-demo
 
-Sprint-demo video generation for the [Ralph](https://github.com/cdubiel08/ralph-hero) workflow — record a live screen demo or composite a structured demo video from JSON content.
+Demo-video scaffold for the [Ralph](https://github.com/cdubiel08/ralph-hero) workflow.
 
-## Overview
+## Status
 
-`ralph-demo` is a Claude Code sub-plugin that turns sprint work into shareable demo media. It offers two complementary skills (live screen capture vs. programmatic video compositing) backed by a [Remotion](https://www.remotion.dev/) project (`remotion/`, the `demo-studio` package).
+Rebuilding (epic #1748). The v1 framework — an OBS screen-capture skill, an 8-step
+interview skill, and a JSON-contract layer over Remotion — was deleted in #1750: it
+was specced twice and produced zero video artifacts, and the contract layer broke at
+the render boundary. What remains is the scaffold the v2 pipeline
+(capture → script → assemble → deliver) builds on. There is no working skill here yet.
 
-Unlike the other sub-plugins, `ralph-demo` is **not** published to npm — it ships as part of this repo.
+`ralph-demo` is **not** published to npm — it ships as part of this repo.
 
-## Skills
-
-| Skill | Purpose |
-|-------|---------|
-| `record-demo` | Capture an OBS-based **live screen demo** for a GitHub issue — orchestrates `obs-cli` to record, optionally trim/thumbnail, upload, and post a `## Demo Recording` comment. Requires OBS Studio + `obs-cli` with the OBS WebSocket server running. |
-| `demo-video` | Generate a **composited sprint-demo video** with Remotion from structured content (features, screenshots, bullet points). Trigger on "demo video", "sprint recap", "presentation video". |
-
-Pick `record-demo` for a live screen-capture; pick `demo-video` to render a structured video from JSON without recording.
-
-## Architecture
+## The scaffold
 
 ```
-plugin/ralph-demo/
-├── skills/
-│   ├── record-demo/    # OBS screen-capture skill
-│   └── demo-video/     # Remotion composited-video skill
-└── remotion/           # `demo-studio` — the Remotion video generator (pnpm)
-    ├── src/            # React-based video compositions
-    ├── inputs/         # JSON content fed to the compositions
-    └── remotion.config.ts
+plugin/ralph-demo/remotion/
+├── package.json
+├── tsconfig.json
+├── remotion.config.ts
+└── src/
+    ├── index.ts     # registerRoot
+    ├── Root.tsx     # one composition, `Demo`
+    └── Demo.tsx     # blank stage
 ```
 
-The `remotion/` project (`demo-studio`) is a [Remotion](https://www.remotion.dev/) app managed with **pnpm**:
+One composition. Duration comes from props via `calculateMetadata`, never from a
+constant declared beside the composition — that is what truncated renders at 495
+frames in v1.
 
 ```bash
 cd plugin/ralph-demo/remotion
 pnpm install
-pnpm dev      # Remotion studio (preview/iterate)
-pnpm build    # render the video
-pnpm test     # vitest
+pnpm compositions   # lists `Demo`
+pnpm typecheck
+pnpm dev            # Remotion studio
 ```
 
-## Usage
+CI runs the same `compositions` + `typecheck` pair. There are no unit tests: the
+scaffold owns no logic, and the drift that actually happened was in the types.
 
-- **Live demo:** invoke the `record-demo` skill (e.g. "record a demo for #NNN") — ensure OBS Studio + `obs-cli` + the OBS WebSocket server are running first.
-- **Composited video:** invoke the `demo-video` skill (e.g. "make a sprint demo video") — it feeds structured content (features/screenshots/bullets) into the `demo-studio` Remotion compositions and renders an MP4.
+Known flake: the first render on a fresh machine may need one retry after the
+~94MB chrome-headless-shell download.
 
 ## Links
 
