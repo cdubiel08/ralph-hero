@@ -22,6 +22,7 @@ import {
   RefusalError,
   removeProjectItems,
   run,
+  SWEEPABLE_ITEM_KINDS,
   UsageError,
   walkNonIssueItems,
 } from "./board.js";
@@ -191,7 +192,31 @@ describe("classifyNonIssueSweep — fails closed", () => {
     const { ctx } = sweepCtx([{ id: "x1", type: null }]);
     const report = classifyNonIssueSweep(walkNonIssueItems(ctx));
     expect(report.candidates).toHaveLength(0);
-    expect(report.retained).toEqual([{ label: "unknown item x1", reason: "unknown-kind" }]);
+    expect(report.retained).toEqual([{ label: "unknown item x1", reason: "unrecognized-kind" }]);
+  });
+
+  it("RETAINS a REDACTED item — GitHub redacts content the viewer cannot see, and it may be an ISSUE", () => {
+    // The predicate is an allowlist, not "anything that is not ISSUE". A
+    // by-exclusion rule would remove a redacted issue's board item and destroy
+    // its Workflow State and Claim values, which is precisely the one-way loss
+    // this sweep's safety argument claims cannot happen here.
+    const { ctx } = sweepCtx([{ id: "r1", type: "REDACTED" }, pr("p1", 1)]);
+    const report = classifyNonIssueSweep(walkNonIssueItems(ctx));
+    expect(report.candidates.map((c) => c.itemId)).toEqual(["p1"]);
+    expect(report.retained).toEqual([{ label: "REDACTED item r1", reason: "unrecognized-kind" }]);
+  });
+
+  it("a kind added to ProjectV2ItemType after this shipped lands on the RETAINED side by default", () => {
+    const { ctx } = sweepCtx([{ id: "n1", type: "SOMETHING_NEW" }]);
+    const report = classifyNonIssueSweep(walkNonIssueItems(ctx));
+    expect(report.candidates).toHaveLength(0);
+    expect(report.retained[0].reason).toBe("unrecognized-kind");
+  });
+
+  it("the allowlist is exactly PULL_REQUEST and DRAFT_ISSUE", () => {
+    expect([...SWEEPABLE_ITEM_KINDS].sort()).toEqual(["DRAFT_ISSUE", "PULL_REQUEST"]);
+    expect(SWEEPABLE_ITEM_KINDS).not.toContain("ISSUE");
+    expect(SWEEPABLE_ITEM_KINDS).not.toContain("REDACTED");
   });
 
   it("retains an archived item — archived items reject writes", () => {

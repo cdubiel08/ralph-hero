@@ -6632,12 +6632,21 @@ export interface NonIssueWalk {
   short: boolean; // paged fewer nodes than totalCount claimed
 }
 
+/** The item kinds this sweep will remove. An ALLOWLIST, not "everything that
+ *  is not ISSUE" — `ProjectV2ItemType` also has `REDACTED`, which is what
+ *  GitHub returns when the viewer cannot see an item's content, and a redacted
+ *  item may perfectly well be an ISSUE whose board field values are real. A
+ *  by-exclusion predicate would remove it and destroy them. Anything GitHub
+ *  adds to that enum later lands on the retained side by default, which is the
+ *  direction a sweep with no undo has to fail. */
+export const SWEEPABLE_ITEM_KINDS: readonly string[] = ["PULL_REQUEST", "DRAFT_ISSUE"];
+
 /** Why a non-issue item is NOT removed. Named for the same reason prune's
  *  retention reasons are: a sweep that silently drops items from its own
  *  candidate list reads identically to one that found nothing. */
 export type NonIssueRetention =
   | "archived" // archived items reject writes — the mutation would fail anyway
-  | "unknown-kind"; // no `type` came back: we cannot prove it is not an issue
+  | "unrecognized-kind"; // absent, REDACTED, or a kind added after this shipped
 
 export interface NonIssueSweepReport {
   candidates: NonIssueItem[];
@@ -6708,8 +6717,8 @@ export function walkNonIssueItems(ctx: Ctx): NonIssueWalk {
       nonIssue.push({
         itemId: n.id,
         // A null `type` is carried through as "unknown" rather than guessed
-        // at — the classifier retains it, and a guess here is the one way
-        // this sweep could remove an issue.
+        // at. It is not on SWEEPABLE_ITEM_KINDS, so the classifier retains
+        // it — a guess here is the one way this sweep could remove an issue.
         kind: kind ?? "unknown",
         isArchived: !!n.isArchived,
         createdAt: typeof n?.createdAt === "string" ? n.createdAt : null,
@@ -6742,7 +6751,7 @@ export function classifyNonIssueSweep(walk: NonIssueWalk): NonIssueSweepReport {
   for (const it of walk.nonIssue) {
     byKind.set(it.kind, (byKind.get(it.kind) ?? 0) + 1);
     if (it.createdAt && (!newest?.createdAt || it.createdAt > newest.createdAt)) newest = it;
-    if (it.kind === "unknown") retained.push({ label: it.label, reason: "unknown-kind" });
+    if (!SWEEPABLE_ITEM_KINDS.includes(it.kind)) retained.push({ label: it.label, reason: "unrecognized-kind" });
     else if (it.isArchived) retained.push({ label: it.label, reason: "archived" });
     else candidates.push(it);
   }
