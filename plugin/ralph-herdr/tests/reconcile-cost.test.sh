@@ -364,6 +364,26 @@ case "$OUT" in
   *) not_ok "bounded wait: expected a declined pass, got '$OUT'" ;;
 esac
 
+# 7f — --dry-run resolves its log destination like any other pass. The first
+# draft defined ledger_root AFTER log(), so the dry run's own announcement — the
+# earliest log call in the file — resolved `/logs/reconcile.log` and, on a
+# writable root, the one mode that promises to write nothing created a file at
+# the filesystem root. A failed command substitution still leaves printf
+# successful, so it surfaced as a stray path rather than an error.
+ROOT="$TMP/dryrunlog"
+mk_ledger "$ROOT" acme demo 2 p >/dev/null
+anchor_herd
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$ROOT" bash "$SCRIPTS/reconcile.sh" --dry-run 2>&1)
+case "$OUT" in
+  *"command not found"*) not_ok "dry run: log path resolves without an undefined helper — got '$OUT'" ;;
+  *) ok "dry run: log path resolves without an undefined helper" ;;
+esac
+if [ -f "$ROOT/logs/reconcile.log" ]; then
+  ok "dry run: its log lands under the ledger root, not at /"
+else
+  not_ok "dry run: expected a log at $ROOT/logs/reconcile.log"
+fi
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

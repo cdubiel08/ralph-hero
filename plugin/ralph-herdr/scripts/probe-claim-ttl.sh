@@ -493,13 +493,24 @@ sleep 1 # let restore settle before snapshotting
 # after a week of uptime. So phase F's decision is, in production, written
 # nowhere anyone reads. Copy the session log out before teardown deletes it
 # with the session; this is the only capture of what the hook decided.
-PROBE_SESSION_LOG="$HOME/.config/herdr/sessions/$SESSION/herdr-server.log"
-if [ -f "$PROBE_SESSION_LOG" ]; then
-  cp "$PROBE_SESSION_LOG" "$OUT/session-server.log" || true
-  note "startup-hook log captured ($(grep -c 'reconcile:' "$OUT/session-server.log" 2>/dev/null || echo 0) reconcile lines)"
+# The reconcile log FIRST — it is the one that carries the decisions. It lives
+# under the scratch ledger root, which cleanup removes with $SCRATCH, so a
+# completed probe would otherwise discard the very record this capture exists
+# for.
+PROBE_RECONCILE_LOG="$RALPH_HERDR_LEDGER_ROOT/logs/reconcile.log"
+if [ -f "$PROBE_RECONCILE_LOG" ]; then
+  cp "$PROBE_RECONCILE_LOG" "$OUT/reconcile.log" || true
+  note "startup-hook decisions captured ($(grep -c 'reconcile:' "$OUT/reconcile.log" 2>/dev/null || echo 0) lines)"
 else
-  note "startup-hook log ABSENT at $PROBE_SESSION_LOG — hook output not captured"
+  note "no reconcile log at $PROBE_RECONCILE_LOG — the hook wrote no decisions (it may not have fired)"
 fi
+
+# The session log too, but only as context: it holds herdr's own restore
+# tracing, and — measured — zero `reconcile:` lines, since herdr does not route
+# a startup hook's stdout here. Kept because restore timing is what explains a
+# slow pass, discarded as evidence of what the pass decided.
+PROBE_SESSION_LOG="$HOME/.config/herdr/sessions/$SESSION/herdr-server.log"
+[ -f "$PROBE_SESSION_LOG" ] && { cp "$PROBE_SESSION_LOG" "$OUT/session-server.log" || true; }
 
 cap 09-workspace-list-after probe_herdr workspace list || true
 cap 10-pane-list-after probe_herdr pane list || true

@@ -95,6 +95,17 @@ HERDR="${HERDR_BIN_PATH:-herdr}"
 # set -e can leave a locked section early — never strand the mutex.
 trap ralph_ledger_unlock_held EXIT
 
+# Ledgers nest as <root>/<owner>/<repo>/ledger.jsonl (see ledger.sh).
+#
+# Defined HERE, above log(), and not beside its fellow path helpers: log()
+# resolves its destination through it, and the flag block below logs before
+# those helpers used to be reached. With the definition later, `--dry-run`'s
+# own announcement resolved the log path as `/logs/reconcile.log` — so the one
+# mode whose entire promise is that it writes nothing could create a file at
+# the filesystem root. A command substitution that fails still leaves printf
+# successful, which is why this surfaced as a stray path rather than an error.
+ledger_root() { printf '%s\n' "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"; }
+
 # log LINE — stdout, plus an append to a durable file (GH-1900).
 #
 # stdout alone made this pass unobservable in exactly the mode that matters.
@@ -108,10 +119,8 @@ trap ralph_ledger_unlock_held EXIT
 # the fleet, or whether the pass aborted on an unready snapshot before reaching
 # it — was written and immediately discarded.
 #
-# Lazy path resolution: `ledger_root` is defined below, and callers may log
-# before it is reachable in some future edit. Appending, never truncating: a
-# restart storm's passes are the sequence worth reading, so each must not erase
-# the one before it.
+# Appending, never truncating: a restart storm's passes are the sequence worth
+# reading, so each must not erase the one before it.
 #
 # Logging FAILS OPEN, absolutely. A read-only or missing log directory is not a
 # reason to abort a reconciliation pass — that would let an unwritable disk do
@@ -202,9 +211,6 @@ if [ "$DRY_RUN" = 1 ]; then
   refill_all_to_capacity() { log "would evaluate fleet refill for $1"; }
   ralph_dirty_clear() { log "would clear the dirty mark for $(dirname "$1")"; }
 fi
-
-# Ledgers nest as <root>/<owner>/<repo>/ledger.jsonl (see ledger.sh).
-ledger_root() { printf '%s\n' "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"; }
 
 # scope_key LEDGER_FILE — the "owner/repo" a ledger path encodes. Used to key
 # the cross-phase `open_all` set, because a bare NAME is not a unique key
