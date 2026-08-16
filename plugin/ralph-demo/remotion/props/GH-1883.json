@@ -1,0 +1,97 @@
+{
+  "title": "board prune: relationship gating",
+  "durationInFrames": 1770,
+  "slides": [
+    {
+      "kind": "title",
+      "from": 0,
+      "durationInFrames": 150,
+      "eyebrow": "GH-1883  ·  PR #2014",
+      "title": "board prune learns two more\nrelationship edges",
+      "subtitle": "One-hop sibling and inverse-blocks gating, at zero GraphQL cost"
+    },
+    {
+      "kind": "statement",
+      "from": 150,
+      "durationInFrames": 270,
+      "heading": "What prune actually removes",
+      "lines": [
+        "It removes a long-closed issue from the project board only — the GitHub issue stays intact.",
+        "What is lost is the board item: its Workflow State and Claim values go with it.",
+        "So the predicate must fail closed on every closed item another reader still needs.",
+        "Two of the five relationship edges were ungated."
+      ]
+    },
+    {
+      "kind": "statement",
+      "from": 420,
+      "durationInFrames": 270,
+      "heading": "sibling-edge",
+      "lines": [
+        "A closed item sharing an own-repo parent with an OPEN item is held.",
+        "One hop only — a sibling's siblings are not walked.",
+        "board.ts:6237 — the gate sits before the age check, so it binds once the item ages out."
+      ]
+    },
+    {
+      "kind": "statement",
+      "from": 690,
+      "durationInFrames": 310,
+      "heading": "blocks-edge",
+      "lines": [
+        "GitHub exposes no inverse blocks connection.",
+        "But an open item's CLOSED blockers are exactly the closed items that block something open.",
+        "The inverse falls out of the forward edge — so no nested connection is added, and the query costs the same.",
+        "A truncated blocker list on the open side fails closed for every candidate."
+      ]
+    },
+    {
+      "kind": "terminal",
+      "from": 1000,
+      "durationInFrames": 390,
+      "heading": "Run against this board, 2026-08-16",
+      "command": "board prune",
+      "output": [
+        "board volume: 1587 items = 16 page(s) per full scan",
+        "  (23 open, 819 closed, 745 non-issue) — threshold 800",
+        "  note: 745 scanned node(s) are pull requests or drafts —",
+        "  never read by board.ts, and NOT prunable here.",
+        "nothing to prune: 818 closed item(s) all still read by something.",
+        "  held indefinitely: 818 closed item(s) still read by something —",
+        "  too-recent 776, blocks-edge 3, apply-unit 22, sibling-edge 17"
+      ]
+    },
+    {
+      "kind": "table",
+      "from": 1390,
+      "durationInFrames": 230,
+      "heading": "Cost: zero",
+      "columns": ["", "pages", "points"],
+      "rows": [
+        ["before (0.1.152)", "16", "48"],
+        ["after (GH-1883)", "16", "48"]
+      ]
+    },
+    {
+      "kind": "title",
+      "from": 1620,
+      "durationInFrames": 150,
+      "eyebrow": "SHIPPED",
+      "title": "Retention is now reported\non every path",
+      "subtitle": "An over-tight rule is only visible if the tally always prints"
+    }
+  ],
+  "captions": [
+    { "from": 0, "durationInFrames": 150, "text": "GH-1883 closed the last two ungated relationship edges in board prune." },
+    { "from": 155, "durationInFrames": 130, "text": "Pruning removes the board item, not the issue — Workflow State and Claim go with it." },
+    { "from": 290, "durationInFrames": 125, "text": "That is one-way, so the predicate has to fail closed on anything another reader still needs." },
+    { "from": 425, "durationInFrames": 130, "text": "sibling-edge: a closed item is held while it shares an own-repo parent with an open one." },
+    { "from": 560, "durationInFrames": 125, "text": "Exactly one hop — a sibling's siblings are not walked." },
+    { "from": 695, "durationInFrames": 150, "text": "blocks-edge: GitHub has no inverse blocks connection to read." },
+    { "from": 850, "durationInFrames": 145, "text": "The inverse falls out of the forward edge, so nothing new is queried and the cost is unchanged." },
+    { "from": 1005, "durationInFrames": 190, "text": "Run live against this board: 818 closed items, none prunable today." },
+    { "from": 1200, "durationInFrames": 185, "text": "17 held by sibling-edge and 3 by blocks-edge — reasons that did not exist before this change." },
+    { "from": 1395, "durationInFrames": 220, "text": "Measured with RALPH_GQL_COST=1: the GraphQL document is byte-identical. 16 pages, 48 points, before and after." },
+    { "from": 1625, "durationInFrames": 140, "text": "And the retention tally now prints on every path, not only when there is nothing to prune." }
+  ]
+}
