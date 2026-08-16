@@ -95,7 +95,55 @@ HERDR="${HERDR_BIN_PATH:-herdr}"
 # set -e can leave a locked section early — never strand the mutex.
 trap ralph_ledger_unlock_held EXIT
 
-log() { echo "$(date -u +%FT%TZ) reconcile: $*"; }
+# Ledgers nest as <root>/<owner>/<repo>/ledger.jsonl (see ledger.sh).
+#
+# Defined HERE, above log(), and not beside its fellow path helpers: log()
+# resolves its destination through it, and the flag block below logs before
+# those helpers used to be reached. With the definition later, `--dry-run`'s
+# own announcement resolved the log path as `/logs/reconcile.log` — so the one
+# mode whose entire promise is that it writes nothing could create a file at
+# the filesystem root. A command substitution that fails still leaves printf
+# successful, which is why this surfaced as a stray path rather than an error.
+ledger_root() { printf '%s\n' "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"; }
+
+# log LINE — stdout, plus an append to a durable file (GH-1900).
+#
+# stdout alone made this pass unobservable in exactly the mode that matters.
+# Run by hand, reconcile.sh prints to a terminal; run as the `[[startup]]`
+# hook — its only automatic invocation, and the one phase F exists for — herdr
+# routes the hook's stdout nowhere a reader can reach. Measured 2026-08-15:
+# zero `reconcile:` lines in `~/.config/herdr/herdr-server.log` after seven
+# days of uptime, and zero in an isolated probe session's own server log while
+# the plugin was demonstrably loaded and the hook demonstrably fired. So every
+# decision this pass makes after a restart — including whether phase F re-armed
+# the fleet, or whether the pass aborted on an unready snapshot before reaching
+# it — was written and immediately discarded.
+#
+# Appending, never truncating: a restart storm's passes are the sequence worth
+# reading, so each must not erase the one before it.
+#
+# Logging FAILS OPEN, absolutely. A read-only or missing log directory is not a
+# reason to abort a reconciliation pass — that would let an unwritable disk do
+# what a sick server does, and this pass's whole discipline is that it acts
+# only on what it can prove. An unwritable log costs observability, never work.
+reconcile_log_file() {
+  if [ -n "${RALPH_HERDR_RECONCILE_LOG:-}" ]; then
+    printf '%s\n' "$RALPH_HERDR_RECONCILE_LOG"
+  else
+    printf '%s\n' "$(ledger_root)/logs/reconcile.log"
+  fi
+}
+
+log() {
+  local line f dir
+  line="$(date -u +%FT%TZ) reconcile: $*"
+  echo "$line"
+  f=$(reconcile_log_file) || return 0
+  dir=$(dirname "$f")
+  [ -d "$dir" ] || mkdir -p "$dir" 2>/dev/null || return 0
+  printf '%s\n' "$line" >>"$f" 2>/dev/null || true
+  return 0
+}
 
 # ── flags (GH-1933) ──────────────────────────────────────────────────────────
 #   --dry-run  run every read and every decision, perform no write. The pass
@@ -164,9 +212,6 @@ if [ "$DRY_RUN" = 1 ]; then
   ralph_dirty_clear() { log "would clear the dirty mark for $(dirname "$1")"; }
 fi
 
-# Ledgers nest as <root>/<owner>/<repo>/ledger.jsonl (see ledger.sh).
-ledger_root() { printf '%s\n' "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"; }
-
 # scope_key LEDGER_FILE — the "owner/repo" a ledger path encodes. Used to key
 # the cross-phase `open_all` set, because a bare NAME is not a unique key
 # across repositories: two repos in one session both hold a `w42-fix`, and a
@@ -192,12 +237,63 @@ scope_key() {
 # any stray diagnostic line to the JSON, jq rejects the whole value, and the
 # scoped herd collapses to an empty list — re-erasing the "no agents" vs
 # "could not find out" distinction the transport layer works to preserve.
+# The pass announces itself BEFORE the first read that can abort it (GH-1900).
+# "the hook never fired" and "the hook fired and found an unready server" are
+# opposite diagnoses with opposite remedies — a registration problem versus a
+# retry-or-delay problem — and without a line written before the snapshot read,
+# both render as an empty log. This is phase F's whole open question: it is the
+# only phase whose omission is silent-but-unproductive rather than self-healing.
+log "pass started (pid $$, ledger root $(ledger_root))"
+
+# A bounded wait for the snapshot to become answerable (GH-1900).
+#
+# Measured, 4 restarts of an isolated session: herdr starts this hook at
+# T+~46ms and the API only answers an external client at T+~76ms. The hook is
+# therefore launched INTO the readiness window, and the snapshot read succeeded
+# every time only because sourcing the libraries costs more than the ~30ms of
+# margin. That is a race won by accident of startup cost, and the measurement
+# was taken on an idle 4-pane session — the cockpit this must survive restores
+# ten workspaces and eleven agents, where restore is heavier and the margin is
+# unmeasured.
+#
+# Losing that race is uniquely expensive HERE. Every other unknown in this
+# script fails closed and is re-asked by the next pass; phase F has no next
+# pass. Refill is edge-triggered from a session exiting, a restart destroys the
+# listeners that would emit that edge, and nothing else schedules a reconcile —
+# so an aborted startup pass means the fleet silently stays un-rearmed until
+# its arming expires. The abort is correct (never sweep against an unknown
+# herd) and stays exactly as it was; what is wrong is treating the first read,
+# issued milliseconds into a server's life, as that read's only chance.
+#
+# Deliberately a WAIT, not a retry of the pass: the failure being covered is a
+# server that is not answering YET, which resolves in tens of milliseconds, and
+# re-running whole phases would risk acting twice. The bound is small and the
+# fall-through is the unchanged abort — a server that is genuinely sick still
+# gets refused, one second later. Fails open in the only direction available:
+# if the wait loop cannot run at all, the original read still happens.
+# The retry REUSES its own read rather than probing first: a throwaway
+# readiness call would make every healthy pass cost two snapshots instead of
+# one, and reconcile-cost.test.sh pins that count deliberately. So the loop
+# below IS the original read, attempted up to a bounded number of times, and a
+# server that answers immediately — the overwhelmingly common case — still
+# issues exactly one.
+_snap_wait_ms=${RALPH_HERDR_SNAPSHOT_WAIT_MS:-3000}
+_snap_waited=0
 _snap_err=$(ralph_diag_file)
-if ! snapshot=$(ralph_herdr_snapshot 2>"$_snap_err"); then
-  log "herdr snapshot failed — not reconciling ($(ralph_diag_read "$_snap_err"))"
+while :; do
+  snapshot=$(ralph_herdr_snapshot 2>"$_snap_err") && break
+  [ "$_snap_waited" -lt "$_snap_wait_ms" ] || break
+  sleep 0.1
+  _snap_waited=$((_snap_waited + 100))
+  snapshot=""
+done
+if [ -z "${snapshot:-}" ]; then
+  log "herdr snapshot failed after ${_snap_waited}ms — not reconciling ($(ralph_diag_read "$_snap_err"))"
   rm -f "$_snap_err"
   exit 0
 fi
+[ "$_snap_waited" -eq 0 ] ||
+  log "the herdr snapshot took ${_snap_waited}ms to answer — the pass started inside the server's readiness window"
 rm -f "$_snap_err"
 # An empty enrichment is NOT an empty herd: phases A and D read absence as
 # "mark lost / orphan the children", so a failure here must stop the pass
