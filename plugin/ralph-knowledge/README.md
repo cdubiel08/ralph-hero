@@ -241,6 +241,27 @@ skip the call rather than pass an empty string.
 | `RALPH_KNOWLEDGE_CONFIG` | Override path to `knowledge.config.json` (tilde expanded). |
 | `RALPH_KNOWLEDGE_DIRS` | Comma-separated list of roots. Beats config, loses to CLI. |
 | `RALPH_KNOWLEDGE_DB` | Override SQLite path. Beats `config.dbPath`, loses to a CLI `.db` positional. |
+| `RALPH_KNOWLEDGE_HANDSHAKE_DEADLINE_SEC` | How long the launcher waits for a first-run bootstrap before answering the MCP handshake with a no-tools stub and finishing the install in the background (default `15`; `0` blocks until the install completes). |
+| `RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC` | How long to wait for *another* process's bootstrap before giving up (default `900`). Only reachable with the handshake deadline disabled. |
+
+### First run on a slow link
+
+The first launch for a given runtime installs ~155MB and builds — about 4.5s on
+a normal connection, comfortably inside Claude Code's 30s MCP startup deadline.
+On a slow link the download can outrun that deadline, and the server would be
+marked failed for the whole session *and* the install killed with it, so the
+next session would start just as cold.
+
+Past `RALPH_KNOWLEDGE_HANDSHAKE_DEADLINE_SEC` the launcher instead answers the
+handshake from a zero-dependency stub that reports **no tools**, and lets the
+install finish in the background. The session is honestly degraded — the model
+is told the toolset is unavailable and why — and a session started after the
+install completes gets the full server. A bootstrap that *fails* is not a slow
+one: it aborts the launch with its error, as before.
+
+Closing that first session before the install finishes interrupts it, but npm's
+cache keeps whatever was already fetched, so the next launch resumes rather than
+restarting the download.
 
 ## Benchmarks
 
