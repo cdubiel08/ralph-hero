@@ -5466,7 +5466,11 @@ describe("prune candidates (GH-1788)", () => {
     parentNumber: null,
     ...over,
   });
-  const openItem = (n: number, parentNumber: number | null = null): QueueItem =>
+  const openItem = (
+    n: number,
+    parentNumber: number | null = null,
+    over: Partial<QueueItem> = {},
+  ): QueueItem =>
     ({
       number: n,
       repo: "cdubiel08/ralph-hero",
@@ -5487,6 +5491,7 @@ describe("prune candidates (GH-1788)", () => {
       updatedAt: days(1),
       createdAt: days(2),
       estimate: "S",
+      ...over,
     }) as QueueItem;
   const cfg = (apply: Partial<ApplyConfig> = {}) => ({
     volume: { ...VOLUME_DEFAULTS },
@@ -5582,6 +5587,68 @@ describe("prune candidates (GH-1788)", () => {
     const r = classifyPrune([], [closed(1, { closedAt: days(31) })], c, NOW);
     expect(r.candidates.map((x) => x.number)).toEqual([1]);
     expect(classifyPrune([], [closed(1, { closedAt: days(29) })], c, NOW).candidates).toEqual([]);
+  });
+
+  it("holds a closed item whose own-repo parent still has an open child (GH-1883)", () => {
+    // 7(open) and 8(closed, old) share parent 5. 9 is an unrelated closed leaf.
+    const r = classifyPrune(
+      [openItem(7, 5)],
+      [closed(8, { parentNumber: 5 }), closed(9)],
+      cfg(),
+      NOW,
+    );
+    expect(r.candidates.map((c) => c.number)).toEqual([9]);
+    expect(reasons(r)).toEqual({ 8: "sibling-edge" });
+  });
+
+  it("one hop only — a sibling's sibling is not walked (GH-1883)", () => {
+    // 7(open) parent 5; 8(closed) parent 5 is held; 8's own child 10 is not.
+    const r = classifyPrune(
+      [openItem(7, 5)],
+      [closed(8, { parentNumber: 5 }), closed(10, { parentNumber: 8 })],
+      cfg(),
+      NOW,
+    );
+    expect(r.candidates.map((c) => c.number)).toEqual([10]);
+    expect(reasons(r)).toEqual({ 8: "sibling-edge" });
+  });
+
+  it("holds a closed item that blocks an open one — the inverse edge (GH-1883)", () => {
+    const r = classifyPrune(
+      [openItem(7, null, { closedBlockers: [8] })],
+      [closed(8), closed(9)],
+      cfg(),
+      NOW,
+    );
+    expect(r.candidates.map((c) => c.number)).toEqual([9]);
+    expect(reasons(r)).toEqual({ 8: "blocks-edge" });
+  });
+
+  it("a truncated blocker list on the open side fails closed for every candidate (GH-1883)", () => {
+    const r = classifyPrune(
+      [openItem(7, null, { blockersTruncated: true })],
+      [closed(8), closed(9)],
+      cfg(),
+      NOW,
+    );
+    expect(r.candidates).toEqual([]);
+    expect(reasons(r)).toEqual({ 8: "blocks-edge", 9: "blocks-edge" });
+  });
+
+  it("divergence is derived from the not-terminal keep, never a second detector (GH-1883)", () => {
+    const r = classifyPrune(
+      [],
+      [closed(1, { state: "In Review" }), closed(2, { state: "(none)", stateReason: null }), closed(3)],
+      cfg(),
+      NOW,
+    );
+    expect(r.diverged).toEqual([
+      { number: 1, state: "In Review", stateReason: "COMPLETED" },
+      { number: 2, state: "(none)", stateReason: null },
+    ]);
+    // Every diverged item is also retained as not-terminal — one keep, two views.
+    expect(reasons(r)).toEqual({ 1: "not-terminal", 2: "not-terminal" });
+    expect(r.candidates.map((c) => c.number)).toEqual([3]);
   });
 
   it("oldest first — a bounded sweep should remove the deadest history", () => {
