@@ -188,6 +188,14 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, fetchAgentsCmd(m.cfg, m.runner)
 
+	case forkDoneMsg:
+		if msg.rc == 0 {
+			m.status = fmt.Sprintf("fork #%d: %s", msg.issue, msg.detail)
+		} else {
+			m.status = fmt.Sprintf("fork #%d failed (rc %d): %s", msg.issue, msg.rc, msg.detail)
+		}
+		return m, fetchAgentsCmd(m.cfg, m.runner)
+
 	case statusMsg:
 		m.status = string(msg)
 		return m, nil
@@ -282,6 +290,9 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	case "s":
 		return verbSpawn(m)
+
+	case "f":
+		return verbFork(m)
 
 	case "v":
 		m.status = "reading frontier…"
@@ -450,6 +461,43 @@ func verbSpawn(m Model) (Model, tea.Cmd) {
 	}
 	m.status = fmt.Sprintf("spawning a work session for #%d…", card.Number)
 	return m, spawnCmd(m.cfg, m.runner, card.Number)
+}
+
+// verbFork forks the selected issue's live session (GH-1957). The row is an
+// ISSUE, so the fork source is only unambiguous when the issue has exactly one
+// live agent: two agents get a named refusal rather than a silent pick, since
+// the pane actions (fork-right/down/tab) already say "beside THIS pane" and
+// are the right surface for that case.
+func verbFork(m Model) (Model, tea.Cmd) {
+	card, ok := m.selectedCard()
+	if !ok {
+		m.status = "no card selected"
+		return m, nil
+	}
+	if !m.herdrOK {
+		m.status = noMuxBanner + " — a fork needs a live pane to fork from"
+		return m, nil
+	}
+	as := m.agents[card.Number]
+	switch {
+	case len(as) == 0:
+		m.status = fmt.Sprintf("no live session for #%d — nothing to fork (s spawns one)", card.Number)
+		return m, nil
+	case len(as) > 1:
+		names := make([]string, 0, len(as))
+		for _, a := range as {
+			names = append(names, a.Name)
+		}
+		m.status = fmt.Sprintf("#%d has %d live sessions (%s) — fork from the pane itself (herdr's fork-right/down/tab actions)",
+			card.Number, len(as), strings.Join(names, ", "))
+		return m, nil
+	}
+	if as[0].Pane == "" {
+		m.status = fmt.Sprintf("herdr reports no pane for %s — nothing to fork", as[0].Name)
+		return m, nil
+	}
+	m.status = fmt.Sprintf("forking %s…", as[0].Name)
+	return m, forkCmd(m.cfg, m.runner, card.Number, as[0].Pane)
 }
 
 // ── mouse ───────────────────────────────────────────────────────────────────

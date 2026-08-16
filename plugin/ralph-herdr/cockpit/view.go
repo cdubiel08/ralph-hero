@@ -95,7 +95,7 @@ func legend(m Model) string {
 	if m.mode == ModePeek || m.mode == ModeDag {
 		return "esc close"
 	}
-	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · v dag · d diff · g browser · q quit"
+	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · d diff · g browser · q quit"
 }
 
 // bodyHeightOf mirrors viewModel's body sizing — shared with hitTest so the
