@@ -17,7 +17,8 @@
 #                reconcile has appended its exit reason=lost yet. Younger
 #                un-live records are a note, not a finding: the next
 #                reconcile marks them lost inside the same window a stale
-#                board claim gets.
+#                board claim gets. The per-record lines are capped and the
+#                COUNT is always printed (GH-2023) — see the phase.
 #
 # Output: herdr-setup.sh check style (`  ok   name — detail` / `  GAP  ` /
 # `  note `). ralph/scripts/herdr-setup.sh relays the verdict as an advisory
@@ -30,6 +31,10 @@
 # Knobs:
 #   RALPH_LOCK_TTL_MIN        staleness window, minutes (default 120 — the
 #                             same TTL the board's claim protocol uses)
+#   RALPH_LINEAGE_STALE_MAX   most stale-open records to list individually
+#                             (default 10; 0 lists none). Suppressed records
+#                             still count as findings — only the enumeration
+#                             is bounded.
 #   RALPH_HERDR_LEDGER        check exactly this ledger file (tests; default:
 #                             scan every ~/.ralph/<owner>/<repo>/ledger.jsonl)
 #   RALPH_HERDR_LEDGER_ROOT   ledger root dir (default ~/.ralph)
@@ -55,6 +60,11 @@ HERDR="${HERDR_BIN_PATH:-herdr}"
 TTL_MIN="${RALPH_LOCK_TTL_MIN:-120}"
 case "$TTL_MIN" in
   '' | *[!0-9]* | 0*) echo "doctor-lineage.sh: RALPH_LOCK_TTL_MIN must be a positive integer (got '$TTL_MIN')" >&2; exit 64 ;;
+esac
+# 0 is meaningful here — enumerate nothing, report only the count.
+STALE_MAX="${RALPH_LINEAGE_STALE_MAX:-10}"
+case "$STALE_MAX" in
+  '' | *[!0-9]*) echo "doctor-lineage.sh: RALPH_LINEAGE_STALE_MAX must be a non-negative integer (got '$STALE_MAX')" >&2; exit 64 ;;
 esac
 [ "$#" -eq 0 ] || { echo "doctor-lineage.sh: takes no arguments" >&2; exit 64; }
 
@@ -191,8 +201,17 @@ $live_names
 EOF
 
 # ── ledger side: open records with no live agent, older than the TTL ─────────
+#
+# The per-record lines are CAPPED (GH-2023). Measured 2026-08-16 on the live
+# ledgers: 36 of 39 open records were stale, so this side emitted 36 GAP lines
+# — one remedy, repeated 36 times, burying the live-side findings that each
+# name their own. Past the cap the records still COUNT as findings (a
+# suppressed gap is not a healed one); only their enumeration stops, and the
+# summary below says how many were withheld.
 now=$(date -u +%s)
 open_checked=0
+stale_total=0
+stale_shown=0
 while IFS='	' read -r f ref; do
   [ -n "$ref" ] || continue
   open_checked=$((open_checked + 1))
@@ -210,18 +229,42 @@ EOF2
   [ -n "$alive" ] && continue
   ts=$(RALPH_HERDR_LEDGER="$f" ralph_ledger_last "$ref" 2>/dev/null | jq -r '.ts // empty' 2>/dev/null) || ts=""
   if [ -z "$ts" ] || ! ep=$(iso_to_epoch "$ts"); then
-    gap "lineage-$ref" "open record with no live agent and no readable timestamp — reconcile should mark it lost"
+    stale_total=$((stale_total + 1))
+    if [ "$stale_shown" -lt "$STALE_MAX" ]; then
+      stale_shown=$((stale_shown + 1))
+      gap "lineage-$ref" "open record with no live agent and no readable timestamp — reconcile should mark it lost"
+    else
+      FINDINGS=$((FINDINGS + 1))
+    fi
     continue
   fi
   age_min=$(((now - ep) / 60))
   if [ "$age_min" -ge "$TTL_MIN" ]; then
-    gap "lineage-$ref" "open record, no live agent, last event $ts (${age_min}m ago >= TTL ${TTL_MIN}m) — reconcile has not run; run the reconcile action"
+    stale_total=$((stale_total + 1))
+    if [ "$stale_shown" -lt "$STALE_MAX" ]; then
+      stale_shown=$((stale_shown + 1))
+      gap "lineage-$ref" "open record, no live agent, last event $ts (${age_min}m ago >= TTL ${TTL_MIN}m) — reconcile has not run; run the reconcile action"
+    else
+      FINDINGS=$((FINDINGS + 1))
+    fi
   else
     note "lineage-$ref" "open record, no live agent, last event ${age_min}m ago (< TTL ${TTL_MIN}m) — the next reconcile marks it lost"
   fi
 done <<EOF3
 $open_pairs
 EOF3
+
+# The accumulation line (GH-2023) — printed at EVERY verdict, including the
+# clean one. The count of stale-open records is the growth curve of a reconcile
+# that has stopped landing: 36 of them was the tell that the [[startup]] hook's
+# output had been routed nowhere for weeks (GH-1900). A number only visible
+# when there is nothing to report is not a curve anyone can watch, and a number
+# only visible when it is already large is a number nobody saw grow.
+if [ "$stale_total" -gt "$stale_shown" ]; then
+  echo "  note lineage-stale-open — $stale_total stale open record(s); $((stale_total - stale_shown)) not listed (cap RALPH_LINEAGE_STALE_MAX=$STALE_MAX). One reconcile pass closes all of them"
+else
+  echo "  note lineage-stale-open — $stale_total stale open record(s) of $open_checked open"
+fi
 
 if [ "$FINDINGS" -eq 0 ]; then
   pass "lineage" "closed ($live_checked live ledgered agent(s), $open_checked open record(s))"

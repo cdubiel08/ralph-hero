@@ -705,6 +705,22 @@ not here.
   a push failure is a one-time warning, never an aborted verb, and a server restart
   drops them until reconcile re-pushes. The state token only claims what maps
   honestly (`working`/`blocked`); `idle` updates the ledger, not the chip.
+- **A sweep that has stopped landing is silent; its backlog is not (GH-2023).** Measured
+  2026-08-16 against the live ledgers: 36 of 39 open records would have swept `lost` in
+  one pass — names spanning weeks. Nothing was wrong with reconcile; the number was the
+  only evidence that the `[[startup]]` hook's sweep had not been landing (GH-1900 found
+  its output routed nowhere). `doctor-lineage.sh` already flagged every one of those
+  records and still failed to say it: the count lived in the *clean* pass line, so the
+  one verdict where it was visible was the one where it was zero, and 36 findings arrived
+  as 36 identical GAP lines that buried the live-side ones. The count now prints at every
+  verdict (`note lineage-stale-open — N …`) and the per-record listing is capped
+  (`RALPH_LINEAGE_STALE_MAX`, default 10) — **capped, not dropped**: a suppressed record
+  still counts as a finding and the line names how many were withheld. The sweep itself
+  stays deliberately unbounded, unlike `board prune`: it costs no remote call per record,
+  writes only to a local append-only file, touches the board never, and — running on
+  server restart — a limit would need one restart per batch to converge. The mass-sweep
+  hazard a limit gestures at is answered by evidence instead: the fail-closed re-probe,
+  per-record scoping, and phase A releasing no claim.
 - **A process can outlive its pane, and until GH-1888 nothing looked (`doctor-orphans.sh`).**
   Both sides of `doctor-lineage.sh` are keyed on a ledger identity, so neither
   can see a process that was never a ledgered agent — a cockpit, a dev server, a
