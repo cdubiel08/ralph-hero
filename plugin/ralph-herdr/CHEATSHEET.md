@@ -131,6 +131,7 @@ verbatim; Human Needed cards show the blocking question).
 | `r` | reply — `herdr agent prompt`; checkmark only after herdr confirms |
 | `a` | answer — comment-first via `board answer` (see §5) |
 | `s` | spawn — a `/ralph:work` session for the card |
+| `f` | fork — `scripts/fork.sh` on the card's live session; refused (never guessed) when the issue has two |
 | `v` | DAG view — `board frontier` as a text tree |
 | `d` / `g` / `q` | PR diff popup / open in browser / quit |
 | mouse | click selects, double-click observes |

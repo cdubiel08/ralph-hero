@@ -96,6 +96,35 @@ exactly like one that merged — and the selector never escalates on its own: th
 nothing. That check exists for the *unattended* lane, which is the population
 the cap protects, since prose cannot stop a lane nobody is watching.
 
+### A unit a live session is driving is not yours (GH-1929)
+
+`deliver-push.sh` wins the branch at the **push instant** — but a work session
+sitting on **unpushed local commits** emits no remote signal at all, so every
+check above reads a quiet PR and the rebase lands anyway. That session's next
+push then conflicts loudly: the "messy-but-recoverable" outcome the lanes spec
+named as residue §8.2.
+
+The lease that closes it already existed; nobody read it. `board claim` takes a
+per-(worktree, unit) lock (GH-1956) at the one acquisition point contract rule 1
+makes mandatory — so it is not a convention that can be stripped. `board
+deliver-queue` now reads it, and a unit held by a *live foreign session on this
+machine* is refused **entirely**, before any PR-shaped reasoning, as a
+**`local-session-active`** blocked row naming the holder's worktree.
+
+Two things follow. It is **self-clearing** — `windowExpiresAt` is the lock's own
+`RALPH_LOCK_TTL_MIN` expiry, so a dead session costs one TTL and no human, and
+`board claim NNN --steal` is the same explicit assertion the claim path already
+documents. The lease deliberately outlives the board claim — releasing it on the move to In
+Review would make it unobservable, since In Review is the only state this queue
+reads — so a unit's pickup latency can be a full TTL rather than the ~5-min
+settle window. That is the accepted price; no "I'm finished" verb reclaims it,
+because a verb whose omission restores the hazard is residue §8.3 by
+construction.
+
+And it is **same-machine only**: a deliver loop on another host sees
+no lock and residue §8.2 survives there — correctly, since unpushed commits are
+themselves a machine-local fact that no remote reader could ever have observed.
+
 ## Close-out, demotion, safety rails
 
 - **`no-open-pr` rows**: verify at least one linked PR actually MERGED, then `board move NNN done` (the Done-evidence guard accepts either linkage this lane uses — a closing-reference merged PR, or one merged on this issue's branch — so `--why` is for a completion with no merged PR at all, GH-1732). A linked PR closed *unmerged* → Human Needed with the finding, the escalation composed per [../work/references/escalation.md](../work/references/escalation.md). This lane is the only thing that un-strands these. **Apply units are different by design**: on an apply-labeled item the close gate refuses Done without `ralph-apply-evidence:v1` — that refusal means the deploy, not the merge, is the outcome; leave it open (or escalate), never route around the gate.
@@ -115,4 +144,4 @@ the cap protects, since prose cannot stop a lane nobody is watching.
    ```
 
 2. `mkdir -p "$RALPH_HOME"` (default `~/.ralph`) first, then append `<iso8601> deliver GH-<n> rc=<code> checked=<N> acted=<M>` to `$RALPH_HOME/deliver.outcomes.log` and touch `$RALPH_HOME/deliver.heartbeat` — surface a write failure rather than swallowing it; a lane always logging `checked=0` must be visibly dead, never silently green. An empty pass (no item selected) writes `GH-none` in the subject slot; the line still lands.
-3. Report, as your final output: `checked`/`acted` counts, the blocked-reason set from the queue read, and the earliest `windowExpiresAt` among time-bounded rows (`settling`, `retry-window`, `deferred`). The lane's goal state — for whatever invoked you — is: empty `next` AND no time-bounded blocked rows; rows only a human can clear (`no-pr`, `convergence-stalled`, Human Needed) don't count against it.
+3. Report, as your final output: `checked`/`acted` counts, the blocked-reason set from the queue read, and the earliest `windowExpiresAt` among time-bounded rows (`settling`, `retry-window`, `deferred`). The lane's goal state — for whatever invoked you — is: empty `next` AND no time-bounded blocked rows; rows only a human can clear (`no-pr`, `convergence-stalled`, Human Needed) don't count against it. `local-session-active` IS time-bounded — it clears itself on the lock's TTL — so it counts like the others.

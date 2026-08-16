@@ -86,6 +86,17 @@ func TestSpawnScriptIsConstant(t *testing.T) {
 	if strings.Contains(spawnScript, "%s") || strings.Contains(spawnScript, "%d") {
 		t.Fatalf("spawnScript looks templated — it must be constant: %q", spawnScript)
 	}
+	// forkScript: same contract — the pane id is positional, never interpolated,
+	// and the session read stays in fork.sh (GH-1957).
+	if !strings.Contains(forkScript, `RALPH_FORK_PANE="$2"`) || !strings.Contains(forkScript, `"$1/fork.sh"`) {
+		t.Fatalf("forkScript must pass the pane positionally to fork.sh: %q", forkScript)
+	}
+	if strings.Contains(forkScript, "%s") || strings.Contains(forkScript, "%d") {
+		t.Fatalf("forkScript looks templated — it must be constant: %q", forkScript)
+	}
+	if got := argsFork("/plug/scripts", hostile); got[len(got)-1] != hostile {
+		t.Fatalf("a hostile pane id must arrive as one positional arg, got %q", got)
+	}
 }
 
 func TestParseBoardColumns(t *testing.T) {

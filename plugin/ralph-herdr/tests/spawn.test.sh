@@ -523,6 +523,29 @@ case "$tab_out" in
 esac
 rm -f "$FAKE_HERDR_FIXTURES/tab-create.raw" "$FAKE_HERDR_FIXTURES/tab-create.rc"
 
+# ── the lane spawns prompt through the adapter, not the binary (GH-1999) ─────
+# Neither lane parses the prompt response, so nothing there can be MISREAD —
+# what a raw `$HERDR agent prompt` branches on instead is the exit status, and
+# transport.sh's founding rule is that a zero exit is not evidence of success.
+# herdr exits 0 having answered an error envelope, a reply to a different
+# request, or a wrong result type; each read here as "prompt delivered" and
+# the lane proceeded to notify-watch against an agent that never got its
+# prompt. Asserted structurally because the fix IS structural (one call swap)
+# and the regression is someone writing the raw form back: driving the whole
+# script would need a tend-queue/deliver-queue fixture the fake board has no
+# other reason to grow.
+for _lane in tend deliver; do
+  _raw=$(grep -v '^[[:space:]]*echo ' "$SCRIPT_DIR/../scripts/$_lane-pass.sh" \
+    | grep -c 'HERDR" agent prompt')
+  is "$_lane-pass: no raw agent prompt outside the adapter" "0" "$_raw"
+  if grep -q "ralph_herdr_agent_prompt ralph-$_lane" "$SCRIPT_DIR/../scripts/$_lane-pass.sh"; then
+    ok "$_lane-pass: the prompt goes through the validating adapter"
+  else
+    not_ok "$_lane-pass: the prompt goes through the validating adapter"
+  fi
+done
+unset _lane _raw
+
 # ── ralph_branch_for_issue: the GH-1807 grammar, and the legacy resume ───────
 # A throwaway git repo so the ref probes see exactly the branches this block
 # creates — the real checkout's branch list is not a fixture.

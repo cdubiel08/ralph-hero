@@ -501,6 +501,20 @@ Following the design record's practice of naming residual risk rather than hidin
    messy-but-recoverable at branch level (the work session's next push conflicts loudly).
    Accepted; users running interactive work sessions alongside an enabled deliver loop
    should size `RALPH_SETTLE_MIN` to their idle habits.
+   **[T-2026-08-16, GH-1917 + GH-1929] Largely closed, and the remainder is named.**
+   Two typed exclusions now sit under this, in the two places the hazard lives.
+   At the *push instant*, `deliver-push.sh` pins a `--force-with-lease` to the head
+   it rebased from, so a work session that already pushed wins on a real
+   server-side CAS (GH-1917). For work that is *unpushed* — the half no remote
+   signal can see, and the reason this point was written — `board deliver-queue`
+   reads the per-(worktree, unit) lock `board claim` already publishes (GH-1956)
+   and refuses the item entirely as a `local-session-active` blocked row (GH-1929).
+   That lock's acquisition is mandatory by construction, so this is not point 3.
+   What remains, stated rather than retired: the lock read is **machine-local**, so
+   a deliver loop on a *different host* still has the original exposure. That bound
+   is inherent — unpushed commits are themselves a machine-local fact — and the
+   original mitigations (settle window, pre-push re-check, SHA-pinned merge) are
+   what protect that case, exactly as described above.
 3. **Conventions fail open by nature.** Opt-in flags, billing guard, spawn lock, and outcome
    lines live in user-owned scripts; a user who strips them keeps a working but less safe
    loop. That is the deliberate price of scripts-as-examples; the enforcement line (board.ts,

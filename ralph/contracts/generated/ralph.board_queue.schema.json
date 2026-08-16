@@ -680,7 +680,8 @@
                         "marker-current",
                         "retry-window",
                         "deferred",
-                        "convergence-stalled"
+                        "convergence-stalled",
+                        "local-session-active"
                       ]
                     },
                     "verdict": {
@@ -776,7 +777,8 @@
                       "marker-current",
                       "retry-window",
                       "deferred",
-                      "convergence-stalled"
+                      "convergence-stalled",
+                      "local-session-active"
                     ]
                   },
                   "verdict": {
@@ -868,7 +870,8 @@
                       "marker-current",
                       "retry-window",
                       "deferred",
-                      "convergence-stalled"
+                      "convergence-stalled",
+                      "local-session-active"
                     ]
                   },
                   "verdict": {
