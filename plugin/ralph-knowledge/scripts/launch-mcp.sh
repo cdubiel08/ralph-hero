@@ -28,6 +28,24 @@
 #   * an inter-process mkdir LOCK, so exactly one process runs the
 #     destructive `npm ci` while the others wait and then re-check. The lock is
 #     never taken from its holder — see the note on reclamation below.
+#
+# The bootstrap is BOUNDED, not unbounded (GH-1850). It measures ~4.5s cold on
+# a normal link, but 155MB has to arrive first and a slow link can push that
+# past Claude Code's 30s MCP startup deadline — at which point the server is
+# marked failed for the session AND the install it was waiting on is torn down,
+# so the next session starts just as cold. Past
+# RALPH_KNOWLEDGE_HANDSHAKE_DEADLINE_SEC (15s) the install continues in the
+# background and this launcher exec's scripts/handshake-stub.cjs instead: a
+# zero-dependency process that answers the handshake and reports no tools. The
+# session is degraded and says so; it is not failed, and the work is not lost.
+#
+# The honest limit: if the session is torn down while the background install is
+# still running, that install dies with it. What survives is npm's own cache, so
+# the bytes already fetched are not re-fetched — the next launch resumes from a
+# warm cache rather than from nothing. Correctness is unaffected either way: the
+# marker is removed before the install and written only after it succeeds, so an
+# interrupted tree re-bootstraps rather than being served.
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -41,8 +59,32 @@ cd "$PLUGIN_ROOT"
 # Resolved from the script's own directory, not PLUGIN_ROOT: the two differ when
 # CLAUDE_PLUGIN_ROOT is set, and the checker ships beside this launcher.
 CHECK_DEPS="$SCRIPT_DIR/deps-complete.cjs"
+# Served instead of the real entry point when the bootstrap is still running at
+# the handshake deadline (GH-1850).
+STUB="$SCRIPT_DIR/handshake-stub.cjs"
 
 LOCK_WAIT_SEC="${RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC:-900}"
+
+# How long we are willing to make Claude Code WAIT for a first bootstrap before
+# answering the handshake with the stub instead (GH-1850).
+#
+# This is a bound on the handshake, not on the install: past the deadline the
+# bootstrap keeps running in the background and the next session gets the real
+# server. 15s sits under Claude Code's 30s MCP_TIMEOUT with room for the
+# handshake itself, and well over the ~4.5s a cold bootstrap measures on a
+# normal link — so the ordinary case still exec's the real server on the FIRST
+# session and nothing about it changes. Only a bootstrap slow enough to have
+# been killed by the deadline anyway reaches the stub.
+#
+# 0 restores the pre-GH-1850 behaviour: block until the bootstrap finishes,
+# however long that takes. That is also the automatic fallback when the stub is
+# missing — a launcher that cannot serve a stub must not shorten its wait.
+HANDSHAKE_DEADLINE_SEC="${RALPH_KNOWLEDGE_HANDSHAKE_DEADLINE_SEC:-15}"
+# A non-numeric setting is a typo, not an instruction to block forever.
+case "$HANDSHAKE_DEADLINE_SEC" in
+  '' | *[!0-9]*) HANDSHAKE_DEADLINE_SEC=15 ;;
+esac
+[ -r "$STUB" ] || HANDSHAKE_DEADLINE_SEC=0
 
 # A stable identifier for THIS MACHINE.
 #
@@ -130,6 +172,13 @@ IDENTITY_FILE="$RUNTIME_ROOT/.bootstrap-identity"
 # once do not serialize against each other — they have nothing in common to
 # protect.
 LOCK="$RUNTIME_ROOT/.bootstrap.lock"
+# Written by the backgrounded bootstrap with its exit status, and polled by the
+# foreground (GH-1850). It is what distinguishes SLOW from BROKEN: a bootstrap
+# still running has written nothing and earns the stub, while one that finished
+# non-zero fails the launch exactly as a synchronous one would. Serving a stub
+# forever because npm can never succeed is the worst outcome available here, so
+# it is the one case that is never allowed to look like patience.
+BOOT_STATUS="$RUNTIME_ROOT/.bootstrap.status"
 
 fingerprint() {
   local hasher
@@ -308,8 +357,7 @@ run_bootstrap() {
   # it read as a defect against Claude Code MCP_TIMEOUT (default 30000ms) —
   # for comparison the `npx -y ralph-hero-knowledge-index@X` wiring this
   # replaces took 7.7s cold and fetched 596MB. On a slow link the download can
-  # still dominate; see the follow-up issue on decoupling it from the
-  # handshake.
+  # still dominate, which is what the handshake deadline above bounds (GH-1850).
   echo "[ralph-knowledge] first run for runtime '$RUNTIME_KEY': installing and building (one-time, usually a few seconds)..."
   # Drop the marker first: if we are interrupted below, the next launch must
   # see an incomplete tree rather than a stale "complete" claim.
@@ -405,6 +453,12 @@ lock_write_owner() {
     >"$LOCK/owner" 2>/dev/null || true
 }
 
+# Set true only where we have positively established that the tree cannot serve
+# yet (GH-1850). Never inferred at the exec by re-running bootstrap_needed: that
+# is a node subprocess, and paying for it on every warm launch to answer a
+# question only the cold path can ask would tax the common case for the rare one.
+SERVE_STUB=false
+
 if bootstrap_needed; then
   mkdir -p "$RUNTIME_ROOT"
   waited=0
@@ -421,6 +475,20 @@ if bootstrap_needed; then
     # sessions costs roughly one polling interval PER session, each waking,
     # taking a lock it does not need, and dropping it again.
     bootstrap_needed || break
+
+    # Waiting on ANOTHER process's bootstrap is bounded by the same handshake
+    # deadline as running our own (GH-1850) — from Claude Code's side the two
+    # are indistinguishable, and the peer's install carries on regardless.
+    if [ "$HANDSHAKE_DEADLINE_SEC" -gt 0 ] && [ "$waited" -ge "$HANDSHAKE_DEADLINE_SEC" ]; then
+      echo "[ralph-knowledge] another process is still bootstrapping after ${waited}s; serving a" >&2
+      echo "[ralph-knowledge] stub for this session so the handshake is not lost. Held by:" >&2
+      echo "[ralph-knowledge] $(cat "$LOCK/owner" 2>/dev/null || echo 'unknown (no owner recorded)')" >&2
+      echo "[ralph-knowledge] if that process is gone, remove $LOCK and relaunch." >&2
+      # One last look before committing to the stub: the peer may have finished
+      # between the check at the top of this turn and now.
+      bootstrap_needed && SERVE_STUB=true
+      break
+    fi
 
     if [ "$waited" -ge "$LOCK_WAIT_SEC" ]; then
       echo "[ralph-knowledge] timed out after ${LOCK_WAIT_SEC}s waiting for another process to bootstrap ($LOCK)" >&2
@@ -521,12 +589,81 @@ if bootstrap_needed; then
         echo "[ralph-knowledge] started before this upgrade is closed, it can be removed." >&2
       fi
 
-      run_bootstrap >&2
-    fi
+      if [ "$HANDSHAKE_DEADLINE_SEC" -eq 0 ]; then
+        run_bootstrap >&2
+        trap - EXIT INT TERM
+        rm -rf "$LOCK"
+      else
+        # Backgrounded, and the LOCK GOES WITH IT (GH-1850). The foreground
+        # disarms its own handlers immediately afterwards: two processes with a
+        # `rm -rf "$LOCK"` trap means the one that leaves first deletes a lock
+        # the other is still bootstrapping under, and the next launcher then
+        # takes it and runs a second destructive `npm ci` on the same tree.
+        # Ownership is single by construction here, exactly as it was when the
+        # bootstrap ran in the foreground.
+        #
+        # stdout is redirected to stderr for the WHOLE subshell, not just
+        # run_bootstrap: after the exec below, that fd is the MCP stdio channel
+        # this process is speaking on, and one stray npm line on it corrupts the
+        # session. stdin is closed for the same reason in the other direction —
+        # a backgrounded npm must never consume bytes meant for the server.
+        # The status is published FROM THE EXIT TRAP, and run_bootstrap is
+        # called as a plain command — never as an `if`/`||` condition. Every
+        # construct that captures a status also disables errexit for the
+        # command it captures, and run_bootstrap relies on errexit to stop at
+        # the first failed step: written as `if run_bootstrap`, a failed
+        # `npm ci` fell through to `npm run build`, the prune, and the
+        # completion marker. Caught by this file's own broken-install test.
+        #
+        # The signal handlers deliberately publish NOTHING. A bootstrap that
+        # was killed has reached no verdict — the tree simply needs rebuilding —
+        # and the absence reads as "still going", which serves the stub and
+        # re-bootstraps next launch. Only a run that finished on its own gets to
+        # say whether it worked.
+        rm -f "$BOOT_STATUS"
+        (
+          trap 'st=$?; rm -rf "$LOCK"; printf "%s\n" "$st" >"$BOOT_STATUS"' EXIT
+          trap 'trap - EXIT; rm -rf "$LOCK"; exit 130' INT
+          trap 'trap - EXIT; rm -rf "$LOCK"; exit 143' TERM
+          run_bootstrap
+        ) >&2 </dev/null &
+        trap - EXIT INT TERM
 
-    trap - EXIT INT TERM
-    rm -rf "$LOCK"
+        waited=0
+        while [ ! -f "$BOOT_STATUS" ] && [ "$waited" -lt "$HANDSHAKE_DEADLINE_SEC" ]; do
+          sleep 1
+          waited=$((waited + 1))
+        done
+
+        if [ -f "$BOOT_STATUS" ]; then
+          boot_status=$(cat "$BOOT_STATUS" 2>/dev/null || echo 1)
+          if [ "$boot_status" != "0" ]; then
+            echo "[ralph-knowledge] bootstrap failed (exit $boot_status); see the output above." >&2
+            exit 1
+          fi
+        else
+          # Still installing. Say so on the one channel a user can read, since
+          # a session with no knowledge tools and no explanation is the thing
+          # that gets reported as a broken plugin.
+          echo "[ralph-knowledge] bootstrap is still running after ${waited}s (slow link?)." >&2
+          echo "[ralph-knowledge] Answering the handshake with a no-tools stub so this session is" >&2
+          echo "[ralph-knowledge] not marked failed. The install CONTINUES in the background; a new" >&2
+          echo "[ralph-knowledge] session started once it finishes will have the full toolset." >&2
+          SERVE_STUB=true
+        fi
+      fi
+    else
+      trap - EXIT INT TERM
+      rm -rf "$LOCK"
+    fi
   fi
+fi
+
+# A bootstrap that finished inside the deadline, or one a peer finished while we
+# waited, exec's the real server on THIS session. Only a tree we have positively
+# established cannot serve yet gets the stub.
+if [ "$SERVE_STUB" = true ]; then
+  exec node "$STUB"
 fi
 
 # cwd stays the plugin root (see the top of this file); the entry point is
