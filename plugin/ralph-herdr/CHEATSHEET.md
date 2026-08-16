@@ -260,7 +260,11 @@ RALPH_HERDR_DRY_RUN=true bash plugin/ralph-herdr/scripts/work-fleet.sh
 bash plugin/ralph-herdr/scripts/doctor-lineage.sh
                                              # L10: live agents ↔ open ledger records, read-only
                                              # (0 closed / 1 findings / 2 not evaluable);
-                                             # /ralph:help herdr relays the same verdict
+                                             # /ralph:help herdr relays the same verdict.
+                                             # `note lineage-stale-open — N` is the accumulation
+                                             # curve: N growing = reconcile has stopped landing.
+                                             # RALPH_LINEAGE_STALE_MAX caps the per-record lines
+                                             # (10; suppressed records still count as findings)
 bash plugin/ralph-herdr/scripts/doctor-orphans.sh
                                              # GH-1888: processes whose HERDR_PANE_ID names no
                                              # live pane — the side neither lineage check can

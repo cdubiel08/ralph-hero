@@ -596,6 +596,18 @@ unset RALPH_HERDR_LEDGER
 # instead of N views drifting apart as the pass runs. It stays LAZY — a pass
 # where nothing looks lost never asks — and its outcome is remembered so a
 # failed probe is not retried per ledger either.
+#
+# Deliberately UNBOUNDED, unlike the board's own prune (GH-2023). 36 of 39 open
+# records swept in one measured pass, and a per-pass limit would have been the
+# wrong shape for all three reasons prune's exists: the sweep costs zero remote
+# calls per record (the one re-probe above is hoisted and charged once for the
+# pass), it writes to a local append-only file rather than to GitHub, and it
+# makes no board write at all. A limit would also not converge — this pass runs
+# on server restart, so N stale records past the limit would need N/limit
+# restarts to clear, while doctor-lineage kept reporting them. The hazard a
+# limit gestures at is a MASS sweep from a bad read, and that is already
+# answered by evidence rather than by arithmetic: the fail-closed re-probe, the
+# per-record `record_is_ours` scoping, and this phase releasing no claim.
 fresh_json=""   # scoped herd from the one fresh re-probe
 fresh_state=""  # "" not yet asked | ok | failed
 fresh_err=""    # the diagnostic from a failed probe, for the log line

@@ -82,6 +82,32 @@ EOF
 run '[]'
 is "stale open record exits 1" "1" "$RC"
 has_line "stale open record is a GAP" '^  GAP  lineage-w9-old#cccc .*reconcile'
+has_line "the stale count is reported" '^  note lineage-stale-open — 1 stale open record'
+
+# ── the cap: many stale records enumerate boundedly, all of them count ───────
+# GH-2023 — 36 of 39 open records were stale on the live ledgers, one remedy
+# printed 36 times. The cap bounds the LISTING; a suppressed record is still a
+# finding, and the count line says how many were withheld.
+: >"$RALPH_HERDR_LEDGER"
+i=1
+while [ "$i" -le 12 ]; do
+  printf '{"ts":"2020-01-01T00:00:00Z","ev":"spawn","agent_ref":"w%s-old#c%s","pane_id":"p3","tokens":{"depth":"0"}}\n' \
+    "$i" "$i" >>"$RALPH_HERDR_LEDGER"
+  i=$((i + 1))
+done
+export RALPH_LINEAGE_STALE_MAX=3
+run '[]'
+is "capped stale sweep still exits 1" "1" "$RC"
+is "only the cap is listed" "3" "$(printf '%s\n' "$OUT" | grep -c '^  GAP  lineage-w')"
+has_line "the withheld remainder is named" '^  note lineage-stale-open — 12 stale open record(s); 9 not listed'
+has_line "every stale record still counts as a finding" '^  12 lineage finding(s)$'
+
+# A cap of 0 is meaningful: report the count, enumerate nothing.
+export RALPH_LINEAGE_STALE_MAX=0
+run '[]'
+is "cap 0 lists no record" "0" "$(printf '%s\n' "$OUT" | grep -c '^  GAP  lineage-w')"
+is "cap 0 still exits 1" "1" "$RC"
+unset RALPH_LINEAGE_STALE_MAX
 
 # ── open record, no live agent, WITHIN TTL → note only, exit 0 ───────────────
 cat >"$RALPH_HERDR_LEDGER" <<EOF
