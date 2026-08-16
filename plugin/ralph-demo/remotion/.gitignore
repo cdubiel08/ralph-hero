@@ -2,3 +2,5 @@ node_modules/
 out/
 dist/
 .DS_Store
+public/*.webm
+public/*.mp4
