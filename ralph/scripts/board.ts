@@ -2790,6 +2790,105 @@ function peerRefusal(ctx: Ctx, number: number, worktree: string, since: string):
   );
 }
 
+// ── The lock read as a lease, by deliver (GH-1929) ──────────────────────────
+//
+// GH-1917 typed the work/deliver exclusion at the PUSH INSTANT: `deliver-push.sh`
+// pins the remote head with `--force-with-lease=<ref>:<sha>`, so a work session
+// that already pushed wins atomically. It says in its own header that it does
+// not protect a session holding UNPUSHED local commits, and the lanes spec
+// (§8.2) accepts that as messy-but-recoverable: deliver rebases, the work
+// session's next push conflicts loudly.
+//
+// The gap is not that no lease exists. It is that nobody READ the one that
+// does. `takeWorktreeLock` (GH-1956) already publishes a record per (worktree,
+// unit) at every `board claim` — the mandatory acquisition point contract rule
+// 1 makes unavoidable — so the "who takes it, and is that enforceable" question
+// a branch-level lease would have to answer is already answered by construction.
+// It is not a convention that can fail open (lanes spec §8.3): no user script
+// can strip it, because it is taken inside the CLI's own claim path.
+//
+// Two properties make it readable from outside the owning session, neither of
+// them accidental: the sessions dir is machine-shared, and the issue number is
+// in the FILENAME. So one `readdir` names every live holder of a unit on this
+// machine, at zero API cost — which matters, since the ranking walk this feeds
+// runs at the 1-pt GraphQL floor (GH-1803) and a lease check that spent points
+// would be paid on every candidate on every pass.
+//
+// SCOPE, stated rather than implied: this covers a deliver loop on the SAME
+// MACHINE. A deliver running on another host sees no lock, and residue §8.2
+// survives there untouched. That is the right boundary and not a shortfall —
+// unpushed local commits are themselves a machine-local fact, so there was
+// never anything for a remote reader to observe.
+//
+// Why not a new `refs/ralph/lease/<branch>` ref, the issue's own first option:
+// it would be a second lock with a second expiry semantics to design and
+// heartbeat, guarding a hazard that never leaves the machine. Reusing the
+// existing record means the expiry question is already settled — the SAME
+// `RALPH_LOCK_TTL_MIN` clock as the board claim, so a dead session cannot block
+// deliver any longer than it can block another claim.
+
+/** A live foreign hold on a unit, as deliver sees it. */
+export interface LeaseHold {
+  session: string;
+  worktree: string;
+  since: string;
+  /** When the lock ages out on its own. This is what makes the resulting
+   *  blocked row self-clearing, unlike `convergence-stalled`, which only a
+   *  human clears. */
+  expiresAt: string;
+}
+
+export type LeaseProbe = (number: number) => LeaseHold | null;
+
+/** Enumerate live worktree locks on this machine, keyed by issue number.
+ *
+ *  Returns null — NOT an empty probe — when there is no readable sessions dir.
+ *  The distinction is the whole safety argument: an empty probe asserts "no
+ *  session holds anything", while null asserts nothing and leaves deliver's
+ *  queue exactly as it was. A lease we could not read is never evidence that
+ *  no lease is held.
+ *
+ *  Own-session locks are excluded. A deliver pass driven from the very session
+ *  that holds the unit is not racing itself, and blocking there would make the
+ *  lane unable to close out its own work. */
+export function localSessionLease(ctx: Ctx): LeaseProbe | null {
+  if (!ctx.session?.dir) return null;
+  let names: string[];
+  try {
+    names = readdirSync(ctx.session.dir);
+  } catch {
+    return null; // no dir yet, or unreadable — not evaluated
+  }
+  const cutoff = ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
+  const ttlMs = ctx.cfg.lockTtlMin * 60_000;
+  const holds = new Map<number, LeaseHold>();
+  for (const name of names) {
+    // The same shape `worktreeLockPath` writes. Matched with an anchored
+    // pattern rather than a prefix test so a future `wt-` file of another kind
+    // cannot be read as a lock — and so `wt-19290-…` is never mistaken for a
+    // hold on #1929, the prefix-match trap GH-1996 hit on `head:`.
+    const m = /^wt-(\d+)-[0-9a-f]{16}\.json$/.exec(name);
+    if (!m) continue;
+    const number = Number(m[1]);
+    const held = readWorktreeLock(join(ctx.session.dir, name));
+    if (!held) continue;
+    if (held.freshMs < cutoff) continue; // aged out on the board claim's own clock
+    if (held.lock.session === ctx.session.id) continue; // ours
+    // Several worktrees may hold the same unit (each has its own digest). Keep
+    // the one that expires LAST: the row may not re-enter the queue while any
+    // live session still holds it.
+    const hold: LeaseHold = {
+      session: held.lock.session,
+      worktree: held.lock.worktree,
+      since: held.lock.since,
+      expiresAt: new Date(held.freshMs + ttlMs).toISOString(),
+    };
+    const prior = holds.get(number);
+    if (!prior || prior.expiresAt < hold.expiresAt) holds.set(number, hold);
+  }
+  return (number: number) => holds.get(number) ?? null;
+}
+
 /** Refuse a SECOND, distinct unit driven from one session. Re-claiming the
  *  same issue (heartbeat, resume after Human Needed) is not a second unit and
  *  always passes. There is deliberately no --force: a fresh session is the
@@ -4383,6 +4482,9 @@ export interface DeliverRow {
    *  only on `convergence-stalled` rows. */
   convergence?: string | null;
   detail?: string | null;
+  /** GH-1929: the live foreign session holding this unit's worktree lock.
+   *  Present only on `local-session-active` rows. */
+  lease?: LeaseHold | null;
 }
 
 export interface DeliverQueueResult {
@@ -4448,6 +4550,7 @@ export function classifyDeliver(
   now: Date,
   probe: DeliverProbe | null,
   convergence: ConvergenceProbe | null = null,
+  lease: LeaseProbe | null = null,
 ): DeliverQueueResult {
   const ms = (iso: string | null | undefined): number | null => {
     if (!iso) return null;
@@ -4469,6 +4572,32 @@ export function classifyDeliver(
   }> = [];
 
   for (const c of cands) {
+    // GH-1929, first: a unit a live session on this machine is driving is
+    // refused ENTIRELY, before any PR-shaped reasoning. That is deliberate and
+    // stronger than the push-instant lease it complements — the hazard is
+    // unpushed local commits, which are invisible to every remote signal the
+    // checks below read, so no amount of looking at the PR can rule it out.
+    // Close-outs are included: if the holder's PR merged, the holder is the
+    // session that should close it, and it will.
+    //
+    // Surfaced as a blocked row, never silently dropped — the GH-1977
+    // precedent, and for its reason: a row that simply vanished from the queue
+    // would be indistinguishable from one that merged.
+    const hold = lease?.(c.number) ?? null;
+    if (hold) {
+      blocked.push({
+        number: c.number,
+        title: c.title,
+        pr: c.openPrs[0]?.number ?? null,
+        reason: "local-session-active",
+        // Self-clearing, unlike convergence-stalled: the lock ages out on
+        // RALPH_LOCK_TTL_MIN with no human in the loop, which is the answer to
+        // "a dead session blocks deliver forever".
+        windowExpiresAt: hold.expiresAt,
+        lease: hold,
+      });
+      continue;
+    }
     if (c.prs.length === 0) {
       // Rollup-advanced epic parents and human-placed items — not deliver's
       // business; they never reach the signal checks.
@@ -4942,7 +5071,9 @@ export function deliverQueue(
         }
       : null;
   }
-  return classifyDeliver(cands, opts, ctx.now(), probe, conv);
+  // GH-1929. Unbudgeted, unlike the convergence probe: one `readdir` for the
+  // whole pass and no API call at all, so there is nothing here to ration.
+  return classifyDeliver(cands, opts, ctx.now(), probe, conv, localSessionLease(ctx));
 }
 
 // ---------------------------------------------------------------------------
@@ -7369,6 +7500,13 @@ reads
                               blocked row — visible, and out of an unattended
                               lane's reach. Budget: RALPH_DELIVER_CONVERGENCE_MAX
                               (3); cap: RALPH_REVIEW_ROUND_CAP
+                              A unit a live session on THIS machine is driving
+                              (the GH-1956 worktree lock, taken at board
+                              claim) is held out entirely as a local-session-
+                              active row (GH-1929): that session may hold
+                              unpushed commits, which no remote signal can see.
+                              Self-clearing on RALPH_LOCK_TTL_MIN; same-machine
+                              only, and never evaluated without a sessions dir
   tend-queue [--json]         tend lane (GH-1712): Backlog hygiene + Done audit
                               — pending closure proposals, stale bodies,
                               cleared/truncated deps, unformed intake,
@@ -7910,6 +8048,19 @@ export function run(argv: string[], ctx: Ctx): number {
           out(
             `  #${b.number} pr#${b.pr} review loop ${b.convergence}: ${b.detail ?? ""}` +
               `\n    → board move ${b.number} human-needed --why "<decision>" (do not request another review)`,
+          );
+        }
+        // GH-1929: a held unit names its holder and its own expiry. A bare
+        // `←local-session-active` would read as a fault needing intervention,
+        // when the correct response is almost always to wait — so the line says
+        // when it clears itself, and the escape hatch is the same --steal the
+        // claim path already documents.
+        for (const b of res.blocked) {
+          if (b.reason !== "local-session-active" || !b.lease) continue;
+          out(
+            `  #${b.number} held by a live session in ${b.lease.worktree} (since ${b.lease.since})` +
+              `\n    → it may hold unpushed commits; clears itself at ${b.lease.expiresAt}.` +
+              ` If that session is gone: board claim ${b.number} --steal`,
           );
         }
       };
