@@ -46,6 +46,11 @@ DEFAULT_WINDOW_DAYS = int(os.environ.get("RALPH_META_WINDOW_DAYS", "7"))
 DEFAULT_MIN_REFLECTIONS = int(os.environ.get("RALPH_META_MIN_REFLECTIONS", "5"))
 DEFAULT_MAX_CANDIDATES = int(os.environ.get("RALPH_META_MAX_CANDIDATES", "3"))
 
+# Upper bound on how many already-dispositioned axioms are shown to the
+# paraphrase gate. Bounds the prompt, not the correctness: an axiom past the
+# cut is simply not compared against, which stages a duplicate at worst.
+DEFAULT_DEDUP_MAX_EXISTING = int(os.environ.get("RALPH_META_DEDUP_MAX_EXISTING", "150"))
+
 # Per-reflection content slice for the prompt (reflections are already compact).
 REFLECTION_CLIP = 700
 
@@ -241,15 +246,14 @@ def _existing_hashes(candidates_file: Path) -> set[str]:
     return out
 
 
-def _rejected_hashes(wiki_dir: Path) -> set[str]:
-    """Hashes of claims the human rejected in ``_rejected.jsonl`` (GH-1518).
+def _rejected_claims(wiki_dir: Path) -> list[str]:
+    """Claims the human rejected in ``_rejected.jsonl`` (GH-1518).
 
-    The curate skill's rejection log keys the claim as ``claim``; hashing it
-    under :func:`_candidate_hash` is what lets a rejection actually stick,
-    instead of the same axiom being re-staged every week for the human gate
-    to absorb again.
+    The curate skill's rejection log keys the claim as ``claim``. Reading it
+    here is what lets a rejection actually stick, instead of the same axiom
+    being re-staged every week for the human gate to absorb again.
     """
-    out: set[str] = set()
+    out: list[str] = []
     path = Path(wiki_dir).expanduser() / "_rejected.jsonl"
     if not path.exists():
         return out
@@ -265,19 +269,17 @@ def _rejected_hashes(wiki_dir: Path) -> set[str]:
             continue
         claim = str(rec.get("claim") or rec.get("axiom") or "").strip()
         if claim:
-            out.add(_candidate_hash(claim))
+            out.append(claim)
     return out
 
 
-def _promoted_hashes(wiki_dir: Path) -> set[str]:
-    """Hashes of axioms already promoted to wiki entries (GH-1518).
+def _promoted_titles(wiki_dir: Path) -> list[str]:
+    """Axioms already promoted to wiki entries (GH-1518).
 
     A wiki entry's H1 *is* the axiom in declarative form — that is the curate
-    skill's own body contract — so the title is the comparable text. Entries
-    are matched on the H1 only; a paraphrase still slips through, which is the
-    lexical limit tracked separately.
+    skill's own body contract — so the title is the comparable text.
     """
-    out: set[str] = set()
+    out: list[str] = []
     wiki_dir = Path(wiki_dir).expanduser()
     if not wiki_dir.exists():
         return out
@@ -291,9 +293,17 @@ def _promoted_hashes(wiki_dir: Path) -> set[str]:
             if line.startswith("# "):
                 title = line[2:].strip()
                 if title:
-                    out.add(_candidate_hash(title))
+                    out.append(title)
                 break
     return out
+
+
+def _rejected_hashes(wiki_dir: Path) -> set[str]:
+    return {_candidate_hash(c) for c in _rejected_claims(wiki_dir)}
+
+
+def _promoted_hashes(wiki_dir: Path) -> set[str]:
+    return {_candidate_hash(t) for t in _promoted_titles(wiki_dir)}
 
 
 def _read_candidate_records(candidates_file: Path) -> list[dict[str, Any]]:
@@ -336,6 +346,141 @@ def prune_candidates(wiki_dir: Path) -> int:
         candidates_file.write_text(body, encoding="utf-8")
         log.info("Pruned %d consumed candidate(s) from %s", removed, candidates_file)
     return removed
+
+
+def _existing_axioms(wiki_dir: Path, *, limit: int = DEFAULT_DEDUP_MAX_EXISTING) -> list[str]:
+    """Axioms already dispositioned, most-restatable first (GH-1967).
+
+    Pending candidates lead because they are the observed failure — the model
+    restating something it proposed days ago — then promoted, then rejected.
+    Truncation therefore drops the least likely match first, and dropping any
+    of them only risks staging a duplicate the human gate still catches.
+    """
+    wiki_dir = Path(wiki_dir).expanduser()
+    pending = [
+        str(r.get("axiom", "")).strip()
+        for r in _read_candidate_records(wiki_dir / "_candidates.jsonl")
+    ]
+    ordered = [a for a in pending if a] + _promoted_titles(wiki_dir) + _rejected_claims(wiki_dir)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for axiom in ordered:
+        key = _candidate_hash(axiom)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(axiom)
+    if limit > 0 and len(deduped) > limit:
+        log.info("Paraphrase gate comparing against %d of %d known axioms", limit, len(deduped))
+        deduped = deduped[:limit]
+    return deduped
+
+
+def build_dedup_prompt(candidates: list[dict[str, Any]], existing: list[str]) -> str:
+    new_block = "\n".join(
+        f"{i}. {str(c.get('axiom', '')).strip()}" for i, c in enumerate(candidates)
+    )
+    known_block = "\n".join(f"- {a}" for a in existing)
+    return "\n".join(
+        [
+            "You are de-duplicating candidate axioms for a personal wiki.",
+            "",
+            "KNOWN axioms (already staged, promoted, or rejected):",
+            known_block,
+            "",
+            "NEW candidates:",
+            new_block,
+            "",
+            "A NEW candidate is a DUPLICATE when it makes the same claim as a "
+            "KNOWN axiom, even in entirely different words. It is NOT a "
+            "duplicate merely for sharing a topic, vocabulary, or subject — "
+            "the claim itself must be the same.",
+            "",
+            'Return ONLY JSON: {"duplicates": [<index of each duplicate NEW '
+            'candidate>]}. Return {"duplicates": []} if none are duplicates.',
+        ]
+    )
+
+
+def parse_duplicate_indices(text: str, count: int) -> set[int]:
+    """Parse ``{"duplicates": [i, ...]}``. Returns ``set()`` on any failure —
+    an unparseable verdict must not drop a candidate."""
+    raw = (text or "").strip()
+    if raw.startswith("```"):
+        nl = raw.find("\n")
+        if nl != -1:
+            raw = raw[nl + 1 :]
+        if raw.rstrip().endswith("```"):
+            raw = raw.rstrip()[:-3].rstrip()
+    start, end = raw.find("{"), raw.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return set()
+    try:
+        data = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(data, dict) or not isinstance(data.get("duplicates"), list):
+        return set()
+    out: set[int] = set()
+    for entry in data["duplicates"]:
+        # Accept a bare index or an object carrying one; ignore anything else.
+        value = entry.get("index") if isinstance(entry, dict) else entry
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        if 0 <= value < count:
+            out.add(value)
+    return out
+
+
+def filter_paraphrases(
+    candidates: list[dict[str, Any]],
+    existing: list[str],
+    llm_url: str = DEFAULT_LLM_URL,
+    model: str = DEFAULT_LLM_MODEL,
+    *,
+    http_post: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Drop candidates that restate an already-dispositioned axiom (GH-1967).
+
+    The hash dedup downstream is exact — whitespace and case only — so a
+    paraphrase of a pending candidate is a fresh hash and stages again, which
+    under the weekly cadence accrues near-duplicates for the human to absorb.
+    The judge is the same local model that wrote the candidates: it needs no
+    embedding space of its own, and a model too unhealthy to answer here is
+    one that synthesized nothing to de-duplicate in the first place.
+
+    **Fails open.** Any error, any unparseable verdict, keeps every candidate:
+    dropping a real axiom is unrecoverable, while a staged duplicate costs one
+    line of the human's attention at the gate that already exists.
+    """
+    if not candidates or not existing:
+        return candidates
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": build_dedup_prompt(candidates, existing)}],
+        "max_tokens": 500,
+        "temperature": 0.0,
+    }
+    url = llm_url.rstrip("/") + "/v1/chat/completions"
+    try:
+        if http_post is None:
+            import httpx  # type: ignore[import-untyped]
+
+            with httpx.Client(timeout=DEFAULT_LLM_TIMEOUT_S) as client:
+                resp = client.post(url, json=body)
+            status, payload = resp.status_code, resp.json()
+        else:
+            status, payload = http_post(url, body, DEFAULT_LLM_TIMEOUT_S)
+        if status != 200:
+            log.warning("Paraphrase gate returned status %d; keeping all candidates", status)
+            return candidates
+        content = payload["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Paraphrase gate unavailable (%s); keeping all candidates", exc)
+        return candidates
+    dupes = parse_duplicate_indices(content, len(candidates))
+    for i in sorted(dupes):
+        log.info("Dropping paraphrase of a known axiom: %s", candidates[i].get("axiom", ""))
+    return [c for i, c in enumerate(candidates) if i not in dupes]
 
 
 def stage_candidates(
@@ -426,6 +571,16 @@ def run_meta_reflect(
     )
     if not candidates:
         log.info("No wiki candidates synthesized.")
+        return 0
+    candidates = filter_paraphrases(
+        candidates,
+        _existing_axioms(wiki_dir),
+        llm_url,
+        model,
+        http_post=http_post,
+    )
+    if not candidates:
+        log.info("All candidates restated known axioms; staging nothing.")
         return 0
     staged = stage_candidates(candidates, wiki_dir, now=now)
     log.info("Staged %d new wiki candidate(s) for curate.", staged)
