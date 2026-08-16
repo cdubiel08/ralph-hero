@@ -29,10 +29,9 @@ function makePluginRoot(): string {
   fs.writeFileSync(path.join(dir, "tsconfig.json"), "{}");
   fs.mkdirSync(path.join(dir, "src"));
   fs.mkdirSync(path.join(dir, "scripts"));
-  for (const f of ["launch-mcp.sh", "deps-complete.cjs", "handshake-stub.cjs"]) {
+  for (const f of ["launch-mcp.mjs", "deps-complete.cjs", "handshake-stub.cjs"]) {
     fs.copyFileSync(path.join(SCRIPTS, f), path.join(dir, "scripts", f));
   }
-  fs.chmodSync(path.join(dir, "scripts", "launch-mcp.sh"), 0o755);
   return dir;
 }
 
@@ -74,7 +73,7 @@ function launch(
   timeoutMs = 30_000,
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
-    const child = spawn("bash", [path.join(dir, "scripts", "launch-mcp.sh")], {
+    const child = spawn(process.execPath, [path.join(dir, "scripts", "launch-mcp.mjs")], {
       cwd: dir,
       stdio: ["pipe", "pipe", "pipe"],
       env: {

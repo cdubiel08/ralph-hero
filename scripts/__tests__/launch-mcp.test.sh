@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # scripts/__tests__/launch-mcp.test.sh
-# Regression suite for the npx-cache-bloat fix (GH-1756, PR #1755).
+# Regression suite for the npx-cache-bloat fix (GH-1756, PR #1755), carried
+# forward onto the Node launcher (GH-1851).
 #
 # The defect: .mcp.json launched the knowledge server as
 # `npx -y ralph-hero-knowledge-index@<pinned version>`. npx materializes a
 # fresh ~500MB-1GB cache tree under ~/.npm/_npx for EVERY distinct version
 # pin, and never evicts one — 33 releases put 20GB on a single machine. The
-# fix launches the vendored copy through scripts/launch-mcp.sh instead.
+# fix launches the vendored copy through scripts/launch-mcp.mjs instead.
 #
 # So the load-bearing assertions here are, in order of what actually caused
 # the bug:
@@ -21,13 +22,23 @@
 #   4. A genuinely incomplete or ABI-stale tree DOES re-bootstrap. The point
 #      is to skip needless work, never to serve a broken build.
 #
-# Every case runs the real script against a fake plugin root with `node` and
-# `npm` stubbed on PATH, so nothing here installs, builds, or hits a registry.
+# WHAT THE NODE PORT CHANGED IN THIS SUITE (GH-1851). The bash launcher shelled
+# out to `node -p` for its identity, so the suite drove identity by stubbing
+# `node` on PATH. A Node launcher reads process.platform/arch/versions.modules
+# directly and cannot be stubbed that way, so identity is driven by the
+# launcher's two documented override vars instead. Two sections are gone rather
+# than ported: the no-hasher and cksum-only fallbacks existed because a host may
+# lack every shell hasher, and node ships crypto — the ladder they tested no
+# longer exists. Every other case is the same assertion against the same
+# behaviour.
+#
+# Every case runs the real script against a fake plugin root with `npm` and
+# `npx` stubbed on PATH, so nothing here installs, builds, or hits a registry.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SRC="$REPO_ROOT/plugin/ralph-knowledge/scripts/launch-mcp.sh"
+SRC="$REPO_ROOT/plugin/ralph-knowledge/scripts/launch-mcp.mjs"
 MCP_JSON="$REPO_ROOT/plugin/ralph-knowledge/.mcp.json"
 RELEASE_WF="$REPO_ROOT/.github/workflows/release-knowledge.yml"
 
@@ -40,52 +51,16 @@ pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); [ -n "${2:-}" ] && echo "$2" | sed 's/^/        /'; return 0; }
 
 [ -f "$SRC" ] || { echo "FATAL: launcher not found at $SRC"; exit 1; }
+command -v node >/dev/null 2>&1 || { echo "FATAL: no node on PATH — the launcher IS a node program"; exit 1; }
 
 # --- stubs -------------------------------------------------------------------
-# node: records its argv, and answers `-p process.versions.modules` with a
-# per-case ABI so the fingerprint boundary is drivable from the test.
+# `node` is NOT stubbed: the launcher is a node program, and the server it
+# starts runs under process.execPath, which no PATH entry can intercept. The
+# served entry point records its own invocation instead — see SERVER_FILE — which
+# is a truer signal anyway: it fires only if the launcher really reached the
+# built artifact.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
-# EXPORTED, so every way of starting the launcher sees the same identity — the
-# helper that passes it explicitly and the cases that invoke `bash <script>`
-# directly. Left unexported it leaked from one section into the fixtures of the
-# next while the direct invocations kept the default, so a fixture and the
-# launcher under test built in two different runtime trees (GH-1844).
-# Sections that vary it reset it when they are done.
-export FAKE_NODE_ID="${FAKE_NODE_ID:-}"
-export FAKE_NODE_ABI="${FAKE_NODE_ABI:-}"
-export FAKE_NODE_VERSION="${FAKE_NODE_VERSION:-}"
-# The integrity check runs as a real script under the real node (GH-1846). The
-# stub fakes the VERSION and ABI probes and nothing else — re-implementing the
-# check here in bash is what the `-e` emulation used to do, and a second copy
-# of the rules cannot disagree with the shipped ones if it does not exist.
-REAL_NODE="$(command -v node || true)"
-cat >"$BIN/node" <<STUB
-#!/usr/bin/env bash
-REAL_NODE="$REAL_NODE"
-STUB
-cat >>"$BIN/node" <<'STUB'
-echo "node $*" >>"$CALL_LOG"
-case "${1:-}" in
-  --version) echo "${FAKE_NODE_VERSION:-v22.11.0}" ;;
-  -p)
-    case "${2:-}" in
-      # The launcher's platform+arch+ABI identity probe. FAKE_NODE_ID drives it
-      # directly; FAKE_NODE_ABI keeps the older ABI-only cases readable.
-      *process.platform*) echo "${FAKE_NODE_ID:-darwin-arm64-abi${FAKE_NODE_ABI:-127}}" ;;
-      'process.versions.modules') echo "${FAKE_NODE_ABI:-127}" ;;
-      *) exit 1 ;;
-    esac
-    ;;
-  *deps-complete.cjs)
-    # The shipped integrity check, run for real. Faking it here would test the
-    # fake; every case below turns on what the real rules decide.
-    [ -n "$REAL_NODE" ] || exit 1
-    exec "$REAL_NODE" "$@"
-    ;;
-  *) exit 0 ;;   # stands in for `exec node dist/index.js`
-esac
-STUB
 cat >"$BIN/npm" <<'STUB'
 #!/usr/bin/env bash
 echo "npm $*" >>"$CALL_LOG"
@@ -98,34 +73,42 @@ echo "npx $*" >>"$CALL_LOG"
 echo "FATAL: launcher invoked npx" >&2
 exit 90
 STUB
-chmod +x "$BIN/node" "$BIN/npm" "$BIN/npx"
+chmod +x "$BIN/npm" "$BIN/npx"
 
-# sanitized_bin <dir> [tool...] — a self-contained PATH holding the node/npm/npx
-# stubs plus the ordinary utilities the launcher shells out to, and NOTHING
-# else. The hashers are deliberately absent unless named in [tool...], which is
-# how the no-hasher and cksum-only branches are reached. Without the coreutils
-# the launcher would simply die at 127 and every assertion would pass or fail
-# for the wrong reason, so each required tool is resolved explicitly and a
-# missing one is a hard error rather than a silent hole.
-# `bash` and `env` are load-bearing: the stubs' `#!/usr/bin/env bash` shebang
-# resolves through this PATH too, and without them every run dies at 127.
-BASE_UTILS="bash env ps cp ln tr rm mv cat find mkdir sleep date uname cut kill sed grep ls dirname basename pwd stat hostname touch"
+# The stand-in for the built server. It appends the line the old `node` stub
+# used to append, so every "did it reach dist/index.js" assertion is unchanged.
+SERVER_FILE="$TMP_ROOT/server.js"
+cat >"$SERVER_FILE" <<'SRV'
+require('fs').appendFileSync(process.env.CALL_LOG, 'node ' + __filename + '\n');
+SRV
+export SERVER_FILE
+
+# The launcher's identity overrides. Left unexported they leaked from one
+# section into the fixtures of the next while direct invocations kept the
+# default, so a fixture and the launcher under test built in two different
+# runtime trees (GH-1844). Sections that vary them reset them when they are done.
+export RALPH_KNOWLEDGE_NODE_ID="${RALPH_KNOWLEDGE_NODE_ID:-}"
+export RALPH_KNOWLEDGE_MACHINE_ID="${RALPH_KNOWLEDGE_MACHINE_ID:-}"
+
+# sanitized_bin <dir> [tool...] — a self-contained PATH holding the npm/npx
+# stubs plus the ordinary utilities the launcher and the stubs shell out to, and
+# NOTHING else. Without them a run would die at 127 and every assertion would
+# pass or fail for the wrong reason, so each required tool is resolved
+# explicitly and a missing one is a hard error rather than a silent hole.
+# `bash`, `env` and `sh` are load-bearing: the stubs' `#!/usr/bin/env bash`
+# shebang resolves through this PATH, and the launcher's probe-availability
+# check runs `sh -c 'command -v ps'`.
+BASE_UTILS="bash sh env node ps cp ln tr rm mv cat find mkdir sleep date uname cut kill sed grep ls dirname basename pwd stat touch"
 sanitized_bin() {
   local dir="$1"; shift
   mkdir -p "$dir"
   local t src
   for t in $BASE_UTILS "$@"; do
-    src=$(PATH="/usr/bin:/bin:/usr/sbin:/sbin" command -v "$t" 2>/dev/null) || {
+    src=$(command -v "$t" 2>/dev/null) || {
       echo "FATAL: sanitized_bin cannot resolve '$t'" >&2; exit 1; }
     ln -sf "$src" "$dir/$t"
   done
-  for t in node npm npx; do cp "$BIN/$t" "$dir/$t"; done
-  # Guard the premise: the hashers must be absent unless explicitly requested.
-  local h
-  for h in shasum sha256sum cksum; do
-    case " $* " in *" $h "*) continue ;; esac
-    [ -e "$dir/$h" ] && { echo "FATAL: $h leaked into $dir" >&2; exit 1; }
-  done
+  for t in npm npx; do cp "$BIN/$t" "$dir/$t"; done
   return 0
 }
 
@@ -160,7 +143,7 @@ populate_runtime() {
   run_launcher "$root" >/dev/null
   rtdir=$(rt "$root") || { echo "FATAL: launcher created no runtime tree in $root" >&2; exit 1; }
   mkdir -p "$rtdir/dist"
-  echo 'console.log("server")' >"$rtdir/dist/index.js"
+  cp "$SERVER_FILE" "$rtdir/dist/index.js"
   # Real installations, not bare directories. Empty dirs were the defect the
   # entry-point check exists to catch, so a fixture made of them would let a
   # name-only check pass and prove nothing (codex P2, PR #1755).
@@ -181,8 +164,7 @@ populate_runtime() {
 fake_root() {
   local root="$TMP_ROOT/$1"
   mkdir -p "$root/scripts" "$root/src"
-  cp "$SRC" "$root/scripts/launch-mcp.sh"
-  chmod +x "$root/scripts/launch-mcp.sh"
+  cp "$SRC" "$root/scripts/launch-mcp.mjs"
   # The integrity check ships beside the launcher (GH-1846) and the launcher
   # resolves it from its own directory, so a fixture root without it is not the
   # thing being tested — every case would fail closed for the wrong reason.
@@ -218,10 +200,7 @@ run_launcher() {
   RC=0
   CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" \
     PATH="$BIN:$PATH" \
-    FAKE_NODE_VERSION="${FAKE_NODE_VERSION:-v22.11.0}" \
-    FAKE_NODE_ABI="${FAKE_NODE_ABI:-127}" \
-    FAKE_NODE_ID="${FAKE_NODE_ID:-darwin-arm64-abi${FAKE_NODE_ABI:-127}}" \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+    node "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
   echo "$log"
 }
 
@@ -241,28 +220,35 @@ else
   pass ".mcp.json carries no version-pinned package spec"
 fi
 
-if grep -q 'launch-mcp.sh' "$MCP_JSON"; then
+if grep -q 'launch-mcp.mjs' "$MCP_JSON"; then
   pass ".mcp.json launches the vendored launcher"
 else
-  fail ".mcp.json does not reference scripts/launch-mcp.sh" "$(cat "$MCP_JSON")"
+  fail ".mcp.json does not reference scripts/launch-mcp.mjs" "$(cat "$MCP_JSON")"
 fi
 
-# The script must be run THROUGH bash, not named as the command (codex P1).
-# Windows launches an MCP `command` as an executable and cannot execute a .sh
-# or honour its shebang, even with Git Bash installed — naming the script
-# directly stops the server from starting there at all, which the `npx` wiring
-# this replaces did not do.
+# The command must be `node` (GH-1851). Windows launches an MCP `command` as an
+# executable: it can neither run a `.sh` nor honour its shebang, which is why
+# the first fix invoked the script through `bash`. That still required bash on
+# PATH — conventional on Windows, not guaranteed. `node` is guaranteed by
+# construction here, because the thing being launched is a Node MCP server.
 if python3 -c "
 import json, sys
 d = json.load(open('$MCP_JSON'))
 s = d['mcpServers']['ralph-knowledge']
-sys.exit(0 if s['command'] == 'bash'
-         and any('launch-mcp.sh' in a for a in s.get('args', [])) else 1)
+sys.exit(0 if s['command'] == 'node'
+         and any('launch-mcp.mjs' in a for a in s.get('args', [])) else 1)
 " 2>/dev/null; then
-  pass ".mcp.json invokes the launcher through bash (works where .sh is not executable)"
+  pass ".mcp.json invokes the launcher through node (no bash dependency on Windows)"
 else
-  fail ".mcp.json names the .sh file as the command — Windows cannot execute it" \
+  fail ".mcp.json does not launch through node — Windows may have no bash on PATH" \
     "$(cat "$MCP_JSON")"
+fi
+
+# No shell launcher may come back: it is the dependency this issue removed.
+if [ -e "$REPO_ROOT/plugin/ralph-knowledge/scripts/launch-mcp.sh" ]; then
+  fail "the bash launcher is back beside the node one — two launchers will drift"
+else
+  pass "there is exactly one launcher"
 fi
 
 # The release workflow used to rewrite the pin. It must no longer do so, or
@@ -271,6 +257,41 @@ if grep -q 'ralph-hero-knowledge-index@\[0-9\]' "$RELEASE_WF"; then
   fail "release-knowledge.yml still rewrites a version pin into .mcp.json"
 else
   pass "release workflow no longer pins a version into .mcp.json"
+fi
+
+echo "=== the Windows path, which no runner here exercises ==="
+
+# GH-1851 exists to remove the launcher's dependence on a shell being present.
+# Nothing in this repo runs on Windows, so the three places the port would still
+# have died there are pinned structurally rather than behaviourally. Each was a
+# real defect in the first draft of the port, not a hypothetical.
+
+# 1. npm ships as `npm.cmd`, and since Node 20 spawn refuses to resolve a `.cmd`
+#    without a shell. Without this the very first bootstrap fails at ENOENT.
+if grep -q 'shell: IS_WINDOWS' "$SRC"; then
+  pass "npm is spawned through a shell on Windows (npm.cmd resolves)"
+else
+  fail "npm is spawned without a shell — `npm.cmd` would not resolve on Windows" \
+    "$(grep -n "spawn('npm'\|spawn(cmd" "$SRC")"
+fi
+
+# 2. A directory symlink on Windows needs elevation or developer mode; a
+#    junction is the same indirection with none. The bootstrap links src/.
+if grep -q "'junction'" "$SRC"; then
+  pass "the src link is a junction on Windows (no elevation required)"
+else
+  fail "symlinkSync is called without the junction type — EPERM on an unelevated Windows" \
+    "$(grep -n 'symlinkSync' "$SRC")"
+fi
+
+# 3. Windows has neither /proc nor `ps`, so the in-use probe would report
+#    "cannot be probed" and REFUSE every rebuild of an existing tree — a
+#    permanent wedge on the one platform this port is for.
+if grep -q 'Win32_Process' "$SRC"; then
+  pass "the in-use probe has a Windows listing (rebuilds are not wedged there)"
+else
+  fail "no Windows process listing — every rebuild of an existing tree would be refused" \
+    "$(grep -n 'probeAvailable' "$SRC")"
 fi
 
 echo "=== release workflow ships launcher fixes (codex P2) ==="
@@ -287,8 +308,6 @@ fi
 echo "=== warm tree: exec the vendored server, install nothing ==="
 
 root=$(fake_root warm)
-# Seed the marker with the fingerprint this very script computes, which is what
-# a completed bootstrap would have written.
 log=$(run_launcher "$root")   # first run bootstraps and writes the marker
 log=$(run_launcher "$root")   # second run is the one under test
 
@@ -311,43 +330,84 @@ else
 fi
 
 if grep -qE "node .*/dist/index\\.js" "$log"; then
-  pass "warm launch exec'd the vendored dist/index.js"
+  pass "warm launch ran the vendored dist/index.js"
 else
-  fail "warm launch never exec'd dist/index.js" "$(cat "$log")"
+  fail "warm launch never ran dist/index.js" "$(cat "$log")"
+fi
+
+echo "=== the launcher serves under its OWN node, not a PATH lookup ==="
+
+# process.execPath, not `node` from PATH: this process is the runtime the tree
+# was keyed to, and serving through a different one could load arch-bound
+# binaries under the wrong ABI. A PATH `node` that fails loudly proves the
+# launcher never consults one.
+root=$(fake_root execpath)
+log=$(run_launcher "$root")
+EP_BIN="$TMP_ROOT/execpath-bin"
+sanitized_bin "$EP_BIN"
+rm -f "$EP_BIN/node"
+cat >"$EP_BIN/node" <<'STUB'
+#!/usr/bin/env bash
+echo "FATAL: launcher resolved node from PATH" >&2
+exit 91
+STUB
+chmod +x "$EP_BIN/node"
+RC=0
+log="$root/calls.log"; : >"$log"
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$EP_BIN" \
+  "$(command -v node)" "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
+if [ "$RC" -eq 0 ] && grep -qE "node .*/dist/index\\.js" "$log"; then
+  pass "the server starts under process.execPath even when PATH node is hostile"
+else
+  fail "the launcher went through PATH to find node (rc=$RC)" "$(cat "$root/stderr.log")"
 fi
 
 echo "=== Node fingerprint tracks the ABI boundary, not the version string ==="
 
 # A patch bump shares the ABI, so the compiled deps still load. Re-installing
-# here buys nothing and can strand an offline machine.
+# here buys nothing and can strand an offline machine. The launcher hashes the
+# platform-arch-abi identity and never the version string, so a patch bump is
+# not merely tolerated — it is invisible to the fingerprint by construction.
 root=$(fake_root patchbump)
-FAKE_NODE_VERSION="v22.11.0" FAKE_NODE_ABI="127" log=$(run_launcher "$root")
+log=$(run_launcher "$root")
 marker_before=$(cat "$(rt "$root")/.bootstrap-complete")
-
-FAKE_NODE_VERSION="v22.14.3" FAKE_NODE_ABI="127" log=$(run_launcher "$root")
+log=$(run_launcher "$root")
+marker_after=$(cat "$(rt "$root")/.bootstrap-complete")
 if grep -q '^npm ' "$log"; then
-  fail "Node patch bump (v22.11.0 -> v22.14.3, same ABI) forced a reinstall" "$(cat "$log")"
+  fail "a relaunch at the same ABI forced a reinstall" "$(cat "$log")"
 else
-  pass "Node patch bump does not invalidate the marker"
+  pass "an unchanged ABI identity does not invalidate the marker"
+fi
+if [ "$marker_before" = "$marker_after" ]; then
+  pass "the fingerprint is stable across relaunches"
+else
+  fail "the fingerprint changed with nothing else changing ($marker_before -> $marker_after)"
 fi
 
-marker_after=$(cat "$(rt "$root")/.bootstrap-complete")
-if [ "$marker_before" = "$marker_after" ]; then
-  pass "fingerprint is stable across a Node patch bump"
+if grep -v '^[[:space:]]*//' "$SRC" | grep -qE 'process\.version[^s]|node --version'; then
+  fail "the launcher reads the full Node version — a patch bump would reinstall" \
+    "$(grep -nE 'process\.version[^s]|node --version' "$SRC")"
 else
-  fail "fingerprint changed on a patch bump ($marker_before -> $marker_after)"
+  pass "the launcher never reads the full Node version string"
 fi
 
 # A major bump moves the ABI, and better-sqlite3's compiled binary genuinely
 # stops loading. That IS a rebuild.
+# The fixture itself must be built under identity A. Left to the ambient
+# identity it is built under whatever this runner really is, and the cases
+# below then count one tree too many — or pass vacuously, on a runner whose
+# real identity differs from both overrides. macOS hid this; Linux did not.
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"
 root=$(fake_root majorbump)
-FAKE_NODE_VERSION="v22.11.0" FAKE_NODE_ABI="127" log=$(run_launcher "$root")
-FAKE_NODE_VERSION="v24.0.0" FAKE_NODE_ABI="137" log=$(run_launcher "$root")
+log=$(run_launcher "$root")
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi137"
+log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "Node ABI change (127 -> 137) does re-bootstrap"
 else
   fail "Node ABI change did not re-bootstrap — compiled deps would fail to load" "$(cat "$log")"
 fi
+export RALPH_KNOWLEDGE_NODE_ID=""
 
 echo "=== incomplete tree still re-bootstraps ==="
 
@@ -371,7 +431,7 @@ log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "a dependency outside any hand-written list still re-bootstraps (zod)"
 else
-  fail "missing zod passed as a complete tree — exec would fail instead of repairing" \
+  fail "missing zod passed as a complete tree — the server would fail instead of repairing" \
     "$(cat "$log")"
 fi
 
@@ -387,7 +447,7 @@ log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "an empty dependency directory re-bootstraps (name alone is not enough)"
 else
-  fail "an EMPTY node_modules/zod passed as installed — exec would fail on its static import" \
+  fail "an EMPTY node_modules/zod passed as installed — the server would fail on its static import" \
     "$(cat "$log")"
 fi
 
@@ -435,14 +495,33 @@ else
   fail "absent marker did not re-bootstrap" "$(cat "$log")"
 fi
 
+# The fingerprint must still track the manifests, or it is a constant by
+# another name. (This is what the shasum/cksum fallback cases used to prove;
+# node's crypto removes the ladder, not the requirement.)
+root=$(fake_root lockchange)
+log=$(run_launcher "$root")
+echo '{"lockfileVersion":3,"changed":true}' >"$root/package-lock.json"
+log=$(run_launcher "$root")
+if grep -q 'npm ci' "$log"; then
+  pass "a lockfile change invalidates the marker"
+else
+  fail "the fingerprint ignored a lockfile change" "$(cat "$log")"
+fi
+
 echo "=== fingerprint identity is platform + arch + ABI, not ABI alone ==="
 
 # arm64 and x64 Node of the same major share NODE_MODULE_VERSION, but
 # better-sqlite3 / onnxruntime-node / sqlite-vec binaries are arch-bound. A
 # shared plugin cache reached from both must NOT match the marker.
+# The fixture itself must be built under identity A. Left to the ambient
+# identity it is built under whatever this runner really is, and the cases
+# below then count one tree too many — or pass vacuously, on a runner whose
+# real identity differs from both overrides. macOS hid this; Linux did not.
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"
 root=$(fake_root archswap)
-FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-FAKE_NODE_ID="darwin-x64-abi127" log=$(run_launcher "$root")
+log=$(run_launcher "$root")
+export RALPH_KNOWLEDGE_NODE_ID="darwin-x64-abi127"
+log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "architecture change at a constant ABI re-bootstraps"
 else
@@ -450,115 +529,53 @@ else
     "$(cat "$log")"
 fi
 
+# The fixture itself must be built under identity A. Left to the ambient
+# identity it is built under whatever this runner really is, and the cases
+# below then count one tree too many — or pass vacuously, on a runner whose
+# real identity differs from both overrides. macOS hid this; Linux did not.
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"
 root=$(fake_root platformswap)
-FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-FAKE_NODE_ID="linux-arm64-abi127" log=$(run_launcher "$root")
+log=$(run_launcher "$root")
+export RALPH_KNOWLEDGE_NODE_ID="linux-arm64-abi127"
+log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "platform change at a constant ABI re-bootstraps"
 else
   fail "darwin -> linux at ABI 127 reused the marker" "$(cat "$log")"
 fi
 
-FAKE_NODE_ID=""; FAKE_NODE_ABI=""; FAKE_NODE_VERSION=""   # restore the defaults for the fixtures below
-
-echo "=== no-hasher fallback never claims a match ==="
-
-# With neither shasum, sha256sum, nor cksum on PATH the marker cannot describe
-# the tree. A CONSTANT sentinel was the bug: the first bootstrap wrote it and
-# every later check matched it, so lockfile and Node changes reused a stale
-# build. The value must differ per call.
-root=$(fake_root nohasher)
-NOHASH_BIN="$TMP_ROOT/nohash-bin"
-sanitized_bin "$NOHASH_BIN"
-
-run_nohasher() {
-  local r="$1" log="$1/calls.log"
-  : >"$log"
-  RC=0
-  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$r" PATH="$NOHASH_BIN" \
-    bash "$r/scripts/launch-mcp.sh" >/dev/null 2>"$r/stderr.log" || RC=$?
-  echo "$log"
-}
-
-log=$(run_nohasher "$root")
-m1=$(cat "$(rt "$root")/.bootstrap-complete" 2>/dev/null || echo MISSING)
-log=$(run_nohasher "$root")
-m2=$(cat "$(rt "$root")/.bootstrap-complete" 2>/dev/null || echo MISSING)
-
-if [ "$m1" = "MISSING" ] || [ "$m2" = "MISSING" ]; then
-  fail "no-hasher run wrote no marker at all" "m1=$m1 m2=$m2"
-elif [ "$m1" != "$m2" ]; then
-  pass "no-hasher fingerprint differs per call (cannot self-match)"
+# The identity the launcher uses when nothing overrides it must carry all three
+# facts, or the two cases above are testing the override and nothing else.
+if node -e "
+const s = require('fs').readFileSync('$SRC','utf8');
+const m = /return \\\`\\\$\{process\.platform\}-\\\$\{process\.arch\}-abi\\\$\{process\.versions\.modules\}\\\`/.test(s);
+process.exit(m ? 0 : 1);
+"; then
+  pass "the default identity is platform + arch + ABI"
 else
-  fail "no-hasher fingerprint is constant ($m1) — a stale build would be reused forever"
+  fail "the default identity is not platform+arch+abi — the override cases prove nothing" \
+    "$(grep -n 'process.platform' "$SRC")"
 fi
 
-if grep -q 'npm ci' "$log"; then
-  pass "no-hasher second launch re-bootstraps rather than trusting the marker"
-else
-  fail "no-hasher second launch trusted a marker it could not compute" "$(cat "$log")"
-fi
+export RALPH_KNOWLEDGE_NODE_ID=""   # restore the defaults for the fixtures below
 
-echo "=== cksum fallback keeps a real fingerprint when shasum is absent ==="
-
-root=$(fake_root cksumonly)
-CK_BIN="$TMP_ROOT/cksum-bin"
-sanitized_bin "$CK_BIN" cksum
-
-run_cksum() {
-  local r="$1" log="$1/calls.log"
-  : >"$log"
-  RC=0
-  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$r" PATH="$CK_BIN" \
-    bash "$r/scripts/launch-mcp.sh" >/dev/null 2>"$r/stderr.log" || RC=$?
-  echo "$log"
-}
-
-log=$(run_cksum "$root")
-c1=$(cat "$(rt "$root")/.bootstrap-complete" 2>/dev/null || echo MISSING)
-log=$(run_cksum "$root")
-c2=$(cat "$(rt "$root")/.bootstrap-complete" 2>/dev/null || echo MISSING)
-if [ "$c1" != "MISSING" ] && [ "$c1" = "$c2" ] && ! grep -q 'npm ci' "$log"; then
-  pass "cksum fallback yields a stable fingerprint (warm tree stays warm)"
-else
-  fail "cksum fallback did not produce a stable warm launch" "c1=$c1 c2=$c2"
-fi
-
-# ...and still tracks the lockfile, or it would be a constant by another name.
-echo '{"lockfileVersion":3,"changed":true}' >"$root/package-lock.json"
-log=$(run_cksum "$root")
-if grep -q 'npm ci' "$log"; then
-  pass "cksum fallback still detects a lockfile change"
-else
-  fail "cksum fingerprint ignored a lockfile change" "$(cat "$log")"
-fi
-
-echo "=== signal traps release the lock AND stop ==="
-
-# Bash resumes after a TERM/INT trap. A handler that only cleaned up would drop
-# the lock and then continue the rest of the bootstrap, letting a second
-# launcher run `npm ci` concurrently against the same tree.
-if grep -qE "trap '.*' INT" "$SRC" && grep -qE "trap '.*' TERM" "$SRC"; then
-  pass "INT and TERM have handlers separate from EXIT"
-else
-  fail "INT/TERM still share the bare EXIT handler" "$(grep -n 'trap' "$SRC")"
-fi
-
-if grep -qE "trap '.*rm -rf \"\\\$LOCK\"; exit [0-9]+' INT" "$SRC" \
-  && grep -qE "trap '.*rm -rf \"\\\$LOCK\"; exit [0-9]+' TERM" "$SRC"; then
-  pass "signal handlers exit explicitly instead of resuming the script"
-else
-  fail "a signal handler cleans up but does not exit — bash would resume into a second npm ci" \
-    "$(grep -n 'trap' "$SRC")"
-fi
+echo "=== signal handlers release the lock AND stop ==="
 
 # Behavioral: TERM during `npm ci` must leave no lock, no marker, and a
 # non-zero rc — not a script that ran on to completion.
+#
+# The hazard the bash launcher documented — a trap that cleans up and then
+# RESUMES into the rest of the bootstrap — has a Node twin: a handler cannot run
+# at all while the thread is inside a synchronous spawnSync, so a synchronous
+# bootstrap would defer it past the build, the prune and the completion marker.
+# That is why the bootstrap awaits its children, and why this case is
+# behavioural rather than a grep for a trap shape.
 root=$(fake_root signal)
 SIG_BIN="$TMP_ROOT/sig-bin"
-sanitized_bin "$SIG_BIN" shasum
+sanitized_bin "$SIG_BIN"
 # npm ci kills the launcher mid-install, standing in for Claude Code killing a
 # slow first run. Overwrites the stub sanitized_bin just installed.
+rm -f "$SIG_BIN/npm"
 cat >"$SIG_BIN/npm" <<'STUB'
 #!/usr/bin/env bash
 echo "npm $*" >>"$CALL_LOG"
@@ -570,17 +587,18 @@ exit 0
 STUB
 chmod +x "$SIG_BIN/npm"
 
+rm -f "$(rt "$root")/dist/index.js"
 log="$root/calls.log"
 : >"$log"
 RC=0
 CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$SIG_BIN" \
-  bash -c 'LAUNCHER_PID=$$; export LAUNCHER_PID; exec bash "$1"' _ \
-  "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+  bash -c 'LAUNCHER_PID=$$; export LAUNCHER_PID; exec node "$1"' _ \
+  "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
 
 if [ "$RC" -ne 0 ]; then
   pass "TERM during npm ci exits non-zero (rc=$RC)"
 else
-  fail "TERM during npm ci still exited 0 — the script resumed past the signal"
+  fail "TERM during npm ci still exited 0 — the launcher resumed past the signal"
 fi
 
 if [ ! -d "$(rt "$root")/.bootstrap.lock" ]; then
@@ -598,7 +616,22 @@ fi
 if ! grep -q 'npm run build' "$log"; then
   pass "TERM during npm ci stops before the build (no resumed bootstrap)"
 else
-  fail "script resumed past the signal and kept bootstrapping" "$(cat "$log")"
+  fail "the launcher resumed past the signal and kept bootstrapping" "$(cat "$log")"
+fi
+
+# The structural half: the bootstrap must not block the thread, or no handler
+# can fire until it is over. spawnSync anywhere inside the bootstrap path is the
+# regression. (spawnSync is fine for the read-only probes, which are not
+# interruptible work and hold no lock.)
+if node -e "
+const s = require('fs').readFileSync('$SRC','utf8');
+const body = s.slice(s.indexOf('async function runBootstrap'));
+process.exit(/spawnSync/.test(body.slice(0, body.indexOf('\n}'))) ? 1 : 0);
+"; then
+  pass "the bootstrap awaits its children instead of blocking the event loop"
+else
+  fail "the bootstrap uses spawnSync — signal handlers could not fire until it finished" \
+    "$(grep -n 'spawnSync' "$SRC")"
 fi
 
 echo "=== the launcher never deletes a lock it does not own ==="
@@ -606,8 +639,8 @@ echo "=== the launcher never deletes a lock it does not own ==="
 # The terminal property, and the reason ~160 lines of reclamation machinery are
 # gone (codex P2 x6). Every scheme for detecting and deleting an abandoned lock
 # is check-then-delete on a shared pathname, and each serialization layer needed
-# its own reclamation in turn. `mkdir` can create atomically but can never
-# safely destroy someone else's directory, so the launcher does not try.
+# its own reclamation in turn. Directory creation is atomic but can never safely
+# destroy someone else's directory, so the launcher does not try.
 #
 # Consequence under test: a pre-existing lock is NEVER removed by a waiter,
 # whatever it looks like — live owner, dead owner, ancient, ownerless.
@@ -634,7 +667,7 @@ for scenario in liveowner deadowner ancient ownerless; do
   RC=0
   CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
     RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+    node "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
 
   if [ -d "$(rt "$root")/.bootstrap.lock" ] && ! grep -q 'npm ci' "$log"; then
     pass "pre-existing lock ($scenario) is neither deleted nor bypassed"
@@ -653,7 +686,7 @@ printf '%s %s %s\n' "$DEAD_PID" "some-other-host" "0" >"$(rt "$root")/.bootstrap
 RC=0
 CALL_LOG="$root/calls.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
   RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+  node "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
 
 if [ "$RC" -ne 0 ]; then
   pass "a wedged lock fails loudly rather than bootstrapping anyway (rc=$RC)"
@@ -672,88 +705,67 @@ else
 fi
 
 # And no reclamation machinery may creep back in.
-if grep -qE 'reap_abandoned_lock|lock_reclaimable|dir_reclaimable|LOCK_STALE_MIN' "$SRC"; then
+if grep -qE 'reapAbandonedLock|lockReclaimable|dirReclaimable|LOCK_STALE_MIN' "$SRC"; then
   fail "reclamation logic is back — every version of it raced" \
-    "$(grep -nE 'reap_abandoned_lock|lock_reclaimable|dir_reclaimable|LOCK_STALE_MIN' "$SRC")"
+    "$(grep -nE 'reapAbandonedLock|lockReclaimable|dirReclaimable|LOCK_STALE_MIN' "$SRC")"
 else
   pass "no lock-reclamation machinery remains"
 fi
-if grep -qE 'mv "\$LOCK"|rm -rf "\$LOCK/reaping"|\.bootstrap\.reap' "$SRC"; then
-  fail "a lock-stealing primitive is back" "$(grep -nE 'mv \"\$LOCK\"|reaping|bootstrap.reap' "$SRC")"
-else
-  pass "the lock is never moved, and no reap marker exists"
-fi
-
-echo "=== signal handlers disarm EXIT before removing their own lock ==="
-
-# Otherwise the handler removes the lock, then `exit` runs the still-armed EXIT
-# trap and removes the pathname AGAIN — deleting whatever waiter acquired it in
-# between, which lets a third waiter bootstrap concurrently.
-# Stated as "every such handler", not "there are exactly two" (GH-1850). The
-# count was a proxy for the invariant while the launcher had a single lock
-# owner; backgrounding the bootstrap gave the subshell its own handler pair, and
-# a count test then fails on a change that upholds the rule perfectly. What must
-# hold is a property of each handler, so that is what is asserted — and it needs
-# no edit the next time a handler is added.
-lock_signal_traps=$(grep -cE "trap '[^']*rm -rf \"\\\$LOCK\"[^']*' (INT|TERM)" "$SRC" || true)
-lock_signal_traps_disarming=$(grep -cE "trap 'trap - EXIT; rm -rf \"\\\$LOCK\"; exit [0-9]+' (INT|TERM)" "$SRC" || true)
-if [ "$lock_signal_traps" -ge 2 ] \
-  && [ "$lock_signal_traps" = "$lock_signal_traps_disarming" ]; then
-  pass "every INT/TERM handler ($lock_signal_traps) disarms EXIT before removing the lock"
-else
-  fail "a signal handler removes the lock with EXIT still armed (double removal)" \
-    "$(grep -n 'trap' "$SRC")"
-fi
-if grep -qE "trap 'rm -rf \"\\\$LOCK\"; exit [0-9]+'" "$SRC"; then
-  fail "a signal handler still removes the lock without disarming EXIT first" \
-    "$(grep -n 'trap' "$SRC")"
-else
-  pass "no signal handler removes the lock with EXIT armed"
-fi
-echo "=== run_bootstrap is never called in a status-capturing context (GH-1850) ==="
-
-# `if run_bootstrap`, `run_bootstrap || x`, `run_bootstrap && x` and
-# `$(run_bootstrap)` all DISABLE errexit for the function they capture — so the
-# fail-fast that stops the bootstrap at its first failed step stops applying,
-# and a failed `npm ci` runs on through `npm run build`, the prune, and the
-# completion marker. That is exactly the "interrupted bootstrap claims
-# completion" state the marker exists to prevent, and it is a one-character
-# refactor away at all times. The status must be published from the EXIT trap
-# instead, which reads $? with errexit still in force.
-# Comments are stripped FIRST: the rule is explained in the launcher in the very
-# words it forbids, and grep -n's line-number prefix means a `^#` filter applied
-# afterwards never matches the indentation it was written for.
-if sed 's/#.*//' "$SRC" \
-  | grep -nE '(if|while|until|\|\||&&|\$\()[[:space:]]*run_bootstrap|run_bootstrap[[:space:]]*(\|\||&&)' \
-  | grep -q .; then
-  fail "run_bootstrap is captured, which silently disables its errexit fail-fast" \
-    "$(grep -nE 'run_bootstrap' "$SRC")"
-else
-  pass "run_bootstrap is only ever called as a plain command"
-fi
-
-if grep -q 'find "\$LOCK"' "$SRC"; then
-  fail "a find(1)-based lock-age probe is still present" "$(grep -n 'find "\$LOCK"' "$SRC")"
-else
-  pass "no find(1) probe of the lock remains"
-fi
-
-# The owner file must actually be written, or every reclaim decision silently
-# degrades to the age fallback.
-root=$(fake_root ownerfile)
-log=$(run_launcher "$root")
-if grep -q 'lock_write_owner' "$SRC"; then
-  pass "the lock holder records an owner identity"
-else
-  fail "no owner file is written — liveness could never be checked" "$(grep -n 'owner' "$SRC")"
-fi
-
-# ...and the lock is never taken out of its path to be inspected. That absence
-# window is what CI's 2-core runner exploited into 3 concurrent installs.
-if grep -q 'mv "$LOCK" "$grave"' "$SRC"; then
-  fail "the lock is still moved out of its path, opening an absence window"
+# The lock is never moved out of its path to be inspected. That absence window
+# is what CI's 2-core runner exploited into 3 concurrent installs.
+if grep -qE 'renameSync\([^)]*LOCK|bootstrap\.reap|reaping' "$SRC"; then
+  fail "a lock-stealing primitive is back" "$(grep -nE 'renameSync|reaping|bootstrap.reap' "$SRC")"
 else
   pass "the lock is never moved out of its path (no absence window)"
+fi
+# Nothing may inspect the lock's age: an age test is the reclamation decision
+# every failed design was built on.
+if grep -qE 'statSync\([^)]*LOCK|mtime' "$SRC"; then
+  fail "a lock-age probe is present" "$(grep -nE 'statSync|mtime' "$SRC")"
+else
+  pass "the lock's age is never consulted"
+fi
+
+# A signal must not release the lock while the bootstrap child is still alive
+# (codex P2, PR #2036). Killing is asynchronous, so releasing immediately hands
+# the lock to a relaunch while `npm ci` — or a grandchild such as `tsc`, never
+# signalled directly — is still mutating the same tree. The handler awaits the
+# child's exit first, and the children are spawned detached so the whole process
+# group can be reached.
+if node -e "
+const s = require('fs').readFileSync('$SRC','utf8');
+const h = s.slice(s.indexOf('function onFatalSignal'), s.indexOf('// --- bootstrap'));
+process.exit(h.indexOf('await new Promise') < h.indexOf('releaseLock()') ? 0 : 1);
+"; then
+  pass "a signal awaits the bootstrap child before releasing the lock"
+else
+  fail "the lock is released before the killed child is gone — a relaunch could install concurrently" \
+    "$(sed -n '/function onFatalSignal/,/^}/p' "$SRC")"
+fi
+if grep -q 'detached: !IS_WINDOWS' "$SRC"; then
+  pass "bootstrap children are detached, so the grandchildren can be signalled"
+else
+  fail "bootstrap children share this process group — tsc would outlive the signal" \
+    "$(grep -n 'spawn(cmd' "$SRC")"
+fi
+
+# The owner file must actually be written, or a timed-out waiter can name nobody.
+if grep -q 'writeLockOwner' "$SRC"; then
+  pass "the lock holder records an owner identity"
+else
+  fail "no owner file is written — a timeout could name no holder" "$(grep -n 'owner' "$SRC")"
+fi
+
+# Releasing must be idempotent, which is what makes the exit hook safe beside a
+# signal handler that has already released. Without it the handler removes the
+# lock and the exit path removes the pathname AGAIN, deleting whatever waiter
+# acquired it in between — the bash launcher's "disarm EXIT first" requirement,
+# reached structurally instead.
+if grep -q 'if (!holdingLock) return;' "$SRC"; then
+  pass "releasing the lock is idempotent (no double removal on the exit path)"
+else
+  fail "releaseLock is not guarded — the exit hook could remove a waiter's lock" \
+    "$(grep -n 'releaseLock' "$SRC")"
 fi
 
 echo "=== bootstrap installs dev deps even when the env says to omit them ==="
@@ -767,7 +779,7 @@ rm -f "$(rt "$root")/dist/index.js"
 log="$root/calls.log"; : >"$log"
 RC=0
 CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" NODE_ENV=production \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+  node "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
 
 if grep -qE '^npm ci .*--include=dev' "$log"; then
   pass "npm ci forces dev dependencies in (survives NODE_ENV=production)"
@@ -776,7 +788,7 @@ else
     "$(grep '^npm ' "$log")"
 fi
 
-# ...and they are still pruned afterwards, or the disk saving this PR exists
+# ...and they are still pruned afterwards, or the disk saving this work exists
 # for would be given straight back.
 if grep -qE '^npm prune .*--omit=dev' "$log"; then
   pass "dev dependencies are pruned again after the build"
@@ -785,197 +797,178 @@ else
     "$(grep '^npm ' "$log")"
 fi
 
-echo "=== deps_complete runs the REAL node program, not a stub ==="
+echo "=== the shipped integrity check, run for real ==="
 
-# Everything above stubs `node`, so those cases exercise the test's own
-# reimplementation of deps_complete rather than the launcher's. That is enough
-# for the surrounding control flow, but it proves nothing about the check
-# itself — a name-only implementation still passes them. (Verified: mutating
-# the launcher back to `fs.existsSync(dir)` leaves the stubbed cases green.)
-#
-# So this section sources the real function and runs it under the real node,
-# against real fixtures. It is the only place the shipped JavaScript is
-# actually executed.
-if ! command -v node >/dev/null 2>&1; then
-  echo "  SKIP: no node on PATH, cannot exercise the real deps_complete"
-else
-  # eval rather than `. <(...)`: process substitution did not reliably deliver
-  # the function here, and a silently unsourced function would make every case
-  # below fail for the wrong reason.
-  # deps_complete delegates to the checker the launcher resolves from its own
-  # directory; the launcher's own resolution is not sourced here, so bind it.
-  CHECK_DEPS="$(dirname "$SRC")/deps-complete.cjs"
-  eval "$(sed -n '/^deps_complete() (/,/^)/p' "$SRC")"
-
-  if ! type deps_complete >/dev/null 2>&1; then
-    fail "deps_complete could not be sourced — the cases below would prove nothing"
-  fi
-
-  dep_fixture() {
-    local root="$TMP_ROOT/$1"
-    mkdir -p "$root/node_modules/zod"
-    cat >"$root/package.json" <<'PKG'
+# The launcher delegates completeness to scripts/deps-complete.cjs (GH-1846).
+# Everything above turns on its verdict indirectly; this section runs the
+# shipped program itself, against real fixtures, exactly as the launcher does —
+# from inside the tree, with the tree's own manifests.
+dep_fixture() {
+  local root="$TMP_ROOT/$1"
+  mkdir -p "$root/node_modules/zod"
+  cat >"$root/package.json" <<'PKG'
 { "name": "t", "dependencies": { "zod": "1" } }
 PKG
-    printf '{"name":"zod","main":"index.js"}\n' >"$root/node_modules/zod/package.json"
-    echo 'module.exports = {}' >"$root/node_modules/zod/index.js"
-    echo "$root"
-  }
+  printf '{"name":"zod","main":"index.js"}\n' >"$root/node_modules/zod/package.json"
+  echo 'module.exports = {}' >"$root/node_modules/zod/index.js"
+  echo "$root"
+}
+deps_complete() ( cd "$1" && node "$(dirname "$SRC")/deps-complete.cjs" >/dev/null 2>&1 )
 
-  root=$(dep_fixture real_ok)
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    pass "a real installation satisfies deps_complete"
-  else
-    fail "a complete tree was reported incomplete — this would rebuild on every launch"
-  fi
+root=$(dep_fixture real_ok)
+if deps_complete "$root"; then
+  pass "a real installation satisfies deps-complete"
+else
+  fail "a complete tree was reported incomplete — this would rebuild on every launch"
+fi
 
-  # The exact case codex named: the directory survives, its contents do not.
-  root=$(dep_fixture real_empty)
-  rm -rf "$root/node_modules/zod"
-  mkdir -p "$root/node_modules/zod"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    fail "an EMPTY node_modules/zod satisfied the real deps_complete — name-only check"
-  else
-    pass "an empty dependency directory fails the real deps_complete"
-  fi
+# The exact case codex named: the directory survives, its contents do not.
+root=$(dep_fixture real_empty)
+rm -rf "$root/node_modules/zod"; mkdir -p "$root/node_modules/zod"
+if deps_complete "$root"; then
+  fail "an EMPTY node_modules/zod satisfied deps-complete — name-only check"
+else
+  pass "an empty dependency directory fails deps-complete"
+fi
 
-  # Manifest present, entry point deleted.
-  root=$(dep_fixture real_noentry)
-  rm -f "$root/node_modules/zod/index.js"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    fail "a package with no entry file satisfied the real deps_complete"
-  else
-    pass "a missing entry point fails the real deps_complete"
-  fi
+# Manifest present, entry point deleted.
+root=$(dep_fixture real_noentry)
+rm -f "$root/node_modules/zod/index.js"
+if deps_complete "$root"; then
+  fail "a package with no entry file satisfied deps-complete"
+else
+  pass "a missing entry point fails deps-complete"
+fi
 
-  # A package absent altogether.
-  root=$(dep_fixture real_absent)
-  rm -rf "$root/node_modules/zod"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    fail "an absent dependency satisfied the real deps_complete"
-  else
-    pass "an absent dependency fails the real deps_complete"
-  fi
+# A package absent altogether.
+root=$(dep_fixture real_absent)
+rm -rf "$root/node_modules/zod"
+if deps_complete "$root"; then
+  fail "an absent dependency satisfied deps-complete"
+else
+  pass "an absent dependency fails deps-complete"
+fi
 
-  # `main` may be extensionless, or name a directory — node appends .js and
-  # falls back to <dir>/index.js. An exact existsSync reported three healthy
-  # packages in this repo's own tree as missing, and a false "missing" forces a
-  # destructive reinstall on EVERY launch.
-  root=$(dep_fixture real_extless)
-  printf '{"name":"zod","main":"./index"}\n' >"$root/node_modules/zod/package.json"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    pass "an extensionless main resolves (no false rebuild)"
-  else
-    fail "an extensionless main was reported missing — a healthy tree would reinstall forever"
-  fi
+# `main` may be extensionless, or name a directory — node appends .js and
+# falls back to <dir>/index.js. An exact existsSync reported three healthy
+# packages in this repo's own tree as missing, and a false "missing" forces a
+# destructive reinstall on EVERY launch.
+root=$(dep_fixture real_extless)
+printf '{"name":"zod","main":"./index"}\n' >"$root/node_modules/zod/package.json"
+if deps_complete "$root"; then
+  pass "an extensionless main resolves (no false rebuild)"
+else
+  fail "an extensionless main was reported missing — a healthy tree would reinstall forever"
+fi
 
-  root=$(dep_fixture real_dirmain)
-  printf '{"name":"zod","main":"./lib"}\n' >"$root/node_modules/zod/package.json"
-  mkdir -p "$root/node_modules/zod/lib"
-  echo 'module.exports = {}' >"$root/node_modules/zod/lib/index.js"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    pass "a main naming a directory resolves via index.js"
-  else
-    fail "a directory main was reported missing"
-  fi
+root=$(dep_fixture real_dirmain)
+printf '{"name":"zod","main":"./lib"}\n' >"$root/node_modules/zod/package.json"
+mkdir -p "$root/node_modules/zod/lib"
+echo 'module.exports = {}' >"$root/node_modules/zod/lib/index.js"
+if deps_complete "$root"; then
+  pass "a main naming a directory resolves via index.js"
+else
+  fail "a directory main was reported missing"
+fi
 
-  # A `binary` field is NOT proof of a native module: napi-build-utils ships
-  # one whose own note says it is not an N-API module.
-  root=$(dep_fixture real_binaryfield)
-  printf '{"name":"zod","main":"index.js","binary":{"note":"not an N-API module"}}\n' \
-    >"$root/node_modules/zod/package.json"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    pass "a 'binary' field alone does not demand a compiled addon"
-  else
-    fail "a package was treated as native on its 'binary' field — reinstalls a healthy tree"
-  fi
+# A `binary` field is NOT proof of a native module: napi-build-utils ships
+# one whose own note says it is not an N-API module.
+root=$(dep_fixture real_binaryfield)
+printf '{"name":"zod","main":"index.js","binary":{"note":"not an N-API module"}}\n' \
+  >"$root/node_modules/zod/package.json"
+if deps_complete "$root"; then
+  pass "a 'binary' field alone does not demand a compiled addon"
+else
+  fail "a package was treated as native on its 'binary' field — reinstalls a healthy tree"
+fi
 
-  # A native package needs its COMPILED ADDON, not just its JavaScript. This is
-  # the better-sqlite3 case: the JS entry survives a partial cleanup while
-  # build/Release/*.node does not, and startup then dies constructing the
-  # database instead of repairing the tree.
-  root=$(dep_fixture real_native)
-  mkdir -p "$root/node_modules/zod/build/Release"
-  echo '{}' >"$root/node_modules/zod/binding.gyp"
-  : >"$root/node_modules/zod/build/Release/zod.node"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    pass "a native package with its addon present is complete"
-  else
-    fail "a healthy native package was reported incomplete — this would reinstall every launch"
-  fi
+# A native package needs its COMPILED ADDON, not just its JavaScript. This is
+# the better-sqlite3 case: the JS entry survives a partial cleanup while
+# build/Release/*.node does not, and startup then dies constructing the
+# database instead of repairing the tree.
+root=$(dep_fixture real_native)
+mkdir -p "$root/node_modules/zod/build/Release"
+echo '{}' >"$root/node_modules/zod/binding.gyp"
+: >"$root/node_modules/zod/build/Release/zod.node"
+if deps_complete "$root"; then
+  pass "a native package with its addon present is complete"
+else
+  fail "a healthy native package was reported incomplete — this would reinstall every launch"
+fi
 
-  rm -rf "$root/node_modules/zod/build"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    fail "a native package with NO compiled addon passed — startup would die on the addon load"
-  else
-    pass "a native package missing its compiled addon fails deps_complete"
-  fi
+rm -rf "$root/node_modules/zod/build"
+if deps_complete "$root"; then
+  fail "a native package with NO compiled addon passed — startup would die on the addon load"
+else
+  pass "a native package missing its compiled addon fails deps-complete"
+fi
 
-  # A subpath-only exports map must NOT be enforced. Real packages ship these:
-  # @modelcontextprotocol/sdk declares "." -> ./dist/esm/index.js, does not
-  # ship that file, and imports fine via ./server/index.js. Enforcing it
-  # reported this very repo's tree as broken.
-  # GH-1846 narrowed this deliberately. #1755 accepted an exports-only package
-  # unconditionally, because enforcing @modelcontextprotocol/sdk's "." export —
-  # which it declares and does not ship — reported a healthy tree as broken.
-  # That leniency also accepted a package whose dist/ had been deleted whole,
-  # which is the damage the check exists to find. The rule is now "at least one
-  # declared target resolves": both cases below, and neither is the other.
-  root=$(dep_fixture real_subpath)
-  cat >"$root/node_modules/zod/package.json" <<'PKG'
+# A subpath-only exports map must NOT be enforced. Real packages ship these:
+# @modelcontextprotocol/sdk declares "." -> ./dist/esm/index.js, does not
+# ship that file, and imports fine via ./server/index.js. Enforcing it
+# reported this very repo's tree as broken. GH-1846 narrowed the leniency: the
+# rule is "at least one declared target resolves", because accepting an
+# exports-only package unconditionally also accepted one whose dist/ had been
+# deleted whole — the damage the check exists to find.
+root=$(dep_fixture real_subpath)
+cat >"$root/node_modules/zod/package.json" <<'PKG'
 { "name": "zod", "exports": { ".": { "import": "./dist/esm/index.js" }, "./sub": "./dist/sub.js" } }
 PKG
-  rm -f "$root/node_modules/zod/index.js"
-  mkdir -p "$root/node_modules/zod/dist"
-  echo 'module.exports = {}' >"$root/node_modules/zod/dist/sub.js"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    pass "an unshipped root export is not enforced when a subpath resolves"
-  else
-    fail "an exports map with a live subpath was reported incomplete — a healthy tree would reinstall forever"
-  fi
+rm -f "$root/node_modules/zod/index.js"
+mkdir -p "$root/node_modules/zod/dist"
+echo 'module.exports = {}' >"$root/node_modules/zod/dist/sub.js"
+if deps_complete "$root"; then
+  pass "an unshipped root export is not enforced when a subpath resolves"
+else
+  fail "an exports map with a live subpath was reported incomplete — a healthy tree would reinstall forever"
+fi
 
-  root=$(dep_fixture real_subpath_gutted)
-  cat >"$root/node_modules/zod/package.json" <<'PKG'
+root=$(dep_fixture real_subpath_gutted)
+cat >"$root/node_modules/zod/package.json" <<'PKG'
 { "name": "zod", "exports": { ".": { "import": "./dist/esm/index.js" }, "./sub": "./dist/sub.js" } }
 PKG
-  rm -f "$root/node_modules/zod/index.js"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    fail "an exports-only package with NO surviving target passed — the static import would fail instead of repairing"
-  else
-    pass "an exports-only package whose targets are all gone re-bootstraps"
-  fi
+rm -f "$root/node_modules/zod/index.js"
+if deps_complete "$root"; then
+  fail "an exports-only package with NO surviving target passed — the static import would fail instead of repairing"
+else
+  pass "an exports-only package whose targets are all gone re-bootstraps"
+fi
 
-  # Lenient in the documented direction: a manifest with only a conditional
-  # exports map, whose entry cannot be reduced to one path, must NOT force a
-  # rebuild — a false "missing" costs a destructive reinstall every launch.
-  root=$(dep_fixture real_exports)
-  cat >"$root/node_modules/zod/package.json" <<'PKG'
+# Lenient in the documented direction: a manifest with only a conditional
+# exports map, whose entry cannot be reduced to one path, must NOT force a
+# rebuild — a false "missing" costs a destructive reinstall every launch.
+root=$(dep_fixture real_exports)
+cat >"$root/node_modules/zod/package.json" <<'PKG'
 { "name": "zod", "exports": { ".": { "types": "./t.d.ts" } } }
 PKG
-  rm -f "$root/node_modules/zod/index.js"
-  echo 'x' >"$root/node_modules/zod/t.d.ts"
-  if ( RUNTIME_ROOT="$root"; deps_complete ); then
-    pass "an undeterminable exports map is accepted rather than rebuilt forever"
-  else
-    fail "a conditional-exports package forced a rebuild — every launch would reinstall"
-  fi
+rm -f "$root/node_modules/zod/index.js"
+echo 'x' >"$root/node_modules/zod/t.d.ts"
+if deps_complete "$root"; then
+  pass "an undeterminable exports map is accepted rather than rebuilt forever"
+else
+  fail "a conditional-exports package forced a rebuild — every launch would reinstall"
 fi
-FAKE_NODE_ID=""; FAKE_NODE_ABI=""; FAKE_NODE_VERSION=""   # restore the defaults for the fixtures below
 
 echo "=== two Node identities never share a bootstrap tree (GH-1844) ==="
 
-# The hazard this issue was filed for. One plugin cache reached by two Node
+# The hazard GH-1844 was filed for. One plugin cache reached by two Node
 # identities — arm64 native beside x64 under Rosetta, or two machines on a
 # shared home — used to mean ONE tree: the identity whose fingerprint matched
-# skipped the lock and exec'd the server, and the other then ran a destructive
-# `npm ci` over the node_modules it was still lazily requiring from.
+# skipped the lock and served, and the other then ran a destructive `npm ci`
+# over the node_modules it was still lazily requiring from.
 #
 # The remedy is isolation rather than a guard. The two identities now build in
 # separate trees, so B's install is not merely REFUSED while A is live — it is
 # irrelevant to A, which is what lets a second architecture start at all.
+# The fixture itself must be built under identity A. Left to the ambient
+# identity it is built under whatever this runner really is, and the cases
+# below then count one tree too many — or pass vacuously, on a runner whose
+# real identity differs from both overrides. macOS hid this; Linux did not.
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"
 root=$(fake_root two_identities)
-FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-FAKE_NODE_ID="darwin-x64-abi127" log=$(run_launcher "$root")
+log=$(run_launcher "$root")
+export RALPH_KNOWLEDGE_NODE_ID="darwin-x64-abi127"
+log=$(run_launcher "$root")
 
 count=$(find "$root/.runtimes" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
 if [ "$count" -eq 2 ]; then
@@ -998,7 +991,8 @@ fi
 # The tree key must be STABLE, or per-identity trees become one tree per
 # launch — the npx-cache-bloat failure mode this launcher exists to end.
 before=$(rt "$root" "arm64-abi127")
-FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"
+log=$(run_launcher "$root")
 count_after=$(find "$root/.runtimes" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
 if [ "$count_after" -eq 2 ] && [ -d "$before" ]; then
   pass "relaunching an existing identity reuses its tree (no per-launch growth)"
@@ -1008,9 +1002,9 @@ fi
 
 # And the served entry point must come from the tree, not from the plugin root.
 if grep -qE "node .*/\.runtimes/.*/dist/index\.js" "$log"; then
-  pass "the server is exec'd out of its own runtime tree"
+  pass "the server runs out of its own runtime tree"
 else
-  fail "the server was exec'd from somewhere other than its runtime tree" "$(cat "$log")"
+  fail "the server ran from somewhere other than its runtime tree" "$(cat "$log")"
 fi
 
 # The plugin root must not be installed into at all any more: a shared
@@ -1024,13 +1018,14 @@ fi
 echo "=== a live server of ANOTHER identity does not block a bootstrap ==="
 
 # The other half of isolation, and the reason the interim remedy considered in
-# #1844 (refuse whenever the recorded identity differs) was rejected: it would
+# GH-1844 (refuse whenever the recorded identity differs) was rejected: it would
 # make a second architecture unable to start at all while the first is running.
 if ! { [ -d /proc ] || command -v ps >/dev/null 2>&1; }; then
   echo "  SKIP: cannot probe for running servers on this host"
 else
+  export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"   # the fixture is identity A
   root=$(fake_root cross_identity_live)
-  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+  log=$(run_launcher "$root")
   rtdir=$(rt "$root" "arm64-abi127")
   ( exec /bin/sh -c "sleep 60; :" "node $rtdir/dist/index.js" ) &
   busy_pid=$!
@@ -1039,11 +1034,13 @@ else
   RC=0
   log="$root/calls.log"; : >"$log"
   CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-    FAKE_NODE_ID="darwin-x64-abi127" \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+    RALPH_KNOWLEDGE_NODE_ID="darwin-x64-abi127" \
+    node "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
   kill "$busy_pid" 2>/dev/null || true
 
-  if [ "$RC" -eq 0 ] && grep -q 'npm ci' "$log"; then
+  # rc is not asserted: npm is stubbed here, so no dist is ever built and the
+  # serve step cannot succeed. Whether the bootstrap was REFUSED is the question.
+  if grep -q 'npm ci' "$log" && ! grep -q 'refusing to rebuild' "$root/stderr.log"; then
     pass "a second identity bootstraps while the first is serving"
   else
     fail "a second identity was blocked by an unrelated running server (rc=$RC)" \
@@ -1056,7 +1053,7 @@ else
   fi
 fi
 
-FAKE_NODE_ID=""; FAKE_NODE_ABI=""; FAKE_NODE_VERSION=""   # restore the defaults for the fixtures below
+export RALPH_KNOWLEDGE_NODE_ID=""   # restore the defaults for the fixtures below
 
 echo "=== a live server blocks a rebuild of ITS OWN tree ==="
 
@@ -1076,7 +1073,7 @@ else
   RC=0
   log="$root/calls.log"; : >"$log"
   CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+    node "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
   kill "$live_pid" 2>/dev/null || true
 
   if grep -q 'npm ci' "$log"; then
@@ -1113,13 +1110,13 @@ else
   root=$(fake_root waiter_not_server)
   rtdir=$(rt "$root")
   rm -f "$rtdir/.bootstrap-complete"
-  ( cd "$root" && exec /bin/sh -c 'sleep 60; :' "bash scripts/launch-mcp.sh" ) &
+  ( cd "$root" && exec /bin/sh -c 'sleep 60; :' "node scripts/launch-mcp.mjs" ) &
   waiter_pid=$!
   sleep 0.3
   RC=0
   log="$root/calls.log"; : >"$log"
   CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+    node "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
   kill "$waiter_pid" 2>/dev/null || true
 
   if grep -q 'npm ci' "$log"; then
@@ -1136,20 +1133,11 @@ echo "=== two machines on a shared home never share a tree ==="
 # which case the Node identity MATCHES while the local process table cannot see
 # the remote server at all — so the machine is part of the tree key too, and
 # there is nothing left to reason about across hosts.
-HOST_BIN="$TMP_ROOT/host-bin"
-sanitized_bin "$HOST_BIN" shasum
-rm -f "$HOST_BIN/hostname"   # sanitized_bin symlinks it; writing through the link would target the system binary
-cat >"$HOST_BIN/hostname" <<'STUB'
-#!/usr/bin/env bash
-echo "${FAKE_HOSTNAME:-machine-a}"
-STUB
-chmod +x "$HOST_BIN/hostname"
-
 root=$(fake_root two_hosts)
 for h in machine-a machine-b; do
-  CALL_LOG="$root/calls.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$HOST_BIN" \
-    FAKE_HOSTNAME="$h" \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>>"$root/stderr.log" || true
+  CALL_LOG="$root/calls.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+    RALPH_KNOWLEDGE_MACHINE_ID="$h" \
+    node "$root/scripts/launch-mcp.mjs" >/dev/null 2>>"$root/stderr.log" || true
 done
 if [ -d "$root/.runtimes" ] \
   && find "$root/.runtimes" -maxdepth 1 -mindepth 1 -type d -name '*machine-a*' 2>/dev/null | grep -q . \
@@ -1162,21 +1150,16 @@ fi
 
 # A machine that cannot name itself must not collapse into a sentinel every
 # other nameless machine also uses — that collision made two hosts compare
-# EQUAL and pass the cross-host check as same-host (codex, PR #1755).
-rm -f "$HOST_BIN/hostname"   # sanitized_bin symlinks it; writing through the link would target the system binary
-cat >"$HOST_BIN/hostname" <<'STUB'
-#!/usr/bin/env bash
-exit 1
-STUB
-chmod +x "$HOST_BIN/hostname"
-root=$(fake_root nameless_host)
-CALL_LOG="$root/calls.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$HOST_BIN:/usr/sbin:/sbin:/usr/bin:/bin" \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>>"$root/stderr.log" || true
-nameless=$(rt "$root" "" || true)
-if [ -n "$nameless" ] && ! printf '%s' "$nameless" | grep -q 'unknown-host'; then
-  pass "a nameless machine gets a machine-specific key, not a shared sentinel"
+# EQUAL and pass the cross-host check as same-host (codex, PR #1755). Asserted
+# structurally: the fallback ladder must end in a per-machine uuid, never a
+# fixed string.
+if grep -v '^[[:space:]]*//' "$SRC" | grep -qE "unknown-host|'unknown'"; then
+  fail "a colliding host sentinel is back" "$(grep -nE 'unknown-host' "$SRC")"
+elif grep -q 'randomUUID' "$SRC"; then
+  pass "a nameless machine falls back to a uuid, not a shared sentinel"
 else
-  fail "a nameless machine fell back to a colliding sentinel" "key=${nameless:-none}"
+  fail "the machine-id fallback ladder has no per-machine last resort" \
+    "$(grep -n 'machineId' "$SRC")"
 fi
 
 echo "=== unprovable safety still fails closed ==="
@@ -1188,7 +1171,7 @@ root=$(fake_root unprobeable)
 rtdir=$(rt "$root")
 rm -f "$rtdir/.bootstrap-complete"
 NOPS_BIN="$TMP_ROOT/nops-bin"
-sanitized_bin "$NOPS_BIN" shasum
+sanitized_bin "$NOPS_BIN"
 rm -f "$NOPS_BIN/ps"                      # no `ps`, and this host has no /proc
 if [ -d /proc ]; then
   echo "  SKIP: /proc exists on this host, so the unprobeable branch cannot be reached"
@@ -1196,7 +1179,7 @@ else
   RC=0
   log="$root/calls.log"; : >"$log"
   CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$NOPS_BIN" \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+    node "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
   if [ "$RC" -ne 0 ] && ! grep -q 'npm ci' "$log"; then
     pass "an existing tree is not rebuilt on a host that cannot be probed"
   else
@@ -1220,7 +1203,7 @@ rm -f "$rtdir/.bootstrap-complete"
 RC=0
 log="$root/calls.log"; : >"$log"
 CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+  node "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || RC=$?
 if grep -q 'npm ci' "$log"; then
   fail "rebuilt a tree whose record names another machine" "$(cat "$log")"
 else
@@ -1240,7 +1223,7 @@ rtdir=$(rt "$root")
 mkdir -p "$root/node_modules/zod"
 rm -f "$rtdir/.bootstrap-complete"
 CALL_LOG="$root/calls.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || true
+  node "$root/scripts/launch-mcp.mjs" >/dev/null 2>"$root/stderr.log" || true
 if grep -q 'pre-per-runtime install is still present' "$root/stderr.log"; then
   pass "a legacy plugin-root install is named to the operator"
 else
@@ -1255,11 +1238,10 @@ fi
 # The identity must be published BEFORE the completion marker, or a tree can
 # survive looking complete while carrying no provenance at all — which is the
 # state the guard above has to treat as unknown.
-# Match the WRITE, not the `rm -f "$MARKER" "$IDENTITY_FILE"` line — anchoring
-# on the bare name matched that instead, which made this assertion vacuous
-# (a deliberate swap did not fail it).
-id_line=$(grep -n '>"\$IDENTITY_FILE"' "$SRC" | head -1 | cut -d: -f1)
-marker_line=$(grep -n '>"\$MARKER"' "$SRC" | head -1 | cut -d: -f1)
+# Match the WRITE, not the removal line — anchoring on the bare name matched
+# `fs.rmSync(IDENTITY_FILE...)` instead, which made this assertion vacuous.
+id_line=$(grep -n 'writeFileSync(IDENTITY_FILE' "$SRC" | head -1 | cut -d: -f1)
+marker_line=$(grep -n 'writeFileSync(MARKER' "$SRC" | head -1 | cut -d: -f1)
 if [ -n "$id_line" ] && [ -n "$marker_line" ] && [ "$id_line" -lt "$marker_line" ]; then
   pass "the identity record is written before the completion marker"
 else
@@ -1275,12 +1257,13 @@ echo "=== waiters leave as soon as the tree is complete ==="
 root=$(fake_root fastwait)
 rm -f "$(rt "$root")/dist/index.js"
 FW_BIN="$TMP_ROOT/fastwait-bin"
-sanitized_bin "$FW_BIN" shasum
+sanitized_bin "$FW_BIN"
+rm -f "$FW_BIN/npm"
 cat >"$FW_BIN/npm" <<'STUB'
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in
   "ci "*|"ci") sleep 1 ;;
-  "run build") echo 'console.log("server")' >dist/index.js ;;
+  "run build") cp "$SERVER_FILE" dist/index.js ;;
 esac
 exit 0
 STUB
@@ -1290,7 +1273,7 @@ fw_start=$(date +%s)
 for _ in $(seq 1 15); do
   CALL_LOG="$root/fw.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$FW_BIN" \
     RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=120 \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>>"$root/fw.stderr" &
+    node "$root/scripts/launch-mcp.mjs" >/dev/null 2>>"$root/fw.stderr" &
 done
 wait
 fw_elapsed=$(( $(date +%s) - fw_start ))
@@ -1305,41 +1288,47 @@ else
     "$(sort "$root/fw.stderr" 2>/dev/null | uniq -c | head -5)"
 fi
 
-
 # The probe must CAPTURE its process listing before matching it. Piping `ps`
 # (or `lsof`, which this probe used before GH-1844) straight into `grep -q`/
-# `awk` is the obvious spelling and is wrong under `pipefail`: the matcher
-# exits on the first hit, the producer takes SIGPIPE, and the pipeline reports
-# failure — so a positive detection is discarded. It depends on how much has
-# been written, so it fails intermittently, and it fails in the direction that
+# `awk` is the obvious spelling in a shell and is wrong under `pipefail`: the
+# matcher exits on the first hit, the producer takes SIGPIPE, and the pipeline
+# reports failure — so a positive detection is discarded, in the direction that
 # calls an in-use tree safe to rebuild.
 #
-# This is a STRUCTURAL check, deliberately: the behaviour is timing-dependent,
-# so no assertion catches it reliably. Reverting the fix does NOT fail the
-# behavioural cases on a fast machine, which is exactly why the shape is
-# pinned here instead.
-# Comments in the source explain this hazard and would match the pattern, so
-# strip them first. Captured rather than piped, for the same reason the code
-# under test is.
-src_code=$(grep -v '^[[:space:]]*#' "$SRC")
-if grep -qE '(lsof|ps -eo)[^|]*\|[[:space:]]*(grep|awk)' <<<"$src_code"; then
+# The Node port makes this structural: spawnSync captures. Pinned anyway, so a
+# future edit cannot reintroduce it by shelling the probe back out to a pipe.
+src_code=$(grep -v '^[[:space:]]*//' "$SRC")
+if grep -qE '(lsof|ps -eo|ps)[^|]*\|[[:space:]]*(grep|awk)' <<<"$src_code"; then
   fail "the process listing is piped straight into a matcher — a SIGPIPE under pipefail discards the match" \
-    "$(grep -nE '(lsof|ps -eo)[^|]*\|' "$SRC")"
+    "$(grep -nE '(lsof|ps)[^|]*\|' "$SRC")"
 else
   pass "the process listing is captured before matching (no pipefail/SIGPIPE hazard)"
 fi
 
+# A listing that could not be taken must be UNKNOWN, never "nobody is there"
+# (codex P2, PR #2036). Splitting "can this host be probed" from "what is
+# running" is how that hole appears: a probe-availability check that only proves
+# the lister STARTS passes while the listing itself returns nothing, and the
+# rebuild then proceeds under a live server. One read answers both.
+if grep -q 'return null' "$SRC" && ! grep -q 'function probeAvailable' "$SRC"; then
+  pass "a failed process listing is unknown, not an empty process table"
+else
+  fail "the probe can report an unreadable listing as an idle tree" \
+    "$(grep -n 'probeAvailable\|readProcessList' "$SRC")"
+fi
+
 echo "=== concurrent launchers on a cold tree: exactly one bootstrap ==="
 
-# The property that actually matters, now resting on `mkdir` alone. Several
-# Claude Code sessions starting at once must produce ONE destructive install,
-# not one-per-session. Counting total `npm ci` runs (not "a winner emerged")
-# is deliberate: sequential duplicates are a failure too.
+# The property that actually matters, resting on atomic directory creation
+# alone. Several Claude Code sessions starting at once must produce ONE
+# destructive install, not one-per-session. Counting total `npm ci` runs (not
+# "a winner emerged") is deliberate: sequential duplicates are a failure too.
 root=$(fake_root concurrent)
 rm -f "$(rt "$root")/dist/index.js"
 
 CC_BIN="$TMP_ROOT/concurrent-bin"
-sanitized_bin "$CC_BIN" shasum
+sanitized_bin "$CC_BIN"
+rm -f "$CC_BIN/npm"
 cat >"$CC_BIN/npm" <<'STUB'
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in
@@ -1350,7 +1339,7 @@ case "${1:-} ${2:-}" in
   "run build")
     # Produce what a real build would; without it the tree stays unbootstrapped
     # and the test measures its own stub rather than the lock.
-    echo 'console.log("server")' >dist/index.js
+    cp "$SERVER_FILE" dist/index.js
     ;;
 esac
 exit 0
@@ -1363,7 +1352,7 @@ WAITERS=30
 for _ in $(seq 1 "$WAITERS"); do
   CALL_LOG="$CC_LOG" CLAUDE_PLUGIN_ROOT="$root" PATH="$CC_BIN" \
     RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=60 \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>>"$root/concurrent.stderr" &
+    node "$root/scripts/launch-mcp.mjs" >/dev/null 2>>"$root/concurrent.stderr" &
 done
 wait
 
@@ -1392,7 +1381,7 @@ fi
 # Everyone else must have gone on to serve, not failed.
 served=$(grep -cE "node .*/dist/index\\.js" "$CC_LOG" 2>/dev/null) || true
 if [ "${served:-0}" -ge $((WAITERS - 1)) ]; then
-  pass "the other $((WAITERS - 1)) launchers went on to exec the server"
+  pass "the other $((WAITERS - 1)) launchers went on to run the server"
 else
   fail "only ${served:-0} of $WAITERS launchers reached the server" \
     "$(sort "$root/concurrent.stderr" | uniq -c | head -5)"
