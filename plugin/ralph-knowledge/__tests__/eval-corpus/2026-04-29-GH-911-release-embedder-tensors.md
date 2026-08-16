@@ -225,7 +225,7 @@ Stop unconditionally pushing every `ParsedDocument` into the corpus-wide `parsed
 
 ### Overview
 
-Run `npm run reindex` against the full live corpus (`~/projects/thoughts`, `~/projects/ralph-hero/thoughts`, `~/projects/ralph-engine/thoughts`, `~/projects/landcrawler-ai/thoughts`) at default 4 GB heap and confirm: (a) it completes without OOM, (b) peak heap stays ≤ 600 MB per the GH-910 recommendation, (c) throughput is within 20% of a pre-fix baseline. Append findings to the existing GH-910 research document or create a short verification note.
+Run `npm run reindex` against the full live corpus (`~/projects/thoughts`, `~/projects/ralph-hero/thoughts`, `~/projects/ralph-engine/thoughts`, `~/projects/acme-crawler/thoughts`) at default 4 GB heap and confirm: (a) it completes without OOM, (b) peak heap stays ≤ 600 MB per the GH-910 recommendation, (c) throughput is within 20% of a pre-fix baseline. Append findings to the existing GH-910 research document or create a short verification note.
 
 ### Tasks
 

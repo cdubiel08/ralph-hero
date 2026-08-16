@@ -25,7 +25,7 @@ primary_issue: 916
 
 ### Reproduced
 
-Minimal repro: `chunkText(raw)` on the first 18,630 bytes of `landcrawler-ai/thoughts/shared/plans/2025-12-31-oklahoma-permit-raw-migration.md` OOMs at any heap size. Bisection narrowed to slice (0, 18630) — a single byte less (18620) succeeds. The doc is plain markdown with embedded Python code blocks; longest line is 239 chars and longest paragraph is 1933 chars (both well under `chunkSize=2048`).
+Minimal repro: `chunkText(raw)` on the first 18,630 bytes of `acme-crawler/thoughts/shared/plans/2025-12-31-oklahoma-permit-raw-migration.md` OOMs at any heap size. Bisection narrowed to slice (0, 18630) — a single byte less (18620) succeeds. The doc is plain markdown with embedded Python code blocks; longest line is 239 chars and longest paragraph is 1933 chars (both well under `chunkSize=2048`).
 
 ### Root cause (instrumented trace)
 
@@ -171,7 +171,7 @@ Update the doc comment on `findOverlapStartIndex` (lines 165-170) to note the ca
   node --max-old-space-size=512 -e "
     const {chunkText} = require('./dist/chunker.js');
     const fs = require('fs');
-    const raw = fs.readFileSync('/Users/dubiel/projects/landcrawler-ai/thoughts/shared/plans/2025-12-31-oklahoma-permit-raw-migration.md','utf-8');
+    const raw = fs.readFileSync('/Users/dubiel/projects/acme-crawler/thoughts/shared/plans/2025-12-31-oklahoma-permit-raw-migration.md','utf-8');
     console.log('chunks:', chunkText(raw).length);
   "
   ```
@@ -359,4 +359,4 @@ No data migration required. The chunker output format is unchanged. Documents th
 - Profile research: [thoughts/shared/research/2026-04-29-reindex-memory-profile.md](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-04-29-reindex-memory-profile.md)
 - #911 fix (prerequisite, already in main): [thoughts/shared/plans/2026-04-29-GH-911-release-embedder-tensors.md](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/plans/2026-04-29-GH-911-release-embedder-tensors.md)
 - Chunker source: [plugin/ralph-knowledge/src/chunker.ts](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/chunker.ts)
-- Failing fixture: `landcrawler-ai/thoughts/shared/plans/2025-12-31-oklahoma-permit-raw-migration.md` (45 KB markdown, lines 1-end; bisected fail point at first 18,630 bytes)
+- Failing fixture: `acme-crawler/thoughts/shared/plans/2025-12-31-oklahoma-permit-raw-migration.md` (45 KB markdown, lines 1-end; bisected fail point at first 18,630 bytes)

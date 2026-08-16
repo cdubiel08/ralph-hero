@@ -32,7 +32,7 @@ The leak is **NOT** in the `parsedDocs[]` accumulator (whole corpus = 24.6 MB ra
 |---|---|
 | Machine | M5 Pro MacBook (darwin 25.4.0) |
 | Node | v22.22.1 (mise-managed) |
-| Corpus roots | `~/projects/landcrawler-ai/thoughts` (641), `~/projects/ralph-hero/thoughts` (671), `~/projects/ralph-engine/thoughts` (250), `~/projects/thoughts` (64) |
+| Corpus roots | `~/projects/acme-crawler/thoughts` (641), `~/projects/ralph-hero/thoughts` (671), `~/projects/ralph-engine/thoughts` (250), `~/projects/thoughts` (64) |
 | Total markdown files indexed | 1,626 |
 | Total raw markdown content | 24,685,301 bytes (23.5 MB) |
 | Pre-existing DB | renamed to `~/.ralph-hero/knowledge.db.pre-profile-backup` (96 MB on disk) |
@@ -264,7 +264,7 @@ Probe scripts (also kept under `/tmp/`):
 ```bash
 # Confirm corpus size
 find ~/projects/thoughts ~/projects/ralph-hero/thoughts ~/projects/ralph-engine/thoughts \
-  ~/projects/landcrawler-ai/thoughts -name '*.md' | wc -l
+  ~/projects/acme-crawler/thoughts -name '*.md' | wc -l
 # -> 1626 (matches the audit's "1,668" within the same order of magnitude;
 #    delta is from .gitignore patterns and dream-memories absent on this machine)
 
@@ -346,7 +346,7 @@ While verifying on the live corpus, a **separate** OOM was discovered that is **
 ```bash
 node --max-old-space-size=8192 -e "
   import('plugin/ralph-knowledge/dist/chunker.js').then(({chunkText}) => {
-    const raw = require('fs').readFileSync('/Users/dubiel/projects/landcrawler-ai/thoughts/shared/plans/2025-12-31-oklahoma-permit-raw-migration.md','utf-8');
+    const raw = require('fs').readFileSync('/Users/dubiel/projects/acme-crawler/thoughts/shared/plans/2025-12-31-oklahoma-permit-raw-migration.md','utf-8');
     chunkText(raw);
   });"
 # -> FATAL ERROR: Reached heap limit Allocation failed - JS heap out of memory
@@ -355,7 +355,7 @@ node --max-old-space-size=8192 -e "
 This OOMs on the **plain `chunker.chunkText()` call** before any embedding occurs. The doc is 45 KB of normal markdown. Verified the same OOM reproduces on `main` (pre-911) — this is a pre-existing bug, not introduced by GH-911. The OOM stack trace shows `Builtins_StringSubstring → JSEntry`, suggesting a runaway recursion in `flattenToAtoms()` / `splitOnSeparator()` for content patterns the existing tests don't cover.
 
 **Affected docs identified during verification**:
-- `landcrawler-ai/thoughts/shared/plans/2025-12-31-oklahoma-permit-raw-migration.md` (45 KB)
+- `acme-crawler/thoughts/shared/plans/2025-12-31-oklahoma-permit-raw-migration.md` (45 KB)
 - `ralph-engine/thoughts/...` (chunker OOMs at the 50-chunk mark on this corpus)
 - `ralph-hero/thoughts/...` (chunker OOMs at the 150-chunk mark on this corpus)
 
@@ -410,4 +410,4 @@ Heap_used grew gradually from ~25 MB (cold) to a peak of 81.1 MB, then dropped t
 
 The combined fixes from #911 (embedder Tensor disposal + parsedDocs accumulator gate) and #916 (chunker forward-progress guard) close out the parent #907. The dream-loop reindex now works end-to-end at default 4 GB Node heap on the live 1,668-doc corpus.
 
-The chunker no-progress fix in #916 was specifically validated by the disappearance of the prior OOM at the ~150-chunk mark — the same fixture (`landcrawler-ai/.../oklahoma-permit-raw-migration.md`) that previously OOMed at 8 GB heap now chunks in <1 ms producing 28 chunks at a 512 MB heap cap. The full corpus run reached 12,879 chunks across 1,636 documents, ~85x the pre-fix progress threshold.
+The chunker no-progress fix in #916 was specifically validated by the disappearance of the prior OOM at the ~150-chunk mark — the same fixture (`acme-crawler/.../oklahoma-permit-raw-migration.md`) that previously OOMed at 8 GB heap now chunks in <1 ms producing 28 chunks at a 512 MB heap cap. The full corpus run reached 12,879 chunks across 1,636 documents, ~85x the pre-fix progress threshold.

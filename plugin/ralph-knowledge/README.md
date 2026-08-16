@@ -55,7 +55,7 @@ The path can be overridden via the `RALPH_KNOWLEDGE_CONFIG` env var.
 {
   "roots": [
     "~/projects/ralph-hero/thoughts",
-    "~/projects/landcrawler-ai/thoughts",
+    "~/projects/acme-crawler/thoughts",
     "~/notes"
   ],
   "ignorePatterns": [

@@ -8,7 +8,7 @@ tags: [design-system, ai-automation, figma, maturity-checklist, portability]
 # Design System Maturity Checklist — AI-Ready Edition
 
 > **Author**: Chad Dubiel
-> **Purpose**: A portable, framework-agnostic maturity checklist for evaluating and building AI-ready design systems. Grounded in lessons from the LandCrawler design system, industry research (Brad Frost, Atlassian, Shopify, GitHub), and the current Claude Code + Figma integration landscape as of March 2026.
+> **Purpose**: A portable, framework-agnostic maturity checklist for evaluating and building AI-ready design systems. Grounded in lessons from building a production design system, industry research (Brad Frost, Atlassian, Shopify, GitHub), and the current Claude Code + Figma integration landscape as of March 2026.
 >
 > **Target use case**: Export this playbook to accelerate frontend development at any company with a partial design system, using Claude Code as the primary AI development tool.
 >
