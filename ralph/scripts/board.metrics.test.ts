@@ -208,14 +208,17 @@ describe("metrics: mutation round trips (exact — a retry doubles a pin and fai
 });
 
 describe("metrics: doctor sweep", () => {
-  it("doctor on a 3-item board = 3 round trips warm (page walk + history chunk + refresh-as-check)", () => {
+  it("doctor on a 3-item board = 4 round trips warm (page walk + history chunk + refresh-as-check + PR-orphan sweep)", () => {
     const gh = new FakeGh();
     flatBoard(gh, 3);
     const { ctx, m } = warmCtx(gh);
     runQuiet(["doctor"], ctx);
     // doctor's refreshCache IS its cache-vs-live check (1), one items page (1),
-    // one history chunk for 3 open items (1).
-    expect(m.graphql).toBe(3);
+    // one history chunk for 3 open items (1), and the GH-2048 orphan sweep (1 —
+    // one page per 100 OPEN PRs, and it cannot be folded into any of the
+    // others: they are all rooted at issues or at the project, and this is the
+    // one question about work that reached neither).
+    expect(m.graphql).toBe(4);
     expect(m.mutations).toBe(0); // no --fix, no writes — pinned
   });
 });
