@@ -73,7 +73,7 @@ run_guard() {
 }
 
 # park_process <dir> — a real process whose cwd is <dir>, i.e. exactly what a
-# running MCP server looks like (launch-mcp.sh cd's to the plugin root before
+# running MCP server looks like (launch-mcp.mjs cd's to the plugin root before
 # exec'ing node).
 park_process() {
   local dir="$1"

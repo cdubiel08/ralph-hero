@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "ralph-knowledge": {
-      "command": "bash",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/launch-mcp.sh"]
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/launch-mcp.mjs"]
     }
   }
 }

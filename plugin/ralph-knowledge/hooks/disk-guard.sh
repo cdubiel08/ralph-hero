@@ -53,7 +53,7 @@ else
 fi
 
 # True (0) when some running process is working inside directory $1 — the
-# server's cwd is its own plugin root, because launch-mcp.sh cd's there before
+# server's cwd is its own plugin root, because launch-mcp.mjs cd's there before
 # exec'ing node.
 dir_in_use() {
   local dir p cwd
@@ -93,7 +93,7 @@ dir_in_use() {
 
 # True (0) when a running process REFERENCES path $1 in its argv.
 #
-# The cwd probe above is the right one for plugin roots, because launch-mcp.sh
+# The cwd probe above is the right one for plugin roots, because launch-mcp.mjs
 # cd's into them. It is the WRONG one for npx caches: `npx -y pkg` runs the
 # binary out of the cache directory but leaves cwd wherever the session started,
 # so a live npx-launched server would look idle. Its argv does carry the path.

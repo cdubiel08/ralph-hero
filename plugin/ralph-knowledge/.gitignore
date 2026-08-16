@@ -2,7 +2,7 @@ node_modules/
 dist/
 knowledge.db
 
-# launch-mcp.sh bootstrap state (per-machine). Since GH-1844 all of it lives
+# launch-mcp.mjs bootstrap state (per-machine). Since GH-1844 all of it lives
 # inside .runtimes/<platform-arch-abi-machine>/, but the bare names stay listed
 # so a tree left at the root by an older launcher is still ignored.
 .runtimes/
