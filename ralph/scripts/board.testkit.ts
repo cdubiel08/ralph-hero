@@ -18,6 +18,7 @@ import {
   RefusalError,
   SMELL_DEFAULTS,
   VOLUME_DEFAULTS,
+  PR_ORPHAN_DEFAULT_IGNORE,
   STATES,
 } from "./board.js";
 
@@ -109,6 +110,18 @@ export class FakeGh {
   /** Deliver A→B broken read: these PRs are OPEN in phase A and resolve to
    *  NOTHING in phase B — the partial read the fetch must refuse (GH-1811). */
   vanishBeforePrFacts = new Set<number>();
+  /** GH-2048: open PRs the orphan sweep can see. `closing` is how many issues
+   *  GitHub's derived linkage names; `unreadableLinkage` makes that count
+   *  unreadable. */
+  openPrs: Array<{
+    number: number;
+    title?: string;
+    author?: string | null;
+    isDraft?: boolean;
+    createdAt?: string;
+    closing?: number;
+    unreadableLinkage?: boolean;
+  }> = [];
   omitFields: string[] = []; // simulate a fresh board missing these fields
   createdFields: Array<{ name: string; dataType: string; options?: string[] }> = [];
   linkedRepos = ["cdubiel08/ralph-hero"]; // projectV2 → repositories linkage
@@ -650,6 +663,31 @@ export class FakeGh {
         },
       });
     }
+    // Unlinked open PR sweep (GH-2048).
+    if (query.includes("pullRequests(states: OPEN")) {
+      const all = this.openPrs;
+      const start = variables.after ? Number(variables.after) : 0;
+      const page = Number.isFinite(this.itemsPageSize) ? all.slice(start, start + this.itemsPageSize) : all;
+      const end = start + page.length;
+      return data({
+        repository: {
+          pullRequests: {
+            pageInfo: this.pageInfo(end < all.length, String(end)),
+            nodes: page.map((p) => ({
+              number: p.number,
+              title: p.title ?? "",
+              isDraft: p.isDraft ?? false,
+              createdAt: p.createdAt ?? "2026-08-01T00:00:00Z",
+              // A deleted account renders as a null author, not an absent field.
+              author: p.author === null ? null : { login: p.author ?? "someone" },
+              // `unreadableLinkage` models the object coming back without the
+              // count — neither linked nor orphaned, which is its own bucket.
+              closingIssuesReferences: p.unreadableLinkage ? {} : { totalCount: p.closing ?? 0 },
+            })),
+          },
+        },
+      });
+    }
     if (query.includes("repositories(first")) {
       return data({
         node: { repositories: { nodes: this.linkedRepos.map((r) => ({ nameWithOwner: r })) } },
@@ -900,6 +938,9 @@ export function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo", opts
     // against an own-repo board, so `deny` colours nothing — and the opt-in
     // path gets its coverage by saying so, which is the direction that needs it.
     foreign: { allow: false, configured: false },
+    // GH-2048: the production default ignore list, so a test that surfaces a
+    // bot PR has to say so explicitly.
+    prOrphans: { ignoreAuthors: [...PR_ORPHAN_DEFAULT_IGNORE], configured: false },
   };
   return {
     // Delegate per-call so tests may overlay gh.exec after ctx construction.

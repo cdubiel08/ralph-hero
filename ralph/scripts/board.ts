@@ -630,6 +630,7 @@ export interface Config {
   smells: SmellThresholds; // GH-1715: doctor's advisory state-smell tripwires
   volume: VolumeThresholds; // GH-1788: how big the scanned board may get before doctor says so
   foreign: ForeignRepoPolicy; // GH-1815: may items from other repos live on this board at all
+  prOrphans: PrOrphanPolicy; // GH-2048: whose unlinked open PRs are worth surfacing
 }
 
 // ---------------------------------------------------------------------------
@@ -892,6 +893,7 @@ export function loadConfig(repoRoot: string): Config {
     smells: parseSmellThresholds(),
     volume: parseVolumeThresholds(),
     foreign: parseForeignRepoPolicy(),
+    prOrphans: parsePrOrphanPolicy(),
   };
 }
 
@@ -985,6 +987,69 @@ export function parseVolumeThresholds(
   return {
     maxItems: positive("RALPH_VOLUME_MAX_ITEMS", VOLUME_DEFAULTS.maxItems),
     pruneAfterDays: positive("RALPH_PRUNE_AFTER_DAYS", VOLUME_DEFAULTS.pruneAfterDays),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Unlinked open PRs (GH-2048) — the one class of work no board surface sees.
+//
+// Every selector here is keyed on the board: `next`/`frontier` rank issues,
+// `deliver-queue` selects In Review items, `doctor` sweeps board invariants.
+// An open PR that references no issue is on none of those surfaces, so it is
+// not merely unranked — it is unseeable, and an empty queue renders exactly
+// like a queue that is empty because its work never reached the board. Three
+// PRs sat that way for up to 23 days.
+//
+// This is a SELECTOR, not a gate. It never files an issue (that would convert
+// a human's exploratory branch into board work without their say) and never
+// blocks `gh pr create` (GH-1717's stated reason for observing rather than
+// redirecting is unchanged: there is no sanctioned alternative to redirect to).
+// Honest limit: making orphans visible does not make anyone look at them.
+// ---------------------------------------------------------------------------
+
+/** Whose unlinked PRs are noise rather than work.
+ *
+ *  Bots that open PRs on their own lifecycle — dependabot, renovate — will
+ *  never carry a closing reference and are triaged by merging or closing them,
+ *  not by adopting them onto a board. Left in, they would be a dozen standing
+ *  rows and the line would be ignored, which is the failure mode this whole
+ *  issue is about. */
+export interface PrOrphanPolicy {
+  ignoreAuthors: string[]; // lowercased logins whose orphan PRs are not surfaced
+  configured: boolean; // false = the defaults below, nothing was set
+}
+
+export const PR_ORPHAN_IGNORE_ENV = "RALPH_PR_ORPHAN_IGNORE_AUTHORS";
+
+export const PR_ORPHAN_DEFAULT_IGNORE: readonly string[] = Object.freeze([
+  "dependabot",
+  "renovate",
+  "github-actions",
+]);
+
+/** A bot login has TWO spellings and they are not interchangeable — measured,
+ *  not assumed: GraphQL's `author.login` returns `dependabot` while REST, the
+ *  web UI and every doc write `dependabot[bot]`. The first draft of this list
+ *  used the suffixed form and matched nothing, leaving all 12 of this repo's
+ *  dependabot PRs standing in the line — the exact "a dozen rows and nobody
+ *  reads it" failure the whole check was designed to avoid. So the suffix is
+ *  stripped on BOTH sides and an operator may write either form. */
+export function normalizeBotLogin(login: string): string {
+  return login.trim().toLowerCase().replace(/\[bot\]$/, "");
+}
+
+/** Comma-separated logins. An explicitly EMPTY value means "ignore nobody" —
+ *  distinct from unset, which takes the defaults — so a repo that wants its
+ *  bot PRs surfaced can say so without inventing a sentinel. */
+export function parsePrOrphanPolicy(
+  env: Record<string, string | undefined> = process.env,
+): PrOrphanPolicy {
+  const raw = env[PR_ORPHAN_IGNORE_ENV];
+  if (raw === undefined)
+    return { ignoreAuthors: [...PR_ORPHAN_DEFAULT_IGNORE], configured: false };
+  return {
+    ignoreAuthors: raw.split(",").map(normalizeBotLogin).filter(Boolean),
+    configured: true,
   };
 }
 
@@ -6505,6 +6570,112 @@ export function applyPrune(ctx: Ctx, candidates: PruneCandidate[]): PruneApplyRe
   return { attempted, removed, failed, aborted: false };
 }
 
+/** One open PR that references no issue in this repo. */
+export interface PrOrphanRow {
+  number: number;
+  title: string;
+  author: string | null; // null = a deleted account; never matched against the ignore list
+  isDraft: boolean;
+  createdAt: string;
+  ageDays: number;
+}
+
+export interface PrOrphanReport {
+  scanned: number; // open PRs read
+  orphans: PrOrphanRow[]; // unlinked, author not ignored — oldest first
+  ignored: number; // unlinked, but by an author the policy skips
+  unreadable: number[]; // PRs whose linkage could not be read at all
+  ignoreAuthors: string[];
+  configured: boolean;
+}
+
+/** Open PRs in the configured repo with no `closingIssuesReferences` (GH-2048).
+ *
+ *  `closingIssuesReferences` is GitHub's own derived linkage — the same field
+ *  gate 6 reads — so this asks the question the merge gate asks, one step
+ *  earlier and without a board item to hang it on. It is deliberately NOT a
+ *  body regex: closing keywords are honoured in commit messages too, and a PR
+ *  body is app-writable (GH-1940).
+ *
+ *  Cost is one connection page per 100 open PRs; the nested linkage read is
+ *  `first: 1` because only its existence is in question, so nodeCount stays at
+ *  the page's own size (GH-1811 — the nesting product is what bills).
+ *
+ *  A PR whose linkage object is absent from the response is counted as
+ *  UNREADABLE rather than sorted into either bucket: "we could not tell" and
+ *  "there is no linkage" are different claims, and collapsing them is the
+ *  defect class this line exists to remove. */
+export function prOrphans(ctx: Ctx): PrOrphanReport {
+  // Normalized here as well as at the parse, so the comparison is spelling-
+  // blind on both sides no matter how the Config was built.
+  const ignore = new Set(ctx.cfg.prOrphans.ignoreAuthors.map(normalizeBotLogin));
+  const orphans: PrOrphanRow[] = [];
+  const unreadable: number[] = [];
+  let scanned = 0;
+  let ignored = 0;
+  const now = ctx.now().getTime();
+  let after: string | null = null;
+  for (;;) {
+    const data: any = ghGraphQL(
+      ctx,
+      `query($owner: String!, $repo: String!, $after: String) {
+        repository(owner: $owner, name: $repo) {
+          pullRequests(states: OPEN, first: 100, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              number
+              title
+              isDraft
+              createdAt
+              author { login }
+              closingIssuesReferences(first: 1) { totalCount }
+            }
+          }
+        }
+      }`,
+      { owner: ctx.cfg.owner, repo: ctx.cfg.repo, after },
+    );
+    const page = data.repository?.pullRequests;
+    if (!page) throw new Error(`could not read open PRs for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+    assertPageInfo(page.pageInfo, `open PRs for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+    for (const p of page.nodes ?? []) {
+      if (!p?.number) continue;
+      scanned++;
+      const total = p.closingIssuesReferences?.totalCount;
+      if (typeof total !== "number") {
+        unreadable.push(p.number);
+        continue;
+      }
+      if (total > 0) continue;
+      const author: string | null = typeof p.author?.login === "string" ? p.author.login : null;
+      if (author && ignore.has(normalizeBotLogin(author))) {
+        ignored++;
+        continue;
+      }
+      const created = Date.parse(p.createdAt ?? "");
+      orphans.push({
+        number: p.number,
+        title: p.title ?? "",
+        author,
+        isDraft: p.isDraft === true,
+        createdAt: p.createdAt ?? "",
+        ageDays: Number.isFinite(created) ? Math.floor((now - created) / 86_400_000) : 0,
+      });
+    }
+    if (!page.pageInfo.hasNextPage) break;
+    after = page.pageInfo.endCursor;
+  }
+  orphans.sort((a, b) => b.ageDays - a.ageDays || a.number - b.number);
+  return {
+    scanned,
+    orphans,
+    ignored,
+    unreadable,
+    ignoreAuthors: ctx.cfg.prOrphans.ignoreAuthors,
+    configured: ctx.cfg.prOrphans.configured,
+  };
+}
+
 export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {}): DoctorReport {
   // The write-guard carve-out (GH-1806), enforced HERE and not only at the CLI
   // dispatch, so a programmatic caller cannot route around it. --fix selects
@@ -6585,7 +6756,35 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
           ` added by hand or by other automation are caught by the \`foreign-items\` sweep, not prevented.`,
     );
 
-    // item sweep: legacy states, claim anomalies, stale claims, closed drift
+    // Unlinked open PRs (GH-2048). INFO by construction, same rules as
+  // `board-volume`: --strict never escalates it and --fix never acts on it,
+  // because the remedy is a judgment (link it, file an issue, close the PR)
+  // and auto-adopting someone's branch onto the board is exactly what this
+  // was designed not to do. Its own try/catch keeps a failed read from
+  // changing doctor's exit code via the item sweep's catch.
+  try {
+    const po = prOrphans(ctx);
+    const shown = po.orphans
+      .slice(0, 5)
+      .map((o) => `#${o.number} (${o.ageDays}d${o.isDraft ? ", draft" : ""}, ${o.author ?? "unknown author"})`)
+      .join(" ");
+    add(
+      "pr-orphans",
+      po.orphans.length === 0 && po.unreadable.length === 0 ? "ok" : "info",
+      (po.orphans.length === 0
+        ? `none of ${po.scanned} open PR(s) are unlinked`
+        : `${po.orphans.length} of ${po.scanned} open PR(s) reference no issue — invisible to every board surface ` +
+          `(no board item, so no \`next\`, \`deliver-queue\` or sweep row): ${shown}` +
+          (po.orphans.length > 5 ? ` +${po.orphans.length - 5} more` : "") +
+          `. \`board pr-orphans\` lists them. Remedy is a judgment: add a closing reference, file the issue, or close the PR`) +
+        (po.ignored ? `; ${po.ignored} skipped by ${PR_ORPHAN_IGNORE_ENV}` : "") +
+        (po.unreadable.length ? `; linkage UNREADABLE for ${po.unreadable.map((n) => `#${n}`).join(" ")} — not counted either way` : ""),
+    );
+  } catch (e) {
+    add("pr-orphans", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
+  // item sweep: legacy states, claim anomalies, stale claims, closed drift
     try {
       const pages = listItemsFull(ctx);
       const { own: items, foreign } = ownRepo(ctx, pages.open);
@@ -7507,6 +7706,18 @@ reads
                               unpushed commits, which no remote signal can see.
                               Self-clearing on RALPH_LOCK_TTL_MIN; same-machine
                               only, and never evaluated without a sessions dir
+  pr-orphans [--json]         open PRs in this repo with no closing issue
+                              reference (GH-2048) — the one class of work no
+                              board surface can see, since a PR is not an issue
+                              and carries no board item. Reads GitHub's own
+                              derived linkage, never the PR body. Bot authors
+                              are skipped via RALPH_PR_ORPHAN_IGNORE_AUTHORS
+                              (dependabot,renovate,github-actions; a trailing
+                              [bot] is stripped on both sides, since GraphQL
+                              spells these logins without it. Set it EMPTY to
+                              surface everyone). A selector:
+                              it files nothing and blocks nothing. Doctor
+                              carries the same count as an advisory i line
   tend-queue [--json]         tend lane (GH-1712): Backlog hygiene + Done audit
                               — pending closure proposals, stale bodies,
                               cleared/truncated deps, unformed intake,
@@ -8087,6 +8298,27 @@ export function run(argv: string[], ctx: Ctx): number {
               .join(" ")}`,
           );
         stalledLines();
+      }
+      return 0;
+    }
+
+    case "pr-orphans": {
+      const res = prOrphans(ctx);
+      if (flags.json) json(res);
+      else {
+        if (!res.orphans.length) out(`no unlinked open PRs (${res.scanned} open)`);
+        else {
+          out(`${res.orphans.length} unlinked open PR(s) of ${res.scanned}:`);
+          for (const o of res.orphans)
+            out(
+              `  #${o.number} ${o.ageDays}d${o.isDraft ? " draft" : ""} ` +
+                `${o.author ?? "(unknown author)"} — ${o.title}`,
+            );
+        }
+        if (res.ignored)
+          out(`  ${res.ignored} skipped by ${PR_ORPHAN_IGNORE_ENV} (${res.ignoreAuthors.join(",") || "none"})`);
+        if (res.unreadable.length)
+          out(`  linkage UNREADABLE: ${res.unreadable.map((n) => `#${n}`).join(" ")} — neither linked nor orphaned`);
       }
       return 0;
     }

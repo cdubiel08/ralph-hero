@@ -33,6 +33,10 @@ import {
   createIssue,
   type Ctx,
   doctor,
+  parsePrOrphanPolicy,
+  prOrphans,
+  PR_ORPHAN_DEFAULT_IGNORE,
+  PR_ORPHAN_IGNORE_ENV,
   ESCALATION_EVIDENCE,
   encodeClaim,
   type ExecResult,
@@ -6323,6 +6327,142 @@ describe("foreign-repo posture (GH-1815)", () => {
       expect(fixed.checks.find((c) => c.name === "foreign-items")?.level).toBe("warn");
       expect(gh.removedItems).toEqual([]);
       expect(gh.issues.has(2)).toBe(true);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unlinked open PRs (GH-2048)
+// ---------------------------------------------------------------------------
+
+describe("pr-orphans", () => {
+  const withPolicy = (gh: FakeGh, ignoreAuthors: string[], configured = true) => {
+    const ctx = makeCtx(gh);
+    return { ...ctx, cfg: { ...ctx.cfg, prOrphans: { ignoreAuthors, configured } } };
+  };
+
+  it("selects open PRs whose derived linkage names no issue, oldest first", () => {
+    const gh = new FakeGh();
+    gh.openPrs = [
+      { number: 10, title: "linked", closing: 1, createdAt: "2026-07-30T12:00:00Z" },
+      { number: 11, title: "orphan young", createdAt: "2026-07-29T12:00:00Z" },
+      { number: 12, title: "orphan old", createdAt: "2026-07-08T12:00:00Z" },
+    ];
+    const res = prOrphans(makeCtx(gh));
+    expect(res.scanned).toBe(3);
+    expect(res.orphans.map((o) => o.number)).toEqual([12, 11]);
+    expect(res.orphans[0].ageDays).toBe(23);
+    expect(res.unreadable).toEqual([]);
+  });
+
+  it("skips the configured bot authors and counts them separately", () => {
+    const gh = new FakeGh();
+    gh.openPrs = [
+      { number: 20, author: "dependabot[bot]" },
+      { number: 21, author: "Dependabot[Bot]" }, // login case is not identity
+      { number: 22, author: "a-human" },
+    ];
+    const res = prOrphans(withPolicy(gh, ["dependabot[bot]"]));
+    expect(res.orphans.map((o) => o.number)).toEqual([22]);
+    expect(res.ignored).toBe(2);
+  });
+
+  // The defect this line was built to avoid, and shipped with once: GraphQL
+  // returns `dependabot`, every doc and the web UI say `dependabot[bot]`, and
+  // a list written in either spelling alone matches half the reality. Measured
+  // against this repo's own 12 standing dependabot PRs.
+  it("matches a bot whichever spelling each side uses — GraphQL drops the [bot] suffix", () => {
+    const gh = new FakeGh();
+    gh.openPrs = [
+      { number: 25, author: "dependabot" }, // as GraphQL actually returns it
+      { number: 26, author: "dependabot[bot]" }, // as REST and the UI write it
+    ];
+    expect(prOrphans(withPolicy(gh, ["dependabot[bot]"])).orphans).toEqual([]);
+    expect(prOrphans(withPolicy(gh, ["dependabot"])).orphans).toEqual([]);
+    expect(prOrphans(withPolicy(gh, [...PR_ORPHAN_DEFAULT_IGNORE])).orphans).toEqual([]);
+  });
+
+  it("an empty ignore list surfaces bot PRs too", () => {
+    const gh = new FakeGh();
+    gh.openPrs = [{ number: 30, author: "dependabot[bot]" }];
+    expect(prOrphans(withPolicy(gh, [])).orphans.map((o) => o.number)).toEqual([30]);
+  });
+
+  it("a deleted author is never matched against the ignore list", () => {
+    const gh = new FakeGh();
+    gh.openPrs = [{ number: 40, author: null }];
+    const res = prOrphans(withPolicy(gh, ["dependabot[bot]"]));
+    expect(res.orphans.map((o) => o.author)).toEqual([null]);
+  });
+
+  it("an unreadable linkage is its own bucket — never counted as linked or orphaned", () => {
+    const gh = new FakeGh();
+    gh.openPrs = [{ number: 50, unreadableLinkage: true }, { number: 51 }];
+    const res = prOrphans(makeCtx(gh));
+    expect(res.unreadable).toEqual([50]);
+    expect(res.orphans.map((o) => o.number)).toEqual([51]);
+  });
+
+  it("pages, and refuses a page whose pagination metadata is missing", () => {
+    const gh = new FakeGh();
+    gh.itemsPageSize = 1;
+    gh.openPrs = [{ number: 60 }, { number: 61, closing: 1 }, { number: 62 }];
+    expect(prOrphans(makeCtx(gh)).orphans.map((o) => o.number)).toEqual([60, 62]);
+
+    const broken = new FakeGh();
+    broken.openPrs = [{ number: 70 }];
+    broken.dropPageInfo = true;
+    expect(() => prOrphans(makeCtx(broken))).toThrow(/pagination metadata missing/);
+  });
+
+  it("asks for the linkage at first: 1 — only its existence is in question", () => {
+    const gh = new FakeGh();
+    gh.openPrs = [{ number: 80 }];
+    prOrphans(makeCtx(gh));
+    const q = gh.queries.find((s) => s.includes("pullRequests(states: OPEN"))!;
+    expect(q).toContain("closingIssuesReferences(first: 1)");
+    expect(q).not.toContain("body");
+  });
+
+  describe("policy", () => {
+    it("unset takes the defaults; explicitly empty means ignore nobody", () => {
+      expect(parsePrOrphanPolicy({})).toEqual({
+        ignoreAuthors: [...PR_ORPHAN_DEFAULT_IGNORE],
+        configured: false,
+      });
+      expect(parsePrOrphanPolicy({ [PR_ORPHAN_IGNORE_ENV]: "" })).toEqual({
+        ignoreAuthors: [],
+        configured: true,
+      });
+      expect(
+        parsePrOrphanPolicy({ [PR_ORPHAN_IGNORE_ENV]: " Bot-One[bot] , bot-two " }).ignoreAuthors,
+      ).toEqual(["bot-one", "bot-two"]);
+    });
+  });
+
+  describe("doctor line", () => {
+    it("is advisory: info when orphans exist, never escalated by --strict, never acted on by --fix", () => {
+      const gh = new FakeGh();
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+      gh.openPrs = [{ number: 90, title: "unlinked" }];
+
+      const rep = doctor(makeCtx(gh));
+      const line = rep.checks.find((c) => c.name === "pr-orphans");
+      expect(line?.level).toBe("info");
+      expect(line?.detail).toContain("#90");
+
+      expect(doctor(makeCtx(gh), { strict: true }).checks.find((c) => c.name === "pr-orphans")?.level).toBe("info");
+      const fixed = doctor(makeCtx(gh), { fix: true });
+      expect(fixed.checks.find((c) => c.name === "pr-orphans")?.level).toBe("info");
+      // It files nothing and closes nothing.
+      expect(gh.mutations.filter((m) => m.includes("createIssue"))).toEqual([]);
+    });
+
+    it("reads ok when nothing is unlinked", () => {
+      const gh = new FakeGh();
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+      gh.openPrs = [{ number: 91, closing: 1 }];
+      expect(doctor(makeCtx(gh)).checks.find((c) => c.name === "pr-orphans")?.level).toBe("ok");
     });
   });
 });
