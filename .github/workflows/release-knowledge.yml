@@ -49,7 +49,7 @@ on:
       - 'plugin/ralph-knowledge/agents/**'
       - 'plugin/ralph-knowledge/hooks/**'
       # Runtime launcher. Now that .mcp.json no longer pins an npm version,
-      # the plugin STARTS through scripts/launch-mcp.sh — that makes it
+      # the plugin STARTS through scripts/launch-mcp.mjs — that makes it
       # runtime content, not tooling. Without this path a commit touching only
       # the launcher would not bump the plugin version, so no installed plugin
       # would ever pick the fix up (codex P2, PR #1755).
@@ -335,7 +335,7 @@ jobs:
       # ── POST-PUBLISH STEPS (only run if publish + verify succeeded) ───────
 
       # .mcp.json no longer pins an npm version — the plugin launches its
-      # vendored copy via scripts/launch-mcp.sh (see PR: npx cache bloat fix),
+      # vendored copy via scripts/launch-mcp.mjs (see PR: npx cache bloat fix),
       # so there is nothing to rewrite post-publish.
 
       - name: Commit version bump and tag
