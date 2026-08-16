@@ -86,6 +86,10 @@ export class RalphWorld extends World {
   livePane = '';
   liveTmp = '';
   liveLedgerRoot = '';
+  /** <liveLedgerRoot>/acme/demo/ledger.jsonl — the D8 scratch victim */
+  liveScopedLedger = '';
+  /** exactly what was written there, for the byte-identity assert */
+  liveSeededLedger = '';
 
   /** Build the replay world — the "a replay world with a board-scoped repo" Given. */
   build(): void {

@@ -63,10 +63,27 @@ Given('a live herdr test session named {string}', async function (this: RalphWor
   if (sessionListed(session) !== 'running') {
     // Headless server for the NAMED session, detached; the After hook stops
     // and deletes it by name. Never `herdr server stop` (unscoped).
+    //
+    // RALPH_HERDR_LEDGER_ROOT is pinned to a throwaway dir for the SERVER's
+    // own environment, and that is load-bearing (GH-2018). herdr fires the
+    // `[[startup]]` hook for EVERY server that starts, this one included, and
+    // that hook runs reconcile.sh — inheriting this process's env, so without
+    // the pin it would sweep the operator's real `~/.ralph` ledgers while
+    // answering about a herd it has never had. That is finding D8 verbatim,
+    // and starting a test server would be betting the operator's live fleet on
+    // the very gate the suite is here to measure.
+    //
+    // Bounding it does not weaken the measurement: the D8 scenarios invoke
+    // reconcile.sh themselves against a scratch ledger root they seeded, so
+    // the hook is the delivery mechanism, not the subject. This removes an
+    // uncontrolled second pass whose victim would be real.
+    const quarantine = path.join(this.liveTmp, 'startup-hook-quarantine');
+    fs.mkdirSync(quarantine, { recursive: true });
     const logFd = fs.openSync(path.join(this.liveTmp, 'server.log'), 'a');
     const child = spawn('herdr', ['--session', session, 'server'], {
       detached: true,
       stdio: ['ignore', logFd, logFd],
+      env: { ...process.env, RALPH_HERDR_LEDGER_ROOT: quarantine },
     });
     child.unref();
     fs.closeSync(logFd);
@@ -147,21 +164,49 @@ Given('an empty temporary ledger root', function (this: RalphWorld) {
   this.liveLedgerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-bdd-ledger-'));
 });
 
+/**
+ * The env a live reconcile runs under.
+ *
+ * Every inherited `RALPH_`/`HERDR_` key is scrubbed before this world's own
+ * values go back — the same rule world.ts's `env()` states for the replay
+ * world, and it matters more here, not less. An operator's exported
+ * `RALPH_HERDR_DRY_RUN=true` would turn the D8 scenario's "nothing was marked
+ * lost" into a tautology about the harness rather than a fact about the gate,
+ * and this suite's whole claim is that its refusals are measurements. Prefix
+ * scrub, not a name list, so knobs added later are isolated by default.
+ * `ANTHROPIC_API_KEY` goes too: nothing here may bill, and the billing guard
+ * must not be handed a reason to think it may.
+ */
+function liveEnv(w: RalphWorld, wrapper: string): NodeJS.ProcessEnv {
+  const e: NodeJS.ProcessEnv = { ...process.env };
+  for (const k of Object.keys(e)) {
+    if (/^(RALPH_|HERDR_)/.test(k) || k === 'ANTHROPIC_API_KEY') delete e[k];
+  }
+  return {
+    ...e,
+    HERDR_BIN_PATH: wrapper,
+    RALPH_HERDR_LEDGER_ROOT: w.liveLedgerRoot,
+    NO_COLOR: '1',
+  };
+}
+
+/**
+ * reconcile.sh talks through `$HERDR_BIN_PATH` — a wrapper that pins the NAMED
+ * session so no read can land on the operator's default session.
+ */
+function sessionWrapper(w: RalphWorld): string {
+  const wrapper = path.join(w.liveTmp || os.tmpdir(), 'herdr-bdd-session');
+  fs.writeFileSync(wrapper, `#!/bin/bash\nexec herdr --session ${w.liveSession} "$@"\n`);
+  fs.chmodSync(wrapper, 0o755);
+  return wrapper;
+}
+
 When('the reconcile pass runs against the live test session', function (this: RalphWorld) {
   gate();
-  // reconcile.sh talks through $HERDR_BIN_PATH — hand it a wrapper that pins
-  // the NAMED session so no read can land on the default session.
-  const wrapper = path.join(this.liveTmp || os.tmpdir(), 'herdr-bdd-session');
-  fs.writeFileSync(wrapper, `#!/bin/bash\nexec herdr --session ${this.liveSession} "$@"\n`);
-  fs.chmodSync(wrapper, 0o755);
   const r = spawnSync('bash', [path.join(SCRIPTS_DIR, 'reconcile.sh')], {
     encoding: 'utf8',
     timeout: 60_000,
-    env: {
-      ...process.env,
-      HERDR_BIN_PATH: wrapper,
-      RALPH_HERDR_LEDGER_ROOT: this.liveLedgerRoot,
-    },
+    env: liveEnv(this, sessionWrapper(this)),
   });
   this.last = {
     rc: r.status ?? -1,
@@ -173,6 +218,189 @@ When('the reconcile pass runs against the live test session', function (this: Ra
 
 Then('the temporary ledger root is still empty', function (this: RalphWorld) {
   assert.deepStrictEqual(fs.readdirSync(this.liveLedgerRoot), [], 'reconcile wrote into an empty ledger root');
+});
+
+// ── D8: the controlled re-test (GH-2018) ────────────────────────────────────
+// The replay suites pin the ownership gate's logic against fake-herdr.sh.
+// These steps re-enter the D8 shape against a REAL isolated server, which is
+// the half a fake cannot reproduce: a server that has genuinely never held
+// these panes, answering into the phases that read absence as death.
+
+/** The two seeded workers. Neither carries `shell_pid`, and both name a
+ *  checkout that does not exist — see the feature's blast-bound paragraph. */
+const D8_REFS = ['w4242-alpha#aaaa', 'w4243-beta#bbbb'] as const;
+const D8_PANES = ['p-d8-alpha', 'p-d8-beta'] as const;
+
+/**
+ * The `ralph_session_key` reconcile.sh will compute for THIS run.
+ *
+ * Shelled out to ledger.sh's own function under the exact env the pass gets,
+ * never re-derived here. The key is a hash of herdr's socket selection, which
+ * the wrapper and the scrubbed env between them decide; a second copy of that
+ * resolution ladder in TypeScript would be free to drift, and the positive
+ * control below is worth exactly as much as this value is correct.
+ */
+function liveSessionKey(w: RalphWorld, wrapper: string): string {
+  const out = execFileSync(
+    'bash',
+    ['-c', `. "${path.join(SCRIPTS_DIR, 'ledger.sh')}" && ralph_session_key`],
+    { encoding: 'utf8', timeout: 15_000, env: liveEnv(w, wrapper) },
+  );
+  const key = out.trim();
+  assert.ok(key, 'ralph_session_key printed nothing — the positive control cannot be trusted');
+  return key;
+}
+
+/** Seed <root>/acme/demo/ledger.jsonl with the two open records. */
+function seedD8Ledger(w: RalphWorld, session: string): void {
+  w.liveLedgerRoot ||= fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-bdd-ledger-'));
+  w.liveScopedLedger = path.join(w.liveLedgerRoot, 'acme', 'demo', 'ledger.jsonl');
+  fs.mkdirSync(path.dirname(w.liveScopedLedger), { recursive: true });
+  w.liveSeededLedger = D8_REFS.map((ref, i) => {
+    const [name, epoch] = ref.split('#');
+    const m = /^w(\d+)-(.+)$/.exec(name)!;
+    return `${JSON.stringify({
+      ts: '2026-08-15T00:00:00Z',
+      ev: 'spawn',
+      agent_ref: ref,
+      pane_id: D8_PANES[i],
+      session,
+      // No `checkout`: recover_claim can resolve no board scope from an empty
+      // one, so the claim-recovery phase cannot reach GitHub even if its own
+      // pane-verdict guard failed. A bound, not the assertion.
+      checkout: '',
+      tokens: {
+        role: 'w',
+        issue: m[1],
+        slug: m[2],
+        root: ref,
+        depth: '0',
+        state: 'spawned',
+        harness: 'claude',
+        spawn_epoch: epoch,
+      },
+    })}\n`;
+  }).join('');
+  fs.writeFileSync(w.liveScopedLedger, w.liveSeededLedger);
+}
+
+function d8Records(w: RalphWorld): Array<Record<string, any>> {
+  return fs
+    .readFileSync(w.liveScopedLedger, 'utf8')
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .map((l) => JSON.parse(l));
+}
+
+Given('a scratch ledger root holding two open records written by another session', function (this: RalphWorld) {
+  gate();
+  // A key no ralph_session_key can produce: the real one is 12 hex chars.
+  seedD8Ledger(this, 'not-this-servers-session-key');
+});
+
+Given('a scratch ledger root holding two open records written by this server', function (this: RalphWorld) {
+  gate();
+  this.liveLedgerRoot ||= fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-bdd-ledger-'));
+  seedD8Ledger(this, liveSessionKey(this, sessionWrapper(this)));
+});
+
+Then('no record in the scratch ledger is marked lost', function (this: RalphWorld) {
+  const exits = d8Records(this).filter((r) => r.ev === 'exit');
+  assert.deepStrictEqual(
+    exits,
+    [],
+    `reconcile swept a ledger it holds no pane of and did not write:\n${this.last.out}`,
+  );
+});
+
+Then('the scratch ledger is byte-identical to what was seeded', function (this: RalphWorld) {
+  assert.strictEqual(
+    fs.readFileSync(this.liveScopedLedger, 'utf8'),
+    this.liveSeededLedger,
+    'the foreign ledger was written to at all',
+  );
+});
+
+Then('the pass declined the sweep out loud', function (this: RalphWorld) {
+  assert.ok(
+    this.last.out.includes("not this server's ledger"),
+    `the pass swept nothing but never said why — silence and a working gate must not read alike:\n${this.last.out}`,
+  );
+});
+
+Then('both records are still open', function (this: RalphWorld) {
+  const open = new Map<string, boolean>();
+  for (const r of d8Records(this)) {
+    if (r.ev === 'spawn' || r.ev === 'discover') open.set(r.agent_ref, true);
+    else if (r.ev === 'exit') open.set(r.agent_ref, false);
+  }
+  assert.deepStrictEqual(
+    [...open.entries()].filter(([, v]) => v).map(([k]) => k).sort(),
+    [...D8_REFS].sort(),
+  );
+});
+
+Then('both records are marked lost', function (this: RalphWorld) {
+  // The control that makes the refusals above measurements rather than
+  // tautologies: same ledger, same live server, same empty herd — the ONLY
+  // difference is the writer stamp, and the sweep runs.
+  const lost = d8Records(this)
+    .filter((r) => r.ev === 'exit' && r.reason === 'lost')
+    .map((r) => r.agent_ref)
+    .sort();
+  assert.deepStrictEqual(
+    lost,
+    [...D8_REFS].sort(),
+    `the ownership proof did not reach phase A — the refusal scenarios prove nothing without this:\n${this.last.out}`,
+  );
+});
+
+Given('the scratch scope has an armed fleet from another session', function (this: RalphWorld) {
+  gate();
+  const dir = path.join(path.dirname(this.liveScopedLedger), 'runs', 'd8-run');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'fleet.json'),
+    `${JSON.stringify({
+      run_id: 'd8-run',
+      armed: true,
+      k: 3,
+      refill: true,
+      budget_left: 8,
+      // Far future: an expired arm disarms before the ownership gate is
+      // reached, which would pass this scenario for the wrong reason.
+      expires_at: '2099-01-01T00:00:00Z',
+      // A repo that does not exist. If the ownership gate ever failed, the
+      // refill path disarms here instead of spawning — the blast bound. The
+      // assertion below is that we never got that far.
+      repo: path.join(this.liveTmp, 'no-such-repo'),
+      session: 'not-this-servers-session-key',
+      spawned: [],
+      created_at: '2026-08-15T00:00:00Z',
+    })}\n`,
+  );
+});
+
+Then('the pass declined the refill out loud', function (this: RalphWorld) {
+  assert.ok(
+    /refill: .*was armed by session .*not this server/.test(this.last.out),
+    `phase F did not name the foreign arming — an inert refill and a gated one must not read alike:\n${this.last.out}`,
+  );
+});
+
+Then('the refill never reached the spawn path', function (this: RalphWorld) {
+  // The blast bound's own line. Seeing it would mean the ownership gate let
+  // this run through and only the missing repo stopped the spawn.
+  assert.ok(
+    !this.last.out.includes('is gone — disarming'),
+    `the refill got PAST the ownership gate and was stopped only by the missing repo:\n${this.last.out}`,
+  );
+});
+
+Then('the live test session gained no agents', function (this: RalphWorld) {
+  const raw = herdrSession(this.liveSession, ['agent', 'list']);
+  const agents = JSON.parse(raw)?.result?.agents ?? [];
+  assert.deepStrictEqual(agents, [], `the live test session holds agents it never should have:\n${raw}`);
 });
 
 // Cleanup ALWAYS — the named session is stopped and deleted even when a step
