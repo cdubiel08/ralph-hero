@@ -877,6 +877,9 @@ export interface CtxOpts {
   cacheDir?: string;
   itemCacheTtlSec?: number;
   now?: () => Date;
+  /** GH-1804. Absent leaves the change oracle off, so Δ is the only window —
+   *  the shape every pre-existing cache test is written against. */
+  itemOracleMaxSec?: number;
   /** GH-1948. Absent leaves the session→unit guard inert, which is what every
    *  pre-existing test is written against. */
   session?: { id: string | null; dir: string };
@@ -906,6 +909,7 @@ export function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo", opts
     cacheDir: opts.cacheDir ?? mkdtempSync(join(tmpdir(), "board-test-")),
     now: opts.now ?? (() => NOW),
     itemCacheTtlSec: opts.itemCacheTtlSec ?? 0,
+    itemOracleMaxSec: opts.itemOracleMaxSec ?? 0,
     session: opts.session,
   };
 }
