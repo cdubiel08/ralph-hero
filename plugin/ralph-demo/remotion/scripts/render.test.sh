@@ -35,10 +35,13 @@ check "props not valid JSON"  2 "$(run --props "$TMP/bad.json" --out "$TMP/o.mp4
 check "unknown composition"   1 "$(run --props "$TMP/props.json" --out "$TMP/o.mp4" --composition NoSuchThing)"
 
 # Success: exit 0, stdout is the path, and the path is a real non-empty file.
+# Run from $TMP, not the scaffold: every case above passes absolute paths from
+# whatever cwd the suite was started in, so a script that only worked from the
+# scaffold dir went unnoticed until it was run from the repo root (GH-2029).
 out="$TMP/nested/demo.mp4"   # also proves the output directory is created
 status=0
-printed="$(bash "$RENDER" --props "$TMP/props.json" --out "$out" 2>/dev/null)" || status=$?
-check "render succeeds" 0 "$status"
+printed="$(cd "$TMP" && bash "$RENDER" --props "$TMP/props.json" --out "$out" 2>/dev/null)" || status=$?
+check "render succeeds from a foreign cwd" 0 "$status"
 if [ "$printed" = "$out" ] && [ -s "$out" ]; then
   printf 'ok   printed path exists and is non-empty\n'
 else
@@ -46,5 +49,17 @@ else
   fails=$((fails + 1))
 fi
 
-[ "$fails" -eq 0 ] || { printf '\n%d failure(s)\n' "$fails"; exit 1; }
+# Caller-relative paths stay relative to the CALLER, never re-rooted into the
+# scaffold by the cd the render now runs under.
+status=0
+printed="$(cd "$TMP" && bash "$RENDER" --props props.json --out rel/demo.mp4 2>/dev/null)" || status=$?
+check "relative paths resolve against the caller" 0 "$status"
+if [ -s "$TMP/rel/demo.mp4" ]; then
+  printf 'ok   relative --out landed in the caller directory\n'
+else
+  printf 'FAIL relative --out did not land in %s/rel\n' "$TMP"
+  fails=$((fails + 1))
+fi
+
+[ "$fails" -eq 0 ] ||{ printf '\n%d failure(s)\n' "$fails"; exit 1; }
 printf '\nall render.sh contract cases pass\n'

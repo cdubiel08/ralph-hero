@@ -52,17 +52,32 @@ node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$props
 
 mkdir -p "$(dirname "$out")"
 
+# Everything below runs with cwd inside the scaffold, because remotion.config.ts
+# is resolved against the CURRENT directory, not against the entry point. So the
+# caller's paths are made absolute first: --props and --out are the caller's,
+# relative to the caller's cwd, and must not silently re-root (GH-2029).
+props_abs="$(cd "$(dirname "$props")" && pwd)/$(basename "$props")"
+out_abs="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
+
+# The scaffold's own binary, not a bare `npx`: npx resolves against the caller's
+# cwd, so from anywhere but the scaffold it found no remotion and reported
+# "could not determine executable to run" — which the flake hint below then
+# mis-narrated as the chrome-headless-shell download (GH-2029).
+REMOTION="$SCAFFOLD/node_modules/.bin/remotion"
+[ -x "$REMOTION" ] \
+  || die 2 "remotion binary missing at $REMOTION. Remedy: pnpm install in $SCAFFOLD"
+
 # --props takes a path; passing JSON inline hits shell-quoting limits on any
 # real narration script.
 #
 # Remotion writes its progress to STDOUT, so it is redirected to stderr: this
 # script's stdout is the output path and nothing else, or `out=$(render.sh …)`
 # hands the caller a bundling log.
-npx remotion render "$SCAFFOLD/src/index.ts" "$composition" "$out" \
-  --props="$props" >&2 \
+(cd "$SCAFFOLD" && "$REMOTION" render "$SCAFFOLD/src/index.ts" "$composition" "$out_abs" \
+  --props="$props_abs") >&2 \
   || die 1 "remotion render exited non-zero for composition '$composition' (see output above). \
 If this is the first render on this machine it may be the chrome-headless-shell download — one retry is warranted."
 
-[ -s "$out" ] || die 3 "render reported success but $out is missing or empty"
+[ -s "$out_abs" ] || die 3 "render reported success but $out is missing or empty"
 
 printf '%s\n' "$out"
