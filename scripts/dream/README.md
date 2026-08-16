@@ -240,6 +240,18 @@ model cannot widen the bound, and since dedup only ever removes more, weekly
 growth stays ≤ N. Fail-open: if the local model is
 offline it stages nothing. Knobs: `RALPH_META_WINDOW_DAYS` (7),
 `RALPH_META_MIN_REFLECTIONS` (5), `RALPH_META_MAX_CANDIDATES` (3),
-`RALPH_META_DEDUP_MAX_EXISTING` (150). This is the
+`RALPH_META_DEDUP_MAX_EXISTING` (150).
+
+**Every suppression leaves a record** (GH-2040). Both gates above used to drop
+a candidate silently, and `prune_candidates` then deleted the consumed entry —
+so a lexical dedup hit and a semantic near-miss were equally invisible, and
+neither could be distinguished from a genuine first staging. Each suppressed
+axiom is now appended to `<wiki_dir>/_suppressed.jsonl` with `matched` naming
+which set it collided with (`staged` / `promoted` / `rejected` / `batch` for a
+repeat inside one run / `paraphrase` for the LLM gate) and `seen_count`, the
+number of times that axiom has now been suppressed — so re-proposal churn is
+readable straight off the file rather than reconstructed. It changes nothing
+about what gets staged, and it is **best-effort by construction**: an
+unwritable log warns and returns 0 rather than costing a staging run. This is the
 hierarchy level that finally seeds the wiki tier and resolves the
 reflection→wiki catch-22.

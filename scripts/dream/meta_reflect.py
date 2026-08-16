@@ -323,6 +323,93 @@ def _read_candidate_records(candidates_file: Path) -> list[dict[str, Any]]:
     return out
 
 
+SUPPRESSED_FILENAME = "_suppressed.jsonl"
+
+
+def _suppression_counts(wiki_dir: Path) -> dict[str, int]:
+    """How many times each axiom hash has already been suppressed."""
+    counts: dict[str, int] = {}
+    path = Path(wiki_dir).expanduser() / SUPPRESSED_FILENAME
+    if not path.exists():
+        return counts
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        log.warning("Could not read %s: %s", path, exc)
+        return counts
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            h = str(rec.get("hash", ""))
+            if h:
+                counts[h] = counts.get(h, 0) + 1
+    return counts
+
+
+def log_suppressions(
+    wiki_dir: Path,
+    suppressed: list[tuple[str, str]],
+    *,
+    now: datetime,
+) -> int:
+    """Append a durable record of candidates that were *not* staged (GH-2040).
+
+    ``suppressed`` is ``(axiom, matched)`` pairs, where ``matched`` names which
+    set the axiom collided with — ``staged`` / ``promoted`` / ``rejected`` for
+    the exact-hash dedup, ``paraphrase`` for the LLM gate, ``batch`` for a
+    repeat inside one run. Each record carries ``seen_count``, the number of
+    times this axiom has now been suppressed, so re-proposal churn is readable
+    straight off the file without reconstructing history.
+
+    Append-only, beside ``_candidates.jsonl``. **Best-effort by construction**:
+    an unwritable log must never cost a staging run, so every failure warns and
+    returns 0. Returns the number of records written.
+    """
+    if not suppressed:
+        return 0
+    wiki_dir = Path(wiki_dir).expanduser()
+    counts = _suppression_counts(wiki_dir)
+    lines: list[str] = []
+    for axiom, matched in suppressed:
+        axiom = str(axiom).strip()
+        if not axiom:
+            continue
+        h = _candidate_hash(axiom)
+        counts[h] = counts.get(h, 0) + 1
+        lines.append(
+            json.dumps(
+                {
+                    "hash": h,
+                    "axiom": axiom,
+                    "matched": matched,
+                    "seen_count": counts[h],
+                    "suppressed_at": now.astimezone(timezone.utc).isoformat(),
+                    "source": "meta-reflect",
+                },
+                ensure_ascii=False,
+            )
+        )
+    if not lines:
+        return 0
+    path = wiki_dir / SUPPRESSED_FILENAME
+    try:
+        wiki_dir.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            for line in lines:
+                fh.write(line + "\n")
+    except OSError as exc:
+        log.warning("Could not record %d suppression(s) to %s: %s", len(lines), path, exc)
+        return 0
+    log.info("Recorded %d suppressed candidate(s) at %s", len(lines), path)
+    return len(lines)
+
+
 def prune_candidates(wiki_dir: Path) -> int:
     """Drop staged candidates the human has since consumed (GH-1518).
 
@@ -438,6 +525,8 @@ def filter_paraphrases(
     model: str = DEFAULT_LLM_MODEL,
     *,
     http_post: Any | None = None,
+    wiki_dir: Path | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Drop candidates that restate an already-dispositioned axiom (GH-1967).
 
@@ -480,6 +569,12 @@ def filter_paraphrases(
     dupes = parse_duplicate_indices(content, len(candidates))
     for i in sorted(dupes):
         log.info("Dropping paraphrase of a known axiom: %s", candidates[i].get("axiom", ""))
+    if dupes and wiki_dir is not None:
+        log_suppressions(
+            wiki_dir,
+            [(str(candidates[i].get("axiom", "")), "paraphrase") for i in sorted(dupes)],
+            now=now or datetime.now(tz=timezone.utc),
+        )
     return [c for i, c in enumerate(candidates) if i not in dupes]
 
 
@@ -501,17 +596,28 @@ def stage_candidates(
     wiki_dir = Path(wiki_dir).expanduser()
     wiki_dir.mkdir(parents=True, exist_ok=True)
     candidates_file = wiki_dir / "_candidates.jsonl"
-    seen = _existing_hashes(candidates_file)
-    seen |= _promoted_hashes(wiki_dir)
-    seen |= _rejected_hashes(wiki_dir)
+    already_staged = _existing_hashes(candidates_file)
+    already_promoted = _promoted_hashes(wiki_dir)
+    already_rejected = _rejected_hashes(wiki_dir)
+    seen = already_staged | already_promoted | already_rejected
 
     new_lines: list[str] = []
+    suppressed: list[tuple[str, str]] = []
     for c in candidates:
         axiom = str(c.get("axiom", "")).strip()
         if not axiom:
             continue
         h = _candidate_hash(axiom)
         if h in seen:
+            if h in already_staged:
+                matched = "staged"
+            elif h in already_promoted:
+                matched = "promoted"
+            elif h in already_rejected:
+                matched = "rejected"
+            else:
+                matched = "batch"
+            suppressed.append((axiom, matched))
             continue
         seen.add(h)
         rec = {
@@ -523,6 +629,8 @@ def stage_candidates(
             "source": "meta-reflect",
         }
         new_lines.append(json.dumps(rec, ensure_ascii=False))
+
+    log_suppressions(wiki_dir, suppressed, now=now)
 
     if not new_lines:
         return 0
@@ -578,6 +686,8 @@ def run_meta_reflect(
         llm_url,
         model,
         http_post=http_post,
+        wiki_dir=wiki_dir,
+        now=now,
     )
     if not candidates:
         log.info("All candidates restated known axioms; staging nothing.")
