@@ -212,6 +212,22 @@ if grep -q "^$SESSION " "$OUT/00-session-list-before.out" 2>/dev/null; then
   "$HERDR_REAL" session delete "$SESSION" >/dev/null 2>&1 || true
 fi
 
+# ── ledger-root isolation — BEFORE any server starts (GH-1900) ───────────────
+# herdr fires the `[[startup]]` hook for EVERY server that starts, the probe's
+# own included, and the hook is reconcile.sh — which walks every ledger under
+# `ledger_root()` (reconcile.sh) while asking a herdr that has never heard of
+# any of those agents. That is exactly how the 2026-08-13 run marked all five
+# of the operator's running workers `lost` in one pass (predecessor probe, D8).
+#
+# GH-1863 and #1905 since added ownership gates that should refuse both the
+# lost-sweep and the refill, but a probe that must run beside a live fleet may
+# not rest its safety on a gate holding: the server inherits this environment,
+# so pointing the ROOT at scratch means the hook has nothing of the operator's
+# to find. `RALPH_HERDR_LEDGER` (set at step 3) is only this probe's own write
+# target and never bounded the hook's walk.
+export RALPH_HERDR_LEDGER_ROOT="$SCRATCH/ledger-root"
+mkdir -p "$RALPH_HERDR_LEDGER_ROOT" || die "cannot create scratch ledger root"
+
 # ── step 1: start the isolated headless server ───────────────────────────────
 T_S1_EXEC=$(now_ms)
 nohup "$HERDR_REAL" --session "$SESSION" server >"$OUT/server-1.log" 2>&1 &
@@ -470,6 +486,21 @@ while [ "$i" -lt 100 ]; do
 done
 [ -n "$T_S2_READY" ] || die "restarted server for $SESSION never became ready (see $OUT/server-2.log)"
 sleep 1 # let restore settle before snapshotting
+# The `[[startup]]` hook's own output (GH-1900). reconcile.sh logs to stdout,
+# and herdr routes a startup hook's stdout to the SESSION log — not to the
+# server's console stdout (`server-2.log` holds only the banner) and not to
+# `~/.config/herdr/herdr-server.log`, which contains zero `reconcile:` lines
+# after a week of uptime. So phase F's decision is, in production, written
+# nowhere anyone reads. Copy the session log out before teardown deletes it
+# with the session; this is the only capture of what the hook decided.
+PROBE_SESSION_LOG="$HOME/.config/herdr/sessions/$SESSION/herdr-server.log"
+if [ -f "$PROBE_SESSION_LOG" ]; then
+  cp "$PROBE_SESSION_LOG" "$OUT/session-server.log" || true
+  note "startup-hook log captured ($(grep -c 'reconcile:' "$OUT/session-server.log" 2>/dev/null || echo 0) reconcile lines)"
+else
+  note "startup-hook log ABSENT at $PROBE_SESSION_LOG — hook output not captured"
+fi
+
 cap 09-workspace-list-after probe_herdr workspace list || true
 cap 10-pane-list-after probe_herdr pane list || true
 cap 11-process-info-after probe_herdr pane process-info --pane "$PANE" || true

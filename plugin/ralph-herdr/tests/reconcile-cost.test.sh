@@ -267,6 +267,103 @@ case "$OUT" in
   *) not_ok "sick server: declines the pass loudly — got '$OUT'" ;;
 esac
 
+echo "# ═══ 7. the pass is observable, and survives a server that is not ready yet (GH-1900) ═══"
+# Measured on a real restart: herdr starts the [[startup]] hook at T+~47ms while
+# the API only answers an external client at T+~76ms — the hook is launched INTO
+# the readiness window and won the race only on library-sourcing cost. Phase F
+# is the one phase with no next pass to correct an abort, so the read retries.
+
+# 7a — the pass leaves a durable record. Before this, reconcile logged only to
+# stdout, which for its ONLY automatic invocation herdr keeps in an in-memory
+# ring that routine pane events evict within minutes of the restart it describes.
+ROOT="$TMP/logfile"
+mk_ledger "$ROOT" acme demo 2 p >/dev/null
+anchor_herd
+: >"$FAKE_HERDR_LOG"
+RALPH_HERDR_LEDGER_ROOT="$ROOT" bash "$SCRIPTS/reconcile.sh" >/dev/null 2>&1
+RLOG="$ROOT/logs/reconcile.log"
+if [ -f "$RLOG" ]; then ok "log: the pass wrote a durable reconcile log"
+else not_ok "log: expected a reconcile log at $RLOG"; fi
+case "$(cat "$RLOG" 2>/dev/null)" in
+  *"pass started"*) ok "log: the pass announces itself BEFORE the read that can abort it" ;;
+  *) not_ok "log: expected a 'pass started' line" ;;
+esac
+case "$(cat "$RLOG" 2>/dev/null)" in
+  *"reconcile complete"*) ok "log: and records the outcome" ;;
+  *) not_ok "log: expected 'reconcile complete'" ;;
+esac
+
+# 7b — logging FAILS OPEN. An unwritable log must never do to a pass what a sick
+# server does: it costs observability, never work.
+ROOT="$TMP/logopen"
+LEDGER=$(mk_ledger "$ROOT" acme demo 2 p)
+anchor_herd
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$ROOT" RALPH_HERDR_RECONCILE_LOG=/proc/nonexistent/x/y.log \
+  bash "$SCRIPTS/reconcile.sh" 2>&1) || RC=$?
+is "log fails open: an unwritable log still exits 0" "0" "$RC"
+case "$OUT" in
+  *"reconcile complete"*) ok "log fails open: and the pass still completed" ;;
+  *) not_ok "log fails open: expected a completed pass, got '$OUT'" ;;
+esac
+
+# 7c — a server that is not answering YET is waited for, not declined. The fake
+# below fails the first `api snapshot` and answers every later one, which is
+# exactly the restart race: unready, then ready milliseconds later.
+ROOT="$TMP/notready"
+mk_ledger "$ROOT" acme demo 2 p >/dev/null
+anchor_herd
+FLAKY="$TMP/bin/herdr-flaky"
+FLAKY_SENTINEL="$TMP/flaky.seen"
+rm -f "$FLAKY_SENTINEL"
+cat >"$FLAKY" <<FLAKYEOF
+#!/bin/bash
+if [ "\$1 \$2" = "api snapshot" ] && [ ! -f "$FLAKY_SENTINEL" ]; then
+  : >"$FLAKY_SENTINEL"
+  echo "connection refused" >&2
+  exit 1
+fi
+exec bash "$SCRIPT_DIR/fake-herdr.sh" "\$@"
+FLAKYEOF
+chmod +x "$FLAKY"
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$ROOT" HERDR_BIN_PATH="$FLAKY" \
+  bash "$SCRIPTS/reconcile.sh" 2>&1) || RC=$?
+is "not-ready server: the pass still exits 0" "0" "$RC"
+case "$OUT" in
+  *"reconcile complete"*) ok "not-ready server: the pass completed instead of declining" ;;
+  *) not_ok "not-ready server: expected a completed pass, got '$OUT'" ;;
+esac
+case "$OUT" in
+  *"readiness window"*) ok "not-ready server: and says it waited, so the race stays visible" ;;
+  *) not_ok "not-ready server: expected the wait to be logged, got '$OUT'" ;;
+esac
+
+# 7d — the retry may not become a cost regression. A server that answers at once
+# — the overwhelmingly common case — still issues EXACTLY ONE snapshot: the
+# retry reuses its own read rather than probing for readiness first.
+ROOT="$TMP/retrycost"
+mk_ledger "$ROOT" acme demo 4 p yes >/dev/null
+herd_of 4 p
+: >"$FAKE_HERDR_LOG"
+RALPH_HERDR_LEDGER_ROOT="$ROOT" bash "$SCRIPTS/reconcile.sh" >/dev/null 2>&1
+is "retry: a healthy server still costs exactly one snapshot" "1" "$(log_count '^api snapshot')"
+
+# 7e — and a genuinely sick server is still refused, bounded, without touching
+# anything. The wait changes when the abort happens, never whether it does.
+ROOT="$TMP/sickbounded"
+LEDGER=$(mk_ledger "$ROOT" acme demo 3 p)
+before=$(wc -l <"$LEDGER" | tr -d ' ')
+RC=0
+OUT=$(RALPH_HERDR_LEDGER_ROOT="$ROOT" HERDR_BIN_PATH=/usr/bin/false \
+  RALPH_HERDR_SNAPSHOT_WAIT_MS=200 bash "$SCRIPTS/reconcile.sh" 2>&1) || RC=$?
+is "bounded wait: a sick server still exits 0" "0" "$RC"
+is "bounded wait: ledger still untouched" "$before" "$(wc -l <"$LEDGER" | tr -d ' ')"
+case "$OUT" in
+  *"not reconciling"*) ok "bounded wait: and the pass is still declined" ;;
+  *) not_ok "bounded wait: expected a declined pass, got '$OUT'" ;;
+esac
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
