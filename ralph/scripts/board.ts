@@ -6541,12 +6541,35 @@ export interface PruneApplyResult {
  *  be tested directly — the two bugs this replaces were both reachable only
  *  through the dispatch, which had no test. */
 export function applyPrune(ctx: Ctx, candidates: PruneCandidate[]): PruneApplyResult {
+  return removeProjectItems(
+    ctx,
+    candidates.map((c) => ({ itemId: c.itemId, label: `#${c.number}` })),
+  );
+}
+
+/** One project item to remove, and what to call it in a failure line. */
+export interface RemovableItem {
+  itemId: string;
+  label: string;
+}
+
+/** The removal loop, bounded twice: by the caller's slice (--limit) and by a
+ *  consecutive-failure circuit breaker. Extracted from the CLI case so it can
+ *  be tested directly — the two bugs this replaces were both reachable only
+ *  through the dispatch, which had no test.
+ *
+ *  Shared by `prune` and `sweep-non-issues` (GH-2050) deliberately: the two
+ *  sweeps disagree about WHAT is safe to remove and must keep disagreeing —
+ *  that is why GH-2050 refused to overload prune's predicate — but "how do we
+ *  remove a project item, and when do we stop trying" is one answer, and a
+ *  second copy of it is a second place for the circuit breaker to rot. */
+export function removeProjectItems(ctx: Ctx, items: RemovableItem[]): PruneApplyResult {
   const failed: string[] = [];
   let removed = 0;
   let attempted = 0;
   let consecutive = 0;
   const projectId = refreshCache(ctx).projectId;
-  for (const c of candidates) {
+  for (const c of items) {
     attempted++;
     try {
       ghGraphQL(
@@ -6561,13 +6584,169 @@ export function applyPrune(ctx: Ctx, candidates: PruneCandidate[]): PruneApplyRe
     } catch (e) {
       // Per-item fault isolation, like doctor's fix loops: one unremovable
       // item must not abort a sweep that is otherwise working.
-      failed.push(`#${c.number} (${(e as Error).message})`);
+      failed.push(`${c.label} (${(e as Error).message})`);
       if (++consecutive >= PRUNE_MAX_CONSECUTIVE_FAILURES) {
         return { attempted, removed, failed, aborted: true };
       }
     }
   }
   return { attempted, removed, failed, aborted: false };
+}
+
+// ---------------------------------------------------------------------------
+// Non-issue sweep (GH-2050) — a ONE-TIME removal of the PR/draft items the
+// project's built-in "Auto-add to project" workflow deposited before its
+// filter was narrowed to `is:issue` on 2026-08-16 (GH-1889).
+//
+// Why a separate verb rather than an arm on `prune`: prune's predicate is a
+// fail-closed argument about *issues other readers still need* — closedDrift,
+// tend's Done audit, the apply-evidence sweep, tree edges. A non-issue item
+// has none of those readers, because `board.ts` cannot see it at all: the
+// item walk's content union has only an `... on Issue` fragment, so every PR
+// and draft on this board is paged for, metered, and then dropped. Teaching
+// prune's predicate to reason about a second kind of subject would erode the
+// one guarantee it exists to make (GH-1821, GH-1889 both said so).
+//
+// Why it is safe in a way prune is not: removing a project item destroys that
+// item's Workflow State and Claim field values. For an issue that is real
+// loss. For a PR or draft there is nothing to lose — board.ts never wrote a
+// field value on one and never read one back. The pull request itself is
+// untouched, exactly as prune leaves the issue.
+// ---------------------------------------------------------------------------
+
+/** A board item whose content is not an issue — a pull request or a draft. */
+export interface NonIssueItem {
+  itemId: string;
+  kind: string; // ProjectV2 item type: PULL_REQUEST, DRAFT_ISSUE, REDACTED, …
+  isArchived: boolean;
+  createdAt: string | null;
+  creator: string | null;
+  label: string; // "PR #2049" / "draft \"title\"" — what a failure line prints
+}
+
+export interface NonIssueWalk {
+  nonIssue: NonIssueItem[];
+  issues: number; // ISSUE items seen — never touched, reported for proportion
+  scanned: number; // nodes paged
+  pages: number;
+  short: boolean; // paged fewer nodes than totalCount claimed
+}
+
+/** Why a non-issue item is NOT removed. Named for the same reason prune's
+ *  retention reasons are: a sweep that silently drops items from its own
+ *  candidate list reads identically to one that found nothing. */
+export type NonIssueRetention =
+  | "archived" // archived items reject writes — the mutation would fail anyway
+  | "unknown-kind"; // no `type` came back: we cannot prove it is not an issue
+
+export interface NonIssueSweepReport {
+  candidates: NonIssueItem[];
+  retained: Array<{ label: string; reason: NonIssueRetention }>;
+  byKind: Array<[string, number]>;
+  /** Newest non-issue item by createdAt — the ONLY observable of whether the
+   *  auto-add source is still live. The ProjectV2 API cannot read a built-in
+   *  workflow's filter (GH-1889), so its effect is all there is to look at. */
+  newest: NonIssueItem | null;
+}
+
+/** Lean full-project walk selecting only what the sweep decides on.
+ *
+ *  Deliberately NOT `listItemsFull`: that walk drops every non-issue node
+ *  before returning (its content union has no PR fragment), so the items this
+ *  sweep exists to find are invisible to it. One connection, no nested ones —
+ *  the 1-pt-per-page floor.
+ *
+ *  Never served from the item cache and never writes to it: this walk selects
+ *  a different shape entirely, and a mutating path pays for truth anyway. */
+export function walkNonIssueItems(ctx: Ctx): NonIssueWalk {
+  const cache = refreshCache(ctx);
+  const nonIssue: NonIssueItem[] = [];
+  let issues = 0;
+  let scanned = 0;
+  let pages = 0;
+  let expected = -1;
+  let after: string | null = null;
+  for (;;) {
+    const data: any = ghGraphQL(
+      ctx,
+      `query($projectId: ID!, $after: String) {
+        node(id: $projectId) {
+          ... on ProjectV2 {
+            items(first: ${ITEMS_PAGE}, after: $after) {
+              totalCount
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                id
+                type
+                isArchived
+                createdAt
+                creator { login }
+                content {
+                  ... on PullRequest { number }
+                  ... on DraftIssue { title }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      { projectId: cache.projectId, after },
+    );
+    const page = data?.node?.items;
+    if (!page) break;
+    pages++;
+    if (typeof page.totalCount === "number") expected = page.totalCount;
+    for (const n of page.nodes ?? []) {
+      scanned++;
+      const kind: string | null = typeof n?.type === "string" ? n.type : null;
+      if (kind === "ISSUE") {
+        issues++;
+        continue;
+      }
+      const num = n?.content?.number;
+      const title = n?.content?.title;
+      nonIssue.push({
+        itemId: n.id,
+        // A null `type` is carried through as "unknown" rather than guessed
+        // at — the classifier retains it, and a guess here is the one way
+        // this sweep could remove an issue.
+        kind: kind ?? "unknown",
+        isArchived: !!n.isArchived,
+        createdAt: typeof n?.createdAt === "string" ? n.createdAt : null,
+        creator: n?.creator?.login ?? null,
+        label:
+          typeof num === "number"
+            ? `PR #${num}`
+            : typeof title === "string"
+              ? `draft "${title.slice(0, 40)}"`
+              : `${kind ?? "unknown"} item ${n.id}`,
+      });
+    }
+    if (!page.pageInfo?.hasNextPage) break;
+    after = page.pageInfo.endCursor;
+  }
+  // Same completeness question GH-1896 asked of the main walk. A short read
+  // here cannot cause a wrong removal — everything removed was seen — but it
+  // can make an incomplete sweep read as a finished one, so it is reported
+  // and the caller says another run is needed.
+  return { nonIssue, issues, scanned, pages, short: expected >= 0 && scanned < expected };
+}
+
+/** The sweep predicate. Fails closed in the one direction that matters: an
+ *  item whose kind did not come back is retained, never removed. */
+export function classifyNonIssueSweep(walk: NonIssueWalk): NonIssueSweepReport {
+  const candidates: NonIssueItem[] = [];
+  const retained: Array<{ label: string; reason: NonIssueRetention }> = [];
+  const byKind = new Map<string, number>();
+  let newest: NonIssueItem | null = null;
+  for (const it of walk.nonIssue) {
+    byKind.set(it.kind, (byKind.get(it.kind) ?? 0) + 1);
+    if (it.createdAt && (!newest?.createdAt || it.createdAt > newest.createdAt)) newest = it;
+    if (it.kind === "unknown") retained.push({ label: it.label, reason: "unknown-kind" });
+    else if (it.isArchived) retained.push({ label: it.label, reason: "archived" });
+    else candidates.push(it);
+  }
+  return { candidates, retained, byKind: [...byKind].sort((a, b) => b[1] - a[1]), newest };
 }
 
 /** One open PR that references no issue in this repo. */
@@ -7831,6 +8010,22 @@ maintenance
                               same run --apply performs (never a dry run under
                               --apply). One sweep removes at most --limit items
                               (200) and stops after 5 consecutive failures.
+  sweep-non-issues [--apply] [--json] [--limit N]
+                              list the PULL REQUEST and DRAFT items on the
+                              project (GH-2050). board.ts cannot read one —
+                              the item walk's content union is issues-only —
+                              so they are paged for and metered on every full
+                              scan and then dropped. DRY RUN unless --apply;
+                              removes the board item only, never the PR.
+                              Separate from prune on purpose: prune's
+                              predicate is a fail-closed argument about issues
+                              other readers still need, and a non-issue item
+                              has no such reader. Prints the newest non-issue
+                              item's timestamp and creator — the only
+                              observable of whether the "Auto-add to project"
+                              workflow is still depositing them, since the API
+                              cannot read that workflow's filter. Same bounds
+                              as prune: --limit (200), 5 consecutive failures.
   setup                       create Workflow State / Claim / Estimate / Priority
                               fields (idempotent; never edits existing fields)
   readiness [--json]          agent-readiness report — 3 levels (interactive,
@@ -8015,7 +8210,8 @@ export function run(argv: string[], ctx: Ctx): number {
   const writes =
     (MUTATING.has(cmd) && !(cmd === "claim" && positional[0] === "show")) ||
     (cmd === "doctor" && flags.fix) ||
-    (cmd === "prune" && flags.apply === true);
+    (cmd === "prune" && flags.apply === true) ||
+    (cmd === "sweep-non-issues" && flags.apply === true);
 
   // The write-guard carve-out (GH-1806) and its manual override, both applied
   // before any command body runs. A mutating command reads the board only to
@@ -8727,6 +8923,107 @@ export function run(argv: string[], ctx: Ctx): number {
         out(
           `${report.candidates.length - selected.length} candidate(s) left for the next run (--limit ${limit})`,
         );
+      }
+      if (result.aborted) {
+        out(
+          `ABORTED after ${PRUNE_MAX_CONSECUTIVE_FAILURES} consecutive failures — ` +
+            `refusing to keep spending mutations against a wall (rate limit? revoked scope?).`,
+        );
+      }
+      if (result.failed.length) {
+        for (const f of result.failed.slice(0, 10)) out(`  failed: ${f}`);
+        if (result.failed.length > 10) out(`  … and ${result.failed.length - 10} more failures`);
+        return 1;
+      }
+      return 0;
+    }
+
+    case "sweep-non-issues": {
+      const walk = walkNonIssueItems(ctx);
+      const report = classifyNonIssueSweep(walk);
+      const applying = !!flags.apply;
+      const limit = pruneLimit(flags.limit);
+      const selected = applying ? report.candidates.slice(0, limit) : report.candidates;
+      const text = !flags.json;
+
+      // The source-liveness line is printed FIRST and on every path, because
+      // it is the operator's whole verification gate: the API cannot read the
+      // auto-add workflow's filter, so the newest non-issue item's timestamp
+      // and creator are the only evidence that the source is closed. It is
+      // deliberately NOT an automatic refusal — a board with no recent PRs
+      // cannot distinguish "the filter was fixed" from "nobody opened a PR",
+      // so a timestamp threshold here would be a coin flip wearing a gate's
+      // clothes. The operator reads it against a PR they know was opened.
+      const sourceLine = () => {
+        if (!report.newest) return "no non-issue item carries a createdAt — source liveness NOT evaluated";
+        return (
+          `newest non-issue item: ${report.newest.label} added ${report.newest.createdAt}` +
+          ` by ${report.newest.creator ?? "unknown"}`
+        );
+      };
+
+      if (text) {
+        out(
+          `${walk.scanned} item(s) = ${walk.pages} page(s) per full scan: ` +
+            `${walk.issues} issue(s), ${walk.nonIssue.length} non-issue` +
+            (report.byKind.length ? ` (${report.byKind.map(([k, n]) => `${k} ${n}`).join(", ")})` : ""),
+        );
+        out(`  ${sourceLine()}`);
+        out(
+          `  compare that against a pull request you know was opened AFTER the auto-add filter was ` +
+            `narrowed to \`is:issue\`. If a later PR is absent here, the source is closed and this set is finite.`,
+        );
+        if (walk.short) {
+          out(
+            `  WARNING: paged fewer nodes than the project reported — this walk is INCOMPLETE. ` +
+              `Everything listed was really seen, but "none left" cannot be concluded from it; re-run.`,
+          );
+        }
+        for (const r of report.retained.slice(0, 10)) out(`  held: ${r.label} (${r.reason})`);
+        if (report.retained.length > 10) out(`  … and ${report.retained.length - 10} more held`);
+      }
+
+      if (report.candidates.length === 0) {
+        if (text) out(`nothing to sweep: no removable non-issue item on this board.`);
+        else json({ ...walk, nonIssue: undefined, ...report, applied: applying, limit, attempted: 0, removed: 0, failed: [], abortedAfterConsecutiveFailures: false });
+        return 0;
+      }
+
+      if (!applying) {
+        if (text) {
+          out(
+            `\nDRY RUN. \`board sweep-non-issues --apply\` removes ${report.candidates.length} item(s) ` +
+              `FROM THE PROJECT ONLY — the pull requests and drafts themselves are untouched, exactly as ` +
+              `\`board prune\` leaves an issue.\nUnlike prune there is nothing to lose: board.ts cannot ` +
+              `read a non-issue item at all, so none of them carries a Workflow State or Claim value.` +
+              (report.candidates.length > limit
+                ? `\nOne sweep removes at most ${limit} (--limit); the rest need another run.`
+                : ""),
+          );
+        } else {
+          json({ ...walk, nonIssue: undefined, ...report, applied: false, limit });
+        }
+        return 0;
+      }
+
+      const result = removeProjectItems(ctx, selected);
+      if (!text) {
+        json({
+          ...walk,
+          nonIssue: undefined,
+          ...report,
+          applied: true,
+          limit,
+          attempted: result.attempted,
+          removed: result.removed,
+          failed: result.failed,
+          abortedAfterConsecutiveFailures: result.aborted,
+        });
+        return result.failed.length ? 1 : 0;
+      }
+      out(`\nremoved ${result.removed} of ${result.attempted} attempted item(s) from the project; the PRs are untouched`);
+      if (report.candidates.length > selected.length) {
+        out(`${report.candidates.length - selected.length} candidate(s) left for the next run (--limit ${limit})`);
       }
       if (result.aborted) {
         out(
