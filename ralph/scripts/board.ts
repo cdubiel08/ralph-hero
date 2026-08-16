@@ -5578,7 +5578,17 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
   if (wantsPriority) needs.push([PRIORITY_FIELD]);
   // …and validated against a LIVE option set: a cached option GitHub has since
   // deleted would pass here and fail after createIssue (see mutationCache).
-  const cache = mutationCache(ctx, needs, [], wantsPriority ? [PRIORITY_FIELD] : []);
+  // PRIORITY_FIELD is OPTIONAL, never a `need`: a board without the field must
+  // still be able to file issues. It is asked for even when no priority was
+  // requested, so the closing hint can tell "this board has no Priority field"
+  // apart from "the cache never looked" — a hint that names a flag the board
+  // cannot honour is worse than silence (GH-1792, the hint-pr-linkage rule).
+  const cache = mutationCache(
+    ctx,
+    needs,
+    wantsPriority ? [] : [PRIORITY_FIELD],
+    wantsPriority ? [PRIORITY_FIELD] : [],
+  );
   if (wantsPriority) assertPriorityOption(cache, opts.priority!);
   {
     // GH-1973: a lost RESPONSE and a failed WRITE are indistinguishable to the
@@ -5763,8 +5773,48 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
           `${unapplied.length === 1 ? "write" : "writes"} did NOT land:\n  - ${unapplied.join("\n  - ")}`,
       );
     }
-    return fetchIssue(ctx, issue.number);
+    const filed = fetchIssue(ctx, issue.number);
+    warnUnprioritized(cache, filed);
+    return filed;
   }
+}
+
+/** GH-1792. An item filed with no priority is not deprioritized, it is LOST:
+ *  `priorityRank` sorts null behind every real option, so `next` names it last
+ *  and no lane names it at all. Nothing told the filer that, and the doctor
+ *  `unformed` leg only notices after UNFORMED_DAYS — by which time the tree it
+ *  belonged to has been worked around.
+ *
+ *  A hint, never a gate: stderr so stdout stays the parseable issue line, and
+ *  `create` still returns 0. Fast human capture through `/ralph:board` may
+ *  legitimately not know the priority yet, and forcing an answer buys a
+ *  reflexive default that carries no information.
+ *
+ *  Silent unless the remedy is real. The board must hold a SINGLE_SELECT
+ *  Priority with at least one option — on a board with a TEXT field of that
+ *  name, or none at all, `board priority` refuses, and a hint whose command
+ *  cannot succeed teaches the reader to ignore hints. The options are read
+ *  from the cache rather than hardcoded P0..P3 for the same reason the ranker
+ *  reads them: `setup` never edits an existing field, so a host repo's own
+ *  scheme is the truth.
+ *
+ *  Keyed on the FILED issue's own priority rather than on "no --priority was
+ *  passed": `create` can adopt a same-title twin (GH-1973) that already
+ *  carries one, and a hint that names a field it never read would be telling
+ *  the operator to fix something already correct. A truncated field-value page
+ *  fails closed for the reason it does everywhere else — absence GitHub never
+ *  asserted is not evidence of an unset field. */
+function warnUnprioritized(cache: BoardCache, issue: Issue): void {
+  if (issue.priority !== null || issue.fieldValuesTruncated) return;
+  const field = cache.fields[PRIORITY_FIELD];
+  if (!field || field.dataType !== "SINGLE_SELECT") return;
+  const options = field.optionOrder ?? Object.keys(field.options ?? {});
+  if (options.length === 0) return;
+  process.stderr.write(
+    `note: #${issue.number} has no ${PRIORITY_FIELD} — unprioritized items sort LAST in \`board next\` ` +
+      `and are named by no lane. Set one: \`board priority ${issue.number} <option>\` ` +
+      `(this board's options: ${options.join(", ")}), or pass --priority on create.\n`,
+  );
 }
 
 /** Node ids only, one aliased round trip for any number of issues. link/dep/

@@ -3882,6 +3882,75 @@ describe("priority is writable through the CLI (GH-1789)", () => {
   });
 });
 
+describe("create nudges toward Priority without gating it (GH-1792)", () => {
+  const stderrOf = (fn: () => void): string => {
+    let buf = "";
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+      buf += String(s);
+      return true;
+    });
+    try {
+      fn();
+    } finally {
+      spy.mockRestore();
+    }
+    return buf;
+  };
+
+  it("names the CONSEQUENCE, not merely the omission — and the issue is still filed", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    let issue: ReturnType<typeof createIssue> | null = null;
+    const err = stderrOf(() => {
+      issue = createIssue(ctx, { title: "unprioritized" });
+    });
+    expect(issue!.number).toBeGreaterThan(0); // a hint is not a gate
+    expect(issue!.priority).toBeNull();
+    expect(err).toMatch(/sort LAST in `board next`/);
+    expect(err).toMatch(/named by no lane/);
+    expect(err).toMatch(new RegExp(`board priority ${issue!.number} <option>`));
+    // The options come from the board, not a hardcoded P0..P3.
+    expect(err).toMatch(/this board's options: P0, P1, P2, P3/);
+  });
+
+  it("stays silent when a priority was set", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const err = stderrOf(() => createIssue(ctx, { title: "urgent", priority: "P0" }));
+    expect(err).not.toMatch(/no Priority/);
+  });
+
+  it("stays silent on a board that has no Priority field — the remedy would not exist", () => {
+    // The precedent's own rule (hint-pr-linkage, GH-1717): a hint is honest
+    // only when the thing it asks for is available. `board priority` refuses
+    // on such a board, so nudging toward it teaches the reader to ignore hints.
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    const ctx = makeCtx(gh);
+    const err = stderrOf(() => createIssue(ctx, { title: "x" }));
+    expect(err).not.toMatch(/no Priority/);
+  });
+
+  it("stays silent on a Priority field ralph will not write — a TEXT field of that name", () => {
+    const gh = new FakeGh();
+    gh.omitFields = ["Priority"];
+    gh.createdFields.push({ name: "Priority", dataType: "TEXT" });
+    const ctx = makeCtx(gh);
+    const err = stderrOf(() => createIssue(ctx, { title: "x" }));
+    expect(err).not.toMatch(/no Priority/);
+  });
+
+  it("filing without a priority is not an error exit — the CLI still returns 0", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    let code = -1;
+    stderrOf(() => {
+      code = run(["create", "--title", "hint me"], ctx);
+    });
+    expect(code).toBe(0);
+  });
+});
+
 describe("create --label", () => {
   it("applies labels via gh issue edit, and a label failure is loud but not fatal", () => {
     const gh = new FakeGh();
