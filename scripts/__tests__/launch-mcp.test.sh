@@ -393,15 +393,21 @@ fi
 
 # A major bump moves the ABI, and better-sqlite3's compiled binary genuinely
 # stops loading. That IS a rebuild.
+# The fixture itself must be built under identity A. Left to the ambient
+# identity it is built under whatever this runner really is, and the cases
+# below then count one tree too many — or pass vacuously, on a runner whose
+# real identity differs from both overrides. macOS hid this; Linux did not.
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"
 root=$(fake_root majorbump)
-RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi137" log=$(run_launcher "$root")
+log=$(run_launcher "$root")
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi137"
+log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "Node ABI change (127 -> 137) does re-bootstrap"
 else
   fail "Node ABI change did not re-bootstrap — compiled deps would fail to load" "$(cat "$log")"
 fi
-RALPH_KNOWLEDGE_NODE_ID=""
+export RALPH_KNOWLEDGE_NODE_ID=""
 
 echo "=== incomplete tree still re-bootstraps ==="
 
@@ -507,9 +513,15 @@ echo "=== fingerprint identity is platform + arch + ABI, not ABI alone ==="
 # arm64 and x64 Node of the same major share NODE_MODULE_VERSION, but
 # better-sqlite3 / onnxruntime-node / sqlite-vec binaries are arch-bound. A
 # shared plugin cache reached from both must NOT match the marker.
+# The fixture itself must be built under identity A. Left to the ambient
+# identity it is built under whatever this runner really is, and the cases
+# below then count one tree too many — or pass vacuously, on a runner whose
+# real identity differs from both overrides. macOS hid this; Linux did not.
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"
 root=$(fake_root archswap)
-RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-RALPH_KNOWLEDGE_NODE_ID="darwin-x64-abi127" log=$(run_launcher "$root")
+log=$(run_launcher "$root")
+export RALPH_KNOWLEDGE_NODE_ID="darwin-x64-abi127"
+log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "architecture change at a constant ABI re-bootstraps"
 else
@@ -517,9 +529,15 @@ else
     "$(cat "$log")"
 fi
 
+# The fixture itself must be built under identity A. Left to the ambient
+# identity it is built under whatever this runner really is, and the cases
+# below then count one tree too many — or pass vacuously, on a runner whose
+# real identity differs from both overrides. macOS hid this; Linux did not.
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"
 root=$(fake_root platformswap)
-RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-RALPH_KNOWLEDGE_NODE_ID="linux-arm64-abi127" log=$(run_launcher "$root")
+log=$(run_launcher "$root")
+export RALPH_KNOWLEDGE_NODE_ID="linux-arm64-abi127"
+log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "platform change at a constant ABI re-bootstraps"
 else
@@ -539,7 +557,7 @@ else
     "$(grep -n 'process.platform' "$SRC")"
 fi
 
-RALPH_KNOWLEDGE_NODE_ID=""   # restore the defaults for the fixtures below
+export RALPH_KNOWLEDGE_NODE_ID=""   # restore the defaults for the fixtures below
 
 echo "=== signal handlers release the lock AND stop ==="
 
@@ -919,9 +937,15 @@ echo "=== two Node identities never share a bootstrap tree (GH-1844) ==="
 # The remedy is isolation rather than a guard. The two identities now build in
 # separate trees, so B's install is not merely REFUSED while A is live — it is
 # irrelevant to A, which is what lets a second architecture start at all.
+# The fixture itself must be built under identity A. Left to the ambient
+# identity it is built under whatever this runner really is, and the cases
+# below then count one tree too many — or pass vacuously, on a runner whose
+# real identity differs from both overrides. macOS hid this; Linux did not.
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"
 root=$(fake_root two_identities)
-RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-RALPH_KNOWLEDGE_NODE_ID="darwin-x64-abi127" log=$(run_launcher "$root")
+log=$(run_launcher "$root")
+export RALPH_KNOWLEDGE_NODE_ID="darwin-x64-abi127"
+log=$(run_launcher "$root")
 
 count=$(find "$root/.runtimes" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
 if [ "$count" -eq 2 ]; then
@@ -944,7 +968,8 @@ fi
 # The tree key must be STABLE, or per-identity trees become one tree per
 # launch — the npx-cache-bloat failure mode this launcher exists to end.
 before=$(rt "$root" "arm64-abi127")
-RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"
+log=$(run_launcher "$root")
 count_after=$(find "$root/.runtimes" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
 if [ "$count_after" -eq 2 ] && [ -d "$before" ]; then
   pass "relaunching an existing identity reuses its tree (no per-launch growth)"
@@ -975,8 +1000,9 @@ echo "=== a live server of ANOTHER identity does not block a bootstrap ==="
 if ! { [ -d /proc ] || command -v ps >/dev/null 2>&1; }; then
   echo "  SKIP: cannot probe for running servers on this host"
 else
+  export RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127"   # the fixture is identity A
   root=$(fake_root cross_identity_live)
-  RALPH_KNOWLEDGE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+  log=$(run_launcher "$root")
   rtdir=$(rt "$root" "arm64-abi127")
   ( exec /bin/sh -c "sleep 60; :" "node $rtdir/dist/index.js" ) &
   busy_pid=$!
@@ -1004,7 +1030,7 @@ else
   fi
 fi
 
-RALPH_KNOWLEDGE_NODE_ID=""   # restore the defaults for the fixtures below
+export RALPH_KNOWLEDGE_NODE_ID=""   # restore the defaults for the fixtures below
 
 echo "=== a live server blocks a rebuild of ITS OWN tree ==="
 
