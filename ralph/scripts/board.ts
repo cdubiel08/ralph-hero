@@ -6122,11 +6122,24 @@ export type PruneRetention =
   | "apply-unit" // apply-labelled (or label list truncated): the close gate's evidence sweep owns it
   | "archived" // already hidden; removing it buys the same scan win but loses more state for no reason
   | "tree-edge" // an OPEN item reaches its ancestors through this closed node
+  | "sibling-edge" // an OPEN item shares this closed node's own-repo parent (GH-1883)
+  | "blocks-edge" // this closed node blocks an OPEN item (GH-1883)
   | "no-item-id"; // no ProjectV2Item handle came back — nothing safe to remove by
+
+/** A closed issue whose board state never reached a terminal one. Already
+ *  retained as `not-terminal`; carried separately only so prune can NAME it,
+ *  because the remedy is a command (`board reconcile N`) rather than "wait".
+ *  Derived from the same keep, never a second detector (GH-1883). */
+export interface PruneDivergence {
+  number: number;
+  state: string; // board Workflow State
+  stateReason: string | null; // COMPLETED / NOT_PLANNED
+}
 
 export interface PruneReport {
   candidates: PruneCandidate[];
   retained: Array<{ number: number; reason: PruneRetention }>;
+  diverged: PruneDivergence[];
   scanned: number; // own-repo closed items considered
 }
 
@@ -6161,9 +6174,35 @@ export function classifyPrune(
     }
   }
 
+  // One-hop quiet neighbourhood (GH-1883). A closed issue often carries the
+  // context an OPEN neighbour still needs, so two more edges hold it — both
+  // read from data the walk ALREADY fetches, so this costs zero extra points:
+  //  - siblings: parents of the open set. A closed item sharing one has an
+  //    open sibling. One hop — a sibling's siblings are not walked.
+  //  - blocks: the INVERSE of blockedBy, which GitHub does not expose as its
+  //    own connection. An open item's CLOSED blockers are exactly the closed
+  //    items that block something open, so the inverse falls out of the
+  //    forward edge and no new nested connection is added (GH-1811).
+  const openParents = new Set<number>();
+  for (const i of open) if (i.parentNumber != null) openParents.add(i.parentNumber);
+  const blocksSomethingOpen = new Set<number>();
+  // Fail closed on a truncated blocker list: a blocker past the page is
+  // invisible, so we cannot prove this closed item blocks nothing. Unlike the
+  // per-item label check the unknown is on the OPEN side, so it taints every
+  // candidate — heavy, but retention is the direction that loses nothing, and
+  // the retained list names it rather than letting the sweep read as clean.
+  let blockersUnknown = false;
+  for (const i of open) {
+    if (i.blockersTruncated) blockersUnknown = true;
+    // Bare numbers: a cross-repo blocker's #N can alias an own-repo #N here.
+    // The only consequence is retaining an item we could have pruned.
+    for (const n of i.closedBlockers) blocksSomethingOpen.add(n);
+  }
+
   const dayMs = 86_400_000;
   const candidates: PruneCandidate[] = [];
   const retained: PruneReport["retained"] = [];
+  const diverged: PruneDivergence[] = [];
   const keep = (number: number, reason: PruneRetention) => retained.push({ number, reason });
 
   for (const c of closed) {
@@ -6177,6 +6216,10 @@ export function classifyPrune(
     }
     if (!["Done", "Canceled"].includes(c.state)) {
       keep(c.number, "not-terminal");
+      // Every item here is a CLOSED issue by construction, so a non-terminal
+      // board state IS axis divergence — a rendering branch off the existing
+      // keep, not a second detector that could drift from doctor's sweep.
+      diverged.push({ number: c.number, state: c.state, stateReason: c.stateReason });
       continue;
     }
     // Fail closed on a truncated label list, exactly as the apply close gate
@@ -6188,6 +6231,14 @@ export function classifyPrune(
     }
     if (loadBearing.has(c.number)) {
       keep(c.number, "tree-edge");
+      continue;
+    }
+    if (c.parentNumber != null && openParents.has(c.parentNumber)) {
+      keep(c.number, "sibling-edge");
+      continue;
+    }
+    if (blockersUnknown || blocksSomethingOpen.has(c.number)) {
+      keep(c.number, "blocks-edge");
       continue;
     }
     const t = c.closedAt ? new Date(c.closedAt).getTime() : NaN;
@@ -6203,7 +6254,7 @@ export function classifyPrune(
     candidates.push({ number: c.number, itemId: c.itemId, state: c.state, closedAt: c.closedAt!, ageDays });
   }
   candidates.sort((a, b) => b.ageDays - a.ageDays);
-  return { candidates, retained, scanned: closed.length };
+  return { candidates, retained, diverged, scanned: closed.length };
 }
 
 /** Consecutive mutation failures that stop a sweep. A prune that keeps firing
@@ -8158,14 +8209,31 @@ export function run(argv: string[], ctx: Ctx): number {
         }
       }
 
+      // Held items are REPORTED on every path (GH-1883). A hold here is
+      // indefinite — nothing ever force-prunes — so an over-tight rule is only
+      // visible if the retention tally is printed whether or not the sweep
+      // also found something to remove.
+      const retentionSummary = () => {
+        if (report.retained.length === 0) return;
+        const counts = new Map<PruneRetention, number>();
+        for (const r of report.retained) counts.set(r.reason, (counts.get(r.reason) ?? 0) + 1);
+        out(
+          `  held indefinitely: ${report.retained.length} closed item(s) still read by something — ` +
+            [...counts].map(([r, n]) => `${r} ${n}`).join(", "),
+        );
+        for (const d of report.diverged.slice(0, 20)) {
+          out(
+            `  #${d.number} DIVERGED issue=CLOSED/${d.stateReason ?? "unknown"} ` +
+              `workflow-state="${d.state}" → run \`board reconcile ${d.number}\``,
+          );
+        }
+        if (report.diverged.length > 20) out(`  … and ${report.diverged.length - 20} more diverged`);
+      };
+
       if (report.candidates.length === 0) {
         if (text) {
-          const counts = new Map<PruneRetention, number>();
-          for (const r of report.retained) counts.set(r.reason, (counts.get(r.reason) ?? 0) + 1);
-          out(
-            `nothing to prune: ${report.scanned} closed item(s) all still read by something — ` +
-              [...counts].map(([r, n]) => `${r} ${n}`).join(", "),
-          );
+          out(`nothing to prune: ${report.scanned} closed item(s) all still read by something.`);
+          retentionSummary();
         } else {
           json({ volume: vol, ...report, applied: applying, limit, attempted: 0, removed: 0, failed: [], abortedAfterConsecutiveFailures: false });
         }
@@ -8181,8 +8249,9 @@ export function run(argv: string[], ctx: Ctx): number {
         if (selected.length > 20) out(`  … and ${selected.length - 20} more`);
         out(
           `\n${report.candidates.length} of ${report.scanned} closed item(s) are removable: closed ≥${ctx.cfg.volume.pruneAfterDays}d, ` +
-            `board state already terminal, no open item's tree passes through them.`,
+            `board state already terminal, no open item's tree, sibling or blocks edge touches them.`,
         );
+        retentionSummary();
       }
 
       if (!applying) {
