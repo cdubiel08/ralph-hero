@@ -6,9 +6,18 @@
 # ~500MB-1GB cache dir under ~/.npm/_npx for every released version pin, and
 # npx never evicts — one machine accumulated 20GB across 33 releases.
 #
-# First run bootstraps in place: npm ci, build, then prune dev deps and the
+# First run bootstraps: npm ci, build, then prune dev deps and the
 # onnxruntime-web wasm binaries (lazy-loaded, unused under Node). All
 # bootstrap output goes to stderr — stdout is the MCP stdio channel.
+#
+# The bootstrap does NOT happen at the plugin root. It happens in a tree keyed
+# by the RUNTIME IDENTITY that will serve from it (GH-1844) — see runtime_key()
+# below. One plugin cache can be reached by two Node identities (arm64 native
+# beside x64 under Rosetta) or by two machines on a shared network home, and a
+# single shared tree meant one of them could run a destructive `npm ci` over
+# node_modules another was still serving from. Per-identity trees remove the
+# sharing rather than guarding it: nothing is shared, so nothing has to be
+# reasoned about across identities or hosts.
 #
 # Bootstrap is guarded two ways, because several Claude Code sessions can
 # launch this script at the same instant:
@@ -23,22 +32,104 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+# The server's cwd stays the PLUGIN ROOT even though it is built and served out
+# of a runtime subtree: hooks/disk-guard.sh identifies an in-use plugin version
+# by the cwd of running processes, so moving it would make every live server
+# read as idle and reclaimable.
 cd "$PLUGIN_ROOT"
 
 # Resolved from the script's own directory, not PLUGIN_ROOT: the two differ when
 # CLAUDE_PLUGIN_ROOT is set, and the checker ships beside this launcher.
 CHECK_DEPS="$SCRIPT_DIR/deps-complete.cjs"
 
-MARKER="$PLUGIN_ROOT/.bootstrap-complete"
-# Which Node identity built the tree. Kept beside the marker (which is an
-# opaque hash) so a launcher can tell "needs rebuilding" from "belongs to a
-# different runtime that may still be serving from it".
-IDENTITY_FILE="$PLUGIN_ROOT/.bootstrap-identity"
-LOCK="$PLUGIN_ROOT/.bootstrap.lock"
 LOCK_WAIT_SEC="${RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC:-900}"
-# Identity for lock ownership. A PID only means something on the host that
-# issued it, and a plugin directory can live on a shared network home.
-THIS_HOST="$(hostname 2>/dev/null || echo unknown-host)"
+
+# A stable identifier for THIS MACHINE.
+#
+# `hostname` first, because it is what an operator recognises in a refusal
+# message. The fallbacks exist because an empty hostname used to collapse to a
+# shared `unknown-host` sentinel, and two machines that both failed to name
+# themselves compared EQUAL — so a cross-host check passed them as same-host
+# (codex, PR #1755). Since the host is part of the tree key, a collision is no
+# longer a guard that fails open but a tree that is genuinely shared, so the
+# collision is removed at the source instead of guarded downstream.
+#
+# The last resort is a uuid persisted under TMPDIR, which is machine-local on
+# every real system even when the home directory is not. Losing it costs one
+# extra tree; it can never produce a wrong match.
+machine_id() {
+  local h id idfile
+  if h=$(hostname 2>/dev/null) && [ -n "$h" ]; then
+    printf '%s' "${h%%.*}"
+    return 0
+  fi
+  if [ -r /etc/machine-id ] && id=$(cat /etc/machine-id 2>/dev/null) && [ -n "$id" ]; then
+    printf 'mid-%s' "$(printf '%s' "$id" | cut -c1-12)"
+    return 0
+  fi
+  if command -v ioreg >/dev/null 2>&1 \
+    && id=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null \
+      | sed -n 's/.*"IOPlatformUUID" = "\([^"]*\)".*/\1/p') \
+    && [ -n "$id" ]; then
+    printf 'uuid-%s' "$(printf '%s' "$id" | cut -c1-12)"
+    return 0
+  fi
+  idfile="${TMPDIR:-/tmp}/.ralph-knowledge-machine-id"
+  if [ -r "$idfile" ] && id=$(cat "$idfile" 2>/dev/null) && [ -n "$id" ]; then
+    printf '%s' "$id"
+    return 0
+  fi
+  id="local-$$-${RANDOM:-0}-$(date +%s 2>/dev/null || echo 0)"
+  printf '%s\n' "$id" >"$idfile" 2>/dev/null || true
+  printf '%s' "$id"
+}
+
+# Filesystem-safe: the key becomes a directory name, and platform strings and
+# hostnames are not guaranteed to be.
+sanitize_key() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'
+}
+
+# The directory key for this runtime's tree: native ABI boundary + machine.
+#
+# Deliberately NOT node_compat_boundary(), even though it answers the same
+# question, because that function's no-node fallback returns a value that
+# DIFFERS ON EVERY CALL — correct for a fingerprint that must never claim a
+# match, fatal for a directory name, which would then mint a fresh tree per
+# launch. That is precisely the npx-cache-bloat failure this launcher exists to
+# end. So the key has its own resolution and bottoms out at a fixed
+# `node-unknown`: one tree that re-bootstraps, never a tree per launch.
+runtime_key() {
+  local id major node_part
+  if id=$(node -p 'process.platform+"-"+process.arch+"-abi"+process.versions.modules' 2>/dev/null) \
+    && [ -n "$id" ]; then
+    node_part="$id"
+  elif major=$(node --version 2>/dev/null) && [ -n "$major" ]; then
+    node_part="${major%%.*}-$(uname -s 2>/dev/null || echo unknown-os)-$(uname -m 2>/dev/null || echo unknown-arch)"
+  else
+    node_part="node-unknown"
+  fi
+  sanitize_key "$node_part-$(machine_id)"
+}
+
+# Identity for lock ownership and provenance messages. A PID only means
+# something on the host that issued it, and a plugin directory can live on a
+# shared network home.
+THIS_HOST="$(machine_id)"
+
+RUNTIME_KEY="$(runtime_key)"
+RUNTIME_ROOT="$PLUGIN_ROOT/.runtimes/$RUNTIME_KEY"
+
+MARKER="$RUNTIME_ROOT/.bootstrap-complete"
+# Which Node identity built the tree. Kept beside the marker (which is an
+# opaque hash) so a refusal can name the runtime that owns the tree. With
+# per-identity trees this is provenance, no longer a guard input: a tree inside
+# $RUNTIME_ROOT was built by $RUNTIME_KEY by construction.
+IDENTITY_FILE="$RUNTIME_ROOT/.bootstrap-identity"
+# The lock lives INSIDE the runtime tree, so two identities bootstrapping at
+# once do not serialize against each other — they have nothing in common to
+# protect.
+LOCK="$RUNTIME_ROOT/.bootstrap.lock"
 
 fingerprint() {
   local hasher
@@ -120,42 +211,59 @@ node_compat_boundary() {
 #
 # Fails closed: a node that cannot run this script, or a checker that is
 # missing, re-bootstraps rather than claiming the tree is healthy.
-deps_complete() {
+#
+# Evaluated INSIDE the runtime tree (GH-1844): its package-lock.json is the copy
+# this tree was installed from, and its node_modules is the only one the served
+# dist can resolve against. A runtime root that does not exist yet fails the
+# `cd` and reads as incomplete, which is correct — there is nothing to serve.
+# Subshell body, not a brace block: the `cd` must not follow the caller out of
+# the function, since the rest of the launcher runs from the plugin root.
+deps_complete() (
+  cd "$RUNTIME_ROOT" 2>/dev/null || return 1
   node "$CHECK_DEPS" 2>/dev/null
-}
+)
 
 
 # True (0) when bootstrap must run.
 bootstrap_needed() {
-  [ -f dist/index.js ] || return 0
+  [ -f "$RUNTIME_ROOT/dist/index.js" ] || return 0
   deps_complete || return 0
   [ -f "$MARKER" ] || return 0
   [ "$(cat "$MARKER" 2>/dev/null)" = "$(fingerprint)" ] || return 0
   return 1
 }
 
-# True (0) when a running MCP SERVER is serving out of directory $1.
+# True (0) when a running MCP SERVER is serving out of the runtime tree $1.
 #
-# Deliberately narrower than "any process in the directory" (codex P2, PR
-# #1755). The launcher cd's to the plugin root, so every WAITING launcher also
-# has its cwd there — a broad probe would make two simultaneous cold starts
-# refuse each other, turning an ordinary race into a hard failure. What must
-# not be disturbed is a live SERVER, so both signals are required: cwd inside
-# the tree AND `dist/index.js` in the argv, which is exactly how this script
-# execs it.
+# Identified by ARGV, not by cwd. The launcher cd's to the plugin root and
+# execs `node <runtime>/dist/index.js` from there, so every process involved —
+# servers and waiting launchers alike — shares that cwd, and a cwd test cannot
+# tell them apart. The absolute path of the served entry point can: no waiter
+# carries it, and it names one runtime tree rather than the plugin as a whole.
+# That precision is what per-identity trees need — a server of a DIFFERENT
+# identity is not a reason to refuse a rebuild of this one.
 #
-# Best-effort by nature: /proc on Linux, lsof + ps on macOS/BSD. It can only
-# speak for THIS machine — see the host check at the guard for why that
-# matters. Callers ask dir_use_probe_available first, so that unknown never
-# reads as "nobody is there".
+# Best-effort by nature: /proc on Linux, `ps` elsewhere. It can only speak for
+# THIS machine, which per-identity trees make sufficient — the machine is part
+# of the tree key, so a tree built elsewhere is a different tree. Callers ask
+# dir_use_probe_available first, so that unknown never reads as "nobody is
+# there".
 dir_use_probe_available() {
-  [ -d /proc ] || { command -v lsof >/dev/null 2>&1 && command -v ps >/dev/null 2>&1; }
+  [ -d /proc ] || command -v ps >/dev/null 2>&1
 }
 
 server_running_in() {
-  local dir
-  dir=$(cd "$1" 2>/dev/null && pwd -P) || dir="${1%/}"
-  dir="${dir%/}"
+  # TWO spellings, because argv carries the path as the launcher wrote it while
+  # `pwd -P` resolves symlinks — on macOS /var is a symlink to /private/var, so
+  # a physical-only match misses every server started through the ordinary
+  # path and the probe reports an in-use tree as idle. The literal is what a
+  # running server's argv actually contains; the physical form covers a caller
+  # that reached the same tree by another name.
+  local dir phys entry entry2
+  dir="${1%/}"
+  phys=$(cd "$1" 2>/dev/null && pwd -P) || phys="$dir"
+  entry="$dir/dist/index.js"
+  entry2="${phys%/}/dist/index.js"
   (
     # From /, so the helpers spawned below are not themselves inside $dir.
     cd / 2>/dev/null || exit 1
@@ -164,29 +272,21 @@ server_running_in() {
       for p in /proc/[0-9]*; do
         pid=${p#/proc/}
         [ "$pid" = "$$" ] && continue
-        cwd=$(readlink "$p/cwd" 2>/dev/null) || continue
-        case "$cwd" in "$dir"|"$dir"/*) ;; *) continue ;; esac
         cmd=$(tr '\0' ' ' <"$p/cmdline" 2>/dev/null) || continue
-        case "$cmd" in *dist/index.js*) exit 0 ;; esac
+        case "$cmd" in *"$entry"*|*"$entry2"*) exit 0 ;; esac
       done
       exit 1
     fi
 
-    if command -v lsof >/dev/null 2>&1 && command -v ps >/dev/null 2>&1; then
+    if command -v ps >/dev/null 2>&1; then
       # Captured before matching — piping into an early-exiting matcher loses
       # the result to SIGPIPE under pipefail.
-      cwdsnap=$(lsof -d cwd -Fpn 2>/dev/null) || cwdsnap=""
       pssnap=$(ps -eo pid=,args= 2>/dev/null) || pssnap=""
-      [ -n "$cwdsnap" ] && [ -n "$pssnap" ] || exit 1
-      printf '%s\n===\n%s\n' "$pssnap" "$cwdsnap" | awk -v self="$$" -v d="$dir" '
-        $0 == "===" { second = 1; next }
-        !second { args[$1 + 0] = $0; next }
-        /^p/ { cur = substr($0, 2) + 0; next }
-        /^n/ {
-          path = substr($0, 2)
-          if (cur != self && (path == d || index(path, d "/") == 1)) {
-            if (index(args[cur], "dist/index.js") > 0) { found = 1 }
-          }
+      [ -n "$pssnap" ] || exit 1
+      printf '%s\n' "$pssnap" | awk -v self="$$" -v e="$entry" -v e2="$entry2" '
+        {
+          pid = $1 + 0
+          if (pid != self && (index($0, e) > 0 || index($0, e2) > 0)) { found = 1 }
         }
         END { exit(found ? 0 : 1) }
       ' && exit 0
@@ -196,6 +296,12 @@ server_running_in() {
   )
 }
 
+# Deliberately NOT a subshell, even though it cd's: bash defers a TERM/INT trap
+# until the current foreground command returns, and a subshell body makes that
+# command the WHOLE bootstrap. A launcher killed during `npm ci` would then run
+# the build, the prune and the completion marker before its handler ever fired,
+# which is exactly the "interrupted bootstrap claims completion" state the
+# marker exists to prevent. It restores the caller's cwd on the way out.
 run_bootstrap() {
   # Measured, not guessed: ~4.5s on a cold npm cache and ~3.6s warm (macOS,
   # 155MB fetched). The old "~1-2 min" here was a pessimistic placeholder, and
@@ -204,10 +310,24 @@ run_bootstrap() {
   # replaces took 7.7s cold and fetched 596MB. On a slow link the download can
   # still dominate; see the follow-up issue on decoupling it from the
   # handshake.
-  echo "[ralph-knowledge] first run: installing and building (one-time, usually a few seconds)..."
+  echo "[ralph-knowledge] first run for runtime '$RUNTIME_KEY': installing and building (one-time, usually a few seconds)..."
   # Drop the marker first: if we are interrupted below, the next launch must
   # see an incomplete tree rather than a stale "complete" claim.
   rm -f "$MARKER" "$IDENTITY_FILE"
+
+  # Materialize the runtime tree. The manifests are COPIED, not symlinked:
+  # `npm prune` can rewrite a lockfile, and writing through a symlink would
+  # edit the plugin's own source of truth. `src` is SYMLINKED, so a developer
+  # editing the plugin sources is not silently served a stale snapshot —
+  # verified that tsc compiles a symlinked rootDir, maps outDir correctly, and
+  # resolves bare imports against this tree's node_modules rather than the
+  # plugin root's.
+  cp "$PLUGIN_ROOT/package.json" "$PLUGIN_ROOT/package-lock.json" \
+    "$PLUGIN_ROOT/tsconfig.json" "$RUNTIME_ROOT/"
+  rm -rf "$RUNTIME_ROOT/src"
+  ln -s "$PLUGIN_ROOT/src" "$RUNTIME_ROOT/src"
+
+  cd "$RUNTIME_ROOT"
   # --include=dev is NOT redundant (codex P2, PR #1755). `tsc` is declared only
   # in devDependencies and the very next line runs it. If the environment says
   # to omit dev — Claude Code inheriting NODE_ENV=production, or a user's own
@@ -235,7 +355,12 @@ run_bootstrap() {
   # from here.
   printf '%s %s\n' "$(node_compat_boundary 2>/dev/null || echo unknown)" "$THIS_HOST" \
     >"$IDENTITY_FILE" 2>/dev/null || true
-  fingerprint >"$MARKER"
+  # The fingerprint is taken from the PLUGIN ROOT's manifests, which are the
+  # source of truth the copies above were made from — so an upstream change
+  # invalidates this tree even though its own copies still agree with its
+  # node_modules.
+  (cd "$PLUGIN_ROOT" && fingerprint) >"$MARKER"
+  cd "$PLUGIN_ROOT"
   echo "[ralph-knowledge] bootstrap complete."
 }
 
@@ -281,6 +406,7 @@ lock_write_owner() {
 }
 
 if bootstrap_needed; then
+  mkdir -p "$RUNTIME_ROOT"
   waited=0
   acquired=false
   while :; do
@@ -326,121 +452,75 @@ if bootstrap_needed; then
     # Re-check under the lock: the process we waited on may have finished the
     # work, in which case we must not repeat the destructive `npm ci`.
     if bootstrap_needed; then
-      # Refuse to rebuild a tree another RUNTIME may still be serving from
-      # (codex P2, PR #1755). One plugin cache can be reached by two Node
-      # identities — arm64 native beside x64 under Rosetta, or two machines on
-      # a shared home. The identity whose fingerprint matches skips the lock
-      # entirely and execs the server; if the other identity then rebuilds,
-      # `npm ci` replaces node_modules underneath a live process and it dies on
-      # its next lazy require.
-      #
-      # A full fix is per-identity trees, which is a layout change tracked in
-      # #1844. What is enforced here is the other remedy: never replace a tree
-      # that a different identity may still be using. When nothing is running
-      # in the directory the rebuild proceeds, so an ordinary permanent
-      # arch switch still recovers by itself.
-      #
-      # Unknown must not read as "safe": on a host where neither /proc nor
-      # lsof can answer, we cannot prove the tree is idle, so a cross-identity
-      # rebuild is refused there too and the operator is told why.
+      # Everything below is scoped to THIS runtime tree. A server of another
+      # identity, or on another machine, is serving out of a different
+      # directory entirely (GH-1844) and is neither disturbed by this rebuild
+      # nor a reason to refuse it — which is the whole point of the layout.
       built_line=$(cat "$IDENTITY_FILE" 2>/dev/null || echo "")
-      built_identity=$(printf '%s' "$built_line" | cut -d' ' -f1)
       built_host=$(printf '%s' "$built_line" | cut -d' ' -f2)
-      this_identity=$(node_compat_boundary 2>/dev/null || echo "")
 
-      # Is there an existing built tree at all? A genuinely empty root has
-      # nothing to protect, so a first install is never blocked.
+      # Is there an existing built tree at all? A genuinely empty runtime root
+      # has nothing to protect, so a first install is never blocked.
       tree_exists=false
-      if [ -f "$MARKER" ] || [ -d node_modules ]; then
+      if [ -f "$MARKER" ] || [ -d "$RUNTIME_ROOT/node_modules" ]; then
         tree_exists=true
       fi
 
-      # A LIVE SERVER on this tree blocks any rebuild, whatever the identity
-      # (codex P2, PR #1755). The earlier guard only covered missing or
-      # differing identities, but a same-identity rebuild is just as
-      # destructive: a damaged marker, a changed lockfile, or a missing entry
-      # point all reach `npm ci`, and node_modules is replaced underneath a
-      # server that is still serving from it. Failing loudly here is better
-      # than the silent alternative, where that server dies later on a lazy
-      # import with nothing to connect it to this rebuild.
+      # A LIVE SERVER on this tree blocks the rebuild (codex P2, PR #1755).
+      # Per-identity trees remove the CROSS-identity case, not this one: a
+      # same-identity rebuild is just as destructive, and a damaged marker, a
+      # changed lockfile, or a missing entry point all reach `npm ci` while a
+      # server is still resolving lazy imports out of node_modules. Failing
+      # loudly here beats the silent alternative, where that server dies later
+      # with nothing to connect it to this rebuild.
+      #
+      # Unknown must not read as "safe": where the process table cannot be read
+      # at all we cannot prove the tree is idle, so an EXISTING tree is refused
+      # there too and the operator is told why.
       if [ "$tree_exists" = true ] && dir_use_probe_available \
-        && server_running_in "$PLUGIN_ROOT"; then
-        echo "[ralph-knowledge] refusing to rebuild: a server is still running in $PLUGIN_ROOT." >&2
+        && server_running_in "$RUNTIME_ROOT"; then
+        echo "[ralph-knowledge] refusing to rebuild: a server is still running out of $RUNTIME_ROOT." >&2
         echo "[ralph-knowledge] Rebuilding would replace node_modules underneath it." >&2
-        echo "[ralph-knowledge] close every session using this plugin root, then relaunch." >&2
-        echo "[ralph-knowledge] once they are closed, removing $PLUGIN_ROOT/node_modules forces a clean rebuild." >&2
+        echo "[ralph-knowledge] close every session using this runtime, then relaunch." >&2
+        echo "[ralph-knowledge] once they are closed, removing $RUNTIME_ROOT forces a clean rebuild." >&2
         exit 1
       fi
 
-      # A tree built on ANOTHER HOST is refused for every rebuild, not only when
-      # the identities differ (codex P2, PR #1755). Two machines on a shared
-      # home can easily share platform, arch and ABI, in which case identities
-      # MATCH and the old placement of this check never ran — while the local
-      # probe cannot see the remote server either. So it is evaluated here,
-      # independently, alongside the live-server check.
+      if [ "$tree_exists" = true ] && ! dir_use_probe_available; then
+        echo "[ralph-knowledge] refusing to rebuild: this host cannot be probed for running" >&2
+        echo "[ralph-knowledge] processes, so a server serving out of $RUNTIME_ROOT cannot be" >&2
+        echo "[ralph-knowledge] ruled out, and rebuilding would replace node_modules underneath it." >&2
+        echo "[ralph-knowledge] close every session using this runtime, then relaunch." >&2
+        echo "[ralph-knowledge] once they are closed, removing $RUNTIME_ROOT forces a clean rebuild." >&2
+        exit 1
+      fi
+
+      # Residual assertion, not a guard that should ever fire: the machine is
+      # part of the tree key, so a tree in this directory was built here. If it
+      # was not, the machine id is not as stable as it claims and the local
+      # process probe above cannot speak for whoever built it — refuse rather
+      # than treat an unprovable case as idle (codex, PR #1755).
       if [ "$tree_exists" = true ] && [ -n "$built_host" ] \
         && [ "$built_host" != "$THIS_HOST" ]; then
-        echo "[ralph-knowledge] refusing to rebuild: this tree was built on host '$built_host'" >&2
-        echo "[ralph-knowledge] and this is '$THIS_HOST', whose process table cannot see whether" >&2
-        echo "[ralph-knowledge] a server there is still serving from it." >&2
-        echo "[ralph-knowledge] close every session using this plugin root, then relaunch." >&2
-        echo "[ralph-knowledge] once they are closed, removing $PLUGIN_ROOT/node_modules forces a clean rebuild." >&2
+        echo "[ralph-knowledge] refusing to rebuild: this tree records host '$built_host'" >&2
+        echo "[ralph-knowledge] but this machine identifies as '$THIS_HOST', so the local process" >&2
+        echo "[ralph-knowledge] table cannot say whether a server there is still serving from it." >&2
+        echo "[ralph-knowledge] close every session using this runtime, then relaunch." >&2
+        echo "[ralph-knowledge] once they are closed, removing $RUNTIME_ROOT forces a clean rebuild." >&2
         exit 1
       fi
 
-      # Beyond that, provenance we cannot verify is also a reason to stop.
-      guard_needed=false
-      guard_why=""
-      if [ "$tree_exists" = true ]; then
-        if [ -z "$built_identity" ]; then
-          # Missing identity metadata is UNKNOWN, not "ours" (codex P2, PR
-          # #1755). A deleted or never-written identity file previously skipped
-          # this guard entirely and let the rebuild proceed over a live server.
-          guard_needed=true
-          guard_why="this tree carries no identity record, so its provenance is unknown"
-        elif [ "$built_identity" != "$this_identity" ]; then
-          guard_needed=true
-          guard_why="this tree was built for '$built_identity' and this session is '$this_identity'"
-        fi
+      # A tree left at the plugin root by a pre-GH-1844 launcher is dead weight
+      # once this runtime tree exists, and it is large. It is NOT swept: a
+      # session started before the upgrade may still be serving out of it, and
+      # deleting it would break exactly the process the guards above protect.
+      # Named once, at the only moment we are already talking to the operator.
+      if [ -d "$PLUGIN_ROOT/node_modules" ]; then
+        echo "[ralph-knowledge] note: a pre-per-runtime install is still present at" >&2
+        echo "[ralph-knowledge] $PLUGIN_ROOT/node_modules and is no longer used. Once every session" >&2
+        echo "[ralph-knowledge] started before this upgrade is closed, it can be removed." >&2
       fi
 
-      if [ "$guard_needed" = true ]; then
-        refuse=""
-        if [ -n "$built_host" ] && [ "$built_host" != "$THIS_HOST" ]; then
-          # A shared home reached from two machines. The other host's processes
-          # are not in our process table, so a locally idle directory is NOT
-          # globally idle (codex P2, PR #1755) — and there is no cross-host
-          # signal to consult. Refuse rather than treat unprovable as safe.
-          refuse="it was built on host '$built_host' and this is '$THIS_HOST', whose process table cannot see it"
-        elif dir_use_probe_available && server_running_in "$PLUGIN_ROOT"; then
-          refuse="a process is currently running in $PLUGIN_ROOT"
-        elif ! dir_use_probe_available && [ -n "$built_identity" ]; then
-          # Two runtimes are positively indicated and we cannot check for a
-          # live server, so this refuses. The missing-identity case below is
-          # NOT treated this harshly on purpose: a tree written by an older
-          # launcher carries no identity at all, so refusing there would block
-          # every ordinary upgrade on a host without /proc or lsof. That case
-          # probes when it can, and says so plainly when it cannot.
-          refuse="this host cannot be probed for running processes"
-        elif ! dir_use_probe_available; then
-          echo "[ralph-knowledge] note: rebuilding a tree of unknown provenance, and this host" >&2
-          echo "[ralph-knowledge] cannot be probed for running processes. Close other sessions" >&2
-          echo "[ralph-knowledge] using this plugin root if any are open." >&2
-        fi
-
-        if [ -n "$refuse" ]; then
-          echo "[ralph-knowledge] refusing to rebuild: $guard_why." >&2
-          echo "[ralph-knowledge] Rebuilding would replace node_modules underneath any session" >&2
-          echo "[ralph-knowledge] still serving from it, and $refuse." >&2
-          # Deleting node_modules is NOT an alternative to closing sessions
-          # (codex P2, PR #1755) — it destroys exactly the tree the guard just
-          # refused to disrupt. It is only safe once nothing is serving from
-          # this root, so it is presented as the step AFTER, never instead.
-          echo "[ralph-knowledge] close every session using this plugin root, then relaunch." >&2
-          echo "[ralph-knowledge] once they are closed, removing $PLUGIN_ROOT/node_modules forces a clean rebuild." >&2
-          exit 1
-        fi
-      fi
       run_bootstrap >&2
     fi
 
@@ -449,4 +529,7 @@ if bootstrap_needed; then
   fi
 fi
 
-exec node dist/index.js "$@"
+# cwd stays the plugin root (see the top of this file); the entry point is
+# addressed absolutely so it resolves node_modules inside its own runtime tree
+# and so the process probe above can recognise it.
+exec node "$RUNTIME_ROOT/dist/index.js" "$@"

@@ -46,6 +46,15 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); [ -n "${2:-}" ] && echo "$2" | s
 # per-case ABI so the fingerprint boundary is drivable from the test.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
+# EXPORTED, so every way of starting the launcher sees the same identity — the
+# helper that passes it explicitly and the cases that invoke `bash <script>`
+# directly. Left unexported it leaked from one section into the fixtures of the
+# next while the direct invocations kept the default, so a fixture and the
+# launcher under test built in two different runtime trees (GH-1844).
+# Sections that vary it reset it when they are done.
+export FAKE_NODE_ID="${FAKE_NODE_ID:-}"
+export FAKE_NODE_ABI="${FAKE_NODE_ABI:-}"
+export FAKE_NODE_VERSION="${FAKE_NODE_VERSION:-}"
 # The integrity check runs as a real script under the real node (GH-1846). The
 # stub fakes the VERSION and ABI probes and nothing else — re-implementing the
 # check here in bash is what the `-e` emulation used to do, and a second copy
@@ -100,7 +109,7 @@ chmod +x "$BIN/node" "$BIN/npm" "$BIN/npx"
 # missing one is a hard error rather than a silent hole.
 # `bash` and `env` are load-bearing: the stubs' `#!/usr/bin/env bash` shebang
 # resolves through this PATH too, and without them every run dies at 127.
-BASE_UTILS="bash env rm mv cat find mkdir sleep date uname cut kill sed grep ls dirname basename pwd stat hostname touch"
+BASE_UTILS="bash env ps cp ln tr rm mv cat find mkdir sleep date uname cut kill sed grep ls dirname basename pwd stat hostname touch"
 sanitized_bin() {
   local dir="$1"; shift
   mkdir -p "$dir"
@@ -120,29 +129,67 @@ sanitized_bin() {
   return 0
 }
 
-# fake_root <name> — a plugin root that looks fully bootstrapped: built output
-# plus every dependency bootstrap_needed() checks. No marker is written; each
-# case decides that itself.
-fake_root() {
-  local root="$TMP_ROOT/$1"
-  mkdir -p "$root/scripts" "$root/dist"
+# rt <root> [match] — the runtime tree the launcher chose under <root>.
+#
+# READ BACK from disk, never recomputed here (GH-1844). The key is
+# platform-arch-abi plus a machine id, and a second copy of that rule in the
+# test is exactly the thing that drifts away from the launcher it is meant to
+# be checking. With [match] the tree whose key contains that substring is
+# selected, which is how the arch-swap cases name one of two trees.
+rt() {
+  local root="$1" match="${2:-}" d
+  for d in "$root"/.runtimes/*/; do
+    [ -d "$d" ] || continue
+    if [ -n "$match" ]; then
+      case "${d%/}" in *"$match"*) ;; *) continue ;; esac
+    fi
+    printf '%s' "${d%/}"
+    return 0
+  done
+  return 1
+}
+
+# populate_runtime <root> — make the runtime tree look like a finished install.
+#
+# npm is stubbed everywhere in this suite, so a bootstrap creates the tree but
+# never fills it. One real launcher run materializes the directory (and so
+# fixes its key without this file having to know it), and this fills in what
+# npm would have.
+populate_runtime() {
+  local root="$1" rtdir d
+  run_launcher "$root" >/dev/null
+  rtdir=$(rt "$root") || { echo "FATAL: launcher created no runtime tree in $root" >&2; exit 1; }
+  mkdir -p "$rtdir/dist"
+  echo 'console.log("server")' >"$rtdir/dist/index.js"
   # Real installations, not bare directories. Empty dirs were the defect the
   # entry-point check exists to catch, so a fixture made of them would let a
   # name-only check pass and prove nothing (codex P2, PR #1755).
-  local d
   for d in "@huggingface/transformers" "@modelcontextprotocol/sdk" \
     "better-sqlite3" "zod" "typescript"; do
-    mkdir -p "$root/node_modules/$d"
-    printf '{"name":"%s","main":"index.js"}\n' "$d" >"$root/node_modules/$d/package.json"
-    echo 'module.exports = {}' >"$root/node_modules/$d/index.js"
+    mkdir -p "$rtdir/node_modules/$d"
+    printf '{"name":"%s","main":"index.js"}\n' "$d" >"$rtdir/node_modules/$d/package.json"
+    echo 'module.exports = {}' >"$rtdir/node_modules/$d/index.js"
   done
+  # The run above wrote a marker. Remove it: a fixture must not decide whether
+  # the tree reads as complete — each case does, and several depend on there
+  # being no marker until they make one.
+  rm -f "$rtdir/.bootstrap-complete" "$rtdir/.bootstrap-identity"
+}
+
+# fake_root <name> — a plugin root plus a runtime tree that looks fully
+# bootstrapped: built output and every dependency bootstrap_needed() checks.
+fake_root() {
+  local root="$TMP_ROOT/$1"
+  mkdir -p "$root/scripts" "$root/src"
   cp "$SRC" "$root/scripts/launch-mcp.sh"
   chmod +x "$root/scripts/launch-mcp.sh"
   # The integrity check ships beside the launcher (GH-1846) and the launcher
   # resolves it from its own directory, so a fixture root without it is not the
   # thing being tested — every case would fail closed for the wrong reason.
   cp "$(dirname "$SRC")/deps-complete.cjs" "$root/scripts/deps-complete.cjs"
-  echo 'console.log("server")' >"$root/dist/index.js"
+  echo 'export const x = 1;' >"$root/src/index.ts"
+  # Copied into each runtime tree by the bootstrap, so it must be present.
+  echo '{"compilerOptions":{"outDir":"dist","rootDir":"src"}}' >"$root/tsconfig.json"
   # Dependencies are declared, because the completeness check reads them from
   # here rather than from a hand-maintained list in the launcher.
   cat >"$root/package.json" <<'PKG'
@@ -158,6 +205,7 @@ fake_root() {
 }
 PKG
   echo '{"lockfileVersion":3}' >"$root/package-lock.json"
+  populate_runtime "$root"
   echo "$root"
 }
 
@@ -262,7 +310,7 @@ else
   pass "warm launch invoked no npx"
 fi
 
-if grep -q 'node dist/index.js' "$log"; then
+if grep -qE "node .*/dist/index\\.js" "$log"; then
   pass "warm launch exec'd the vendored dist/index.js"
 else
   fail "warm launch never exec'd dist/index.js" "$(cat "$log")"
@@ -274,7 +322,7 @@ echo "=== Node fingerprint tracks the ABI boundary, not the version string ==="
 # here buys nothing and can strand an offline machine.
 root=$(fake_root patchbump)
 FAKE_NODE_VERSION="v22.11.0" FAKE_NODE_ABI="127" log=$(run_launcher "$root")
-marker_before=$(cat "$root/.bootstrap-complete")
+marker_before=$(cat "$(rt "$root")/.bootstrap-complete")
 
 FAKE_NODE_VERSION="v22.14.3" FAKE_NODE_ABI="127" log=$(run_launcher "$root")
 if grep -q '^npm ' "$log"; then
@@ -283,7 +331,7 @@ else
   pass "Node patch bump does not invalidate the marker"
 fi
 
-marker_after=$(cat "$root/.bootstrap-complete")
+marker_after=$(cat "$(rt "$root")/.bootstrap-complete")
 if [ "$marker_before" = "$marker_after" ]; then
   pass "fingerprint is stable across a Node patch bump"
 else
@@ -305,7 +353,7 @@ echo "=== incomplete tree still re-bootstraps ==="
 
 root=$(fake_root incomplete)
 log=$(run_launcher "$root")                       # warm it
-rm -rf "$root/node_modules/better-sqlite3"
+rm -rf "$(rt "$root")/node_modules/better-sqlite3"
 log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "missing dependency re-bootstraps (skip-work never serves a broken tree)"
@@ -318,7 +366,7 @@ fi
 # passed as complete and the final exec failed instead of repairing itself.
 root=$(fake_root missingzod)
 log=$(run_launcher "$root")                       # warm it
-rm -rf "$root/node_modules/zod"
+rm -rf "$(rt "$root")/node_modules/zod"
 log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "a dependency outside any hand-written list still re-bootstraps (zod)"
@@ -333,8 +381,8 @@ fi
 # trusted and the server dies on its static import.
 root=$(fake_root emptydep)
 log=$(run_launcher "$root")                       # warm it
-rm -rf "$root/node_modules/zod"
-mkdir -p "$root/node_modules/zod"                 # present, but empty
+rm -rf "$(rt "$root")/node_modules/zod"
+mkdir -p "$(rt "$root")/node_modules/zod"                 # present, but empty
 log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "an empty dependency directory re-bootstraps (name alone is not enough)"
@@ -346,7 +394,7 @@ fi
 # ...and a manifest whose entry point is gone is equally unusable.
 root=$(fake_root gonEntry)
 log=$(run_launcher "$root")                       # warm it
-rm -f "$root/node_modules/zod/index.js"           # manifest stays, entry gone
+rm -f "$(rt "$root")/node_modules/zod/index.js"           # manifest stays, entry gone
 log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "a dependency whose entry point is missing re-bootstraps"
@@ -357,7 +405,7 @@ fi
 # devDependencies are pruned by design; demanding them would rebuild forever.
 root=$(fake_root prunedev)
 log=$(run_launcher "$root")                       # warm it
-rm -rf "$root/node_modules/typescript"
+rm -rf "$(rt "$root")/node_modules/typescript"
 log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   fail "an absent devDependency forced a rebuild — the prune step guarantees it is absent" \
@@ -368,7 +416,7 @@ fi
 
 root=$(fake_root nodist)
 log=$(run_launcher "$root")
-rm -f "$root/dist/index.js"
+rm -f "$(rt "$root")/dist/index.js"
 log=$(run_launcher "$root")
 if grep -q 'npm run build' "$log"; then
   pass "missing dist/index.js re-bootstraps"
@@ -379,7 +427,7 @@ fi
 # An interrupted bootstrap must not leave a marker claiming success.
 root=$(fake_root nomarker)
 log=$(run_launcher "$root")
-rm -f "$root/.bootstrap-complete"
+rm -f "$(rt "$root")/.bootstrap-complete"
 log=$(run_launcher "$root")
 if grep -q 'npm ci' "$log"; then
   pass "absent marker re-bootstraps"
@@ -411,6 +459,8 @@ else
   fail "darwin -> linux at ABI 127 reused the marker" "$(cat "$log")"
 fi
 
+FAKE_NODE_ID=""; FAKE_NODE_ABI=""; FAKE_NODE_VERSION=""   # restore the defaults for the fixtures below
+
 echo "=== no-hasher fallback never claims a match ==="
 
 # With neither shasum, sha256sum, nor cksum on PATH the marker cannot describe
@@ -431,9 +481,9 @@ run_nohasher() {
 }
 
 log=$(run_nohasher "$root")
-m1=$(cat "$root/.bootstrap-complete" 2>/dev/null || echo MISSING)
+m1=$(cat "$(rt "$root")/.bootstrap-complete" 2>/dev/null || echo MISSING)
 log=$(run_nohasher "$root")
-m2=$(cat "$root/.bootstrap-complete" 2>/dev/null || echo MISSING)
+m2=$(cat "$(rt "$root")/.bootstrap-complete" 2>/dev/null || echo MISSING)
 
 if [ "$m1" = "MISSING" ] || [ "$m2" = "MISSING" ]; then
   fail "no-hasher run wrote no marker at all" "m1=$m1 m2=$m2"
@@ -465,9 +515,9 @@ run_cksum() {
 }
 
 log=$(run_cksum "$root")
-c1=$(cat "$root/.bootstrap-complete" 2>/dev/null || echo MISSING)
+c1=$(cat "$(rt "$root")/.bootstrap-complete" 2>/dev/null || echo MISSING)
 log=$(run_cksum "$root")
-c2=$(cat "$root/.bootstrap-complete" 2>/dev/null || echo MISSING)
+c2=$(cat "$(rt "$root")/.bootstrap-complete" 2>/dev/null || echo MISSING)
 if [ "$c1" != "MISSING" ] && [ "$c1" = "$c2" ] && ! grep -q 'npm ci' "$log"; then
   pass "cksum fallback yields a stable fingerprint (warm tree stays warm)"
 else
@@ -533,13 +583,13 @@ else
   fail "TERM during npm ci still exited 0 — the script resumed past the signal"
 fi
 
-if [ ! -d "$root/.bootstrap.lock" ]; then
+if [ ! -d "$(rt "$root")/.bootstrap.lock" ]; then
   pass "TERM during npm ci leaves no lock behind"
 else
   fail "lock survived a TERM — later launchers would wait out the stale window"
 fi
 
-if [ ! -f "$root/.bootstrap-complete" ]; then
+if [ ! -f "$(rt "$root")/.bootstrap-complete" ]; then
   pass "TERM during npm ci writes no completion marker"
 else
   fail "an interrupted bootstrap claimed completion"
@@ -568,16 +618,16 @@ while kill -0 "$DEAD_PID" 2>/dev/null; do DEAD_PID=$((DEAD_PID + 1)); done
 
 for scenario in liveowner deadowner ancient ownerless; do
   root=$(fake_root "noreclaim-$scenario")
-  rm -f "$root/dist/index.js"
-  mkdir -p "$root/.bootstrap.lock"
+  rm -f "$(rt "$root")/dist/index.js"
+  mkdir -p "$(rt "$root")/.bootstrap.lock"
   case "$scenario" in
-    liveowner) printf '%s %s %s\n' "$$" "$(hostname)" "$(date +%s)" >"$root/.bootstrap.lock/owner" ;;
-    deadowner) printf '%s %s %s\n' "$DEAD_PID" "$(hostname)" "$(date +%s)" >"$root/.bootstrap.lock/owner" ;;
+    liveowner) printf '%s %s %s\n' "$$" "$(hostname)" "$(date +%s)" >"$(rt "$root")/.bootstrap.lock/owner" ;;
+    deadowner) printf '%s %s %s\n' "$DEAD_PID" "$(hostname)" "$(date +%s)" >"$(rt "$root")/.bootstrap.lock/owner" ;;
     ancient)
-      printf '%s %s 0\n' "$DEAD_PID" "$(hostname)" >"$root/.bootstrap.lock/owner"
-      touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true ;;
+      printf '%s %s 0\n' "$DEAD_PID" "$(hostname)" >"$(rt "$root")/.bootstrap.lock/owner"
+      touch -t 200001010000 "$(rt "$root")/.bootstrap.lock" 2>/dev/null || true ;;
     ownerless)
-      touch -t 200001010000 "$root/.bootstrap.lock" 2>/dev/null || true ;;
+      touch -t 200001010000 "$(rt "$root")/.bootstrap.lock" 2>/dev/null || true ;;
   esac
 
   log="$root/calls.log"; : >"$log"
@@ -586,20 +636,20 @@ for scenario in liveowner deadowner ancient ownerless; do
     RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
     bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
 
-  if [ -d "$root/.bootstrap.lock" ] && ! grep -q 'npm ci' "$log"; then
+  if [ -d "$(rt "$root")/.bootstrap.lock" ] && ! grep -q 'npm ci' "$log"; then
     pass "pre-existing lock ($scenario) is neither deleted nor bypassed"
   else
     fail "a waiter destroyed or bypassed a lock it did not own ($scenario)" \
-      "lock_present=$([ -d "$root/.bootstrap.lock" ] && echo yes || echo NO); $(cat "$log")"
+      "lock_present=$([ -d "$(rt "$root")/.bootstrap.lock" ] && echo yes || echo NO); $(cat "$log")"
   fi
 done
 
 # Failing closed is only honest if the operator can act on it: the timeout must
 # name the holder and the exact directory to remove.
 root=$(fake_root timeoutmsg)
-rm -f "$root/dist/index.js"
-mkdir -p "$root/.bootstrap.lock"
-printf '%s %s %s\n' "$DEAD_PID" "some-other-host" "0" >"$root/.bootstrap.lock/owner"
+rm -f "$(rt "$root")/dist/index.js"
+mkdir -p "$(rt "$root")/.bootstrap.lock"
+printf '%s %s %s\n' "$DEAD_PID" "some-other-host" "0" >"$(rt "$root")/.bootstrap.lock/owner"
 RC=0
 CALL_LOG="$root/calls.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
   RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC=4 \
@@ -682,7 +732,7 @@ echo "=== bootstrap installs dev deps even when the env says to omit them ==="
 # makes plain `npm ci` skip it, so the build fails on every first launch and
 # the completion marker is never written — the bootstrap can never finish.
 root=$(fake_root devdeps)
-rm -f "$root/dist/index.js"
+rm -f "$(rt "$root")/dist/index.js"
 log="$root/calls.log"; : >"$log"
 RC=0
 CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" NODE_ENV=production \
@@ -724,7 +774,7 @@ else
   # deps_complete delegates to the checker the launcher resolves from its own
   # directory; the launcher's own resolution is not sourced here, so bind it.
   CHECK_DEPS="$(dirname "$SRC")/deps-complete.cjs"
-  eval "$(sed -n '/^deps_complete() {/,/^}/p' "$SRC")"
+  eval "$(sed -n '/^deps_complete() (/,/^)/p' "$SRC")"
 
   if ! type deps_complete >/dev/null 2>&1; then
     fail "deps_complete could not be sourced — the cases below would prove nothing"
@@ -742,7 +792,7 @@ PKG
   }
 
   root=$(dep_fixture real_ok)
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     pass "a real installation satisfies deps_complete"
   else
     fail "a complete tree was reported incomplete — this would rebuild on every launch"
@@ -752,7 +802,7 @@ PKG
   root=$(dep_fixture real_empty)
   rm -rf "$root/node_modules/zod"
   mkdir -p "$root/node_modules/zod"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     fail "an EMPTY node_modules/zod satisfied the real deps_complete — name-only check"
   else
     pass "an empty dependency directory fails the real deps_complete"
@@ -761,7 +811,7 @@ PKG
   # Manifest present, entry point deleted.
   root=$(dep_fixture real_noentry)
   rm -f "$root/node_modules/zod/index.js"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     fail "a package with no entry file satisfied the real deps_complete"
   else
     pass "a missing entry point fails the real deps_complete"
@@ -770,7 +820,7 @@ PKG
   # A package absent altogether.
   root=$(dep_fixture real_absent)
   rm -rf "$root/node_modules/zod"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     fail "an absent dependency satisfied the real deps_complete"
   else
     pass "an absent dependency fails the real deps_complete"
@@ -782,7 +832,7 @@ PKG
   # destructive reinstall on EVERY launch.
   root=$(dep_fixture real_extless)
   printf '{"name":"zod","main":"./index"}\n' >"$root/node_modules/zod/package.json"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     pass "an extensionless main resolves (no false rebuild)"
   else
     fail "an extensionless main was reported missing — a healthy tree would reinstall forever"
@@ -792,7 +842,7 @@ PKG
   printf '{"name":"zod","main":"./lib"}\n' >"$root/node_modules/zod/package.json"
   mkdir -p "$root/node_modules/zod/lib"
   echo 'module.exports = {}' >"$root/node_modules/zod/lib/index.js"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     pass "a main naming a directory resolves via index.js"
   else
     fail "a directory main was reported missing"
@@ -803,7 +853,7 @@ PKG
   root=$(dep_fixture real_binaryfield)
   printf '{"name":"zod","main":"index.js","binary":{"note":"not an N-API module"}}\n' \
     >"$root/node_modules/zod/package.json"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     pass "a 'binary' field alone does not demand a compiled addon"
   else
     fail "a package was treated as native on its 'binary' field — reinstalls a healthy tree"
@@ -817,14 +867,14 @@ PKG
   mkdir -p "$root/node_modules/zod/build/Release"
   echo '{}' >"$root/node_modules/zod/binding.gyp"
   : >"$root/node_modules/zod/build/Release/zod.node"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     pass "a native package with its addon present is complete"
   else
     fail "a healthy native package was reported incomplete — this would reinstall every launch"
   fi
 
   rm -rf "$root/node_modules/zod/build"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     fail "a native package with NO compiled addon passed — startup would die on the addon load"
   else
     pass "a native package missing its compiled addon fails deps_complete"
@@ -847,7 +897,7 @@ PKG
   rm -f "$root/node_modules/zod/index.js"
   mkdir -p "$root/node_modules/zod/dist"
   echo 'module.exports = {}' >"$root/node_modules/zod/dist/sub.js"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     pass "an unshipped root export is not enforced when a subpath resolves"
   else
     fail "an exports map with a live subpath was reported incomplete — a healthy tree would reinstall forever"
@@ -858,7 +908,7 @@ PKG
 { "name": "zod", "exports": { ".": { "import": "./dist/esm/index.js" }, "./sub": "./dist/sub.js" } }
 PKG
   rm -f "$root/node_modules/zod/index.js"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     fail "an exports-only package with NO surviving target passed — the static import would fail instead of repairing"
   else
     pass "an exports-only package whose targets are all gone re-bootstraps"
@@ -873,32 +923,85 @@ PKG
 PKG
   rm -f "$root/node_modules/zod/index.js"
   echo 'x' >"$root/node_modules/zod/t.d.ts"
-  if ( cd "$root" && deps_complete ); then
+  if ( RUNTIME_ROOT="$root"; deps_complete ); then
     pass "an undeterminable exports map is accepted rather than rebuilt forever"
   else
     fail "a conditional-exports package forced a rebuild — every launch would reinstall"
   fi
 fi
+FAKE_NODE_ID=""; FAKE_NODE_ABI=""; FAKE_NODE_VERSION=""   # restore the defaults for the fixtures below
 
-echo "=== a rebuild never replaces a tree another runtime may be serving ==="
+echo "=== two Node identities never share a bootstrap tree (GH-1844) ==="
 
-# One plugin cache can be reached by two Node identities — arm64 native beside
-# x64 under Rosetta, or two machines on a shared home. The identity whose
-# fingerprint MATCHES skips the lock entirely and execs the server; if the other
-# identity then rebuilds, `npm ci` swaps node_modules underneath a live process
-# and it dies on its next lazy require (codex P2). Full isolation is per-identity
-# trees (#1844); what is enforced here is the other remedy — do not replace a
-# tree something is still using.
-if ! { [ -d /proc ] || command -v lsof >/dev/null 2>&1; }; then
-  echo "  SKIP: no /proc and no lsof, so in-use detection cannot be exercised"
+# The hazard this issue was filed for. One plugin cache reached by two Node
+# identities — arm64 native beside x64 under Rosetta, or two machines on a
+# shared home — used to mean ONE tree: the identity whose fingerprint matched
+# skipped the lock and exec'd the server, and the other then ran a destructive
+# `npm ci` over the node_modules it was still lazily requiring from.
+#
+# The remedy is isolation rather than a guard. The two identities now build in
+# separate trees, so B's install is not merely REFUSED while A is live — it is
+# irrelevant to A, which is what lets a second architecture start at all.
+root=$(fake_root two_identities)
+FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+FAKE_NODE_ID="darwin-x64-abi127" log=$(run_launcher "$root")
+
+count=$(find "$root/.runtimes" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+if [ "$count" -eq 2 ]; then
+  pass "two Node identities produced two runtime trees"
 else
-  root=$(fake_root identity_busy)
-  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")   # build as A
+  fail "two identities produced $count runtime tree(s) — they are still sharing one" \
+    "$(find "$root/.runtimes" -maxdepth 1 -mindepth 1 2>/dev/null)"
+fi
 
-  # A realistic live SERVER: cwd in the tree AND `dist/index.js` in argv, which
-  # is how launch-mcp.sh execs it. Both signals are required, so a bare `sleep`
-  # would not (and must not) count — see the waiting-launcher case below.
-  ( cd "$root" && exec /bin/sh -c 'sleep 60; :' "node dist/index.js" ) &
+# Not just separate: the FIRST tree must be intact. A rebuild that reached into
+# it is the defect, whatever directory it was launched from.
+a_dir=$(rt "$root" "arm64-abi127") || a_dir=""
+if [ -n "$a_dir" ] && [ -f "$a_dir/.bootstrap-complete" ] && [ -d "$a_dir/node_modules/zod" ]; then
+  pass "the first identity's tree survived the second identity's bootstrap"
+else
+  fail "the second identity damaged the first identity's tree" \
+    "$(find "$root/.runtimes" -maxdepth 2 2>/dev/null | head -20)"
+fi
+
+# The tree key must be STABLE, or per-identity trees become one tree per
+# launch — the npx-cache-bloat failure mode this launcher exists to end.
+before=$(rt "$root" "arm64-abi127")
+FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+count_after=$(find "$root/.runtimes" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+if [ "$count_after" -eq 2 ] && [ -d "$before" ]; then
+  pass "relaunching an existing identity reuses its tree (no per-launch growth)"
+else
+  fail "a relaunch minted a new tree — $count_after trees after three launches"
+fi
+
+# And the served entry point must come from the tree, not from the plugin root.
+if grep -qE "node .*/\.runtimes/.*/dist/index\.js" "$log"; then
+  pass "the server is exec'd out of its own runtime tree"
+else
+  fail "the server was exec'd from somewhere other than its runtime tree" "$(cat "$log")"
+fi
+
+# The plugin root must not be installed into at all any more: a shared
+# node_modules there is precisely what two identities could collide over.
+if [ -d "$root/node_modules" ]; then
+  fail "the bootstrap installed into the shared plugin root"
+else
+  pass "nothing is installed at the shared plugin root"
+fi
+
+echo "=== a live server of ANOTHER identity does not block a bootstrap ==="
+
+# The other half of isolation, and the reason the interim remedy considered in
+# #1844 (refuse whenever the recorded identity differs) was rejected: it would
+# make a second architecture unable to start at all while the first is running.
+if ! { [ -d /proc ] || command -v ps >/dev/null 2>&1; }; then
+  echo "  SKIP: cannot probe for running servers on this host"
+else
+  root=$(fake_root cross_identity_live)
+  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
+  rtdir=$(rt "$root" "arm64-abi127")
+  ( exec /bin/sh -c "sleep 60; :" "node $rtdir/dist/index.js" ) &
   busy_pid=$!
   sleep 0.3
 
@@ -909,62 +1012,34 @@ else
     bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
   kill "$busy_pid" 2>/dev/null || true
 
-  if grep -q 'npm ci' "$log"; then
-    fail "a second runtime rebuilt a tree with a live process in it — node_modules swapped under a running server" \
-      "$(cat "$log")"
+  if [ "$RC" -eq 0 ] && grep -q 'npm ci' "$log"; then
+    pass "a second identity bootstraps while the first is serving"
   else
-    pass "a cross-identity rebuild is refused while the tree is in use"
-  fi
-  if [ "$RC" -ne 0 ]; then
-    pass "the refusal exits non-zero rather than serving a mismatched tree"
-  else
-    fail "the refusal exited 0 — the caller would think the server started"
-  fi
-  if grep -q 'close every session using this plugin root' "$root/stderr.log"; then
-    pass "the refusal tells the operator to close sessions"
-  else
-    fail "the refusal gives no remedy" "$(cat "$root/stderr.log")"
-  fi
-
-  # Deleting node_modules must never be offered as an ALTERNATIVE to closing
-  # sessions — it destroys the tree the guard just refused to disrupt. It may
-  # only appear as the step AFTER they are closed.
-  if grep -qE 'close .*, or remove .*node_modules' "$root/stderr.log"; then
-    fail "deletion is offered instead of closing sessions — that breaks the very session being protected" \
+    fail "a second identity was blocked by an unrelated running server (rc=$RC)" \
       "$(cat "$root/stderr.log")"
-  else
-    pass "deletion is not offered as an alternative to closing sessions"
   fi
-  if grep -q 'once they are closed' "$root/stderr.log"; then
-    pass "deletion is sequenced after closing sessions"
+  if [ -f "$rtdir/.bootstrap-complete" ] && [ -d "$rtdir/node_modules/zod" ]; then
+    pass "the running server's tree was left untouched"
   else
-    fail "the remedy never says when deletion becomes safe" "$(cat "$root/stderr.log")"
-  fi
-  # The tree must be left intact, not half-rebuilt.
-  if [ -f "$root/.bootstrap-complete" ] && [ -d "$root/node_modules/zod" ]; then
-    pass "the refused rebuild left the existing tree untouched"
-  else
-    fail "the refused rebuild damaged the tree it declined to replace"
+    fail "the second identity's install reached into the live server's tree"
   fi
 fi
 
-# ...but an IDLE tree must still rebuild, or a permanent arch switch could
-# never recover on its own. (The arch-swap cases above cover this: they change
-# identity with nothing running and require `npm ci`.)
+FAKE_NODE_ID=""; FAKE_NODE_ABI=""; FAKE_NODE_VERSION=""   # restore the defaults for the fixtures below
 
-echo "=== a live server blocks a rebuild even at the SAME identity ==="
+echo "=== a live server blocks a rebuild of ITS OWN tree ==="
 
-if ! { [ -d /proc ] || { command -v lsof >/dev/null 2>&1 && command -v ps >/dev/null 2>&1; }; }; then
+if ! { [ -d /proc ] || command -v ps >/dev/null 2>&1; }; then
   echo "  SKIP: cannot probe for running servers on this host"
 else
-  # A damaged marker, a changed lockfile or a missing entry point all reach
-  # `npm ci` at the SAME identity — and that replaces node_modules underneath a
-  # server still serving from the tree (codex P2). Identity is not the only
-  # thing worth guarding.
+  # Per-identity trees remove the cross-identity case, not this one. A damaged
+  # marker, a changed lockfile or a missing entry point all reach `npm ci` at
+  # the SAME identity, and that replaces node_modules underneath a server still
+  # resolving lazy imports out of it (codex P2, PR #1755).
   root=$(fake_root sameid_live)
-  log=$(run_launcher "$root")                    # build it, same identity
-  rm -f "$root/.bootstrap-complete"              # force the rebuild path
-  ( cd "$root" && exec /bin/sh -c 'sleep 60; :' "node dist/index.js" ) &
+  rtdir=$(rt "$root")
+  rm -f "$rtdir/.bootstrap-complete"             # force the rebuild path
+  ( exec /bin/sh -c "sleep 60; :" "node $rtdir/dist/index.js" ) &
   live_pid=$!
   sleep 0.3
   RC=0
@@ -983,13 +1058,30 @@ else
   else
     fail "the same-identity refusal is not reported properly (rc=$RC)" "$(cat "$root/stderr.log")"
   fi
+  if grep -q 'close every session using this runtime' "$root/stderr.log"; then
+    pass "the refusal tells the operator to close sessions"
+  else
+    fail "the refusal gives no remedy" "$(cat "$root/stderr.log")"
+  fi
+  # Deleting the tree must never be offered as an ALTERNATIVE to closing
+  # sessions — it destroys exactly what the guard just refused to disrupt.
+  if grep -q 'once they are closed' "$root/stderr.log"; then
+    pass "deletion is sequenced after closing sessions"
+  else
+    fail "the remedy never says when deletion becomes safe" "$(cat "$root/stderr.log")"
+  fi
+  if [ -d "$rtdir/node_modules/zod" ]; then
+    pass "the refused rebuild left the existing tree untouched"
+  else
+    fail "the refused rebuild damaged the tree it declined to replace"
+  fi
 
-  # ...but a merely WAITING LAUNCHER must not block. It also has its cwd in the
-  # plugin root, so a probe that matched any process there would turn two
-  # simultaneous cold starts into a hard failure instead of a race.
+  # ...but a merely WAITING LAUNCHER must not block. It shares the plugin root
+  # as its cwd with every server, which is why the probe reads argv instead:
+  # a cwd test would turn two simultaneous cold starts into a hard failure.
   root=$(fake_root waiter_not_server)
-  log=$(run_launcher "$root")
-  rm -f "$root/.bootstrap-complete"
+  rtdir=$(rt "$root")
+  rm -f "$rtdir/.bootstrap-complete"
   ( cd "$root" && exec /bin/sh -c 'sleep 60; :' "bash scripts/launch-mcp.sh" ) &
   waiter_pid=$!
   sleep 0.3
@@ -1007,94 +1099,126 @@ else
   fi
 fi
 
-echo "=== provenance that cannot be verified fails closed ==="
+echo "=== two machines on a shared home never share a tree ==="
 
-if ! { [ -d /proc ] || command -v lsof >/dev/null 2>&1; }; then
-  echo "  SKIP: no /proc and no lsof"
+# The second half of GH-1844. Two machines can share platform, arch and ABI, in
+# which case the Node identity MATCHES while the local process table cannot see
+# the remote server at all — so the machine is part of the tree key too, and
+# there is nothing left to reason about across hosts.
+HOST_BIN="$TMP_ROOT/host-bin"
+sanitized_bin "$HOST_BIN" shasum
+rm -f "$HOST_BIN/hostname"   # sanitized_bin symlinks it; writing through the link would target the system binary
+cat >"$HOST_BIN/hostname" <<'STUB'
+#!/usr/bin/env bash
+echo "${FAKE_HOSTNAME:-machine-a}"
+STUB
+chmod +x "$HOST_BIN/hostname"
+
+root=$(fake_root two_hosts)
+for h in machine-a machine-b; do
+  CALL_LOG="$root/calls.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$HOST_BIN" \
+    FAKE_HOSTNAME="$h" \
+    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>>"$root/stderr.log" || true
+done
+if [ -d "$root/.runtimes" ] \
+  && find "$root/.runtimes" -maxdepth 1 -mindepth 1 -type d -name '*machine-a*' 2>/dev/null | grep -q . \
+  && find "$root/.runtimes" -maxdepth 1 -mindepth 1 -type d -name '*machine-b*' 2>/dev/null | grep -q .; then
+  pass "two machines on one plugin cache built separate trees"
 else
-  # A tree built on ANOTHER host. Its processes are not in our process table,
-  # so a locally idle directory is not globally idle — the local probe simply
-  # cannot speak for a shared home (codex P2). Nothing is running here, and it
-  # must STILL refuse.
-  root=$(fake_root identity_foreignhost)
-  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-  printf '%s %s\n' "node-darwin-arm64-abi127" "some-other-host" >"$root/.bootstrap-identity"
+  fail "two machines shared a tree — a remote server is invisible to the local probe" \
+    "$(find "$root/.runtimes" -maxdepth 1 -mindepth 1 2>/dev/null)"
+fi
+
+# A machine that cannot name itself must not collapse into a sentinel every
+# other nameless machine also uses — that collision made two hosts compare
+# EQUAL and pass the cross-host check as same-host (codex, PR #1755).
+rm -f "$HOST_BIN/hostname"   # sanitized_bin symlinks it; writing through the link would target the system binary
+cat >"$HOST_BIN/hostname" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+chmod +x "$HOST_BIN/hostname"
+root=$(fake_root nameless_host)
+CALL_LOG="$root/calls.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$HOST_BIN:/usr/sbin:/sbin:/usr/bin:/bin" \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>>"$root/stderr.log" || true
+nameless=$(rt "$root" "" || true)
+if [ -n "$nameless" ] && ! printf '%s' "$nameless" | grep -q 'unknown-host'; then
+  pass "a nameless machine gets a machine-specific key, not a shared sentinel"
+else
+  fail "a nameless machine fell back to a colliding sentinel" "key=${nameless:-none}"
+fi
+
+echo "=== unprovable safety still fails closed ==="
+
+# Per-identity trees narrow WHO can be affected; they do not make an unreadable
+# process table safe. An existing tree that might still be served, on a host
+# that cannot be probed at all, is refused rather than rebuilt.
+root=$(fake_root unprobeable)
+rtdir=$(rt "$root")
+rm -f "$rtdir/.bootstrap-complete"
+NOPS_BIN="$TMP_ROOT/nops-bin"
+sanitized_bin "$NOPS_BIN" shasum
+rm -f "$NOPS_BIN/ps"                      # no `ps`, and this host has no /proc
+if [ -d /proc ]; then
+  echo "  SKIP: /proc exists on this host, so the unprobeable branch cannot be reached"
+else
   RC=0
   log="$root/calls.log"; : >"$log"
-  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-    FAKE_NODE_ID="darwin-x64-abi127" \
+  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$NOPS_BIN" \
     bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
-  if grep -q 'npm ci' "$log"; then
-    fail "rebuilt a tree built on another host while locally idle — a live remote server would be clobbered" \
-      "$(cat "$log")"
+  if [ "$RC" -ne 0 ] && ! grep -q 'npm ci' "$log"; then
+    pass "an existing tree is not rebuilt on a host that cannot be probed"
   else
-    pass "a tree built on another host is never rebuilt from here, idle or not"
-  fi
-  if grep -q 'process table cannot see' "$root/stderr.log"; then
-    pass "the refusal explains that the other host cannot be probed"
-  else
-    fail "the refusal does not explain the cross-host limitation" "$(cat "$root/stderr.log")"
-  fi
-
-  # The host is evaluated for EVERY rebuild, not only when identities differ.
-  # Two machines on a shared home can share platform, arch and ABI, so the
-  # identities MATCH while the remote server is still invisible to us.
-  root=$(fake_root host_same_identity)
-  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-  printf '%s %s\n' "node-darwin-arm64-abi127" "some-other-host" >"$root/.bootstrap-identity"
-  rm -f "$root/.bootstrap-complete"          # force a rebuild at the SAME identity
-  RC=0
-  log="$root/calls.log"; : >"$log"
-  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-    FAKE_NODE_ID="darwin-arm64-abi127" \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
-  if grep -q 'npm ci' "$log"; then
-    fail "rebuilt a tree built on another host because the identities happened to match" \
-      "$(cat "$log")"
-  else
-    pass "the recorded host is checked even when the Node identities match"
-  fi
-
-  # Identity metadata missing entirely: provenance is UNKNOWN, not "ours". A
-  # deleted or never-written identity file used to skip the guard completely.
-  root=$(fake_root identity_missing)
-  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-  rm -f "$root/.bootstrap-identity"
-  rm -f "$root/.bootstrap-complete"          # force the rebuild path
-  ( cd "$root" && exec /bin/sh -c 'sleep 60; :' "node dist/index.js" ) &
-  miss_pid=$!
-  sleep 0.3
-  RC=0
-  log="$root/calls.log"; : >"$log"
-  CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
-    bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
-  kill "$miss_pid" 2>/dev/null || true
-  if grep -q 'npm ci' "$log"; then
-    fail "rebuilt a tree of unknown provenance with a live process in it" "$(cat "$log")"
-  else
-    pass "a tree with no identity record is not rebuilt while in use"
-  fi
-  # Either refusal is correct here, and the live-server check now fires first —
-  # it is the stronger reason, since it observes an actual server rather than
-  # inferring risk from absent metadata. What must not happen is a rebuild.
-  if grep -qE 'a server is still running|no identity record' "$root/stderr.log"; then
-    pass "the refusal states why the rebuild was declined"
-  else
-    fail "the rebuild was declined with no reason given" "$(cat "$root/stderr.log")"
-  fi
-
-  # ...but an IDLE tree of unknown provenance must still rebuild, or every
-  # upgrade from a launcher version that wrote no identity would be stuck.
-  root=$(fake_root identity_missing_idle)
-  FAKE_NODE_ID="darwin-arm64-abi127" log=$(run_launcher "$root")
-  rm -f "$root/.bootstrap-identity" "$root/.bootstrap-complete"
-  log=$(run_launcher "$root")
-  if grep -q 'npm ci' "$log"; then
-    pass "an idle tree of unknown provenance still rebuilds (upgrades are not blocked)"
-  else
-    fail "an idle tree could not be rebuilt — upgrades from an older launcher would wedge" \
+    fail "rebuilt an existing tree without being able to rule out a live server (rc=$RC)" \
       "$(cat "$root/stderr.log")"
   fi
+  if grep -q 'cannot be probed for running' "$root/stderr.log"; then
+    pass "the refusal explains that the host cannot be probed"
+  else
+    fail "the refusal does not explain itself" "$(cat "$root/stderr.log")"
+  fi
+fi
+
+# Residual assertion: the machine is part of the key, so a tree here was built
+# here. If its record says otherwise the machine id is not as stable as it
+# claims, and the local probe cannot speak for whoever did build it.
+root=$(fake_root foreign_host_record)
+rtdir=$(rt "$root")
+printf '%s %s\n' "node-darwin-arm64-abi127" "some-other-host" >"$rtdir/.bootstrap-identity"
+rm -f "$rtdir/.bootstrap-complete"
+RC=0
+log="$root/calls.log"; : >"$log"
+CALL_LOG="$log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || RC=$?
+if grep -q 'npm ci' "$log"; then
+  fail "rebuilt a tree whose record names another machine" "$(cat "$log")"
+else
+  pass "a tree recording another machine is not rebuilt from here"
+fi
+if grep -q 'cannot say whether' "$root/stderr.log"; then
+  pass "the refusal explains the cross-machine limitation"
+else
+  fail "the refusal does not explain itself" "$(cat "$root/stderr.log")"
+fi
+
+# A pre-GH-1844 install at the plugin root is large and now unused. It is NOT
+# swept — a session started before the upgrade may still be serving from it —
+# but it must be named, or it is silent dead weight forever.
+root=$(fake_root legacy_root)
+rtdir=$(rt "$root")
+mkdir -p "$root/node_modules/zod"
+rm -f "$rtdir/.bootstrap-complete"
+CALL_LOG="$root/calls.log" CLAUDE_PLUGIN_ROOT="$root" PATH="$BIN:$PATH" \
+  bash "$root/scripts/launch-mcp.sh" >/dev/null 2>"$root/stderr.log" || true
+if grep -q 'pre-per-runtime install is still present' "$root/stderr.log"; then
+  pass "a legacy plugin-root install is named to the operator"
+else
+  fail "a legacy install is left silently on disk" "$(cat "$root/stderr.log")"
+fi
+if [ -d "$root/node_modules/zod" ]; then
+  pass "the legacy install is reported, never deleted"
+else
+  fail "the launcher deleted a tree a pre-upgrade session may still be serving from"
 fi
 
 # The identity must be published BEFORE the completion marker, or a tree can
@@ -1104,7 +1228,7 @@ fi
 # on the bare name matched that instead, which made this assertion vacuous
 # (a deliberate swap did not fail it).
 id_line=$(grep -n '>"\$IDENTITY_FILE"' "$SRC" | head -1 | cut -d: -f1)
-marker_line=$(grep -n 'fingerprint >"\$MARKER"' "$SRC" | head -1 | cut -d: -f1)
+marker_line=$(grep -n '>"\$MARKER"' "$SRC" | head -1 | cut -d: -f1)
 if [ -n "$id_line" ] && [ -n "$marker_line" ] && [ "$id_line" -lt "$marker_line" ]; then
   pass "the identity record is written before the completion marker"
 else
@@ -1118,7 +1242,7 @@ echo "=== waiters leave as soon as the tree is complete ==="
 # 2s tick to take a lock it no longer needed — roughly one polling interval per
 # waiter on a cold start (codex P2). They must re-check and leave instead.
 root=$(fake_root fastwait)
-rm -f "$root/dist/index.js"
+rm -f "$(rt "$root")/dist/index.js"
 FW_BIN="$TMP_ROOT/fastwait-bin"
 sanitized_bin "$FW_BIN" shasum
 cat >"$FW_BIN/npm" <<'STUB'
@@ -1151,12 +1275,13 @@ else
 fi
 
 
-# The probe must CAPTURE lsof's output before matching it. Piping `lsof` into
-# `grep -q`/`awk` is the obvious spelling and is wrong under `pipefail`: the
-# matcher exits on the first hit, lsof takes SIGPIPE, and the pipeline reports
-# failure — so a positive detection is discarded. It depends on how much lsof
-# has written, so it fails intermittently, and it fails in the direction that
-# calls an in-use cache safe to delete.
+# The probe must CAPTURE its process listing before matching it. Piping `ps`
+# (or `lsof`, which this probe used before GH-1844) straight into `grep -q`/
+# `awk` is the obvious spelling and is wrong under `pipefail`: the matcher
+# exits on the first hit, the producer takes SIGPIPE, and the pipeline reports
+# failure — so a positive detection is discarded. It depends on how much has
+# been written, so it fails intermittently, and it fails in the direction that
+# calls an in-use tree safe to rebuild.
 #
 # This is a STRUCTURAL check, deliberately: the behaviour is timing-dependent,
 # so no assertion catches it reliably. Reverting the fix does NOT fail the
@@ -1166,11 +1291,11 @@ fi
 # strip them first. Captured rather than piped, for the same reason the code
 # under test is.
 src_code=$(grep -v '^[[:space:]]*#' "$SRC")
-if grep -qE 'lsof[^|]*\|[[:space:]]*(grep|awk)' <<<"$src_code"; then
-  fail "lsof is piped straight into a matcher — a SIGPIPE under pipefail discards the match" \
-    "$(grep -nE 'lsof[^|]*\|' "$SRC")"
+if grep -qE '(lsof|ps -eo)[^|]*\|[[:space:]]*(grep|awk)' <<<"$src_code"; then
+  fail "the process listing is piped straight into a matcher — a SIGPIPE under pipefail discards the match" \
+    "$(grep -nE '(lsof|ps -eo)[^|]*\|' "$SRC")"
 else
-  pass "lsof output is captured before matching (no pipefail/SIGPIPE hazard)"
+  pass "the process listing is captured before matching (no pipefail/SIGPIPE hazard)"
 fi
 
 echo "=== concurrent launchers on a cold tree: exactly one bootstrap ==="
@@ -1180,7 +1305,7 @@ echo "=== concurrent launchers on a cold tree: exactly one bootstrap ==="
 # not one-per-session. Counting total `npm ci` runs (not "a winner emerged")
 # is deliberate: sequential duplicates are a failure too.
 root=$(fake_root concurrent)
-rm -f "$root/dist/index.js"
+rm -f "$(rt "$root")/dist/index.js"
 
 CC_BIN="$TMP_ROOT/concurrent-bin"
 sanitized_bin "$CC_BIN" shasum
@@ -1220,21 +1345,21 @@ else
     "$(sort "$CC_LOG")"
 fi
 
-if [ -f "$root/.bootstrap-complete" ]; then
+if [ -f "$(rt "$root")/.bootstrap-complete" ]; then
   pass "the single winner completed the bootstrap"
 else
   fail "no winner completed the bootstrap" "$(tail -5 "$root/concurrent.stderr" 2>/dev/null)"
 fi
 
 # The lock must be gone afterwards, or the next cold start wedges for nothing.
-if [ ! -d "$root/.bootstrap.lock" ]; then
+if [ ! -d "$(rt "$root")/.bootstrap.lock" ]; then
   pass "the lock is released after a successful bootstrap"
 else
   fail "the lock survived a clean run — every later launch would time out"
 fi
 
 # Everyone else must have gone on to serve, not failed.
-served=$(grep -c 'node dist/index.js' "$CC_LOG" 2>/dev/null) || true
+served=$(grep -cE "node .*/dist/index\\.js" "$CC_LOG" 2>/dev/null) || true
 if [ "${served:-0}" -ge $((WAITERS - 1)) ]; then
   pass "the other $((WAITERS - 1)) launchers went on to exec the server"
 else
