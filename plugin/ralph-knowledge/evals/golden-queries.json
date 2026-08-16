@@ -47,8 +47,8 @@
     },
     {
       "n": 8,
-      "query": "landcrawler permit raw data migration hardening",
-      "expectedSubstrings": ["2026-04-24-landcrawler-backend-hardening-postmortem"],
+      "query": "acme-crawler permit raw data migration hardening",
+      "expectedSubstrings": ["2026-04-24-acme-crawler-backend-hardening-postmortem"],
       "type": "specific-keyword"
     },
     {
@@ -96,7 +96,7 @@
     {
       "n": 16,
       "query": "postmortem on database migration failures in scraper backend",
-      "expectedSubstrings": ["2026-04-24-landcrawler-backend-hardening-postmortem"],
+      "expectedSubstrings": ["2026-04-24-acme-crawler-backend-hardening-postmortem"],
       "type": "mixed"
     }
   ]

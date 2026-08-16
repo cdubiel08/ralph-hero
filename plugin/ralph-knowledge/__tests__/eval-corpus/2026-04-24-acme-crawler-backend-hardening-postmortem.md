@@ -1,25 +1,25 @@
 ---
 date: 2026-04-24
 researcher: claude
-source_repository: landcrawler-ai
+source_repository: acme-crawler
 host_repository: ralph-hero
-topic: "Why LandCrawler backend hardening is struggling — a post-mortem of 14 days of fire-fighting"
-tags: [postmortem, ralph-hero, autonomous-loop, hardening, observability, firefighting, xs-constraint, plan-iteration, landcrawler]
+topic: "Why AcmeCrawler backend hardening is struggling — a post-mortem of 14 days of fire-fighting"
+tags: [postmortem, ralph-hero, autonomous-loop, hardening, observability, firefighting, xs-constraint, plan-iteration, acme-crawler]
 status: complete
 type: research
 last_updated: 2026-04-24
 last_updated_by: claude
 ---
 
-# Post-mortem: Why LandCrawler backend hardening is struggling
+# Post-mortem: Why AcmeCrawler backend hardening is struggling
 
 ## Why this lives in ralph-hero/thoughts
 
-The subject matter is LandCrawler's ELT pipeline, but the **root cause** is a structural property of the ralph-hero autonomous loop — specifically, the XS/Small ticket constraint biases the system against the medium-effort, multi-file infrastructure work that prevents whole classes of bug. This doc is preserved here so it can inform future ralph-hero design decisions (loop sizing, plan iteration cadence, firebreak scheduling).
+The subject matter is AcmeCrawler's ELT pipeline, but the **root cause** is a structural property of the ralph-hero autonomous loop — specifically, the XS/Small ticket constraint biases the system against the medium-effort, multi-file infrastructure work that prevents whole classes of bug. This doc is preserved here so it can inform future ralph-hero design decisions (loop sizing, plan iteration cadence, firebreak scheduling).
 
 ## Context
 
-Triggered by a user prompt in landcrawler-ai on 2026-04-24 after ~7 days of intensive backend hardening work that the user described as "still struggling." The investigation spanned:
+Triggered by a user prompt in acme-crawler on 2026-04-24 after ~7 days of intensive backend hardening work that the user described as "still struggling." The investigation spanned:
 
 - Six in-flight or recent plan/research docs in `thoughts/shared/plans|research/` covering ELT pipeline reliability (GH-496, GH-527, GH-547, GH-552, GH-578, GH-582, GH-584)
 - 14 days of git history (~70 commits) across `src/elt/`, `src/extractors/texas/`, `terraform/pipeline/`, `terraform/monitoring/`, `alembic/versions/`
@@ -119,7 +119,7 @@ Six fixes in mid-April, all caused by missing `src/` directories, base image mis
 | `43af5c5d` | — | Playwright reinstall failed because venv symlink broken |
 | `c075ef9d` | — | Base image mismatch broke venv symlinks |
 | `f829df68` | — | Missing `src/models`, `src/services`, `src/pipelines` → import failures at runtime |
-| `816efb42` | — | Missing `src/landcrawler_crawlers` defeated lazy import fallback |
+| `816efb42` | — | Missing `src/acme_crawlers` defeated lazy import fallback |
 | `db7f599a` | GH-497 | Chromium not in image |
 
 **Each fix is individually surgical. Collectively they reveal one architectural gap**: the Dockerfile drifted for 3 months without validation. A single CI step (`docker build ... && docker run <image> python -c "from src.extractors.texas.p5_downloader import *; from src.elt.services.pipeline_dispatcher import *"`) would have caught all six. No ticket proposes one.
@@ -140,7 +140,7 @@ The 31:22:27 ratio shows research is generating ~40% more documents than plans c
 
 ## Root cause: XS/S constraint structurally biases against firebreaks
 
-LandCrawler's `CLAUDE.md` documents the autonomous loop with this constraint:
+AcmeCrawler's `CLAUDE.md` documents the autonomous loop with this constraint:
 
 > **Constraints**: XS/Small tickets only, Linear as source of truth.
 
@@ -154,7 +154,7 @@ W2.1 is a Medium at minimum:
 
 **The autonomous loop cannot pick this up.** Each ralph-loop iteration scans the backlog and reaches for the freshest XS ticket — which is always the freshest fire (today: GH-578 alembic Cloud SQL `?host=`; yesterday: GH-584 GoAnywhere ZIP; the day before: GH-582 MFT reliability). The system is locally optimal at every step and globally stuck.
 
-This is a **ralph-hero design feedback signal**, not a LandCrawler-only issue. Other portfolios will hit the same wall when their structural-fix work doesn't fit the slot.
+This is a **ralph-hero design feedback signal**, not an AcmeCrawler-only issue. Other portfolios will hit the same wall when their structural-fix work doesn't fit the slot.
 
 ## What IS working — preserve this
 
@@ -181,7 +181,7 @@ This is a **ralph-hero design feedback signal**, not a LandCrawler-only issue. O
 
 ## References
 
-### LandCrawler files cited
+### AcmeCrawler files cited
 - `src/elt/main.py:25` — `logging.basicConfig`, no `init_fastapi`
 - `src/observability/instrumentation/fastapi.py` — exports `instrument_fastapi`, unused by ELT
 - `terraform/monitoring/metrics.tf` — log-based metrics filtering on `jsonPayload.*` that never exists
@@ -189,14 +189,14 @@ This is a **ralph-hero design feedback signal**, not a LandCrawler-only issue. O
 - `src/extractors/texas/p5_downloader.py` — current state: 2 nested retry layers, 4 timeout escalations, ZIP detection
 - `src/elt/CLAUDE.md` — ELT architecture docs
 
-### LandCrawler thoughts cited
+### AcmeCrawler thoughts cited
 - `thoughts/shared/research/2026-04-12-elt-pipeline-quality-audit-monitoring.md` — names W2.1 as highest-leverage gap
 - `thoughts/shared/plans/2026-04-13-group-GH-0547-data-platform-quality-remediation.md` — plan-of-plans, W2.1 critical-path
 - `thoughts/shared/plans/2026-04-13-GH-0552-retrigger-stale-pipelines.md` — operational re-trigger
 - `thoughts/shared/plans/2026-04-12-GH-0527-fix-elt-verification-gaps.md` — UIC TEXT widening + freshness SQL
 - `thoughts/shared/plans/2026-04-21-GH-0582-mft-scraper-reliability-patch.md` — MFT defense-in-depth
 
-### Commits referenced (LandCrawler main, since 2026-04-10)
+### Commits referenced (AcmeCrawler main, since 2026-04-10)
 - MFT chain: `0b45b667` (GH-555), `d5e3a45e` (GH-570), `a495cb79` (GH-571), `7fd14be9` (GH-582), `b0705dc8` (GH-584)
 - Docker fixes: `aa6df399`, `43af5c5d`, `c075ef9d`, `f829df68`, `816efb42`, `db7f599a` (GH-497)
 - ELT structural: `197470de` (GH-535 CRJ), `860ae2bd` (GH-505 per-MV), `3931f6b1` (GH-539 background ack)
