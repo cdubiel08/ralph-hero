@@ -17,7 +17,7 @@ Backlog → In Progress → In Review → Done
 - **`ralph/scripts/board`** is the sole board mutation path: transition legality, claims with TTL (no `--force` anywhere — a stale claim is the only override), a scope gate refusing writes from the wrong repo, and a `doctor` invariant sweep. ~1,100 lines of TypeScript with a vitest contract suite, shipped inside the plugin — no npm dependency.
 - **`/ralph:work`** drives one issue end-to-end under an 8-rule contract (claim before work, board truthful, findings outlive the transcript, gates are run not predicted, …). Frontier-model bookends dispatch in-session on large units only.
 - **`/ralph:board`** is the human surface: orientation, intake, answering blocked items.
-- **`state-guard.yml`** corrects drift server-side (issue events + a 15-minute reconciler), commenting every correction. A weekly `doctor.yml` sweep makes silence impossible.
+- **`state-guard.yml`** corrects drift server-side (issue events + a reconciler cron configured at 15 minutes, which GitHub treats as a ceiling — see `ralph/README.md`), commenting every correction. A weekly `doctor.yml` sweep makes silence impossible.
 - **The loop** is a scheduler-owned `tick.sh`: one issue per tick, worktree-per-job, hard timeout, subscription-billing guard, opt-in via `install-loop.sh --enable`. No sentinels, no self-scheduling sessions.
 
 Human checkpoints: anything the contract doesn't grant (destructive ops, spend, out-of-scope work) lands in **Human Needed** with the exact decision needed as a comment; `CHANGES_REQUESTED` on a PR always blocks merge.
