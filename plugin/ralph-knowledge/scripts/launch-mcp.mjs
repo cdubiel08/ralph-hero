@@ -242,15 +242,47 @@ const PS_LIST = IS_WINDOWS
     'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }']]
   : ['ps', ['-eo', 'pid=,args=']];
 
-function probeAvailable() {
-  if (fs.existsSync('/proc')) return true;
-  const r = spawnSync(PS_LIST[0], IS_WINDOWS ? ['-NoProfile', '-Command', '$null'] : ['-o', 'pid='], {
-    stdio: 'ignore',
-  });
-  return !r.error && r.status === 0;
+// The process listing, or NULL when it could not be taken.
+//
+// One read answers both questions the rebuild path asks — "can this host be
+// probed at all" and "is anything serving from this tree" — because splitting
+// them is how a fail-open hole appears: a probe-availability check that merely
+// proves the *lister* runs will pass while the listing itself returns nothing,
+// and an empty listing is then indistinguishable from a proven-idle tree
+// (codex P2, this PR — reachable on Windows where PowerShell starts but CIM is
+// unavailable, and on any host where `ps` is present but refuses). Null is the
+// only honest answer to a failed read, and every caller must handle it.
+//
+// An EMPTY successful listing is also null: a process table that contains not
+// even this process was not read.
+function readProcessList() {
+  if (fs.existsSync('/proc')) {
+    let pids;
+    try { pids = fs.readdirSync('/proc'); } catch { return null; }
+    const out = [];
+    for (const pid of pids) {
+      if (!/^\d+$/.test(pid)) continue;
+      try { out.push({ pid: Number(pid), cmd: fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ') }); } catch { /* exited */ }
+    }
+    return out.length ? out : null;
+  }
+
+  // Captured in full before matching. The bash predecessor had to say this out
+  // loud — piping `ps` into an early-exiting matcher loses a positive detection
+  // to SIGPIPE under `pipefail`, and it fails in the direction that calls an
+  // in-use tree safe to rebuild. spawnSync captures by construction, so the
+  // hazard is structurally absent rather than avoided by care.
+  const r = spawnSync(PS_LIST[0], PS_LIST[1], { encoding: 'utf8' });
+  if (r.error || r.status !== 0 || !r.stdout) return null;
+  const out = [];
+  for (const line of r.stdout.split('\n')) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (m) out.push({ pid: Number(m[1]), cmd: m[2] });
+  }
+  return out.length ? out : null;
 }
 
-function serverRunningIn(dir) {
+function serverRunningIn(procs, dir) {
   // TWO spellings, because argv carries the path as the launcher wrote it while
   // a realpath resolves symlinks — on macOS /var is a symlink to /private/var,
   // so a physical-only match misses every server started through the ordinary
@@ -267,29 +299,9 @@ function serverRunningIn(dir) {
     return false;
   };
 
-  if (fs.existsSync('/proc')) {
-    let pids;
-    try { pids = fs.readdirSync('/proc'); } catch { return false; }
-    for (const pid of pids) {
-      if (!/^\d+$/.test(pid) || Number(pid) === process.pid) continue;
-      let cmd;
-      try { cmd = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8'); } catch { continue; }
-      if (hit(cmd.replace(/\0/g, ' '))) return true;
-    }
-    return false;
-  }
-
-  // Captured in full before matching. The bash predecessor had to say this out
-  // loud — piping `ps` into an early-exiting matcher loses a positive detection
-  // to SIGPIPE under `pipefail`, and it fails in the direction that calls an
-  // in-use tree safe to rebuild. spawnSync captures by construction, so the
-  // hazard is structurally absent rather than avoided by care.
-  const r = spawnSync(PS_LIST[0], PS_LIST[1], { encoding: 'utf8' });
-  if (r.status !== 0 || !r.stdout) return false;
-  for (const line of r.stdout.split('\n')) {
-    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
-    if (!m || Number(m[1]) === process.pid) continue;
-    if (hit(m[2])) return true;
+  for (const p of procs) {
+    if (p.pid === process.pid) continue;
+    if (hit(p.cmd)) return true;
   }
   return false;
 }
@@ -361,9 +373,34 @@ function releaseLock() {
 // thread with spawnSync. A synchronous bootstrap would defer every handler until
 // after the last step, which is precisely the "interrupted bootstrap claims
 // completion" state the marker exists to prevent.
+//
+// The lock is released only once the bootstrap child is GONE (codex P2, this
+// PR). Killing is asynchronous: releasing immediately hands the lock to a
+// relaunch while `npm ci` — or a grandchild such as `tsc`, which was never
+// signalled directly — is still mutating the same tree, which is the concurrent
+// destructive install the lock exists to prevent.
+//
+// So the whole process GROUP is signalled (bootstrap children are spawned
+// detached for exactly this reason; Windows has no group to signal, so the
+// child alone is), and the handler then awaits the child's exit before letting
+// go. A second signal during that wait exits at once — an operator pressing
+// Ctrl-C twice means it, and by then the lock is the smaller problem.
+let signalled = false;
 function onFatalSignal(sig, code) {
-  process.on(sig, () => {
-    if (activeChild) { try { activeChild.kill(sig); } catch { /* already gone */ } }
+  process.on(sig, async () => {
+    if (signalled) process.exit(code);
+    signalled = true;
+
+    const child = activeChild;
+    if (child) {
+      try {
+        if (IS_WINDOWS || child.pid === undefined) child.kill(sig);
+        else process.kill(-child.pid, sig);
+      } catch { /* already gone */ }
+      await new Promise((r) => (child.exitCode === null && child.signalCode === null
+        ? child.once('close', r)
+        : r()));
+    }
     releaseLock();
     process.exit(code);
   });
@@ -375,9 +412,15 @@ function onFatalSignal(sig, code) {
 // as `npm.cmd` there, and since Node 20 spawn refuses to resolve a `.cmd`
 // without a shell. Nothing user-supplied reaches this call, so there is nothing
 // for the shell to reinterpret.
+//
+// `detached` on POSIX puts each bootstrap step in its own process group, so the
+// signal handler above can reach the grandchildren npm spawns (`tsc` under
+// `npm run build`) rather than orphaning them onto the tree it is abandoning.
 function run(cmd, args, cwd) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd, stdio: ['ignore', 2, 2], shell: IS_WINDOWS });
+    const child = spawn(cmd, args, {
+      cwd, stdio: ['ignore', 2, 2], shell: IS_WINDOWS, detached: !IS_WINDOWS,
+    });
     activeChild = child;
     child.on('error', (e) => { activeChild = null; reject(e); });
     child.on('close', (code, signal) => {
@@ -526,7 +569,9 @@ async function maybeBootstrap() {
       // server is still resolving lazy imports out of node_modules. Failing
       // loudly here beats the silent alternative, where that server dies later
       // with nothing to connect it to this rebuild.
-      if (treeExists && probeAvailable() && serverRunningIn(RUNTIME_ROOT)) {
+      const procs = readProcessList();
+
+      if (treeExists && procs && serverRunningIn(procs, RUNTIME_ROOT)) {
         log(`refusing to rebuild: a server is still running out of ${RUNTIME_ROOT}.`);
         log('Rebuilding would replace node_modules underneath it.');
         log('close every session using this runtime, then relaunch.');
@@ -537,7 +582,7 @@ async function maybeBootstrap() {
       // Unknown must not read as "safe": where the process table cannot be read
       // at all we cannot prove the tree is idle, so an EXISTING tree is refused
       // there too and the operator is told why.
-      if (treeExists && !probeAvailable()) {
+      if (treeExists && !procs) {
         log('refusing to rebuild: this host cannot be probed for running');
         log(`processes, so a server serving out of ${RUNTIME_ROOT} cannot be`);
         log('ruled out, and rebuilding would replace node_modules underneath it.');

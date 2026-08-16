@@ -726,6 +726,29 @@ else
   pass "the lock's age is never consulted"
 fi
 
+# A signal must not release the lock while the bootstrap child is still alive
+# (codex P2, PR #2036). Killing is asynchronous, so releasing immediately hands
+# the lock to a relaunch while `npm ci` — or a grandchild such as `tsc`, never
+# signalled directly — is still mutating the same tree. The handler awaits the
+# child's exit first, and the children are spawned detached so the whole process
+# group can be reached.
+if node -e "
+const s = require('fs').readFileSync('$SRC','utf8');
+const h = s.slice(s.indexOf('function onFatalSignal'), s.indexOf('// --- bootstrap'));
+process.exit(h.indexOf('await new Promise') < h.indexOf('releaseLock()') ? 0 : 1);
+"; then
+  pass "a signal awaits the bootstrap child before releasing the lock"
+else
+  fail "the lock is released before the killed child is gone — a relaunch could install concurrently" \
+    "$(sed -n '/function onFatalSignal/,/^}/p' "$SRC")"
+fi
+if grep -q 'detached: !IS_WINDOWS' "$SRC"; then
+  pass "bootstrap children are detached, so the grandchildren can be signalled"
+else
+  fail "bootstrap children share this process group — tsc would outlive the signal" \
+    "$(grep -n 'spawn(cmd' "$SRC")"
+fi
+
 # The owner file must actually be written, or a timed-out waiter can name nobody.
 if grep -q 'writeLockOwner' "$SRC"; then
   pass "the lock holder records an owner identity"
@@ -1280,6 +1303,18 @@ if grep -qE '(lsof|ps -eo|ps)[^|]*\|[[:space:]]*(grep|awk)' <<<"$src_code"; then
     "$(grep -nE '(lsof|ps)[^|]*\|' "$SRC")"
 else
   pass "the process listing is captured before matching (no pipefail/SIGPIPE hazard)"
+fi
+
+# A listing that could not be taken must be UNKNOWN, never "nobody is there"
+# (codex P2, PR #2036). Splitting "can this host be probed" from "what is
+# running" is how that hole appears: a probe-availability check that only proves
+# the lister STARTS passes while the listing itself returns nothing, and the
+# rebuild then proceeds under a live server. One read answers both.
+if grep -q 'return null' "$SRC" && ! grep -q 'function probeAvailable' "$SRC"; then
+  pass "a failed process listing is unknown, not an empty process table"
+else
+  fail "the probe can report an unreadable listing as an idle tree" \
+    "$(grep -n 'probeAvailable\|readProcessList' "$SRC")"
 fi
 
 echo "=== concurrent launchers on a cold tree: exactly one bootstrap ==="
