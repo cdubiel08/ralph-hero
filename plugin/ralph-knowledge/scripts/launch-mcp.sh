@@ -25,6 +25,10 @@
 #     package-lock.json + the Node major version. It is deleted before the
 #     install and written only after every step succeeds, so an interrupted
 #     or half-updated tree re-bootstraps instead of exec'ing a stale build.
+#   * an inter-process mkdir LOCK, so exactly one process runs the
+#     destructive `npm ci` while the others wait and then re-check. The lock is
+#     never taken from its holder — see the note on reclamation below.
+#
 # The bootstrap is BOUNDED, not unbounded (GH-1850). It measures ~4.5s cold on
 # a normal link, but 155MB has to arrive first and a slow link can push that
 # past Claude Code's 30s MCP startup deadline — at which point the server is
@@ -41,10 +45,7 @@
 # warm cache rather than from nothing. Correctness is unaffected either way: the
 # marker is removed before the install and written only after it succeeds, so an
 # interrupted tree re-bootstraps rather than being served.
-#
-#   * an inter-process mkdir LOCK, so exactly one process runs the
-#     destructive `npm ci` while the others wait and then re-check. The lock is
-#     never taken from its holder — see the note on reclamation below.
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

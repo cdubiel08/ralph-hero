@@ -689,8 +689,17 @@ echo "=== signal handlers disarm EXIT before removing their own lock ==="
 # Otherwise the handler removes the lock, then `exit` runs the still-armed EXIT
 # trap and removes the pathname AGAIN — deleting whatever waiter acquired it in
 # between, which lets a third waiter bootstrap concurrently.
-if grep -cE "trap 'trap - EXIT; rm -rf \"\\\$LOCK\"; exit [0-9]+' (INT|TERM)" "$SRC" | grep -q '^2$'; then
-  pass "both INT and TERM disarm EXIT before removing the lock"
+# Stated as "every such handler", not "there are exactly two" (GH-1850). The
+# count was a proxy for the invariant while the launcher had a single lock
+# owner; backgrounding the bootstrap gave the subshell its own handler pair, and
+# a count test then fails on a change that upholds the rule perfectly. What must
+# hold is a property of each handler, so that is what is asserted — and it needs
+# no edit the next time a handler is added.
+lock_signal_traps=$(grep -cE "trap '[^']*rm -rf \"\\\$LOCK\"[^']*' (INT|TERM)" "$SRC" || true)
+lock_signal_traps_disarming=$(grep -cE "trap 'trap - EXIT; rm -rf \"\\\$LOCK\"; exit [0-9]+' (INT|TERM)" "$SRC" || true)
+if [ "$lock_signal_traps" -ge 2 ] \
+  && [ "$lock_signal_traps" = "$lock_signal_traps_disarming" ]; then
+  pass "every INT/TERM handler ($lock_signal_traps) disarms EXIT before removing the lock"
 else
   fail "a signal handler removes the lock with EXIT still armed (double removal)" \
     "$(grep -n 'trap' "$SRC")"
@@ -701,6 +710,28 @@ if grep -qE "trap 'rm -rf \"\\\$LOCK\"; exit [0-9]+'" "$SRC"; then
 else
   pass "no signal handler removes the lock with EXIT armed"
 fi
+echo "=== run_bootstrap is never called in a status-capturing context (GH-1850) ==="
+
+# `if run_bootstrap`, `run_bootstrap || x`, `run_bootstrap && x` and
+# `$(run_bootstrap)` all DISABLE errexit for the function they capture — so the
+# fail-fast that stops the bootstrap at its first failed step stops applying,
+# and a failed `npm ci` runs on through `npm run build`, the prune, and the
+# completion marker. That is exactly the "interrupted bootstrap claims
+# completion" state the marker exists to prevent, and it is a one-character
+# refactor away at all times. The status must be published from the EXIT trap
+# instead, which reads $? with errexit still in force.
+# Comments are stripped FIRST: the rule is explained in the launcher in the very
+# words it forbids, and grep -n's line-number prefix means a `^#` filter applied
+# afterwards never matches the indentation it was written for.
+if sed 's/#.*//' "$SRC" \
+  | grep -nE '(if|while|until|\|\||&&|\$\()[[:space:]]*run_bootstrap|run_bootstrap[[:space:]]*(\|\||&&)' \
+  | grep -q .; then
+  fail "run_bootstrap is captured, which silently disables its errexit fail-fast" \
+    "$(grep -nE 'run_bootstrap' "$SRC")"
+else
+  pass "run_bootstrap is only ever called as a plain command"
+fi
+
 if grep -q 'find "\$LOCK"' "$SRC"; then
   fail "a find(1)-based lock-age probe is still present" "$(grep -n 'find "\$LOCK"' "$SRC")"
 else
