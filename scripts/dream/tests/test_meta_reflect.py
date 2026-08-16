@@ -412,3 +412,86 @@ class TestParaphraseAcrossRuns:
         assert meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=second
         ) == 1
+
+
+# ---------------------------------------------------------------------------
+# GH-2040: durable record of what was suppressed, and how often
+# ---------------------------------------------------------------------------
+
+
+def _suppressed(wiki: Path) -> list[dict]:
+    path = wiki / meta_reflect.SUPPRESSED_FILENAME
+    if not path.exists():
+        return []
+    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+
+
+class TestSuppressionLog:
+    def test_hash_hit_on_a_staged_candidate_is_recorded(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        meta_reflect.stage_candidates([{"axiom": "A1"}], wiki, now=NOW)
+        assert meta_reflect.stage_candidates([{"axiom": "a1  "}], wiki, now=NOW) == 0
+        recs = _suppressed(wiki)
+        assert [(r["axiom"], r["matched"], r["seen_count"]) for r in recs] == [("a1", "staged", 1)]
+
+    def test_names_the_set_that_matched(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "e.md").write_text("# P1\n", encoding="utf-8")
+        (wiki / "_rejected.jsonl").write_text(json.dumps({"claim": "R1"}) + "\n", encoding="utf-8")
+        meta_reflect.stage_candidates([{"axiom": "P1"}, {"axiom": "R1"}], wiki, now=NOW)
+        assert {r["axiom"]: r["matched"] for r in _suppressed(wiki)} == {
+            "P1": "promoted",
+            "R1": "rejected",
+        }
+
+    def test_a_repeat_inside_one_run_is_recorded_as_batch(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        assert meta_reflect.stage_candidates([{"axiom": "A"}, {"axiom": "a"}], wiki, now=NOW) == 1
+        assert [r["matched"] for r in _suppressed(wiki)] == ["batch"]
+
+    def test_seen_count_accumulates_across_runs(self, tmp_path: Path) -> None:
+        """The re-stage count #1965 needs: churn readable off the file itself."""
+        wiki = tmp_path / "wiki"
+        meta_reflect.stage_candidates([{"axiom": "A1"}], wiki, now=NOW)
+        for _ in range(3):
+            meta_reflect.stage_candidates([{"axiom": "A1"}], wiki, now=NOW)
+        assert [r["seen_count"] for r in _suppressed(wiki)] == [1, 2, 3]
+
+    def test_staging_a_new_axiom_writes_no_suppression(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        assert meta_reflect.stage_candidates([{"axiom": "A1"}], wiki, now=NOW) == 1
+        assert _suppressed(wiki) == []
+
+    def test_the_log_is_append_only_and_never_blocks_staging(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        # A directory where the log file must go: every write fails.
+        (wiki / meta_reflect.SUPPRESSED_FILENAME).mkdir()
+        assert meta_reflect.stage_candidates([{"axiom": "A1"}], wiki, now=NOW) == 1
+        assert meta_reflect.stage_candidates([{"axiom": "A1"}, {"axiom": "A2"}], wiki, now=NOW) == 1
+
+    def test_a_paraphrase_drop_is_recorded(self, tmp_path: Path) -> None:
+        db = tmp_path / "k.db"
+        _seed(db, [
+            {"id": f"r{i}", "date": "2026-06-25T00:00:00+00:00", "content": f"reflection {i}"}
+            for i in range(5)
+        ])
+        wiki = tmp_path / "wiki"
+        first = _scripted_post([{"axiom": "Empty output is never evidence"}], [])
+        meta_reflect.run_meta_reflect(
+            db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=first
+        )
+        second = _scripted_post([{"axiom": "Silence proves nothing about an empty result"}], [0])
+        assert meta_reflect.run_meta_reflect(
+            db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=second
+        ) == 0
+        recs = _suppressed(wiki)
+        assert [r["matched"] for r in recs] == ["paraphrase"]
+        assert recs[0]["axiom"] == "Silence proves nothing about an empty result"
+        assert recs[0]["suppressed_at"].startswith("2026-")
+
+    def test_behavior_is_unchanged_when_nothing_is_suppressed(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        assert meta_reflect.log_suppressions(wiki, [], now=NOW) == 0
+        assert not wiki.exists()
