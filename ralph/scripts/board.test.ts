@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRANCH_KIND_CHARS } from "./contracts.js";
@@ -38,6 +38,8 @@ import {
   type ExecResult,
   fetchIssue,
   formatLocalHm,
+  type LeaseHold,
+  localSessionLease,
   ghGraphQL,
   instrumentQuery,
   COST_ALIAS,
@@ -4427,6 +4429,179 @@ describe("deliver-queue: classification (spec §4.2)", () => {
     });
     expect(calls).toHaveLength(0);
     expect(res.next).toMatchObject({ reason: "no-open-pr", pr: null });
+  });
+
+  // --- local session lease (GH-1929) ------------------------------------
+  const hold = (over: Partial<LeaseHold> = {}): LeaseHold => ({
+    session: "peer-session",
+    worktree: "/wt/feat-1-x",
+    since: "2026-07-31T11:00:00Z",
+    expiresAt: "2026-07-31T13:00:00.000Z",
+    ...over,
+  });
+  const classifyLease = (
+    cands: DeliverCandidate[],
+    lease: Parameters<typeof classifyDeliver>[5],
+  ) => classifyDeliver(cands, DELIVER_DEFAULTS, NOW, () => ({ verdict: "PASS", gate: null }), null, lease);
+
+  it("a held unit is refused ENTIRELY — surfaced as its own blocked row, never silently withheld", () => {
+    const res = classifyLease([cand(1)], () => hold());
+    expect(res.next).toBeNull();
+    expect(res.queue).toHaveLength(0);
+    expect(res.blocked).toHaveLength(1);
+    expect(res.blocked[0]).toMatchObject({
+      number: 1,
+      reason: "local-session-active",
+      lease: hold(),
+    });
+  });
+
+  it("the block is self-clearing: windowExpiresAt is the lock's own TTL expiry, not null", () => {
+    const res = classifyLease([cand(1)], () => hold({ expiresAt: "2026-07-31T13:30:00.000Z" }));
+    // Unlike convergence-stalled, whose remedy is a human's, this row needs
+    // nobody: the lock ages out on RALPH_LOCK_TTL_MIN.
+    expect(res.blocked[0].windowExpiresAt).toBe("2026-07-31T13:30:00.000Z");
+  });
+
+  it("close-outs are held too — the holder is the session that should close its own merged PR", () => {
+    const res = classifyLease([cand(1, { prs: [dpr(101, { state: "MERGED" })] })], () => hold());
+    expect(res.next).toBeNull();
+    expect(res.blocked[0]).toMatchObject({ number: 1, reason: "local-session-active", pr: null });
+  });
+
+  it("a not-evaluated lease never invents a block: a null probe leaves the queue as it was", () => {
+    expect(classifyLease([cand(1)], null).next).toMatchObject({ number: 1, reason: "actionable" });
+  });
+
+  it("an empty probe is not a block either — only a real hold blocks", () => {
+    expect(classifyLease([cand(1)], () => null).next).toMatchObject({ number: 1, reason: "actionable" });
+  });
+
+  it("blocks only the held unit — an unheld sibling still reaches the queue", () => {
+    const res = classifyLease([cand(1), cand(2)], (n) => (n === 1 ? hold() : null));
+    expect(res.next).toMatchObject({ number: 2, reason: "actionable" });
+    expect(res.blocked.map((b) => b.number)).toEqual([1]);
+  });
+
+  it("the lease is checked BEFORE the merge-gate probe — a held unit costs no dry run", () => {
+    const probed: number[] = [];
+    const res = classifyDeliver(
+      [cand(1)],
+      DELIVER_DEFAULTS,
+      NOW,
+      (pr) => {
+        probed.push(pr);
+        return { verdict: "PASS", gate: null };
+      },
+      null,
+      () => hold(),
+    );
+    expect(probed).toHaveLength(0);
+    expect(res.blocked[0].reason).toBe("local-session-active");
+  });
+});
+
+describe("localSessionLease — reading the GH-1956 worktree lock as a lease (GH-1929)", () => {
+  const TTL = 120;
+  const NOW_MS = Date.parse("2026-07-31T12:00:00Z");
+  let dir: string;
+
+  const ctxFor = (id: string | null): Parameters<typeof localSessionLease>[0] =>
+    ({
+      session: { id, dir },
+      cfg: { lockTtlMin: TTL },
+      now: () => new Date(NOW_MS),
+    }) as unknown as Parameters<typeof localSessionLease>[0];
+
+  const writeLock = (
+    file: string,
+    body: Record<string, unknown>,
+    ageMin = 0,
+  ): void => {
+    const p = join(dir, file);
+    writeFileSync(p, JSON.stringify(body));
+    const t = new Date(NOW_MS - ageMin * 60_000);
+    utimesSync(p, t, t);
+  };
+  const lock = (issue: number, over: Record<string, unknown> = {}) => ({
+    session: "peer",
+    issue,
+    worktree: "/wt/peer",
+    since: "2026-07-31T11:00:00Z",
+    ...over,
+  });
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "ralph-lease-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a fresh foreign lock is a hold, and expiresAt is mtime + TTL", () => {
+    writeLock("wt-1929-0123456789abcdef.json", lock(1929), 30);
+    const probe = localSessionLease(ctxFor("mine"))!;
+    expect(probe(1929)).toMatchObject({ session: "peer", worktree: "/wt/peer" });
+    // written 30 min ago, TTL 120 → clears 90 min from now
+    expect(probe(1929)!.expiresAt).toBe("2026-07-31T13:30:00.000Z");
+  });
+
+  it("an aged-out lock is not a hold — the same clock as the board claim", () => {
+    writeLock("wt-1929-0123456789abcdef.json", lock(1929), TTL + 1);
+    expect(localSessionLease(ctxFor("mine"))!(1929)).toBeNull();
+  });
+
+  it("our own lock is never a hold — a session is not racing itself", () => {
+    writeLock("wt-1929-0123456789abcdef.json", lock(1929, { session: "mine" }));
+    expect(localSessionLease(ctxFor("mine"))!(1929)).toBeNull();
+  });
+
+  it("the issue number is matched exactly — wt-19290 is not a hold on 1929", () => {
+    // The prefix-match trap GH-1996 hit on search's `head:` qualifier.
+    writeLock("wt-19290-0123456789abcdef.json", lock(19290));
+    const probe = localSessionLease(ctxFor("mine"))!;
+    expect(probe(1929)).toBeNull();
+    expect(probe(19290)).not.toBeNull();
+  });
+
+  it("ignores files that are not lock records — the session binding beside them is not a lease", () => {
+    writeFileSync(join(dir, "some-session-0123456789abcdef.json"), JSON.stringify({ issue: 1929 }));
+    writeFileSync(join(dir, "wt-1929-nothex.json"), JSON.stringify(lock(1929)));
+    expect(localSessionLease(ctxFor("mine"))!(1929)).toBeNull();
+  });
+
+  it("an unparseable record asserts nothing rather than throwing", () => {
+    writeFileSync(join(dir, "wt-1929-0123456789abcdef.json"), "{not json");
+    expect(localSessionLease(ctxFor("mine"))!(1929)).toBeNull();
+  });
+
+  it("two worktrees holding one unit: the LAST expiry wins — a row may not return while any session holds it", () => {
+    writeLock("wt-1929-aaaaaaaaaaaaaaaa.json", lock(1929, { worktree: "/wt/old" }), 100);
+    writeLock("wt-1929-bbbbbbbbbbbbbbbb.json", lock(1929, { worktree: "/wt/new" }), 10);
+    expect(localSessionLease(ctxFor("mine"))!(1929)!.worktree).toBe("/wt/new");
+  });
+
+  it("an unreadable sessions dir is NOT evaluated — null, never an empty probe", () => {
+    // The whole safety argument: "we could not read the lease" must not render
+    // as "no lease is held".
+    expect(localSessionLease(ctxFor("mine") && ({
+      session: { id: "mine", dir: join(dir, "does-not-exist") },
+      cfg: { lockTtlMin: TTL },
+      now: () => new Date(NOW_MS),
+    } as unknown as Parameters<typeof localSessionLease>[0]))).toBeNull();
+  });
+
+  it("no session dir at all is not evaluated", () => {
+    expect(
+      localSessionLease({ cfg: { lockTtlMin: TTL }, now: () => new Date(NOW_MS) } as unknown as Parameters<
+        typeof localSessionLease
+      >[0]),
+    ).toBeNull();
+  });
+
+  it("a session with no id still reads peers' locks — an unidentified reader excludes nothing", () => {
+    writeLock("wt-1929-0123456789abcdef.json", lock(1929));
+    expect(localSessionLease(ctxFor(null))!(1929)).not.toBeNull();
   });
 });
 
