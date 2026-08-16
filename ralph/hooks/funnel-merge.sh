@@ -18,7 +18,19 @@ CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) |
 # nothing, and refusing it makes this rail unable to be written about. Strip
 # quoted spans before matching; that can only under-redirect, which is the
 # safe direction for a courtesy rail.
-UNQUOTED=$(printf '%s' "$CMD" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
+# The stripper must see the WHOLE command as one string, not a line at a time
+# (GH-2057). `sed` is line-based, so a quoted span that spans newlines — which
+# is what every real `--body "..."` is — had its opening and closing quotes land
+# on different lines and matched nothing: the span survived stripping and any
+# `gh pr merge` inside it was refused as though it were being run. Observed on
+# GH-2057's own filing, where the issue body described this rail in backticks
+# inside a multi-line quoted argument and the rail refused the write.
+#
+# awk with the record separator set past anything a command contains reads the
+# input as a single record, so the same two patterns now match across newlines.
+# Backticks are deliberately NOT stripped: outside quotes they are command
+# substitution, which really does run what is inside them.
+UNQUOTED=$(printf '%s' "$CMD" | awk 'BEGIN{RS="\x01"} {gsub(/'"'"'[^'"'"']*'"'"'/,""); gsub(/"[^"]*"/,""); printf "%s", $0}')
 
 if [[ "$UNQUOTED" == *"gh pr merge"* && "$CMD" != *"scripts/merge-pr.sh"* ]]; then
   case " $CMD" in *" -R "* | *" --repo "* | *" --repo="*) exit 0 ;; esac

@@ -183,6 +183,7 @@ CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review
 ADVISORY_SH="${RALPH_ADVISORY_FINDINGS_SH:-$PROJECT_ROOT/scripts/advisory-findings.sh}"
 CONVERGENCE_SH="${RALPH_CONVERGENCE_SH:-$PROJECT_ROOT/scripts/review-convergence.sh}"
 LINKAGE_DRIFT_SH="${RALPH_LINKAGE_DRIFT_SH:-$PROJECT_ROOT/scripts/pr-linkage-drift.sh}"
+RULESET_CONTEXTS_SH="${RALPH_RULESET_CONTEXTS_SH:-$PROJECT_ROOT/scripts/ruleset-contexts.sh}"
 STALENESS_SH="${RALPH_REVIEW_STALENESS_SH:-$PROJECT_ROOT/scripts/review-staleness.sh}"
 # The "not evaluated" evidence value: review mode, an exempt author, or a PR
 # that is already closed. ok=false is inert wherever the ladder waives review.
@@ -828,6 +829,38 @@ gather() {
           else " | LINKAGE DRIFT — \(.summary). GitHub'"'"'s closing linkage is what the merge gate reads; the merge will fold nothing back into the board. Restore the keyword before merging"
           end' <<<"$drift")
         verdict="${verdict}${drift_line}"
+      fi
+      ;;
+  esac
+
+  # Required-but-not-produced ruleset contexts (GH-2057), on GATE-READY ONLY.
+  # Every gate here can pass while GitHub's ruleset still refuses the merge:
+  # required contexts are enumerated by literal name, so a diff that drops a
+  # matrix leg leaves a required check nothing will ever report (#2055 — MERGE
+  # GATE PASS, then "the base branch policy prohibits the merge").
+  #
+  # GATE-READY only, deliberately, unlike the two blocks above. This is the
+  # verdict that says act NOW, and it is the only one whose recommended next
+  # action GitHub can refuse. On GATE-YOURS attestation the answer would be
+  # noise by construction — `ralph-attestation` is required and unproduced
+  # until attest-pr.sh runs, which is precisely what that verdict already says.
+  #
+  # Silent when nothing is missing, and it changes no verdict: the refusal is
+  # GitHub's to make and all we owe the driver is the string instead of the
+  # opaque one. Fails open — see the script's own header.
+  case "$verdict" in
+    GATE-READY*)
+      if [ -x "$RULESET_CONTEXTS_SH" ]; then
+        local rules rules_line
+        rules=$("$RULESET_CONTEXTS_SH" "$PR" 2>/dev/null) || rules=''
+        printf '%s' "$rules" | jq -e 'type == "object"' >/dev/null 2>&1 \
+          || rules='{"ok":false,"count":0,"missing":[],"summary":"","detail":"ruleset-contexts.sh returned nothing usable"}'
+        rules_line=$(jq -r '
+          if .ok != true then " | required ruleset contexts NOT CHECKED (\(.detail))"
+          elif .count == 0 then ""
+          else " | REQUIRED CONTEXT NOT PRODUCED AT THIS HEAD — \(.summary). The branch ruleset requires it by name, so the merge will be refused with \"the base branch policy prohibits the merge\" no matter what the gates say. Either the check has not started, or the diff stopped producing it and the ruleset needs updating"
+          end' <<<"$rules")
+        verdict="${verdict}${rules_line}"
       fi
       ;;
   esac
