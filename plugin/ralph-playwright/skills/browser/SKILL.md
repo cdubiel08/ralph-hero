@@ -110,7 +110,55 @@ playwright-cli eval "JSON.stringify({ errors: window.__consoleErrors || [], warn
 | Storage | `localstorage-list`, `localstorage-get <key>`, `localstorage-set <key> <value>`, `sessionstorage-*` |
 | State | `state-save --filename=path`, `state-load --filename=path` |
 | Network | `route <pattern> <handler>`, `unroute <pattern>` |
-| DevTools | `console [min-level]`, `network`, `tracing-start`, `tracing-stop`, `video-start` |
+| DevTools | `console [min-level]`, `network`, `tracing-start`, `tracing-stop`, `video-start`, `video-stop [--filename=path.webm]` — see [Video capture](#video-capture) |
+
+## Video capture
+
+Measured against `@playwright/cli` 1.59.0-alpha on 2026-08-15 (GH-1749); the notes below are observations, not inferences from the docs.
+
+```bash
+playwright-cli -s=<session> open <url>          # video-start refuses if no browser is open
+playwright-cli -s=<session> video-start          # takes NO arguments
+# ... drive the page ...
+playwright-cli -s=<session> video-stop --filename=".playwright-cli/<session>/demo.webm"
+```
+
+- **`video-start` takes no filename.** The path is given to `video-stop --filename`. Omitting it writes `.playwright-cli/video-<timestamp>.webm` — outside the session dir, so always pass it, and `mkdir -p` the session dir first.
+- **Recording begins at `video-start`,** so open and navigate before starting if the load should not be in the artifact.
+- **`video-chapter` does not exist.** There is no chapter/marker command; segment by recording separate clips, or record timestamps yourself alongside the capture.
+- **Errors exit 0.** `video-stop` when nothing is recording, `video-start` twice, and an unrecognised subcommand all print `### Error` (or a usage dump) on stdout and still exit 0. In a script, grep the output for `### Error` — the exit code proves nothing.
+- **Frame size is capped at 800x800 and is not configurable.** Playwright's default is the viewport scaled to fit 800x800, and the CLI exposes no size option, so a 1280x720 viewport records at **800x450**. `resize 1280 720` before `video-start` changes the viewport and does **not** change the recorded size (verified). If the artifact needs true 720p, use the API fallback below.
+
+### Observed WebM properties
+
+| | |
+|---|---|
+| Container / codec | Matroska/WebM, **VP8**, no audio track |
+| Dimensions | **800x450** from a 1280x720 viewport (viewport aspect, capped at 800px) |
+| Frame rate | 25 fps constant |
+| Content | Real interaction frames — clicks and DOM/CSS changes render correctly under headless |
+
+**Duration metadata:** the *stream* reports `duration=N/A` and `nb_frames=N/A`, so `ffprobe -show_entries stream=duration` returns nothing — this is the trap. The *format* duration is present and was exact in every capture (30.32 s / 758 frames, 8.20 s / 205, 3.84 s / 96, all = frames ÷ 25). Read it from the format, and for a render pipeline prefer the frame count, which cannot disagree with itself:
+
+```bash
+ffprobe -v error -show_entries format=duration -of csv=p=0 demo.webm
+ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 demo.webm
+```
+
+### Fallback: the Playwright API, when size matters
+
+`page.video().start({ size })` accepts explicit dimensions the CLI cannot pass. Verified to produce a true 1280x720 VP8 WebM:
+
+```js
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+const page = await ctx.newPage();
+await page.goto(url);
+await page.video().start({ size: { width: 1280, height: 720 } });
+// ... drive the page ...
+await page.video().stop({ path: 'demo.webm' });
+```
+
+Use the CLI path by default — it composes with every other command in this skill and 800x450 is fine for an inline artifact. Drop to the API only when the deliverable needs ≥720p.
 
 ## Session Management
 
