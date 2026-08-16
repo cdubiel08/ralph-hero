@@ -36,6 +36,25 @@
 //   * an inter-process mkdir LOCK, so exactly one process runs the
 //     destructive `npm ci` while the others wait and then re-check. The lock is
 //     never taken from its holder — see the note on reclamation below.
+//
+// The bootstrap is BOUNDED, not unbounded (GH-1850). It measures ~4.5s cold on
+// a normal link, but 155MB has to arrive first and a slow link can push that
+// past Claude Code's 30s MCP startup deadline — at which point the server is
+// marked failed for the session AND the install it was waiting on is torn down,
+// so the next session starts just as cold. Past
+// RALPH_KNOWLEDGE_HANDSHAKE_DEADLINE_SEC (15s) the install continues in the
+// background and this launcher serves scripts/handshake-stub.cjs instead: a
+// zero-dependency process that answers the handshake and reports no tools. The
+// session is degraded and says so; it is not failed, and the work is not lost.
+//
+// A client that merely disconnects does NOT take the install down: the launcher
+// waits for it before exiting. The honest limit is narrower than the bash
+// predecessor's but real — if the launcher itself is killed while the install is
+// running, that install dies with it. What survives is npm's own cache, so
+// the bytes already fetched are not re-fetched — the next launch resumes from a
+// warm cache rather than from nothing. Correctness is unaffected either way: the
+// marker is removed before the install and written only after it succeeds, so an
+// interrupted tree re-bootstraps rather than being served.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -57,6 +76,41 @@ process.chdir(PLUGIN_ROOT);
 const CHECK_DEPS = path.join(SCRIPT_DIR, 'deps-complete.cjs');
 
 const LOCK_WAIT_SEC = Number(process.env.RALPH_KNOWLEDGE_BOOTSTRAP_WAIT_SEC || 900);
+
+// Served instead of the real entry point when the bootstrap is still running at
+// the handshake deadline (GH-1850).
+const STUB = path.join(SCRIPT_DIR, 'handshake-stub.cjs');
+
+// How long we are willing to make Claude Code WAIT for a first bootstrap before
+// answering the handshake with the stub instead (GH-1850).
+//
+// This is a bound on the handshake, not on the install: past the deadline the
+// bootstrap keeps running in the background and the next session gets the real
+// server. 15s sits under Claude Code's 30s MCP_TIMEOUT with room for the
+// handshake itself, and well over the ~4.5s a cold bootstrap measures on a
+// normal link — so the ordinary case still serves the real server on the FIRST
+// session and nothing about it changes. Only a bootstrap slow enough to have
+// been killed by the deadline anyway reaches the stub.
+//
+// 0 restores the pre-GH-1850 behaviour: block until the bootstrap finishes,
+// however long that takes. That is also the automatic fallback when the stub is
+// missing — a launcher that cannot serve a stub must not shorten its wait.
+// A non-numeric setting is a typo, not an instruction to block forever.
+let HANDSHAKE_DEADLINE_SEC = Number.parseInt(process.env.RALPH_KNOWLEDGE_HANDSHAKE_DEADLINE_SEC ?? '', 10);
+if (!Number.isInteger(HANDSHAKE_DEADLINE_SEC) || HANDSHAKE_DEADLINE_SEC < 0) HANDSHAKE_DEADLINE_SEC = 15;
+if (!fs.existsSync(STUB)) HANDSHAKE_DEADLINE_SEC = 0;
+
+// Set true only where we have positively established that the tree cannot serve
+// yet (GH-1850). Never inferred at the serve step by re-running bootstrapNeeded:
+// that spawns the dependency checker, and paying for it on every warm launch to
+// answer a question only the cold path can ask would tax the common case for the
+// rare one.
+let serveStub = false;
+// The still-running install, when the stub is serving beside it. The launcher
+// waits for this before exiting, so a client that disconnects from the stub
+// does not take the install down with it — the bash predecessor got that for
+// free by forking a subshell that outlived the launcher.
+let bootstrapInFlight = null;
 
 const log = (msg) => process.stderr.write(`[ralph-knowledge] ${msg}\n`);
 
@@ -523,6 +577,22 @@ async function maybeBootstrap() {
     // taking a lock it does not need, and dropping it again.
     if (!bootstrapNeeded()) return;
 
+    // Waiting on ANOTHER process's bootstrap is bounded by the same handshake
+    // deadline as running our own (GH-1850) — from Claude Code's side the two
+    // are indistinguishable, and the peer's install carries on regardless.
+    if (HANDSHAKE_DEADLINE_SEC > 0 && waited >= HANDSHAKE_DEADLINE_SEC) {
+      let owner = 'unknown (no owner recorded)';
+      try { owner = fs.readFileSync(path.join(LOCK, 'owner'), 'utf8').trim() || owner; } catch { /* keep default */ }
+      log(`another process is still bootstrapping after ${waited}s; serving a`);
+      log('stub for this session so the handshake is not lost. Held by:');
+      log(owner);
+      log(`if that process is gone, remove ${LOCK} and relaunch.`);
+      // One last look before committing to the stub: the peer may have finished
+      // between the check at the top of this turn and now.
+      if (bootstrapNeeded()) serveStub = true;
+      return;
+    }
+
     if (waited >= LOCK_WAIT_SEC) {
       let owner = 'unknown (no owner recorded)';
       try { owner = fs.readFileSync(path.join(LOCK, 'owner'), 'utf8').trim() || owner; } catch { /* keep default */ }
@@ -616,11 +686,60 @@ async function maybeBootstrap() {
         log('started before this upgrade is closed, it can be removed.');
       }
 
-      await runBootstrap();
+      if (HANDSHAKE_DEADLINE_SEC === 0) {
+        await runBootstrap();
+        releaseLock();
+        return;
+      }
+
+      // Past the deadline the install KEEPS RUNNING and this process serves the
+      // stub beside it — the lock is not released, because the tree is still
+      // being installed into. The bash predecessor had to fork a subshell and
+      // hand the lock across to it, and then disarm the parent's own handlers so
+      // two processes did not both `rm -rf` the same pathname. Here the
+      // bootstrap is already a promise in the one process that owns the lock, so
+      // ownership stays single without anything being handed anywhere.
+      //
+      // Not awaited past the deadline, and deliberately not turned into a
+      // rejection either: a bootstrap that outruns the handshake has reached no
+      // verdict, and the absence of one is what earns the stub.
+      let settled = null;
+      const running = runBootstrap().then(
+        () => { settled = { ok: true }; },
+        (e) => { settled = { ok: false, error: e }; },
+      );
+      await Promise.race([running, new Promise((r) => setTimeout(r, HANDSHAKE_DEADLINE_SEC * 1000))]);
+
+      if (settled) {
+        releaseLock();
+        // A bootstrap that finished non-zero fails the launch exactly as a
+        // synchronous one would. Serving a stub forever because npm can never
+        // succeed is the worst outcome available here, so it is the one case
+        // that is never allowed to look like patience.
+        if (!settled.ok) throw settled.error;
+        return;
+      }
+
+      // Still installing. Say so on the one channel a user can read, since a
+      // session with no knowledge tools and no explanation is the thing that
+      // gets reported as a broken plugin.
+      log(`bootstrap is still running after ${HANDSHAKE_DEADLINE_SEC}s (slow link?).`);
+      log('Answering the handshake with a no-tools stub so this session is');
+      log('not marked failed. The install CONTINUES in the background; a new');
+      log('session started once it finishes will have the full toolset.');
+      serveStub = true;
+      bootstrapInFlight = running;
+      running.then(() => {
+        releaseLock();
+        if (settled && !settled.ok) log(`background bootstrap failed: ${settled.error.message}`);
+      });
+      return;
     }
-  } finally {
+  } catch (e) {
     releaseLock();
+    throw e;
   }
+  releaseLock();
 }
 
 // cwd stays the plugin root (see the top of this file); the entry point is
@@ -639,18 +758,38 @@ async function maybeBootstrap() {
 // server would then be indistinguishable, and a merely-waiting launcher would
 // block every rebuild.
 function serve() {
-  process.removeAllListeners('SIGINT');
-  process.removeAllListeners('SIGTERM');
+  // A bootstrap that outran the handshake deadline is STILL RUNNING under our
+  // lock while the stub answers beside it (GH-1850), so the lock-releasing
+  // handlers stay armed — dropping them here would leave the lock behind on the
+  // one path where a signal is most likely. On every other path we hold
+  // nothing, and the server child gets the signal directly.
+  if (!holdingLock) {
+    process.removeAllListeners('SIGINT');
+    process.removeAllListeners('SIGTERM');
+  }
 
-  const child = spawn(process.execPath, [ENTRY, ...process.argv.slice(2)], { stdio: 'inherit' });
-  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    process.on(sig, () => { try { child.kill(sig); } catch { /* already gone */ } });
+  // A bootstrap that finished inside the deadline, or one a peer finished while
+  // we waited, serves the real server on THIS session. Only a tree we have
+  // positively established cannot serve yet gets the stub.
+  const target = serveStub ? STUB : ENTRY;
+  const child = spawn(process.execPath, [target, ...process.argv.slice(2)], { stdio: 'inherit' });
+  if (!holdingLock) {
+    for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+      process.on(sig, () => { try { child.kill(sig); } catch { /* already gone */ } });
+    }
   }
   child.on('error', (e) => {
     log(`failed to start the server: ${e.message}`);
     process.exit(1);
   });
-  child.on('close', (code, signal) => {
+  child.on('close', async (code, signal) => {
+    // A disconnecting client must not abort an install that is still running
+    // (GH-1850): the session is over, but the tree it was waiting on is one
+    // `npm ci` from being usable by the next one.
+    if (bootstrapInFlight) {
+      log('client disconnected; finishing the background install before exiting.');
+      await bootstrapInFlight;
+    }
     process.exit(signal ? 128 + (os.constants.signals[signal] || 0) : (code ?? 1));
   });
 }
