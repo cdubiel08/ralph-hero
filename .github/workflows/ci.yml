@@ -66,8 +66,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Test
-        run: pnpm test
+      # The scaffold owns no logic to unit-test (GH-1750). What can rot is the
+      # composition registry and the types — typing drift already went unnoticed
+      # once while 51/51 vitest cases stayed green.
+      - name: Compositions smoke
+        run: npx remotion compositions src/index.ts
+
+      - name: Typecheck
+        run: npx tsc --noEmit
 
   build-and-test-knowledge:
     runs-on: ubuntu-latest

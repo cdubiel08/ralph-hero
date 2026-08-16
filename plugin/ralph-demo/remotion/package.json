@@ -2,31 +2,21 @@
   "name": "demo-studio",
   "version": "1.0.0",
   "type": "module",
-  "description": "Sprint demo video generator using Remotion",
+  "description": "Remotion scaffold for ralph demo videos",
   "scripts": {
     "dev": "remotion studio",
-    "build": "remotion bundle",
-    "upgrade": "remotion upgrade",
-    "test": "vitest run --coverage",
-    "test:watch": "vitest"
+    "compositions": "remotion compositions src/index.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.496",
-    "@remotion/transitions": "^4.0.496",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "remotion": "^4.0.496",
-    "zod": "^4.4.3"
+    "remotion": "^4.0.496"
   },
   "devDependencies": {
-    "@testing-library/jest-dom": "^6.0.0",
-    "@testing-library/react": "^16.0.0",
     "@types/react": "19.2.17",
-    "@types/web": "0.0.353",
-    "@vitest/coverage-v8": "^4.1.10",
-    "jsdom": "^25.0.0",
-    "typescript": "6.0.3",
-    "vitest": "^4.1.10"
+    "typescript": "6.0.3"
   },
   "private": true,
   "pnpm": {

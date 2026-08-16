@@ -1,7 +1,7 @@
 {
   "name": "ralph-demo",
   "version": "0.1.0",
-  "description": "Generate sprint demo videos from structured JSON input using Remotion. Reusable scene templates, pluggable themes, and export presets for 16:9, 1:1, and 9:16 formats.",
+  "description": "Remotion scaffold for ralph demo videos — one composition, duration derived from props. Rebuilding: the v2 capture/caption/assemble pipeline lands on top of this.",
   "author": {
     "name": "Chad Dubiel",
     "url": "https://github.com/cdubiel08"
