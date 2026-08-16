@@ -47,6 +47,14 @@ case "${1:-} ${2:-}" in
     exit "${GH_STUB_CHECKS_EXIT:-0}"
     ;;
   "pr comment")
+    # GH-2003: the observed rate-limit shape is the dangerous one — gh prints
+    # the refusal and exits 0, so the comment never posts while the call looks
+    # like a success. Nothing is written to comments.log in that case, which is
+    # exactly the audit hole under test.
+    if [[ -f "$GH_STUB_DIR/pr_comment_ratelimit" ]]; then
+      echo "GraphQL: API rate limit exceeded for user ID 1 (createComment)" >&2
+      exit 0
+    fi
     for ((i = 0; i < ${#args[@]}; i++)); do
       if [[ "${args[$i]}" == "--body" ]]; then printf '%s\n---\n' "${args[$((i + 1))]}" >>"$GH_STUB_DIR/comments.log"; fi
     done
@@ -723,6 +731,25 @@ if grep -q "Merge Gate Override" "$LAST_DIR/comments.log" 2>/dev/null \
   pass "--force posts override comment with reason"
 else
   fail "--force override comment missing"
+fi
+
+# 12b. A rate-limited override comment is NAMED, and the merge still proceeds
+# (GH-2003). Two assertions, and both matter: the silent-success shape must not
+# read as a posted record, and it must not become a new gate after every real
+# gate has already been evaluated.
+setup_no_att_ratelimited() {
+  setup_no_att "$1"
+  touch "$1/pr_comment_ratelimit"
+}
+run_case "--force names a rate-limited override comment and still merges" 0 "$POLICY" \
+  setup_no_att_ratelimited --force "hotfix: validator outage"
+expect_out "rate-limited override named" "override comment NOT posted (rate limited)"
+expect_out "rate-limited override hands back the remedy" "gh pr comment"
+expect_merged "--force with rate-limited override record"
+if grep -q "Merge Gate Override" "$LAST_DIR/comments.log" 2>/dev/null; then
+  fail "rate-limited override must not report a comment that never posted"
+else
+  pass "rate-limited override posts nothing (the audit hole is named, not hidden)"
 fi
 
 # 13. --force without a reason is rejected
