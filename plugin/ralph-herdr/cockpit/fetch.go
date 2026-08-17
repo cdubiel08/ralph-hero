@@ -39,6 +39,12 @@ type Config struct {
 	// (GH-1805): the board is never walked less often than this, whatever the
 	// backoff says. Equal to Interval = backoff off, a constant cadence.
 	MaxInterval time.Duration
+	// LedgerPath is ~/.ralph/<owner>/<repo>/ledger.jsonl for this board scope,
+	// resolved once (ralph_ledger_path's rules). "" = no scope discoverable,
+	// which costs the age chip and nothing else.
+	LedgerPath string
+	// Glyphs gates the Nerd Font codepoints. Default ASCII — see signals.go.
+	Glyphs glyphSet
 }
 
 // Runner is the exec seam: tests substitute a recorder, production uses
@@ -155,7 +161,16 @@ var allColumnsUnknown = [3]bool{true, true, true}
 type agentsMsg struct {
 	agents  []Agent
 	herdrOK bool
+	// ledger rides along on the same message because it is read on the same
+	// tick and joins to exactly these agents. A stale ledger against fresh
+	// agents would age a session by another session's clock.
+	ledger Ledger
 }
+
+// diffsMsg carries one bounded pass of worktree measurements, keyed by
+// agent_ref. Absent from the map = not measured this pass, which the renderer
+// draws as ±? — never as a clean worktree.
+type diffsMsg struct{ diffs map[string]DiffStat }
 
 type peekMsg struct {
 	who  string
@@ -319,6 +334,19 @@ func parseAgents(out, repoRoot string) ([]Agent, error) {
 					Workspace     string `json:"workspace_id"`
 					Cwd           string `json:"cwd"`
 					ForegroundCwd string `json:"foreground_cwd"`
+					// The ralph C8 tokens the spawner stamps and the session
+					// refreshes (`herdr pane report-metadata --token …`).
+					// They arrive in THIS response — the status dot's second
+					// half, the branch, and the ledger join key cost no extra
+					// call.
+					//
+					// Typed `any`, not `string`: encoding/json reports a type
+					// error for the WHOLE document if any one value is a
+					// number, and the caller treats that as an unparseable
+					// snapshot and drops the overlay. Losing a card marking
+					// because a token changed shape is chrome; losing the
+					// overlay is not.
+					Tokens map[string]any `json:"tokens"`
 				} `json:"agents"`
 			} `json:"snapshot"`
 		} `json:"result"`
@@ -413,9 +441,29 @@ func parseAgents(out, repoRoot string) ([]Agent, error) {
 		if status == "" {
 			status = "unknown"
 		}
-		agents = append(agents, Agent{Name: a.Name, Status: status, Pane: a.Pane, Issue: issue, Lane: lane})
+		agents = append(agents, Agent{
+			Name:       a.Name,
+			Status:     status,
+			Pane:       a.Pane,
+			Issue:      issue,
+			Lane:       lane,
+			Root:       tokenString(a.Tokens, "root"),
+			Branch:     tokenString(a.Tokens, "branch"),
+			TokenState: tokenString(a.Tokens, "state"),
+		})
 	}
 	return agents, nil
+}
+
+// tokenString reads one C8 token. A missing key, a null, or a non-string value
+// is "" — absence, which every consumer already handles as "this marking has
+// no data" rather than inventing one.
+func tokenString(tokens map[string]any, key string) string {
+	if tokens == nil {
+		return ""
+	}
+	s, _ := tokens[key].(string)
+	return s
 }
 
 // repoRootSpellings returns the set of paths that all name repoRoot.
@@ -539,7 +587,8 @@ const (
 	boardTimeout = 25 * time.Second // tsx cold start + GitHub round trips
 	herdrTimeout = 8 * time.Second
 	ghTimeout    = 12 * time.Second
-	promptWaitMS = "15000" // ralph-answer.sh nudge parity
+	gitTimeout   = 5 * time.Second // local; measured ~93 ms per worktree read
+	promptWaitMS = "15000"         // ralph-answer.sh nudge parity
 )
 
 // boardDeadline: a read deadline tighter than the poll cadence it guards is a
@@ -760,7 +809,25 @@ func fetchAgentsCmd(cfg Config, r Runner) tea.Cmd {
 		if perr != nil {
 			return agentsMsg{herdrOK: false}
 		}
-		return agentsMsg{agents: agents, herdrOK: true}
+		// One local file read on the same tick — no network, no herdr call.
+		// It carries the spawn clock the age chip needs and the branch for a
+		// unit whose session has already exited.
+		return agentsMsg{agents: agents, herdrOK: true, ledger: readLedger(cfg.LedgerPath)}
+	}
+}
+
+// fetchDiffsCmd measures each target worktree with two local git processes.
+// Bounded by the caller (Model.diffTargets) and by a deadline here: a git
+// process wedged on a network filesystem must cost one marking, not the tick.
+func fetchDiffsCmd(r Runner, targets []LedgerSpawn) tea.Cmd {
+	return func() tea.Msg {
+		out := make(map[string]DiffStat, len(targets))
+		for _, sp := range targets {
+			ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+			out[sp.Ref] = worktreeDiff(ctx, r, sp.Checkout)
+			cancel()
+		}
+		return diffsMsg{diffs: out}
 	}
 }
 

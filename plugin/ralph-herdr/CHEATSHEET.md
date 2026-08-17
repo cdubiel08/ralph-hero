@@ -134,7 +134,23 @@ verbatim; Human Needed cards show the blocking question).
 | `f` | fork — `scripts/fork.sh` on the card's live session; refused (never guessed) when the issue has two |
 | `v` | DAG view — `board frontier` as a text tree |
 | `d` / `g` / `q` | PR diff popup / open in browser / quit |
+| `D` | swap the third column between Human Needed and Done · 14d (upper-case — `d` is the PR diff) |
 | mouse | click selects, double-click observes |
+
+Card markings (GH-2061) — everything below is machine-local, no extra network
+read. **A marking we could not measure never renders like a measured one:**
+
+| Marking | Reads |
+|---|---|
+| status dot | herdr's `agent_status` joined with the session's own C8 `state` token, both from the one `api snapshot` already made. Yellow working, blue reporting, red blocked, green **hollow** idle, small grey starting or no session. `blocked` from either half wins; a stale `spawned` token never overrides a live status |
+| branch | the live session's `tokens.branch`, else the newest ledger spawn for the issue — so an In Review card still names its branch after the session exited |
+| `+N/-N` | the agent's own worktree vs its merge base, In Progress only. `±?` = unreadable **or** not yet measured; nothing at all = no live session. `+0/-0` is a real measurement. Untracked files are not counted — `git diff` cannot see them, and staging them would mutate a live agent's index from a viewer |
+| age | time since spawn from `~/.ralph/<owner>/<repo>/ledger.jsonl`, joined on the exact `agent_ref`. Minute precision. No record = `—`, **never** `0m` |
+| priority | red `[!]` at P0, else a three-bar meter (P1 yellow/3, P2 2, P3 1). An unset priority is an EMPTY meter, not a blank — it sinks the item in `board next` and should look like a defect |
+
+`RALPH_COCKPIT_GLYPHS=nerd` opts in to Nerd Font glyphs. The default is ASCII
+because a host without the font renders tofu at the wrong advance width, which
+shears the fixed-stride card grid the mouse maps clicks through.
 
 ## 4. Names (grammar B)
 

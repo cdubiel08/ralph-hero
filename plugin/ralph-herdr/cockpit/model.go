@@ -51,10 +51,93 @@ type Card struct {
 // Agent is one live herdr agent, joined to an issue by name. Decoration only.
 type Agent struct {
 	Name   string
-	Status string // working | blocked | idle | done | unknown
+	Status string // herdr's own agent_status: working | blocked | idle | done | unknown
 	Pane   string
 	Issue  int
 	Lane   string // grammar-B lane char; "w" for legacy gh-N
+	// Root is the agent_ref the spawner recorded (tokens.root, e.g.
+	// "w2061-cockpit-card-markings#f9f8678d") — the EXACT key onto the
+	// ledger's own agent_ref. Empty for an agent nobody spawned through the
+	// sanctioned path.
+	Root string
+	// Branch is tokens.branch — the checkout this session took. Free: it
+	// arrives in the same snapshot the status does.
+	Branch string
+	// TokenState is the ralph C8 `state` token the session pushes at its own
+	// checkpoints (spawned → working → blocked → reporting). It expresses what
+	// agent_status structurally cannot; cardState decides when it may speak.
+	TokenState string
+}
+
+// Card marking states — the vocabulary the status dot renders, ranked so a
+// fleet on one issue resolves to the state that most needs a human's eye.
+const (
+	stateBlocked   = "blocked"
+	stateReporting = "reporting"
+	stateWorking   = "working"
+	stateStarting  = "starting"
+	stateIdle      = "idle"
+	stateUnknown   = "unknown"
+)
+
+var stateRank = map[string]int{
+	stateBlocked:   0,
+	stateReporting: 1,
+	stateWorking:   2,
+	stateStarting:  3,
+	stateIdle:      4,
+	stateUnknown:   5,
+}
+
+// joinAgentState merges herdr's live observation with the session's own last
+// checkpoint token.
+//
+// The rule is that the token REFINES and never contradicts. agent_status is
+// herdr watching the process right now; the token is the session's last
+// self-report and can be arbitrarily stale. So:
+//
+//   - blocked from EITHER wins. A session that escalated and then went idle
+//     waiting for the answer is still the card that needs a human, and
+//     agent_status shows it as plain idle.
+//   - reporting is taken only over live motion (working). herdr cannot express
+//     it at all — the whole reason the token is read — and it is a close-out
+//     checkpoint, so it is the more specific truth about a working session.
+//   - spawned/briefed is taken ONLY where agent_status has nothing to say.
+//     This is narrower than it first looks and deliberately so: `spawned` is
+//     written by the SPAWNER, not by the session, so it persists until the
+//     session's first self-report — and a session that never runs the
+//     checkpoint never overwrites it. Reading it over an idle status rendered
+//     a five-hour-old session as "starting" (observed against the live
+//     snapshot while building this). agent_status can express idle, so idle
+//     wins; the age chip beside the dot is what actually says "young".
+//
+// Anything else falls through to agent_status, which is the only half that is
+// live.
+func joinAgentState(status, token string) string {
+	if status == "blocked" || token == "blocked" {
+		return stateBlocked
+	}
+	switch status {
+	case "working":
+		if token == "reporting" {
+			return stateReporting
+		}
+		return stateWorking
+	case "idle", "done":
+		return stateIdle
+	case "", "unknown":
+		// herdr has no observation — the pane exists but no agent session has
+		// registered yet. This IS the starting window, and it is the only
+		// place the token can speak without contradicting a live fact.
+		switch token {
+		case "spawned", "briefed":
+			return stateStarting
+		case stateWorking, stateReporting:
+			return token
+		}
+		return stateUnknown
+	}
+	return stateUnknown
 }
 
 // Grammar-B agent names (naming.sh / contracts.ts parity) plus the legacy
@@ -109,6 +192,19 @@ type Model struct {
 	agents  map[int][]Agent // issue → live agents, w-lane first then by name
 	herdrOK bool            // false = no multiplexer — overlay off, verbs degrade
 
+	// Machine-local card markings (signals.go). All three are decoration:
+	// losing any of them loses a marking, never a card or a column.
+	ledger Ledger              // spawn history — agent age, and branch off a dead session
+	diffs  map[string]DiffStat // agent_ref → worktree diff, In Progress only
+	glyphs glyphSet
+
+	// showDone swaps the third column between Human Needed and Done (the `D`
+	// key). doneCards is its data and stays nil here — GH-2062 owns the
+	// bounded closed-issue read that fills it, so this unit renders the swap
+	// and an empty state that NAMES what is missing.
+	showDone  bool
+	doneCards []Card
+
 	// Cursor + mode.
 	col, row int
 	mode     Mode
@@ -147,6 +243,8 @@ func newModel(cfg Config, r Runner) Model {
 		cfg:       cfg,
 		runner:    r,
 		agents:    map[int][]Agent{},
+		diffs:     map[string]DiffStat{},
+		glyphs:    cfg.Glyphs,
 		herdrOK:   cfg.Herdr != "",
 		width:     80,
 		height:    24,
@@ -158,9 +256,45 @@ func newModel(cfg Config, r Runner) Model {
 	}
 }
 
+// glyphSet is the set the card strip draws from. A zero-valued set — a Config
+// built without resolveGlyphs — falls back to ASCII rather than rendering the
+// whole strip as empty strings: an unset knob must mean "the safe default",
+// never "no glyphs at all".
+func (m Model) glyphSet() glyphSet {
+	if m.glyphs.dotFull == "" {
+		return asciiGlyphs
+	}
+	return m.glyphs
+}
+
+// columnCards is the card list column idx is DISPLAYING. Every reader —
+// cursor clamping, the scroll window, the renderer, hitTest — goes through
+// here, so the `D` swap cannot leave one of them addressing Human Needed while
+// another draws Done.
+func (m Model) columnCards(idx int) []Card {
+	if idx == 2 && m.showDone {
+		return m.doneCards
+	}
+	return m.cols[idx]
+}
+
+// columnTitle names the displayed column. "Done · 14d" carries its window in
+// the title on purpose: it is the audit window, not all history, and a header
+// reading a bare "Done" would claim completeness it does not have.
+func (m Model) columnTitle(idx int) string {
+	if idx == 2 && m.showDone {
+		return doneColumnTitle
+	}
+	return columnStates[idx]
+}
+
+// doneColumnTitle — the window is RALPH_AUDIT_DAYS, which GH-2062's read will
+// honour; the label states it here so the swap can never ship without it.
+const doneColumnTitle = "Done · 14d"
+
 // selectedCard is the card under the cursor, if any.
 func (m Model) selectedCard() (Card, bool) {
-	cards := m.cols[m.col]
+	cards := m.columnCards(m.col)
 	if m.row < 0 || m.row >= len(cards) {
 		return Card{}, false
 	}
@@ -177,24 +311,102 @@ func (m Model) agentFor(issue int) (Agent, bool) {
 	return as[0], true
 }
 
-// glyphStatus is the card's decoration status: blocked wins (it needs the
-// human), then working, then the first agent's status.
-func (m Model) glyphStatus(issue int) (string, bool) {
+// cardState is the card's dot: every live agent's joined state, resolved by
+// stateRank so the most attention-worthy wins. ok=false means no live agent —
+// which the renderer must not draw like a live agent in an unknown state.
+func (m Model) cardState(issue int) (string, bool) {
 	as := m.agents[issue]
 	if len(as) == 0 {
 		return "", false
 	}
-	best := as[0].Status
+	best := stateUnknown
 	for _, a := range as {
-		if a.Status == "blocked" {
-			return "blocked", true
-		}
-		if a.Status == "working" {
-			best = "working"
+		s := joinAgentState(a.Status, a.TokenState)
+		if stateRank[s] < stateRank[best] {
+			best = s
 		}
 	}
 	return best, true
 }
+
+// cardAge is the LIVE agent's age since spawn. It resolves through the
+// agent_ref the spawner recorded, so a respawned unit ages from the session
+// actually on screen. ok=false = no record: rendered as a dash, never as 0m.
+func (m Model) cardAge(issue int, now time.Time) (time.Duration, bool) {
+	for _, a := range m.agents[issue] {
+		if a.Root == "" {
+			continue
+		}
+		if sp, ok := m.ledger.ByRef[a.Root]; ok {
+			return now.Sub(sp.SpawnedAt), true
+		}
+	}
+	return 0, false
+}
+
+// cardBranch is the checkout the work is on. The live agent's own token is
+// preferred; the ledger's newest spawn for the issue answers for a session
+// that has since exited, which is why an In Review card still names a branch.
+func (m Model) cardBranch(issue int) string {
+	for _, a := range m.agents[issue] {
+		if a.Branch != "" {
+			return a.Branch
+		}
+	}
+	if sp, ok := m.ledger.ByIssue[issue]; ok {
+		return sp.Branch
+	}
+	return ""
+}
+
+// cardDiff is the worktree measurement for a live agent's checkout. Two
+// distinct falses: no live agent with a recorded checkout (live=false — there
+// is nothing to measure, so nothing is drawn), and a measurement that failed
+// (live=true, DiffStat.Known=false — drawn as ±?).
+func (m Model) cardDiff(issue int) (DiffStat, bool) {
+	for _, a := range m.agents[issue] {
+		if a.Root == "" {
+			continue
+		}
+		if st, ok := m.diffs[a.Root]; ok {
+			return st, true
+		}
+		if sp, ok := m.ledger.ByRef[a.Root]; ok && sp.Checkout != "" {
+			// A checkout we know about but have not measured yet: the read is
+			// pending, not absent. ±? is the honest ink until it lands.
+			return DiffStat{}, true
+		}
+	}
+	return DiffStat{}, false
+}
+
+// diffTargets lists the (agent_ref, checkout) pairs worth measuring: live
+// agents on In Progress cards, in board order, bounded. The bound is the point
+// — each measurement is two local git processes, and an unbounded column would
+// put that on the overlay tick.
+func (m Model) diffTargets() []LedgerSpawn {
+	var out []LedgerSpawn
+	for _, c := range m.cols[0] { // In Progress only — the worktree column
+		for _, a := range m.agents[c.Number] {
+			if a.Root == "" {
+				continue
+			}
+			sp, ok := m.ledger.ByRef[a.Root]
+			if !ok || sp.Checkout == "" {
+				continue
+			}
+			out = append(out, sp)
+			if len(out) >= maxDiffReads {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+// maxDiffReads bounds one pass. Beyond it the chip stays ±? rather than
+// silently reading as measured-and-clean.
+const maxDiffReads = 8
 
 // setAgents replaces the overlay from a fresh agent-list read.
 func setAgents(list []Agent) map[int][]Agent {
@@ -319,7 +531,10 @@ func agentSignature(byIssue map[int][]Agent) string {
 	for _, n := range issues {
 		fmt.Fprintf(&b, "%d:", n)
 		for _, a := range byIssue[n] {
-			fmt.Fprintf(&b, "%s=%s,", a.Name, a.Status)
+			// The C8 token rides along: a session pushing state=blocked is
+			// about to move its item to Human Needed, which is exactly the
+			// write this oracle exists to get ahead of.
+			fmt.Fprintf(&b, "%s=%s/%s,", a.Name, a.Status, a.TokenState)
 		}
 		b.WriteByte(';')
 	}
@@ -335,7 +550,7 @@ func (m *Model) clampCursor() {
 	if m.col > 2 {
 		m.col = 2
 	}
-	n := len(m.cols[m.col])
+	n := len(m.columnCards(m.col))
 	if n == 0 {
 		m.row = 0
 		return

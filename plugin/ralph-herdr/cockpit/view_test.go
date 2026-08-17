@@ -178,7 +178,7 @@ func TestViewOverlaysAndInput(t *testing.T) {
 }
 
 func TestTruncateStyledStaysWellFormed(t *testing.T) {
-	styled := styleSelected.Render(strings.Repeat("wide title ", 10))
+	styled := styleNumSel.Render(strings.Repeat("wide title ", 10))
 	got := truncate(styled, 10)
 	if w := lipgloss.Width(got); w > 10 {
 		t.Errorf("truncate width = %d, want <= 10", w)
@@ -203,8 +203,8 @@ func TestViewTinySizeDoesNotPanic(t *testing.T) {
 }
 
 func TestColWindowFollowsCursor(t *testing.T) {
-	// bodyHeight 11 → visible = (11-2)/3 = 3.
-	const bh = 11
+	// bodyHeight 14 → visible = (14-2)/cardRows = 3.
+	const bh = 14
 	mk := func(n int) Model {
 		m := testModel(&fakeRunner{})
 		var cards []Card
@@ -240,7 +240,7 @@ func TestColWindowFollowsCursor(t *testing.T) {
 
 func TestViewScrollFollowKeepsSelectionVisible(t *testing.T) {
 	m := testModel(&fakeRunner{})
-	m.width, m.height = 120, 13 // bodyHeight 9 → visible = 2
+	m.width, m.height = 120, 14 // bodyHeight 10 → visible = 2
 	var cards []Card
 	for i := 0; i < 8; i++ {
 		cards = append(cards, card(200+i, "In Progress", fmt.Sprintf("Deep%d", i)))
@@ -248,7 +248,7 @@ func TestViewScrollFollowKeepsSelectionVisible(t *testing.T) {
 	m.cols[0] = cards
 	m.row = 6 // past the fold — window must be [5,7)
 	out := viewModel(m)
-	if !strings.Contains(out, "#206") || !strings.Contains(out, "▸") {
+	if !strings.Contains(out, "#206") || !strings.Contains(out, "▌") {
 		t.Errorf("the selected card must stay rendered (every verb acts on it); got:\n%s", out)
 	}
 	if strings.Contains(out, "#200 ") {
@@ -261,7 +261,7 @@ func TestViewScrollFollowKeepsSelectionVisible(t *testing.T) {
 
 func TestHitTestScrolledWindow(t *testing.T) {
 	m := testModel(&fakeRunner{})
-	m.width, m.height = 120, 13 // visible = 2
+	m.width, m.height = 120, 14 // visible = 2
 	var cards []Card
 	for i := 0; i < 8; i++ {
 		cards = append(cards, card(200+i, "In Progress", fmt.Sprintf("Deep%d", i)))
@@ -305,5 +305,305 @@ func TestHitTestMirrorsLayout(t *testing.T) {
 	m.col = 1
 	if col, _, ok := hitTest(m, 55, headerRows+colHeaderRows); !ok || col != 1 {
 		t.Errorf("narrow hit col = %d ok=%v, want current column 1", col, ok)
+	}
+}
+
+// ── card markings (GH-2061) ─────────────────────────────────────────────────
+
+// TestCardHeightIsUniformInEveryState is the load-bearing one. hitTest maps
+// clicks through cardRows as a FIXED STRIDE, so a card that reflowed on
+// selection — or on having a chip, a question, a branch — would move the grid
+// under the cursor and every click below it would land on the wrong issue.
+func TestCardHeightIsUniformInEveryState(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.ledger = Ledger{
+		Read:    true,
+		ByRef:   map[string]LedgerSpawn{"w10-ten#aaa": {Ref: "w10-ten#aaa", Issue: 10, SpawnedAt: time.Now().Add(-3 * time.Hour), Checkout: "/wt/10", Branch: "feat/10-ten"}},
+		ByIssue: map[int]LedgerSpawn{10: {Branch: "feat/10-ten"}},
+	}
+	m.agents = setAgents([]Agent{
+		{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Root: "w10-ten#aaa", Branch: "feat/10-ten", TokenState: "working"},
+	})
+	m.diffs = map[string]DiffStat{"w10-ten#aaa": {Add: 1233, Del: 1234, Known: true}}
+
+	cards := []Card{
+		{Number: 10, State: "In Progress", Title: "short", Priority: "P0", Estimate: "M"},
+		{Number: 11, State: "In Progress", Title: strings.Repeat("a very long title ", 20)},
+		{Number: 20, State: "In Review", Title: "review", Priority: "P2", ParentNumber: 1930},
+		{Number: 30, State: "Human Needed", Title: "blocked", Question: strings.Repeat("q ", 90)},
+		{Number: 31, State: "Human Needed", Title: "blocked, no question"},
+		{Number: 40, State: "In Progress", Title: "no agent, no marking at all"},
+	}
+	for _, width := range []int{20, 40, 60, 120, 200} {
+		for _, c := range cards {
+			for _, sel := range []bool{false, true} {
+				col, row := 1, 1 // not the cursor
+				if sel {
+					col, row = m.col, m.row
+				}
+				out := renderCard(m, col, row, c, width)
+				if got := strings.Count(out, "\n"); got != cardRows {
+					t.Fatalf("#%d w=%d selected=%v rendered %d lines, want cardRows=%d:\n%q",
+						c.Number, width, sel, got, cardRows, out)
+				}
+				for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+					if w := lipgloss.Width(line); w > width {
+						t.Fatalf("#%d w=%d selected=%v line overflows to %d cells: %q",
+							c.Number, width, sel, w, line)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestHitTestMirrorsRenderedStride reads the mapping off the ACTUAL render
+// rather than recomputing the formula: the Nth rendered card must start on the
+// line hitTest maps to the Nth card, or the mouse and the eye disagree.
+func TestHitTestMirrorsRenderedStride(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.width, m.height = 140, 40
+	var cards []Card
+	for i := 0; i < 6; i++ {
+		cards = append(cards, card(300+i, "In Progress", fmt.Sprintf("Card%d", i)))
+	}
+	m.cols = [3][]Card{cards, nil, nil}
+	m.col, m.row = 0, 0
+
+	lines := strings.Split(viewModel(m), "\n")
+	start, end := colWindow(m, 0, bodyHeightOf(m))
+	for i := start; i < end; i++ {
+		y := headerRows + colHeaderRows + (i-start)*cardRows
+		if y >= len(lines) {
+			t.Fatalf("card %d maps past the render (%d lines)", i, len(lines))
+		}
+		if !strings.Contains(lines[y], fmt.Sprintf("#%d", cards[i].Number)) {
+			t.Errorf("hitTest maps y=%d to card %d (#%d), but that line renders:\n%q",
+				y, i, cards[i].Number, lines[y])
+		}
+		// Every line of the card maps to the same card, including the rule.
+		for k := 0; k < cardRows; k++ {
+			col, row, ok := hitTest(m, 2, y+k)
+			if !ok || col != 0 || row != i {
+				t.Errorf("hitTest(2,%d) = (%d,%d,%v), want (0,%d,true)", y+k, col, row, ok, i)
+			}
+		}
+	}
+}
+
+func TestJoinAgentStateTokenRefinesNeverContradicts(t *testing.T) {
+	tests := []struct {
+		name          string
+		status, token string
+		want          string
+	}{
+		{"herdr working, no token", "working", "", stateWorking},
+		{"reporting is only expressible by the token", "working", "reporting", stateReporting},
+		{"blocked from herdr wins", "blocked", "working", stateBlocked},
+		// The case the token exists for: a session escalated and then went
+		// idle waiting for the answer. herdr sees plain idle; the card must
+		// still be the one that needs a human.
+		{"blocked from the token wins over idle", "idle", "blocked", stateBlocked},
+		// `spawned` is written by the SPAWNER and persists until the session's
+		// first self-report — which a session that never checkpoints never
+		// makes. So it may only speak where herdr has no observation at all;
+		// over a live idle it rendered a five-hour-old session as "starting".
+		{"spawned speaks only where herdr is silent", "unknown", "spawned", stateStarting},
+		{"briefed counts as starting too", "", "briefed", stateStarting},
+		{"a stale spawned token loses to live idle", "idle", "spawned", stateIdle},
+		{"a stale spawned token loses to live motion", "working", "spawned", stateWorking},
+		{"a stale working token loses to live idle", "idle", "working", stateIdle},
+		{"done is idle — nothing is happening", "done", "", stateIdle},
+		{"unknown with no token stays unknown", "unknown", "", stateUnknown},
+		{"a token can speak when herdr cannot", "unknown", "working", stateWorking},
+		{"an unrecognised herdr status is unknown, not invented", "wedged", "", stateUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := joinAgentState(tt.status, tt.token); got != tt.want {
+				t.Errorf("joinAgentState(%q,%q) = %q, want %q", tt.status, tt.token, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCardStateRanksTheMostAttentionWorthyAgent(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.agents = setAgents([]Agent{
+		{Name: "w50-a", Status: "idle", Issue: 50, Lane: "w"},
+		{Name: "w50-b", Status: "idle", Issue: 50, Lane: "x", TokenState: "blocked"},
+		{Name: "w50-c", Status: "working", Issue: 50, Lane: "r"},
+	})
+	if s, ok := m.cardState(50); !ok || s != stateBlocked {
+		t.Errorf("cardState = %q,%v — a blocked member of a fleet must win", s, ok)
+	}
+	// No live agent is NOT a live agent in an unknown state.
+	if _, ok := m.cardState(999); ok {
+		t.Error("an issue with no agents must report no state")
+	}
+}
+
+func TestCardAgeUsesTheAgentRefNotTheName(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	m := testModel(&fakeRunner{})
+	m.ledger = Ledger{Read: true, ByRef: map[string]LedgerSpawn{
+		"w60-x#old": {Ref: "w60-x#old", Issue: 60, SpawnedAt: now.Add(-90 * time.Hour)},
+		"w60-x#new": {Ref: "w60-x#new", Issue: 60, SpawnedAt: now.Add(-2 * time.Hour)},
+	}}
+	// Both records share the agent NAME; only the ref tells them apart. A
+	// name-keyed join would age this session by the dead one's clock.
+	m.agents = setAgents([]Agent{{Name: "w60-x", Status: "working", Issue: 60, Lane: "w", Root: "w60-x#new"}})
+	age, ok := m.cardAge(60, now)
+	if !ok || age != 2*time.Hour {
+		t.Errorf("cardAge = %v,%v — want the live session's own spawn", age, ok)
+	}
+
+	// An agent nobody spawned through the sanctioned path carries no root, so
+	// there is no record — a dash, never 0m.
+	m.agents = setAgents([]Agent{{Name: "w60-x", Status: "working", Issue: 60, Lane: "w"}})
+	if _, ok := m.cardAge(60, now); ok {
+		t.Error("an agent with no ledger record must not report an age")
+	}
+}
+
+func TestCardDiffThreeCasesStayDistinct(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.ledger = Ledger{Read: true, ByRef: map[string]LedgerSpawn{
+		"w70-a#r": {Ref: "w70-a#r", Issue: 70, Checkout: "/wt/70"},
+		"w71-a#r": {Ref: "w71-a#r", Issue: 71, Checkout: "/wt/71"},
+	}}
+	m.agents = setAgents([]Agent{
+		{Name: "w70-a", Status: "working", Issue: 70, Lane: "w", Root: "w70-a#r"},
+		{Name: "w71-a", Status: "working", Issue: 71, Lane: "w", Root: "w71-a#r"},
+	})
+	m.diffs = map[string]DiffStat{"w70-a#r": {Add: 5, Del: 1, Known: true}}
+
+	// Measured.
+	if st, live := m.cardDiff(70); !live || !st.Known || st.Add != 5 {
+		t.Errorf("measured diff = %+v live=%v", st, live)
+	}
+	if got := diffChip(m, Card{Number: 70}); !strings.Contains(got, "+5") || !strings.Contains(got, "-1") {
+		t.Errorf("measured chip = %q", got)
+	}
+	// Known checkout, not yet measured — pending, not clean.
+	if got := diffChip(m, Card{Number: 71}); !strings.Contains(got, "±?") {
+		t.Errorf("unmeasured chip = %q, want ±?", got)
+	}
+	// No live agent — nothing to measure, so nothing is drawn. This must not
+	// look like either of the two above.
+	if got := diffChip(m, Card{Number: 999}); got != "" {
+		t.Errorf("agentless chip = %q, want empty", got)
+	}
+}
+
+func TestDiffTargetsAreInProgressOnlyAndBounded(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	var inProgress []Card
+	agents := []Agent{}
+	refs := map[string]LedgerSpawn{}
+	for i := 0; i < maxDiffReads+4; i++ {
+		n := 400 + i
+		inProgress = append(inProgress, card(n, "In Progress", "x"))
+		ref := fmt.Sprintf("w%d-x#r", n)
+		agents = append(agents, Agent{Name: fmt.Sprintf("w%d-x", n), Status: "working", Issue: n, Lane: "w", Root: ref})
+		refs[ref] = LedgerSpawn{Ref: ref, Issue: n, Checkout: fmt.Sprintf("/wt/%d", n)}
+	}
+	// An In Review agent must never be measured: its work has left the
+	// worktree, and the right slot there belongs to the PR chip.
+	reviewRef := "w500-r#r"
+	agents = append(agents, Agent{Name: "w500-r", Status: "working", Issue: 500, Lane: "w", Root: reviewRef})
+	refs[reviewRef] = LedgerSpawn{Ref: reviewRef, Issue: 500, Checkout: "/wt/500"}
+
+	m.cols = [3][]Card{inProgress, {card(500, "In Review", "r")}, nil}
+	m.agents = setAgents(agents)
+	m.ledger = Ledger{Read: true, ByRef: refs}
+
+	targets := m.diffTargets()
+	if len(targets) != maxDiffReads {
+		t.Errorf("diffTargets = %d, want the bound %d — each target is two local git processes", len(targets), maxDiffReads)
+	}
+	for _, sp := range targets {
+		if sp.Issue == 500 {
+			t.Error("an In Review agent must not be measured")
+		}
+	}
+}
+
+func TestColumnHeaderCountIsRightJustifiedWithoutParens(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.width, m.height = 180, 40
+	out := viewModel(m)
+	if strings.Contains(out, "In Progress (3)") {
+		t.Error("the count must be right-justified and parenthesis-free")
+	}
+	head := strings.Split(out, "\n")[headerRows]
+	if !strings.Contains(head, "In Progress") || !strings.Contains(head, "3") {
+		t.Errorf("header line lost its name or count: %q", head)
+	}
+}
+
+func TestDoneSwapNamesItsMissingSourceAndClampsTheCursor(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.width, m.height = 180, 40
+	m.col, m.row = 2, 1 // on the second Human Needed card
+
+	m, _ = updateKey(m, keyMsg("D"))
+	if !m.showDone {
+		t.Fatal("D must swap the third column")
+	}
+	// The two lists are different lengths, so a row index that outlived the
+	// swap would leave every verb acting on a card that is not under the
+	// cursor.
+	if m.row != 0 {
+		t.Errorf("row = %d after the swap, want 0", m.row)
+	}
+	out := viewModel(m)
+	if !strings.Contains(out, doneColumnTitle) {
+		t.Errorf("the Done header must carry its window; got:\n%s", out)
+	}
+	if strings.Contains(out, "Thirty") {
+		t.Error("the Done column must not still be rendering Human Needed cards")
+	}
+	// An empty column and a column with no reader yet must not read alike.
+	if !strings.Contains(out, "GH-2062") {
+		t.Errorf("the unwired Done column must name what fills it; got:\n%s", out)
+	}
+	if strings.Contains(out, "(none)") {
+		t.Error("the unwired Done column must not claim it is merely empty")
+	}
+
+	m, _ = updateKey(m, keyMsg("D"))
+	if m.showDone || !strings.Contains(viewModel(m), "Human Needed") {
+		t.Error("D must swap back")
+	}
+}
+
+func TestPriorityGlyphMarksP0AndNullDistinctly(t *testing.T) {
+	if !strings.Contains(priorityGlyph("P0"), "[!]") {
+		t.Error("P0 must be an alert, not a meter position")
+	}
+	// A null priority sinks an item below stale backlog in `board next`, so it
+	// is a real defect and renders as an EMPTY meter rather than as blank.
+	empty := priorityGlyph("")
+	if empty == "" {
+		t.Error("an unset priority must render as an empty meter, not as nothing")
+	}
+	for _, p := range []string{"P1", "P2", "P3"} {
+		if g := priorityGlyph(p); lipgloss.Width(g) != lipgloss.Width(empty) {
+			t.Errorf("priorityGlyph(%q) is %d cells, empty is %d — the meter must be fixed-width",
+				p, lipgloss.Width(g), lipgloss.Width(empty))
+		}
+	}
+}
+
+func TestAgeChipDashesRatherThanZero(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	// A live agent with no ledger record: not an agent that is zero minutes old.
+	m.agents = setAgents([]Agent{{Name: "w80-x", Status: "working", Issue: 80, Lane: "w"}})
+	if got := ageChip(m, Card{Number: 80}, asciiGlyphs); !strings.Contains(got, "—") {
+		t.Errorf("ageChip = %q, want a dash", got)
+	}
+	if strings.Contains(ageChip(m, Card{Number: 80}, asciiGlyphs), "0m") {
+		t.Error("a missing record must never render as 0m")
 	}
 }

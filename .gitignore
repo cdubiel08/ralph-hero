@@ -40,3 +40,7 @@ node_modules/
 # ralph-herdr cockpit TUI binary (rung 1 of the launcher ladder; rebuilt by
 # the plugin's [[build]] hook / scripts/build-cockpit.sh — never committed).
 plugin/ralph-herdr/cockpit/ralph-cockpit
+# ...and the name a bare `go build ./...` produces, which is the directory's,
+# not the one the build hook passes to -o. Same 5 MB artifact, one keystroke
+# away from being committed by anyone who builds before staging.
+plugin/ralph-herdr/cockpit/cockpit
