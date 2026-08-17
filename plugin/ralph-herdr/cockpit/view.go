@@ -14,25 +14,68 @@ import (
 )
 
 const (
-	headerRows      = 2 // title line + banner/blank line above the columns
-	cardRows        = 3 // every card renders exactly this many lines
+	headerRows = 2 // title line + banner/blank line above the columns
+	// cardRows is load-bearing: hitTest maps clicks through it as a fixed
+	// stride, so the constant and the card geometry MUST move together.
+	// 3 content lines + 1 separator rule.
+	cardRows        = 4
 	colHeaderRows   = 2 // column title + rule
 	statusRows      = 2 // legend + status line
 	narrowThreshold = 90
 )
 
 var (
-	styleTitle    = lipgloss.NewStyle().Bold(true)
-	styleBanner   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	styleDim      = lipgloss.NewStyle().Faint(true)
-	styleColHead  = lipgloss.NewStyle().Bold(true).Underline(true)
-	styleSelected = lipgloss.NewStyle().Reverse(true)
-	styleWorking  = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	styleBlocked  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	styleIdle     = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	styleErr      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	styleOverlay  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	styleQuestion = lipgloss.NewStyle().Italic(true)
+	styleTitle   = lipgloss.NewStyle().Bold(true)
+	styleBanner  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	styleDim     = lipgloss.NewStyle().Faint(true)
+	styleErr     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	styleOverlay = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+
+	// ── card ink ────────────────────────────────────────────────────────────
+	// Selection changes INK, never geometry: a card that reflowed under j/k
+	// would move the grid beneath the cursor and invalidate the fixed stride.
+	styleNum      = lipgloss.NewStyle().Foreground(lipgloss.Color("15")) // white, NOT bold
+	styleNumSel   = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	styleCardText = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	styleBranch   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleMeta     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleRule     = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
+	styleQuestion = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("214"))
+	styleEpic     = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("60"))
+	styleTimer    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	styleGutter   = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+	styleGutterS  = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+
+	// Status dot — herdr's own vocabulary, joined with the C8 state token.
+	dotWorking   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))  // yellow
+	dotReporting = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))  // blue
+	dotBlocked   = lipgloss.NewStyle().Foreground(lipgloss.Color("203")) // red — needs a human
+	dotIdle      = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green, HOLLOW
+	dotStarting  = lipgloss.NewStyle().Foreground(lipgloss.Color("244")) // small grey
+	dotNone      = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+
+	// Priority. Colour is reserved for the two that mean "now": red alert at
+	// P0, yellow at P1. P2/P3 are white fill over a dimmed remainder.
+	prioP0   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	prioFill = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	prioWhit = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	prioEmpt = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+
+	// Worktree diff.
+	diffAdd    = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+	diffDel    = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	diffSep    = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	diffUnread = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+
+	// Column headers: the count carries the column's colour, the NAME goes
+	// bold white only where the cursor is.
+	colCount = [3]lipgloss.Style{
+		lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true), // In Progress — yellow
+		lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true), // In Review — orange
+		lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true), // Human Needed — red
+	}
+	styleColHead    = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	styleColHeadSel = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 )
 
 func viewModel(m Model) string {
@@ -95,7 +138,7 @@ func legend(m Model) string {
 	if m.mode == ModePeek || m.mode == ModeDag {
 		return "esc close"
 	}
-	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · d diff · g browser · q quit"
+	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · d diff · D done⇄human · g browser · q quit"
 }
 
 // bodyHeightOf mirrors viewModel's body sizing — shared with hitTest so the
@@ -122,7 +165,7 @@ func visibleCards(bodyHeight int) int {
 // acts on the selected card, so the selected card must always be on screen —
 // and stays at the top elsewhere. Shared by renderColumn and hitTest.
 func colWindow(m Model, idx, bodyHeight int) (start, end int) {
-	cards := m.cols[idx]
+	cards := m.columnCards(idx)
 	visible := visibleCards(bodyHeight)
 	if idx == m.col && m.row >= visible {
 		start = m.row - visible + 1
@@ -161,20 +204,37 @@ func renderColumns(m Model, bodyHeight int) string {
 }
 
 func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
-	cards := m.cols[idx]
-	head := columnStates[idx] // board state name VERBATIM
+	cards := m.columnCards(idx)
+	// Header: name left, count RIGHT-justified with no parens, the count in
+	// the column's own colour and the name bold white only under the cursor —
+	// so "where am I" and "how much is here" are two separate reads.
+	name := m.columnTitle(idx) // board state name VERBATIM (or the Done window)
 	if narrow {
-		head = fmt.Sprintf("◀ %s (%d/3) ▶", head, idx+1)
+		name = fmt.Sprintf("◀ %s (%d/3) ▶", name, idx+1)
 	}
-	head = fmt.Sprintf("%s (%d)", head, len(cards))
+	nameStyle := styleColHead
+	if idx == m.col {
+		nameStyle = styleColHeadSel
+	}
+	count := fmt.Sprintf("%d", len(cards))
+	pad := width - lipgloss.Width(name) - lipgloss.Width(count) - 2
+	if pad < 1 {
+		pad = 1
+	}
 	var b strings.Builder
-	b.WriteString(truncate(styleColHead.Render(head), width))
+	b.WriteString(truncate(nameStyle.Render(name)+strings.Repeat(" ", pad)+colCount[idx].Render(count), width))
 	b.WriteString("\n")
-	b.WriteString(truncate(styleDim.Render(strings.Repeat("─", min(width, 40))), width))
+	b.WriteString(truncate(styleRule.Render(strings.Repeat("━", max(1, min(width-2, 60)))), width))
 	b.WriteString("\n")
 
 	if len(cards) == 0 {
-		b.WriteString(truncate(styleDim.Render("  (none)"), width))
+		// An empty column and a column whose data source is not wired must not
+		// read alike — the Done swap has no reader until GH-2062.
+		empty := "  (none)"
+		if idx == 2 && m.showDone {
+			empty = "  (Done unwired — GH-2062 fills it; D returns)"
+		}
+		b.WriteString(truncate(styleDim.Render(empty), width))
 		b.WriteString("\n")
 		return lipgloss.NewStyle().Width(width).Render(b.String())
 	}
@@ -197,62 +257,193 @@ func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
 	return lipgloss.NewStyle().Width(width).Render(b.String())
 }
 
-// renderCard emits exactly cardRows lines (hitTest depends on it).
+// renderCard emits exactly cardRows lines — three content lines under a
+// gutter column, then a dim separator rule. UNIFORM IN EVERY STATE: selection
+// changes ink only, because hitTest maps clicks through cardRows as a fixed
+// stride and a card that grew or shrank under the cursor would silently move
+// every card below it out from under the mouse.
+//
+// Gutter: the status dot rides line 1; lines 2-3 carry a bar, bold white on
+// the selected card. No boxes and no per-card borders — a border is two more
+// rows of chrome per card in a column that is already three cards deep.
 func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 	selected := m.mode != ModePeek && m.mode != ModeDag && colIdx == m.col && rowIdx == m.row
+	g := m.glyphSet()
+	inner := width - 2 // gutter char + one space
+	if inner < 1 {
+		inner = 1
+	}
 
-	cursor := "  "
+	bar, barStyle := "│", styleGutter
 	if selected {
-		cursor = "▸ "
+		bar, barStyle = "▌", styleGutterS
 	}
-	glyph := " "
-	who := ""
-	if status, ok := m.glyphStatus(card.Number); ok {
-		switch status {
-		case "working":
-			glyph = styleWorking.Render("●")
-		case "blocked":
-			glyph = styleBlocked.Render("●")
-		case "idle", "done":
-			glyph = styleIdle.Render("●")
-		default:
-			glyph = styleDim.Render("●")
-		}
-		if a, ok := m.agentFor(card.Number); ok {
-			who = " " + styleDim.Render(a.Name)
-		}
-	}
-	line1 := fmt.Sprintf("%s#%d %s%s", cursor, card.Number, glyph, who)
+	gutterTop := statusDot(m, card, g)
+	gutterRest := barStyle.Render(bar)
 
-	title := card.Title
+	numStyle, textStyle := styleNum, styleCardText
 	if selected {
-		title = styleSelected.Render(title)
+		numStyle, textStyle = styleNumSel, styleNumSel
 	}
-	line2 := "  " + title
 
+	// ── line 1: #num · agent count · branch (dim) · right slot.
+	left := numStyle.Render(fmt.Sprintf("#%d", card.Number))
+	if n := len(m.agents[card.Number]); n > 1 {
+		// The lane letter is deliberately gone: with a fleet, HOW MANY is the
+		// operative fact and the lane is one keypress away through peek.
+		left += " " + dotWorking.Render(fmt.Sprintf("%s%d", g.agents, n))
+	}
+	// The right slot carries ONE fact, so it can never argue with itself: the
+	// worktree diff while the work is IN the worktree. The PR's fate once it
+	// has left is the same slot on In Review cards — GH-2062 fills it.
+	chip := ""
+	if card.State == columnStates[0] {
+		chip = diffChip(m, card)
+	}
+	avail := inner - lipgloss.Width(left) - 2
+	if chip != "" {
+		avail -= lipgloss.Width(chip) + 2
+	}
+	line1 := left
+	if br := m.cardBranch(card.Number); br != "" && avail > 3 {
+		if g.branch != "" {
+			br = g.branch + " " + br
+		}
+		// Truncated ONLY when the right slot is competing for the row; a card
+		// with no chip gives the branch the full width.
+		line1 += "  " + styleBranch.Render(trimTo(br, avail))
+	}
+	if chip != "" {
+		line1 = pad(line1, inner-lipgloss.Width(chip)) + chip
+	}
+
+	// ── line 2: title.
+	line2 := textStyle.Render(trimTo(card.Title, inner))
+
+	// ── line 3: priority · estimate · epic · agent age (right-justified).
 	var line3 string
 	if card.State == "Human Needed" {
-		// The phone-answerable contract: the question line, verbatim.
+		// The phone-answerable contract: the question line, verbatim, and it
+		// owns the whole row — a timer beside a question the human is meant to
+		// answer is noise competing with the one thing that matters.
 		q := card.Question
 		if q == "" {
 			q = "(question unavailable — a still answers via the board)"
 		}
-		line3 = "  " + styleQuestion.Render("? "+q)
+		line3 = styleQuestion.Render(trimTo("? "+q, inner))
 	} else {
-		meta := []string{}
-		if card.Priority != "" {
-			meta = append(meta, "["+card.Priority+"]")
-		}
+		lead := priorityGlyph(card.Priority)
 		if card.Estimate != "" {
-			meta = append(meta, "["+card.Estimate+"]")
+			lead += " " + styleMeta.Render("["+card.Estimate+"]")
 		}
 		if card.ParentNumber != 0 {
-			meta = append(meta, fmt.Sprintf("via #%d", card.ParentNumber))
+			// The parent NUMBER only: its title and the child rollup are a
+			// board read this unit does not make (GH-2062).
+			lead += "  " + styleCardText.Render(g.chevron) + " " +
+				styleEpic.Render(fmt.Sprintf("#%d", card.ParentNumber))
 		}
-		line3 = "  " + styleDim.Render(strings.Join(meta, " "))
+		timer := ageChip(m, card, g)
+		line3 = pad(lead, inner-lipgloss.Width(timer)) + timer
 	}
 
-	return truncate(line1, width) + "\n" + truncate(line2, width) + "\n" + truncate(line3, width) + "\n"
+	rule := styleRule.Render("  " + strings.Repeat("─", max(1, width-4)))
+	return truncate(gutterTop+" "+line1, width) + "\n" +
+		truncate(gutterRest+" "+line2, width) + "\n" +
+		truncate(gutterRest+" "+line3, width) + "\n" +
+		truncate(rule, width) + "\n"
+}
+
+// statusDot renders the joined vocabulary: yellow working, blue reporting, red
+// blocked (a human is needed), green HOLLOW idle, small grey starting. Hollow
+// for idle because it is the one state that means "nothing is happening" — a
+// filled dot of any colour reads as activity across a column of them.
+func statusDot(m Model, card Card, g glyphSet) string {
+	state, ok := m.cardState(card.Number)
+	if !ok {
+		return dotNone.Render(g.dotSmall)
+	}
+	switch state {
+	case stateWorking:
+		return dotWorking.Render(g.dotFull)
+	case stateReporting:
+		return dotReporting.Render(g.dotFull)
+	case stateBlocked:
+		return dotBlocked.Render(g.dotFull)
+	case stateIdle:
+		return dotIdle.Render(g.dotHollow)
+	case stateStarting:
+		return dotStarting.Render(g.dotSmall)
+	default:
+		return dotNone.Render(g.dotSmall)
+	}
+}
+
+// diffChip — "+123/-45" from the agent's own worktree, green over red. Three
+// cases that must not look alike: no live agent renders NOTHING (there is no
+// worktree to measure), an unreadable or not-yet-measured git renders a dim
+// "±?", and a real measurement renders its numbers — including a genuine
+// +0/-0, which is a worktree sitting at its base.
+func diffChip(m Model, card Card) string {
+	st, live := m.cardDiff(card.Number)
+	if !live {
+		return ""
+	}
+	if !st.Known {
+		return diffUnread.Render("±?")
+	}
+	return diffAdd.Render(fmt.Sprintf("+%d", st.Add)) +
+		diffSep.Render("/") +
+		diffDel.Render(fmt.Sprintf("-%d", st.Del))
+}
+
+// priorityGlyph — P0 is an alert, P1-P3 a three-bar meter: P1 fills all three
+// in yellow, P2 two, P3 one, white over a dimmed remainder.
+//
+// Two limits stated rather than hidden: P2 and P3 differ only in fill count,
+// and P1 differs from them only in colour, so a monochrome terminal collapses
+// the three into a bar chart. An UNSET priority renders as an empty meter
+// rather than as blank — a null priority sinks an item below stale backlog in
+// `board next`, so it is a real defect and should look like one.
+func priorityGlyph(p string) string {
+	if p == "P0" {
+		return prioP0.Render("[!]")
+	}
+	n := 0
+	switch p {
+	case "P1":
+		n = 3
+	case "P2":
+		n = 2
+	case "P3":
+		n = 1
+	}
+	fill := prioWhit
+	if n == 3 {
+		fill = prioFill
+	}
+	out := ""
+	for i, mark := range []string{"▁", "▃", "▅"} {
+		if i < n {
+			out += fill.Render(mark)
+		} else {
+			out += prioEmpt.Render(mark)
+		}
+	}
+	return out
+}
+
+// ageChip — the LIVE agent's age since spawn, at minute precision so the
+// existing adaptive poll can drive it without a 1 Hz repaint.
+//
+// No ledger record is a dash, never 0m: an agent nobody spawned through the
+// sanctioned path, or one spawned on another host, is not an agent that is
+// zero minutes old.
+func ageChip(m Model, card Card, g glyphSet) string {
+	label := "—"
+	if age, ok := m.cardAge(card.Number, time.Now()); ok {
+		label = formatAge(age)
+	}
+	return styleTimer.Render(strings.TrimSpace(g.clock+" ") + label)
 }
 
 // renderOverlay draws the peek/dag pane: bordered, clipped to the body area.
@@ -344,6 +535,35 @@ func truncate(s string, width int) string {
 		return s
 	}
 	return ansi.Truncate(s, width, "")
+}
+
+// pad right-fills a possibly-styled string to `to` terminal cells, so a
+// right-justified chip lands at the same column on every card.
+func pad(s string, to int) string {
+	if d := to - lipgloss.Width(s); d > 0 {
+		return s + strings.Repeat(" ", d)
+	}
+	return s
+}
+
+// trimTo clips to n cells with an ellipsis. Rune-based, so a multi-byte title
+// is never cut mid-character.
+func trimTo(s string, n int) string {
+	if n <= 1 || lipgloss.Width(s) <= n {
+		return s
+	}
+	r := []rune(s)
+	if len(r) > n-1 {
+		r = r[:n-1]
+	}
+	return string(r) + "…"
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func baseName(p string) string {

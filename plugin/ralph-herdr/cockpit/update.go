@@ -81,6 +81,13 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	case agentsMsg:
 		m.herdrOK = msg.herdrOK
 		m.agents = setAgents(msg.agents)
+		if msg.ledger.Read {
+			// Only a ledger we actually read replaces the last one. An
+			// unreadable file is a failed read, and dropping every age chip to
+			// a dash on one transient stat error would look exactly like a
+			// fleet nobody spawned through the sanctioned path.
+			m.ledger = msg.ledger
+		}
 		// The writers are visible here, one free local read ahead of their board
 		// writes: a session appearing (it is about to claim), going blocked (it
 		// moved the item to Human Needed), or leaving. Snap, don't wait.
@@ -88,6 +95,18 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			m.agentSig = sig
 			m.snapToFloor()
 		}
+		// The diff pass runs off the joined state, so it is dispatched here
+		// rather than on the tick: before this message there is no agent_ref
+		// to measure against, and after it the target list is exact.
+		if targets := m.diffTargets(); len(targets) > 0 {
+			return m, fetchDiffsCmd(m.runner, targets)
+		}
+		return m, nil
+
+	case diffsMsg:
+		// REPLACE, never merge: a stale entry for an agent that has since
+		// exited would keep drawing a diff for a worktree nobody is in.
+		m.diffs = msg.diffs
 		return m, nil
 
 	case peekMsg:
@@ -306,6 +325,26 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		m.status = fmt.Sprintf("looking up #%d's PR…", card.Number)
 		return m, prDiffCmd(m.cfg, m.runner, card.Number)
+
+	case "D":
+		// Swap the third column between Human Needed and Done. Upper-case
+		// because `d` is the PR diff and a slip between the two would open a
+		// pane rather than change a view.
+		//
+		// The cursor is clamped straight after: the two lists are different
+		// lengths, and a row index that outlives the swap would leave every
+		// verb acting on a card that is not under the cursor.
+		m.showDone = !m.showDone
+		if m.col == 2 {
+			m.row = 0
+		}
+		m.clampCursor()
+		if m.showDone {
+			m.status = doneColumnTitle + " — the closed-issue read is not wired yet (GH-2062); D returns to Human Needed"
+		} else {
+			m.status = "third column: Human Needed"
+		}
+		return m, nil
 
 	case "g":
 		card, ok := m.selectedCard()

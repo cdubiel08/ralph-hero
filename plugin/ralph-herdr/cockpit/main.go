@@ -18,6 +18,13 @@
 //	RALPH_COCKPIT_INTERVAL_MAX
 //	                        hard staleness bound on the adaptive board cadence
 //	                        (default 300; below the floor = backoff off)
+//	RALPH_COCKPIT_GLYPHS    "nerd" opts in to Nerd Font card glyphs; anything
+//	                        else (default) uses ASCII — a host without the font
+//	                        renders tofu at the wrong width and shears the
+//	                        fixed-stride card grid the mouse maps through
+//	RALPH_HERDR_LEDGER      pin the spawn ledger file (default: the board
+//	                        scope's ~/.ralph/<owner>/<repo>/ledger.jsonl)
+//	RALPH_HERDR_LEDGER_ROOT ledger root dir (default ~/.ralph)
 package main
 
 import (
@@ -117,6 +124,12 @@ func resolveConfig(args []string, getenv func(string) string) (Config, error) {
 
 	cfg.Interval = pollInterval(getenv("RALPH_COCKPIT_INTERVAL"))
 	cfg.MaxInterval = maxPollInterval(getenv("RALPH_COCKPIT_INTERVAL_MAX"), cfg.Interval)
+
+	// Machine-local markings. Both are chrome and neither can fail startup:
+	// no discoverable board scope costs the age chip, and an unset glyph knob
+	// takes the ASCII set.
+	cfg.LedgerPath = ledgerPath(cfg.Repo, getenv)
+	cfg.Glyphs = resolveGlyphs(getenv("RALPH_COCKPIT_GLYPHS"))
 	return cfg, nil
 }
 
