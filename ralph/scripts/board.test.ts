@@ -5922,23 +5922,50 @@ describe("doctor board-volume line (GH-1788)", () => {
     expect(c.detail).toContain("page(s) per full scan");
   });
 
-  it("over threshold is INFO and never touches the exit code, --strict included", () => {
+  /** A board that is over threshold AND has something prune can remove. */
+  const prunableBoard = () => {
     const gh = new FakeGh();
-    gh.issues.set(1, { number: 1, state: "Backlog" });
-    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1,
+      state: "Done",
+      issueState: "CLOSED",
+      stateReason: "COMPLETED",
+      closedAt: new Date(NOW.getTime() - 400 * 86_400_000).toISOString(),
+    });
+    return gh;
+  };
+
+  it("over threshold WITH a prune candidate is INFO and never touches the exit code, --strict included", () => {
+    const ctx = makeCtx(prunableBoard());
     ctx.cfg.volume = { ...ctx.cfg.volume, maxItems: 0 }; // any board is "over"
     const baseline = doctor(makeCtx(new FakeGh()), { strict: true }).ok;
     const r = doctor(ctx, { strict: true });
     expect(line(r).level).toBe("info");
     // The remedy removes items from the project — a human's call, never a gate.
     expect(line(r).detail).toContain("archiving would NOT help");
+    expect(line(r).detail).toContain("`board prune` lists 1 closed item(s)");
     expect(r.ok).toBe(baseline);
   });
 
-  it("--fix never acts on it: a board over threshold produces no fix line", () => {
+  // GH-2052. Once #2050 made the count honest the line became permanent on
+  // this repo's own board — over threshold, nothing prunable, no action. An
+  // `i` marker that can never clear is the check crying wolf about itself.
+  it("over threshold with NOTHING prunable reads ok, still reports the scan, and says why", () => {
     const gh = new FakeGh();
-    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(1, { number: 1, state: "Backlog" }); // open: never a candidate
     const ctx = makeCtx(gh);
+    ctx.cfg.volume = { ...ctx.cfg.volume, maxItems: 0 };
+    const c = line(doctor(ctx));
+    expect(c.level).toBe("ok");
+    // The measurement is never withheld — only the marker asking for action.
+    expect(c.detail).toContain("page(s) per full scan");
+    expect(c.detail).toContain("over 0 (RALPH_VOLUME_MAX_ITEMS)");
+    expect(c.detail).toContain("Nothing is prunable");
+    expect(c.detail).toContain(`${ctx.cfg.volume.pruneAfterDays}-day window`);
+  });
+
+  it("--fix never acts on it: a board over threshold with candidates produces no fix line", () => {
+    const ctx = makeCtx(prunableBoard());
     ctx.cfg.volume = { ...ctx.cfg.volume, maxItems: 0 };
     const r = doctor(ctx, { fix: true });
     expect(line(r).level).toBe("info");
