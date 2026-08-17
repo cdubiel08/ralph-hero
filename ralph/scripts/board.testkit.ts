@@ -60,6 +60,11 @@ export interface FakeIssue {
     updatedAt?: string;
     // Deliver-lane facts (GH-1712) — served only by the deliver detail branch.
     prState?: "OPEN" | "MERGED" | "CLOSED";
+    // Card-signals facts (GH-2062) — the chip's four scalars. `rollup` absent
+    // means GitHub returned no statusCheckRollup at all, which is a state the
+    // chip must handle rather than a fixture omission.
+    mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+    rollup?: "SUCCESS" | "PENDING" | "FAILURE" | "ERROR" | "EXPECTED";
     headSha?: string;
     checks?: Array<{ name: string; conclusion: string | null }>;
     reviewsAt?: string[];
@@ -151,6 +156,11 @@ export class FakeGh {
   viewerLogin = "me-bot";
   loseCreateResponse = false;
   failTwinSearch = false;
+
+  /** GH-2062: which of the three UNPAGINATED linkage connections reports more
+   *  pages than the card-signals read asked for. Each one independently means
+   *  an omitted PR, so each must hold the issue out of the answer. */
+  truncateCardLinkage: "closing" | "refs" | "branch-prs" | null = null;
 
   expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
 
@@ -287,6 +297,31 @@ export class FakeGh {
       number: p.number,
       state: p.prState ?? (p.merged ? "MERGED" : "OPEN"),
     };
+  }
+
+  /** The card-signals view of a linked PR (GH-2062): linkage plus the four
+   *  scalars the chip reads. No `id` — that document never fetches by node,
+   *  because it makes no second call. */
+  private cardPrLink(p: NonNullable<FakeIssue["prs"]>[number]) {
+    return {
+      number: p.number,
+      state: p.prState ?? (p.merged ? "MERGED" : "OPEN"),
+      merged: p.merged,
+      mergeable: p.mergeable ?? null,
+      // Absent rollup stays ABSENT, so the fixture can exercise the case the
+      // chip must never green: a PR on which no check has run.
+      statusCheckRollup: p.rollup ? { state: p.rollup } : null,
+    };
+  }
+
+  /** Branch-convention refs GitHub's SUBSTRING filter would return for
+   *  `needle`. Shared by the deliver linkage and the card-signals one so a
+   *  fixture cannot make the two readers see different branches. */
+  private branchRefNodes(fi: FakeIssue, needle: string) {
+    return [
+      ...(fi.branchPrs ? [{ name: `feature/GH-${fi.number}`, prs: fi.branchPrs }] : []),
+      ...(fi.branchRefs ?? []),
+    ].filter((r) => needle !== "" && r.name.includes(needle));
   }
 
   /** Every PR any issue links, by NODE ID — phase B queries by id alone, with
@@ -462,6 +497,70 @@ export class FakeGh {
       return data({ search: { nodes } });
     }
 
+    // Card-signals linkage (GH-2062): cK/rK alias pairs. Matched before the
+    // deliver branch for the same reason that one is matched early — its
+    // selection set contains the other branches' needles.
+    if (query.includes("c0: issue(number: $n0)")) {
+      const repo: Record<string, unknown> = {};
+      for (const [key, num] of Object.entries(variables)) {
+        const m = /^n(\d+)$/.exec(key);
+        if (!m) continue;
+        const fi = this.issues.get(num as number);
+        if (!fi) {
+          repo[`c${m[1]}`] = null;
+          repo[`r${m[1]}`] = { nodes: [] };
+          continue;
+        }
+        const cut = this.truncateCardLinkage;
+        repo[`c${m[1]}`] = {
+          number: fi.number,
+          closedByPullRequestsReferences: {
+            pageInfo: { hasNextPage: cut === "closing" },
+            nodes: (fi.prs ?? []).map((p) => this.cardPrLink(p)),
+          },
+        };
+        repo[`r${m[1]}`] = {
+          pageInfo: { hasNextPage: cut === "refs" },
+          nodes: this.branchRefNodes(fi, String(variables[`h${m[1]}`] ?? "")).map((r) => ({
+            name: r.name,
+            associatedPullRequests: {
+              pageInfo: { hasNextPage: cut === "branch-prs" },
+              nodes: (r.prs ?? []).map((p) => this.cardPrLink(p)),
+            },
+          })),
+        };
+      }
+      return data({ repository: repo });
+    }
+
+    // Card-signals epic rollups (GH-2062): eK aliases over subIssues. The
+    // needle carries the VARIABLE, because `closedTreeEdges` sends `pe0:
+    // issue(number: 3)` — a bare `e0: issue(number` is a substring of it, and
+    // matching that stole the closure's answers.
+    if (query.includes("e0: issue(number: $e0)")) {
+      const repo: Record<string, unknown> = {};
+      for (const [key, num] of Object.entries(variables)) {
+        const m = /^e(\d+)$/.exec(key);
+        if (!m) continue;
+        const fi = this.issues.get(num as number);
+        if (!fi) {
+          repo[`e${m[1]}`] = null;
+          continue;
+        }
+        const kids = [...this.issues.values()].filter((c) => c.parent === fi.number);
+        const page = kids.slice(0, 50);
+        repo[`e${m[1]}`] = {
+          number: fi.number,
+          title: fi.title ?? `Issue ${fi.number}`,
+          subIssues: {
+            pageInfo: { hasNextPage: kids.length > page.length },
+            nodes: page.map((c) => ({ number: c.number, state: c.issueState ?? "OPEN" })),
+          },
+        };
+      }
+      return data({ repository: repo });
+    }
+
     // Deliver-lane detail fetch (GH-1712): dK/bK alias pairs. Matched before
     // every other issue branch — its selection set contains their needles.
     if (query.includes("d0: issue(number")) {
@@ -503,11 +602,7 @@ export class FakeGh {
                   ],
           },
         };
-        const needle = String(variables[`h${m[1]}`] ?? "");
-        const refs = [
-          ...(fi.branchPrs ? [{ name: `feature/GH-${fi.number}`, prs: fi.branchPrs }] : []),
-          ...(fi.branchRefs ?? []),
-        ].filter((r) => needle !== "" && r.name.includes(needle));
+        const refs = this.branchRefNodes(fi, String(variables[`h${m[1]}`] ?? ""));
         repo[`b${m[1]}`] = {
           nodes: refs.map((r) => ({
             name: r.name,
@@ -647,7 +742,9 @@ export class FakeGh {
             pageInfo: this.pageInfo(end < all.length, String(end)),
             nodes: page.map((fi) => ({
               number: fi.number,
+              title: fi.title ?? `Issue ${fi.number}`,
               closedAt: fi.closedAt ?? null,
+              stateReason: fi.stateReason ?? null,
               // An issue's close IS an update, so absent updatedAt falls back
               // to closedAt rather than to "unknown" — see listOwnRecentClosed.
               updatedAt: fi.updatedAt ?? fi.closedAt ?? null,

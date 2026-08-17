@@ -148,6 +148,28 @@ read. **A marking we could not measure never renders like a measured one:**
 | age | time since spawn from `~/.ralph/<owner>/<repo>/ledger.jsonl`, joined on the exact `agent_ref`. Minute precision. No record = `—`, **never** `0m` |
 | priority | red `[!]` at P0, else a three-bar meter (P1 yellow/3, P2 2, P3 1). An unset priority is an EMPTY meter, not a blank — it sinks the item in `board next` and should look like a defect |
 
+Card markings (GH-2062) — the ones whose data must be FETCHED. They ride a
+second, slower cadence (`RALPH_COCKPIT_SIGNAL_INTERVAL`, default 120s, floored
+at the board interval) and are skipped entirely on a board with nothing to
+mark. Same rule as above, one level louder: **a read that failed renders as `?`,
+never as a value.**
+
+| Marking | Reads |
+|---|---|
+| `⇅ #2049` | the In Review PR chip, from `board card-signals --json`. **Green** open with checks green and no conflict, **amber** open otherwise, **purple** merged, **red** closed unmerged. Grey `⇅ ?` = the read failed or has not landed; *nothing at all* = we read it and this issue genuinely has no PR — a rollup-advanced epic parent, say |
+| `❯ #1994 Epic: … 2/4` | the epic rollup, same read: parent name in the comment ink, `done/total` in the merged-PR purple. `2/50+` = the child list was TRUNCATED, so the tally is a floor. No rollup read leaves the bare `❯ #1994` GH-2061 already drew |
+| Done · 14d | the `D` column, from `board closed --json` — own-repo items closed as COMPLETED inside `RALPH_AUDIT_DAYS`. Read lazily on the first `D` and refreshed only while it is on screen. Cancels (`NOT_PLANNED`) are excluded, matching `reconcile`. Four empty states stay apart: unread, read-failed, nothing-closed, and an ordinary empty column |
+
+**Green is not a merge verdict.** It means checks green and no known conflict —
+nothing more. Contract rule 7 is that gates are RUN, not predicted, and the
+cockpit is a viewer: `scripts/merge-pr.sh` is still the only thing that answers
+whether a PR may merge. The stated cost of that restraint is that a PR with
+FAILING checks renders the same amber as one still running.
+
+**Done · 14d is a window, not history.** The header always carries the window
+the read actually used, so a repo that raises `RALPH_AUDIT_DAYS` is never told
+"14d" over 30 days of closes.
+
 `RALPH_COCKPIT_GLYPHS=nerd` opts in to Nerd Font glyphs. The default is ASCII
 because a host without the font renders tofu at the wrong advance width, which
 shears the fixed-stride card grid the mouse maps clicks through.

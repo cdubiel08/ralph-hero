@@ -34,6 +34,11 @@ type glyphSet struct {
 	clock   string
 	chevron string
 	agents  string
+	// pr leads the In Review chip. ⇅ is ordinary Unicode with a predictable
+	// single-cell width, so unlike the branch/clock/agents glyphs it is NOT
+	// gated — the chip is the one marking whose absence would be read as
+	// "no PR", and a font knob must not be able to say that.
+	pr string
 
 	dotFull   string
 	dotHollow string
@@ -46,6 +51,7 @@ var nerdGlyphs = glyphSet{
 	clock:     "", // nf-fa-clock_o
 	chevron:   "❯",
 	agents:    "", // nf-fa-users
+	pr:        "⇅",
 	dotFull:   "●",
 	dotHollow: "○",
 	dotSmall:  "·",
@@ -56,6 +62,7 @@ var asciiGlyphs = glyphSet{
 	clock:     "",
 	chevron:   ">",
 	agents:    "x",
+	pr:        "⇅",
 	dotFull:   "●",
 	dotHollow: "○",
 	dotSmall:  "·",

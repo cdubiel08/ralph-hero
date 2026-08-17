@@ -50,7 +50,7 @@ func testModel(f *fakeRunner) Model {
 	m := newModel(Config{
 		Board: "BOARD", Herdr: "HERDR", Gh: "", Repo: "/tmp/repo",
 		ScriptsDir: "/plug/scripts", Interval: 30 * time.Second,
-		MaxInterval: 300 * time.Second,
+		MaxInterval: 300 * time.Second, SignalInterval: 120 * time.Second,
 	}, f)
 	m.width, m.height = 120, 40
 	m.cols = [3][]Card{
