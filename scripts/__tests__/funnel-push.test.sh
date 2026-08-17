@@ -121,6 +121,32 @@ expect_rc "double-quoted mention is not a command" 0
 run_hook "echo 'about git push --force' && git push --force origin feat/1930-courtesy-funnel-for"
 expect_rc "a real force push after a quoted mention still redirects" 2
 
+# --- GH-2058: the stripper and the segmenter both read the WHOLE command ----
+#
+# Same defect as funnel-board, and the expensive one to get wrong: the cost of
+# a wrong redirect here is a session that cannot push its own work.
+
+run_hook 'gh issue create --title T --body "The rail catches this form:
+  git push --force origin feat/1930-courtesy-funnel-for
+and redirects it to the lease script."'
+expect_rc "multi-line quoted body quoting a force push passes" 0
+
+# The single-line form passed before the fix; pinned so the two cases stay
+# distinguishable.
+run_hook 'gh issue create --title T --body "never git push --force origin feat/1930-courtesy-funnel-for"'
+expect_rc "single-line quoted body quoting a force push passes" 0
+
+# A real force push on a later line of a multi-line command still redirects.
+run_hook 'echo "prose about
+force pushing" && git push --force origin feat/1930-courtesy-funnel-for'
+expect_rc "a real force push after a multi-line quoted span still redirects" 2
+
+# A separator inside the quoted body is not a separator.
+run_hook 'gh issue create --title T --body "a; b && c | d
+git push --force origin feat/1930-courtesy-funnel-for"'
+expect_rc "separators inside a multi-line quoted body do not split it" 0
+
+
 echo ""
 echo "funnel-push.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

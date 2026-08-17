@@ -9,6 +9,17 @@
 # v1's merge-review-decision-gate.sh — the one hook pattern that ever held.
 set -euo pipefail
 
+# The quote-aware command reader every funnel shares (GH-2058). A courtesy rail
+# that cannot read its own library must fail OPEN — never block a command
+# because a file is missing (the direction hooks.json's CLAUDE_PLUGIN_ROOT
+# guard already takes, GH-2045). Resolved beside THIS script rather than from
+# CLAUDE_PLUGIN_ROOT: the library is an implementation detail of this file, so
+# the copy that ships with it is the one that must be read.
+CS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/cmdscan.sh"
+[ -r "$CS_LIB" ] || exit 0
+# shellcheck source=lib/cmdscan.sh
+. "$CS_LIB" || exit 0
+
 INPUT=$(cat)
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [ -n "$CMD" ] || exit 0
@@ -18,20 +29,17 @@ CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) |
 # nothing, and refusing it makes this rail unable to be written about. Strip
 # quoted spans before matching; that can only under-redirect, which is the
 # safe direction for a courtesy rail.
-# The stripper must see the WHOLE command as one string, not a line at a time
-# (GH-2057). `sed` is line-based, so a quoted span that spans newlines — which
-# is what every real `--body "..."` is — had its opening and closing quotes land
-# on different lines and matched nothing: the span survived stripping and any
-# `gh pr merge` inside it was refused as though it were being run. Observed on
-# GH-2057's own filing, where the issue body described this rail in backticks
-# inside a multi-line quoted argument and the rail refused the write.
 #
-# awk with the record separator set past anything a command contains reads the
-# input as a single record, so the same two patterns now match across newlines.
-# Backticks are deliberately NOT stripped: outside quotes they are command
-# substitution, which really does run what is inside them.
-UNQUOTED=$(printf '%s' "$CMD" | awk 'BEGIN{RS="\x01"} {gsub(/'"'"'[^'"'"']*'"'"'/,""); gsub(/"[^"]*"/,""); printf "%s", $0}')
-
+# The stripper must see the WHOLE command, not a line at a time (GH-2057): a
+# quoted span that spans newlines — which every real `--body "..."` is — had
+# its opening and closing quotes land on different lines and matched nothing,
+# so the span survived and any `gh pr merge` inside it was refused as though
+# it were being run. Observed on GH-2057's own filing.
+#
+# The reading of shell quoting now lives in hooks/lib/cmdscan.sh, shared with
+# the three sibling funnels (GH-2058) — the same fix had to be made in four
+# places and was made in one, which is the drift GH-1843 already named.
+UNQUOTED=$(cs_strip_quotes "$CMD")
 if [[ "$UNQUOTED" == *"gh pr merge"* && "$CMD" != *"scripts/merge-pr.sh"* ]]; then
   case " $CMD" in *" -R "* | *" --repo "* | *" --repo="*) exit 0 ;; esac
   # gh also accepts -R with its value attached, no space (`-Rowner/repo`,

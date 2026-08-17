@@ -31,6 +31,17 @@
 #     gh's attached `-Rowner/repo` form.
 set -euo pipefail
 
+# The quote-aware command reader every funnel shares (GH-2058). A courtesy rail
+# that cannot read its own library must fail OPEN — never block a command
+# because a file is missing (the direction hooks.json's CLAUDE_PLUGIN_ROOT
+# guard already takes, GH-2045). Resolved beside THIS script rather than from
+# CLAUDE_PLUGIN_ROOT: the library is an implementation detail of this file, so
+# the copy that ships with it is the one that must be read.
+CS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/cmdscan.sh"
+[ -r "$CS_LIB" ] || exit 0
+# shellcheck source=lib/cmdscan.sh
+. "$CS_LIB" || exit 0
+
 INPUT=$(cat)
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [ -n "$CMD" ] || exit 0
@@ -45,7 +56,13 @@ CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) |
 # own canonical case. So a double-quoted span is stripped only when it contains
 # no `$(` and no backtick; single quotes suppress substitution entirely and are
 # always stripped.
-UNQUOTED=$(printf '%s' "$CMD" | sed -E -e "s/'[^']*'//g" -e 's/"([^"$`]|\$[^("`])*"//g')
+#
+# The stripper reads the WHOLE command, not a line at a time (GH-2058): the
+# `sed` this replaced could not match a quoted span whose opening and closing
+# quotes landed on different lines, which is every multi-line `--body`, so a
+# body describing this loop kept its `gh pr checks` visible and drew the
+# advisory. Same defect GH-2057 fixed in funnel-merge.sh, one file over.
+UNQUOTED=$(cs_strip_quotes "$CMD" 1)
 
 # Already using the classifier — nothing to redirect.
 case "$UNQUOTED" in *pr-gate-watch.sh*) exit 0 ;; esac

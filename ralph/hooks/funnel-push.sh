@@ -21,9 +21,22 @@
 # Quoted vs run (the defect this issue filed against the funnels themselves):
 # a command that merely QUOTES `git push --force` as an argument — filing an
 # issue about this rail, writing a doc, grepping for it — is not running it.
-# Each segment has its quoted spans stripped before matching, so this funnel
-# does not refuse documentation about itself.
+# Segments are derived on UNQUOTED separators and each has its quoted spans
+# stripped before matching, both reading the whole command rather than a line
+# at a time (GH-2058), so this funnel does not refuse documentation about
+# itself — including the multi-line kind, which is all of it.
 set -euo pipefail
+
+# The quote-aware command reader every funnel shares (GH-2058). A courtesy rail
+# that cannot read its own library must fail OPEN — never block a command
+# because a file is missing (the direction hooks.json's CLAUDE_PLUGIN_ROOT
+# guard already takes, GH-2045). Resolved beside THIS script rather than from
+# CLAUDE_PLUGIN_ROOT: the library is an implementation detail of this file, so
+# the copy that ships with it is the one that must be read.
+CS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/cmdscan.sh"
+[ -r "$CS_LIB" ] || exit 0
+# shellcheck source=lib/cmdscan.sh
+. "$CS_LIB" || exit 0
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PUSH_SCRIPT="$PLUGIN_ROOT/scripts/deliver-push.sh"
@@ -37,20 +50,17 @@ case "$CMD" in *"git push"*) ;; *) exit 0 ;; esac
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
 CWD="${CWD:-$PWD}"
 
-# Strip quoted spans: what is quoted is an ARGUMENT, not a command being run.
-# Both quote styles, non-greedy, applied per segment.
-strip_quotes() {
-  printf '%s' "$1" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g'
-}
-
-# Split on shell separators, same shape as funnel-board.
-SEGMENTS=${CMD%%#*}
-SEGMENTS=${SEGMENTS//;/$'\n'}
-SEGMENTS=${SEGMENTS//&/$'\n'}
-SEGMENTS=${SEGMENTS//|/$'\n'}
-
-while IFS= read -r raw_seg; do
-  seg=$(strip_quotes "$raw_seg")
+# Split on UNQUOTED shell separators and strip each segment's quoted spans —
+# what is quoted is an ARGUMENT, not a command being run. Both halves read the
+# whole command at once (GH-2058, shared with the sibling funnels in
+# hooks/lib/cmdscan.sh), which is what the previous line-at-a-time version
+# could not do: a multi-line `--body` was split at every newline and separator
+# inside it and its bounding quotes then sat in different segments, so nothing
+# was stripped and a doc quoting `git push --force` drew a refusal. That is the
+# expensive direction here — the cost of a wrong redirect is a session that
+# cannot push its own work.
+while IFS= read -r -d "$CS_SEP" raw_seg; do
+  seg=$(cs_strip_quotes "$raw_seg")
   [ -n "${seg//[[:space:]]/}" ] || continue
   # The sanctioned path exempts its own segment.
   case "$seg" in *deliver-push.sh*) continue ;; esac
@@ -96,5 +106,5 @@ while IFS= read -r raw_seg; do
   printf 'Force-pushing a branch with an open PR goes through the lease script:\n  bash %q --branch %q --expect <sha>\nIt pins the expected remote head, so a peer that moved the branch is a typed refusal instead of a silent clobber (GH-1917).\n' \
     "$PUSH_SCRIPT" "$BRANCH" >&2
   exit 2
-done <<< "$SEGMENTS"
+done < <(cs_segments "$CMD")
 exit 0

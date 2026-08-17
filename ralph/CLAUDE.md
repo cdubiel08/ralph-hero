@@ -30,6 +30,10 @@ ralph/
 │                       # deliver-push.sh / pr-gate-watch.sh (each
 │                       #   only when the host repo ships the target) — NOT
 │                       #   enforcement; board.ts + state-guard.yml are
+│                       #   the guarantees
+├── hooks/lib/cmdscan.sh    # the ONE reader of shell quoting (GH-2058): which
+│                       #   bytes are being RUN, and where one command ends.
+│                       #   Policy stays in each rail; only the walk is shared
 └── .claude-plugin/     # manifest
 ```
 
