@@ -89,7 +89,18 @@ jobs:
       matrix:
         # Node 20 dropped (GH-2053): EOL 2026-04-30, and better-sqlite3 13
         # requires >=22, so keeping 20 here pins the dependency at 12.
-        node-version: [22]
+        #
+        # 24 is the runtime release-knowledge.yml publishes on
+        # (release-knowledge.yml:186), so without it the package ships on a
+        # version no leg tests (GH-2056). The release job building green is
+        # weak evidence: it builds, it does not run the suite.
+        #
+        # This leg is ADVISORY until the ruleset requires its context. The main
+        # ruleset enumerates required checks by literal name, per matrix value
+        # ('build-and-test-knowledge (22)'), so a new leg produces a context
+        # nobody requires and a red 24 blocks nothing. Making it required is
+        # the apply twin, after a soak proves it stable.
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
