@@ -330,7 +330,7 @@ func parseBoardColumns(out string) ([3][]Card, error) {
 func parseCardSignals(out string) (map[int]PRMark, map[int]EpicRollup, error) {
 	var payload struct {
 		InReview *[]struct {
-			Number int  `json:"number"`
+			Number int `json:"number"`
 			PRs    *[]struct {
 				Number    int    `json:"number"`
 				State     string `json:"state"`

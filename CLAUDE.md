@@ -19,6 +19,10 @@ npx tsc --noEmit                               # typecheck
 shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh
 ```
 
+The cockpit is Go and CI gates it on **formatting** as well as tests, so a
+green `go test` is not a green `test-hooks`: from `plugin/ralph-herdr/cockpit/`,
+run `gofmt -l .` (must print nothing) before `go vet ./... && go test ./...`.
+
 ralph-knowledge builds/tests from `plugin/ralph-knowledge/` (`npm ci && npm run build && npm test`).
 
 ## The Board (source of truth)
