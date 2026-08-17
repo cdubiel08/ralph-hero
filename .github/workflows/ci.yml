@@ -86,6 +86,12 @@ jobs:
       run:
         working-directory: plugin/ralph-knowledge
     strategy:
+      # Load-bearing for the advisory leg below, not a preference. fail-fast
+      # defaults to TRUE, which cancels the sibling legs the moment one fails
+      # -- so a red 24 would cancel the REQUIRED 'build-and-test-knowledge (22)'
+      # context, and a cancelled required check is not a passing one. The leg
+      # would block the merges it is documented not to block.
+      fail-fast: false
       matrix:
         # Node 20 dropped (GH-2053): EOL 2026-04-30, and better-sqlite3 13
         # requires >=22, so keeping 20 here pins the dependency at 12.
