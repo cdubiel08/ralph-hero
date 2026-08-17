@@ -164,6 +164,53 @@ expect_rc "quoted blocked token in an issue body passes" 0
 run_hook "gh api graphql -f query='mutation { addSubIssue(input:{}) }'"
 expect_rc "gh api keeps matching inside quotes" 2
 
+
+# --- GH-2058: the stripper and the segmenter both read the WHOLE command ----
+#
+# Quoted-is-not-run (GH-1930) was implemented line-at-a-time, and every real
+# `--body` is multi-line. The bash split turned each newline and each `;`/`&`/
+# `|` INSIDE a quoted span into a segment break, so the quotes bounding the
+# body landed in different segments and every per-segment `sed` matched
+# nothing. A body that merely described a blocked mutation was then refused as
+# though it were running one — reproduced against this rail while fixing it.
+
+MULTILINE_BODY='Paragraph one describes the rail.
+
+It catches gh project item-edit; and the separators & and | inside this
+body must not split it into segments.
+Paragraph two.'
+run_hook "$(printf 'gh issue create --title T --body "%s"' "$MULTILINE_BODY")"
+expect_rc "multi-line quoted body naming a blocked token passes" 0
+
+# The single-line form already passed before the fix — pinned so a regression
+# cannot be mistaken for the multi-line case alone.
+run_hook 'gh issue create --title T --body "it catches gh project item-edit"'
+expect_rc "single-line quoted body naming a blocked token passes" 0
+
+# ...and the real thing on a LATER line of the same command still redirects:
+# the fix may not become a blanket amnesty for anything multi-line.
+run_hook 'echo "a quoted
+mention of nothing" && gh project item-delete --id X'
+expect_rc "a real mutation after a multi-line quoted span still redirects" 2
+
+# The `gh api` exception survives multi-line too: a GraphQL mutation lives
+# INSIDE the quotes and its segment is matched whole, so a pretty-printed
+# mutation — the form anyone actually writes — is still caught.
+run_hook "gh api graphql -f query='mutation {
+  addSubIssue(input: {issueId: \"a\", subIssueId: \"b\"}) { clientMutationId }
+}'"
+expect_rc "multi-line gh api GraphQL mutation still redirects" 2
+
+# A comment runs to end of LINE, not to end of command. The old truncation at
+# the first `#` anywhere silenced the rail on every later line.
+run_hook 'git status # nothing to see
+gh project item-edit --id X'
+expect_rc "a comment on one line does not silence the next" 2
+
+# ...and a `#` inside quotes is not a comment at all.
+run_hook 'gh issue create --title T --body "fixes #2058 for good"; git status'
+expect_rc "a hash inside a quoted body is not a comment" 0
+
 # ---------------------------------------------------------------------------
 echo
 echo "Results: $PASS passed, $FAIL failed"

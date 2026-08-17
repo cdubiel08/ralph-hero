@@ -120,6 +120,31 @@ silent "a payload with no command"
 LAST_ERR=$(printf '%s' 'not json' | "$HOOK" 2>&1 >/dev/null) || true
 silent "a payload that is not JSON"
 
+echo "== GH-2058: the stripper reads the whole command =="
+# The `sed` this replaced could not match a quoted span whose opening and
+# closing quotes landed on different lines, so a body describing the futile
+# loop kept its `gh pr checks` visible and drew the advisory.
+run_hook 'gh issue create --title T --body "The futile loop looks like:
+until ! gh pr checks 1845 | grep -q pending; do sleep 30; done
+and it never terminates."'
+silent "a multi-line quoted body describing the loop draws no advisory"
+
+run_hook 'gh issue create --title T --body "never write: until ! gh pr checks 1845; do sleep 30; done"'
+silent "a single-line quoted body describing the loop draws no advisory"
+
+# The carve-out that matters: a command substitution inside double quotes is
+# execution, not an argument — and it still is when the command is multi-line.
+run_hook 'while [ -n "$(gh pr checks 1845)" ]; do
+  sleep 30
+done'
+redirects "a multi-line loop wrapping the call in a substitution still redirects"
+
+# ...and a real loop after a multi-line quoted mention is not amnestied.
+run_hook 'echo "prose about
+polling" ; until ! gh pr checks 1845 | grep -q pending; do sleep 30; done'
+redirects "a real loop after a multi-line quoted span still redirects"
+
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
