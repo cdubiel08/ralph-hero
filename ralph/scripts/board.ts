@@ -5208,6 +5208,15 @@ export interface CardEpic {
 export interface CardSignalsResult {
   inReview: CardPrRow[];
   epics: CardEpic[];
+  /** In Review issues whose PR linkage came back TRUNCATED — GitHub had more
+   *  closing references, more matching branches, or more PRs on one branch than
+   *  the page asked for. They are held OUT of `inReview` rather than answered
+   *  from a partial list, because an omitted live PR would let the newest
+   *  merged one win the chip and render an in-flight unit as landed. Absence
+   *  from `inReview` is what the cockpit already draws as unread; this array is
+   *  so a human running the verb can see WHICH, rather than reading the same
+   *  silence a deleted issue produces. */
+  unreadable: number[];
 }
 
 /** Linkage + the four scalars, per In Review issue. Selected inside two
@@ -5239,20 +5248,27 @@ function cardPrFrom(n: any): CardPr {
  *  would be worse than no chip. */
 export function cardSignals(ctx: Ctx): CardSignalsResult {
   const open = listOwnOpenItems(ctx, QUEUE_SELECT_MINIMAL);
-  return withCache(ctx, () => ({
-    inReview: cardPrLinkage(
+  return withCache(ctx, () => {
+    const linkage = cardPrLinkage(
       ctx,
       open.filter((i) => i.state === "In Review").map((i) => i.number),
-    ),
-    epics: cardEpicRollups(
-      ctx,
-      [...new Set(open.map((i) => i.parentNumber).filter((n): n is number => n != null))],
-    ),
-  }));
+    );
+    return {
+      ...linkage,
+      epics: cardEpicRollups(
+        ctx,
+        [...new Set(open.map((i) => i.parentNumber).filter((n): n is number => n != null))],
+      ),
+    };
+  });
 }
 
-function cardPrLinkage(ctx: Ctx, numbers: number[]): CardPrRow[] {
+function cardPrLinkage(
+  ctx: Ctx,
+  numbers: number[],
+): { inReview: CardPrRow[]; unreadable: number[] } {
   const out: CardPrRow[] = [];
+  const unreadable: number[] = [];
   for (let start = 0; start < numbers.length; start += DELIVER_CHUNK) {
     const chunk = numbers.slice(start, start + DELIVER_CHUNK);
     const decls = chunk.map((_, k) => `$n${k}: Int!, $h${k}: String!`).join(", ");
@@ -5264,12 +5280,17 @@ function cardPrLinkage(ctx: Ctx, numbers: number[]): CardPrRow[] {
         (_, k) => `
       c${k}: issue(number: $n${k}) {
         number
-        closedByPullRequestsReferences(first: 10) { nodes { ${CARD_PR_FIELDS} } }
+        closedByPullRequestsReferences(first: 10) {
+          pageInfo { hasNextPage }
+          nodes { ${CARD_PR_FIELDS} }
+        }
       }
       r${k}: refs(refPrefix: "refs/heads/", query: $h${k}, first: 10) {
+        pageInfo { hasNextPage }
         nodes {
           name
           associatedPullRequests(first: 10, states: [OPEN, MERGED, CLOSED]) {
+            pageInfo { hasNextPage }
             nodes { ${CARD_PR_FIELDS} }
           }
         }
@@ -5300,11 +5321,26 @@ function cardPrLinkage(ctx: Ctx, numbers: number[]): CardPrRow[] {
       // yields no row, and the renderer draws that as "not read" rather than
       // as "no PR" — the whole point of the grey `?`.
       if (!issue) return;
+      const refs = repo[`r${k}`];
+      // Fail closed on a truncated page, exactly as the blocker, child and
+      // label reads do. These connections are UNPAGINATED, so a `hasNextPage`
+      // means GitHub had more linkage than we asked for — and the omitted PR
+      // is as likely to be the live one as any other. Answering from what came
+      // back would let an older merged PR win the chip and paint an in-flight
+      // unit as landed, which is a stronger claim than the read supports.
+      if (
+        issue.closedByPullRequestsReferences?.pageInfo?.hasNextPage ||
+        refs?.pageInfo?.hasNextPage ||
+        (refs?.nodes ?? []).some((r: any) => r?.associatedPullRequests?.pageInfo?.hasNextPage)
+      ) {
+        unreadable.push(num);
+        return;
+      }
       const byNumber = new Map<number, CardPr>();
       for (const n of issue.closedByPullRequestsReferences?.nodes ?? []) {
         if (n?.number) byNumber.set(n.number, cardPrFrom(n));
       }
-      for (const ref of repo[`r${k}`]?.nodes ?? []) {
+      for (const ref of refs?.nodes ?? []) {
         if (parseBranchName(ref?.name ?? "")?.issue !== num) continue;
         for (const n of ref?.associatedPullRequests?.nodes ?? []) {
           if (n?.number && !byNumber.has(n.number)) byNumber.set(n.number, cardPrFrom(n));
@@ -5313,7 +5349,7 @@ function cardPrLinkage(ctx: Ctx, numbers: number[]): CardPrRow[] {
       out.push({ number: num, prs: [...byNumber.values()] });
     });
   }
-  return out;
+  return { inReview: out, unreadable };
 }
 
 /** Children per rollup round trip. Matches `fetchIssue`'s `subIssues(first: 50)`
@@ -8818,7 +8854,12 @@ export function run(argv: string[], ctx: Ctx): number {
           out(
             `epic #${e.number} ${e.done}/${e.total}${e.truncated ? " (child list TRUNCATED)" : ""} ${e.title}`,
           );
-        if (!res.inReview.length && !res.epics.length) out("no card signals");
+        if (res.unreadable.length)
+          out(
+            `  linkage TRUNCATED (held out, reads as unread): ${res.unreadable.map((n) => `#${n}`).join(" ")}`,
+          );
+        if (!res.inReview.length && !res.epics.length && !res.unreadable.length)
+          out("no card signals");
       }
       return 0;
     }

@@ -6570,6 +6570,32 @@ describe("card-signals (GH-2062)", () => {
     expect(linkage[0]).not.toContain("fieldValues");
   });
 
+  /** The three linkage connections are UNPAGINATED, so a `hasNextPage` means
+   *  GitHub had more than the page asked for — and the omitted PR is as likely
+   *  to be the live one as any other. Answering from the partial list would let
+   *  an older merged PR win the chip and paint an in-flight unit as landed.
+   *  Same fail-closed rule the blocker, child and label reads apply. */
+  it("holds an issue OUT of the answer when any linkage page is truncated", () => {
+    for (const cut of ["closing", "refs", "branch-prs"] as const) {
+      const g = new FakeGh();
+      const c = makeCtx(g);
+      g.issues.set(1, {
+        number: 1, state: "In Review", stateUpdatedAt: OLD,
+        prs: [{ number: 101, merged: true, prState: "MERGED" }],
+        branchRefs: [{ name: "fix/1-live", prs: [{ number: 102, merged: false, prState: "OPEN" }] }],
+      });
+      g.truncateCardLinkage = cut;
+      const res = cardSignals(c);
+      // Absent from inReview is exactly what the cockpit draws as unread —
+      // and NAMED, so a human running the verb sees which, rather than the
+      // same silence a deleted issue produces.
+      expect(res.inReview).toEqual([]);
+      expect(res.unreadable).toEqual([1]);
+    }
+    // The control: with every page complete, the same fixture answers.
+    expect(cardSignals(ctx).unreadable).toEqual([]);
+  });
+
   it("rolls up each DISTINCT parent once, counting closed children", () => {
     gh.issues.set(1994, { number: 1994, title: "Epic: cockpit", state: "In Progress" });
     gh.issues.set(1, { number: 1, state: "Backlog", parent: 1994, issueState: "OPEN" });

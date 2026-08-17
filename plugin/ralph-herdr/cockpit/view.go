@@ -122,6 +122,14 @@ func viewModel(m Model) string {
 	if !m.signalsOK && m.signalsErr != "" {
 		banner = append(banner, styleErr.Render("card markings unread: "+m.signalsErr))
 	}
+	// A failed REFRESH over a non-empty Done list is the nastiest of these: the
+	// in-column message only speaks when the list is empty, so the last good
+	// cards and their count would sit there looking current while the window
+	// they claim to cover has moved on. Same treatment the board columns get —
+	// keep the cards, name the failure — and only while the column is up.
+	if m.showDone && !m.doneOK && m.doneErr != "" {
+		banner = append(banner, styleErr.Render(m.doneTitle()+" stale: "+m.doneErr))
+	}
 	if !m.herdrOK {
 		banner = append(banner, styleBanner.Render(noMuxBanner))
 	}

@@ -157,6 +157,11 @@ export class FakeGh {
   loseCreateResponse = false;
   failTwinSearch = false;
 
+  /** GH-2062: which of the three UNPAGINATED linkage connections reports more
+   *  pages than the card-signals read asked for. Each one independently means
+   *  an omitted PR, so each must hold the issue out of the answer. */
+  truncateCardLinkage: "closing" | "refs" | "branch-prs" | null = null;
+
   expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
 
   exec: (argv: string[], stdin?: string) => ExecResult = (argv, stdin) => {
@@ -506,16 +511,22 @@ export class FakeGh {
           repo[`r${m[1]}`] = { nodes: [] };
           continue;
         }
+        const cut = this.truncateCardLinkage;
         repo[`c${m[1]}`] = {
           number: fi.number,
           closedByPullRequestsReferences: {
+            pageInfo: { hasNextPage: cut === "closing" },
             nodes: (fi.prs ?? []).map((p) => this.cardPrLink(p)),
           },
         };
         repo[`r${m[1]}`] = {
+          pageInfo: { hasNextPage: cut === "refs" },
           nodes: this.branchRefNodes(fi, String(variables[`h${m[1]}`] ?? "")).map((r) => ({
             name: r.name,
-            associatedPullRequests: { nodes: (r.prs ?? []).map((p) => this.cardPrLink(p)) },
+            associatedPullRequests: {
+              pageInfo: { hasNextPage: cut === "branch-prs" },
+              nodes: (r.prs ?? []).map((p) => this.cardPrLink(p)),
+            },
           })),
         };
       }

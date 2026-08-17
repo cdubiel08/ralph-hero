@@ -182,6 +182,39 @@ func TestFailedSignalsReadDropsTheMarksRatherThanKeepingThemGreen(t *testing.T) 
 	}
 }
 
+// A failed REFRESH over a non-empty list is the case the in-column empty
+// states cannot cover: they only speak when the column is empty, so the last
+// good cards would sit there with their count looking current. Found by Codex
+// on this PR — the unit's own rule turned back on it.
+func TestAStaleDoneWindowNeverLooksCurrent(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.width, m.height = 160, 40
+	m, _ = updateKey(m, keyMsg("D"))
+	m, _ = updateModel(m, doneMsg{ok: true, windowDays: 14, cards: []Card{
+		{Number: 2061, State: doneState, Title: "landed", ClosedAt: time.Now().Add(-time.Hour).Format(time.RFC3339)},
+	}})
+	if !strings.Contains(viewModel(m), "#2061") {
+		t.Fatal("a good read must render its cards")
+	}
+
+	m, _ = updateModel(m, doneMsg{err: "timed out after 25s (cockpit board-read deadline)"})
+	out := viewModel(m)
+	// The cards STAY — a closed-issue list is history, and losing it to one
+	// transient timeout costs more than it protects. What may not stay is the
+	// impression that it is current.
+	if !strings.Contains(out, "#2061") {
+		t.Error("a transient failure must not discard the last good window")
+	}
+	if !strings.Contains(out, "stale") || !strings.Contains(out, "timed out") {
+		t.Errorf("a stale window must say so and name the cause:\n%s", out)
+	}
+	// ...and it must go quiet again once the column is not on screen.
+	m, _ = updateKey(m, keyMsg("D"))
+	if strings.Contains(viewModel(m), "stale") {
+		t.Error("a hidden Done column must not shout about its stale read")
+	}
+}
+
 func TestEpicChipDegradesOneStepAtATime(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	card := Card{Number: 20, State: "In Review", ParentNumber: 1994}
