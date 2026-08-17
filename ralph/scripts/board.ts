@@ -965,8 +965,15 @@ export interface VolumeThresholds {
 }
 
 export const VOLUME_DEFAULTS: Readonly<VolumeThresholds> = Object.freeze({
-  // ~8 pages. Comfortably above a healthy working board, well below the point
-  // where a routine poll starts costing real GraphQL budget.
+  // ~8 pages. "Comfortably above a healthy working board" was true when this
+  // was chosen and is not any more (GH-2052): #2050 swept 763 PR/draft items
+  // out, so the count now measures real issues only, and this repo's live
+  // board sits just above 800 with nothing prunable. It cannot be otherwise —
+  // `pruneAfterDays` sets a floor of one retention window of closed work
+  // (~840 items at this repo's throughput), so no constant below that floor is
+  // reachable by the remedy the line names. The number therefore marks where
+  // pruning becomes worth RECOMMENDING once anything is prunable, not a size a
+  // board stays under; the doctor line's severity carries the difference.
   maxItems: 800,
   // Six months. Far past tend's audit window and past any plausible reopen, so
   // a pruned item is one nobody is still reasoning about.
@@ -7319,19 +7326,33 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       try {
         const vol = volumeReport(pages, ctx.cfg.volume);
         const prune = classifyPrune(items, closedOwn, ctx.cfg, ctx.now());
+        // GH-2052: over threshold is only NEWS when the remedy exists. Once
+        // #2050 removed the PR/draft items the count became honest and the
+        // line became permanent — 860 real issues, 0 prunable — because
+        // `pruneAfterDays` floors the board at one retention window of closed
+        // work, which at this repo's throughput is already above 800. A
+        // threshold under that floor cannot be met by pruning, so an `i` that
+        // never clears is the check crying wolf about itself (the failure
+        // `foreign-items` above declines for the same reason). The
+        // measurement is never withheld — doctor renders `ok` lines too — only
+        // the marker that asks the reader to act.
+        const actionable = vol.over && prune.candidates.length > 0;
         add(
           "board-volume",
-          vol.over ? "info" : "ok",
+          actionable ? "info" : "ok",
           `${vol.items} items = ${vol.pages} page(s) per full scan ` +
             `(${vol.open} open, ${vol.closed} closed${vol.archived ? `, ${vol.archived} archived` : ""}` +
             `${vol.nonIssue ? `, ${vol.nonIssue} non-issue (PRs/drafts board.ts never reads)` : ""})` +
             (vol.over
               ? `; over ${vol.maxItems} (RALPH_VOLUME_MAX_ITEMS) — every scan pays for all of it, and ` +
                 `archiving would NOT help (archived items are still returned by the items API). ` +
-                (prune.candidates.length
+                (actionable
                   ? `\`board prune\` lists ${prune.candidates.length} closed item(s) safe to remove from the project ` +
                     `(the issues are untouched); it is a dry run until \`--apply\``
-                  : `no closed item is old enough to prune yet — the growth is live work, not history`)
+                  : `Nothing is prunable — every closed item is still read by something (\`board prune\` says which), ` +
+                    `so there is no action and this reads ok rather than info: the board cannot fall below one ` +
+                    `${ctx.cfg.volume.pruneAfterDays}-day window of closed work, and a threshold under that floor ` +
+                    `would fire forever with no remedy`)
               : ""),
         );
       } catch (e) {
