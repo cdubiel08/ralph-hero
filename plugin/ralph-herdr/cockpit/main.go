@@ -18,6 +18,11 @@
 //	RALPH_COCKPIT_INTERVAL_MAX
 //	                        hard staleness bound on the adaptive board cadence
 //	                        (default 300; below the floor = backoff off)
+//	RALPH_COCKPIT_SIGNAL_INTERVAL
+//	                        seconds between board-sourced card-marking reads —
+//	                        the PR chip, the epic rollup, and (only while it is
+//	                        on screen) the Done window. Default 120, floored at
+//	                        RALPH_COCKPIT_INTERVAL
 //	RALPH_COCKPIT_GLYPHS    "nerd" opts in to Nerd Font card glyphs; anything
 //	                        else (default) uses ASCII — a host without the font
 //	                        renders tofu at the wrong width and shears the
@@ -124,6 +129,7 @@ func resolveConfig(args []string, getenv func(string) string) (Config, error) {
 
 	cfg.Interval = pollInterval(getenv("RALPH_COCKPIT_INTERVAL"))
 	cfg.MaxInterval = maxPollInterval(getenv("RALPH_COCKPIT_INTERVAL_MAX"), cfg.Interval)
+	cfg.SignalInterval = signalInterval(getenv("RALPH_COCKPIT_SIGNAL_INTERVAL"), cfg.Interval)
 
 	// Machine-local markings. Both are chrome and neither can fail startup:
 	// no discoverable board scope costs the age chip, and an unset glyph knob
@@ -167,6 +173,25 @@ func maxPollInterval(raw string, floor time.Duration) time.Duration {
 		return floor
 	}
 	return max
+}
+
+// signalInterval parses RALPH_COCKPIT_SIGNAL_INTERVAL — the second cadence
+// (GH-2062): default 120s, garbage takes the default, and a value below the
+// board floor collapses TO the floor. Slower than the board poll by default
+// because these reads cost more per pass and go stale more slowly: a PR's fate
+// changes on someone else's clock, not on the board's.
+func signalInterval(raw string, floor time.Duration) time.Duration {
+	const def = 120 * time.Second
+	d := def
+	if raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			d = time.Duration(n) * time.Second
+		}
+	}
+	if d < floor {
+		return floor
+	}
+	return d
 }
 
 // installedPluginsFile resolves Claude Code's install registry, honouring

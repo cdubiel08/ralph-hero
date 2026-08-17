@@ -6466,3 +6466,191 @@ describe("pr-orphans", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Card signals (GH-2062) — the viewer's read.
+// ---------------------------------------------------------------------------
+
+import { cardSignals, recentDone } from "./board.js";
+
+describe("card-signals (GH-2062)", () => {
+  const OLD = "2026-07-31T10:00:00Z";
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  /** The whole reason this is not `deliver-queue`. That selector shells
+   *  `merge-pr.sh --dry-run` per open PR — a merge gate on a viewer's timer,
+   *  which contract rule 7 forbids and GH-1817 measured the cost of. */
+  it("runs no subprocess at all — a viewer never runs the merge gate", () => {
+    gh.issues.set(1, {
+      number: 1, state: "In Review", stateUpdatedAt: OLD,
+      prs: [{ number: 101, merged: false, prState: "OPEN", rollup: "SUCCESS", mergeable: "MERGEABLE" }],
+    });
+    const execs: string[][] = [];
+    const spied: Ctx = { ...ctx, exec: (argv, stdin) => { execs.push(argv); return ctx.exec(argv, stdin); } };
+    cardSignals(spied);
+    expect(execs.filter((a) => a[0] !== "gh")).toHaveLength(0);
+  });
+
+  /** The rows deliver deliberately drops the PR number from — `no-open-pr`
+   *  and `settling` — are exactly the merged and closed populations the purple
+   *  and red inks exist for. This read carries the number for every one. */
+  it("carries the PR number and fate for merged and closed-unmerged items alike", () => {
+    gh.issues.set(1, {
+      number: 1, state: "In Review", stateUpdatedAt: OLD,
+      prs: [{ number: 101, merged: true, prState: "MERGED" }],
+    });
+    gh.issues.set(2, {
+      number: 2, state: "In Review", stateUpdatedAt: OLD,
+      prs: [{ number: 102, merged: false, prState: "CLOSED" }],
+    });
+    const res = cardSignals(ctx);
+    const byIssue = new Map(res.inReview.map((r) => [r.number, r.prs]));
+    expect(byIssue.get(1)).toEqual([
+      { number: 101, state: "MERGED", merged: true, checks: null, mergeable: null },
+    ]);
+    expect(byIssue.get(2)?.[0]).toMatchObject({ number: 102, state: "CLOSED", merged: false });
+  });
+
+  /** An In Review item with NO linked PR is a real, ordinary state (a
+   *  rollup-advanced epic parent). It must appear with an empty list rather
+   *  than be omitted: omission is how the renderer spells "not read". */
+  it("reports a PR-less In Review item as present-with-none, never as absent", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", stateUpdatedAt: OLD });
+    const res = cardSignals(ctx);
+    expect(res.inReview).toEqual([{ number: 1, prs: [] }]);
+  });
+
+  it("unions closing references with the branch convention, and rejects digit coincidences", () => {
+    gh.issues.set(1807, {
+      number: 1807, state: "In Review", stateUpdatedAt: OLD,
+      branchRefs: [
+        { name: "fix/1807-real", prs: [{ number: 901, merged: false, prState: "OPEN" }] },
+        { name: "fix/18070-other-unit", prs: [{ number: 902, merged: false, prState: "OPEN" }] },
+      ],
+    });
+    const res = cardSignals(ctx);
+    expect(res.inReview[0].prs.map((p) => p.number)).toEqual([901]);
+  });
+
+  /** Only In Review items are asked about — the chip lives in that column, and
+   *  the linkage read is the per-item cost. */
+  it("asks about In Review items only", () => {
+    gh.issues.set(1, { number: 1, state: "In Progress" });
+    gh.issues.set(2, { number: 2, state: "In Review", stateUpdatedAt: OLD });
+    gh.issues.set(3, { number: 3, state: "Backlog" });
+    expect(cardSignals(ctx).inReview.map((r) => r.number)).toEqual([2]);
+  });
+
+  /** The nesting hazard GH-1811 measured at 607 points: cost is the PRODUCT of
+   *  the `first:` values down a nesting, so a CONNECTION under
+   *  `refs → associatedPullRequests` is enormous. `statusCheckRollup { state }`
+   *  is a scalar on a plain object — probed live at cost 1, nodeCount 0 — and
+   *  that distinction is what makes this document one call instead of two. */
+  it("selects no nested CONNECTION inside the linkage, and makes exactly one call for it", () => {
+    gh.issues.set(1, {
+      number: 1, state: "In Review", stateUpdatedAt: OLD,
+      prs: [{ number: 101, merged: false, prState: "OPEN", rollup: "SUCCESS" }],
+    });
+    gh.queries.length = 0;
+    cardSignals(ctx);
+    const linkage = gh.queries.filter((q) => q.includes("c0: issue(number"));
+    expect(linkage).toHaveLength(1);
+    expect(linkage[0]).toContain("statusCheckRollup { state }");
+    // The costly connections deliver's own linkage carries and this one does
+    // not: contexts under the rollup, and the comment/field reads a chip never
+    // looks at.
+    expect(linkage[0]).not.toContain("contexts(");
+    expect(linkage[0]).not.toContain("comments(");
+    expect(linkage[0]).not.toContain("projectItems");
+    expect(linkage[0]).not.toContain("fieldValues");
+  });
+
+  it("rolls up each DISTINCT parent once, counting closed children", () => {
+    gh.issues.set(1994, { number: 1994, title: "Epic: cockpit", state: "In Progress" });
+    gh.issues.set(1, { number: 1, state: "Backlog", parent: 1994, issueState: "OPEN" });
+    gh.issues.set(2, { number: 2, state: "Backlog", parent: 1994, issueState: "OPEN" });
+    gh.issues.set(3, {
+      number: 3, state: "Done", parent: 1994, issueState: "CLOSED", stateReason: "COMPLETED",
+      closedAt: "2026-07-30T00:00:00Z",
+    });
+    gh.issues.set(4, {
+      number: 4, state: "Done", parent: 1994, issueState: "CLOSED", stateReason: "COMPLETED",
+      closedAt: "2026-07-30T00:00:00Z",
+    });
+    gh.queries.length = 0;
+    const res = cardSignals(ctx);
+    expect(res.epics).toEqual([
+      { number: 1994, title: "Epic: cockpit", done: 2, total: 4, truncated: false },
+    ]);
+    // Two open children name one parent — one alias, not two.
+    expect(gh.queries.filter((q) => q.includes("e0: issue(number"))).toHaveLength(1);
+    expect(gh.queries.filter((q) => q.includes("e1: issue(number"))).toHaveLength(0);
+  });
+
+  it("makes no rollup call at all when nothing has a parent", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.queries.length = 0;
+    expect(cardSignals(ctx).epics).toEqual([]);
+    expect(gh.queries.filter((q) => q.includes("subIssues"))).toHaveLength(0);
+  });
+});
+
+describe("board closed — the Done window (GH-2062)", () => {
+  const days = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  /** `reconcile`'s own rule verbatim: closed + NOT_PLANNED is Canceled, and a
+   *  Canceled item in a Done column would be a second opinion about what Done
+   *  means. */
+  it("excludes NOT_PLANNED cancels and orders newest first", () => {
+    gh.issues.set(1, {
+      number: 1, title: "shipped first", state: "Done", issueState: "CLOSED",
+      stateReason: "COMPLETED", closedAt: days(5), updatedAt: days(5),
+    });
+    gh.issues.set(2, {
+      number: 2, title: "shipped second", state: "Done", issueState: "CLOSED",
+      stateReason: "COMPLETED", closedAt: days(1), updatedAt: days(1),
+    });
+    gh.issues.set(3, {
+      number: 3, title: "cancelled", state: "Canceled", issueState: "CLOSED",
+      stateReason: "NOT_PLANNED", closedAt: days(2), updatedAt: days(2),
+    });
+    const res = recentDone(ctx, TEND_DEFAULTS);
+    expect(res.items.map((c) => c.number)).toEqual([2, 1]);
+    expect(res.windowDays).toBe(14);
+  });
+
+  /** The title is what the column renders, and it rides free: it is a scalar
+   *  on a node the window read already pages. The audit's rows carried an
+   *  empty title only because nothing had asked for one. */
+  it("carries the title and the own-repo nameWithOwner the card's URL needs", () => {
+    gh.issues.set(1, {
+      number: 1, title: "Cockpit card markings", state: "Done", issueState: "CLOSED",
+      stateReason: "COMPLETED", closedAt: days(1), updatedAt: days(1),
+    });
+    const [c] = recentDone(ctx, TEND_DEFAULTS).items;
+    expect(c).toEqual({
+      number: 1, repo: "cdubiel08/ralph-hero",
+      title: "Cockpit card markings", closedAt: days(1),
+    });
+  });
+
+  it("honours the window: a close older than auditDays is out", () => {
+    gh.issues.set(1, {
+      number: 1, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED",
+      closedAt: days(20), updatedAt: days(20),
+    });
+    expect(recentDone(ctx, { staleDays: 30, auditDays: 14 }).items).toEqual([]);
+    expect(recentDone(ctx, { staleDays: 30, auditDays: 30 }).items).toHaveLength(1);
+  });
+});

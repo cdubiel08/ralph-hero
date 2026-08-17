@@ -67,6 +67,19 @@ var (
 	diffSep    = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 	diffUnread = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
 
+	// PR chip (GH-2062). One ink per fate, and `prUnread` is the SAME grey the
+	// diff chip's ±? uses — across the card, "we could not read this" has one
+	// colour, and it is never a colour that also means a state.
+	prReady   = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — checks green, no conflict
+	prPending = lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // amber — running, failing, or conflicted
+	prMerged  = lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // purple — landed
+	prClosed  = lipgloss.NewStyle().Foreground(lipgloss.Color("203")) // red — closed unmerged
+	prUnread  = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+
+	// Epic rollup: the done/total takes the SAME purple merged PRs use —
+	// both mean "landed".
+	styleRollup = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
+
 	// Column headers: the count carries the column's colour, the NAME goes
 	// bold white only where the cursor is.
 	colCount = [3]lipgloss.Style{
@@ -99,15 +112,20 @@ func viewModel(m Model) string {
 	// is NEVER shadowed by the no-multiplexer banner (on a herdr-less host a
 	// failed read would otherwise render as a calm empty board), and the
 	// failure outranks the chrome note when width forces a cut.
-	switch {
-	case m.boardErr != "" && !m.herdrOK:
-		b.WriteString(truncate(
-			styleErr.Render("board read failed: "+m.boardErr)+styleBanner.Render(" · "+noMuxBanner), m.width))
-	case m.boardErr != "":
-		b.WriteString(truncate(styleErr.Render("board read failed: "+m.boardErr), m.width))
-	case !m.herdrOK:
-		b.WriteString(truncate(styleBanner.Render(noMuxBanner), m.width))
+	// Priority order, joined so a narrow terminal cuts the CHROME and keeps the
+	// failure. The markings failure is third: the grey `?` chips already say it
+	// per card, but a board with no In Review card has no chip to say it on.
+	var banner []string
+	if m.boardErr != "" {
+		banner = append(banner, styleErr.Render("board read failed: "+m.boardErr))
 	}
+	if !m.signalsOK && m.signalsErr != "" {
+		banner = append(banner, styleErr.Render("card markings unread: "+m.signalsErr))
+	}
+	if !m.herdrOK {
+		banner = append(banner, styleBanner.Render(noMuxBanner))
+	}
+	b.WriteString(truncate(strings.Join(banner, styleDim.Render(" · ")), m.width))
 	b.WriteString("\n")
 
 	// Body: overlay modes replace the columns; browse/input modes show them.
@@ -228,13 +246,23 @@ func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
 	b.WriteString("\n")
 
 	if len(cards) == 0 {
-		// An empty column and a column whose data source is not wired must not
-		// read alike — the Done swap has no reader until GH-2062.
-		empty := "  (none)"
+		// Four facts that must never read alike: an empty column, a Done
+		// window still being read, a Done read that FAILED, and a window with
+		// genuinely nothing closed in it. The third is the one that matters —
+		// "the read broke" rendered as "nothing shipped in 14 days" is a
+		// confident lie about the busiest column on the board.
+		empty, style := "  (none)", styleDim
 		if idx == 2 && m.showDone {
-			empty = "  (Done unwired — GH-2062 fills it; D returns)"
+			switch {
+			case !m.doneOK && m.doneErr != "":
+				empty, style = "  (closed-issue read failed: "+m.doneErr+")", styleErr
+			case !m.doneOK:
+				empty = "  (reading the last " + fmt.Sprintf("%dd", m.doneWindowDays) + "…)"
+			default:
+				empty = "  (nothing closed in the window)"
+			}
 		}
-		b.WriteString(truncate(styleDim.Render(empty), width))
+		b.WriteString(truncate(style.Render(empty), width))
 		b.WriteString("\n")
 		return lipgloss.NewStyle().Width(width).Render(b.String())
 	}
@@ -294,11 +322,15 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		left += " " + dotWorking.Render(fmt.Sprintf("%s%d", g.agents, n))
 	}
 	// The right slot carries ONE fact, so it can never argue with itself: the
-	// worktree diff while the work is IN the worktree. The PR's fate once it
-	// has left is the same slot on In Review cards — GH-2062 fills it.
+	// worktree diff while the work is IN the worktree, the PR's fate once it
+	// has left. The two are mutually exclusive by column, which is why one
+	// slot suffices.
 	chip := ""
-	if card.State == columnStates[0] {
+	switch card.State {
+	case columnStates[0]:
 		chip = diffChip(m, card)
+	case columnStates[1]:
+		chip = prChip(m, card, g)
 	}
 	avail := inner - lipgloss.Width(left) - 2
 	if chip != "" {
@@ -322,7 +354,15 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 
 	// ── line 3: priority · estimate · epic · agent age (right-justified).
 	var line3 string
-	if card.State == "Human Needed" {
+	switch {
+	case card.State == doneState:
+		// A closed card from the window read has no priority and no estimate —
+		// they were never fetched. Falling through to the meter would draw the
+		// empty-priority glyph, which on a live card is a real defect and here
+		// would be a lie about a card nobody can fix. What a closed card has
+		// is when it closed.
+		line3 = styleMeta.Render(trimTo(closedLabel(card, time.Now()), inner))
+	case card.State == "Human Needed":
 		// The phone-answerable contract: the question line, verbatim, and it
 		// owns the whole row — a timer beside a question the human is meant to
 		// answer is noise competing with the one thing that matters.
@@ -331,18 +371,20 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 			q = "(question unavailable — a still answers via the board)"
 		}
 		line3 = styleQuestion.Render(trimTo("? "+q, inner))
-	} else {
+	default:
 		lead := priorityGlyph(card.Priority)
 		if card.Estimate != "" {
 			lead += " " + styleMeta.Render("["+card.Estimate+"]")
 		}
-		if card.ParentNumber != 0 {
-			// The parent NUMBER only: its title and the child rollup are a
-			// board read this unit does not make (GH-2062).
-			lead += "  " + styleCardText.Render(g.chevron) + " " +
-				styleEpic.Render(fmt.Sprintf("#%d", card.ParentNumber))
-		}
+		// The epic chip is the only variable-length thing on this row, so it —
+		// not the timer — absorbs the width. Budgeted BEFORE it is built: the
+		// timer is right-justified by `pad`, which cannot push back, so an
+		// over-long epic name would simply run into it and both would be
+		// unreadable. Two spaces of separator on each side.
 		timer := ageChip(m, card, g)
+		if epic := epicChip(m, card, g, inner-lipgloss.Width(lead)-lipgloss.Width(timer)-4); epic != "" {
+			lead += "  " + epic
+		}
 		line3 = pad(lead, inner-lipgloss.Width(timer)) + timer
 	}
 
@@ -394,6 +436,92 @@ func diffChip(m Model, card Card) string {
 	return diffAdd.Render(fmt.Sprintf("+%d", st.Add)) +
 		diffSep.Render("/") +
 		diffDel.Render(fmt.Sprintf("-%d", st.Del))
+}
+
+// prChip — the In Review right slot (GH-2062). Five outcomes, and the two that
+// mean "nothing to show" are deliberately different ink:
+//
+//   - UNREAD (the signals read failed, has not landed, or did not cover this
+//     issue) → a grey `⇅ ?`. It is the loudest case here: a chip that rendered
+//     blank on a failed read would say "this issue has no PR", which is the
+//     exact green-because-nobody-looked failure GH-1971 fixed on the merge side.
+//   - read, no linked PR → NOTHING. An In Review item with no PR is a real,
+//     ordinary state (a rollup-advanced epic parent, a human-placed item), and
+//     a chip for it would be noise on every card in that class.
+//
+// The remaining three are the PR's fate: green ready, amber pending, purple
+// merged, red closed-unmerged. "Ready" is checks-green-and-unconflicted, never
+// a merge-gate verdict — see prFate.
+func prChip(m Model, card Card, g glyphSet) string {
+	label := strings.TrimSpace(g.pr + " ")
+	mark, ok := m.cardPR(card.Number)
+	if !ok {
+		return prUnread.Render(label + "?")
+	}
+	num := fmt.Sprintf("%s#%d", label, mark.Number)
+	switch mark.Fate {
+	case PRFateReady:
+		return prReady.Render(num)
+	case PRFatePending:
+		return prPending.Render(num)
+	case PRFateMerged:
+		return prMerged.Render(num)
+	case PRFateClosed:
+		return prClosed.Render(num)
+	}
+	return "" // PRFateNone — read, and there is genuinely no PR
+}
+
+// epicChip — the line-3 parent marking. Caret white, the parent's identity in
+// the comment ink and italic, the done/total in the purple merged PRs use
+// (both mean "landed").
+//
+// Degrades one step at a time rather than all at once: with no rollup read it
+// is the bare `❯ #1994` the Model already held, which is strictly what GH-2061
+// shipped. A TRUNCATED child list renders `2/50+` — the rollup is a floor, not
+// a total, and a bare 2/50 off a truncated read is a number nobody can trust.
+//
+// `budget` is the cells this chip may occupy, and it is spent in order of what
+// the operator can act on: the parent NUMBER (which `v` and `g` resolve), then
+// the TALLY (the fact the rollup exists for), then the name, which is the only
+// part that trims. A budget too small even for the number drops the chip
+// entirely — the alternative is a fragment that reads as a different issue.
+func epicChip(m Model, card Card, g glyphSet, budget int) string {
+	if card.ParentNumber == 0 {
+		return ""
+	}
+	head := styleCardText.Render(g.chevron) + " " +
+		styleEpic.Render(fmt.Sprintf("#%d", card.ParentNumber))
+	if lipgloss.Width(head) > budget {
+		return ""
+	}
+	e, ok := m.cardEpic(card.ParentNumber)
+	if !ok {
+		return head
+	}
+	tally := fmt.Sprintf("%d/%d", e.Done, e.Total)
+	if e.Truncated {
+		tally += "+"
+	}
+	rest := budget - lipgloss.Width(head) - lipgloss.Width(tally) - 1
+	if rest < 0 {
+		return head
+	}
+	if e.Title != "" && rest > 4 {
+		head += " " + styleEpic.Render(trimTo(e.Title, rest-1))
+	}
+	return head + " " + styleRollup.Render(tally)
+}
+
+// closedLabel is a Done card's line 3: when it closed, at the same minute
+// precision the age chip uses. An unparseable stamp says so rather than
+// rendering an age computed from a zero time.
+func closedLabel(card Card, now time.Time) string {
+	at, err := time.Parse(time.RFC3339, card.ClosedAt)
+	if err != nil {
+		return "closed (time unreadable)"
+	}
+	return "closed " + formatAge(now.Sub(at)) + " ago"
 }
 
 // priorityGlyph — P0 is an alert, P1-P3 a three-bar meter: P1 fills all three

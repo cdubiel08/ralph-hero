@@ -32,6 +32,10 @@ const (
 // VERBATIM (the decision-microworld lock). Order is the render order.
 var columnStates = [3]string{"In Progress", "In Review", "Human Needed"}
 
+// doneState is the board state name the closed-issue read's cards carry. Also
+// verbatim, so a Done card is recognisable by the same test as every other.
+const doneState = "Done"
+
 // Card is one board item in a column. Everything here comes from the board
 // CLI — never from herdr.
 type Card struct {
@@ -46,6 +50,86 @@ type Card struct {
 	// issue's LATEST comment, verbatim — the card must be phone-answerable.
 	// Empty on non-HN cards and when the gh read failed.
 	Question string
+	// ClosedAt is set only on Done cards (the closed-issue window). It is the
+	// one meta fact a closed card has: priority and estimate are not fetched
+	// for it, which is why line 3 must not fall through to the meter that
+	// renders an UNSET priority as a defect.
+	ClosedAt string
+}
+
+// PR chip fates (GH-2062). Five, and the two that mean "we did not find out"
+// are deliberately separate: PRFateNone is a read that says this issue has no
+// PR (blank chip), while an issue ABSENT from the map was never read (grey ?).
+// An unread chip that rendered like a clean one is the failure GH-1971 fixed
+// on the merge side.
+const (
+	PRFateNone    = "none"
+	PRFateReady   = "ready"
+	PRFatePending = "pending"
+	PRFateMerged  = "merged"
+	PRFateClosed  = "closed"
+)
+
+// PRMark is the chosen PR for one In Review card.
+type PRMark struct {
+	Number int
+	Fate   string
+}
+
+// prFate classifies one linked PR.
+//
+// `ready` is deliberately WEAKER than "the merge gate will pass" — checks green
+// and no known conflict, nothing more. Contract rule 7 is that gates are RUN,
+// not predicted, and the cockpit is a viewer: `scripts/merge-pr.sh` is still
+// the only thing that answers whether a PR may merge. The honest cost of that
+// restraint is that a FAILING check renders the same amber as a still-running
+// one — the spec allots four inks and red is spoken for by closed-unmerged.
+//
+// A null rollup (no check has run yet) and a null mergeability (GitHub
+// recomputes it lazily) are both "not proven ready", never "ready": green
+// requires the positive fact. Only CONFLICTING demotes on mergeability, so the
+// UNKNOWN GitHub returns while recomputing cannot flap a green chip to amber.
+func prFate(state string, merged bool, checks, mergeable string) string {
+	if merged || state == "MERGED" {
+		return PRFateMerged
+	}
+	if state != "OPEN" {
+		return PRFateClosed
+	}
+	if checks == "SUCCESS" && mergeable != "CONFLICTING" {
+		return PRFateReady
+	}
+	return PRFatePending
+}
+
+// chipRank orders the fates a card may draw from when an issue has several
+// linked PRs: a live PR is what the operator acts on, and among equals the
+// newest (highest number) wins. PRFateNone ranks last so any real PR displaces
+// the zero value.
+var chipRank = map[string]int{
+	PRFateReady:   0,
+	PRFatePending: 0, // one class: both are "the open PR", ink differs
+	PRFateMerged:  1,
+	PRFateClosed:  2,
+	PRFateNone:    3,
+}
+
+func betterChip(a, b PRMark) bool {
+	ra, rb := chipRank[a.Fate], chipRank[b.Fate]
+	if ra != rb {
+		return ra < rb
+	}
+	return a.Number > b.Number
+}
+
+// EpicRollup is one parent's child tally. Truncated is load-bearing: 2/4 read
+// off a truncated child list is not 2/4, and the renderer must say so.
+type EpicRollup struct {
+	Number    int
+	Title     string
+	Done      int
+	Total     int
+	Truncated bool
 }
 
 // Agent is one live herdr agent, joined to an issue by name. Decoration only.
@@ -198,12 +282,29 @@ type Model struct {
 	diffs  map[string]DiffStat // agent_ref → worktree diff, In Progress only
 	glyphs glyphSet
 
+	// Board-sourced card markings (GH-2062) — the second cadence. Both maps
+	// are per-issue authoritative WITHIN a successful pass: an issue present
+	// with PRFateNone has no PR, an issue absent was not read. signalsOK is
+	// false until the first successful pass and again after any failure, which
+	// is what makes every chip fall back to the grey `?`.
+	prs             map[int]PRMark
+	epics           map[int]EpicRollup
+	signalsOK       bool
+	signalsErr      string
+	lastSignals     time.Time
+	signalsInFlight bool
+
 	// showDone swaps the third column between Human Needed and Done (the `D`
-	// key). doneCards is its data and stays nil here — GH-2062 owns the
-	// bounded closed-issue read that fills it, so this unit renders the swap
-	// and an empty state that NAMES what is missing.
-	showDone  bool
-	doneCards []Card
+	// key); the closed-issue read is dispatched LAZILY, only while the column
+	// is on screen. doneOK/doneErr keep "not read yet", "read failed" and
+	// "nothing closed in the window" three distinct empty states.
+	showDone       bool
+	doneCards      []Card
+	doneOK         bool
+	doneErr        string
+	doneWindowDays int
+	lastDone       time.Time
+	doneInFlight   bool
 
 	// Cursor + mode.
 	col, row int
@@ -244,11 +345,17 @@ func newModel(cfg Config, r Runner) Model {
 		runner:    r,
 		agents:    map[int][]Agent{},
 		diffs:     map[string]DiffStat{},
+		prs:       map[int]PRMark{},
+		epics:     map[int]EpicRollup{},
 		glyphs:    cfg.Glyphs,
 		herdrOK:   cfg.Herdr != "",
 		width:     80,
 		height:    24,
 		pollEvery: cfg.Interval,
+		// The label the Done header carries until the read answers. The read's
+		// own windowDays replaces it, so a repo that sets RALPH_AUDIT_DAYS is
+		// never described by this default for longer than one pass.
+		doneWindowDays: defaultAuditDays,
 		// Seeded with the EMPTY board's signature so a board that is genuinely
 		// empty reads as unchanged from the first poll and backs off, rather
 		// than spending one cycle at the floor to discover nothing is there.
@@ -283,14 +390,21 @@ func (m Model) columnCards(idx int) []Card {
 // reading a bare "Done" would claim completeness it does not have.
 func (m Model) columnTitle(idx int) string {
 	if idx == 2 && m.showDone {
-		return doneColumnTitle
+		return m.doneTitle()
 	}
 	return columnStates[idx]
 }
 
-// doneColumnTitle — the window is RALPH_AUDIT_DAYS, which GH-2062's read will
-// honour; the label states it here so the swap can never ship without it.
-const doneColumnTitle = "Done · 14d"
+// doneTitle states the window the read actually used, not a constant: a repo
+// that raises RALPH_AUDIT_DAYS would otherwise be told "14d" over 30 days of
+// closes, which is the same class of lie as a bare "Done".
+func (m Model) doneTitle() string {
+	return fmt.Sprintf("Done · %dd", m.doneWindowDays)
+}
+
+// defaultAuditDays mirrors board.ts's RALPH_AUDIT_DAYS default — the header's
+// label before the first read answers, never a claim about the data.
+const defaultAuditDays = 14
 
 // selectedCard is the card under the cursor, if any.
 func (m Model) selectedCard() (Card, bool) {
@@ -378,6 +492,66 @@ func (m Model) cardDiff(issue int) (DiffStat, bool) {
 		}
 	}
 	return DiffStat{}, false
+}
+
+// cardPR is the In Review chip's data. ok=false means UNREAD — the read
+// failed, has not landed, or did not cover this issue — and the renderer draws
+// that as a grey `?`. ok=true with PRFateNone is the different, stronger fact
+// that this issue has no PR, which draws nothing at all.
+func (m Model) cardPR(issue int) (PRMark, bool) {
+	if !m.signalsOK {
+		return PRMark{}, false
+	}
+	mark, ok := m.prs[issue]
+	return mark, ok
+}
+
+// cardEpic is the parent rollup for a card. ok=false leaves the caret and the
+// bare parent number the Model already holds — a rollup we could not read must
+// not invent a denominator.
+func (m Model) cardEpic(parent int) (EpicRollup, bool) {
+	if !m.signalsOK || parent == 0 {
+		return EpicRollup{}, false
+	}
+	e, ok := m.epics[parent]
+	return e, ok
+}
+
+// signalsWanted reports whether there is anything for the second cadence to
+// mark. A board with no In Review card and no parented card has no chip and no
+// rollup to draw, so the pass is skipped entirely rather than paying for a
+// board read to fill nothing — the common shape of a quiet board.
+func (m Model) signalsWanted() bool {
+	if len(m.cols[1]) > 0 {
+		return true
+	}
+	for i := range m.cols {
+		for _, c := range m.cols[i] {
+			if c.ParentNumber != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// signalsDue is the second cadence's gate. Fixed, not adaptive: the board poll
+// backs off because its writers are visible in the free agent overlay (GH-1805),
+// and nothing here can see a reviewer approving a PR or a check turning green.
+func (m Model) signalsDue(now time.Time) bool {
+	if m.signalsInFlight || !m.signalsWanted() {
+		return false
+	}
+	return m.lastSignals.IsZero() || !now.Before(m.lastSignals.Add(m.cfg.SignalInterval))
+}
+
+// doneDue gates the closed-issue read. Shown-only: the Done column is behind a
+// key, so a cockpit nobody has pressed `D` on never pays for the window.
+func (m Model) doneDue(now time.Time) bool {
+	if m.doneInFlight || !m.showDone {
+		return false
+	}
+	return m.lastDone.IsZero() || !now.Before(m.lastDone.Add(m.cfg.SignalInterval))
 }
 
 // diffTargets lists the (agent_ref, checkout) pairs worth measuring: live

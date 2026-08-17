@@ -325,14 +325,25 @@ func TestCardHeightIsUniformInEveryState(t *testing.T) {
 		{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Root: "w10-ten#aaa", Branch: "feat/10-ten", TokenState: "working"},
 	})
 	m.diffs = map[string]DiffStat{"w10-ten#aaa": {Add: 1233, Del: 1234, Known: true}}
+	// GH-2062's markings are the new reflow risk: a PR chip, an epic name that
+	// can be arbitrarily long, and a Done card's close time all land on rows
+	// hitTest maps through as a fixed stride.
+	m.signalsOK = true
+	m.prs = map[int]PRMark{20: {Number: 2049, Fate: PRFateMerged}}
+	m.epics = map[int]EpicRollup{
+		1930: {Number: 1930, Title: strings.Repeat("Epic: a very long parent name ", 8), Done: 2, Total: 4, Truncated: true},
+	}
 
 	cards := []Card{
 		{Number: 10, State: "In Progress", Title: "short", Priority: "P0", Estimate: "M"},
 		{Number: 11, State: "In Progress", Title: strings.Repeat("a very long title ", 20)},
 		{Number: 20, State: "In Review", Title: "review", Priority: "P2", ParentNumber: 1930},
+		{Number: 21, State: "In Review", Title: "unread chip", ParentNumber: 9999}, // epic present, rollup absent
 		{Number: 30, State: "Human Needed", Title: "blocked", Question: strings.Repeat("q ", 90)},
 		{Number: 31, State: "Human Needed", Title: "blocked, no question"},
 		{Number: 40, State: "In Progress", Title: "no agent, no marking at all"},
+		{Number: 50, State: doneState, Title: "closed", ClosedAt: time.Now().Add(-30 * time.Hour).Format(time.RFC3339)},
+		{Number: 51, State: doneState, Title: "closed, unreadable stamp", ClosedAt: "not-a-time"},
 	}
 	for _, width := range []int{20, 40, 60, 120, 200} {
 		for _, c := range cards {
@@ -542,12 +553,12 @@ func TestColumnHeaderCountIsRightJustifiedWithoutParens(t *testing.T) {
 	}
 }
 
-func TestDoneSwapNamesItsMissingSourceAndClampsTheCursor(t *testing.T) {
+func TestDoneSwapClampsTheCursorAndKeepsItsThreeEmptyStatesApart(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	m.width, m.height = 180, 40
 	m.col, m.row = 2, 1 // on the second Human Needed card
 
-	m, _ = updateKey(m, keyMsg("D"))
+	m, cmd := updateKey(m, keyMsg("D"))
 	if !m.showDone {
 		t.Fatal("D must swap the third column")
 	}
@@ -557,19 +568,52 @@ func TestDoneSwapNamesItsMissingSourceAndClampsTheCursor(t *testing.T) {
 	if m.row != 0 {
 		t.Errorf("row = %d after the swap, want 0", m.row)
 	}
+	// `D` is the only signal that anyone wants this column, so the read is
+	// dispatched on the key rather than at the next tick.
+	if cmd == nil || !m.doneInFlight {
+		t.Fatal("D must dispatch the closed-issue read immediately")
+	}
 	out := viewModel(m)
-	if !strings.Contains(out, doneColumnTitle) {
+	if !strings.Contains(out, m.doneTitle()) {
 		t.Errorf("the Done header must carry its window; got:\n%s", out)
 	}
 	if strings.Contains(out, "Thirty") {
 		t.Error("the Done column must not still be rendering Human Needed cards")
 	}
-	// An empty column and a column with no reader yet must not read alike.
-	if !strings.Contains(out, "GH-2062") {
-		t.Errorf("the unwired Done column must name what fills it; got:\n%s", out)
+	// Three facts, three renderings. Reading-not-yet-landed first.
+	if strings.Contains(out, "(none)") || strings.Contains(out, "nothing closed") {
+		t.Errorf("an unread window must not claim to be empty; got:\n%s", out)
 	}
-	if strings.Contains(out, "(none)") {
-		t.Error("the unwired Done column must not claim it is merely empty")
+
+	// A FAILED read must never render like a window with nothing in it.
+	failed, _ := updateModel(m, doneMsg{err: "gh api graphql failed (exit 1)"})
+	fout := viewModel(failed)
+	if !strings.Contains(fout, "gh api graphql failed") {
+		t.Errorf("a failed Done read must name its cause; got:\n%s", fout)
+	}
+	if strings.Contains(fout, "nothing closed") {
+		t.Error("a failed read must not render as an empty window")
+	}
+
+	// A read that succeeded and found nothing says exactly that.
+	okEmpty, _ := updateModel(m, doneMsg{ok: true, windowDays: 14})
+	if !strings.Contains(viewModel(okEmpty), "nothing closed in the window") {
+		t.Error("a successful, empty window must say so rather than looking unread")
+	}
+
+	// And a read with cards renders them, with the close time — never the
+	// empty priority meter, which on a live card means a real defect.
+	filled, _ := updateModel(m, doneMsg{
+		ok:         true,
+		windowDays: 14,
+		cards: []Card{{
+			Number: 2061, Repo: "o/r", Title: "Cockpit card markings",
+			State: doneState, ClosedAt: time.Now().Add(-90 * time.Minute).Format(time.RFC3339),
+		}},
+	})
+	dout := viewModel(filled)
+	if !strings.Contains(dout, "#2061") || !strings.Contains(dout, "closed 1h 30m ago") {
+		t.Errorf("a Done card must carry its number and when it closed; got:\n%s", dout)
 	}
 
 	m, _ = updateKey(m, keyMsg("D"))

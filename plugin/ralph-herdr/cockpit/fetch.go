@@ -39,6 +39,13 @@ type Config struct {
 	// (GH-1805): the board is never walked less often than this, whatever the
 	// backoff says. Equal to Interval = backoff off, a constant cadence.
 	MaxInterval time.Duration
+	// SignalInterval is the SECOND cadence (GH-2062): the board-sourced card
+	// markings and the Done window. Slower than the board poll and deliberately
+	// non-adaptive — these reads have no free local oracle to snap them to the
+	// floor, and they are the ones with real per-pass cost. Never below
+	// Interval: a marking cadence faster than the board it marks would read
+	// PR fates for cards the columns have not shown yet.
+	SignalInterval time.Duration
 	// LedgerPath is ~/.ralph/<owner>/<repo>/ledger.jsonl for this board scope,
 	// resolved once (ralph_ledger_path's rules). "" = no scope discoverable,
 	// which costs the age chip and nothing else.
@@ -79,6 +86,14 @@ func (e execRunner) Run(ctx context.Context, prog string, args ...string) (strin
 func argsBoardList() []string     { return []string{"list", "--json"} }
 func argsBoardGet(n int) []string { return []string{"get", strconv.Itoa(n), "--json"} }
 func argsBoardFrontier() []string { return []string{"frontier", "--json"} }
+
+// The second cadence (GH-2062). Two verbs, not one, because they are wanted at
+// different times: card-signals marks cards that are always on screen, while
+// the Done window is only ever read behind the `D` key. Folding them together
+// would pay for a 14-day closed-issue walk on every pass to fill a column
+// nobody is looking at.
+func argsCardSignals() []string { return []string{"card-signals", "--json"} }
+func argsBoardClosed() []string { return []string{"closed", "--json"} }
 func argsBoardAnswer(n int, msg string) []string {
 	return []string{"answer", strconv.Itoa(n), "-m", msg}
 }
@@ -171,6 +186,27 @@ type agentsMsg struct {
 // agent_ref. Absent from the map = not measured this pass, which the renderer
 // draws as ±? — never as a clean worktree.
 type diffsMsg struct{ diffs map[string]DiffStat }
+
+// signalsMsg carries one pass of the board-sourced card markings. `ok` is the
+// whole degradation contract: false means the read FAILED, and every In Review
+// chip renders grey `?` rather than blank. Within a successful pass the map is
+// authoritative per issue — an issue present with PRFateNone genuinely has no
+// PR, an issue ABSENT was not in the read and stays unread.
+type signalsMsg struct {
+	prs   map[int]PRMark
+	epics map[int]EpicRollup
+	ok    bool
+	err   string
+}
+
+// doneMsg carries the bounded closed-issue window. Same split: `ok` false is a
+// failed read, which the column names rather than drawing as "nothing closed".
+type doneMsg struct {
+	cards      []Card
+	windowDays int
+	ok         bool
+	err        string
+}
 
 type peekMsg struct {
 	who  string
@@ -282,6 +318,94 @@ func parseBoardColumns(out string) ([3][]Card, error) {
 		cols[idx] = append(cols[idx], c)
 	}
 	return cols, nil
+}
+
+// parseCardSignals reads `board card-signals --json`.
+//
+// Both arrays are POINTERS for the same reason parseBoardColumns's is: `{}`,
+// `null` and a schema-invalid payload all decode to nil slices, and rendering
+// those as "every In Review card has no PR" is the confident lie this whole
+// unit exists to prevent. A payload missing either array is a FAILED read, and
+// the caller maps a failed read to every chip UNREAD.
+func parseCardSignals(out string) (map[int]PRMark, map[int]EpicRollup, error) {
+	var payload struct {
+		InReview *[]struct {
+			Number int  `json:"number"`
+			PRs    *[]struct {
+				Number    int    `json:"number"`
+				State     string `json:"state"`
+				Merged    bool   `json:"merged"`
+				Checks    string `json:"checks"`
+				Mergeable string `json:"mergeable"`
+			} `json:"prs"`
+		} `json:"inReview"`
+		Epics *[]struct {
+			Number    int    `json:"number"`
+			Title     string `json:"title"`
+			Done      int    `json:"done"`
+			Total     int    `json:"total"`
+			Truncated bool   `json:"truncated"`
+		} `json:"epics"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return nil, nil, fmt.Errorf("card-signals --json: %w", err)
+	}
+	if payload.InReview == nil || payload.Epics == nil {
+		return nil, nil, fmt.Errorf("card-signals --json: payload carries no inReview/epics array — a malformed read is not an unmarked board")
+	}
+	prs := make(map[int]PRMark, len(*payload.InReview))
+	for _, r := range *payload.InReview {
+		// A row whose `prs` key is absent is the same hazard one level down:
+		// it would mark the card "no PR" off a read that never answered. Leave
+		// the issue OUT of the map, which renders unread.
+		if r.PRs == nil {
+			continue
+		}
+		mark := PRMark{Fate: PRFateNone}
+		for _, p := range *r.PRs {
+			cand := PRMark{Number: p.Number, Fate: prFate(p.State, p.Merged, p.Checks, p.Mergeable)}
+			if betterChip(cand, mark) {
+				mark = cand
+			}
+		}
+		prs[r.Number] = mark
+	}
+	epics := make(map[int]EpicRollup, len(*payload.Epics))
+	for _, e := range *payload.Epics {
+		epics[e.Number] = EpicRollup{
+			Number: e.Number, Title: e.Title,
+			Done: e.Done, Total: e.Total, Truncated: e.Truncated,
+		}
+	}
+	return prs, epics, nil
+}
+
+// parseClosed reads `board closed --json` into Done cards. Same pointer rule:
+// an absent `items` array is a failed read, never an empty window.
+func parseClosed(out string) ([]Card, int, error) {
+	var payload struct {
+		WindowDays int `json:"windowDays"`
+		Items      *[]struct {
+			Number   int    `json:"number"`
+			Repo     string `json:"repo"`
+			Title    string `json:"title"`
+			ClosedAt string `json:"closedAt"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return nil, 0, fmt.Errorf("closed --json: %w", err)
+	}
+	if payload.Items == nil {
+		return nil, 0, fmt.Errorf("closed --json: payload carries no items array — a malformed read is not an empty window")
+	}
+	cards := make([]Card, 0, len(*payload.Items))
+	for _, it := range *payload.Items {
+		cards = append(cards, Card{
+			Number: it.Number, Repo: it.Repo, Title: it.Title,
+			State: doneState, ClosedAt: it.ClosedAt,
+		})
+	}
+	return cards, payload.WindowDays, nil
 }
 
 // parseAgents validates a protocol-19 session_snapshot envelope and returns
@@ -789,6 +913,51 @@ func fetchBoardCmd(cfg Config, r Runner) tea.Cmd {
 			}
 		}
 		return msg
+	}
+}
+
+// fetchSignalsCmd reads the board-sourced card markings (GH-2062). Every
+// failure lands as ok:false — a read we could not make must not render like a
+// board with nothing to mark, which is the same rule the board columns and the
+// worktree diff already follow.
+func fetchSignalsCmd(cfg Config, r Runner) tea.Cmd {
+	return func() tea.Msg {
+		deadline := boardDeadline(cfg)
+		probe := &rateProbe{cfg: cfg, r: r}
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
+		out, stderr, err := r.Run(ctx, cfg.Board, argsCardSignals()...)
+		timedOut := ctx.Err() == context.DeadlineExceeded
+		cancel()
+		if err != nil {
+			return signalsMsg{err: explainReadFailure(probe, deadline, timedOut, stderr+out, err)}
+		}
+		prs, epics, perr := parseCardSignals(out)
+		if perr != nil {
+			return signalsMsg{err: perr.Error()}
+		}
+		return signalsMsg{prs: prs, epics: epics, ok: true}
+	}
+}
+
+// fetchDoneCmd reads the closed-issue window. Dispatched only while the Done
+// column is on screen — it is the most expensive of this unit's three reads and
+// the one nobody is looking at by default.
+func fetchDoneCmd(cfg Config, r Runner) tea.Cmd {
+	return func() tea.Msg {
+		deadline := boardDeadline(cfg)
+		probe := &rateProbe{cfg: cfg, r: r}
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
+		out, stderr, err := r.Run(ctx, cfg.Board, argsBoardClosed()...)
+		timedOut := ctx.Err() == context.DeadlineExceeded
+		cancel()
+		if err != nil {
+			return doneMsg{err: explainReadFailure(probe, deadline, timedOut, stderr+out, err)}
+		}
+		cards, days, perr := parseClosed(out)
+		if perr != nil {
+			return doneMsg{err: perr.Error()}
+		}
+		return doneMsg{cards: cards, windowDays: days, ok: true}
 	}
 }
 

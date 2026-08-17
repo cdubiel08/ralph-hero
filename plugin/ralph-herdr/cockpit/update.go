@@ -49,6 +49,17 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			m.pollInFlight = true
 			cmds = append(cmds, fetchBoardCmd(m.cfg, m.runner))
 		}
+		// The second cadence (GH-2062), gated separately: it is skipped
+		// entirely when there is nothing to mark, and the Done window is only
+		// read while its column is on screen.
+		if m.signalsDue(time.Time(msg)) {
+			m.signalsInFlight = true
+			cmds = append(cmds, fetchSignalsCmd(m.cfg, m.runner))
+		}
+		if m.doneDue(time.Time(msg)) {
+			m.doneInFlight = true
+			cmds = append(cmds, fetchDoneCmd(m.cfg, m.runner))
+		}
 		return m, tea.Batch(cmds...)
 
 	case boardMsg:
@@ -76,6 +87,50 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		} else {
 			m.backoff()
 		}
+		// The markings hang off these cards, and until they landed there was
+		// nothing to mark (signalsWanted is false on an empty board). Asking
+		// here rather than waiting for the next tick is what makes the first
+		// board a marked board.
+		if m.signalsDue(time.Now()) {
+			m.signalsInFlight = true
+			return m, fetchSignalsCmd(m.cfg, m.runner)
+		}
+		return m, nil
+
+	case signalsMsg:
+		m.signalsInFlight = false
+		m.lastSignals = time.Now()
+		m.signalsErr = msg.err
+		if !msg.ok {
+			// REPLACE with nothing, not merge: signalsOK false already sends
+			// every chip to `?`, and keeping the last good marks beside it
+			// would mean a card drawn green off a read that has since failed.
+			// The board columns keep their last good cards because a card is
+			// the WORK; a marking is a claim about right now.
+			m.signalsOK = false
+			return m, nil
+		}
+		m.signalsOK = true
+		m.prs = msg.prs
+		m.epics = msg.epics
+		return m, nil
+
+	case doneMsg:
+		m.doneInFlight = false
+		m.lastDone = time.Now()
+		m.doneErr = msg.err
+		if !msg.ok {
+			m.doneOK = false
+			return m, nil
+		}
+		m.doneOK = true
+		m.doneCards = msg.cards
+		if msg.windowDays > 0 {
+			m.doneWindowDays = msg.windowDays
+		}
+		// The Done list just changed length under a cursor that may be parked
+		// past its end — the same clamp the `D` swap itself performs.
+		m.clampCursor()
 		return m, nil
 
 	case agentsMsg:
@@ -339,12 +394,20 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.row = 0
 		}
 		m.clampCursor()
-		if m.showDone {
-			m.status = doneColumnTitle + " — the closed-issue read is not wired yet (GH-2062); D returns to Human Needed"
-		} else {
+		if !m.showDone {
 			m.status = "third column: Human Needed"
+			return m, nil
 		}
-		return m, nil
+		// Fetch NOW rather than at the next tick: `D` is the whole signal that
+		// anyone wants this column, and waiting up to SignalInterval to fill it
+		// would make the key feel broken. Subsequent refreshes ride the second
+		// cadence while the column stays up.
+		m.status = m.doneTitle() + " — a WINDOW, not all history; D returns to Human Needed"
+		if m.doneInFlight || !m.lastDone.IsZero() {
+			return m, nil
+		}
+		m.doneInFlight = true
+		return m, fetchDoneCmd(m.cfg, m.runner)
 
 	case "g":
 		card, ok := m.selectedCard()
@@ -492,6 +555,13 @@ func verbSpawn(m Model) (Model, tea.Cmd) {
 	card, ok := m.selectedCard()
 	if !ok {
 		m.status = "no card selected"
+		return m, nil
+	}
+	if card.State == doneState {
+		// A Done card is a closed issue from the window read, not work. The
+		// spawn path would take a claim on it; refuse here so the reason is
+		// legible instead of arriving as a board refusal two layers down.
+		m.status = fmt.Sprintf("#%d is closed (%s) — nothing to spawn; D returns to Human Needed", card.Number, m.doneTitle())
 		return m, nil
 	}
 	if !m.herdrOK {

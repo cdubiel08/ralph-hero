@@ -4084,19 +4084,21 @@ const CLOSED_EDGE_BATCH = 50;
  *  than the cutoff therefore ends the read, and only issues whose window
  *  membership was decided by a field GitHub actually sorted on are dropped.
  *
- *  Cheaper than the walk it replaces in a second way: the audit reads only
- *  `number` and `closedAt` off these, so `fieldValues` — the connection that
- *  makes the open walk's `projectItems` nesting cost real points — is not
- *  requested at all. Board membership and archived are filtered exactly as the
- *  scan-derived set filtered them, and a truncated membership list is the same
- *  hard, self-naming error the open walk raises rather than a silent drop. */
+ *  Cheaper than the walk it replaces in a second way: `fieldValues` — the
+ *  connection that makes the open walk's `projectItems` nesting cost real
+ *  points — is not requested at all. `title` and `stateReason` are scalars and
+ *  ride free (GH-2062): the Done view needs both, and the audit's rows carried
+ *  an empty title only because nothing had asked for one. Board membership and
+ *  archived are filtered exactly as the scan-derived set filtered them, and a
+ *  truncated membership list is the same hard, self-naming error the open walk
+ *  raises rather than a silent drop. */
 export function listOwnRecentClosed(
   ctx: Ctx,
   since: Date,
-): Array<{ number: number; closedAt: string }> {
+): Array<{ number: number; title: string; closedAt: string; stateReason: string | null }> {
   const cutoff = since.getTime();
   return withCache(ctx, (cache) => {
-    const out: Array<{ number: number; closedAt: string }> = [];
+    const out: Array<{ number: number; title: string; closedAt: string; stateReason: string | null }> = [];
     let after: string | null = null;
     for (;;) {
       const data: any = ghGraphQL(
@@ -4108,7 +4110,9 @@ export function listOwnRecentClosed(
               pageInfo { hasNextPage endCursor }
               nodes {
                 number
+                title
                 closedAt
+                stateReason
                 updatedAt
                 projectItems(first: ${PROJECT_ITEMS_PAGE}) {
                   pageInfo { hasNextPage }
@@ -4142,7 +4146,12 @@ export function listOwnRecentClosed(
         if (item.isArchived) continue;
         const closed = new Date(c.closedAt ?? "").getTime();
         if (!Number.isFinite(closed) || closed < cutoff) continue;
-        out.push({ number: c.number, closedAt: c.closedAt });
+        out.push({
+          number: c.number,
+          title: c.title ?? "",
+          closedAt: c.closedAt,
+          stateReason: c.stateReason ?? null,
+        });
       }
       if (!page.pageInfo.hasNextPage) return out;
       after = page.pageInfo.endCursor;
@@ -5142,6 +5151,267 @@ export function deliverQueue(
 }
 
 // ---------------------------------------------------------------------------
+// Card signals (GH-2062) — the viewer's read.
+//
+// `deliver-queue` is a SELECTOR and is deliberately not this. Three reasons it
+// cannot serve a card marking, none of them a defect in it:
+//
+//   1. It runs the merge gate. The CLI builds a probe that shells
+//      `merge-pr.sh <PR> --dry-run` per open linked PR, plus
+//      `review-convergence.sh` per PR. GH-1803's 1-point floor is a fact about
+//      the ITEM WALK, not about the command. Polling that from a viewer is the
+//      shape GH-1817 recorded driving the GraphQL budget to 0/5000, and
+//      contract rule 7 says gates are RUN, not predicted — a chip is not a
+//      decision anyone asked the gate to make.
+//   2. `DeliverRow.pr` is null on `no-open-pr` and `settling` — exactly the
+//      rows whose PRs are all merged or all closed, i.e. the population the
+//      purple and red inks exist for. Correct for a selector (merged-vs-closed
+//      is the session's judgment) and useless as a source of PR fate.
+//   3. `fetchDeliverCandidates` reads `comments(last: 50)` and
+//      `projectItems.fieldValues` per candidate — cost a chip never reads.
+//
+// So this is its own read: linkage plus four scalars, no subprocess. It
+// answers "what is on the card", never "what should happen next".
+// ---------------------------------------------------------------------------
+
+/** One linked PR as a card marking. `checks`/`mergeable` are null when GitHub
+ *  did not answer — a rollup is absent until a check runs, and mergeability is
+ *  computed lazily. Null is NOT green: `prReady` requires the positive fact. */
+export interface CardPr {
+  number: number;
+  state: "OPEN" | "MERGED" | "CLOSED";
+  merged: boolean;
+  /** `statusCheckRollup.state` — EXPECTED | ERROR | FAILURE | PENDING |
+   *  SUCCESS. A scalar on a non-connection object, so it is free of the
+   *  GH-1811 nesting hazard: measured live at cost 1, nodeCount 0. */
+  checks: string | null;
+  /** MERGEABLE | CONFLICTING | UNKNOWN. UNKNOWN is the transient GitHub
+   *  returns while it recomputes, which is why only CONFLICTING demotes. */
+  mergeable: string | null;
+}
+
+export interface CardPrRow {
+  number: number; // the ISSUE
+  prs: CardPr[];
+}
+
+/** An epic parent's child rollup. `truncated` is the fail-closed flag the
+ *  renderer needs: 2/4 read off a truncated child list is not 2/4. */
+export interface CardEpic {
+  number: number;
+  title: string;
+  done: number;
+  total: number;
+  truncated: boolean;
+}
+
+export interface CardSignalsResult {
+  inReview: CardPrRow[];
+  epics: CardEpic[];
+}
+
+/** Linkage + the four scalars, per In Review issue. Selected inside two
+ *  connections (`closedByPullRequestsReferences`, and the PRs hanging off
+ *  `refs`), which is safe precisely because none of these is itself a
+ *  connection — GH-1811's 607-point document was `contexts(first: 100)` nested
+ *  three deep, and nodeCount is the PRODUCT of the `first:` values down each
+ *  nesting. Scalars and plain objects multiply nothing. */
+const CARD_PR_FIELDS = `number state merged mergeable statusCheckRollup { state }`;
+
+function cardPrFrom(n: any): CardPr {
+  return {
+    number: n.number,
+    state: n.state,
+    merged: n.merged === true,
+    checks: n.statusCheckRollup?.state ?? null,
+    mergeable: n.mergeable ?? null,
+  };
+}
+
+/** The card markings whose data must be fetched: In Review PR fate and the
+ *  epic rollups for the distinct own-repo parents of the open board.
+ *
+ *  Both halves ride the ONE open walk the caller's board poll already paid for
+ *  (`listOwnOpenItems` at the 1-point floor, served from the item cache when
+ *  it is warm), then one GraphQL document each. The PR linkage is the same
+ *  union `deliver` uses — closing references ∪ the branch convention — because
+ *  a chip that disagreed with the lane about which PR belongs to an issue
+ *  would be worse than no chip. */
+export function cardSignals(ctx: Ctx): CardSignalsResult {
+  const open = listOwnOpenItems(ctx, QUEUE_SELECT_MINIMAL);
+  return withCache(ctx, () => ({
+    inReview: cardPrLinkage(
+      ctx,
+      open.filter((i) => i.state === "In Review").map((i) => i.number),
+    ),
+    epics: cardEpicRollups(
+      ctx,
+      [...new Set(open.map((i) => i.parentNumber).filter((n): n is number => n != null))],
+    ),
+  }));
+}
+
+function cardPrLinkage(ctx: Ctx, numbers: number[]): CardPrRow[] {
+  const out: CardPrRow[] = [];
+  for (let start = 0; start < numbers.length; start += DELIVER_CHUNK) {
+    const chunk = numbers.slice(start, start + DELIVER_CHUNK);
+    const decls = chunk.map((_, k) => `$n${k}: Int!, $h${k}: String!`).join(", ");
+    // `c`/`r` aliases, deliberately not deliver's `d`/`b`: the two documents
+    // are separable in the fixtures and in any cost probe, and a reader of one
+    // can never be handed the other's payload.
+    const aliases = chunk
+      .map(
+        (_, k) => `
+      c${k}: issue(number: $n${k}) {
+        number
+        closedByPullRequestsReferences(first: 10) { nodes { ${CARD_PR_FIELDS} } }
+      }
+      r${k}: refs(refPrefix: "refs/heads/", query: $h${k}, first: 10) {
+        nodes {
+          name
+          associatedPullRequests(first: 10, states: [OPEN, MERGED, CLOSED]) {
+            nodes { ${CARD_PR_FIELDS} }
+          }
+        }
+      }`,
+      )
+      .join("\n");
+    const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
+    chunk.forEach((n, k) => {
+      vars[`n${k}`] = n;
+      // GitHub's ref filter is a SUBSTRING match, so the bare number spans
+      // both branch grammars in one connection — and returns coincidences
+      // (`feature/GH-20620`), which parseBranchName rejects below.
+      vars[`h${k}`] = String(n);
+    });
+    const data: any = ghGraphQL(
+      ctx,
+      `query($owner: String!, $repo: String!, ${decls}) {
+        repository(owner: $owner, name: $repo) {
+          ${aliases}
+        }
+      }`,
+      vars,
+    );
+    const repo: any = data.repository ?? {};
+    chunk.forEach((num, k) => {
+      const issue = repo[`c${k}`];
+      // Absent, not invented: an issue deleted or made invisible mid-walk
+      // yields no row, and the renderer draws that as "not read" rather than
+      // as "no PR" — the whole point of the grey `?`.
+      if (!issue) return;
+      const byNumber = new Map<number, CardPr>();
+      for (const n of issue.closedByPullRequestsReferences?.nodes ?? []) {
+        if (n?.number) byNumber.set(n.number, cardPrFrom(n));
+      }
+      for (const ref of repo[`r${k}`]?.nodes ?? []) {
+        if (parseBranchName(ref?.name ?? "")?.issue !== num) continue;
+        for (const n of ref?.associatedPullRequests?.nodes ?? []) {
+          if (n?.number && !byNumber.has(n.number)) byNumber.set(n.number, cardPrFrom(n));
+        }
+      }
+      out.push({ number: num, prs: [...byNumber.values()] });
+    });
+  }
+  return out;
+}
+
+/** Children per rollup round trip. Matches `fetchIssue`'s `subIssues(first: 50)`
+ *  so the two reads agree about when a child list is truncated. */
+const CARD_EPIC_CHILDREN = 50;
+const CARD_EPIC_CHUNK = 10;
+
+function cardEpicRollups(ctx: Ctx, parents: number[]): CardEpic[] {
+  const out: CardEpic[] = [];
+  for (let start = 0; start < parents.length; start += CARD_EPIC_CHUNK) {
+    const chunk = parents.slice(start, start + CARD_EPIC_CHUNK);
+    const decls = chunk.map((_, k) => `$e${k}: Int!`).join(", ");
+    const aliases = chunk
+      .map(
+        (_, k) => `
+      e${k}: issue(number: $e${k}) {
+        number title
+        subIssues(first: ${CARD_EPIC_CHILDREN}) {
+          pageInfo { hasNextPage }
+          nodes { number state }
+        }
+      }`,
+      )
+      .join("\n");
+    const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
+    chunk.forEach((n, k) => {
+      vars[`e${k}`] = n;
+    });
+    const data: any = ghGraphQL(
+      ctx,
+      `query($owner: String!, $repo: String!, ${decls}) {
+        repository(owner: $owner, name: $repo) { ${aliases} }
+      }`,
+      vars,
+    );
+    const repo: any = data.repository ?? {};
+    chunk.forEach((num, k) => {
+      const e = repo[`e${k}`];
+      if (!e) return;
+      const kids: any[] = e.subIssues?.nodes ?? [];
+      out.push({
+        number: num,
+        title: e.title ?? "",
+        // CLOSED, not "board state Done": `parentCheck`'s own rollup rule is
+        // "all children closed", and reading the board state per child would
+        // mean a `fieldValues` connection under a `subIssues` connection —
+        // the nesting GH-1811 measured at hundreds of points.
+        done: kids.filter((c) => c?.state === "CLOSED").length,
+        total: kids.length,
+        truncated: e.subIssues?.pageInfo?.hasNextPage ?? false,
+      });
+    });
+  }
+  return out;
+}
+
+/** One own-repo issue closed as completed inside the audit window. */
+export interface DoneItem {
+  number: number;
+  repo: string; // nameWithOwner — own-repo by construction; carried for URLs
+  title: string;
+  closedAt: string;
+}
+
+export interface DoneResult {
+  windowDays: number;
+  since: string;
+  items: DoneItem[];
+}
+
+/** Board items closed as COMPLETED inside `RALPH_AUDIT_DAYS` — the Done view.
+ *
+ *  `board list` cannot answer this: it is open-issues-only by construction
+ *  (GH-1814 moved the lanes off the project scan), so `--state Done` returns
+ *  an empty list rather than a Done column.
+ *
+ *  NOT_PLANNED is excluded, which is `reconcile`'s own rule verbatim (closed +
+ *  NOT_PLANNED → Canceled, else Done) rather than a second opinion about what
+ *  Done means. Newest first: the window is a recency view, and its consumer
+ *  reads the top of it.
+ *
+ *  The window is a WINDOW. Every consumer must say so — a bare "Done" header
+ *  over 14 days of closes claims a completeness this read does not have. */
+export function recentDone(ctx: Ctx, opts: TendOpts = parseTendOpts()): DoneResult {
+  const since = new Date(ctx.now().getTime() - opts.auditDays * 86_400_000);
+  const items = listOwnRecentClosed(ctx, since)
+    .filter((c) => c.stateReason !== "NOT_PLANNED")
+    .map((c) => ({
+      number: c.number,
+      repo: `${ctx.cfg.owner}/${ctx.cfg.repo}`,
+      title: c.title,
+      closedAt: c.closedAt,
+    }))
+    .sort((a, b) => (a.closedAt < b.closedAt ? 1 : a.closedAt > b.closedAt ? -1 : b.number - a.number));
+  return { windowDays: opts.auditDays, since: since.toISOString(), items };
+}
+
+// ---------------------------------------------------------------------------
 // Tend lane selector (GH-1712, D4) — spec §4.3.
 //
 // Deterministic hygiene queue over own-repo items. The selector CLASSIFIES;
@@ -5433,7 +5703,7 @@ export function tendQueue(ctx: Ctx, opts: TendOpts = parseTendOpts()): TendQueue
   const trails = fetchCommentTrails(ctx, recent.map((c) => c.number));
   const closed = recent.map((c) => ({
     number: c.number,
-    title: "",
+    title: c.title,
     closedAt: c.closedAt,
     comments: trails.get(c.number) ?? [],
   }));
@@ -7913,6 +8183,25 @@ reads
                               judgment (and every closure, as a marker-comment
                               proposal) belongs to /ralph:tend. Knobs:
                               RALPH_STALE_DAYS (30), RALPH_AUDIT_DAYS (14)
+  card-signals [--json]       the VIEWER's read (GH-2062, ralph-herdr cockpit):
+                              In Review items with their linked PRs
+                              {number, state, merged, mergeable, checks} — the
+                              same closing-references ∪ branch-convention union
+                              deliver uses — plus epic rollups
+                              {number, title, done, total, truncated} for the
+                              distinct own-repo parents of open items. Two
+                              GraphQL documents on top of the open walk, no
+                              subprocess. Deliberately NOT deliver-queue: that
+                              selector shells the merge gate per PR (rule 7 —
+                              gates are RUN, not predicted, and never on a
+                              viewer's timer) and drops the PR number on
+                              exactly its merged and closed rows
+  closed [--json]             own-repo board items closed as COMPLETED inside
+                              RALPH_AUDIT_DAYS (14), newest first — the Done
+                              view. \`list\` cannot answer it (open-issues-only
+                              by construction, GH-1814). NOT_PLANNED is
+                              excluded, reconcile's own rule. A WINDOW, never
+                              all history: every consumer must say so
 
 mutations
   create --title T [--body B] [--parent NNN] [--estimate XS..XL] [--state S]
@@ -8503,6 +8792,43 @@ export function run(argv: string[], ctx: Ctx): number {
               .join(" ")}`,
           );
         stalledLines();
+      }
+      return 0;
+    }
+
+    case "card-signals": {
+      const res = cardSignals(ctx);
+      if (flags.json) json(res);
+      else {
+        for (const r of res.inReview) {
+          const prs = r.prs.length
+            ? r.prs
+                .map(
+                  (p) =>
+                    `pr#${p.number} ${p.merged ? "MERGED" : p.state}` +
+                    (p.state === "OPEN"
+                      ? ` checks=${p.checks ?? "?"} mergeable=${p.mergeable ?? "?"}`
+                      : ""),
+                )
+                .join(" ")
+            : "(no linked PR)";
+          out(`#${r.number} ${prs}`);
+        }
+        for (const e of res.epics)
+          out(
+            `epic #${e.number} ${e.done}/${e.total}${e.truncated ? " (child list TRUNCATED)" : ""} ${e.title}`,
+          );
+        if (!res.inReview.length && !res.epics.length) out("no card signals");
+      }
+      return 0;
+    }
+
+    case "closed": {
+      const res = recentDone(ctx);
+      if (flags.json) json(res);
+      else {
+        out(`${res.items.length} closed as completed since ${res.since} (${res.windowDays}d window)`);
+        for (const c of res.items) out(`  #${c.number} ${c.closedAt} ${c.title}`);
       }
       return 0;
     }
