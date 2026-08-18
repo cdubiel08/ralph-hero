@@ -84,6 +84,49 @@ is "stale open record exits 1" "1" "$RC"
 has_line "stale open record is a GAP" '^  GAP  lineage-w9-old#cccc .*reconcile'
 has_line "the stale count is reported" '^  note lineage-stale-open — 1 stale open record'
 
+# ── GH-2066: the remedy is split by what reconcile can do with the record ────
+# A record with NO ownership proof — no session key, no pane this server holds
+# — is one no reconcile pass can ever sweep, so naming the reconcile action for
+# it is a remedy that provably never fires. It must name --adopt instead, with
+# the ledger path resolved (the flag refuses a bare invocation by design).
+cat >"$RALPH_HERDR_LEDGER" <<'EOF'
+{"ts":"2020-01-01T00:00:00Z","ev":"spawn","agent_ref":"w854-pre#c854","pane_id":"pGONE","tokens":{"depth":"0"}}
+EOF
+run '[]'
+is "an unownable stale record exits 1" "1" "$RC"
+has_line "an unownable record names --adopt with the ledger resolved" \
+  "^  GAP  lineage-w854-pre#c854 .*no ownership proof.*--adopt $RALPH_HERDR_LEDGER\$"
+if printf '%s\n' "$OUT" | grep -q 'run the reconcile action'; then
+  not_ok "an unownable record does not name the pass that cannot clear it — got: $OUT"
+else
+  ok "an unownable record does not name the pass that cannot clear it"
+fi
+has_line "the count says how many need an operator assertion" \
+  '^  note lineage-stale-open — 1 stale open record(s) of 1 open; 1 of them have no ownership proof'
+has_line "the finding line says the same" \
+  '^  1 lineage finding(s) — 1 need an operator assertion'
+
+# A record carrying a session key IS provable — some server wrote it, and that
+# server's next pass sweeps it. Today's wording is correct for it.
+cat >"$RALPH_HERDR_LEDGER" <<'EOF'
+{"ts":"2020-01-01T00:00:00Z","ev":"spawn","agent_ref":"w855-keyed#c855","session":"somehost:9999","tokens":{"depth":"0"}}
+EOF
+run '[]'
+has_line "a session-keyed record keeps the reconcile remedy" \
+  '^  GAP  lineage-w855-keyed#c855 .*run the reconcile action$'
+has_line "a session-keyed record is not counted as unownable" \
+  '^  note lineage-stale-open — 1 stale open record(s) of 1 open$'
+
+# So is a record whose pane THIS server still holds: the pane half of
+# reconcile's proof. The pane outlives the agent, which is exactly the record
+# phase A sweeps.
+cat >"$RALPH_HERDR_LEDGER" <<'EOF'
+{"ts":"2020-01-01T00:00:00Z","ev":"spawn","agent_ref":"w856-paned#c856","pane_id":"p0","tokens":{"depth":"0"}}
+EOF
+run '[{"name":"unrelated-pane-holder","agent_status":"idle","pane_id":"p0"}]'
+has_line "a record on a pane this server holds keeps the reconcile remedy" \
+  '^  GAP  lineage-w856-paned#c856 .*run the reconcile action$'
+
 # ── the cap: many stale records enumerate boundedly, all of them count ───────
 # GH-2023 — 36 of 39 open records were stale on the live ledgers, one remedy
 # printed 36 times. The cap bounds the LISTING; a suppressed record is still a
@@ -100,7 +143,7 @@ run '[]'
 is "capped stale sweep still exits 1" "1" "$RC"
 is "only the cap is listed" "3" "$(printf '%s\n' "$OUT" | grep -c '^  GAP  lineage-w')"
 has_line "the withheld remainder is named" '^  note lineage-stale-open — 12 stale open record(s); 9 not listed'
-has_line "every stale record still counts as a finding" '^  12 lineage finding(s)$'
+has_line "every stale record still counts as a finding" '^  12 lineage finding(s) '
 
 # A cap of 0 is meaningful: report the count, enumerate nothing.
 export RALPH_LINEAGE_STALE_MAX=0

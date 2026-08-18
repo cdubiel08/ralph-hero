@@ -20,6 +20,17 @@
 #                board claim gets. The per-record lines are capped and the
 #                COUNT is always printed (GH-2023) — see the phase.
 #
+# The ledger side's remedy is SPLIT by what reconcile can actually do with the
+# record (GH-2066). reconcile's ownership proof is positive and two-sided — a
+# pane this server holds, or the session key that wrote the record — and a
+# record carrying NEITHER (every record written before the session stamp
+# existed) is one no reconcile pass can ever sweep. Observed 2026-08-17: a
+# pass cleared 15 records and left three exactly as they were while this check
+# went on naming the pass as their remedy. An advisory line survives only
+# while it is true, so those records name `reconcile.sh --adopt <ledger>` —
+# the operator assertion built for them (GH-1944) — with the path resolved,
+# since the flag refuses a bare invocation by design.
+#
 # Output: herdr-setup.sh check style (`  ok   name — detail` / `  GAP  ` /
 # `  note `). ralph/scripts/herdr-setup.sh relays the verdict as an advisory
 # NOTE-level section (a lineage finding is watcher telemetry, never a cockpit
@@ -103,6 +114,10 @@ rm -f "$_snap_err"
 # missing record — a gap invented by the check itself.
 live_json=$(ralph_herd_by_scope "$raw" 2>/dev/null) || live_json=""
 live_names=$(printf '%s\n' "$live_json" | jq -r 'select(.name != null) | .name' 2>/dev/null) || live_names=""
+# The pane half of reconcile's ownership proof, read the same way it reads it:
+# every pane_id this server holds, unscoped. A pane is a server-wide fact, not
+# a repository-scoped one, and reconcile compares against exactly this set.
+server_panes=$(printf '%s' "$raw" | jq -r '(.panes // [])[] | .pane_id // empty' 2>/dev/null | tr '\n' ' ') || server_panes=""
 
 # scope_of NAME — the repository scope of a live agent, or empty.
 scope_of() {
@@ -130,9 +145,17 @@ in_ledger_scope() {
   return 1
 }
 
-# ── open ledger records, as "FILE<TAB>REF" pairs ─────────────────────────────
+# ── open ledger records, as US-separated "FILE + open row" lines ─────────────
 # $RALPH_HERDR_LEDGER pins one file (tests); otherwise every board scope's
 # ledger is scanned — live agents can belong to any repo's board.
+#
+# Rows rather than bare refs (GH-2066): the ledger side needs each record's
+# `pane` and `session`, the two halves of reconcile's ownership proof, to say
+# which remedy clears it. US (0x1f) is the separator ralph_ledger_open_rows
+# already emits, and it is not tab for the reason stated there — tab is IFS
+# whitespace, so two adjacent empty columns would collapse into one and shift
+# every field after them, and a pre-session-key record's trailing columns are
+# empty by definition.
 ledger_files() {
   if [ -n "${RALPH_HERDR_LEDGER:-}" ]; then
     [ -f "$RALPH_HERDR_LEDGER" ] && printf '%s\n' "$RALPH_HERDR_LEDGER"
@@ -145,14 +168,14 @@ ledger_files() {
   return 0
 }
 
-open_pairs=""
+open_rows=""
 while IFS= read -r f; do
   [ -n "$f" ] || continue
-  while IFS= read -r ref; do
-    [ -n "$ref" ] || continue
-    open_pairs="$open_pairs$f	$ref
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    open_rows="$open_rows$f$row
 "
-  done < <(RALPH_HERDR_LEDGER="$f" ralph_ledger_open_agents || true)
+  done < <(RALPH_HERDR_LEDGER="$f" ralph_ledger_open_rows || true)
 done < <(ledger_files)
 
 # ── live side: exactly one open record per live ralph agent ──────────────────
@@ -182,15 +205,15 @@ while IFS= read -r name; do
   # be resolved matches nothing and is reported as an unledgered gap, which is
   # the honest answer: we cannot say which ledger should hold it.
   count=0
-  while IFS='	' read -r pf pref; do
+  while IFS=$'\037' read -r pf pref _rest; do
     [ -n "$pref" ] || continue
     in_ledger_scope "$name" "$pf" || continue
     case "${pref%%#*}" in
       "$name") count=$((count + 1)) ;;
     esac
-  done <<EOF_PAIRS
-$open_pairs
-EOF_PAIRS
+  done <<EOF_ROWS
+$open_rows
+EOF_ROWS
   case "$count" in
     1) pass "lineage-$name" "one open ledger record" ;;
     0) gap "lineage-$name" "live agent with NO open ledger record — run the reconcile action (the [[startup]] pass heals this on server restart)" ;;
@@ -212,7 +235,8 @@ now=$(date -u +%s)
 open_checked=0
 stale_total=0
 stale_shown=0
-while IFS='	' read -r f ref; do
+unownable_total=0
+while IFS=$'\037' read -r f ref pane _pid _harness _parent _state _issue _checkout _toks session; do
   [ -n "$ref" ] || continue
   open_checked=$((open_checked + 1))
   name=${ref%%#*}
@@ -227,12 +251,42 @@ while IFS='	' read -r f ref; do
 $live_names
 EOF2
   [ -n "$alive" ] && continue
+  # Which remedy can clear this record (GH-2066) — reconcile's own proof,
+  # asked the way reconcile asks it: a pane this server holds, or the session
+  # key that wrote the record. Either one and the next pass sweeps it. Neither
+  # and no pass ever will: the writer is unknowable from the ledger, so only
+  # an operator can assert it. A record whose session key belongs to some
+  # OTHER server stays on the reconcile wording deliberately — that pass has
+  # not run here, which is a different claim from cannot run, and the honest
+  # failure direction for a wording fix is toward the remedy that might work.
+  ownable=""
+  if [ -n "$pane" ]; then
+    case " $server_panes " in
+      *" $pane "*) ownable=1 ;;
+    esac
+  fi
+  [ -n "$session" ] && ownable=1
+  if [ -n "$ownable" ]; then
+    remedy="reconcile has not run; run the reconcile action"
+    lost_remedy="reconcile should mark it lost"
+    fresh_remedy="the next reconcile marks it lost"
+  else
+    # The ledger path is resolved into the line because --adopt refuses a bare
+    # invocation by design (GH-1944): the flag names the ledger the operator
+    # actually inspected, so a remedy that made the reader go find the path
+    # would be one more step between a true finding and the action that clears
+    # it.
+    remedy="no ownership proof (pre-session-key record), so reconcile cannot clear this; inspect and assert: bash $SCRIPT_DIR/reconcile.sh --dry-run --adopt $f"
+    lost_remedy="$remedy"
+    fresh_remedy="$remedy"
+  fi
   ts=$(RALPH_HERDR_LEDGER="$f" ralph_ledger_last "$ref" 2>/dev/null | jq -r '.ts // empty' 2>/dev/null) || ts=""
   if [ -z "$ts" ] || ! ep=$(iso_to_epoch "$ts"); then
     stale_total=$((stale_total + 1))
+    [ -n "$ownable" ] || unownable_total=$((unownable_total + 1))
     if [ "$stale_shown" -lt "$STALE_MAX" ]; then
       stale_shown=$((stale_shown + 1))
-      gap "lineage-$ref" "open record with no live agent and no readable timestamp — reconcile should mark it lost"
+      gap "lineage-$ref" "open record with no live agent and no readable timestamp — $lost_remedy"
     else
       FINDINGS=$((FINDINGS + 1))
     fi
@@ -241,17 +295,18 @@ EOF2
   age_min=$(((now - ep) / 60))
   if [ "$age_min" -ge "$TTL_MIN" ]; then
     stale_total=$((stale_total + 1))
+    [ -n "$ownable" ] || unownable_total=$((unownable_total + 1))
     if [ "$stale_shown" -lt "$STALE_MAX" ]; then
       stale_shown=$((stale_shown + 1))
-      gap "lineage-$ref" "open record, no live agent, last event $ts (${age_min}m ago >= TTL ${TTL_MIN}m) — reconcile has not run; run the reconcile action"
+      gap "lineage-$ref" "open record, no live agent, last event $ts (${age_min}m ago >= TTL ${TTL_MIN}m) — $remedy"
     else
       FINDINGS=$((FINDINGS + 1))
     fi
   else
-    note "lineage-$ref" "open record, no live agent, last event ${age_min}m ago (< TTL ${TTL_MIN}m) — the next reconcile marks it lost"
+    note "lineage-$ref" "open record, no live agent, last event ${age_min}m ago (< TTL ${TTL_MIN}m) — $fresh_remedy"
   fi
 done <<EOF3
-$open_pairs
+$open_rows
 EOF3
 
 # The accumulation line (GH-2023) — printed at EVERY verdict, including the
@@ -260,15 +315,36 @@ EOF3
 # output had been routed nowhere for weeks (GH-1900). A number only visible
 # when there is nothing to report is not a curve anyone can watch, and a number
 # only visible when it is already large is a number nobody saw grow.
-if [ "$stale_total" -gt "$stale_shown" ]; then
-  echo "  note lineage-stale-open — $stale_total stale open record(s); $((stale_total - stale_shown)) not listed (cap RALPH_LINEAGE_STALE_MAX=$STALE_MAX). One reconcile pass closes all of them"
+#
+# The count is also split (GH-2066): "3 stale open record(s). One reconcile
+# pass closes all of them" was read as three actionable items on a board where
+# zero of them were actionable by the named pass. A number is only a curve
+# anyone can watch while the sentence beside it is true.
+if [ "$unownable_total" -gt 0 ]; then
+  adopt_tail="; $unownable_total of them have no ownership proof — no reconcile pass clears those, only reconcile.sh --adopt <ledger>"
 else
-  echo "  note lineage-stale-open — $stale_total stale open record(s) of $open_checked open"
+  adopt_tail=""
+fi
+if [ "$stale_total" -gt "$stale_shown" ]; then
+  if [ "$unownable_total" -eq 0 ]; then
+    sweepable="One reconcile pass closes all of them"
+  elif [ "$unownable_total" -eq "$stale_total" ]; then
+    sweepable="No reconcile pass closes any of them"
+  else
+    sweepable="One reconcile pass closes the $((stale_total - unownable_total)) with ownership proof"
+  fi
+  echo "  note lineage-stale-open — $stale_total stale open record(s); $((stale_total - stale_shown)) not listed (cap RALPH_LINEAGE_STALE_MAX=$STALE_MAX). $sweepable$adopt_tail"
+else
+  echo "  note lineage-stale-open — $stale_total stale open record(s) of $open_checked open$adopt_tail"
 fi
 
 if [ "$FINDINGS" -eq 0 ]; then
   pass "lineage" "closed ($live_checked live ledgered agent(s), $open_checked open record(s))"
   exit 0
 fi
-echo "  $FINDINGS lineage finding(s)"
+if [ "$unownable_total" -gt 0 ]; then
+  echo "  $FINDINGS lineage finding(s) — $unownable_total need an operator assertion (reconcile.sh --adopt), not a reconcile pass"
+else
+  echo "  $FINDINGS lineage finding(s)"
+fi
 exit 1
