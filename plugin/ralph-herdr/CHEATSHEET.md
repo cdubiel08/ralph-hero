@@ -303,7 +303,10 @@ bash plugin/ralph-herdr/scripts/doctor-lineage.sh
                                              # `note lineage-stale-open — N` is the accumulation
                                              # curve: N growing = reconcile has stopped landing.
                                              # RALPH_LINEAGE_STALE_MAX caps the per-record lines
-                                             # (10; suppressed records still count as findings)
+                                             # (10; suppressed records still count as findings).
+                                             # GH-2066: a record with no ownership proof
+                                             # (session: null) names `reconcile.sh --adopt <ledger>`
+                                             # instead — no reconcile pass can ever clear it
 bash plugin/ralph-herdr/scripts/doctor-orphans.sh
                                              # GH-1888: processes whose HERDR_PANE_ID names no
                                              # live pane — the side neither lineage check can

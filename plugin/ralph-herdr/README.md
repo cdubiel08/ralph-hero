@@ -728,6 +728,22 @@ not here.
   server restart — a limit would need one restart per batch to converge. The mass-sweep
   hazard a limit gestures at is answered by evidence instead: the fail-closed re-probe,
   per-record scoping, and phase A releasing no claim.
+
+- **An advisory line survives only while its remedy is true (GH-2066).** The stale-record
+  GAP named "run the reconcile action" for every record. Observed 2026-08-17: a pass ran,
+  cleared 15 records, and left three exactly as they were — their ledger rows carry
+  `session: null`, they predate the session key, so phase A can prove ownership of them
+  by neither half of its positive test (a pane this server holds, or the key that wrote
+  the record) and correctly skips them. Running the named action again changes nothing,
+  forever. `doctor-lineage.sh` now asks reconcile's own question per record and splits the
+  verdict: provable ownership keeps today's text, and a record with neither proof names
+  `reconcile.sh --dry-run --adopt <ledger>` — the operator assertion built for exactly this
+  population (GH-1944) — **with the path resolved**, because that flag refuses a bare
+  invocation by design. The counts split with it: `3 lineage finding(s)` read as three
+  actionable items when zero were actionable by the pass it named. A record whose session
+  key belongs to some *other* server keeps the reconcile wording deliberately — "that pass
+  has not run here" is a different claim from "no pass can", and the honest failure
+  direction for a wording fix is toward the remedy that might work.
 - **A process can outlive its pane, and until GH-1888 nothing looked (`doctor-orphans.sh`).**
   Both sides of `doctor-lineage.sh` are keyed on a ledger identity, so neither
   can see a process that was never a ledgered agent — a cockpit, a dev server, a
