@@ -4,6 +4,17 @@ Terminal commands to drive the cockpit, in the order you'll actually need them.
 Distilled from live sessions and the shipped scripts — every command here has
 been run for real or read straight out of the source it invokes.
 
+**Common asks → the one command** (details in the named section):
+
+| You want | Run | § |
+|---|---|---|
+| Launch a fleet on workable items | `bash plugin/ralph-herdr/scripts/work-fleet.sh` (add issue numbers for exactly those) | 6 |
+| Open the cockpit | `herdr plugin action invoke cockpit --plugin ralph-herdr` | 3 |
+| Board state / who's working | `board list` · `board next` · `herdr agent list` | 7 |
+| Spawn one worker on issue NNN | `bash plugin/ralph-herdr/scripts/work-fleet.sh NNN` | 6 |
+| Answer a blocked session | `board answer NNN -m "..."` then attend the pane | 5 |
+| Something's weird | `board doctor` · `bash plugin/ralph-herdr/scripts/doctor.sh` | 10 |
+
 ## 0. Quick start from zero (one-time)
 
 Skip whatever you already have. Ralph first, herdr second — the cockpit is a
