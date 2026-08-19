@@ -22,7 +22,7 @@ The board CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/board` — that placeholder reso
 
 `board deliver-queue --json` picks the work: take `next` (or the argument's issue if given — it must be in the queue). Empty `next` ⇒ nothing to do: write the exit report and stop. Handle ONE item per pass, end to end, then exit at a surfaced state. You are a single-pass operator: whatever invoked you decides whether and when another pass happens — never arrange one yourself, and never wait around for state to change.
 
-Inherited from /ralph:work, verbatim: board truthful at all times; exit only at surfaced states; findings outlive the transcript; decisions journaled via `board comment`; gates are run, not predicted; scope is the selected item.
+Inherited from /ralph:work, verbatim: board truthful at all times; exit only at surfaced states; findings outlive the transcript; decisions journaled via `board comment`; gates are run, not predicted; scope is the selected item. So is the evidence discipline those rules assume — [../work/references/discipline.md](../work/references/discipline.md): empty output is never evidence, the watch is part of the push, async state needs settle time, threads outrank gates, verdicts are observed never typed.
 
 ## The gate decides — you react to its token
 
