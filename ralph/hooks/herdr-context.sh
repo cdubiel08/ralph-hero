@@ -15,4 +15,24 @@ set -euo pipefail
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 echo "cockpit-hosted session (herdr): self-report lifecycle at the natural checkpoints via the pane state token — herdr pane report-metadata \"\$HERDR_PANE_ID\" --source ralph-herdr --token state=<working|blocked|reporting>; herdr reference: $PLUGIN_ROOT/skills/work/references/herdr-api.md; escalations must be phone-answerable (first line <=240 chars stating the decision, enumerated options with one recommended default)."
+
+# Operator-ask routing (GH-2074/GH-2075). Host repos install ralph as a plugin
+# and have no ralph-hero CLAUDE.md, so this line is the ONLY place a fresh
+# session learns the sanctioned entry points; measured without it, every
+# session re-derives them in 5-15 tool calls and small models land on the
+# wrong surface. The herdr action forms are used because they resolve from
+# any cwd — a host repo has no plugin/ralph-herdr/ checkout to path into.
+#
+# The cheat sheet ships in the ralph-herdr HERDR plugin, not this Claude
+# plugin — $CLAUDE_PLUGIN_ROOT is the wrong tree — so its path is resolved
+# from herdr's own registry. Best-effort: a missing herdr/jq or an
+# unregistered plugin degrades to naming the install, never to a broken path
+# and never to a non-zero exit.
+CHEAT="CHEATSHEET.md in the ralph-herdr plugin install (herdr plugin list --json | jq -r '.result.plugins[]|select(.plugin_id==\"ralph-herdr\").plugin_root')"
+if command -v herdr >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  root=$(herdr plugin list --json 2>/dev/null \
+    | jq -r '.result.plugins[] | select(.plugin_id == "ralph-herdr") | .plugin_root' 2>/dev/null || true)
+  [ -n "${root:-}" ] && [ -f "$root/CHEATSHEET.md" ] && CHEAT="$root/CHEATSHEET.md"
+fi
+echo "operator asks, answered (do not re-derive): 'launch a fleet' -> herdr plugin action invoke work-fleet --plugin ralph-herdr (or work-these for named issues); 'open the cockpit' -> herdr plugin action invoke cockpit --plugin ralph-herdr; 'board status / who is working' -> board list + board next + herdr agent list. Full cheat sheet: $CHEAT"
 exit 0
