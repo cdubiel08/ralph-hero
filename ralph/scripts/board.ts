@@ -6613,6 +6613,97 @@ export function installedPluginReport(cfg: Config): { level: "ok" | "info"; deta
   };
 }
 
+/** Doctor's `gate-kit` line (GH-2083). Only ever ok|info, like
+ *  `installed-plugin`: the kit is vendored BY CHOICE (validate-attestation.yml
+ *  runs the gate scripts in Actions, where no plugin install exists, so a shim
+ *  was never an option), which makes drift a fact to surface, not a breach.
+ *  Compares the host repo's install stamp (.github/ralph-kit.json, written by
+ *  install-gates.sh) against the installed plugin's kit manifest. Files the
+ *  host modified or deleted are the host's — named, never counted as drift
+ *  (recommend, never impose). */
+export function gateKitReport(repoRoot: string): { level: "ok" | "info"; detail: string } {
+  const stampPath = join(repoRoot, ".github", "ralph-kit.json");
+  if (!existsSync(stampPath))
+    return {
+      level: "ok",
+      detail:
+        "no gate-kit stamp (.github/ralph-kit.json) — merge gates not installed from the plugin kit " +
+        "(install-gates.sh writes one; a repo with its own gates, or the canonical repo, has none)",
+    };
+  let stamped: Record<string, string>;
+  let stampVersion = "?";
+  try {
+    const stamp = JSON.parse(readFileSync(stampPath, "utf8"));
+    if (!stamp?.files || typeof stamp.files !== "object") throw new Error("no files map");
+    stamped = stamp.files;
+    if (typeof stamp.version === "string") stampVersion = stamp.version;
+  } catch (e) {
+    return { level: "info", detail: `not evaluated: .github/ralph-kit.json unreadable (${(e as Error).message})` };
+  }
+  const copies = resolveInstalledPlugin("ralph");
+  if (!copies)
+    return { level: "info", detail: "not evaluated: a gate-kit stamp exists but no installed ralph plugin is recorded to compare it against" };
+  // The HIGHEST installed version is the judge here — the question is "is a
+  // better kit available than what is vendored", the inverse of the floor
+  // check's lowest-copy rule (there the risk was a gate not running).
+  const ranked = copies
+    .filter((c) => compareVersions(c.version, "0.0.0") !== null)
+    .sort((a, b) => compareVersions(b.version, a.version)!);
+  const best = ranked[0];
+  if (!best)
+    return { level: "info", detail: `not evaluated: installed version unparseable (${copies.map((c) => c.version).join(", ")})` };
+  const manifestPath = join(best.installPath, "kit", "manifest.json");
+  let kitFiles: Record<string, string>;
+  try {
+    kitFiles = JSON.parse(readFileSync(manifestPath, "utf8"))?.files ?? {};
+  } catch {
+    return {
+      level: "info",
+      detail: `not evaluated: installed ralph ${best.version} ships no readable kit manifest (predates the kit, or a partial install)`,
+    };
+  }
+  const outdated: string[] = [];
+  const modified: string[] = [];
+  const retired: string[] = [];
+  let current = 0;
+  for (const [dest, stampedHash] of Object.entries(stamped)) {
+    const kitHash = kitFiles[dest];
+    let hostHash: string | null = null;
+    try {
+      hostHash = createHash("sha256").update(readFileSync(join(repoRoot, dest))).digest("hex");
+    } catch {
+      hostHash = null; // deleted by the host — an opt-out install-gates.sh respects
+    }
+    if (kitHash === undefined) {
+      retired.push(dest);
+      continue;
+    }
+    if (hostHash === null) continue; // opt-out: not drift, not current
+    if (hostHash !== stampedHash) {
+      modified.push(dest); // the host owns this file now
+      continue;
+    }
+    if (stampedHash === kitHash) current++;
+    else outdated.push(dest);
+  }
+  const notes: string[] = [];
+  if (modified.length) notes.push(`${modified.length} locally modified (the host's, respected)`);
+  if (retired.length) notes.push(`${retired.length} retired from the kit`);
+  const suffix = notes.length ? ` — ${notes.join("; ")}` : "";
+  if (outdated.length === 0)
+    return {
+      level: "ok",
+      detail: `gate kit ${stampVersion}: ${current} file(s) current with installed ralph ${best.version}${suffix}`,
+    };
+  return {
+    level: "info",
+    detail:
+      `gate kit ${stampVersion} is behind installed ralph ${best.version}: ${outdated.length} file(s) outdated ` +
+      `(${outdated.slice(0, 3).join(", ")}${outdated.length > 3 ? ", …" : ""})${suffix} — ` +
+      `re-run: bash ${best.installPath}/scripts/install-gates.sh`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Volume + prune (GH-1788). Both are PURE over the page walk every caller
 // already does — measuring the board costs nothing extra, and the dry run
@@ -7738,6 +7829,16 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     add("installed-plugin", "info", `not evaluated: ${(e as Error).message}`);
   }
 
+  // Gate-kit drift (GH-2083). INFO level always, same construction as the
+  // floor check above: vendored gates that lag the plugin are a fact worth a
+  // line, never a breach — and a repo with no stamp hears "ok", not noise.
+  try {
+    const r = gateKitReport(ctx.repoRoot);
+    add("gate-kit", r.level, r.detail);
+  } catch (e) {
+    add("gate-kit", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
   const ok = !checks.some((c) => c.level === "fail");
   return { ok, checks };
 }
@@ -7880,7 +7981,9 @@ export function readiness(ctx: Ctx): ReadinessReport {
     hasGate ? "scripts/merge-pr.sh present" : "no scripted merge gate",
     hasGate
       ? undefined
-      : "before agents merge unattended, script the merge verdict (convention: scripts/merge-pr.sh running CI/review/attestation checks with real exit codes) or encode it as required status checks",
+      : "before agents merge unattended, script the merge verdict — the plugin ships the whole family as an " +
+        "installable kit (`bash <plugin>/scripts/install-gates.sh` from this repo vendors merge-pr.sh, attestation, " +
+        "review evidence and the validating workflow, and prints the ruleset steps) — or encode it as required status checks",
   );
   const hasStateGuard = existsSync(join(wfDir, "state-guard.yml"));
   add(

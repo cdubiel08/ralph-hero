@@ -1,0 +1,605 @@
+#!/bin/bash
+# Merge a PR through verification gates, with deterministic worktree cleanup.
+#
+# Usage: ./scripts/merge-pr.sh PR_NUMBER [WORKTREE_ID] [--force "reason"] [--dry-run]
+#
+# GH-1589 (epic #1588): this script is the PORTABLE merge gate — the
+# verification lives here, in plain bash + gh + jq, so it binds from any
+# shell or harness (Claude Code, hero-fable, bare terminal, CI). Claude Code
+# hooks are advisory/funnel UX on top; they are NOT the enforcement layer.
+#
+# Gates (in order):
+#   0. PR is OPEN (fetch state/mergeable/head/author/reviewDecision in one call)
+#   1. reviewDecision != CHANGES_REQUESTED   — HARD block, not forceable.
+#      Dismiss or resolve the review on GitHub to clear it (audit-logged).
+#   2. mergeable == MERGEABLE (UNKNOWN retried once after 5s; CONFLICTING blocks)
+#   3. All CI checks green. A `fail`/`cancel` bucket BLOCKS (verdict); a
+#      `pending` bucket is PENDING (exit 75) — still building is not red.
+#      The `ralph-attestation` status context is EXCLUDED here — this script
+#      validates the attestation comment directly (gate 4); the commit status
+#      is the server-side backstop published by validate-attestation.yml.
+#      Zero checks reported → loud warn, continue (CI-less-repo portability).
+#   4. Attestation comment (<!-- ralph-attestation:v1 -->) present, JSON-valid,
+#      head_sha == current PR head, non-empty tests[] all exit_code 0, review
+#      verdict present. Skipped for policy-exempt authors (bots).
+#   5. External review evidence by the policy bot, in one of two modes derived
+#      from the policy (never defaulted):
+#        review   — a formal APPROVED review at the current head. Every policy
+#                   naming no head_marker (CodeRabbit et al.) keeps this.
+#        findings — opted into by naming head_marker: ONE scoped review per
+#                   head, blocking only on unresolved top-severity (P0)
+#                   threads. For reviewers like Codex that have no APPROVED
+#                   verb and emit findings instead
+#                   (scripts/codex-review-evidence.sh holds the predicate).
+#      No evidence at this head is PENDING (exit 75), never FAIL: gate 1
+#      already caught CHANGES_REQUESTED, so its absence is "not yet", not
+#      "no". Skipped for exempt authors.
+#   6. Apply-keyword hygiene (scripts/apply-keywords.sh, GH-1694): no closing
+#      keyword may bind an apply-kind issue, and an infra-touching PR may not
+#      close a ship issue that has no apply twin. Inert unless the repo opted
+#      in via the policy file's `apply` block, and skipped entirely in host
+#      repos that do not ship the checker.
+#
+# Policy: .github/ralph-merge-policy.json (override path for tests via
+# RALPH_MERGE_POLICY_FILE). NO policy file → gates 4-5 off (repo hasn't
+# opted in); gates 0-3 always apply.
+#
+# --force "reason": skips gates 2 (UNKNOWN only), 3, 4, 5 — never gate 1 —
+# and posts a "## Merge Gate Override" comment on the PR (reason, actor,
+# skipped gates, head sha) BEFORE merging. Loud and durable, never silent.
+#
+# --dry-run (GH-1712, D8): evaluate every gate exactly as the merge path
+# does — same tokens, same exit codes (0/1/75) — then stop. No merge, no
+# worktree cleanup, no comment, no mutation of any kind. This is the single
+# source of truth for "is this PR mergeable and why not"; selectors and
+# skills read it rather than re-implementing gate logic. One sanctioned
+# divergence: gate 2 makes a single attempt with no retry sleep, and
+# mergeable UNKNOWN maps to PENDING — mergeable (the merge path retries
+# once, then soft-gates). Mutually exclusive with --force: a dry run of an
+# override is not a meaningful question.
+#
+# Output contract (loop-runners grep these):
+#   MERGE GATE PASS            — all gates satisfied (or force-skipped)   [0]
+#   MERGE GATE WARN — ...      — non-blocking anomaly (e.g. zero checks)
+#   MERGE GATE PENDING — g: .. — evidence not in YET; retry later         [75]
+#   MERGE GATE FAIL — g: ...   — first failing gate, machine-parseable    [1]
+#   MERGE BLOCKED — ...        — legacy token, emitted alongside FAIL
+#
+# PENDING vs FAIL matters to unattended runners: exit 1 means stop and get a
+# human, exit 75 means come back later with the work still claimed. Do not
+# collapse them.
+#
+# Attestation lookup reads the comment list paginated, through the shared
+# reader (GH-1842); `last` matching picks the newest attestation.
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: $0 PR_NUMBER [WORKTREE_ID] [--force \"reason\"] [--dry-run]" >&2
+  exit 1
+}
+
+PR_NUMBER=""
+WORKTREE_ID=""
+FORCE=false
+FORCE_REASON=""
+DRY_RUN=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --force)
+      FORCE=true
+      FORCE_REASON="${2:-}"
+      if [[ -z "$FORCE_REASON" ]]; then
+        echo "MERGE GATE FAIL — force: --force requires a reason string" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    -*)
+      usage
+      ;;
+    *)
+      if [[ -z "$PR_NUMBER" ]]; then
+        PR_NUMBER="$1"
+      elif [[ -z "$WORKTREE_ID" ]]; then
+        WORKTREE_ID="$1"
+      else
+        usage
+      fi
+      shift
+      ;;
+  esac
+done
+
+[[ -z "$PR_NUMBER" ]] && usage
+
+if [[ "$DRY_RUN" == "true" && "$FORCE" == "true" ]]; then
+  echo "MERGE GATE FAIL — args: --dry-run and --force are mutually exclusive" >&2
+  exit 1
+fi
+
+PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [[ -z "$PROJECT_ROOT" ]]; then
+  echo "Error: Not in a git repository" >&2
+  exit 1
+fi
+
+# The policy reader, the login-normalization rule and the attestation payload
+# rules are shared with validate-attestation.sh and pr-gate-watch.sh (GH-1843)
+# — three readers of the same evidence with three copies of the rules is how a
+# gate and its watcher come to disagree about the same bytes.
+# shellcheck source=lib/merge-evidence.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/merge-evidence.sh"
+# GH-1817/GH-2003: names the rate-limit failure shape for this script's one
+# gh WRITE (the --force override record). Every READ here stays unguarded and
+# fails open into a retry or a PENDING verdict — the opposite default, chosen
+# from consequence, not an inconsistency to be tidied away.
+# shellcheck source=lib/gh-budget.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/gh-budget.sh"
+POLICY_FILE="$(me_policy_file "$PROJECT_ROOT")"
+
+# Gate-skip accumulator for --force (bash-3.2-safe counter + newline list).
+SKIPPED_GATES=""
+SKIPPED_COUNT=0
+
+# Retry-able outcome. Distinct from FAIL: nothing is wrong, the evidence just
+# isn't in yet (CI still building, reviewer hasn't looked at this head). A
+# loop-runner must NOT treat 75 as a verdict — leave the work claimed and come
+# back. 75 is EX_TEMPFAIL from sysexits(3).
+PENDING_EXIT=75
+
+block() { # block <gate> <detail>  — hard stop (or force-skip when allowed)
+  echo "MERGE GATE FAIL — $1: $2"
+  echo "MERGE BLOCKED — $2"
+  exit 1
+}
+
+pending() { # pending <gate> <detail> — retry-able, not a verdict
+  echo "MERGE GATE PENDING — $1: $2"
+  exit "$PENDING_EXIT"
+}
+
+soft_gate() { # soft_gate <gate> <detail> — blocks unless --force
+  if [[ "$FORCE" == "true" ]]; then
+    SKIPPED_GATES="${SKIPPED_GATES}- **$1**: $2"$'\n'
+    SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+    echo "MERGE GATE WARN — $1 skipped by --force: $2"
+  else
+    block "$1" "$2"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Policy
+# ---------------------------------------------------------------------------
+# Fail CLOSED on a malformed policy file — a truncated/corrupt policy must not
+# silently disable the evidence gates (CodeRabbit finding, PR #1602). Exit 2
+# from the shared loader is that case and only that case. The defaults and the
+# mode derivation (review vs findings) live in the loader, not here.
+set +e
+POLICY=$(me_policy_load "$POLICY_FILE")
+POLICY_RC=$?
+set -e
+if [[ "$POLICY_RC" -eq 2 ]]; then
+  block "policy" "merge policy file is not valid JSON: $POLICY_FILE"
+fi
+ATTESTATION_REQUIRED=$(me_policy_get "$POLICY" attestationRequired)
+EXTERNAL_REQUIRED=$(me_policy_get "$POLICY" externalRequired)
+EXTERNAL_BOT=$(me_policy_get "$POLICY" bot)
+EXTERNAL_TRIGGER=$(me_policy_get "$POLICY" trigger)
+EXTERNAL_EVIDENCE_MODE=$(me_policy_get "$POLICY" mode)
+
+# ---------------------------------------------------------------------------
+# Gate 0: PR core facts (single fetch)
+# ---------------------------------------------------------------------------
+pr_json=$(gh pr view "$PR_NUMBER" --json state,mergeable,headRefOid,baseRefName,reviewDecision,author 2>/dev/null) \
+  || block "fetch" "cannot read PR #$PR_NUMBER (gh pr view failed)"
+
+state=$(jq -r '.state // ""' <<<"$pr_json")
+mergeable=$(jq -r '.mergeable // ""' <<<"$pr_json")
+head_sha=$(jq -r '.headRefOid // ""' <<<"$pr_json")
+# Empty skips the base binding rather than failing it (GH-1841): a field we
+# could not read is not evidence that the PR was retargeted.
+base_ref=$(jq -r '.baseRefName // ""' <<<"$pr_json")
+decision=$(jq -r '.reviewDecision // ""' <<<"$pr_json")
+author=$(jq -r '.author.login // ""' <<<"$pr_json")
+
+[[ "$state" == "OPEN" ]] || block "state" "PR #$PR_NUMBER is $state, not OPEN"
+
+# Exempt author? Normalizes the app/ prefix and [bot] suffix on both sides.
+EXEMPT=$(me_is_exempt "$POLICY" "$author")
+
+# ---------------------------------------------------------------------------
+# Gate 1: CHANGES_REQUESTED — unconditional, --force does not apply
+# ---------------------------------------------------------------------------
+if [[ "$decision" == "CHANGES_REQUESTED" ]]; then
+  block "review" "changes requested on PR #$PR_NUMBER — dismiss or resolve the review on GitHub (not forceable)"
+fi
+
+# ---------------------------------------------------------------------------
+# Gate 2: mergeable
+# ---------------------------------------------------------------------------
+# Dry-run divergence (the one sanctioned one, GH-1712 D8): a selector probing
+# many PRs cannot afford a 5s sleep per UNKNOWN, and "GitHub hasn't computed
+# mergeability yet" is evidence-not-in-yet, not a verdict — so dry-run makes a
+# single attempt and maps UNKNOWN to PENDING. The merge path keeps its
+# retry-then-soft-gate shape unchanged.
+if [[ "$mergeable" == "UNKNOWN" && "$DRY_RUN" != "true" ]]; then
+  sleep 5
+  mergeable=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable' 2>/dev/null || echo "UNKNOWN")
+fi
+case "$mergeable" in
+  MERGEABLE) ;;
+  CONFLICTING)
+    # Physically cannot merge; force cannot help.
+    block "mergeable" "PR #$PR_NUMBER has conflicts — rebase first"
+    ;;
+  *)
+    if [[ "$DRY_RUN" == "true" ]]; then
+      pending "mergeable" "mergeable status is ${mergeable:-empty} (not yet computed)"
+    else
+      soft_gate "mergeable" "mergeable status is ${mergeable:-empty} after retry"
+    fi
+    ;;
+esac
+
+# ---------------------------------------------------------------------------
+# Gate 3: CI checks green
+# ---------------------------------------------------------------------------
+# `description` is fetched here (not just name/bucket) so gate 5 can read the
+# external reviewer's own status line without a second API call.
+checks_json=$(gh pr checks "$PR_NUMBER" --json name,bucket,description 2>/dev/null || true)
+if [[ -z "$checks_json" ]] || ! jq -e . >/dev/null 2>&1 <<<"$checks_json"; then
+  checks_json="[]"
+fi
+checks_total=$(jq 'length' <<<"$checks_json")
+if [[ "$checks_total" -eq 0 ]]; then
+  echo "MERGE GATE WARN — checks: no CI checks reported on PR #$PR_NUMBER (continuing)"
+else
+  # Red and still-building are different facts. Red is a verdict; building is
+  # a wait. Collapsing them made a loop-runner abandon PRs whose CI simply
+  # hadn't finished.
+  red=$(jq -r '
+    [.[] | select(.name != "ralph-attestation")
+         | select(.bucket == "fail" or .bucket == "cancel")]
+    | map("\(.name)=\(.bucket)") | join(", ")
+  ' <<<"$checks_json")
+  waiting=$(jq -r '
+    [.[] | select(.name != "ralph-attestation")
+         | select(.bucket == "pending")]
+    | map(.name) | join(", ")
+  ' <<<"$checks_json")
+  if [[ -n "$red" ]]; then
+    soft_gate "checks" "not green: $red"
+  elif [[ -n "$waiting" ]]; then
+    if [[ "$FORCE" == "true" ]]; then
+      soft_gate "checks" "still running: $waiting"
+    else
+      pending "checks" "still running: $waiting"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Gate 4: attestation
+# ---------------------------------------------------------------------------
+ATTESTATION_MARKER="$ME_ATTESTATION_MARKER"
+if [[ "$ATTESTATION_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
+  # Paginated, via the shared reader (GH-1842): an unpaginated window drops a
+  # valid attestation on a long PR. An unreadable comment list is PENDING, not
+  # a missing attestation — retry the read rather than re-run attest-pr.sh.
+  _me_noerrexit
+  att_body=$(me_attestation_comment "$PR_NUMBER")
+  att_rc=$?
+  _me_errexit_restore
+  if [[ "$att_rc" -eq 3 ]]; then
+    pending "attestation" "could not read the comments on PR #$PR_NUMBER (gh api failed) — retry"
+  fi
+  if [[ -z "$att_body" ]]; then
+    soft_gate "attestation" "no $ATTESTATION_MARKER comment on PR #$PR_NUMBER (run scripts/attest-pr.sh)"
+  else
+    # Payload extraction and the three validity checks are the shared reader's
+    # (GH-1843); this gate owns only the mapping from reason code to refusal.
+    att_status=$(me_attestation_status "$att_body" "$head_sha" "$base_ref")
+    att_sha=$(me_attestation_field "$att_body" .head_sha)
+    case "$att_status" in
+      missing)
+        soft_gate "attestation" "attestation comment present but JSON payload unparseable" ;;
+      stale)
+        soft_gate "attestation" "attestation head_sha ${att_sha:0:8} != PR head ${head_sha:0:8} — re-attest after the latest push" ;;
+      base-changed)
+        # Retargeting changes what the PR merges without moving the head, so
+        # the head binding alone cannot see it (GH-1841). Absent base_ref
+        # lands here too: it predates the binding and has the same remedy.
+        soft_gate "attestation" "attestation base '$(me_attestation_field "$att_body" .base_ref)' != PR base '$base_ref' — re-attest against the current base" ;;
+      no-tests)
+        soft_gate "attestation" "attestation lacks passing test evidence (tests[] empty or non-zero exit_code)" ;;
+      no-verdict)
+        soft_gate "attestation" "attestation lacks a review verdict" ;;
+      rejected)
+        # An honest non-approving verdict is evidence AGAINST merging
+        # (CodeRabbit finding, PR #1602: presence-only check let REJECTED pass).
+        soft_gate "attestation" "attestation review verdict is '$(me_attestation_field "$att_body" .review.verdict)', not APPROVED" ;;
+    esac
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Gate 5: external (independent-identity) review
+# ---------------------------------------------------------------------------
+if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
+  evidence_ok=false
+  evidence_detail=""
+
+  if [[ "$EXTERNAL_EVIDENCE_MODE" == "review" ]]; then
+    # --- review mode: the reviewer files a formal APPROVED review -----------
+    # Head-bound and DISMISSED-excluded, exactly as gate 5 has always behaved
+    # for reviewers that speak this protocol. The predicate is the shared
+    # reader's, which is also what pr-gate-watch.sh classifies against.
+    #
+    # rc 3 is a failed reviews API, kept distinct from rc 1 (no review yet):
+    # collapsing them would make an unavailable API read as EMPTY EVIDENCE.
+    # Pinned by a regression test (CodeRabbit, #1839).
+    set +e
+    me_review_mode_approved "$PR_NUMBER" "$EXTERNAL_BOT" "$head_sha"
+    ext_rc=$?
+    set -e
+    [[ "$ext_rc" -eq 0 ]] && evidence_ok=true
+    if [[ "$ext_rc" -eq 3 ]]; then
+      evidence_detail="external-review evidence could not be read (reviews API unavailable)"
+    else
+      evidence_detail="no current APPROVED $EXTERNAL_BOT review at head ${head_sha:0:8} yet — comment '$EXTERNAL_TRIGGER' to trigger one"
+    fi
+  else
+    # --- findings mode: one scoped review per head, P0-clean ---------------
+    # The predicate lives in ONE script, which validate-attestation.sh and
+    # pr-gate-watch.sh also run: three readers of the same evidence with three
+    # copies of the rule is how a gate and its watcher come to disagree.
+    CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review-evidence.sh}"
+    if [[ ! -x "$CODEX_EVIDENCE_SH" ]]; then
+      block "policy" "external_review names head_marker (findings mode) but $CODEX_EVIDENCE_SH is missing"
+    fi
+    # Captured, not inherited (same pattern as gate 6): under `set -e` a
+    # crashed predicate would kill this script mid-gate, and a runner would see
+    # no MERGE GATE token at all — indistinguishable from a gate that passed
+    # and then died. An unusable answer is PENDING, never silently ok.
+    set +e
+    ext_evidence=$(me_run_evidence_script "$CODEX_EVIDENCE_SH" "$PR_NUMBER" "$head_sha")
+    ext_rc=$?
+    set -e
+    if [[ "$ext_rc" -ne 0 ]]; then
+      evidence_detail="external-review $ext_evidence"
+    else
+      [[ "$(jq -r '.ok' <<<"$ext_evidence")" == "true" ]] && evidence_ok=true
+      evidence_detail=$(jq -r '.detail' <<<"$ext_evidence")
+    fi
+  fi
+
+  if [[ "$evidence_ok" != "true" ]]; then
+    if [[ "$FORCE" == "true" ]]; then
+      soft_gate "external-review" "no current $EXTERNAL_BOT review at head ${head_sha:0:8}"
+    else
+      # Gate 1 already caught CHANGES_REQUESTED, so "no review at this head"
+      # is never a negative verdict — it is "not yet". Retry-able.
+      #
+      # Naming WHY costs nothing here: a rate-limited reviewer publishes a
+      # check whose STATE is success but whose DESCRIPTION says so ("Review
+      # rate limited"). Read the description, never the state. Deliberately
+      # NOT the bot's rate-limit PR comment — that comment persists after the
+      # review eventually lands, so it would mislabel every later wait; the
+      # check is bound to this head and cannot go stale. Matched on the
+      # description rather than a hardcoded check name so it stays
+      # bot-agnostic: check-run names need not equal the configured bot login.
+      rl_checks=$(jq -r '
+        [.[] | select(((.description // "") | ascii_downcase) | contains("rate limit"))]
+        | map(.name) | join(", ")
+      ' <<<"$checks_json" 2>/dev/null || echo "")
+      if [[ -n "$rl_checks" ]]; then
+        pending "external-review" "$EXTERNAL_BOT is rate-limited and filed no review evidence (per its own '$rl_checks' check) — retry after the window, or comment '$EXTERNAL_TRIGGER'"
+      fi
+      # The detail comes from the mode actually in force, so the remedy named
+      # is one this repo's reviewer can act on.
+      pending "external-review" "$evidence_detail"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Gate 6: apply-keyword hygiene + infra-split (GH-1694)
+# ---------------------------------------------------------------------------
+# A merged PR is not a deployed change. This refuses a PR whose closing
+# keywords bind an apply-kind issue, and an infra-touching PR that closes a
+# ship issue with no apply twin. Fully inert unless the repo opted in via the
+# `apply` block of the policy file — including in host repos that vendor
+# merge-pr.sh without the checker script at all.
+#
+# soft_gate, not a hard block: every other evidence gate here is forceable
+# with the loud `--force` override comment, and a special case would be
+# inconsistent. Gate 1 (CHANGES_REQUESTED) remains the only unforceable one.
+# Test-only override, same pattern as RALPH_MERGE_POLICY_FILE / RALPH_WORKTREE_ROOT.
+APPLY_KEYWORDS_SH="${RALPH_APPLY_KEYWORDS_SH:-$PROJECT_ROOT/scripts/apply-keywords.sh}"
+if [[ -x "$APPLY_KEYWORDS_SH" ]]; then
+  # Captured, not streamed: the first line is the verdict a runner greps for,
+  # and the remaining lines are the operator's remedy.
+  set +e
+  apply_out=$("$APPLY_KEYWORDS_SH" "$PR_NUMBER" 2>&1)
+  apply_rc=$?
+  set -e
+  echo "$apply_out"
+  if [[ "$apply_rc" -ne 0 ]]; then
+    soft_gate "apply-keywords" "$(head -1 <<<"$apply_out")"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Force override: durable record BEFORE merging
+# ---------------------------------------------------------------------------
+if [[ "$FORCE" == "true" && "$SKIPPED_COUNT" -gt 0 ]]; then
+  actor=$(gh api user --jq '.login' 2>/dev/null || echo "unknown")
+  override_body="## Merge Gate Override
+
+**Actor:** \`$actor\`
+**Reason:** $FORCE_REASON
+**Head SHA:** \`$head_sha\`
+**Gates skipped ($SKIPPED_COUNT):**
+$SKIPPED_GATES
+_Posted by scripts/merge-pr.sh --force before merging (GH-1589)._"
+  # GH-2003: the override record is the one gh WRITE in this script, and it was
+  # the strongest form of the shape GH-1817 was filed against — `2>/dev/null`
+  # discarded even the rate-limit text, so an audit trail with a hole in it read
+  # exactly like one without. Routed through gb_gh so a rate-limited no-op is
+  # named rather than inferred from an exit code gh does not reliably set.
+  #
+  # It does NOT block the merge, unlike attest-pr.sh's fail-closed write. That
+  # write is evidence a later gate reads, so a phantom one leaves a driver
+  # waiting forever; this one is a record of a decision the operator has already
+  # made and every gate has already been evaluated against. Turning a transient
+  # rate limit into a refusal here would invent a gate after the verdict. What
+  # the failure owes the operator is the remedy, so it prints the re-runnable
+  # command instead of a bare "continuing".
+  override_rc=0
+  gb_gh pr comment "$PR_NUMBER" --body "$override_body" >/dev/null || override_rc=$?
+  if [[ "$override_rc" -eq 4 ]]; then
+    echo "MERGE GATE WARN — force: override comment NOT posted (rate limited); merge continues, re-post after the reset:" >&2
+    printf '  gh pr comment %q --body %q\n' "$PR_NUMBER" "$override_body" >&2
+  elif [[ "$override_rc" -ne 0 ]]; then
+    echo "MERGE GATE WARN — force: failed to post override comment (gh exited $override_rc); merge continues, re-post with:" >&2
+    printf '  gh pr comment %q --body %q\n' "$PR_NUMBER" "$override_body" >&2
+  fi
+fi
+
+echo "MERGE GATE PASS — PR #$PR_NUMBER @ ${head_sha:0:8} (attestation=$ATTESTATION_REQUIRED external=$EXTERNAL_REQUIRED exempt=$EXEMPT force=$FORCE)"
+
+# Dry run stops here: gates evaluated, verdict emitted, nothing touched.
+# Everything below this line mutates (worktree removal, the merge itself).
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "Dry run: no merge attempted."
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Head-branch facts — read ONCE, used by both worktree cleanup and the
+# post-merge remote-branch delete (GH-1873). Read unconditionally: the delete
+# below needs HEAD_BRANCH even when the caller supplied --worktree.
+# ---------------------------------------------------------------------------
+head_facts=$(gh pr view "$PR_NUMBER" --json headRefName,isCrossRepository 2>/dev/null || echo '{}')
+HEAD_BRANCH=$(jq -r '.headRefName // ""' <<<"$head_facts" 2>/dev/null || echo "")
+IS_FORK=$(jq -r '.isCrossRepository // false' <<<"$head_facts" 2>/dev/null || echo "false")
+
+# ---------------------------------------------------------------------------
+# Worktree cleanup (pre-merge, so the tree is gone before the branch is)
+# ---------------------------------------------------------------------------
+if [[ -z "$WORKTREE_ID" ]]; then
+  # Any branch, not just feature/GH-*: the worktree dir is the branch's last
+  # path segment, which covers feature/GH-1234 -> GH-1234 and claude/foo -> foo
+  # alike. Non-feature branches were silently never cleaned up before.
+  WORKTREE_ID="${HEAD_BRANCH##*/}"
+fi
+
+# Reject anything that could escape the worktree bases. WORKTREE_ID reaches
+# `rm -rf` below, so this is load-bearing, not hygiene.
+case "$WORKTREE_ID" in
+  "" | . | .. | *[/\\]* ) WORKTREE_ID="" ;;
+esac
+
+if [[ -n "$WORKTREE_ID" ]]; then
+  # Worktree dirs live under the MAIN checkout. $PROJECT_ROOT is
+  # `--show-toplevel`, which inside a worktree is THAT WORKTREE — so the old
+  # code looked for <job-worktree>/.claude/worktrees/<id> and found nothing.
+  # In the worktree-per-job flow (tick.sh) that is every run, so cleanup was
+  # dead, not merely limited to feature/ branches. --git-common-dir resolves
+  # to the main .git regardless of which worktree we are in.
+  # `-C "$PROJECT_ROOT"` is load-bearing: --git-common-dir returns a path
+  # relative to the CWD, so running from a subdirectory yields "../.git" and
+  # resolving that against $PROJECT_ROOT lands OUTSIDE the repository — which
+  # is where `rm -rf` below would then point (CodeRabbit finding, PR #1690).
+  git_common=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null || echo "")
+  case "$git_common" in
+    "") git_common="$PROJECT_ROOT/.git" ;;
+    /*) ;;
+    *)  git_common="$PROJECT_ROOT/$git_common" ;;
+  esac
+  MAIN_ROOT=$(cd "$(dirname "$git_common")" 2>/dev/null && pwd) || MAIN_ROOT="$PROJECT_ROOT"
+  # Test-only override, same pattern as RALPH_MERGE_POLICY_FILE.
+  WORKTREE_ROOT="${RALPH_WORKTREE_ROOT:-$MAIN_ROOT}"
+
+  for base in "worktrees" ".claude/worktrees"; do
+    WORKTREE_PATH="$WORKTREE_ROOT/$base/$WORKTREE_ID"
+    if [[ -d "$WORKTREE_PATH" ]]; then
+      # NEVER remove the tree we are running from. The fallback below is
+      # `rm -rf`, which would delete this script's own checkout mid-run. The
+      # old feature/GH-* narrowness hid this by accident; generalizing the
+      # match removes that accident, so the guard has to be explicit.
+      wt_real=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd -P) || wt_real="$WORKTREE_PATH"
+      here_real=$(pwd -P)
+      root_real=$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P) || root_real="$PROJECT_ROOT"
+      if [[ "$root_real" == "$wt_real" || "$here_real" == "$wt_real" || "$here_real" == "$wt_real"/* ]]; then
+        echo "Skipping worktree cleanup: $WORKTREE_PATH is the current working tree"
+        continue
+      fi
+      echo "Removing worktree: $WORKTREE_PATH"
+      # Best-effort, and deliberately non-fatal: this runs BEFORE the merge, so
+      # a housekeeping failure must never abort it (a bare `git worktree prune`
+      # in a non-repo cwd used to exit 128 under `set -e`). Uses `git -C`
+      # rather than `cd` so gh keeps its repo context for the merge below.
+      git -C "$WORKTREE_ROOT" worktree remove "$WORKTREE_PATH" --force 2>/dev/null || {
+        echo "Warning: git worktree remove failed, forcing cleanup" >&2
+        rm -rf "$WORKTREE_PATH" || true
+        git -C "$WORKTREE_ROOT" worktree prune 2>/dev/null || true
+      }
+      echo "Worktree removed: $WORKTREE_ID"
+    fi
+  done
+fi
+
+# ---------------------------------------------------------------------------
+# Merge — pinned to the gated head SHA so a push landing during the gate
+# window cannot merge an unreviewed commit (TOCTOU; CodeRabbit finding).
+# ---------------------------------------------------------------------------
+echo "Merging PR #$PR_NUMBER @ ${head_sha:0:8}..."
+# NO `--delete-branch` (GH-1873). That flag merges remotely, then does LOCAL
+# cleanup: check out the default branch, delete the local branch. Run from
+# inside a linked worktree — the normal path under tick.sh and work-fleet —
+# that checkout lands IN THE WORKTREE, and both outcomes are bad:
+#
+#   main already checked out elsewhere -> gh exits nonzero AFTER a successful
+#     merge, a false negative (GH-1677, handled below and still needed for
+#     other failures)
+#   main free -> the checkout SUCCEEDS and silently relocates main into the
+#     worktree. Nothing notices until some later `git checkout main` in the
+#     primary checkout refuses with "'main' is already used by worktree ..."
+#
+# The remote branch is deleted explicitly after the merge instead, so the
+# behavior no longer depends on which branch the primary checkout happens to
+# be sitting on. Local branches are pruned by `git fetch --prune`.
+if ! gh pr merge "$PR_NUMBER" --merge --match-head-commit "$head_sha"; then
+  merged_state=$(gh pr view "$PR_NUMBER" --json state --jq .state 2>/dev/null || echo "UNKNOWN")
+  if [ "$merged_state" = "MERGED" ]; then
+    echo "PR #$PR_NUMBER merged successfully (gh exited nonzero after the merge landed)."
+  else
+    echo "MERGE FAILED — gh pr merge exited nonzero and PR #$PR_NUMBER state is $merged_state, not MERGED." >&2
+    exit 1
+  fi
+fi
+
+# Remote head-branch delete — best-effort, never fatal: the merge has already
+# landed and a housekeeping failure must not report it as a failure.
+# Skipped for forks (the ref lives in another repo) and when the repo has
+# delete_branch_on_merge enabled, in which case GitHub already removed it and
+# the DELETE answers 422/404.
+if [[ "$IS_FORK" == "true" ]]; then
+  echo "Head branch left alone: PR #$PR_NUMBER is from a fork."
+elif [[ -z "$HEAD_BRANCH" ]]; then
+  echo "Head branch not resolved — skipping remote branch delete." >&2
+elif gh api --method DELETE "repos/{owner}/{repo}/git/refs/heads/$HEAD_BRANCH" >/dev/null 2>&1; then
+  echo "Remote branch deleted: $HEAD_BRANCH"
+else
+  echo "Remote branch $HEAD_BRANCH not deleted (already gone, or delete refused) — harmless."
+fi
+
+echo "PR #$PR_NUMBER merged successfully."

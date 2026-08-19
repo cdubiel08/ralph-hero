@@ -25,6 +25,18 @@ ralph/
 │                       #   remedy), never just a count and a check name
 ├── scripts/tick.sh     # ONE scheduler-transport example of driving the work
 │                       #   lane (+ install-loop.sh) — a recipe, not THE loop
+├── scripts/install-gates.sh  # vendors kit/ into a host repo (GH-2083):
+│                       #   idempotent, respects host-modified/deleted files,
+│                       #   seeds a minimal merge policy, stamps
+│                       #   .github/ralph-kit.json, PRINTS the manual steps
+├── scripts/kit-sync.sh # the ONE writer of kit/ — regenerates it from the
+│                       #   canonical repo-root scripts/; kit.test.ts asserts
+│                       #   byte-identity in CI (the GH-2058 shape)
+├── kit/                # the merge-gate family, vendored so it ships in the
+│                       #   plugin (the marketplace packages only ./ralph, and
+│                       #   validate-attestation.yml runs these scripts in
+│                       #   Actions where no plugin install exists — vendoring
+│                       #   is forced, a shim was never an option)
 ├── examples/README.md  # transport recipes: /loop, routines, scheduler — copy and own
 ├── hooks/funnel-*.sh   # courtesy redirects to board.ts / merge-pr.sh /
 │                       # deliver-push.sh / pr-gate-watch.sh (each
