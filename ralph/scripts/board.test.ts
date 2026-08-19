@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash as cryptoCreateHash } from "node:crypto";
 import { join } from "node:path";
 import { BRANCH_KIND_CHARS } from "./contracts.js";
 import {
@@ -23,6 +24,7 @@ import {
   CAPABILITY_FLOORS,
   compareVersions,
   installedPluginReport,
+  gateKitReport,
   resolveInstalledPlugin,
   claimExpiry,
   claimHintDue,
@@ -2342,6 +2344,124 @@ describe("doctor: installed-plugin floor (GH-1825) — advisory by construction"
     expect(c.level).toBe("info");
     expect(c.detail).toContain("not evaluated");
     expect(r.ok).toBe(baseline);
+  });
+});
+
+describe("doctor: gate-kit drift (GH-2083) — advisory, host-owned files respected", () => {
+  const saved = process.env.RALPH_INSTALLED_PLUGINS_FILE;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.RALPH_INSTALLED_PLUGINS_FILE;
+    else process.env.RALPH_INSTALLED_PLUGINS_FILE = saved;
+  });
+
+  const sha = (s: string) => cryptoCreateHash("sha256").update(s).digest("hex");
+
+  /** A fake host repo: files on disk + the install stamp recording them. */
+  const hostRepo = (opts: {
+    files?: Record<string, string>; // dest -> content on disk
+    stamp?: Record<string, string>; // dest -> stamped hash
+    stampRaw?: string;
+    version?: string;
+  }) => {
+    const root = mkdtempSync(join(tmpdir(), "board-gatekit-host-"));
+    for (const [dest, content] of Object.entries(opts.files ?? {})) {
+      mkdirSync(join(root, dest, ".."), { recursive: true });
+      writeFileSync(join(root, dest), content);
+    }
+    if (opts.stampRaw !== undefined || opts.stamp) {
+      mkdirSync(join(root, ".github"), { recursive: true });
+      writeFileSync(
+        join(root, ".github", "ralph-kit.json"),
+        opts.stampRaw ?? JSON.stringify({ version: opts.version ?? "0.1.100", files: opts.stamp }),
+      );
+    }
+    return root;
+  };
+
+  /** A fake installed plugin carrying a kit manifest, registered for resolve. */
+  const pluginWithKit = (version: string, kitFiles: Record<string, string> | null) => {
+    const dir = mkdtempSync(join(tmpdir(), "board-gatekit-plugin-"));
+    mkdirSync(join(dir, ".claude-plugin"), { recursive: true });
+    writeFileSync(join(dir, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "ralph", version }));
+    if (kitFiles) {
+      mkdirSync(join(dir, "kit"), { recursive: true });
+      writeFileSync(join(dir, "kit", "manifest.json"), JSON.stringify({ files: kitFiles }));
+    }
+    const reg = join(mkdtempSync(join(tmpdir(), "board-gatekit-reg-")), "installed_plugins.json");
+    writeFileSync(reg, JSON.stringify({ plugins: { "ralph@ralph-hero": [{ scope: "user", installPath: dir }] } }));
+    process.env.RALPH_INSTALLED_PLUGINS_FILE = reg;
+    return dir;
+  };
+
+  it("no stamp reads ok — not installed from the kit is not a finding", () => {
+    const r = gateKitReport(hostRepo({}));
+    expect(r.level).toBe("ok");
+    expect(r.detail).toContain("no gate-kit stamp");
+  });
+
+  it("current kit is ok with the count; behind the plugin is info naming files and the remedy", () => {
+    const A = "gate v1";
+    pluginWithKit("0.1.101", { "scripts/merge-pr.sh": sha(A) });
+    const root = hostRepo({ files: { "scripts/merge-pr.sh": A }, stamp: { "scripts/merge-pr.sh": sha(A) } });
+    const ok = gateKitReport(root);
+    expect(ok.level).toBe("ok");
+    expect(ok.detail).toContain("1 file(s) current");
+
+    const plugin = pluginWithKit("0.1.102", { "scripts/merge-pr.sh": sha("gate v2") });
+    const behind = gateKitReport(root);
+    expect(behind.level).toBe("info");
+    expect(behind.detail).toContain("scripts/merge-pr.sh");
+    expect(behind.detail).toContain(`bash ${plugin}/scripts/install-gates.sh`);
+  });
+
+  it("a host-modified file is the host's — named, never counted as drift", () => {
+    pluginWithKit("0.1.101", { "scripts/pr-file-classes.sh": sha("kit copy") });
+    const root = hostRepo({
+      files: { "scripts/pr-file-classes.sh": "adapted taxonomy" },
+      stamp: { "scripts/pr-file-classes.sh": sha("kit copy") },
+    });
+    const r = gateKitReport(root);
+    expect(r.level).toBe("ok");
+    expect(r.detail).toContain("1 locally modified");
+  });
+
+  it("a deleted file is an opt-out, and a retired file is named — neither is drift", () => {
+    pluginWithKit("0.1.101", { "scripts/merge-pr.sh": sha("gate") });
+    const r = gateKitReport(
+      hostRepo({
+        files: { "scripts/ruleset-contexts.sh": "old" }, // in stamp, gone from the kit
+        stamp: { "scripts/merge-pr.sh": sha("gate"), "scripts/ruleset-contexts.sh": sha("old x") },
+      }),
+    );
+    expect(r.level).toBe("ok");
+    expect(r.detail).toContain("1 retired");
+  });
+
+  it("unreadable stamp, absent registry, and a kit-less plugin all read not evaluated, never clean", () => {
+    pluginWithKit("0.1.101", { "scripts/merge-pr.sh": sha("x") });
+    const bad = gateKitReport(hostRepo({ stampRaw: "{ not json" }));
+    expect(bad.level).toBe("info");
+    expect(bad.detail).toContain("not evaluated");
+
+    const stamped = hostRepo({ stamp: { "scripts/merge-pr.sh": sha("x") } });
+    process.env.RALPH_INSTALLED_PLUGINS_FILE = join(tmpdir(), "board-gatekit-none", "nope.json");
+    expect(gateKitReport(stamped).detail).toContain("not evaluated");
+
+    pluginWithKit("0.1.50", null); // installed, but predates the kit
+    const nokit = gateKitReport(stamped);
+    expect(nokit.level).toBe("info");
+    expect(nokit.detail).toContain("no readable kit manifest");
+  });
+
+  it("doctor carries the line, and --strict never escalates it", () => {
+    pluginWithKit("0.1.102", { "scripts/merge-pr.sh": sha("v2") });
+    const ctx = makeCtx(new FakeGh());
+    ctx.repoRoot = hostRepo({ files: { "scripts/merge-pr.sh": "v1" }, stamp: { "scripts/merge-pr.sh": sha("v1") } });
+    const r = doctor(ctx, { strict: true });
+    const c = r.checks.find((x) => x.name === "gate-kit")!;
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("outdated");
+    expect(r.ok).toBe(doctor(makeCtx(new FakeGh()), { strict: true }).ok);
   });
 });
 
