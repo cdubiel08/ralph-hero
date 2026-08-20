@@ -47,7 +47,6 @@ import {
   PR_ORPHAN_IGNORE_ENV,
   ESCALATION_EVIDENCE,
   encodeClaim,
-  type ExecResult,
   fetchIssue,
   formatLocalHm,
   type LeaseHold,
@@ -713,13 +712,10 @@ describe("failure diagnostics carry their context", () => {
 // ---------------------------------------------------------------------------
 
 import {
-  data,
   FakeGh,
-  type FakeIssue,
   makeCtx,
   NOW,
   ok,
-  PROJECT_ID,
   refusalMessage,
 } from "./board.testkit.js";
 

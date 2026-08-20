@@ -40,19 +40,4 @@ export default tseslint.config(
       "@typescript-eslint/no-non-null-assertion": "off",
     },
   },
-  {
-    // TEMPORARY (v0.2.0 integration): board.ts and its suites are owned by a
-    // concurrent workstream this release; the only findings there are 7
-    // unused imports/vars — mechanical, but editing those files from the
-    // release-prep branch would manufacture merge conflicts. Downgraded to
-    // warn (visible, non-blocking) — the lead flips this back to error after
-    // integration and deletes this block.
-    files: ["ralph/scripts/board.ts", "ralph/scripts/board*.test.ts"],
-    rules: {
-      "@typescript-eslint/no-unused-vars": [
-        "warn",
-        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
-      ],
-    },
-  },
 );

@@ -25,7 +25,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   BOARD_STATES,
-  type BranchKind,
   BRANCH_KIND_CHARS,
   branchKindFor,
   CLAIM_MAX_HOLDERS,
@@ -42,7 +41,6 @@ import {
   heartbeat,
   isContractId,
   isMember,
-  isValidHolder,
   type Lane,
   LANE_CHARS,
   type LiveLintDeps,
