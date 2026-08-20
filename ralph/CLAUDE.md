@@ -81,6 +81,7 @@ Rejected: a new `refs/ralph/lease/<branch>` ref (GH-1929's first option) — a s
 
 ```bash
 npx vitest run ralph/scripts/ && npx tsc --noEmit
+npm run lint
 shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh
 ```
 
