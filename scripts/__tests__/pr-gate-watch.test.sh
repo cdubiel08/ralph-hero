@@ -2296,6 +2296,57 @@ else
   fail "drift on GATE-FAIL (out=${LAST_OUT:0:260})"
 fi
 
+# --- review-request protocol (GH-2087) --------------------------------------
+# The watcher dispatches findings mode's predicate by request protocol, same
+# as gate 5: request_mode review-request runs copilot-review-evidence.sh. The
+# real predicate runs against the same gh stub, so this is the full path — a
+# wrong dispatch would run the Codex script, find no head-bound marker
+# request, and land on GATE-YOURS review instead.
+echo "=== review-request protocol (GH-2087) ==="
+
+POLICY_COPILOT="$TMP_ROOT/policy-copilot.json"
+cat >"$POLICY_COPILOT" <<'EOF'
+{ "version": 1,
+  "attestation": { "required": true },
+  "external_review": { "required": true, "request_mode": "review-request" } }
+EOF
+COPILOT_LOGIN="copilot-pull-request-reviewer[bot]"
+COPILOT_REVIEW_AT_HEAD=$(jq -nc --arg bot "$COPILOT_LOGIN" --arg sha "$HEAD_SHA" \
+  '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha,
+     body:"## Pull request overview\n\nfine.",
+     submitted_at:"2026-08-19T00:00:00Z", html_url:"https://example.test/r/c1"}]')
+COPILOT_QUOTA_AT_HEAD=$(jq -nc --arg bot "$COPILOT_LOGIN" --arg sha "$HEAD_SHA" \
+  '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha,
+     body:"Copilot was unable to review this pull request because the user who requested the review has reached their quota limit.",
+     submitted_at:"2026-08-19T00:00:00Z", html_url:"https://example.test/r/c2"}]')
+
+POLICY="$POLICY_COPILOT"
+D="$TMP_ROOT/copilot-clean"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$COPILOT_REVIEW_AT_HEAD"
+expect "a clean Copilot review at head is the verdict — attestation next" "$D" "GATE-YOURS attestation" 0
+run "$D"
+if [[ "$LAST_OUT" == *"$COPILOT_LOGIN"* ]]; then
+  pass "hands back the Copilot login as the reviewer to attest with"
+else
+  fail "copilot reviewer hint (out=${LAST_OUT:0:160})"
+fi
+
+# The failure family: a real review object that reviewed nothing. The remedy
+# is the re-request — never the comment-marker protocol, which this reviewer
+# does not read.
+D="$TMP_ROOT/copilot-quota"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$COPILOT_QUOTA_AT_HEAD"
+expect "a quota-declined Copilot review is the caller's move" "$D" "GATE-YOURS review" 0
+run "$D"
+if [[ "$LAST_OUT" == *"requested_reviewers"* ]] && [[ "$LAST_OUT" != *"ralph-review-head"* ]]; then
+  pass "the remedy is the re-request, not the marker protocol"
+else
+  fail "copilot quota remedy (out=${LAST_OUT:0:220})"
+fi
+POLICY="$POLICY_REVIEW"
+
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

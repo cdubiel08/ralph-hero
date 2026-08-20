@@ -43,8 +43,8 @@ echo "install-gates.test.sh"
 HOST="$(new_host host1)"
 out="$(cd "$HOST" && bash "$INSTALLER")"
 n="$(jq -r '.files | length' "$HOST/.github/ralph-kit.json")"
-if [ -x "$HOST/scripts/merge-pr.sh" ] && [ -f "$HOST/.github/workflows/validate-attestation.yml" ] && [ "$n" = 17 ]; then
-  pass "fresh install lands 17 files + stamp; scripts executable"
+if [ -x "$HOST/scripts/merge-pr.sh" ] && [ -f "$HOST/.github/workflows/validate-attestation.yml" ] && [ "$n" = 18 ]; then
+  pass "fresh install lands 18 files + stamp; scripts executable"
 else
   fail "fresh install (files=$n)"
 fi
@@ -73,7 +73,7 @@ fi
 
 # --- idempotent second run --------------------------------------------------
 out="$(cd "$HOST" && bash "$INSTALLER")"
-if grep -q "0 installed, 0 updated, 17 already current, 0 skipped" <<<"$out"; then
+if grep -q "0 installed, 0 updated, 18 already current, 0 skipped" <<<"$out"; then
   pass "second run is a no-op"
 else
   fail "second run: $(grep 'installed,' <<<"$out")"
@@ -125,8 +125,8 @@ HOST4="$(new_host host4)"
 echo '{"owner":"o","repo":"r","projectNumber":7}' > "$HOST4/.ralph.json"
 (cd "$HOST4" && bash "$INSTALLER" >/dev/null)
 n4="$(jq -r '.files | length' "$HOST4/.github/ralph-kit.json")"
-if [ "$n4" = 19 ] && [ -f "$HOST4/.github/workflows/state-guard.yml" ]; then
-  pass "fresh install into a board-configured host lands all 19 files"
+if [ "$n4" = 20 ] && [ -f "$HOST4/.github/workflows/state-guard.yml" ]; then
+  pass "fresh install into a board-configured host lands all 20 files"
 else
   fail "board-configured fresh install (files=$n4)"
 fi

@@ -87,6 +87,50 @@ eq "absent policy: no exempt authors" "[]"     "$(me_policy_get "$PN" exemptAuth
 me_policy_load "$BAD" >/dev/null 2>&1
 eq "malformed policy → exit 2 (fail closed, not silently permissive)" "2" "$?"
 
+# --- request protocol (GH-2087) --------------------------------------------
+echo "=== request_mode derivation ==="
+
+eq "default requestMode is comment"          "comment" "$(me_policy_get "$P" requestMode)"
+eq "absent policy: requestMode is comment"   "comment" "$(me_policy_get "$PN" requestMode)"
+
+COPILOT="$TMP/copilot.json"
+cat >"$COPILOT" <<'JSON'
+{ "attestation": { "required": true },
+  "external_review": { "required": true, "request_mode": "review-request" } }
+JSON
+PC=$(me_policy_load "$COPILOT")
+eq "review-request derives findings mode (no head_marker needed)" \
+  "findings" "$(me_policy_get "$PC" mode)"
+eq "review-request carries its requestMode" \
+  "review-request" "$(me_policy_get "$PC" requestMode)"
+# The bot default follows the protocol: the measured Copilot filing login,
+# not the Codex connector a review-request reviewer never is.
+eq "review-request bot defaults to the Copilot reviewer" \
+  "copilot-pull-request-reviewer[bot]" "$(me_policy_get "$PC" bot)"
+
+COPILOT_BOT="$TMP/copilot-bot.json"
+cat >"$COPILOT_BOT" <<'JSON'
+{ "external_review": { "required": true, "request_mode": "review-request",
+                       "bot": "my-org-copilot[bot]" } }
+JSON
+PCB=$(me_policy_load "$COPILOT_BOT")
+eq "an explicit bot wins over the protocol default" \
+  "my-org-copilot[bot]" "$(me_policy_get "$PCB" bot)"
+
+# An unrecognized request_mode is a MALFORMED policy, same class as invalid
+# JSON: a typo silently deriving comment mode would point gate 5 at a marker
+# protocol the configured reviewer never speaks, and it would wait forever.
+TYPO="$TMP/typo.json"
+echo '{ "external_review": { "required": true, "request_mode": "review_request" } }' >"$TYPO"
+me_policy_load "$TYPO" >/dev/null 2>&1
+eq "unrecognized request_mode → exit 2 (fail closed)" "2" "$?"
+
+EXPLICIT_COMMENT="$TMP/explicit-comment.json"
+echo '{ "external_review": { "request_mode": "comment", "head_marker": "ralph-review-head" } }' >"$EXPLICIT_COMMENT"
+PEC=$(me_policy_load "$EXPLICIT_COMMENT")
+eq "an explicit request_mode: comment is accepted" "0" "$?"
+eq "…and still derives findings from head_marker" "findings" "$(me_policy_get "$PEC" mode)"
+
 # --- exempt authors --------------------------------------------------------
 echo "=== exempt-author normalization ==="
 

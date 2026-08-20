@@ -173,6 +173,7 @@ run_v() {
   out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" \
     RALPH_MERGE_POLICY_FILE="${policy:-/nonexistent-policy.json}" \
     RALPH_CODEX_EVIDENCE_SH="${CODEX_EVIDENCE_STUB:-$(dirname "$SCRIPT")/codex-review-evidence.sh}" \
+    RALPH_COPILOT_EVIDENCE_SH="${COPILOT_EVIDENCE_STUB:-$(dirname "$SCRIPT")/copilot-review-evidence.sh}" \
     bash "$SCRIPT" 123 2>&1)
   local rc=$?
   set -e
@@ -342,6 +343,34 @@ s_comments_unreadable() {
 }
 run_v "an unreadable comment list is not an absent attestation" \
   pending "cannot read the comments" "$POLICY" s_comments_unreadable
+
+# --- request-mode dispatch (GH-2087) ----------------------------------------
+# Same dispatch merge-pr.sh gate 5 makes: a review-request policy runs the
+# Copilot predicate. Discriminating stubs — the other protocol's crashes.
+COPILOT_POLICY="$TMP_ROOT/copilot-policy.json"
+cat >"$COPILOT_POLICY" <<'EOF'
+{ "attestation": { "required": true },
+  "external_review": { "required": true, "request_mode": "review-request" } }
+EOF
+PASSING_EVIDENCE="$TMP_ROOT/passing-evidence.sh"
+printf '#!/usr/bin/env bash\necho %s\n' \
+  "'{\"ok\":true,\"turn\":\"\",\"detail\":\"stub ok\",\"reviewer\":\"copilot-pull-request-reviewer[bot]\",\"review_url\":\"\"}'" \
+  >"$PASSING_EVIDENCE"
+chmod +x "$PASSING_EVIDENCE"
+CRASH_IF_INVOKED="$TMP_ROOT/crash-if-invoked.sh"
+printf '#!/usr/bin/env bash\nexit 9\n' >"$CRASH_IF_INVOKED"
+chmod +x "$CRASH_IF_INVOKED"
+
+s_copilot() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "[]"; }
+COPILOT_EVIDENCE_STUB="$PASSING_EVIDENCE" CODEX_EVIDENCE_STUB="$CRASH_IF_INVOKED" \
+  run_v "review-request policy runs the Copilot predicate" \
+  success "attested @ ${SHA:0:8}" "$COPILOT_POLICY" s_copilot
+COPILOT_EVIDENCE_STUB="$CRASH_IF_INVOKED" \
+  run_v "…and a failing Copilot predicate is pending, not the Codex path" \
+  pending "could not be evaluated" "$COPILOT_POLICY" s_copilot
+COPILOT_EVIDENCE_STUB=/nonexistent-copilot-evidence.sh \
+  run_v "review-request mode with no evidence script is a failure" \
+  failure "is missing" "$COPILOT_POLICY" s_copilot
 
 echo
 echo "Results: $PASS passed, $FAIL failed"

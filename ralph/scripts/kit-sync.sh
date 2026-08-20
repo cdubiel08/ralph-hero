@@ -25,6 +25,7 @@ KIT_FILES=(
   "scripts/apply-keywords.sh"
   "scripts/attest-pr.sh"
   "scripts/codex-review-evidence.sh"
+  "scripts/copilot-review-evidence.sh"
   "scripts/merge-pr.sh"
   "scripts/pr-file-classes.sh"
   "scripts/pr-gate-watch.sh"

@@ -107,6 +107,7 @@ set -e
 [[ "$POLICY_RC" -eq 0 ]] || POLICY=$(jq -n "$ME_JQ_LIB me_policy_none")
 BOT=$(me_policy_get "$POLICY" bot)
 MODE=$(me_policy_get "$POLICY" mode)
+REQUEST_MODE=$(me_policy_get "$POLICY" requestMode)
 [[ -n "$BOT" ]] || BOT="chatgpt-codex-connector[bot]"
 
 REVIEWED="unknown"
@@ -186,7 +187,7 @@ if [[ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage'
   emit false 0 "" "" "more than 100 review threads — not counted"
 fi
 
-result=$(jq -c --arg bot "$BOT" --arg mode "$MODE" '
+result=$(jq -c --arg bot "$BOT" --arg mode "$MODE" --arg reqmode "$REQUEST_MODE" '
   def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
   # Severity from the badge, in either reviewer'"'"'s rendering. Anchored on the
   # badge markup — a bare "P1" substring also matches prose that merely
@@ -204,8 +205,13 @@ result=$(jq -c --arg bot "$BOT" --arg mode "$MODE" '
     | { author: ((.author.login // "") | norm), url: (.url // ""), tier: tier(.body // "") }
     | select(.tier != "")
     # The one subtraction: what gate 5 already blocks on — in the only mode
-    # where it blocks on threads at all.
-    | select(($mode == "findings" and .author == ($bot | norm) and .tier == "P0") | not)
+    # where it blocks on threads at all. Under the review-request protocol
+    # (GH-2087) gate 5 blocks on EVERY unresolved bot thread, not just P0 —
+    # Copilot emits no severity markup, so its threads never reach this count
+    # anyway, but a badged bot thread must not double-report as advisory while
+    # also blocking the gate.
+    | select(($mode == "findings" and .author == ($bot | norm)
+              and ($reqmode == "review-request" or .tier == "P0")) | not)
   ]
   | { count: length,
       summary: ( group_by(.tier) | sort_by(.[0].tier)
