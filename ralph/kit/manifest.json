@@ -17,6 +17,8 @@
     "scripts/validate-attestation.sh": "39d11ef5fd3638e57c8dd833f476fdafa70660713172221875a0a82c02f5d8ca",
     "scripts/lib/gh-budget.sh": "d4cbd2df5bdcd0f8ed07c4eb9629a893103801572323b7c38d2596c243275742",
     "scripts/lib/merge-evidence.sh": "1a59cd3aa7b396f1666e7a34f99d8e89f0ce2e265e347e0c24c8bc081b281783",
-    ".github/workflows/validate-attestation.yml": "362b1421f23cf1e88a1ae0959c63f698e90b2c0de7a5b4c5530e3ab0cc236497"
+    ".github/workflows/validate-attestation.yml": "362b1421f23cf1e88a1ae0959c63f698e90b2c0de7a5b4c5530e3ab0cc236497",
+    ".github/workflows/state-guard.yml": "4c23fd09515a03262e7f423e45733366e65ad4016094234a4b6c9a901af13fa7",
+    ".github/workflows/doctor.yml": "e851de240963f070345f6476054302210ff328040d8d739e1b25bc0fd4c26163"
   }
 }
