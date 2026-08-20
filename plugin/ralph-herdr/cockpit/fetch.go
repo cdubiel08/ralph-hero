@@ -839,6 +839,55 @@ func scrubSignal(s string) string {
 	return s
 }
 
+// cardSignalsSince is the ralph release that shipped `board card-signals`
+// (7cd8b1b3). A resolved board CLI older than this refuses the subcommand,
+// and without naming the skew the chips render the same UNREAD a rate limit
+// produces — the cause is undiagnosable from the screen (GH-2073).
+const cardSignalsSince = "0.1.168"
+
+// explainStaleBoardCLI names version skew when the board CLI itself refused
+// the card-signals subcommand. Matched on board.ts's own usage refusal
+// (`unknown command "card-signals"`), never predicted from a version read —
+// the refusal IS the evidence, where a version compare would guess. Anything
+// else returns "" and the caller falls through to explainReadFailure, so a
+// transient failure keeps its ordinary naming (fail-safe: an unmatched skew
+// still shows the verbatim refusal, just without the diagnosis).
+func explainStaleBoardCLI(boardPath, combined string) string {
+	if !strings.Contains(combined, `unknown command "card-signals"`) {
+		return ""
+	}
+	where := boardPath
+	if v := pluginPathVersion(boardPath); v != "" {
+		where = fmt.Sprintf("%s (ralph %s)", boardPath, v)
+	}
+	return fmt.Sprintf(
+		"board CLI predates card-signals (ships in ralph %s): %s — update the installed plugin (`/plugin`) or point RALPH_HERDR_BOARD at a newer copy",
+		cardSignalsSince, where)
+}
+
+// pluginPathVersion extracts the version component from a plugin-cache board
+// path (…/ralph/<version>/scripts/board) — the same component
+// installedBoardCLI ranks by. "" when the path has no such shape (a vendored
+// checkout, an explicit override): a guessed version is worse than none.
+func pluginPathVersion(p string) string {
+	parts := strings.Split(filepath.ToSlash(p), "/")
+	if len(parts) < 4 || parts[len(parts)-1] != "board" || parts[len(parts)-2] != "scripts" || parts[len(parts)-4] != "ralph" {
+		return ""
+	}
+	v := parts[len(parts)-3]
+	for _, part := range strings.Split(v, ".") {
+		if part == "" {
+			return ""
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return ""
+			}
+		}
+	}
+	return v
+}
+
 // explainReadFailure is the single naming path for a failed board exec.
 // timedOut = the cockpit's own deadline fired (ctx.Err() said so).
 func explainReadFailure(p *rateProbe, deadline time.Duration, timedOut bool, combined string, err error) string {
@@ -929,6 +978,9 @@ func fetchSignalsCmd(cfg Config, r Runner) tea.Cmd {
 		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		if err != nil {
+			if skew := explainStaleBoardCLI(cfg.Board, stderr+out); skew != "" {
+				return signalsMsg{err: skew}
+			}
 			return signalsMsg{err: explainReadFailure(probe, deadline, timedOut, stderr+out, err)}
 		}
 		prs, epics, perr := parseCardSignals(out)
