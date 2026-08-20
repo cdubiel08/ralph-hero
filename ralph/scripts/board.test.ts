@@ -34,6 +34,8 @@ import {
   countEvidence,
   createIssue,
   type Ctx,
+  DECISION_EVIDENCE_MARKER,
+  decisionEvidence,
   doctor,
   parsePrOrphanPolicy,
   prOrphans,
@@ -96,7 +98,10 @@ describe("state machine", () => {
   it("encodes exactly the designed transition table — terminal states have no move edges", () => {
     expect(MACHINE).toEqual({
       Backlog: ["In Progress", "Done", "Canceled"],
-      "In Progress": ["In Review", "Human Needed", "Backlog", "Canceled"],
+      // In Progress → Done: the GH-1777 argument extended — gates key on the
+      // destination, so apply/decision units close through the gated lane
+      // instead of a fictional In Review hop that drops their --why.
+      "In Progress": ["In Review", "Done", "Human Needed", "Backlog", "Canceled"],
       "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
       "Human Needed": ["In Progress", "Backlog", "Canceled"],
       Done: [],
@@ -108,7 +113,6 @@ describe("state machine", () => {
     const illegal: Array<[string, string]> = [
       ["Backlog", "In Review"],
       ["Backlog", "Human Needed"],
-      ["In Progress", "Done"],
       ["Human Needed", "In Review"],
       ["Human Needed", "Done"],
       ["Done", "In Progress"],
@@ -6825,5 +6829,147 @@ describe("board closed — the Done window (GH-2062)", () => {
     });
     expect(recentDone(ctx, { staleDays: 30, auditDays: 14 }).items).toEqual([]);
     expect(recentDone(ctx, { staleDays: 30, auditDays: 30 }).items).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Idempotent terminal transitions + the In Progress → Done edge (v0.2.0)
+// ---------------------------------------------------------------------------
+
+describe("same-state moves are retries, not violations", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("Done → Done with the issue closed is a pure noop — zero mutations", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "CLOSED" });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(after.state).toBe("Done");
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("Done → Done with the issue still OPEN re-drives only the close, on evidence", () => {
+    // The half-applied shape: the field write landed, the close was lost to
+    // the network. The retry completes it — and writes nothing else.
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "OPEN", prs: [{ number: 9, merged: true }] });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(gh.mutations).toEqual(["closeIssue(#1, COMPLETED)"]);
+    expect(after.issueState).toBe("CLOSED");
+  });
+
+  it("the re-drive runs the SAME evidence gates a fresh move would — a UI 'Done' is not evidence", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "OPEN" });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(UsageError);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("Canceled → Canceled with the issue OPEN completes the NOT_PLANNED close", () => {
+    gh.issues.set(1, { number: 1, state: "Canceled", issueState: "OPEN" });
+    transition(ctx, fetchIssue(ctx, 1), "Canceled");
+    expect(gh.mutations).toEqual(["closeIssue(#1, NOT_PLANNED)"]);
+  });
+
+  it("Human Needed → Human Needed is a noop and needs no --why (a retry, not a new escalation)", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Human Needed")).not.toThrow();
+    expect(gh.mutations).toEqual([]);
+    expect(gh.comments).toEqual([]);
+  });
+
+  it("the CLI reports the noop instead of an issue line", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "CLOSED" });
+    let outText = "";
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      outText += String(s);
+      return true;
+    });
+    try {
+      expect(run(["move", "1", "done"], ctx)).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(outText).toContain('noop: #1 already "Done"');
+  });
+});
+
+describe("In Progress → Done and decision evidence", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("In Progress → Done is legal with a merged linked PR; the claim clears", () => {
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("me@test", NOW),
+      prs: [{ number: 9, merged: true }],
+    });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(after.state).toBe("Done");
+    expect(gh.mutations).toContain("closeIssue(#1, COMPLETED)");
+    expect(after.claim).toBeNull();
+  });
+
+  it("decisionEvidence: marker + artifact passes; a marker quoted in a code fence does not", () => {
+    expect(decisionEvidence([`${DECISION_EVIDENCE_MARKER}\nartifact: thoughts/shared/research/x.md`]))
+      .toBe("thoughts/shared/research/x.md");
+    expect(decisionEvidence([`discussing the protocol:\n\`\`\`\n${DECISION_EVIDENCE_MARKER}\nartifact: y\n\`\`\``]))
+      .toBeNull();
+    expect(decisionEvidence([`${DECISION_EVIDENCE_MARKER}\nno artifact line here`])).toBeNull();
+    expect(decisionEvidence([])).toBeNull();
+  });
+
+  it("a decision-evidence comment satisfies the Done gate for a unit with no PR", () => {
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("me@test", NOW),
+      comments: [`**Decision evidence**\n\n${DECISION_EVIDENCE_MARKER}\nartifact: thoughts/shared/plans/z.md`],
+    });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(after.state).toBe("Done");
+  });
+
+  it("move --decision posts the marker comment BEFORE the transition, so the record survives a refusal", () => {
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    // The fixture's comment list is static (the posted comment is recorded in
+    // gh.comments, not served back), so the gate itself still refuses — which
+    // is exactly the property under test: evidence lands first.
+    expect(() => run(["move", "1", "done", "--decision", "thoughts/shared/research/w.md"], ctx)).toThrow(UsageError);
+    expect(gh.comments.some((c) => c.body.includes(DECISION_EVIDENCE_MARKER))).toBe(true);
+    expect(gh.comments.some((c) => c.body.includes("artifact: thoughts/shared/research/w.md"))).toBe(true);
+  });
+});
+
+describe("doctor --fix completes the close the board was ahead of", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("board Done + issue OPEN + merged PR → close completed, never demoted", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "OPEN", prs: [{ number: 9, merged: true }] });
+    doctor(ctx, { fix: true });
+    expect(gh.mutations).toContain("closeIssue(#1, COMPLETED)");
+    expect(gh.mutations.filter((m) => m.includes("setState(#1, Backlog)"))).toEqual([]);
+  });
+
+  it("board Done + issue OPEN with NO evidence → reconcile demotes as before", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "OPEN" });
+    doctor(ctx, { fix: true });
+    expect(gh.mutations).toContain("setState(#1, Backlog)");
+    expect(gh.mutations.filter((m) => m.startsWith("closeIssue"))).toEqual([]);
+  });
+
+  it("board Canceled + issue OPEN → the NOT_PLANNED close is completed (cancel has no evidence gate)", () => {
+    gh.issues.set(1, { number: 1, state: "Canceled", issueState: "OPEN" });
+    doctor(ctx, { fix: true });
+    expect(gh.mutations).toContain("closeIssue(#1, NOT_PLANNED)");
   });
 });

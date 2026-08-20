@@ -84,7 +84,14 @@ export type State = (typeof STATES)[number];
  *  (surfaced by `tend-queue`), not as a state. */
 export const MACHINE: Record<State, readonly State[]> = {
   Backlog: ["In Progress", "Done", "Canceled"],
-  "In Progress": ["In Review", "Human Needed", "Backlog", "Canceled"],
+  // In Progress → Done is legal for the same reason Backlog → Done is
+  // (GH-1777): the Done evidence gates key on the DESTINATION, so a unit whose
+  // completion is not a PR — an apply unit closing on its evidence comment, a
+  // decision unit closing on its recorded artifact — closes through the gated
+  // lane instead of laundering through a fictional In Review hop that drops
+  // its --why. Nothing is weakened: the gates run identically on every edge
+  // into Done.
+  "In Progress": ["In Review", "Done", "Human Needed", "Backlog", "Canceled"],
   "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
   "Human Needed": ["In Progress", "Backlog", "Canceled"],
   Done: [],
@@ -2150,6 +2157,70 @@ function guardHolder(ctx: Ctx, issue: Issue): void {
   );
 }
 
+export const DECISION_EVIDENCE_MARKER = "<!-- ralph-decision-evidence:v1 -->";
+
+/** Decision evidence: the typed close for a unit that legitimately ends with
+ *  no PR — a decision recorded in thoughts/, a spike whose outcome is a
+ *  document. A comment carrying the marker names the artifact; the gate
+ *  accepts it the way it accepts apply evidence. The marker check is
+ *  code-masked (lastMarkerIndex), so prose QUOTING the marker does not pass
+ *  it; the artifact is read from the raw line, since backticks around a path
+ *  are how comments write one. */
+export function decisionEvidence(comments: readonly string[]): string | null {
+  for (let i = comments.length - 1; i >= 0; i--) {
+    if (lastMarkerIndex(comments[i], DECISION_EVIDENCE_MARKER) < 0) continue;
+    const m = /^\s*artifact:\s*(\S[^\n]*)$/m.exec(comments[i]);
+    if (m) return m[1].replace(/`/g, "").trim();
+  }
+  return null;
+}
+
+/** The Done evidence gates, shared verbatim by the fresh transition and the
+ *  same-state re-drive — two callers may not disagree about what "evidenced"
+ *  means (the GH-1732 rule, one layer up).
+ *
+ *  Apply-kind close gate (GH-1693). PREVENTIVE, not advisory: an apply unit
+ *  reaches Done only on shape-valid `ralph-apply-evidence:v1`. There is
+ *  deliberately NO --why escape for it. --why means "completed without a
+ *  merged PR", which is the NORMAL case for an apply unit — so honouring it
+ *  would hand every apply issue a one-flag bypass of the only gate that makes
+ *  the kind mean anything. A merged PR is not an escape either: a merge is
+ *  exactly the thing this kind refuses to accept as proof. */
+function guardDoneEvidence(ctx: Ctx, issue: Issue, why: string | undefined): void {
+  if (isApplyIssue(ctx.cfg, issue.labels, issue.labelsTruncated)) {
+    const failure = applyEvidenceFailure(ctx, issue.number);
+    if (failure) {
+      throw new RefusalError(
+        `#${issue.number} is an apply unit (label "${ctx.cfg.apply.label}") — Done requires deployed-and-verified evidence: ${failure}. ` +
+          `Post one with scripts/apply-evidence.sh, or move it to Human Needed if the apply cannot be done. ` +
+          `(--why does not bypass this.)`,
+      );
+    }
+    return;
+  }
+  if (why || issue.prs.some((p) => p.merged)) return;
+  // Parity with deliver-queue's linkage (GH-1732): a merged PR reaches the
+  // issue through the closing reference OR the branch convention. The
+  // no-closing-keyword population is exactly the one the close-out lane
+  // exists for, so refusing it here made `--why` the routine path and
+  // drained the flag of meaning.
+  if (branchLinkedMergedPr(ctx, issue.number)) return;
+  // Decision evidence — checked last: it costs a comment-trail read, and only
+  // the path that would otherwise refuse pays it. An unreadable trail is not
+  // evidence (fail closed, same direction as every other read here).
+  try {
+    if (decisionEvidence(fetchApplyMeta(ctx, issue.number).comments)) return;
+  } catch {
+    /* unreadable trail is not evidence */
+  }
+  throw new UsageError(
+    `moving #${issue.number} to Done requires a merged linked PR — none found ` +
+      `(neither a closing reference nor a merged PR on this issue's branch — see \`board name ${issue.number}\`). ` +
+      `For a unit that ends without a PR, record the outcome: \`board move ${issue.number} done --decision "<artifact path>"\`. ` +
+      `Pass --why "<how this was completed>" to complete without either.`,
+  );
+}
+
 export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {}): Issue {
   // Cache freshness resolved BEFORE any write; the body never retries.
   const cache = mutationCache(ctx, [[STATE_FIELD, to]], [CLAIM_FIELD]);
@@ -2170,6 +2241,24 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         `#${issue.number} is in legacy state "${from}" — set a v2 state on it in the board UI before mutating it`,
       );
     }
+    // Same-state moves are RETRIES, not violations: a lost response and a
+    // failed write are indistinguishable to a caller, so the retry has to be
+    // the safe move — the refusal it used to get ("Done → Done: illegal")
+    // carried no safety value (the noop mutates nothing) and turned every
+    // half-applied close into a human repair. Mutate nothing that already
+    // holds; re-drive only the side effect the earlier call left missing — a
+    // terminal state whose issue close never landed — and on the SAME
+    // evidence a fresh move would demand, because the board saying "Done" is
+    // not evidence (a UI write can say anything). The --why comment is also
+    // skipped: on a retry it is already on the record, and re-posting it
+    // would make every retry a duplicate.
+    if (from === to && to !== "In Progress") {
+      const needsClose = (to === "Done" || to === "Canceled") && issue.issueState === "OPEN";
+      if (!needsClose) return issue; // pure noop — read back, nothing to re-drive
+      if (to === "Done") guardDoneEvidence(ctx, issue, opts.why);
+      closeIssue(ctx, issue.nodeId, to === "Done" ? "COMPLETED" : "NOT_PLANNED");
+      return fetchIssue(ctx, issue.number);
+    }
     // Same-state In Progress is claim (re)acquisition, not a transition:
     // adopting claimless WIP or refreshing one's own claim. Fully guarded by
     // the claim checks below; the state write is a harmless same-value set.
@@ -2188,42 +2277,13 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         `moving to Human Needed requires --why "<the exact decision needed>" — it becomes the escalation comment`,
       );
     }
-    // Done requires evidence: a merged linked PR, or an explicit --why on the
-    // record. Intent lane only — reconcile() reflects reality unchecked.
+    // Done requires evidence: a merged linked PR, typed decision evidence, or
+    // an explicit --why on the record. Intent lane only — reconcile() reflects
+    // reality unchecked. The gates key on the DESTINATION (guardDoneEvidence,
+    // shared with the same-state re-drive above), which is what makes every
+    // edge into Done equally strong.
     const doneWithoutMergedPr = to === "Done" && !issue.prs.some((p) => p.merged);
-    const applyKind = isApplyIssue(ctx.cfg, issue.labels, issue.labelsTruncated);
-    if (doneWithoutMergedPr && !opts.why && !applyKind) {
-      // Parity with deliver-queue's linkage (GH-1732): a merged PR reaches the
-      // issue through the closing reference OR the branch convention. The
-      // no-closing-keyword population is exactly the one the close-out lane
-      // exists for, so refusing it here made `--why` the routine path and
-      // drained the flag of meaning.
-      if (!branchLinkedMergedPr(ctx, issue.number)) {
-        throw new UsageError(
-          `moving #${issue.number} to Done requires a merged linked PR — none found ` +
-            `(neither a closing reference nor a merged PR on this issue's branch — see \`board name ${issue.number}\`). ` +
-            `Pass --why "<how this was completed>" to complete without one.`,
-        );
-      }
-    }
-    // Apply-kind close gate (GH-1693). PREVENTIVE, not advisory: an apply unit
-    // reaches Done only on shape-valid `ralph-apply-evidence:v1`.
-    //
-    // There is deliberately NO --why escape here. --why means "completed
-    // without a merged PR", which is the NORMAL case for an apply unit — so
-    // honouring it would hand every apply issue a one-flag bypass of the only
-    // gate that makes the kind mean anything. A merged PR is not an escape
-    // either: a merge is exactly the thing this kind refuses to accept as proof.
-    if (to === "Done" && applyKind) {
-      const failure = applyEvidenceFailure(ctx, issue.number);
-      if (failure) {
-        throw new RefusalError(
-          `#${issue.number} is an apply unit (label "${ctx.cfg.apply.label}") — Done requires deployed-and-verified evidence: ${failure}. ` +
-            `Post one with scripts/apply-evidence.sh, or move it to Human Needed if the apply cannot be done. ` +
-            `(--why does not bypass this.)`,
-        );
-      }
-    }
+    if (to === "Done") guardDoneEvidence(ctx, issue, opts.why);
 
     const itemId = requireItem(issue);
     const leavingInProgress = from === "In Progress" && to !== "In Progress";
@@ -7647,7 +7707,38 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       // Fix loops are per-item fault-isolated: one unwritable item logs its
       // own fail line and the sweep keeps going.
       if (opts.fix) {
-        for (const i of [...terminalDrift, ...closedDrift]) {
+        // Terminal drift is the board being AHEAD of GitHub — the shape a
+        // half-applied `move done` leaves (field written, close lost to the
+        // network). Reconcile would demote the finished work to Backlog, so
+        // the close is COMPLETED instead — but only on the same evidence a
+        // fresh move would demand (a UI write saying "Done" is not evidence).
+        // No evidence, or any read failure → reconcile demotes as before:
+        // the repair may not be weaker than the gate it repairs around.
+        for (const i of terminalDrift) {
+          try {
+            const issue = fetchIssue(ctx, i.number);
+            const terminal = issue.state === "Done" || issue.state === "Canceled";
+            if (issue.issueState !== "OPEN" || !terminal) {
+              add("fix", "ok", reconcile(ctx, i.number));
+              continue;
+            }
+            try {
+              if (issue.state === "Done") guardDoneEvidence(ctx, issue, undefined);
+              closeIssue(ctx, issue.nodeId, issue.state === "Done" ? "COMPLETED" : "NOT_PLANNED");
+              addComment(
+                ctx,
+                issue.nodeId,
+                `\`board doctor --fix\`: board said "${issue.state}" but the issue was still open — completed the close.`,
+              );
+              add("fix", "ok", `#${i.number}: completed the close the board was ahead of ("${issue.state}")`);
+            } catch {
+              add("fix", "ok", reconcile(ctx, i.number));
+            }
+          } catch (e) {
+            add("fix", "fail", `#${i.number}: ${(e as Error).message}`);
+          }
+        }
+        for (const i of closedDrift) {
           try {
             add("fix", "ok", reconcile(ctx, i.number));
           } catch (e) {
@@ -8553,8 +8644,9 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
 /** Flags that take a value. Declared beside the booleans so arity is a property
  *  of the flag rather than of the token that happens to follow it. */
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
-  "body", "candidates", "estimate", "holder", "label", "lane", "limit",
-  "message", "on", "out", "parent", "priority", "state", "title", "why",
+  "blocked-by", "body", "candidates", "decision", "estimate", "holder", "label",
+  "lane", "limit", "message", "on", "out", "parent", "priority", "state",
+  "title", "until", "why",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -9137,7 +9229,8 @@ export function run(argv: string[], ctx: Ctx): number {
       if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`release requires -m "<where you stopped and what's next>"`);
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
       const after = transition(ctx, issue, "Backlog", { why: flags.m });
-      out(issueLine(after));
+      if (issue.state === "Backlog") out(`noop: #${after.number} already "Backlog" (nothing to do)`);
+      else out(issueLine(after));
       return 0;
     }
 
@@ -9145,8 +9238,24 @@ export function run(argv: string[], ctx: Ctx): number {
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
       const to = positional[1] ? parseStateArg(positional[1]) : null;
       if (!to) throw new UsageError(`move requires a target state (${STATES.join(" | ")})`);
+      if (typeof flags.decision === "string" && flags.decision) {
+        // Evidence BEFORE the state write, same ordering rule as --why: an
+        // interrupted run leaves the record, not a bare state.
+        addComment(
+          ctx,
+          issue.nodeId,
+          `**Decision evidence** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${DECISION_EVIDENCE_MARKER}\nartifact: ${flags.decision}`,
+        );
+      }
+      const noop = issue.state === to && to !== "In Progress";
       const after = transition(ctx, issue, to, { why: typeof flags.why === "string" ? flags.why : undefined });
-      out(issueLine(after));
+      if (noop) {
+        out(
+          issue.issueState === "OPEN" && after.issueState === "CLOSED"
+            ? `noop: #${after.number} already "${to}" — completed the issue close the earlier move left half-applied`
+            : `noop: #${after.number} already "${to}" (nothing to do)`,
+        );
+      } else out(issueLine(after));
       return 0;
     }
 
@@ -9177,7 +9286,13 @@ export function run(argv: string[], ctx: Ctx): number {
       if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`cancel requires -m "<reason>"`);
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
       const after = transition(ctx, issue, "Canceled", { why: flags.m });
-      out(issueLine(after));
+      if (issue.state === "Canceled") {
+        out(
+          issue.issueState === "OPEN" && after.issueState === "CLOSED"
+            ? `noop: #${after.number} already "Canceled" — completed the issue close the earlier cancel left half-applied`
+            : `noop: #${after.number} already "Canceled" (nothing to do)`,
+        );
+      } else out(issueLine(after));
       return 0;
     }
 
@@ -9232,7 +9347,14 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "dep": {
       const blocked = requireNumber(positional[0]);
-      const blocking = requireNumber(typeof flags.on === "string" ? flags.on : undefined, "--on <blocking issue>");
+      // --blocked-by is an alias for --on: the CLI's own output and JSON say
+      // "blockedBy", and every observed first use typed it — a CLI that
+      // disagrees with its own vocabulary is the defect, not the typist.
+      const onFlag =
+        typeof flags.on === "string" ? flags.on
+        : typeof flags["blocked-by"] === "string" ? flags["blocked-by"]
+        : undefined;
+      const blocking = requireNumber(onFlag, "--on <blocking issue> (--blocked-by also accepted)");
       setDependency(ctx, blocked, blocking, !!flags.rm);
       out(`#${blocked} ${flags.rm ? "no longer" : "is"} blocked by #${blocking}`);
       return 0;
