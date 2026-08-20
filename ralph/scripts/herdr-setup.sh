@@ -14,6 +14,10 @@
 #   herdr-setup.sh reap [--apply] [--limit N]
 #                                        sweep zombie panes / orphaned processes
 #                                        (dry run by default — see the reap block)
+#   herdr-setup.sh sweep [--apply] [--limit N]
+#                                        remove FINISHED fleet worktrees — merged,
+#                                        clean, session idle (dry run by default —
+#                                        see the sweep block; GH-2103)
 #
 # Exit codes (check): 0 fully wired · 1 gaps found · 2 herdr not installed.
 # --oneline prints exactly one machine-readable line ("herdr: …") for doctor,
@@ -52,16 +56,16 @@ for arg in "$@"; do
     continue
   fi
   case "$arg" in
-    check | fix | reap) MODE="$arg" ;;
+    check | fix | reap | sweep) MODE="$arg" ;;
     --oneline) ONELINE=1 ;;
     --apply) REAP_APPLY=1 ;;
     --limit) prev="--limit" ;;
-    *) echo "herdr-setup.sh: unknown argument '$arg' (usage: [check|fix|reap] [--oneline] [--apply] [--limit N])" >&2; exit 64 ;;
+    *) echo "herdr-setup.sh: unknown argument '$arg' (usage: [check|fix|reap|sweep] [--oneline] [--apply] [--limit N])" >&2; exit 64 ;;
   esac
 done
 [ "$prev" = "--limit" ] && { echo "herdr-setup.sh: --limit needs a value" >&2; exit 64; }
-if [ "$MODE" != "reap" ] && { [ -n "$REAP_APPLY" ] || [ "$REAP_LIMIT" != 50 ]; }; then
-  echo "herdr-setup.sh: --apply/--limit belong to the reap verb" >&2
+if [ "$MODE" != "reap" ] && [ "$MODE" != "sweep" ] && { [ -n "$REAP_APPLY" ] || [ "$REAP_LIMIT" != 50 ]; }; then
+  echo "herdr-setup.sh: --apply/--limit belong to the reap and sweep verbs" >&2
   exit 64
 fi
 
@@ -96,9 +100,13 @@ fi
 #
 # Exit: 0 nothing to reap · 1 candidates found (dry run) or actions performed ·
 #       2 not evaluable · 64 bad invocation.
-if [ "$MODE" = "reap" ]; then
-  command -v "$HERDR" >/dev/null 2>&1 || { echo "reap: not evaluable — herdr is not installed (looked for '$HERDR')" >&2; exit 2; }
-  command -v jq >/dev/null 2>&1 || { echo "reap: not evaluable — jq is required" >&2; exit 2; }
+#
+# The prologue below (transport boundary, snapshot, dry-run banner, act/listed
+# helpers) is SHARED with the sweep verb (GH-2103) — same safety grammar, same
+# exit codes, different subject.
+if [ "$MODE" = "reap" ] || [ "$MODE" = "sweep" ]; then
+  command -v "$HERDR" >/dev/null 2>&1 || { echo "$MODE: not evaluable — herdr is not installed (looked for '$HERDR')" >&2; exit 2; }
+  command -v jq >/dev/null 2>&1 || { echo "$MODE: not evaluable — jq is required" >&2; exit 2; }
 
   # The strict transport boundary ships in the herdr plugin; resolve it the
   # same way the lineage/orphans relays below do. No boundary, no sweep.
@@ -110,7 +118,7 @@ if [ "$MODE" = "reap" ]; then
     [ -n "$_cand" ] && [ -f "$_cand/transport.sh" ] && { _rp_scripts="$_cand"; break; }
   done
   if [ -z "$_rp_scripts" ]; then
-    echo "reap: not evaluable — the ralph-herdr plugin's transport boundary was not found (install the herdr plugin, or run from a vendored checkout)" >&2
+    echo "$MODE: not evaluable — the ralph-herdr plugin's transport boundary was not found (install the herdr plugin, or run from a vendored checkout)" >&2
     exit 2
   fi
   # shellcheck source=/dev/null
@@ -118,14 +126,18 @@ if [ "$MODE" = "reap" ]; then
   # shellcheck source=/dev/null
   . "$_rp_scripts/transport.sh"
 
-  snap=$(ralph_herdr_snapshot) || { echo "reap: not evaluable — herdr snapshot unavailable (an unreadable herd must never read as a reapable one)" >&2; exit 2; }
+  snap=$(ralph_herdr_snapshot) || { echo "$MODE: not evaluable — herdr snapshot unavailable (an unreadable herd must never read as a reapable one)" >&2; exit 2; }
 
-  [ -n "$REAP_APPLY" ] && echo "reap: APPLY mode — acting, limit $REAP_LIMIT action(s)" ||
-    echo "reap: DRY RUN — nothing is closed or killed; re-run with --apply to act (limit $REAP_LIMIT)"
+  [ -n "$REAP_APPLY" ] && echo "$MODE: APPLY mode — acting, limit $REAP_LIMIT action(s)" ||
+    echo "$MODE: DRY RUN — nothing is closed, killed or removed; re-run with --apply to act (limit $REAP_LIMIT)"
 
   findings=0
   acted=0
   budget_hit=""
+  # The action word is padded to five columns so WOULD/SKIP/LIST/REAP/SWEEP
+  # rows align in the one report a human reads before re-running with --apply.
+  ACT_WORD="REAP "
+  [ "$MODE" = "sweep" ] && ACT_WORD="SWEEP"
   # act DESC CMD... — print the finding; under --apply (and budget) run CMD.
   act() {
     local desc="$1"
@@ -141,7 +153,7 @@ if [ "$MODE" = "reap" ]; then
       return 0
     fi
     acted=$((acted + 1))
-    echo "  REAP  $desc — $*"
+    echo "  $ACT_WORD $desc — $*"
     local out rc=0
     out=$("$@" 2>&1) || rc=$?
     if [ "$rc" -ne 0 ] || jq -e '.error' <<<"$out" >/dev/null 2>&1; then
@@ -149,8 +161,10 @@ if [ "$MODE" = "reap" ]; then
     fi
     return 0
   }
-  listed() { findings=$((findings + 1)); echo "  LIST  $1 — ownership unclear, never acted on: $2"; }
+  listed() { findings=$((findings + 1)); echo "  LIST  $1 — $2"; }
+fi
 
+if [ "$MODE" = "reap" ]; then
   # ── (a) agents whose recorded checkout/cwd no longer exists on disk ────────
   # The zombie-pane shape: reconcile exits the worker `lost` when its worktree
   # dir is deleted (scope resolution fails closed), and can never re-discover
@@ -171,7 +185,7 @@ if [ "$MODE" = "reap" ]; then
       act "close pane $a_pane (agent $a_name: checkout '$a_dir' is gone from disk)" "$HERDR" pane close "$a_pane"
       [ -n "$unit" ] && echo "        operator: board claim show $unit — reap never writes board state; a stale claim self-clears at TTL or releases via reconcile's pane-proved pass"
     else
-      listed "agent $a_name (pane $a_pane)" "checkout '$a_dir' is gone, but the name is not ralph's — not ours to close"
+      listed "agent $a_name (pane $a_pane)" "ownership unclear, never acted on: checkout '$a_dir' is gone, but the name is not ralph's — not ours to close"
     fi
   done <<EOF_ZOMBIES
 $rows
@@ -207,7 +221,7 @@ EOF_ZOMBIES
           if [ "$p_user" = "$me" ]; then
             act "kill pid $p_pid (cwd '$cwd' is a deleted worktree; $cmd)" kill "$p_pid"
           else
-            listed "pid $p_pid (user $p_user)" "cwd '$cwd' deleted, but the process is not $me's — not ours to kill"
+            listed "pid $p_pid (user $p_user)" "ownership unclear, never acted on: cwd '$cwd' deleted, but the process is not $me's — not ours to kill"
           fi
         done <<EOF_PROCS
 $ps_out
@@ -250,21 +264,216 @@ EOF_PROCS
     if printf '%s' "${u_name:-}" | grep -Eq '^gh-[0-9]+$|^ralph-(deliver|tend)$|^[a-z][0-9]+-[a-z].*$'; then
       act "close pane $u_pane (agent ${u_name:-<unnamed>}: status unknown, no foreground process, shell up $et)" "$HERDR" pane close "$u_pane"
     else
-      listed "pane $u_pane (agent ${u_name:-<unnamed>})" "unknown status, idle shell up $et, but the name is not ralph's"
+      listed "pane $u_pane (agent ${u_name:-<unnamed>})" "ownership unclear, never acted on: unknown status, idle shell up $et, but the name is not ralph's"
     fi
   done <<EOF_UNK
 $unk
 EOF_UNK
 
+fi
+
+# ── sweep: finished fleet worktrees — merged, clean, idle (GH-2103) ──────────
+#
+# reap's subject is ZOMBIES: the checkout is GONE from disk and the pane or
+# process outlived it. This verb's subject is the inverse pile reap cannot
+# touch: the checkout is PRESENT, its branch merged, its tree clean, its
+# session (if any) idle — the fleet worktrees nothing ever removes (measured:
+# ~120 accumulated under ~/.herdr/worktrees/ralph-hero, 2-3 live). A different
+# predicate with a different failure direction — an unreadable `git status`
+# must LIST, never remove — so it is a sibling verb, not a reap category:
+# reap's exit codes are load-bearing and its contract says "zombies".
+#
+# Same safety grammar as reap:
+#   1. DRY RUN by default; --apply to act; --limit N (50) bounds one sweep.
+#   2. Every removal requires THREE positive readings: `git status
+#      --porcelain` empty, HEAD an ancestor of the origin default branch, and
+#      no live session in the herdr snapshot (a working/blocked/unknown status
+#      or a working/blocked/reporting pane token disqualifies). Anything
+#      unreadable — status, merge state, the snapshot itself — LISTS or
+#      refuses; it never removes.
+#   3. LISTED, never touched: dirty trees, unmerged heads (a squash-merged
+#      branch reads as unmerged — honest limit, the output says so), live
+#      sessions, locked worktrees, dirs under the pile git does not recognise,
+#      and the worktree this sweep itself runs from.
+#   4. Board state is never written (claims release via reconcile/TTL).
+#      Branch deletion and `git worktree prune` are out of scope — the branch
+#      may still be a PR head somewhere; only the checkout on disk is the
+#      subject. Merged is judged against the LOCAL origin ref (no network
+#      here); a stale ref only under-collects.
+#
+# Removal path: `herdr worktree remove --workspace <id>` when a herdr
+# workspace still fronts the checkout (closes the space with it), else
+# `git worktree remove` — never --force, so git's own dirty check stands as a
+# second belt behind the porcelain read above.
+if [ "$MODE" = "sweep" ]; then
+  # Physical paths everywhere: git records a worktree's CANONICAL path
+  # (symlinks resolved — /var vs /private/var on macOS), so comparing it
+  # against an unresolved root would silently classify every real worktree
+  # as a stray dir. A path that cannot be resolved stays as given.
+  phys() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
+  WT_ROOT=$(phys "${RALPH_HERDR_WORKTREES_ROOT:-$HOME/.herdr/worktrees}")
+  REPO_P=$(phys "$REPO")
+  PWD_P=$(pwd -P)
+  common=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
+    { echo "sweep: not evaluable — '$REPO' is not a git repository" >&2; exit 2; }
+  main_root=$(dirname "$common")
+  repo_name=$(basename "$main_root")
+
+  # The merge target, resolved once — every linked worktree shares one ref
+  # store. origin/HEAD when the clone recorded it, else the two conventional
+  # names; none resolvable = not evaluable, because "merged" would have no
+  # meaning, not "nothing is merged".
+  base=""
+  _head_ref=$(git -C "$REPO" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  for _b in "$_head_ref" origin/main origin/master; do
+    [ -n "$_b" ] || continue
+    if git -C "$REPO" rev-parse -q --verify "refs/remotes/$_b^{commit}" >/dev/null 2>&1; then
+      base="$_b"
+      break
+    fi
+  done
+  if [ -z "$base" ]; then
+    echo "sweep: not evaluable — no origin default branch ref (looked for origin/HEAD, origin/main, origin/master)" >&2
+    exit 2
+  fi
+  echo "sweep: merged is judged against the LOCAL $base — a stale ref only under-collects; \`git -C $main_root fetch origin\` refreshes it"
+
+  # Per-workspace liveness from the snapshot, joined on checkout path. A
+  # status that is not idle/done (unknown included) or a live-ish pane token
+  # counts as live; dead-before-start markers (spawned/briefed) do not — the
+  # git readings below still gate those trees on their own facts.
+  ws_tsv=$(printf '%s' "$snap" | jq -r '
+    (.panes // []) as $panes
+    | (.agents // []) as $agents
+    | (.workspaces // [])[]
+    | select((.worktree.checkout_path // "") != "")
+    | . as $w
+    | ($agents | map(select((.workspace_id // "") == $w.workspace_id) | (.agent_status // "unknown"))) as $as
+    | ($panes | map(select((.workspace_id // "") == $w.workspace_id) | ((.tokens // {}).state // "")) | map(select(. != ""))) as $ts
+    | ((([$w.agent_status // ""] + $as) | map(select(. != "" and . != "idle" and . != "done")))
+       + ($ts | map(select(. == "working" or . == "blocked" or . == "reporting")))) as $live
+    | [$w.worktree.checkout_path, $w.workspace_id,
+       (if ($live | length) > 0 then "live" else "idle" end),
+       ($live | unique | join(","))]
+    | @tsv' 2>/dev/null) || ws_tsv=""
+
+  wt_list=$(git -C "$REPO" worktree list --porcelain 2>/dev/null) ||
+    { echo "sweep: not evaluable — 'git worktree list' failed in $REPO" >&2; exit 2; }
+
+  # Parse porcelain blocks; keep every path git recognises (for the stray-dir
+  # scan) and the subset under the herdr pile (the candidates).
+  git_known=""
+  candidates=""
+  cur="" cur_locked=0 cur_prunable=0
+  flush_wt() {
+    [ -n "$cur" ] || return 0
+    git_known="$git_known$cur"$'\n'
+    case "$cur" in
+      "$WT_ROOT"/*) candidates="$candidates$cur"$'\t'"$cur_locked"$'\t'"$cur_prunable"$'\n' ;;
+    esac
+    cur="" cur_locked=0 cur_prunable=0
+  }
+  while IFS= read -r _line; do
+    case "$_line" in
+      "worktree "*) flush_wt; cur="${_line#worktree }" ;;
+      locked*) cur_locked=1 ;;
+      prunable*) cur_prunable=1 ;;
+      "") flush_wt ;;
+    esac
+  done <<EOF_WTLIST
+$wt_list
+EOF_WTLIST
+  flush_wt
+
+  while IFS=$'\t' read -r wt locked prunable; do
+    [ -n "$wt" ] || continue
+    # metadata whose checkout is already gone: `git worktree prune` territory,
+    # zero disk cost — out of scope here
+    [ "$prunable" = 1 ] && continue
+    [ -d "$wt" ] || continue
+
+    case "$PWD_P/" in "$wt"/*)
+      listed "worktree $wt" "this sweep is running inside it — never touched"
+      continue ;;
+    esac
+    case "$REPO_P/" in "$wt"/*)
+      listed "worktree $wt" "it is the repo this sweep was pointed at — never touched"
+      continue ;;
+    esac
+
+    wsid=""
+    ws_line=$(awk -F'\t' -v p="$wt" '$1 == p { print; exit }' <<<"$ws_tsv")
+    if [ -n "$ws_line" ]; then
+      wsid=$(cut -f2 <<<"$ws_line")
+      if [ "$(cut -f3 <<<"$ws_line")" = "live" ]; then
+        listed "worktree $wt (workspace $wsid)" "session is live ($(cut -f4 <<<"$ws_line")) — never touched"
+        continue
+      fi
+    fi
+
+    if [ "$locked" = 1 ]; then
+      listed "worktree $wt" "locked — git worktree remove would refuse; unlock by hand if it is truly finished"
+      continue
+    fi
+
+    if ! st=$(git -C "$wt" status --porcelain 2>/dev/null); then
+      listed "worktree $wt" "git status unreadable — an unreadable tree must list, never remove"
+      continue
+    fi
+    if [ -n "$st" ]; then
+      listed "worktree $wt" "tree is dirty ($(printf '%s\n' "$st" | grep -c .) path(s)) — commit, stash or discard by hand first"
+      continue
+    fi
+
+    anc_rc=0
+    git -C "$wt" merge-base --is-ancestor HEAD "refs/remotes/$base" 2>/dev/null || anc_rc=$?
+    if [ "$anc_rc" -eq 1 ]; then
+      listed "worktree $wt" "not merged — HEAD is not reachable from $base (unpushed, unmerged, or squash-merged; judge by hand)"
+      continue
+    elif [ "$anc_rc" -ne 0 ]; then
+      listed "worktree $wt" "merge state unreadable (git exited $anc_rc) — must list, never remove"
+      continue
+    fi
+
+    if [ -n "$wsid" ]; then
+      act "remove workspace $wsid + checkout $wt (clean, merged into $base, session idle)" "$HERDR" worktree remove --workspace "$wsid"
+    else
+      act "remove worktree $wt (clean, merged into $base, no herdr workspace)" git -C "$main_root" worktree remove "$wt"
+    fi
+  done <<EOF_CANDS
+$candidates
+EOF_CANDS
+
+  # Dirs sitting in the pile that git does not recognise as worktrees: nothing
+  # here can verify them (no metadata to read clean/merged from), so they are
+  # only ever LISTED — there is no undo on an rm.
+  pile="$WT_ROOT/$repo_name"
+  if [ -d "$pile" ]; then
+    for d in "$pile"/*/; do
+      d="${d%/}"
+      [ -d "$d" ] || continue
+      d=$(phys "$d")
+      if ! printf '%s' "$git_known" | grep -Fxq "$d"; then
+        listed "dir $d" "not a linked worktree of $main_root — nothing here can verify it; inspect and remove by hand"
+      fi
+    done
+  fi
+fi
+
+if [ "$MODE" = "reap" ] || [ "$MODE" = "sweep" ]; then
   echo
   if [ "$findings" -eq 0 ]; then
-    echo "reap: nothing to reap — every agent's checkout exists, no orphaned processes, no stale unknown panes"
+    if [ "$MODE" = "reap" ]; then
+      echo "reap: nothing to reap — every agent's checkout exists, no orphaned processes, no stale unknown panes"
+    else
+      echo "sweep: nothing to sweep — no finished fleet worktrees for $repo_name under $WT_ROOT"
+    fi
     exit 0
   fi
   if [ -n "$REAP_APPLY" ]; then
-    echo "reap: $findings finding(s), $acted action(s) performed${budget_hit:+ (limit reached — re-run to continue)}"
+    echo "$MODE: $findings finding(s), $acted action(s) performed${budget_hit:+ (limit reached — re-run to continue)}"
   else
-    echo "reap: $findings finding(s) — DRY RUN, nothing was touched; re-run with --apply to act"
+    echo "$MODE: $findings finding(s) — DRY RUN, nothing was touched; re-run with --apply to act"
   fi
   exit 1
 fi

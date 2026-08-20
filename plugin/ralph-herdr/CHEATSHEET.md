@@ -14,6 +14,7 @@ been run for real or read straight out of the source it invokes.
 | Fleet health at a glance (incl. dead-before-start) | `bash plugin/ralph-herdr/scripts/fleet-status.sh` | 7 |
 | Spawn one worker on issue NNN | `bash plugin/ralph-herdr/scripts/work-fleet.sh NNN` | 6 |
 | Answer a blocked session | `board answer NNN -m "..."` then attend the pane | 5 |
+| Clean up finished sessions (worktrees + disk) | `bash ralph/scripts/herdr-setup.sh sweep` (dry run; `--apply` to act) | 10 |
 | Something's weird | `board doctor` · `bash plugin/ralph-herdr/scripts/doctor.sh` | 10 |
 
 ## 0. Quick start from zero (one-time)
@@ -397,6 +398,35 @@ bash ralph/scripts/herdr-setup.sh reap      # zombie panes (checkout gone from
                                             # never touched. Board state is never
                                             # written: claims release via
                                             # reconcile's pane-proved pass or TTL
+bash ralph/scripts/herdr-setup.sh sweep     # the INVERSE pile reap cannot touch:
+                                            # FINISHED fleet worktrees under
+                                            # ~/.herdr/worktrees/<repo> — tree
+                                            # clean, branch merged into the origin
+                                            # default branch, session (if any)
+                                            # idle. Same grammar as reap: DRY RUN
+                                            # by default, --apply, --limit N (50).
+                                            # Dirty, unmerged (squash-merges read
+                                            # as unmerged), live, locked, and
+                                            # unrecognised dirs are LISTED, never
+                                            # touched. Merged is judged against
+                                            # the LOCAL origin ref — fetch first
+                                            # if it's stale (staleness only
+                                            # under-collects). Branch deletion and
+                                            # `git worktree prune` stay out of
+                                            # scope: only the checkout on disk
+```
+
+One finished workspace by hand — the command the sweep also uses:
+
+```bash
+herdr worktree remove --workspace <id>      # removes the checkout AND closes the
+                                            # workspace; <id> from `herdr worktree
+                                            # list` (never typed from memory).
+                                            # Refuses a dirty tree — commit, stash
+                                            # or discard first; --force overrides
+                                            # that refusal and DISCARDS uncommitted
+                                            # work, so check `git -C <checkout>
+                                            # status` before reaching for it
 ```
 
 Don't `plugin link` a dev checkout long-term: the link serves whatever branch
