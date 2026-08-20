@@ -36,6 +36,9 @@ import {
   type Ctx,
   DECISION_EVIDENCE_MARKER,
   decisionEvidence,
+  diagnoseEmptyQueue,
+  parseDefer,
+  formatDefer,
   doctor,
   parsePrOrphanPolicy,
   prOrphans,
@@ -6972,4 +6975,91 @@ describe("doctor --fix completes the close the board was ahead of", () => {
     doctor(ctx, { fix: true });
     expect(gh.mutations).toContain("closeIssue(#1, NOT_PLANNED)");
   });
+});
+
+// ---------------------------------------------------------------------------
+// Defer — "the precondition is not met" as a typed parking lane (v0.2.0)
+// ---------------------------------------------------------------------------
+
+describe("defer parks an item out of ranking", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("parseDefer/formatDefer round-trip, condition-only, and garbage tolerance", () => {
+    const m = parseDefer("2026-09-01T00:00:00.000Z|model-gate repo goes public")!;
+    expect(m.recheck?.toISOString()).toBe("2026-09-01T00:00:00.000Z");
+    expect(m.condition).toBe("model-gate repo goes public");
+    expect(formatDefer(m)).toBe("2026-09-01T00:00:00.000Z|model-gate repo goes public");
+    expect(parseDefer("-|just a condition")).toEqual({ recheck: null, condition: "just a condition" });
+    expect(parseDefer("bare condition, no pipe")).toEqual({ recheck: null, condition: "bare condition, no pipe" });
+    expect(parseDefer("")).toBeNull();
+    expect(parseDefer(null)).toBeNull();
+    // A garbled instant degrades to condition-only, never to "not deferred".
+    expect(parseDefer("not-a-date|cond")).toEqual({ recheck: null, condition: "cond" });
+  });
+
+  it("a deferred item never ranks — its own bucket, not blocked", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", defer: "-|waiting on GH-2088" });
+    gh.issues.set(2, { number: 2, state: "Backlog" });
+    const { eligible, blocked, deferred } = rankNext(listItems(ctx));
+    expect(eligible.map((i) => i.number)).toEqual([2]);
+    expect(blocked).toEqual([]);
+    expect(deferred.map((i) => i.number)).toEqual([1]);
+  });
+
+  it("all-deferred is a typed empty verdict, so a loop terminates honestly", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", defer: "-|precondition" });
+    const { eligible, blocked, inFlightEpics, deferred } = rankNext(listItems(ctx));
+    const dx = diagnoseEmptyQueue(listItems(ctx), eligible, blocked, inFlightEpics, deferred);
+    expect(dx.diagnosis).toBe("all-deferred");
+    expect(dx.deferredCount).toBe(1);
+  });
+
+  it("defer verb writes comment-then-field; --clear reverses; bad --recheck refused at write time", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(run(["defer", "1", "--until", "sandbox spike lands", "--recheck", "2026-09-01T00:00:00Z"], ctx)).toBe(0);
+    expect(gh.comments.some((c) => c.body.includes("parked — sandbox spike lands"))).toBe(true);
+    expect(gh.mutations).toContain("setDefer(#1)");
+    // comment precedes the field write (interrupted run leaves the reason)
+    expect(gh.mutations.indexOf("addComment")).toBeLessThan(gh.mutations.indexOf("setDefer(#1)"));
+    expect(run(["defer", "1", "--clear"], ctx)).toBe(0);
+    expect(gh.issues.get(1)!.defer).toBeNull();
+    expect(() => run(["defer", "1", "--until", "x", "--recheck", "next tuesday"], ctx)).toThrow(UsageError);
+    expect(() => run(["defer", "1"], ctx)).toThrow(UsageError);
+  });
+
+  it("claiming a deferred unit lifts the mark — the claim IS the assertion the precondition holds", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", defer: "-|waiting" });
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(after.state).toBe("In Progress");
+    expect(gh.mutations).toContain("clearField(#1, F_defer)");
+    expect(gh.issues.get(1)!.defer).toBeNull();
+  });
+
+  it("doctor: defer-elapsed is info with the remedy; a future recheck stays ok", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", defer: "2026-07-01T00:00:00Z|cond-a" }); // past (NOW is 07-31)
+    gh.issues.set(2, { number: 2, state: "Backlog", defer: "2027-01-01T00:00:00Z|cond-b" }); // future
+    const rep = doctor(ctx);
+    const line = rep.checks.find((c) => c.name === "defer-elapsed")!;
+    expect(line.level).toBe("info");
+    expect(line.detail).toContain("#1(cond-a)");
+    expect(line.detail).not.toContain("#2");
+  });
+
+  it("doctor: untriaged-priority counts null-priority Backlog items and names the remedy", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "P1" });
+    gh.issues.set(3, { number: 3, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    const rep = doctor(ctx);
+    const line = rep.checks.find((c) => c.name === "untriaged-priority")!;
+    expect(line.level).toBe("info");
+    expect(line.detail).toContain("1 Backlog item(s)");
+    expect(line.detail).toContain("#1");
+    expect(line.detail).toContain("board priority");
+  });
+
 });

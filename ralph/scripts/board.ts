@@ -192,6 +192,36 @@ export function claimExpiry(claim: Claim, ttlMin: number): Date {
 
 /** Local-time HH:MM. The expiry hint only fires inside the final quarter of the
  *  TTL, so the time it names is always minutes away — a date would be noise. */
+// ---------------------------------------------------------------------------
+// Defer — "the precondition is not met" as a typed, parking write lane.
+// The mark lives in a project TEXT field ("Defer"), which rides the
+// fieldValues page every walk already pays for — zero extra GraphQL cost,
+// visible as a board column, and never a label (rankNext's eligibility is a
+// function of dependency edges and field values, never labels — GH-1803).
+// Value grammar mirrors Claim's: `{recheck-iso|-}|{condition}`.
+// ---------------------------------------------------------------------------
+
+export interface DeferMark {
+  recheck: Date | null; // when to look again; null = no date, condition-only
+  condition: string; // the observable the item waits on
+}
+
+export function parseDefer(raw: string | null | undefined): DeferMark | null {
+  if (!raw || !raw.trim()) return null;
+  const idx = raw.indexOf("|");
+  if (idx < 0) return { recheck: null, condition: raw.trim() };
+  const iso = raw.slice(0, idx).trim();
+  const t = new Date(iso).getTime();
+  return {
+    recheck: iso !== "-" && Number.isFinite(t) ? new Date(iso) : null,
+    condition: raw.slice(idx + 1).trim(),
+  };
+}
+
+export function formatDefer(m: DeferMark): string {
+  return `${m.recheck ? m.recheck.toISOString() : "-"}|${m.condition}`;
+}
+
 export function formatLocalHm(d: Date): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
@@ -221,6 +251,10 @@ export interface QueueItemCore {
   fieldValuesTruncated: boolean; // fail closed: state/claim reads unreliable = not eligible
   claim: Claim | null;
   claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited)
+  /** Defer mark ("the precondition is not met") — a deferred item never
+   *  ranks. Optional so pure-ranking fixtures stay terse; every walk
+   *  populates it (the field rides the same fieldValues page). */
+  defer?: DeferMark | null;
   // Tend-lane inputs (GH-1712) — optional so pure-ranking fixtures stay terse;
   // listItemsFull always populates them.
   updatedAt?: string | null;
@@ -376,8 +410,14 @@ export function rankNext(
   eligible: QueueItemWithBlockers[];
   blocked: QueueItemWithBlockers[];
   inFlightEpics: InFlightEpic[];
+  deferred: QueueItemWithBlockers[];
 } {
-  const backlog = items.filter((i) => i.state === "Backlog" && !i.claim);
+  // A deferred item never ranks — its stated precondition is not met, and
+  // re-dispatching it burns a session to rediscover that. Returned as its own
+  // bucket, not folded into `blocked`: a defer is a judgment on the record
+  // (`board defer --clear` lifts it), while blocked is a dependency fact.
+  const deferred = items.filter((i) => i.state === "Backlog" && !i.claim && i.defer);
+  const backlog = items.filter((i) => i.state === "Backlog" && !i.claim && !i.defer);
   const ineligible = (i: QueueItemWithBlockers) =>
     i.openBlockers.length > 0 || i.blockersTruncated || i.fieldValuesTruncated;
   const blocked = backlog.filter(ineligible);
@@ -498,7 +538,7 @@ export function rankNext(
         ...(childrenBlocked !== undefined ? { childrenBlocked } : {}),
       };
     });
-  return { eligible, blocked, inFlightEpics };
+  return { eligible, blocked, inFlightEpics, deferred };
 }
 
 /** A blocked item whose every open blocker the board itself calls finished. */
@@ -508,10 +548,11 @@ export interface StaleBlockedEdge {
 }
 
 export interface EmptyQueueReport {
-  diagnosis: "no-items" | "human-needed" | "epic-in-flight" | "stale-blocked" | null;
+  diagnosis: "no-items" | "human-needed" | "epic-in-flight" | "stale-blocked" | "all-deferred" | null;
   humanNeededCount: number;
   staleBlockedEdges: StaleBlockedEdge[];
   inFlightEpics: InFlightEpic[];
+  deferredCount: number;
 }
 
 /** Board states that assert the work is finished; an item parked here still
@@ -531,8 +572,10 @@ export function diagnoseEmptyQueue(
   eligible: QueueItemWithBlockers[],
   blocked: QueueItemWithBlockers[],
   inFlightEpics: InFlightEpic[] = [],
+  deferred: QueueItemWithBlockers[] = [],
 ): EmptyQueueReport {
   const humanNeededCount = items.filter((i) => i.state === "Human Needed").length;
+  const deferredCount = deferred.length;
   // Match on openBlockerLabels, not bare numbers: issue numbers repeat across
   // repos, and `items` is own-repo only, so a foreign owner/repo#9 must never
   // resolve against our own #9. Own-repo labels are exactly "#N".
@@ -555,8 +598,9 @@ export function diagnoseEmptyQueue(
     : humanNeededCount > 0 ? "human-needed"
     : inFlightEpics.length > 0 ? "epic-in-flight"
     : staleBlockedEdges.length > 0 ? "stale-blocked"
+    : deferredCount > 0 && blocked.length === 0 ? "all-deferred"
     : null;
-  return { diagnosis, humanNeededCount, staleBlockedEdges, inFlightEpics };
+  return { diagnosis, humanNeededCount, staleBlockedEdges, inFlightEpics, deferredCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -1463,6 +1507,7 @@ interface BoardCache {
 
 const STATE_FIELD = "Workflow State";
 const CLAIM_FIELD = "Claim";
+export const DEFER_FIELD = "Defer";
 const STATUS_FIELD = "Status";
 const ESTIMATE_FIELD = "Estimate";
 const PRIORITY_FIELD = "Priority";
@@ -1648,6 +1693,7 @@ export interface Issue {
   fieldValuesTruncated: boolean; // >FIELD_VALUE_PAGE values — state/claim reads unreliable, mutations refuse
   claim: Claim | null;
   claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited); join/leave refuse
+  defer: DeferMark | null; // Defer mark — parked out of next/frontier until cleared
   estimate: string | null;
   priority: string | null;
   labels: string[];
@@ -1750,6 +1796,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       fieldValuesTruncated: fieldValuesTruncated(item?.fieldValues),
       claim: parseClaim(fv[CLAIM_FIELD]),
       claimRaw: fv[CLAIM_FIELD] ?? null,
+      defer: parseDefer(fv[DEFER_FIELD]),
       estimate: fv[ESTIMATE_FIELD] ?? null,
       priority: fv[PRIORITY_FIELD] ?? null,
       labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
@@ -2223,7 +2270,7 @@ function guardDoneEvidence(ctx: Ctx, issue: Issue, why: string | undefined): voi
 
 export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {}): Issue {
   // Cache freshness resolved BEFORE any write; the body never retries.
-  const cache = mutationCache(ctx, [[STATE_FIELD, to]], [CLAIM_FIELD]);
+  const cache = mutationCache(ctx, [[STATE_FIELD, to]], [CLAIM_FIELD, DEFER_FIELD]);
   {
     // Fail closed BEFORE any write: a truncated field-value page means the
     // state and claim just read may be wrong — the legality check and claim
@@ -2372,6 +2419,13 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         clearField(ctx, cache, itemId, CLAIM_FIELD);
         if (rest) setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(rest));
       }
+    }
+
+    // Claiming lifts a defer: taking the unit asserts its stated precondition
+    // now holds (or is being tested) — a mark left behind would hide the item
+    // from `next` again the moment the claim releases.
+    if (enteringInProgress && issue.defer && cache.fields[DEFER_FIELD]) {
+      clearField(ctx, cache, itemId, DEFER_FIELD);
     }
 
     try {
@@ -3980,6 +4034,7 @@ function toQueueItem(
     fieldValuesTruncated: fvTruncated,
     claim: parseClaim(fv[CLAIM_FIELD]),
     claimRaw: fv[CLAIM_FIELD] ?? null,
+    defer: parseDefer(fv[DEFER_FIELD]),
     ...(select.blockers ? blockerParts() : {}),
     ...(select.labels
       ? {
@@ -6128,6 +6183,37 @@ export function setPriority(ctx: Ctx, number: number, value: string | null): Iss
   return fetchIssue(ctx, number);
 }
 
+/** Park / unpark an item (audit B8): "the precondition is not met" as a typed
+ *  write instead of an unrepresentable fact that costs a session per re-rank.
+ *  Metadata-only — never touches the state field or the claim. The comment is
+ *  provenance, posted BEFORE the field write (the transition() ordering rule:
+ *  an interrupted run leaves the reason, not a bare mark). */
+export function setDefer(ctx: Ctx, number: number, mark: DeferMark | null): Issue {
+  const issue = fetchIssue(ctx, number);
+  const itemId = requireItem(issue);
+  const cache = mutationCache(ctx, [[DEFER_FIELD]]);
+  if (mark === null) {
+    if (issue.defer) {
+      addComment(
+        ctx,
+        issue.nodeId,
+        `\`board defer --clear\` (by \`${ctx.cfg.holder}\`): precondition lifted — ${issue.defer.condition}`,
+      );
+      clearField(ctx, cache, itemId, DEFER_FIELD);
+    }
+  } else {
+    addComment(
+      ctx,
+      issue.nodeId,
+      `\`board defer\` (by \`${ctx.cfg.holder}\`): parked — ${mark.condition}` +
+        (mark.recheck ? `\nRecheck by ${mark.recheck.toISOString()}.` : "") +
+        `\n\nLifted by \`board defer ${number} --clear\` or by claiming the unit.`,
+    );
+    setText(ctx, cache, itemId, DEFER_FIELD, formatDefer(mark));
+  }
+  return fetchIssue(ctx, number);
+}
+
 export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
   if (opts.state && ["Done", "Canceled"].includes(opts.state)) {
     throw new UsageError(
@@ -7549,6 +7635,36 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       // surfacing it is enough.
       add("claim-garbled", garbled.length === 0 ? "ok" : "warn", garbled.length === 0 ? "none" : `unparseable Claim text (want "holder[+holder2...]|iso8601"): ${garbled.map((i) => `#${i.number}`).join(" ")}`);
 
+      // Defer marks past their recheck instant (audit B8). INFO by
+      // construction: a defer is a judgment on the record, and lifting it is
+      // one too — --strict never escalates, --fix never acts. The marker only
+      // renders when the remedy applies (GH-2052's rule).
+      const deferElapsed = items.filter(
+        (i) => i.defer?.recheck && i.defer.recheck.getTime() <= ctx.now().getTime(),
+      );
+      add(
+        "defer-elapsed",
+        deferElapsed.length === 0 ? "ok" : "info",
+        deferElapsed.length === 0
+          ? "none"
+          : `deferred items past their recheck instant — re-test the condition and \`board defer N --clear\` or re-defer: ` +
+            deferElapsed.map((i) => `#${i.number}(${i.defer!.condition})`).join(" "),
+      );
+
+      // Null-Priority intake (audit B5). INFO with the remedy named: a null
+      // priority sinks below stale backlog in `next`, so these items are
+      // invisible to every ranking lane until someone triages them.
+      const untriaged = items.filter((i) => i.state === "Backlog" && !i.priority);
+      add(
+        "untriaged-priority",
+        untriaged.length === 0 ? "ok" : "info",
+        untriaged.length === 0
+          ? "none"
+          : `${untriaged.length} Backlog item(s) with no Priority — invisible to next/frontier ranking; ` +
+            `\`board priority N P0..P3\`: ${untriaged.slice(0, 10).map((i) => `#${i.number}`).join(" ")}` +
+            (untriaged.length > 10 ? ` +${untriaged.length - 10} more` : ""),
+      );
+
       // Apply-kind sweep (GH-1693). Inert — three `ok` lines — on a repo that
       // has not opted in, and on an opted-in board with no apply issues.
       if (!ctx.cfg.apply.enabled) {
@@ -8237,7 +8353,8 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
     }
   }
 
-  if (!cache.fields[CLAIM_FIELD]) {
+  for (const textField of [CLAIM_FIELD, DEFER_FIELD]) {
+    if (cache.fields[textField]) continue;
     ghGraphQL(
       ctx,
       `mutation($projectId: ID!, $name: String!) {
@@ -8245,10 +8362,10 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
           projectV2Field { ... on ProjectV2FieldCommon { id } }
         }
       }`,
-      { projectId: cache.projectId, name: CLAIM_FIELD },
+      { projectId: cache.projectId, name: textField },
     );
-    created.push({ name: CLAIM_FIELD });
-    note(`created "${CLAIM_FIELD}" text field`);
+    created.push({ name: textField });
+    note(`created "${textField}" text field`);
   }
 
   for (const { name, options } of ADVISORY_FIELDS) {
@@ -8645,7 +8762,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
  *  of the flag rather than of the token that happens to follow it. */
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
   "blocked-by", "body", "candidates", "decision", "estimate", "holder", "label",
-  "lane", "limit", "message", "on", "out", "parent", "priority", "state",
+  "lane", "limit", "message", "on", "out", "parent", "priority", "recheck", "state",
   "title", "until", "why",
 ]);
 
@@ -8690,7 +8807,10 @@ function issueLine(i: Issue): string {
   const parent = i.parent ? ` parent=#${i.parent.number}` : "";
   const blockers = i.blockedBy.filter((b) => b.issueState === "OPEN").map((b) => `#${b.number}`);
   const blocked = blockers.length ? ` blockedBy=${blockers.join(",")}` : "";
-  return `#${i.number} [${i.state ?? "no-state"}]${claim}${parent}${blocked} ${i.title}`;
+  const defer = i.defer
+    ? ` deferred(${i.defer.condition}${i.defer.recheck ? `, recheck ${i.defer.recheck.toISOString().slice(0, 10)}` : ""})`
+    : "";
+  return `#${i.number} [${i.state ?? "no-state"}]${claim}${defer}${parent}${blocked} ${i.title}`;
 }
 
 /** Exactly one line, whatever the tier. With no diagnosis it is byte-identical
@@ -8705,7 +8825,9 @@ function emptyQueueLine(blocked: QueueItemWithBlockers[], dx: EmptyQueueReport):
     const who = e.holder ? ` claimed by ${e.holder}` : " in flight";
     return `queue empty — epic #${e.root} is being worked (child #${e.child}${who})`;
   }
-  if (!blocked.length) return "queue empty";
+  if (dx.diagnosis === "all-deferred")
+    return `queue empty — ${dx.deferredCount} deferred awaiting their stated preconditions (board list shows them; board defer N --clear lifts one)`;
+  if (!blocked.length) return dx.deferredCount ? `queue empty (${dx.deferredCount} deferred)` : "queue empty";
   const stale = dx.diagnosis === "stale-blocked" ? dx.staleBlockedEdges[0] : null;
   const hint = stale
     ? ` — #${stale.number}'s blockers are all resolved on the board; stale edge? board dep ${stale.number} --on ${stale.blockers[0]} --rm`
@@ -8742,8 +8864,8 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 
 const MUTATING = new Set([
   "create", "claim", "release", "move", "cancel", "reopen", "answer", "priority",
-  "link", "dep", "comment", "adopt", "reconcile", "parent-check",
-  "resolve", "setup",
+  "defer", "link", "dep", "comment", "adopt", "reconcile", "parent-check",
+  "resolve", "setup", "add",
 ]);
 
 export function run(argv: string[], ctx: Ctx): number {
@@ -8914,9 +9036,9 @@ export function run(argv: string[], ctx: Ctx): number {
         values: own.map((i) => i.priority),
         fresh: flags.fresh === true,
       });
-      const { eligible, blocked, inFlightEpics } = rankNext(own, closedEdges, order);
+      const { eligible, blocked, inFlightEpics, deferred } = rankNext(own, closedEdges, order);
       // --json carries the diagnosis as fields, never as the prose line.
-      const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics);
+      const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics, deferred);
       if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked, ...dx, cache: cacheFacts(full) });
       else if (eligible.length === 0) {
         // The empty answer is where staleness matters MOST — a loop reads
@@ -9334,6 +9456,36 @@ export function run(argv: string[], ctx: Ctx): number {
         return 1;
       }
       out(`#${number}: tend proposal ${reject ? "rejected" : "accepted"}${p.at ? ` (proposed ${p.at})` : ""}`);
+      return 0;
+    }
+
+    case "defer": {
+      const number = requireNumber(positional[0]);
+      if (flags.clear) {
+        const after = setDefer(ctx, number, null);
+        out(after.defer ? `#${number}: defer clear did not stick — re-run` : `#${number}: defer cleared`);
+        return 0;
+      }
+      const condition = typeof flags.until === "string" ? flags.until.trim() : "";
+      if (!condition)
+        throw new UsageError(
+          `defer requires --until "<observable condition>" (what must become true before this ranks again), or --clear`,
+        );
+      let recheck: Date | null = null;
+      if (typeof flags.recheck === "string" && flags.recheck) {
+        const t = new Date(flags.recheck).getTime();
+        // Refused at write time, never misfiled: a recheck nobody can parse is
+        // a defer that silently never resurfaces.
+        if (!Number.isFinite(t)) throw new UsageError(`--recheck must be an ISO-8601 instant, got "${flags.recheck}"`);
+        recheck = new Date(t);
+      }
+      const after = setDefer(ctx, number, { recheck, condition });
+      out(
+        `#${number}: deferred — ${condition}` +
+          (recheck ? ` (recheck by ${recheck.toISOString()})` : "") +
+          ` — parked out of next/frontier until cleared or claimed`,
+      );
+      if (after.state !== "Backlog") out(`  note: state is "${after.state}" — defer only parks Backlog ranking`);
       return 0;
     }
 

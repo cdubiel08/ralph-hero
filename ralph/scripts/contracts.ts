@@ -785,6 +785,9 @@ function zQueueItem(mode: Mode) {
     fieldValuesTruncated: z.boolean(),
     claim: zClaimJson(mode).nullable(),
     claimRaw: z.string().nullable(),
+    // Defer mark (v0.2.0): parked out of ranking until cleared or claimed.
+    // Optional for pre-0.2.0 payloads; null on every undeferred row since.
+    defer: obj(mode, { recheck: zIsoUtc.nullable(), condition: z.string() }).nullable().optional(),
     openBlockerLabels: z.array(z.string()),
     // GH-1803: `next` runs the lean walk (no `labels` connection — 1 GraphQL
     // point per page saved), so both label fields are ABSENT from its rows.
@@ -805,8 +808,9 @@ function zNextResult(mode: Mode) {
     next: zQueueItem(mode).nullable(),
     queue: z.array(zQueueItem(mode)),
     blocked: z.array(zQueueItem(mode)),
-    diagnosis: z.enum(["no-items", "human-needed", "epic-in-flight", "stale-blocked"]).nullable(),
+    diagnosis: z.enum(["no-items", "human-needed", "epic-in-flight", "stale-blocked", "all-deferred"]).nullable(),
     humanNeededCount: z.number().int().min(0),
+    deferredCount: z.number().int().min(0).optional(),
     staleBlockedEdges: z.array(obj(mode, { number: zIssue, blockers: z.array(z.number().int()) })),
     inFlightEpics: z.array(obj(mode, { root: zIssue, child: zIssue, holder: z.string().nullable() })),
     cache: zCacheFacts(mode).optional(),

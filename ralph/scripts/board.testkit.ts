@@ -34,6 +34,7 @@ export interface FakeIssue {
   state?: string | null;
   priority?: string | null; // Priority single-select value ("P0".."P3")
   claim?: string | null;
+  defer?: string | null; // raw Defer field text ("iso|condition" or "-|condition")
   issueState?: "OPEN" | "CLOSED";
   stateReason?: string | null;
   onBoard?: boolean; // default true
@@ -185,12 +186,14 @@ export class FakeGh {
       claim?: string | null,
       truncated = false,
       priority?: string | null,
+      defer?: string | null,
     ) => ({
       pageInfo: { hasNextPage: truncated },
       nodes: [
         ...(state ? [{ name: state, field: { name: "Workflow State" } }] : []),
         ...(claim ? [{ text: claim, field: { name: "Claim" } }] : []),
         ...(priority ? [{ name: priority, field: { name: "Priority" } }] : []),
+        ...(defer ? [{ text: defer, field: { name: "Defer" } }] : []),
       ],
     });
     return {
@@ -251,7 +254,7 @@ export class FakeGh {
                   id: `ITEM_${fi.number}`,
                   isArchived: fi.archived ?? false,
                   project: { id: PROJECT_ID },
-                  fieldValues: fieldValues(fi.state, fi.claim, fi.fieldValuesTruncated ?? false, fi.priority),
+                  fieldValues: fieldValues(fi.state, fi.claim, fi.fieldValuesTruncated ?? false, fi.priority, fi.defer),
                 },
               ],
       },
@@ -418,6 +421,7 @@ export class FakeGh {
       nodes: [
         ...(fi.state ? [{ name: fi.state, field: { name: "Workflow State" } }] : []),
         ...(fi.claim ? [{ text: fi.claim, field: { name: "Claim" } }] : []),
+        ...(fi.defer ? [{ text: fi.defer, field: { name: "Defer" } }] : []),
         ...(fi.priority ? [{ name: fi.priority, field: { name: "Priority" } }] : []),
         ...(fi.estimate ? [{ name: fi.estimate, field: { name: "Estimate" } }] : []),
       ],
@@ -649,6 +653,7 @@ export class FakeGh {
           options: [...STATES, ...LEGACY_STATES].map((s) => ({ id: `OPT_${s}`, name: s })),
         },
         { id: "F_claim", name: "Claim", dataType: "TEXT" },
+        { id: "F_defer", name: "Defer", dataType: "TEXT" },
         {
           id: "F_status", name: "Status", dataType: "SINGLE_SELECT",
           options: ["Todo", "In Progress", "Done"].map((s) => ({ id: `S_${s}`, name: s })),
@@ -895,6 +900,9 @@ export class FakeGh {
         // back like the seeded field, or a custom-scheme read-back can't be
         // asserted at all. Option ids are `<prefix>_<name>` on both paths
         // ("P_P0", "Priority_Now").
+      } else if (variables.fieldId === "F_defer" && fi) {
+        fi.defer = variables.text;
+        this.mutations.push(`setDefer(#${itemNum})`);
       } else if (variables.optionId && (variables.fieldId === "F_priority" || variables.fieldId === "F_Priority") && fi) {
         fi.priority = String(variables.optionId).replace(/^[^_]*_/, "");
         this.mutations.push(`setPriority(#${itemNum}, ${fi.priority})`);
@@ -907,6 +915,7 @@ export class FakeGh {
       const itemNum = Number(String(variables.itemId).replace("ITEM_", ""));
       const fi = this.issues.get(itemNum);
       if (fi && variables.fieldId === "F_claim" && !this.stickyClaim) fi.claim = null;
+      if (fi && variables.fieldId === "F_defer") fi.defer = null;
       if (fi && (variables.fieldId === "F_priority" || variables.fieldId === "F_Priority")) fi.priority = null;
       this.mutations.push(`clearField(#${itemNum}, ${variables.fieldId})`);
       return data({ clearProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
