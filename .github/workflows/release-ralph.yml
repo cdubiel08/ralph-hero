@@ -69,10 +69,10 @@ jobs:
             echo "Bump type: $MANUAL_BUMP (workflow_dispatch)"
           else
             COMMIT_MSG=$(git log -1 --pretty=%B)
-            if echo "$COMMIT_MSG" | grep -qiE '\b#major\b'; then
+            if echo "$COMMIT_MSG" | grep -qiE '(^|[[:space:]])#major([[:space:]]|$)'; then
               echo "type=major" >> "$GITHUB_OUTPUT"
               echo "Bump type: major (commit annotation)"
-            elif echo "$COMMIT_MSG" | grep -qiE '\b#minor\b'; then
+            elif echo "$COMMIT_MSG" | grep -qiE '(^|[[:space:]])#minor([[:space:]]|$)'; then
               echo "type=minor" >> "$GITHUB_OUTPUT"
               echo "Bump type: minor (commit annotation)"
             else
