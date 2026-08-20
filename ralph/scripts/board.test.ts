@@ -91,6 +91,7 @@ import {
   SMELL_DEFAULTS,
   STATES,
   transition,
+  TransientError,
   UsageError,
 } from "./board.js";
 
@@ -7173,5 +7174,110 @@ describe("accepted-but-unmoved proposals (audit B9)", () => {
     }
     expect(outText).toContain("complete the disposition");
     expect(outText).toContain("board move 1 done");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batch 4 (v0.2.0): typed transport handling + budget machinery (audit B2)
+// ---------------------------------------------------------------------------
+
+describe("typed transport handling", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("a transport-shaped READ failure is retried, then typed TransientError", () => {
+    let calls = 0;
+    const flaky: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ").startsWith("gh api graphql")) {
+          calls++;
+          return { code: 1, stdout: "", stderr: "net/http: TLS handshake timeout" };
+        }
+        return ctx.exec(argv, stdin);
+      },
+    };
+    expect(() => ghGraphQL(flaky, "query { viewer { login } }", {})).toThrow(TransientError);
+    expect(calls).toBe(3); // initial + 2 bounded retries
+  });
+
+  it("a MUTATION never retries on transport failure — read-back over replay (GH-1973)", () => {
+    let calls = 0;
+    const flaky: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ").startsWith("gh api graphql")) {
+          calls++;
+          return { code: 1, stdout: "", stderr: "connection reset by peer" };
+        }
+        return ctx.exec(argv, stdin);
+      },
+    };
+    expect(() => ghGraphQL(flaky, "mutation { x }", {})).toThrow(/gh api graphql failed/);
+    expect(calls).toBe(1);
+  });
+
+  it("a non-transport failure is not retried and stays a plain error", () => {
+    let calls = 0;
+    const broken: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ").startsWith("gh api graphql")) {
+          calls++;
+          return { code: 1, stdout: "", stderr: "GraphQL: Field 'nope' doesn't exist" };
+        }
+        return ctx.exec(argv, stdin);
+      },
+    };
+    expect(() => ghGraphQL(broken, "query { viewer { login } }", {})).toThrow(Error);
+    expect(() => ghGraphQL(broken, "query { viewer { login } }", {})).not.toThrow(TransientError);
+    expect(calls).toBe(2); // one per assertion — no retries
+  });
+
+  it("RATE_LIMITED in the body is a TransientError, never a GraphQLError", () => {
+    const limited: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ").startsWith("gh api graphql"))
+          return {
+            code: 0,
+            stdout: JSON.stringify({ errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] }),
+            stderr: "",
+          };
+        return ctx.exec(argv, stdin);
+      },
+    };
+    expect(() => ghGraphQL(limited, "query { viewer { login } }", {})).toThrow(TransientError);
+  });
+
+  it("lane pre-flight defers under the floor (exit 75) and fails OPEN on an unreadable budget", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const starved: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ") === `gh api --hostname github.com rate_limit`)
+          return { code: 0, stdout: JSON.stringify({ resources: { graphql: { remaining: 3, reset: 1755600000 } } }), stderr: "" };
+        return ctx.exec(argv, stdin);
+      },
+    };
+    const errSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const old = process.env.RALPH_GH_BUDGET_FLOOR;
+      process.env.RALPH_GH_BUDGET_FLOOR = "500";
+      try {
+        expect(run(["next"], starved)).toBe(75);
+        // Unreadable budget (FakeGh answers code 1 for rate_limit): proceeds.
+        expect(run(["next"], ctx)).toBe(0);
+      } finally {
+        if (old === undefined) delete process.env.RALPH_GH_BUDGET_FLOOR;
+        else process.env.RALPH_GH_BUDGET_FLOOR = old;
+      }
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });

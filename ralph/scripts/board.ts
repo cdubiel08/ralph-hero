@@ -19,7 +19,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1266,6 +1266,29 @@ export const realExec: ExecFn = (argv, stdin) => {
 
 export class UsageError extends Error {}
 export class RefusalError extends Error {} // invariant refusal — exit 2
+/** Temporary failure — exit 75 (EX_TEMPFAIL): "wait and re-run", never "this
+ *  request is malformed". Rate limits and lane budget deferrals land here so
+ *  a caller can distinguish backing off from being wrong (the gh-budget.sh
+ *  exit-4 typing, extended into board.ts's own error surface — audit B2). */
+export class TransientError extends Error {
+  constructor(
+    message: string,
+    public readonly resetAt: string | null = null,
+  ) {
+    super(message);
+  }
+}
+
+/** Synchronous nap for the transport retry — reads only, bounded, jittered. */
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Transport-shaped failure: the request may never have reached GitHub, so a
+ *  READ is safe to retry. An HTTP error body or GraphQL errors are NOT
+ *  transport — those answers are real and retrying them is spend. */
+const TRANSPORT_RE =
+  /\b(i\/o timeout|timed? ?out|connection (reset|refused|closed)|TLS handshake|unexpected EOF|temporary failure|no such host|network is unreachable|could not resolve host)\b/i;
 
 /** GraphQL-level failure (body.errors non-empty). Carries the structured
  *  error types so callers can branch on `NOT_FOUND` etc. instead of matching
@@ -1379,6 +1402,24 @@ export function instrumentQuery(query: string): { query: string; instrumented: b
 /** Cumulative points observed this process, for the per-command totals line. */
 export const gqlCost = { calls: 0, points: 0 };
 
+/** One ledger line per spending invocation (audit B2): attribution was the
+ *  actual blocker in the 5000-pt exhaustion incident — the burner was
+ *  invisible to every transcript. Best-effort by construction: a failed
+ *  append must never fail the command that did the real work. */
+export function appendBudgetLedger(cmd: string, now: Date): void {
+  if (gqlCost.calls === 0) return;
+  try {
+    const dir = join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(
+      join(dir, "budget.jsonl"),
+      JSON.stringify({ at: now.toISOString(), cmd, calls: gqlCost.calls, points: gqlCost.points }) + "\n",
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
 function costLabel(query: string): string {
   const brace = selectionSetStart(query);
   const first = query.slice(brace + 1).match(/[A-Za-z_][A-Za-z0-9_]*/);
@@ -1390,7 +1431,11 @@ export function ghGraphQL<T = any>(
   query: string,
   variables: Record<string, unknown>,
 ): T {
-  const measuring = process.env.RALPH_GQL_COST === "1";
+  // Instrumentation is on by default (measured cost-neutral, GH-1801):
+  // the per-invocation ledger below needs the numbers even when nobody is
+  // watching stderr. RALPH_GQL_COST=0 disables; =1 additionally narrates.
+  const measuring = process.env.RALPH_GQL_COST !== "0";
+  const narrate = process.env.RALPH_GQL_COST === "1";
   const sent = measuring ? instrumentQuery(query) : { query, instrumented: false };
   // Read-your-writes, half one (GH-1806): mark BEFORE the wire, because a
   // mutation that lands and then fails to report back (non-zero exit,
@@ -1400,12 +1445,28 @@ export function ghGraphQL<T = any>(
   if (mutating) markLocalWrite(ctx);
   // --hostname keeps API traffic on the same host the scope gate verified —
   // a GHE config must not silently query github.com.
-  const r = ctx.exec(
-    ["gh", "api", "graphql", "--hostname", ctx.cfg.host, "--input", "-"],
-    JSON.stringify({ query: sent.query, variables }),
-  );
+  const argv = ["gh", "api", "graphql", "--hostname", ctx.cfg.host, "--input", "-"];
+  const payload = JSON.stringify({ query: sent.query, variables });
+  let r = ctx.exec(argv, payload);
+  // Bounded jittered retry on TRANSPORT failures, reads only (audit B2): a
+  // TLS flap and a refusal must stop being indistinguishable, and the ad-hoc
+  // remedy was hand-typed sleeps. Mutations never retry — GH-1973's read-back
+  // over retry choice stands, and mutationCache's no-replay rule with it.
+  for (let attempt = 0; r.code !== 0 && !mutating && attempt < 2; attempt++) {
+    const said = `${r.stderr} ${r.stdout}`;
+    if (!TRANSPORT_RE.test(said)) break;
+    sleepMs(200 * (attempt + 1) + Math.floor(Math.random() * 150));
+    r = ctx.exec(argv, payload);
+  }
   if (r.code !== 0) {
-    throw new Error(`gh api graphql failed (exit ${r.code}): ${r.stderr.trim() || r.stdout.trim()}`);
+    const said = (r.stderr.trim() || r.stdout.trim());
+    // gh already failed on the limit: still typed 4→75, not passed through —
+    // "wait for the reset" and "this request is malformed" are different
+    // remedies (the gh-budget.sh rule).
+    if (/rate limit/i.test(said)) throw new TransientError(`gh api graphql rate limited: ${said}`);
+    if (TRANSPORT_RE.test(said) && !mutating)
+      throw new TransientError(`gh api graphql transport failure (retried): ${said}`);
+    throw new Error(`gh api graphql failed (exit ${r.code}): ${said}`);
   }
   let body: any;
   try {
@@ -1415,6 +1476,13 @@ export function ghGraphQL<T = any>(
     throw new Error(`gh api graphql returned unparseable output: ${r.stdout.slice(0, 200)}`);
   }
   if (body.errors?.length) {
+    if (body.errors.some((e: any) => e?.type === "RATE_LIMITED")) {
+      const reset = body.data?.[COST_ALIAS]?.resetAt ?? null;
+      throw new TransientError(
+        `GraphQL rate limited${reset ? ` (resets ${reset})` : ""}: ${body.errors.map((e: any) => e.message).join("; ")}`,
+        reset,
+      );
+    }
     throw new GraphQLError(
       `GraphQL: ${body.errors.map((e: any) => e.message).join("; ")}`,
       body.errors.map((e: any) => e?.type).filter((t: unknown): t is string => typeof t === "string"),
@@ -1425,11 +1493,12 @@ export function ghGraphQL<T = any>(
     if (rl) {
       gqlCost.calls += 1;
       gqlCost.points += rl.cost;
-      process.stderr.write(
-        `[gql-cost] ${costLabel(query)} cost=${rl.cost} nodes=${rl.nodeCount} ` +
-          `used=${rl.used}/${rl.limit} remaining=${rl.remaining} resetAt=${rl.resetAt} ` +
-          `| session calls=${gqlCost.calls} points=${gqlCost.points}\n`,
-      );
+      if (narrate)
+        process.stderr.write(
+          `[gql-cost] ${costLabel(query)} cost=${rl.cost} nodes=${rl.nodeCount} ` +
+            `used=${rl.used}/${rl.limit} remaining=${rl.remaining} resetAt=${rl.resetAt} ` +
+            `| session calls=${gqlCost.calls} points=${gqlCost.points}\n`,
+        );
     }
     // Callers destructure known keys, but leaving the probe in would leak into
     // --json output paths that re-emit whole nodes. Only OUR alias is removed —
@@ -8141,6 +8210,43 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     add("herdr-cockpit", "info", `not evaluated: ${(e as Error).message}`);
   }
 
+  // GraphQL spend attribution (audit B2). INFO always: a number is a fact,
+  // never a breach — the exhaustion incident's real blocker was that no
+  // surface said WHO was spending. Reads the per-invocation ledger every
+  // command already appends; an absent ledger is a young machine, not a
+  // problem.
+  try {
+    const ledger = join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "budget.jsonl");
+    if (!existsSync(ledger)) {
+      add("gql-spend", "ok", "no spend ledger yet (~/.ralph/budget.jsonl appends per invocation)");
+    } else {
+      const cutoff = ctx.now().getTime() - 24 * 3600_000;
+      const byCmd = new Map<string, number>();
+      let total = 0;
+      for (const line of readFileSync(ledger, "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const j = JSON.parse(line);
+          if (new Date(j.at).getTime() < cutoff) continue;
+          byCmd.set(j.cmd, (byCmd.get(j.cmd) ?? 0) + (j.points ?? 0));
+          total += j.points ?? 0;
+        } catch {
+          /* one garbled line is not a broken ledger */
+        }
+      }
+      const top = [...byCmd.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+      add(
+        "gql-spend",
+        "ok",
+        total === 0
+          ? "0 points recorded in the last 24h"
+          : `${total} points in 24h — top: ${top.map(([c, p]) => `${c}=${p}`).join(" ")} (~/.ralph/budget.jsonl)`,
+      );
+    }
+  } catch (e) {
+    add("gql-spend", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
   // Installed-plugin floor (GH-1825). INFO level always — see the section
   // above. Its own try/catch keeps a throwing filesystem read out of the exit
   // code, exactly as the smells and volume blocks do.
@@ -9016,6 +9122,32 @@ export function run(argv: string[], ctx: Ctx): number {
         `scope check failed: origin "${remote.stdout.trim()}" does not match configured ` +
           `${ctx.cfg.host}/${ctx.cfg.owner}/${ctx.cfg.repo} — refusing to mutate another repo's board`,
       );
+    }
+  }
+
+  // Lane budget pre-flight (audit B2): the ranking/selector lanes are the
+  // repo's recurring GraphQL spenders, and a pass that starts under an
+  // exhausted budget half-completes and loses its markers. Checked BEFORE any
+  // read; REST /rate_limit is free and its budget is measurably independent
+  // of the GraphQL one (GH-1804's measurement). Fails OPEN on an unreadable
+  // budget — a transient outage must never read as starvation (GH-1817).
+  if (["next", "frontier", "deliver-queue", "tend-queue", "brief"].includes(cmd)) {
+    const floor = Number(process.env.RALPH_GH_BUDGET_FLOOR ?? 500);
+    if (Number.isFinite(floor) && floor > 0) {
+      const r = ctx.exec(["gh", "api", "--hostname", ctx.cfg.host, "rate_limit"]);
+      if (r.code === 0) {
+        try {
+          const g = JSON.parse(r.stdout)?.resources?.graphql;
+          if (g && typeof g.remaining === "number" && g.remaining < floor) {
+            process.stderr.write(
+              `BUDGET-DEFER graphql remaining=${g.remaining} < floor=${floor} (RALPH_GH_BUDGET_FLOOR) reset=${g.reset}\n`,
+            );
+            return 75;
+          }
+        } catch {
+          /* unreadable budget: proceed — see fail-open note above */
+        }
+      }
     }
   }
 
@@ -10027,7 +10159,13 @@ if (isMain) {
         dir: join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "sessions"),
       },
     };
-    process.exit(run(process.argv.slice(2), ctx));
+    let code: number;
+    try {
+      code = run(process.argv.slice(2), ctx);
+    } finally {
+      appendBudgetLedger(process.argv[2] ?? "(none)", new Date());
+    }
+    process.exit(code);
   } catch (e) {
     if (e instanceof UsageError) {
       process.stderr.write(`usage: ${e.message}\n`);
@@ -10036,6 +10174,11 @@ if (isMain) {
     if (e instanceof RefusalError) {
       process.stderr.write(`refused: ${e.message}\n`);
       process.exit(2);
+    }
+    if (e instanceof TransientError) {
+      // EX_TEMPFAIL: wait and re-run — never "this request is malformed".
+      process.stderr.write(`temporary: ${e.message}\n`);
+      process.exit(75);
     }
     process.stderr.write(`error: ${(e as Error).message}\n`);
     process.exit(1);
