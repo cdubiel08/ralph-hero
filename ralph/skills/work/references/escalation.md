@@ -23,8 +23,8 @@ The schema checks that the shape is answerable. It cannot check that the
 question is worth asking. That is the rest of this file.
 
 `move NNN human-needed` requires a `--why` but does **not** validate C9 —
-`board.ts:1983` enforces that the string exists, not its shape, and `answer`
-validates nothing about the question either (`board.ts:2359`). The typed check
+the `transition()` guard enforces that the string exists, not its shape, and `answer`
+validates nothing about the question either (the `answer` verb). The typed check
 is `board contract validate ralph.escalation`, run deliberately.
 
 ### Not every ask is a C9 escalation
