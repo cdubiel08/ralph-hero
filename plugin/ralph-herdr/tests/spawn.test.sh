@@ -33,6 +33,10 @@ export RALPH_HERDR_REPO="$ROOT"
 printf '{"agent":{"name":"w","agent_status":"working","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":9}}\n' \
   >"$FAKE_HERDR_FIXTURES/agent-wait-until.json"
 export RALPH_HERDR_LEDGER="$TMP/ledger/ledger.jsonl"
+# Isolate the D3 lock pre-check from the machine's real ~/.ralph/sessions —
+# a genuinely live lock there would skip a test spawn and read as a failure.
+export RALPH_HERDR_SESSIONS_DIR="$TMP/sessions"
+mkdir -p "$TMP/sessions"
 
 # The spawn path derives its branch from `board name` (GH-1858). Point it at
 # the shim so the dry-run plan stays offline — the real CLI would fetch the
@@ -357,8 +361,15 @@ SHIM
     "$(grep -c "^agent start $RNAME " "$FAKE_HERDR_LOG" 2>/dev/null | tr -d ' ')"
   is "race: exactly one worker was prompted — the invariant" "1" \
     "$(grep -c "^agent prompt $RNAME " "$FAKE_HERDR_LOG" 2>/dev/null | tr -d ' ')"
-  is "race: exactly one spawn record reached the ledger" "1" \
-    "$(jq -s '[.[] | select(.ev == "spawn")] | length' <"$RACE_LEDGER" 2>/dev/null)"
+  # Two spawn records now reach the ledger — the loser's is PROVISIONAL
+  # (written at pane creation, audit D2b, so a spawner killed pre-start still
+  # leaves a sweepable row) — but the invariant survives at the level that
+  # matters: exactly ONE record is OPEN, and the loser's is closed with the
+  # honest reason rather than left for a sweep to prove.
+  is "race: exactly one OPEN spawn record — the invariant" "1" \
+    "$(RALPH_HERDR_LEDGER="$RACE_LEDGER" ralph_ledger_open_agents | grep -c . | tr -d ' ')"
+  is "race: the loser's provisional record is closed never_started" "1" \
+    "$(jq -s '[.[] | select(.ev == "exit" and .reason == "never_started" and .via == "spawn")] | length' <"$RACE_LEDGER" 2>/dev/null)"
 
   # The pre-check catches the ordinary (non-racing) case earlier and cheaper:
   # B arrives after A is visible, so it never touches the server at all.
@@ -449,6 +460,21 @@ if git -C "$SPAWNREPO" rev-parse --verify -q origin/main >/dev/null 2>&1; then
     *"send-keys"*) ok "turn: the failure hands back the manual submit" ;;
     *) not_ok "turn: the failure hands back the manual submit — got '$turn_out'" ;;
   esac
+  # Audit D2a: the unconfirmed verdict is machine-greppable and names the pane.
+  case "$turn_out" in
+    *"SPAWN-UNCONFIRMED pW1"*) ok "turn: SPAWN-UNCONFIRMED names the pane" ;;
+    *) not_ok "turn: SPAWN-UNCONFIRMED names the pane — got '$turn_out'" ;;
+  esac
+  # Audit D1: the spawn output says which provisioning path was taken — here
+  # the fake's worktree path does not exist, and the report says so.
+  case "$turn_out" in
+    *"provision: skipped"*) ok "provision: the spawn reports the provisioning path taken" ;;
+    *) not_ok "provision: the spawn reports the provisioning path taken — got '$turn_out'" ;;
+  esac
+  # Audit D2b: the worker is LIVE (only its prompt is unsubmitted), so the
+  # provisional spawn record stays OPEN — an open row means a live worker.
+  is "turn: the provisional record stays open for the live worker" "1" \
+    "$(ralph_ledger_open_agents 2>/dev/null | grep -c . | tr -d ' ')"
   rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.json"
   REPO="$_saved_repo"
   RALPH_HERDR_LEDGER="$_saved_ledger"
@@ -456,6 +482,56 @@ if git -C "$SPAWNREPO" rev-parse --verify -q origin/main >/dev/null 2>&1; then
 else
   not_ok "turn: origin/main fixture could not be built"
 fi
+
+# ── the D3 lock pre-check: a live per-(worktree, unit) lock skips the spawn ──
+# `board claim` publishes wt-<N>-<16-hex>.json under the sessions dir
+# (GH-1956); a FRESH one means a local session is driving N right now, and the
+# spawn must SKIP (rc 2) rather than open a pane whose only act would be being
+# refused. A STALE one (older than RALPH_LOCK_TTL_MIN, the board claim's own
+# clock) asserts nothing and the spawn proceeds. Both run under dry-run: the
+# check sits before the plan branch, so a skip costs no herdr call at all.
+LQUEUE='{"next":{"number":902,"title":"Lock pre-check"},"queue":[]}'
+printf '{"session":"other-session","issue":902,"worktree":"/tmp/elsewhere","since":"2026-08-19T00:00:00Z"}' \
+  >"$TMP/sessions/wt-902-0123456789abcdef.json"
+lock_out=$(RALPH_HERDR_DRY_RUN=true spawn_work_session 902 "$LQUEUE" 2>&1)
+is "lock: a live worktree lock skips the spawn (rc 2)" "2" "$?"
+case "$lock_out" in
+  *"SKIP GH-902"*"/tmp/elsewhere"*) ok "lock: the skip names the lock's worktree" ;;
+  *) not_ok "lock: the skip names the lock's worktree — got '$lock_out'" ;;
+esac
+# The prefix trap (GH-1996): a lock on #9020 is NOT a hold on #902.
+mv "$TMP/sessions/wt-902-0123456789abcdef.json" "$TMP/sessions/wt-9020-0123456789abcdef.json"
+lock_out=$(RALPH_HERDR_DRY_RUN=true spawn_work_session 902 "$LQUEUE" 2>&1)
+is "lock: another issue's lock never skips this one (anchored match)" "0" "$?"
+rm -f "$TMP/sessions/wt-9020-0123456789abcdef.json"
+# Staleness: aged out on the board claim's clock → asserts nothing, proceed.
+printf '{"session":"other-session","issue":902,"worktree":"/tmp/elsewhere","since":"2026-08-19T00:00:00Z"}' \
+  >"$TMP/sessions/wt-902-0123456789abcdef.json"
+touch -t 202601010000 "$TMP/sessions/wt-902-0123456789abcdef.json"
+lock_out=$(RALPH_HERDR_DRY_RUN=true spawn_work_session 902 "$LQUEUE" 2>&1)
+is "lock: a stale lock asserts nothing — the spawn proceeds" "0" "$?"
+rm -f "$TMP/sessions/wt-902-0123456789abcdef.json"
+# An absent sessions dir is not evaluated, never a block.
+_saved_sessions="$RALPH_HERDR_SESSIONS_DIR"
+RALPH_HERDR_SESSIONS_DIR="$TMP/no-such-sessions-dir"
+lock_out=$(RALPH_HERDR_DRY_RUN=true spawn_work_session 902 "$LQUEUE" 2>&1)
+is "lock: an unreadable sessions dir is not evaluated (spawn proceeds)" "0" "$?"
+RALPH_HERDR_SESSIONS_DIR="$_saved_sessions"
+
+# ── the D2a modal probe: pane content named, never gated on ─────────────────
+printf '{"read":{"pane_id":"pM1","lines":["╭─ Welcome to Claude Code","Do you trust the files in this folder?","╰─"]}}' \
+  >"$FAKE_HERDR_FIXTURES/pane-read.pM1.json"
+modal_out=$(spawn_modal_probe pM1 2>&1)
+case "$modal_out" in
+  *"pane-blocked-modal pM1"*) ok "modal: a known blocking modal is named with its pane" ;;
+  *) not_ok "modal: a known blocking modal is named with its pane — got '$modal_out'" ;;
+esac
+modal_out=$(spawn_modal_probe pEmpty 2>&1)
+is "modal: an empty pane prints nothing" "" "$modal_out"
+printf 'not json\n' >"$FAKE_HERDR_FIXTURES/pane-read.raw"
+modal_out=$(spawn_modal_probe pBroken 2>&1)
+is "modal: an unreadable pane prints nothing (absence is not evidence)" "" "$modal_out"
+rm -f "$FAKE_HERDR_FIXTURES/pane-read.pM1.json" "$FAKE_HERDR_FIXTURES/pane-read.raw"
 printf '{"agent":{"name":"w","agent_status":"working","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":9}}\n' \
   >"$FAKE_HERDR_FIXTURES/agent-wait-until.json"
 

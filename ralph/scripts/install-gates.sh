@@ -17,8 +17,16 @@
 # Writes:
 #   scripts/*.sh + scripts/lib/*.sh        the merge-gate family
 #   .github/workflows/validate-attestation.yml
+#   .claude/hooks/*                        advisory orientation + poll-loop rail
+#                                          (audit C3; registration is a PRINTED
+#                                          manual step — settings.json is
+#                                          host-owned and never edited here)
+#   CLAUDE.md                              the operator-asks fragment, merged
+#                                          between BEGIN/END ralph-kit markers
+#                                          (host content outside them untouched)
 #   .github/ralph-merge-policy.json        seeded ONLY if absent
-#   .github/ralph-kit.json                 install stamp (version + sha256 per file)
+#   .github/ralph-kit.json                 install stamp (version + sha256 per
+#                                          file, + per-fragment block hashes)
 
 set -euo pipefail
 
@@ -53,6 +61,7 @@ STAMP="$TARGET/.github/ralph-kit.json"
 kit_path() {
   case "$1" in
     .github/workflows/*) printf 'workflows/%s' "${1#.github/workflows/}" ;;
+    .claude/hooks/*) printf 'hooks/%s' "${1#.claude/hooks/}" ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -163,6 +172,104 @@ if [ -f "$STAMP" ]; then
   done < <(jq -r --slurpfile m "$MANIFEST" '.files | keys[] | select(. as $k | $m[0].files | has($k) | not)' "$STAMP" 2>/dev/null)
 fi
 
+# --- fragments (audit C3) ----------------------------------------------------
+# A fragment is NOT a file copy: the block is merged into a HOST-OWNED file
+# between BEGIN/END ralph-kit markers, so the host's own content around it is
+# never touched. The same three rules as files apply to the BLOCK: unmodified
+# older block updates in place, a host-edited block is respected (skip, --force
+# overwrites), and a host that deleted the block (or the whole file) after an
+# install has opted out — respected until --force.
+FRAG_BEGIN='<!-- BEGIN ralph-kit -->'
+FRAG_END='<!-- END ralph-kit -->'
+frag_stamp_entries="" # dest\thash lines for fragment blocks this run vouches for
+
+stamped_fragment() { # previous install's record for one fragment, "" if none
+  [ -f "$STAMP" ] || { printf ''; return; }
+  jq -r --arg f "$1" '.fragments[$f] // ""' "$STAMP" 2>/dev/null || printf ''
+}
+
+# Print the marker block (inclusive) from a file; empty if no BEGIN marker.
+extract_fragment() {
+  awk -v b="$FRAG_BEGIN" -v e="$FRAG_END" \
+    'index($0, b) { inblk = 1 } inblk { print } inblk && index($0, e) { exit }' "$1"
+}
+
+while IFS=$'\t' read -r frag_dest frag_kit; do
+  [ -n "$frag_dest" ] || continue
+  frag_src="$KIT_DIR/$frag_kit"
+  [ -f "$frag_src" ] || { echo "install-gates: kit fragment missing: $frag_src" >&2; exit 2; }
+  frag_hash="$(sha256 "$frag_src")"
+  out="$TARGET/$frag_dest"
+  prev="$(stamped_fragment "$frag_dest")"
+
+  if [ ! -f "$out" ]; then
+    if [ -n "$prev" ] && [ "$FORCE" != 1 ]; then
+      echo "  SKIPPED    $frag_dest — previously installed, deleted by the host (opt-out respected); --force reinstalls"
+      skipped=$((skipped + 1)); skipped_files+=("$frag_dest")
+      frag_stamp_entries="$frag_stamp_entries$frag_dest	$prev
+"
+      continue
+    fi
+    cp "$frag_src" "$out"
+    echo "  installed  $frag_dest (created with the ralph-kit block)"
+    installed=$((installed + 1))
+    frag_stamp_entries="$frag_stamp_entries$frag_dest	$frag_hash
+"
+    continue
+  fi
+
+  if ! grep -qF "$FRAG_BEGIN" "$out"; then
+    if [ -n "$prev" ] && [ "$FORCE" != 1 ]; then
+      echo "  SKIPPED    $frag_dest — ralph-kit block removed by the host (opt-out respected); --force re-adds"
+      skipped=$((skipped + 1)); skipped_files+=("$frag_dest")
+      frag_stamp_entries="$frag_stamp_entries$frag_dest	$prev
+"
+      continue
+    fi
+    printf '\n' >> "$out"
+    cat "$frag_src" >> "$out"
+    echo "  installed  $frag_dest (ralph-kit block appended; existing content untouched)"
+    installed=$((installed + 1))
+    frag_stamp_entries="$frag_stamp_entries$frag_dest	$frag_hash
+"
+    continue
+  fi
+
+  if ! grep -qF "$FRAG_END" "$out"; then
+    echo "  SKIPPED    $frag_dest — BEGIN marker without END; refusing to edit a malformed block (fix the markers, then re-run)"
+    skipped=$((skipped + 1)); skipped_files+=("$frag_dest")
+    [ -n "$prev" ] && frag_stamp_entries="$frag_stamp_entries$frag_dest	$prev
+"
+    continue
+  fi
+
+  block_file="$(mktemp)"
+  extract_fragment "$out" > "$block_file"
+  have_hash="$(sha256 "$block_file")"
+  rm -f "$block_file"
+
+  if [ "$have_hash" = "$frag_hash" ]; then
+    current=$((current + 1))
+    frag_stamp_entries="$frag_stamp_entries$frag_dest	$frag_hash
+"
+  elif [ "$have_hash" = "$prev" ] || [ "$FORCE" = 1 ]; then
+    awk -v b="$FRAG_BEGIN" -v e="$FRAG_END" -v f="$frag_src" '
+      index($0, b) && !done { while ((getline line < f) > 0) print line; close(f); skip = 1; done = 1; next }
+      skip { if (index($0, e)) skip = 0; next }
+      { print }
+    ' "$out" > "$out.ralph-kit.tmp" && mv "$out.ralph-kit.tmp" "$out"
+    echo "  updated    $frag_dest (ralph-kit block; content outside the markers untouched)"
+    updated=$((updated + 1))
+    frag_stamp_entries="$frag_stamp_entries$frag_dest	$frag_hash
+"
+  else
+    echo "  SKIPPED    $frag_dest — ralph-kit block locally modified (differs from the kit and from the last install); --force overwrites"
+    skipped=$((skipped + 1)); skipped_files+=("$frag_dest")
+    [ -n "$prev" ] && frag_stamp_entries="$frag_stamp_entries$frag_dest	$prev
+"
+  fi
+done < <(jq -r '.fragments // {} | to_entries[] | [.key, .value.kit] | @tsv' "$MANIFEST")
+
 # Seed the minimal policy ONLY if absent — the policy is the host's to own.
 # external_review.required:false is the stated default for a repo with no
 # reviewer wired (opt-in rule); attestation stays required because the gate
@@ -202,6 +309,14 @@ mkdir -p "$TARGET/.github"
     printf '    "%s": "%s"' "$dest" "$hash"
     first=0
   done <<< "$new_stamp_entries"
+  printf '\n  },\n  "fragments": {\n'
+  first=1
+  while IFS=$'\t' read -r dest hash; do
+    [ -n "$dest" ] || continue
+    [ "$first" = 1 ] || printf ',\n'
+    printf '    "%s": "%s"' "$dest" "$hash"
+    first=0
+  done <<< "$frag_stamp_entries"
   printf '\n  }\n}\n'
 } > "$STAMP"
 
@@ -278,6 +393,22 @@ MANUAL steps this installer cannot perform:
    project scope, created under Settings -> Secrets and variables -> Actions.
    A configured board with a missing PAT fails loudly by design; a repo with
    no board config exits idle.
+
+8. Advisory hooks (installed under .claude/hooks/, never registered by this
+   script — .claude/settings.json is host-owned). To arm them, add to the
+   host's .claude/settings.json "hooks" block:
+     SessionStart -> bash .claude/hooks/ralph-kit-orient.sh
+       (one orientation line: the gates this repo ships and the one command
+       to run after any push; or "board configured, gates not installed")
+     PreToolUse, matcher "Bash|Monitor" -> bash .claude/hooks/funnel-gate-watch.sh
+       (advisory redirect of un-terminating `gh pr checks` poll loops to
+       pr-gate-watch.sh; prints to stderr, always exits 0)
+   SKIP funnel-gate-watch registration if the ralph plugin is installed in
+   this repo's sessions — the plugin already ships that rail, and a second
+   registration double-prints. The CLAUDE.md operator-asks block between the
+   BEGIN/END ralph-kit markers is managed by this installer: edits inside the
+   markers are respected on re-run (--force overwrites); everything outside
+   them is never touched.
 
 Re-run this installer after a plugin update to pick up gate fixes; files you
 have modified locally are never overwritten without --force. 'board doctor'

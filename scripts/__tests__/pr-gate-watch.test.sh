@@ -2347,6 +2347,116 @@ else
 fi
 POLICY="$POLICY_REVIEW"
 
+echo "=== A4: GATE-YOURS review hands back the thread reader ==="
+# The verdict used to name the problem (threads to adjudicate) and hand back
+# no tool — 107 hand-rolled reviewThreads GraphQL literals measured. The line
+# is an annotation, not a verdict change, and it attaches to GATE-YOURS review
+# and nowhere else.
+COMMENTED_AT_HEAD=$(jq -nc --arg bot "$BOT" --arg sha "$HEAD_SHA" \
+  '[{state:"COMMENTED", user:{login:$bot}, commit_id:$sha,
+     submitted_at:"2026-08-13T04:00:00Z"}]')
+D="$TMP_ROOT/threads-reader-yours"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$COMMENTED_AT_HEAD" \
+  "$(jq -nc '[{user:{login:"cdubiel08"}, body:"@codex review", created_at:"2026-08-13T03:00:00Z"}]')"
+run "$D"
+if [[ "$LAST_OUT" == "GATE-YOURS review"* ]] \
+   && [[ "$LAST_OUT" == *"review-threads.sh 1740 --unresolved"* ]]; then
+  pass "GATE-YOURS review names the thread reader"
+else
+  fail "thread reader line missing (out=${LAST_OUT:0:200})"
+fi
+# The reader is NOT chrome on every verdict: a wait carries no tool hint.
+D="$TMP_ROOT/threads-reader-wait"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$COMMENTED_AT_HEAD" \
+  "$(jq -nc '[{user:{login:"cdubiel08"}, body:"@codex review", created_at:"2026-08-13T05:00:00Z"}]')"
+run "$D"
+if [[ "$LAST_OUT" == "GATE-WAIT review"* ]] && [[ "$LAST_OUT" != *"review-threads.sh"* ]]; then
+  pass "GATE-WAIT review does not carry the reader line"
+else
+  fail "reader line leaked onto GATE-WAIT (out=${LAST_OUT:0:200})"
+fi
+
+echo "=== B7: a persistently silent reviewer gets an annotation, not a verdict ==="
+# --watch re-prints the SAME GATE-WAIT review line once, with a note appended,
+# after RALPH_REVIEW_ANSWER_MAX_MIN. The verdict token is unchanged (a Monitor
+# parsing the stream sees GATE-WAIT review both times), the note fires once
+# (no per-poll spam), and the board-move suggestion appears only when the head
+# branch parses under `board name`'s grammar.
+run_watch_for_note() { # run_watch_for_note <dir> -> writes $1/watch.out
+  local dir="$1"
+  rm -f "$dir/view_calls" "$dir/watch.out"
+  set +e
+  PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" \
+    RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+    RALPH_REVIEW_ANSWER_MAX_MIN=0.02 \
+    bash "$SCRIPT" 1740 --watch --interval 1 >"$dir/watch.out" 2>/dev/null &
+  WATCH_PID=$!
+  set -e
+  local i
+  for i in $(seq 1 24); do
+    grep -q "note: reviewer silent" "$dir/watch.out" 2>/dev/null && break
+    sleep 0.5
+  done
+  # Two more polls' worth: proves the note does not repeat.
+  sleep 2.5
+  kill "$WATCH_PID" 2>/dev/null || true
+  wait "$WATCH_PID" 2>/dev/null || true
+}
+
+D="$TMP_ROOT/silent-reviewer"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$COMMENTED_AT_HEAD" \
+  "$(jq -nc '[{user:{login:"cdubiel08"}, body:"@codex review", created_at:"2026-08-13T05:00:00Z"}]')"
+jq '. + {headRefName: "feat/1740-silent-reviewer"}' "$D/pr_view.json" >"$D/pr_view.json.tmp" \
+  && mv "$D/pr_view.json.tmp" "$D/pr_view.json"
+run_watch_for_note "$D"
+WATCH_OUT=$(cat "$D/watch.out")
+if [[ "$(head -1 "$D/watch.out")" == "GATE-WAIT review"* ]] \
+   && [[ "$(head -1 "$D/watch.out")" != *"note:"* ]]; then
+  pass "the first watch line is the bare verdict"
+else
+  fail "first watch line wrong: $(head -1 "$D/watch.out")"
+fi
+if grep -q "note: reviewer silent at head ${HEAD_SHA:0:8}" "$D/watch.out"; then
+  pass "the silent-reviewer note names the head"
+else
+  fail "silent-reviewer note missing (out=$WATCH_OUT)"
+fi
+if grep -q "consider: board move 1740 human-needed --why 'reviewer silent since" "$D/watch.out"; then
+  pass "the note derives the issue from the branch and names the escalation"
+else
+  fail "board-move suggestion missing (out=$WATCH_OUT)"
+fi
+note_line=$(grep "note: reviewer silent" "$D/watch.out" | head -1)
+if [[ "$note_line" == "GATE-WAIT review"* ]]; then
+  pass "the note extends the verdict line — the token stream is unchanged"
+else
+  fail "note changed the verdict token: $note_line"
+fi
+if [[ "$(grep -c 'note: reviewer silent' "$D/watch.out")" == "1" ]]; then
+  pass "the note fires exactly once, not per poll"
+else
+  fail "note repeated: $(grep -c 'note: reviewer silent' "$D/watch.out") times"
+fi
+
+# A branch outside `board name`'s grammar: the note still fires, but no board
+# command is guessed at.
+D="$TMP_ROOT/silent-reviewer-foreign-branch"
+scenario "$D" "$(jq -n --argjson g "$GREEN_CHECKS" --argjson a "$ATT_PENDING" '$g + [$a]')" \
+  "$OPEN_PR" "$COMMENTED_AT_HEAD" \
+  "$(jq -nc '[{user:{login:"cdubiel08"}, body:"@codex review", created_at:"2026-08-13T05:00:00Z"}]')"
+jq '. + {headRefName: "experiment-branch"}' "$D/pr_view.json" >"$D/pr_view.json.tmp" \
+  && mv "$D/pr_view.json.tmp" "$D/pr_view.json"
+run_watch_for_note "$D"
+if grep -q "note: reviewer silent at head" "$D/watch.out" \
+   && ! grep -q "board move" "$D/watch.out"; then
+  pass "an unparseable branch omits the board command rather than guessing"
+else
+  fail "foreign-branch note wrong: $(cat "$D/watch.out")"
+fi
+
 echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

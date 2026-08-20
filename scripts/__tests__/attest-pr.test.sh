@@ -89,8 +89,16 @@ new_case() { # new_case → sets CASE_DIR, seeds pr_view.json
 }
 
 run_attest() { # run_attest [args...] — runs with stub env; sets LAST_OUT/LAST_RC
+  # RALPH_ATTEST_RETRY_WAIT_SEC=0: the rate-limit retry's fallback nap is 30 s,
+  # which is suite time, not coverage. RALPH_ATTEST_CACHE_DIR keeps the run
+  # cache inside the case dir instead of the real ~/.ralph.
+  # RALPH_MERGE_POLICY_FILE points at a nonexistent path by default so the
+  # REPO'S OWN verify block cannot leak a derived run set into cases that test
+  # the no-evidence refusal; verify-block cases override it.
   set +e
   LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$CASE_DIR" GH_STUB_LOG="$CASE_DIR/gh.log" \
+    RALPH_ATTEST_RETRY_WAIT_SEC=0 RALPH_ATTEST_CACHE_DIR="$CASE_DIR/attest-cache" \
+    RALPH_MERGE_POLICY_FILE="${POLICY_FILE_OVERRIDE:-$CASE_DIR/no-such-policy.json}" \
     bash "$SCRIPT" "$@" 2>&1)
   LAST_RC=$?
   set -e
@@ -193,6 +201,8 @@ run_attest_in() { # run_attest_in <dir> [args...] — like run_attest, from <dir
   shift
   set +e
   LAST_OUT=$(cd "$dir" && PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$CASE_DIR" GH_STUB_LOG="$CASE_DIR/gh.log" \
+    RALPH_ATTEST_RETRY_WAIT_SEC=0 RALPH_ATTEST_CACHE_DIR="$CASE_DIR/attest-cache" \
+    RALPH_MERGE_POLICY_FILE="${POLICY_FILE_OVERRIDE:-$CASE_DIR/no-such-policy.json}" \
     bash "$SCRIPT" "$@" 2>&1)
   LAST_RC=$?
   set -e
@@ -336,6 +346,172 @@ run_attest 123 --test "npm test::0::ok" \
 [[ "$LAST_RC" -eq 75 ]] && pass "rate-limited post exits 75 (EX_TEMPFAIL)" || fail "rate-limited post rc=$LAST_RC out=$LAST_OUT"
 grep -qF "ATTESTATION NOT POSTED" <<<"$LAST_OUT" && pass "rate-limited post is named, not announced as success" || fail "no refusal token: $LAST_OUT"
 grep -qF "ATTESTATION POSTED —" <<<"$LAST_OUT" && fail "announced a post that never landed" || pass "does not claim a post that never landed"
+
+# ---------------------------------------------------------------------------
+# 15. Unrunnable run sets are REFUSED (audit B3): every run failed AND every
+#     failure is an environment error — the attestation would assert nothing.
+# ---------------------------------------------------------------------------
+echo
+echo "=== unrunnable run sets are refused (audit B3) ==="
+
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 \
+  --run "echo 'bash: vitest: command not found'; exit 127" \
+  --run "echo 'Error: Cannot find module vitest.config.ts'; exit 1" \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+[[ "$LAST_RC" -eq 75 ]] && pass "all-unrunnable run set exits 75" || fail "unrunnable rc=$LAST_RC out=$LAST_OUT"
+grep -qF "ATTESTATION REFUSED — unrunnable run set" <<<"$LAST_OUT" \
+  && pass "unrunnable refusal token emitted" || fail "unrunnable token missing: $LAST_OUT"
+grep -qF "NEXT: npm ci" <<<"$LAST_OUT" \
+  && pass "unrunnable NEXT names npm ci" || fail "no npm ci NEXT: $LAST_OUT"
+[[ ! -f "$CASE_DIR/posted_body.txt" && ! -f "$CASE_DIR/patched_body.txt" ]] \
+  && pass "unrunnable refusal posts nothing" || fail "unrunnable refusal posted anyway"
+
+# The tsc-squatter banner and the vitest config-load failure are also the shape.
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 \
+  --run "echo 'This is not the tsc command you are looking for'; exit 1" \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+[[ "$LAST_RC" -eq 75 ]] && grep -qF "unrunnable run set" <<<"$LAST_OUT" \
+  && pass "tsc-squatter banner is unrunnable" || fail "tsc squatter rc=$LAST_RC out=$LAST_OUT"
+
+# A run set with a GENUINE red still posts honestly (rc 0), even when a
+# sibling failure is unrunnable — real evidence must not be suppressed.
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 \
+  --run "echo 'bash: vitest: command not found'; exit 127" \
+  --run "echo '3 tests failed'; exit 1" \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+[[ "$LAST_RC" -eq 0 ]] && grep -q "ATTESTATION POSTED" <<<"$LAST_OUT" \
+  && pass "a genuine red among the failures still posts honestly" || fail "mixed failures rc=$LAST_RC out=$LAST_OUT"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+[[ "$(jq -r '.tests[1].exit_code' <<<"$payload")" == "1" ]] \
+  && pass "the honest red is recorded, not doctored" || fail "mixed failure payload wrong"
+
+# ---------------------------------------------------------------------------
+# 16. Policy-default run set (audit A8): with no --test/--run the verify block
+#     of the merge policy supplies the runs; pathRuns expand per changed file;
+#     explicit flags always win; an absent block keeps the refusal.
+# ---------------------------------------------------------------------------
+echo
+echo "=== policy-default run set (audit A8) ==="
+
+VERIFY_POLICY="$TMP_ROOT/policy-verify.json"
+cat >"$VERIFY_POLICY" <<'EOF'
+{ "version": 1,
+  "attestation": { "required": true },
+  "verify": {
+    "runs": ["echo base-verify-ran"],
+    "pathRuns": {
+      "mcp-server/**": ["echo cockpit-style-run-ran"],
+      "no-such-dir/**": ["echo must-never-run"]
+    }
+  } }
+EOF
+
+# The stubbed PR diff (new_run_case) includes scripts/merge-pr.sh only; seed a
+# case whose diff also touches mcp-server/** so exactly ONE pathRun matches.
+new_run_case "$LOCAL_HEAD"
+jq -n --arg sha "$LOCAL_HEAD" '{headRefOid: $sha, baseRefName: "main",
+  files: [{path: "scripts/merge-pr.sh"}, {path: "mcp-server/src/index.ts"}]}' \
+  >"$CASE_DIR/pr_view.json"
+POLICY_FILE_OVERRIDE="$VERIFY_POLICY" run_attest_in "$RUN_REPO" 123 \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+[[ "$LAST_RC" -eq 0 ]] && grep -q "ATTESTATION POSTED" <<<"$LAST_OUT" \
+  && pass "no-flags attest derives and posts from the verify block" || fail "verify derivation rc=$LAST_RC out=$LAST_OUT"
+grep -qF "RUN SET DERIVED FROM POLICY" <<<"$LAST_OUT" \
+  && pass "derivation is narrated, not silent" || fail "no derivation narration: $LAST_OUT"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+cmds=$(jq -r '[.tests[].command] | join("|")' <<<"$payload")
+[[ "$cmds" == "echo base-verify-ran|echo cockpit-style-run-ran" ]] \
+  && pass "base runs + the matched pathRun execute, in order" || fail "derived run set wrong: $cmds"
+grep -qF "must-never-run" <<<"$cmds" \
+  && fail "an unmatched pathRuns glob executed" || pass "unmatched pathRuns glob does not execute"
+
+# Explicit --run wins outright: nothing from the policy runs.
+new_run_case "$LOCAL_HEAD"
+POLICY_FILE_OVERRIDE="$VERIFY_POLICY" run_attest_in "$RUN_REPO" 123 \
+  --run "echo explicit-wins" \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+[[ "$(jq -r '.tests | length' <<<"$payload")" == "1" ]] \
+  && [[ "$(jq -r '.tests[0].command' <<<"$payload")" == "echo explicit-wins" ]] \
+  && pass "explicit --run overrides the policy verify block" || fail "explicit did not win: $(jq -c .tests <<<"$payload")"
+
+# No verify block (default POLICY_FILE_OVERRIDE points at a nonexistent file):
+# today's refusal, extended to NAME the verify block as the way to set a default.
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 --review-verdict APPROVED --reviewer "r"
+[[ "$LAST_RC" -eq 1 ]] && grep -q "at least one --test" <<<"$LAST_OUT" \
+  && pass "absent verify block keeps the refusal" || fail "absent-block behavior changed: rc=$LAST_RC $LAST_OUT"
+grep -q "verify" <<<"$LAST_OUT" && grep -q "NEXT:" <<<"$LAST_OUT" \
+  && pass "refusal names the verify block and a runnable NEXT" || fail "refusal not extended: $LAST_OUT"
+
+# ---------------------------------------------------------------------------
+# 17. --resume (audit B3): re-posts CACHED runs only while the PR head is
+#     unchanged. Stale cache refuses with the reason; no cache refuses.
+# ---------------------------------------------------------------------------
+echo
+echo "=== --resume re-posts from cache, head-pinned (audit B3) ==="
+
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 --run "echo 'cached 7 passed'" \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+[[ "$LAST_RC" -eq 0 ]] || fail "resume setup post failed: $LAST_OUT"
+[[ -f "$CASE_DIR/attest-cache/123-$LOCAL_HEAD.json" ]] \
+  && pass "run results cached keyed on (pr, head_sha)" || fail "no cache written"
+rm -f "$CASE_DIR/posted_body.txt"
+run_attest_in "$RUN_REPO" 123 --resume \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+[[ "$LAST_RC" -eq 0 ]] && grep -q "ATTESTATION POSTED" <<<"$LAST_OUT" \
+  && pass "--resume re-posts at the unchanged head" || fail "resume rc=$LAST_RC out=$LAST_OUT"
+grep -q "RUNNING:" <<<"$LAST_OUT" \
+  && fail "--resume re-ran the suite" || pass "--resume did not re-run anything"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+[[ "$(jq -r '.tests[0].command' <<<"$payload")" == "echo 'cached 7 passed'" ]] \
+  && pass "--resume publishes the cached run results" || fail "resume payload wrong: $(jq -c .tests <<<"$payload")"
+
+# Head moved since the cache was written: REFUSED with the reason.
+jq -n --arg sha "$SHA" '{headRefOid: $sha, baseRefName: "main",
+  files: [{path: "scripts/merge-pr.sh"}]}' >"$CASE_DIR/pr_view.json"
+rm -f "$CASE_DIR/posted_body.txt"
+run_attest_in "$RUN_REPO" 123 --resume \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+[[ "$LAST_RC" -eq 75 ]] && grep -qF "stale cache" <<<"$LAST_OUT" \
+  && pass "--resume refuses a moved head as stale cache" || fail "stale-cache rc=$LAST_RC out=$LAST_OUT"
+grep -q "NEXT:" <<<"$LAST_OUT" && pass "stale-cache refusal has a NEXT" || fail "stale-cache NEXT missing"
+[[ ! -f "$CASE_DIR/posted_body.txt" ]] \
+  && pass "stale cache posts nothing" || fail "stale cache posted anyway"
+
+# No cache at all: its own refusal, not the stale one.
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 --resume \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+[[ "$LAST_RC" -eq 75 ]] && grep -qF "no cached runs" <<<"$LAST_OUT" \
+  && pass "--resume with no cache refuses by name" || fail "no-cache rc=$LAST_RC out=$LAST_OUT"
+
+# --resume never mixes with fresh evidence.
+new_run_case "$LOCAL_HEAD"
+run_attest_in "$RUN_REPO" 123 --resume --run "echo fresh" \
+  --review-verdict APPROVED --reviewer "r"
+[[ "$LAST_RC" -eq 1 ]] && grep -q "never mixes" <<<"$LAST_OUT" \
+  && pass "--resume + --run rejected" || fail "resume+run accepted (rc=$LAST_RC)"
+
+# A rate-limited post in run mode points the NEXT at --resume (cache exists).
+new_run_case "$LOCAL_HEAD"
+: >"$CASE_DIR/rate_limited"
+run_attest_in "$RUN_REPO" 123 --run "echo ok" \
+  --review-verdict APPROVED --reviewer "r" --no-auto-classes --generated-by "t"
+[[ "$LAST_RC" -eq 75 ]] && grep -qF -- "--resume" <<<"$LAST_OUT" \
+  && pass "rate-limited run-mode post names --resume as the NEXT" || fail "rate-limit NEXT: rc=$LAST_RC $LAST_OUT"
+
+# --help short-circuits before everything (no gh, no policy, no git).
+set +e
+HELP_OUT=$(bash "$SCRIPT" --help 2>&1)
+HELP_RC=$?
+set -e
+[[ "$HELP_RC" -eq 0 ]] && grep -q "Usage:" <<<"$HELP_OUT" \
+  && pass "--help exits 0 with usage, before any config read" || fail "--help rc=$HELP_RC"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"

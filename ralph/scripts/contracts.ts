@@ -572,6 +572,7 @@ export const DELIVER_REASONS = [
   "retry-window",
   "deferred",
   "convergence-stalled", // GH-1977: review-convergence.sh says `stalled`/`cap-reached` — held OUT of the queue so an unattended lane stops re-requesting, surfaced as its own blocked row so it never reads as "merged"
+  "reviewer-rate-limited", // audit B7: the merge gate's own text says the external reviewer is rate-limited — a session dispatched now would only rediscover the wait. Self-clearing: the next pass re-reads the gate
   "local-session-active", // GH-1929: a live session on THIS machine holds the GH-1956 worktree lock for this unit — it may be sitting on unpushed local commits, which no remote signal can see. Held OUT of the queue until the lock ages out on RALPH_LOCK_TTL_MIN
 ] as const;
 /** THE tend-lane category list (same single-declaration rule): board.ts
@@ -785,6 +786,9 @@ function zQueueItem(mode: Mode) {
     fieldValuesTruncated: z.boolean(),
     claim: zClaimJson(mode).nullable(),
     claimRaw: z.string().nullable(),
+    // Defer mark (v0.2.0): parked out of ranking until cleared or claimed.
+    // Optional for pre-0.2.0 payloads; null on every undeferred row since.
+    defer: obj(mode, { recheck: zIsoUtc.nullable(), condition: z.string() }).nullable().optional(),
     openBlockerLabels: z.array(z.string()),
     // GH-1803: `next` runs the lean walk (no `labels` connection — 1 GraphQL
     // point per page saved), so both label fields are ABSENT from its rows.
@@ -805,8 +809,9 @@ function zNextResult(mode: Mode) {
     next: zQueueItem(mode).nullable(),
     queue: z.array(zQueueItem(mode)),
     blocked: z.array(zQueueItem(mode)),
-    diagnosis: z.enum(["no-items", "human-needed", "epic-in-flight", "stale-blocked"]).nullable(),
+    diagnosis: z.enum(["no-items", "human-needed", "epic-in-flight", "stale-blocked", "all-deferred"]).nullable(),
     humanNeededCount: z.number().int().min(0),
+    deferredCount: z.number().int().min(0).optional(),
     staleBlockedEdges: z.array(obj(mode, { number: zIssue, blockers: z.array(z.number().int()) })),
     inFlightEpics: z.array(obj(mode, { root: zIssue, child: zIssue, holder: z.string().nullable() })),
     cache: zCacheFacts(mode).optional(),

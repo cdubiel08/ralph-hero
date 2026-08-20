@@ -4,12 +4,12 @@
     "scripts/advisory-findings.sh": "91d3f882542d9107c49947b23019aaf84fbd07ba25aa266867963e7b591cfad5",
     "scripts/apply-evidence.sh": "fe3b63d0831ffba3e17407e398f229afcded343397691cc1b8c4ade938aba262",
     "scripts/apply-keywords.sh": "59e1c6ea0b85e3eed6dd828e642bce83e99095de06cfd333fcbdf63088f51eb7",
-    "scripts/attest-pr.sh": "ea1e54bf13c95661b5982692467eb32925ed6dede6cae7d2d9092fad2b8f6c3a",
+    "scripts/attest-pr.sh": "cb03071431f013fe5527f1f87fb7b04432cac22642f39461402ecd9431d6bf06",
     "scripts/codex-review-evidence.sh": "40c3e763e58741fa056067e3ba27bf501583b187cbd45a74a72c68442c74b2ad",
     "scripts/copilot-review-evidence.sh": "44928bb673c17b1db6627331ca7587eec4c412a3f6782da34e51b2b02d702813",
     "scripts/merge-pr.sh": "7e6d5764020561932a113e8d8f49d3d880669bdf4baa5baaf920f94b12695666",
     "scripts/pr-file-classes.sh": "9b36a53c532d7ce0277f516b0be38eced898abdd766ad4fe011df7a717deac38",
-    "scripts/pr-gate-watch.sh": "2475e796dd3dc62794dc671186c6bfd7ccf32238f833af3c4895b68d181873b0",
+    "scripts/pr-gate-watch.sh": "ae39ca5bb49c2a5b2e2cd88734e48eae134050f7dc53cc1d2dcb8eab2fcbf15c",
     "scripts/pr-linkage-drift.sh": "dbe3031f44ce52556ece22793b1c574b908bb104edc6ed30ff603023d31ee6be",
     "scripts/publish-apply-keywords-status.sh": "e35b5820bd0ebd24da660e09e30b4728d3d938b8b4ad2e6369bd5bb89023ce7e",
     "scripts/review-convergence.sh": "74d7afa913d2368b67278053d2e16e73d94602ea81d6c6145da425fc2d5bf0d8",
@@ -20,6 +20,17 @@
     "scripts/lib/merge-evidence.sh": "94585c10870019e73278a22af9f9372ef4f987671976a20f9b5506c55b22155a",
     ".github/workflows/validate-attestation.yml": "362b1421f23cf1e88a1ae0959c63f698e90b2c0de7a5b4c5530e3ab0cc236497",
     ".github/workflows/state-guard.yml": "4c23fd09515a03262e7f423e45733366e65ad4016094234a4b6c9a901af13fa7",
-    ".github/workflows/doctor.yml": "e851de240963f070345f6476054302210ff328040d8d739e1b25bc0fd4c26163"
+    ".github/workflows/doctor.yml": "e851de240963f070345f6476054302210ff328040d8d739e1b25bc0fd4c26163",
+    ".claude/hooks/ralph-kit-orient.sh": "7fc4bbb2908942462c915c52b42174c09a953db66b9ba5a269b270405ea53c52",
+    ".claude/hooks/funnel-gate-watch.sh": "b029e7925218f55e636df4400177f1d4432e9447eadee1ac02c3202ed1786168",
+    ".claude/hooks/lib/cmdscan.sh": "7b4ac76275f0357c1779877798538f030e557206d6bbb633883e81378fc3a563"
+  },
+  "sources": {
+    ".claude/hooks/ralph-kit-orient.sh": "ralph/scripts/kit-src/ralph-kit-orient.sh",
+    ".claude/hooks/funnel-gate-watch.sh": "ralph/hooks/funnel-gate-watch.sh",
+    ".claude/hooks/lib/cmdscan.sh": "ralph/hooks/lib/cmdscan.sh"
+  },
+  "fragments": {
+    "CLAUDE.md": { "kit": "fragments/CLAUDE.md", "src": "ralph/scripts/kit-src/claude-md-fragment.md", "sha256": "27e224aa892f3ece03c0c84d1bcde7bd251d125a8ee9d8aaeba60283f253c7be" }
   }
 }

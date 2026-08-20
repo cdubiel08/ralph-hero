@@ -22,5 +22,19 @@
       ".github/**",
       "ralph/scripts/install-loop.sh"
     ]
+  },
+  "verify": {
+    "runs": [
+      "npx vitest run ralph/scripts/",
+      "npx tsc --noEmit"
+    ],
+    "pathRuns": {
+      "plugin/ralph-herdr/cockpit/**": [
+        "bash -c 'cd plugin/ralph-herdr/cockpit && test -z \"$(gofmt -l .)\" && go vet ./... && go test ./...'"
+      ],
+      "plugin/ralph-knowledge/**": [
+        "bash -c 'cd plugin/ralph-knowledge && npm run build && npm test'"
+      ]
+    }
   }
 }

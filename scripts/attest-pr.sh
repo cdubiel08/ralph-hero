@@ -36,6 +36,40 @@
 # when no prior attestation exists — re-attestation never invents, and never
 # retypes, a review verdict.
 #
+# POLICY-DEFAULT RUN SET (audit A8): when neither --test nor --run is given,
+# the run set is derived from the optional `verify` block in
+# .github/ralph-merge-policy.json — the same file the merge gate reads, so the
+# repo's verify commands live in exactly one place:
+#
+#   "verify": {
+#     "runs":     ["npx vitest run ralph/scripts/", "npx tsc --noEmit"],
+#     "pathRuns": {"plugin/ralph-herdr/cockpit/**": ["bash -c '...gofmt...'"]}
+#   }
+#
+# `runs` always execute; each `pathRuns` entry executes only when its glob
+# matches a file the PR actually changes (bash pattern semantics — `*` crosses
+# `/`, so `dir/**` means "anything under dir/"). Explicit --test/--run ALWAYS
+# wins over the policy; a policy without a verify block keeps today's behavior
+# exactly (the refusal below). When pathRuns exist but the PR's changed files
+# cannot be read, the derivation REFUSES rather than guessing which runs apply.
+#
+# UNRUNNABLE RUN SETS ARE REFUSED (audit B3): when EVERY --run failed AND every
+# failure's output matches the unrunnable shapes (`command not found`,
+# `Cannot find module`, the npm tsc-squatter banner, a vitest config-load
+# failure), nothing is posted — an attestation whose every command failed to
+# even execute asserts nothing about the code, which is the silent-pass shape
+# this repo removes everywhere else. Exit 75, NEXT names `npm ci`. A run set
+# with REAL failures (tests genuinely red) still posts honestly, exit 0.
+#
+# VERIFY/PUBLISH SPLIT (audit B3): observed run results are cached under
+# ~/.ralph/attest-cache/ keyed on (pr, head_sha) the moment the head binding
+# passes, so a failed POST no longer costs a full re-run of the suite. A
+# rate-limited post is retried once via the gh-budget backoff; if it still
+# fails, `--resume` re-posts from the cache WITHOUT re-running — but only
+# after re-reading the PR head and confirming it has not moved (a stale cache
+# refuses with the reason; cached evidence is never published against a head
+# it did not run at).
+#
 # The comment carries the machine-readable payload in a ```json fence under
 # the <!-- ralph-attestation:v1 --> marker. head_sha is captured from the PR
 # at post time — pushing after attesting invalidates the attestation (both
@@ -47,14 +81,64 @@ set -euo pipefail
 
 MARKER='<!-- ralph-attestation:v1 -->'
 
+help() {
+  cat <<'EOF'
+Usage:
+  attest-pr.sh PR_NUMBER --run "<cmd>" [--run "<cmd>"]... \
+    (--review-verdict APPROVED --reviewer "<who>" | --carry-review) \
+    [--review-mode internal|external] [--review-url URL] \
+    [--class "name::reviewed_by"]... [--no-auto-classes] [--generated-by ID]
+  attest-pr.sh PR_NUMBER --test "command::exit_code[::summary]" [--test ...]... \
+    --review-verdict APPROVED --reviewer "<who>" [...]
+  attest-pr.sh PR_NUMBER            # no --test/--run: run set derived from the
+                                    # policy's `verify` block, when one exists
+  attest-pr.sh PR_NUMBER --resume [--carry-review | --review-verdict ...]
+
+  --run CMD          execute CMD, record its REAL exit code + output digest +
+                     the sha it ran at; repeatable; never mixes with --test
+  --test PACKED      caller-typed evidence "command::exit_code[::summary]"
+  --resume           re-post from the run cache (~/.ralph/attest-cache/)
+                     without re-running — refused unless the PR head is still
+                     the head the cached runs executed at
+  --carry-review     copy the review block from the PR's prior attestation
+  --review-verdict / --reviewer / --review-mode / --review-url
+                     the review evidence to record (from a REAL review)
+  --class / --no-auto-classes   file-class coverage declarations
+  --generated-by ID  attribution (default: $RALPH_HARNESS_ID or user@host)
+  -h, --help         this text
+
+With no --test/--run, the run set comes from .github/ralph-merge-policy.json's
+optional `verify` block ({"runs": [...], "pathRuns": {"glob/**": [...]}});
+explicit flags always win. An all-failed run set whose failures are
+environment errors (command not found / Cannot find module / wrong tsc /
+vitest config-load) is REFUSED, not posted — NEXT names `npm ci`.
+
+Exit: 0 posted (honest failures included); 75 refused-but-retryable (head
+moved, rate limited, unrunnable run set, stale cache, no prior review);
+1 usage / hard error. Consumers key on the message token, never the code.
+EOF
+}
+
 usage() {
-  grep '^#' "$0" | sed -n '2,20p' >&2
+  help >&2
   exit 1
 }
+
+# --help short-circuits BEFORE any policy/config evaluation (audit B3c): help
+# must work with no policy file, no gh auth, no git checkout.
+for a in "$@"; do
+  case "$a" in
+    -h|--help) help; exit 0 ;;
+  esac
+done
+
+# Reconstructed invocation, for NEXT: lines that mean "run this again".
+RERUN_CMD=$(printf '%q ' bash "$0" "$@"); RERUN_CMD="${RERUN_CMD% }"
 
 PR_NUMBER=""
 TESTS=()
 RUNS=()
+RESUME=false
 CARRY_REVIEW=false
 CLASSES=()
 AUTO_CLASSES=true
@@ -68,6 +152,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --test)           TESTS+=("${2:?--test needs a value}"); shift 2 ;;
     --run)            RUNS+=("${2:?--run needs a command}"); shift 2 ;;
+    --resume)         RESUME=true; shift ;;
     --carry-review)   CARRY_REVIEW=true; shift ;;
     --class)          CLASSES+=("${2:?--class needs a value}"); shift 2 ;;
     --no-auto-classes) AUTO_CLASSES=false; shift ;;
@@ -87,22 +172,27 @@ done
 [[ -z "$PR_NUMBER" ]] && usage
 if [[ ${#TESTS[@]} -gt 0 && ${#RUNS[@]} -gt 0 ]]; then
   echo "ERROR: --test and --run are mutually exclusive — observed and caller-typed evidence never mix" >&2
+  echo "NEXT: re-run with only one evidence lane (drop either every --test or every --run)" >&2
   exit 1
 fi
-if [[ ${#TESTS[@]} -eq 0 && ${#RUNS[@]} -eq 0 ]]; then
-  echo "ERROR: at least one --test \"command::exit_code[::summary]\" or --run \"<cmd>\" is required" >&2
+if [[ "$RESUME" == "true" && ( ${#TESTS[@]} -gt 0 || ${#RUNS[@]} -gt 0 ) ]]; then
+  echo "ERROR: --resume re-posts CACHED runs and never mixes with fresh --test/--run evidence" >&2
+  echo "NEXT: bash scripts/attest-pr.sh $PR_NUMBER --resume --carry-review   # or drop --resume to run fresh evidence" >&2
   exit 1
 fi
 if [[ "$CARRY_REVIEW" == "true" && ( -n "$REVIEW_VERDICT" || -n "$REVIEWER" ) ]]; then
   echo "ERROR: --carry-review and --review-verdict/--reviewer are mutually exclusive — carry copies, it never retypes" >&2
+  echo "NEXT: re-run with either --carry-review alone, or the typed --review-verdict/--reviewer pair" >&2
   exit 1
 fi
 if [[ "$CARRY_REVIEW" != "true" && ( -z "$REVIEW_VERDICT" || -z "$REVIEWER" ) ]]; then
   echo "ERROR: --review-verdict and --reviewer are required (or --carry-review)" >&2
+  echo "NEXT: bash scripts/attest-pr.sh $PR_NUMBER ... --carry-review   # or --review-verdict APPROVED --reviewer \"<who>\" from a REAL review" >&2
   exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # GH-1817: the attestation post is a write nobody re-reads in this invocation,
 # so a rate-limited `gh` exiting 0 would print "ATTESTATION POSTED" over a
@@ -110,11 +200,83 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # can never go green.
 # shellcheck source=lib/gh-budget.sh
 . "$SCRIPT_DIR/lib/gh-budget.sh"
+# me_policy_file: the same policy-path resolution every gate reader uses
+# (GH-1843) — the verify block lives in the file the gates already read.
+# shellcheck source=lib/merge-evidence.sh
+. "$SCRIPT_DIR/lib/merge-evidence.sh"
 
 # Retry-able refusal, distinct from a failing test run (which posts an honest
 # failing attestation, exit 0). 75 is EX_TEMPFAIL, matching merge-pr.sh's
 # PENDING. Consumers key on the token, never the shared exit code.
 REFUSED_EXIT=75
+
+# The run cache (audit B3): observed results keyed on (pr, head_sha), so a
+# failed post never costs a re-run of the suite. Overridable for tests.
+CACHE_DIR="${RALPH_ATTEST_CACHE_DIR:-$HOME/.ralph/attest-cache}"
+
+# --- policy-default run set (audit A8) --------------------------------------
+# Only when the caller typed NO evidence at all: explicit --test/--run always
+# wins, and --resume replaces execution entirely. A policy with no verify
+# block lands on the unchanged refusal below.
+if [[ ${#TESTS[@]} -eq 0 && ${#RUNS[@]} -eq 0 && "$RESUME" != "true" ]]; then
+  POLICY_FILE="$(me_policy_file "$REPO_ROOT")"
+  verify_json=""
+  if [[ -f "$POLICY_FILE" ]]; then
+    if ! verify_json=$(jq -ce '.verify // empty' "$POLICY_FILE" 2>/dev/null); then
+      # Unreadable policy = no derivable default. Say so rather than letting
+      # the refusal below imply the block is merely absent.
+      verify_json=""
+      echo "WARN: $POLICY_FILE is not readable JSON — cannot derive a default run set from it" >&2
+    fi
+  fi
+  if [[ -n "$verify_json" ]]; then
+    while IFS= read -r cmd; do
+      [[ -n "$cmd" ]] && RUNS+=("$cmd")
+    done < <(jq -r '(.runs // [])[]' <<<"$verify_json")
+    if [[ "$(jq -r '(.pathRuns // {}) | length' <<<"$verify_json")" -gt 0 ]]; then
+      # pathRuns need the PR's changed files. An unreadable file list must not
+      # silently drop the path-scoped runs — that would attest a cockpit
+      # change with the cockpit suite quietly skipped — so it refuses.
+      if ! changed_files=$(gh api --paginate "repos/{owner}/{repo}/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename' 2>/dev/null); then
+        echo "ATTESTATION REFUSED — verify.pathRuns is configured but PR #$PR_NUMBER's changed files could not be read; refusing to guess which path-scoped runs apply"
+        echo "NEXT: retry, or name the run set explicitly: bash scripts/attest-pr.sh $PR_NUMBER --run \"<cmd>\" ..."
+        exit "$REFUSED_EXIT"
+      fi
+      while IFS= read -r glob; do
+        [[ -n "$glob" ]] || continue
+        glob_matched=false
+        while IFS= read -r f; do
+          [[ -n "$f" ]] || continue
+          # Bash pattern semantics, documented in the header: `*` crosses `/`,
+          # so `dir/**` reads as "anything under dir/".
+          # shellcheck disable=SC2254  # unquoted $glob IS the pattern match
+          case "$f" in
+            $glob) glob_matched=true; break ;;
+          esac
+        done <<<"$changed_files"
+        if [[ "$glob_matched" == "true" ]]; then
+          while IFS= read -r cmd; do
+            [[ -n "$cmd" ]] || continue
+            dup=false
+            for existing in ${RUNS[@]+"${RUNS[@]}"}; do
+              [[ "$existing" == "$cmd" ]] && { dup=true; break; }
+            done
+            [[ "$dup" == "true" ]] || RUNS+=("$cmd")
+          done < <(jq -r --arg g "$glob" '.pathRuns[$g][]' <<<"$verify_json")
+        fi
+      done < <(jq -r '(.pathRuns // {}) | keys_unsorted[]' <<<"$verify_json")
+    fi
+    if [[ ${#RUNS[@]} -gt 0 ]]; then
+      echo "RUN SET DERIVED FROM POLICY verify block (${#RUNS[@]} command(s)):" >&2
+      printf '  %s\n' "${RUNS[@]}" >&2
+    fi
+  fi
+fi
+if [[ ${#TESTS[@]} -eq 0 && ${#RUNS[@]} -eq 0 && "$RESUME" != "true" ]]; then
+  echo "ERROR: at least one --test \"command::exit_code[::summary]\" or --run \"<cmd>\" is required (or set a repo default: a \"verify\" block in .github/ralph-merge-policy.json — {\"runs\": [...], \"pathRuns\": {\"glob/**\": [...]}})" >&2
+  echo "NEXT: bash scripts/attest-pr.sh $PR_NUMBER --run \"npx vitest run ralph/scripts/\" --carry-review   # substitute this repo's real verify commands" >&2
+  exit 1
+fi
 
 # Colour and cursor control are the default for every modern test runner, and
 # a raw control byte in the digest is a payload no downstream reader can be
@@ -135,16 +297,39 @@ strip_ansi() {
 # Executed BEFORE the head fetch: the binding compares the sha each command
 # actually ran at against the PR head as of posting time, so a push landing
 # mid-run is caught, not laundered.
+
+# The unrunnable shapes (audit B3): failures that say the ENVIRONMENT is
+# broken, not the code — a node_modules-less worktree, the npm `tsc` squatter
+# package, vitest unable to load its config. Matched against a failed run's
+# combined output.
+looks_unrunnable() {
+  case "$1" in
+    *"command not found"*)                        return 0 ;;
+    *"Cannot find module"*)                       return 0 ;;
+    *ERR_MODULE_NOT_FOUND*)                       return 0 ;;
+    *"not the tsc command you are looking for"*)  return 0 ;;  # the npm squatter banner
+    *"failed to load config"*)                    return 0 ;;  # vitest config-load failure
+  esac
+  return 1
+}
+
 RUN_RESULTS="[]"
+runs_failed=0
+runs_unrunnable=0
 for cmd in ${RUNS[@]+"${RUNS[@]}"}; do
   echo "RUNNING: $cmd" >&2
   set +e
   run_out=$(bash -c "$cmd" 2>&1)
   run_rc=$?
   set -e
+  if [[ "$run_rc" -ne 0 ]]; then
+    runs_failed=$((runs_failed + 1))
+    if looks_unrunnable "$run_out"; then runs_unrunnable=$((runs_unrunnable + 1)); fi
+  fi
   ran_at_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
   if [[ -z "$ran_at_sha" ]]; then
     echo "ERROR: --run requires a git checkout (cannot resolve HEAD)" >&2
+    echo "NEXT: cd into the PR's worktree, then re-run: $RERUN_CMD" >&2
     exit 1
   fi
   # Digest: the last non-empty output line, truncated — enough to recognize
@@ -160,6 +345,19 @@ for cmd in ${RUNS[@]+"${RUNS[@]}"}; do
     '. + [{command: $c, exit_code: $e, summary: $s, ran_at_sha: $sha}]' <<<"$RUN_RESULTS")
 done
 
+# --- refuse the unrunnable (audit B3) ----------------------------------------
+# EVERY run failed AND every failure is an environment error: this run set
+# executed nothing, so posting it would be an attestation that asserts nothing
+# — the silent-pass shape. A run set with any real result (a pass, or a
+# genuine red) still posts honestly; the merge gate is what judges those.
+# Checked before any network: the refusal needs no PR read.
+if [[ ${#RUNS[@]} -gt 0 && "$runs_failed" -eq ${#RUNS[@]} && "$runs_unrunnable" -eq ${#RUNS[@]} ]]; then
+  echo "ATTESTATION REFUSED — unrunnable run set: every command failed to even execute (missing deps / wrong tool, not failing tests); posting would attest nothing"
+  jq -r '.[] | "  \(.command)  →  \(.summary)"' <<<"$RUN_RESULTS"
+  echo "NEXT: npm ci   # provision this worktree, then re-run: $RERUN_CMD"
+  exit "$REFUSED_EXIT"
+fi
+
 pr_facts=$(gh pr view "$PR_NUMBER" --json headRefOid,baseRefName)
 head_sha=$(jq -r '.headRefOid // ""' <<<"$pr_facts")
 # The base the evidence is about (GH-1841). Retargeting a PR changes what it
@@ -168,19 +366,69 @@ head_sha=$(jq -r '.headRefOid // ""' <<<"$pr_facts")
 base_ref=$(jq -r '.baseRefName // ""' <<<"$pr_facts")
 if [[ -z "$head_sha" || -z "$base_ref" ]]; then
   echo "ERROR: cannot resolve head SHA / base ref for PR #$PR_NUMBER" >&2
+  echo "NEXT: gh pr view $PR_NUMBER --json headRefOid   # confirm gh can see the PR, then re-run: $RERUN_CMD" >&2
   exit 1
 fi
+
+# --- resume from cache (--resume mode) ---------------------------------------
+# The cache is keyed on (pr, head_sha), so "the head is unchanged" is checked
+# by construction: the file for the CURRENT head either holds the cached runs
+# or does not exist. A cache that exists only for an older head is stale, and
+# stale refuses with the reason — cached evidence is never published against a
+# head it did not run at.
+if [[ "$RESUME" == "true" ]]; then
+  cache_file="$CACHE_DIR/${PR_NUMBER}-${head_sha}.json"
+  if [[ -f "$cache_file" ]] && RUN_RESULTS=$(jq -ce '.runs' "$cache_file" 2>/dev/null); then
+    echo "RESUME: reusing $(jq -r 'length' <<<"$RUN_RESULTS") cached run result(s) for head ${head_sha:0:8} (cached at $(jq -r '.cached_at // "?"' "$cache_file" 2>/dev/null))" >&2
+  else
+    newest=""
+    for f in "$CACHE_DIR/${PR_NUMBER}-"*.json; do
+      [[ -f "$f" ]] || continue
+      if [[ -z "$newest" || "$f" -nt "$newest" ]]; then newest="$f"; fi
+    done
+    if [[ -n "$newest" ]]; then
+      cached_sha=$(jq -r '.head_sha // ""' "$newest" 2>/dev/null || echo "")
+      echo "ATTESTATION REFUSED — stale cache: cached runs executed at ${cached_sha:0:8}, PR head is now ${head_sha:0:8}; cached evidence proves nothing about the new head"
+    else
+      echo "ATTESTATION REFUSED — no cached runs for PR #$PR_NUMBER (nothing to resume)"
+    fi
+    echo "NEXT: bash scripts/attest-pr.sh $PR_NUMBER --run \"<test cmd>\" --carry-review   # run the evidence at the current head"
+    exit "$REFUSED_EXIT"
+  fi
+fi
+
+# True whenever tests[] is composed from OBSERVED runs — fresh or cached.
+RUN_MODE=false
+if [[ ${#RUNS[@]} -gt 0 || "$RESUME" == "true" ]]; then RUN_MODE=true; fi
 
 # --- head binding (--run mode) ---------------------------------------------
 # Evidence is bound to the attested commit, not just to a real run: if the PR
 # head moved between running and posting, the observed runs prove nothing
 # about what would merge.
-if [[ ${#RUNS[@]} -gt 0 ]]; then
+if [[ "$RUN_MODE" == "true" ]]; then
   moved=$(jq -r --arg h "$head_sha" '[.[] | select(.ran_at_sha != $h)] | length' <<<"$RUN_RESULTS")
   if [[ "$moved" -gt 0 ]]; then
     first_ran=$(jq -r '.[0].ran_at_sha' <<<"$RUN_RESULTS")
     echo "ATTESTATION REFUSED — head moved (ran at ${first_ran:0:8}, PR head now ${head_sha:0:8}; re-run at the new head)"
+    echo "NEXT: $RERUN_CMD   # the runs must execute at the new head"
     exit "$REFUSED_EXIT"
+  fi
+fi
+
+# --- run cache write (audit B3) ----------------------------------------------
+# Written the moment the binding passes, BEFORE any post attempt, so a failed
+# post costs a --resume rather than a re-run of the whole suite. Best-effort:
+# an unwritable cache degrades to today's behavior (re-run to retry), never
+# blocks the post.
+if [[ ${#RUNS[@]} -gt 0 ]]; then
+  if mkdir -p "$CACHE_DIR" 2>/dev/null; then
+    jq -n --argjson pr "$PR_NUMBER" --arg sha "$head_sha" --arg base "$base_ref" \
+      --argjson runs "$RUN_RESULTS" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{pr: $pr, head_sha: $sha, base_ref: $base, runs: $runs, cached_at: $at}' \
+      >"$CACHE_DIR/${PR_NUMBER}-${head_sha}.json" 2>/dev/null \
+      || echo "WARN: could not write the run cache — a failed post will need a full re-run" >&2
+  else
+    echo "WARN: could not create $CACHE_DIR — a failed post will need a full re-run" >&2
   fi
 fi
 
@@ -215,6 +463,7 @@ if [[ "$CARRY_REVIEW" == "true" ]]; then
   fi
   if [[ -z "$carried_review" ]]; then
     echo "ATTESTATION REFUSED — no prior review (no prior attestation with a review block on PR #$PR_NUMBER; a fresh verdict needs --review-verdict/--reviewer from a real review)"
+    echo "NEXT: bash scripts/pr-gate-watch.sh $PR_NUMBER   # it names the review evidence to cite, then re-run with --review-verdict/--reviewer instead of --carry-review"
     exit "$REFUSED_EXIT"
   fi
   REVIEW_VERDICT=$(jq -r '.verdict // ""' <<<"$carried_review")
@@ -230,9 +479,10 @@ generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # --- tests[] ---------------------------------------------------------------
 tests_json="[]"
-if [[ ${#RUNS[@]} -gt 0 ]]; then
+if [[ "$RUN_MODE" == "true" ]]; then
   # Observed runs only — real exit codes, digests, and ran_at_sha, captured
-  # above. Nothing caller-typed enters this lane.
+  # above (or loaded from the head-pinned cache under --resume). Nothing
+  # caller-typed enters this lane.
   tests_json="$RUN_RESULTS"
 fi
 for t in ${TESTS[@]+"${TESTS[@]}"}; do
@@ -331,28 +581,63 @@ if [[ "$comments_fetched" == "true" ]]; then
     '[.[] | select(.body | contains($m))] | last | .id // empty' <<<"$comments_json" | tail -1)
 fi
 
+# post_with_backoff <gh args...> — one bounded retry on the rate-limit shape
+# (audit B3b). The run results are already cached, so the retry risks nothing;
+# narrated on stderr because a backoff nobody can see is the silent
+# degradation GH-1817 is about. The wait comes from the budget reader (capped
+# at 300 s like the watcher's nap, so this stays interruptible), with
+# RALPH_ATTEST_RETRY_WAIT_SEC (default 30) as the floor when the budget is
+# unreadable — tests set it to 0.
+post_with_backoff() {
+  local rc=0 wait
+  gb_gh "$@" >/dev/null || rc=$?
+  if [[ $rc -eq 4 ]]; then
+    wait=$(gb_backoff_seconds)
+    [[ "$wait" =~ ^[0-9]+$ ]] || wait=0
+    [[ "$wait" -eq 0 ]] && wait="${RALPH_ATTEST_RETRY_WAIT_SEC:-30}"
+    [[ "$wait" -gt 300 ]] && wait=300
+    echo "attest-pr: rate limited — retrying the post once in ${wait}s (results are cached; --resume can re-post later without re-running)" >&2
+    sleep "$wait"
+    rc=0
+    gb_gh "$@" >/dev/null || rc=$?
+  fi
+  return "$rc"
+}
+
+# The NEXT for a rate-limited post: with observed runs the cache makes
+# --resume the cheap remedy; caller-typed --test evidence has nothing cached,
+# so the remedy is the same command again.
+rate_limited_next() {
+  if [[ "$RUN_MODE" == "true" ]]; then
+    echo "NEXT: bash scripts/attest-pr.sh $PR_NUMBER --resume --carry-review   # after the reset — re-posts the cached runs without re-running (use your review flags if there is no prior attestation to carry)" >&2
+  else
+    echo "NEXT: $RERUN_CMD   # after the rate-limit reset" >&2
+  fi
+}
+
 if [[ -n "$existing_id" ]]; then
   # Rate limiting is EX_TEMPFAIL, not a bad request: the attestation is
-  # unchanged and re-running this command is the whole remedy. Mapping it onto
-  # REFUSED_EXIT keeps that indistinguishable-from-nothing case out of the
-  # success line above.
+  # unchanged and re-posting is the whole remedy. Mapping it onto REFUSED_EXIT
+  # keeps that indistinguishable-from-nothing case out of the success line.
   # `$?` inside `if ! cmd` is the NEGATED status, so the code is captured on the
   # `||` branch instead — reading it after the inversion would see 0 and route
   # every failure to the success line.
   rc=0
-  gb_gh api --method PATCH "repos/{owner}/{repo}/issues/comments/$existing_id" \
-    -f body="$body" >/dev/null || rc=$?
+  post_with_backoff api --method PATCH "repos/{owner}/{repo}/issues/comments/$existing_id" \
+    -f body="$body" || rc=$?
   if [[ $rc -eq 4 ]]; then
-    echo "ATTESTATION NOT UPDATED — rate limited; re-run this command after the reset" >&2
+    echo "ATTESTATION NOT UPDATED — rate limited (retried once)" >&2
+    rate_limited_next
     exit "$REFUSED_EXIT"
   fi
   [[ $rc -ne 0 ]] && exit "$rc"
   echo "ATTESTATION UPDATED — PR #$PR_NUMBER @ ${head_sha:0:8} (comment $existing_id)"
 else
   rc=0
-  gb_gh pr comment "$PR_NUMBER" --body "$body" >/dev/null || rc=$?
+  post_with_backoff pr comment "$PR_NUMBER" --body "$body" || rc=$?
   if [[ $rc -eq 4 ]]; then
-    echo "ATTESTATION NOT POSTED — rate limited; re-run this command after the reset" >&2
+    echo "ATTESTATION NOT POSTED — rate limited (retried once)" >&2
+    rate_limited_next
     exit "$REFUSED_EXIT"
   fi
   [[ $rc -ne 0 ]] && exit "$rc"

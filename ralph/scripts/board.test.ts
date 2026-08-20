@@ -11,6 +11,7 @@ import { createHash as cryptoCreateHash } from "node:crypto";
 import { join } from "node:path";
 import { BRANCH_KIND_CHARS } from "./contracts.js";
 import {
+  acceptedUnactioned,
   adopt,
   answer,
   APPLY_EVIDENCE_MARKER,
@@ -34,6 +35,11 @@ import {
   countEvidence,
   createIssue,
   type Ctx,
+  DECISION_EVIDENCE_MARKER,
+  decisionEvidence,
+  diagnoseEmptyQueue,
+  parseDefer,
+  formatDefer,
   doctor,
   parsePrOrphanPolicy,
   prOrphans,
@@ -41,7 +47,6 @@ import {
   PR_ORPHAN_IGNORE_ENV,
   ESCALATION_EVIDENCE,
   encodeClaim,
-  type ExecResult,
   fetchIssue,
   formatLocalHm,
   type LeaseHold,
@@ -85,7 +90,9 @@ import {
   SMELL_DEFAULTS,
   STATES,
   transition,
+  TransientError,
   UsageError,
+  writeBootstrapConfig,
 } from "./board.js";
 
 // ---------------------------------------------------------------------------
@@ -96,7 +103,10 @@ describe("state machine", () => {
   it("encodes exactly the designed transition table — terminal states have no move edges", () => {
     expect(MACHINE).toEqual({
       Backlog: ["In Progress", "Done", "Canceled"],
-      "In Progress": ["In Review", "Human Needed", "Backlog", "Canceled"],
+      // In Progress → Done: the GH-1777 argument extended — gates key on the
+      // destination, so apply/decision units close through the gated lane
+      // instead of a fictional In Review hop that drops their --why.
+      "In Progress": ["In Review", "Done", "Human Needed", "Backlog", "Canceled"],
       "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
       "Human Needed": ["In Progress", "Backlog", "Canceled"],
       Done: [],
@@ -108,7 +118,6 @@ describe("state machine", () => {
     const illegal: Array<[string, string]> = [
       ["Backlog", "In Review"],
       ["Backlog", "Human Needed"],
-      ["In Progress", "Done"],
       ["Human Needed", "In Review"],
       ["Human Needed", "Done"],
       ["Done", "In Progress"],
@@ -703,13 +712,10 @@ describe("failure diagnostics carry their context", () => {
 // ---------------------------------------------------------------------------
 
 import {
-  data,
   FakeGh,
-  type FakeIssue,
   makeCtx,
   NOW,
   ok,
-  PROJECT_ID,
   refusalMessage,
 } from "./board.testkit.js";
 
@@ -6825,5 +6831,563 @@ describe("board closed — the Done window (GH-2062)", () => {
     });
     expect(recentDone(ctx, { staleDays: 30, auditDays: 14 }).items).toEqual([]);
     expect(recentDone(ctx, { staleDays: 30, auditDays: 30 }).items).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Idempotent terminal transitions + the In Progress → Done edge (v0.2.0)
+// ---------------------------------------------------------------------------
+
+describe("same-state moves are retries, not violations", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("Done → Done with the issue closed is a pure noop — zero mutations", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "CLOSED" });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(after.state).toBe("Done");
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("Done → Done with the issue still OPEN re-drives only the close, on evidence", () => {
+    // The half-applied shape: the field write landed, the close was lost to
+    // the network. The retry completes it — and writes nothing else.
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "OPEN", prs: [{ number: 9, merged: true }] });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(gh.mutations).toEqual(["closeIssue(#1, COMPLETED)"]);
+    expect(after.issueState).toBe("CLOSED");
+  });
+
+  it("the re-drive runs the SAME evidence gates a fresh move would — a UI 'Done' is not evidence", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "OPEN" });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(UsageError);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("Canceled → Canceled with the issue OPEN completes the NOT_PLANNED close", () => {
+    gh.issues.set(1, { number: 1, state: "Canceled", issueState: "OPEN" });
+    transition(ctx, fetchIssue(ctx, 1), "Canceled");
+    expect(gh.mutations).toEqual(["closeIssue(#1, NOT_PLANNED)"]);
+  });
+
+  it("Human Needed → Human Needed is a noop and needs no --why (a retry, not a new escalation)", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Human Needed")).not.toThrow();
+    expect(gh.mutations).toEqual([]);
+    expect(gh.comments).toEqual([]);
+  });
+
+  it("the CLI reports the noop instead of an issue line", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "CLOSED" });
+    let outText = "";
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      outText += String(s);
+      return true;
+    });
+    try {
+      expect(run(["move", "1", "done"], ctx)).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(outText).toContain('noop: #1 already "Done"');
+  });
+});
+
+describe("In Progress → Done and decision evidence", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("In Progress → Done is legal with a merged linked PR; the claim clears", () => {
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("me@test", NOW),
+      prs: [{ number: 9, merged: true }],
+    });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(after.state).toBe("Done");
+    expect(gh.mutations).toContain("closeIssue(#1, COMPLETED)");
+    expect(after.claim).toBeNull();
+  });
+
+  it("decisionEvidence: marker + artifact passes; a marker quoted in a code fence does not", () => {
+    expect(decisionEvidence([`${DECISION_EVIDENCE_MARKER}\nartifact: thoughts/shared/research/x.md`]))
+      .toBe("thoughts/shared/research/x.md");
+    expect(decisionEvidence([`discussing the protocol:\n\`\`\`\n${DECISION_EVIDENCE_MARKER}\nartifact: y\n\`\`\``]))
+      .toBeNull();
+    expect(decisionEvidence([`${DECISION_EVIDENCE_MARKER}\nno artifact line here`])).toBeNull();
+    expect(decisionEvidence([])).toBeNull();
+  });
+
+  it("a decision-evidence comment satisfies the Done gate for a unit with no PR", () => {
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("me@test", NOW),
+      comments: [`**Decision evidence**\n\n${DECISION_EVIDENCE_MARKER}\nartifact: thoughts/shared/plans/z.md`],
+    });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(after.state).toBe("Done");
+  });
+
+  it("move --decision posts the marker comment BEFORE the transition, so the record survives a refusal", () => {
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    // The fixture's comment list is static (the posted comment is recorded in
+    // gh.comments, not served back), so the gate itself still refuses — which
+    // is exactly the property under test: evidence lands first.
+    expect(() => run(["move", "1", "done", "--decision", "thoughts/shared/research/w.md"], ctx)).toThrow(UsageError);
+    expect(gh.comments.some((c) => c.body.includes(DECISION_EVIDENCE_MARKER))).toBe(true);
+    expect(gh.comments.some((c) => c.body.includes("artifact: thoughts/shared/research/w.md"))).toBe(true);
+  });
+});
+
+describe("doctor --fix completes the close the board was ahead of", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("board Done + issue OPEN + merged PR → close completed, never demoted", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "OPEN", prs: [{ number: 9, merged: true }] });
+    doctor(ctx, { fix: true });
+    expect(gh.mutations).toContain("closeIssue(#1, COMPLETED)");
+    expect(gh.mutations.filter((m) => m.includes("setState(#1, Backlog)"))).toEqual([]);
+  });
+
+  it("board Done + issue OPEN with NO evidence → reconcile demotes as before", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "OPEN" });
+    doctor(ctx, { fix: true });
+    expect(gh.mutations).toContain("setState(#1, Backlog)");
+    expect(gh.mutations.filter((m) => m.startsWith("closeIssue"))).toEqual([]);
+  });
+
+  it("board Canceled + issue OPEN → the NOT_PLANNED close is completed (cancel has no evidence gate)", () => {
+    gh.issues.set(1, { number: 1, state: "Canceled", issueState: "OPEN" });
+    doctor(ctx, { fix: true });
+    expect(gh.mutations).toContain("closeIssue(#1, NOT_PLANNED)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Defer — "the precondition is not met" as a typed parking lane (v0.2.0)
+// ---------------------------------------------------------------------------
+
+describe("defer parks an item out of ranking", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("parseDefer/formatDefer round-trip, condition-only, and garbage tolerance", () => {
+    const m = parseDefer("2026-09-01T00:00:00.000Z|model-gate repo goes public")!;
+    expect(m.recheck?.toISOString()).toBe("2026-09-01T00:00:00.000Z");
+    expect(m.condition).toBe("model-gate repo goes public");
+    expect(formatDefer(m)).toBe("2026-09-01T00:00:00.000Z|model-gate repo goes public");
+    expect(parseDefer("-|just a condition")).toEqual({ recheck: null, condition: "just a condition" });
+    expect(parseDefer("bare condition, no pipe")).toEqual({ recheck: null, condition: "bare condition, no pipe" });
+    expect(parseDefer("")).toBeNull();
+    expect(parseDefer(null)).toBeNull();
+    // A garbled instant degrades to condition-only, never to "not deferred".
+    expect(parseDefer("not-a-date|cond")).toEqual({ recheck: null, condition: "cond" });
+  });
+
+  it("a deferred item never ranks — its own bucket, not blocked", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", defer: "-|waiting on GH-2088" });
+    gh.issues.set(2, { number: 2, state: "Backlog" });
+    const { eligible, blocked, deferred } = rankNext(listItems(ctx));
+    expect(eligible.map((i) => i.number)).toEqual([2]);
+    expect(blocked).toEqual([]);
+    expect(deferred.map((i) => i.number)).toEqual([1]);
+  });
+
+  it("all-deferred is a typed empty verdict, so a loop terminates honestly", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", defer: "-|precondition" });
+    const { eligible, blocked, inFlightEpics, deferred } = rankNext(listItems(ctx));
+    const dx = diagnoseEmptyQueue(listItems(ctx), eligible, blocked, inFlightEpics, deferred);
+    expect(dx.diagnosis).toBe("all-deferred");
+    expect(dx.deferredCount).toBe(1);
+  });
+
+  it("defer verb writes comment-then-field; --clear reverses; bad --recheck refused at write time", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(run(["defer", "1", "--until", "sandbox spike lands", "--recheck", "2026-09-01T00:00:00Z"], ctx)).toBe(0);
+    expect(gh.comments.some((c) => c.body.includes("parked — sandbox spike lands"))).toBe(true);
+    expect(gh.mutations).toContain("setDefer(#1)");
+    // comment precedes the field write (interrupted run leaves the reason)
+    expect(gh.mutations.indexOf("addComment")).toBeLessThan(gh.mutations.indexOf("setDefer(#1)"));
+    expect(run(["defer", "1", "--clear"], ctx)).toBe(0);
+    expect(gh.issues.get(1)!.defer).toBeNull();
+    expect(() => run(["defer", "1", "--until", "x", "--recheck", "next tuesday"], ctx)).toThrow(UsageError);
+    expect(() => run(["defer", "1"], ctx)).toThrow(UsageError);
+  });
+
+  it("claiming a deferred unit lifts the mark — the claim IS the assertion the precondition holds", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", defer: "-|waiting" });
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(after.state).toBe("In Progress");
+    expect(gh.mutations).toContain("clearField(#1, F_defer)");
+    expect(gh.issues.get(1)!.defer).toBeNull();
+  });
+
+  it("doctor: defer-elapsed is info with the remedy; a future recheck stays ok", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", defer: "2026-07-01T00:00:00Z|cond-a" }); // past (NOW is 07-31)
+    gh.issues.set(2, { number: 2, state: "Backlog", defer: "2027-01-01T00:00:00Z|cond-b" }); // future
+    const rep = doctor(ctx);
+    const line = rep.checks.find((c) => c.name === "defer-elapsed")!;
+    expect(line.level).toBe("info");
+    expect(line.detail).toContain("#1(cond-a)");
+    expect(line.detail).not.toContain("#2");
+  });
+
+  it("doctor: untriaged-priority counts null-priority Backlog items and names the remedy", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "P1" });
+    gh.issues.set(3, { number: 3, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    const rep = doctor(ctx);
+    const line = rep.checks.find((c) => c.name === "untriaged-priority")!;
+    expect(line.level).toBe("info");
+    expect(line.detail).toContain("1 Backlog item(s)");
+    expect(line.detail).toContain("#1");
+    expect(line.detail).toContain("board priority");
+  });
+
+});
+
+// ---------------------------------------------------------------------------
+// Batch 3 (v0.2.0): stale-claim lock consult, stranded worktrees, accepted-
+// but-unmoved proposals, reviewer-rate-limited deliver rows
+// ---------------------------------------------------------------------------
+
+describe("doctor --fix consults the local worktree lock before releasing a stale claim", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("a fresh local lock holds the release and reports claim-idle-but-driven", () => {
+    const staleSince = new Date(NOW.getTime() - 200 * 60_000);
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", staleSince) });
+    // A live peer session's lock, fresh on the same TTL clock (the network-
+    // flap divergence: local heartbeat landed, board write did not).
+    const dir = mkdtempSync(join(tmpdir(), "ralph-locks-"));
+    writeFileSync(
+      join(dir, "wt-1-0123456789abcdef.json"),
+      JSON.stringify({ session: "peer-session", worktree: "/tmp/wt", since: NOW.toISOString() }),
+    );
+    const ctx2: Ctx = { ...ctx, session: { id: "my-session", dir } };
+    const rep = doctor(ctx2, { fix: true });
+    const line = rep.checks.find((c) => c.name === "claim-idle-but-driven");
+    expect(line?.level).toBe("info");
+    expect(gh.mutations.filter((m) => m.includes("clearField(#1"))).toEqual([]);
+    expect(gh.issues.get(1)!.claim).not.toBeNull();
+  });
+
+  it("no lock (or unreadable dir) keeps today's release exactly", () => {
+    const staleSince = new Date(NOW.getTime() - 200 * 60_000);
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", staleSince) });
+    doctor(ctx, { fix: true });
+    expect(gh.mutations).toContain("clearField(#1, F_claim)");
+    expect(gh.mutations).toContain("setState(#1, Backlog)");
+  });
+});
+
+describe("doctor surfaces stranded worktrees (uncommitted work, no claim)", () => {
+  it("dirty issue-branch worktree with no board claim is an info row; claimed or clean ones are not", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(7, { number: 7, state: "Backlog" });
+    gh.issues.set(8, { number: 8, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    gh.worktreeList = [
+      "worktree /repo\nHEAD abc\nbranch refs/heads/main",
+      "worktree /wt/feat-7\nHEAD abc\nbranch refs/heads/feat/7-something",
+      "worktree /wt/feat-8\nHEAD abc\nbranch refs/heads/feat/8-claimed",
+      "worktree /wt/clean-9\nHEAD abc\nbranch refs/heads/fix/9-clean",
+    ].join("\n\n");
+    gh.dirtyWorktrees = new Set(["/wt/feat-7", "/wt/feat-8"]);
+    const rep = doctor(ctx);
+    const line = rep.checks.find((c) => c.name === "worktree-uncommitted")!;
+    expect(line.level).toBe("info");
+    expect(line.detail).toContain("#7(/wt/feat-7)");
+    expect(line.detail).not.toContain("#8"); // claimed — someone is driving it
+    expect(line.detail).not.toContain("#9"); // clean — nothing stranded
+  });
+});
+
+describe("accepted-but-unmoved proposals (audit B9)", () => {
+  const proposal = `${TEND_PROPOSAL_MARKER}\n\`\`\`json\n{"action":"close-as-delivered","at":"2026-07-20T00:00:00Z"}\n\`\`\``;
+  const accepted = (extra = "") =>
+    `${TEND_RESOLUTION_MARKER}\n\`\`\`json\n{"disposition":"accepted","at":"2026-07-21T00:00:00Z"${extra}}\n\`\`\``;
+
+  it("acceptedUnactioned: accepted stands; rejected, actioned, reopen-note, and re-armed all clear it", () => {
+    expect(acceptedUnactioned([proposal, accepted()])).toEqual({ at: "2026-07-21T00:00:00Z" });
+    expect(acceptedUnactioned([proposal, accepted(',"actioned":true')])).toBeNull();
+    expect(
+      acceptedUnactioned([
+        proposal,
+        `Resolved by \`board reopen\`.\n${accepted()}`,
+      ]),
+    ).toBeNull();
+    expect(acceptedUnactioned([proposal, accepted(), proposal])).toBeNull(); // re-armed
+    expect(
+      acceptedUnactioned([proposal, `${TEND_RESOLUTION_MARKER}\n\`\`\`json\n{"disposition":"rejected","at":"x"}\n\`\`\``]),
+    ).toBeNull();
+  });
+
+  it("the smell line lists an accepted-unactioned Backlog item immediately", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", comments: [proposal, accepted()] });
+    const rep = doctor(ctx);
+    const line = rep.checks.find((c) => c.name === "tend-proposal-stale")!;
+    expect(line.level).toBe("info");
+    expect(line.detail).toContain("#1(accepted 2026-07-21, unactioned)");
+  });
+
+  it("resolve --accept prints the follow-up disposition commands", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", comments: [proposal] });
+    let outText = "";
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      outText += String(s);
+      return true;
+    });
+    try {
+      expect(run(["resolve", "1", "--accept"], ctx)).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(outText).toContain("complete the disposition");
+    expect(outText).toContain("board move 1 done");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batch 4 (v0.2.0): typed transport handling + budget machinery (audit B2)
+// ---------------------------------------------------------------------------
+
+describe("typed transport handling", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("a transport-shaped READ failure is retried, then typed TransientError", () => {
+    let calls = 0;
+    const flaky: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ").startsWith("gh api graphql")) {
+          calls++;
+          return { code: 1, stdout: "", stderr: "net/http: TLS handshake timeout" };
+        }
+        return ctx.exec(argv, stdin);
+      },
+    };
+    expect(() => ghGraphQL(flaky, "query { viewer { login } }", {})).toThrow(TransientError);
+    expect(calls).toBe(3); // initial + 2 bounded retries
+  });
+
+  it("a MUTATION never retries on transport failure — read-back over replay (GH-1973)", () => {
+    let calls = 0;
+    const flaky: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ").startsWith("gh api graphql")) {
+          calls++;
+          return { code: 1, stdout: "", stderr: "connection reset by peer" };
+        }
+        return ctx.exec(argv, stdin);
+      },
+    };
+    expect(() => ghGraphQL(flaky, "mutation { x }", {})).toThrow(/gh api graphql failed/);
+    expect(calls).toBe(1);
+  });
+
+  it("a non-transport failure is not retried and stays a plain error", () => {
+    let calls = 0;
+    const broken: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ").startsWith("gh api graphql")) {
+          calls++;
+          return { code: 1, stdout: "", stderr: "GraphQL: Field 'nope' doesn't exist" };
+        }
+        return ctx.exec(argv, stdin);
+      },
+    };
+    expect(() => ghGraphQL(broken, "query { viewer { login } }", {})).toThrow(Error);
+    expect(() => ghGraphQL(broken, "query { viewer { login } }", {})).not.toThrow(TransientError);
+    expect(calls).toBe(2); // one per assertion — no retries
+  });
+
+  it("RATE_LIMITED in the body is a TransientError, never a GraphQLError", () => {
+    const limited: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ").startsWith("gh api graphql"))
+          return {
+            code: 0,
+            stdout: JSON.stringify({ errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] }),
+            stderr: "",
+          };
+        return ctx.exec(argv, stdin);
+      },
+    };
+    expect(() => ghGraphQL(limited, "query { viewer { login } }", {})).toThrow(TransientError);
+  });
+
+  it("lane pre-flight defers under the floor (exit 75) and fails OPEN on an unreadable budget", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const starved: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ") === `gh api --hostname github.com rate_limit`)
+          return { code: 0, stdout: JSON.stringify({ resources: { graphql: { remaining: 3, reset: 1755600000 } } }), stderr: "" };
+        return ctx.exec(argv, stdin);
+      },
+    };
+    const errSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const old = process.env.RALPH_GH_BUDGET_FLOOR;
+      process.env.RALPH_GH_BUDGET_FLOOR = "500";
+      try {
+        expect(run(["next"], starved)).toBe(75);
+        // Unreadable budget (FakeGh answers code 1 for rate_limit): proceeds.
+        expect(run(["next"], ctx)).toBe(0);
+      } finally {
+        if (old === undefined) delete process.env.RALPH_GH_BUDGET_FLOOR;
+        else process.env.RALPH_GH_BUDGET_FLOOR = old;
+      }
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batch 5 (v0.2.0): brief / who / help <verb> / bootstrap / add / C1
+// ---------------------------------------------------------------------------
+
+describe("orientation verbs (audit A2/A5)", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  let outText: string;
+  let spy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+    outText = "";
+    spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      outText += String(s);
+      return true;
+    }) as any;
+  });
+  afterEach(() => spy.mockRestore());
+
+  it("brief: one read carries next head, queue counts, deliver/tend counts and leases", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1" });
+    gh.issues.set(2, { number: 2, state: "In Review", prs: [{ number: 9, merged: false }] });
+    gh.issues.set(3, { number: 3, state: "Backlog", defer: "-|later" });
+    expect(run(["brief"], ctx)).toBe(0);
+    expect(outText).toContain("next: #1");
+    expect(outText).toMatch(/1 eligible.*1 deferred/s);
+    expect(outText).toContain("deliver");
+  });
+
+  it("brief --json is the same facts, typed; leases null ≠ []", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(run(["brief", "--json"], ctx)).toBe(0);
+    const j = JSON.parse(outText);
+    expect(j.next[0].number).toBe(1);
+    expect(j.counts.eligible).toBe(1);
+    expect(j.leases).toBeNull(); // makeCtx has no session dir — not evaluated, never "nobody"
+  });
+
+  it("who reads the local leases and says 'not evaluated' when the dir is unreadable", () => {
+    expect(run(["who"], ctx)).toBe(0);
+    expect(outText).toContain("not evaluated");
+    outText = "";
+    const dir = mkdtempSync(join(tmpdir(), "ralph-who-"));
+    writeFileSync(
+      join(dir, "wt-42-0123456789abcdef.json"),
+      JSON.stringify({ session: "s-1", worktree: "/wt/42", since: NOW.toISOString() }),
+    );
+    const ctx2: Ctx = { ...ctx, session: { id: "s-1", dir } };
+    expect(run(["who"], ctx2)).toBe(0);
+    expect(outText).toContain("#42 (this session) in /wt/42");
+  });
+
+  it("help <verb> prints the per-verb entry; unknown verb exits 64 with the list", () => {
+    expect(run(["help", "defer"], ctx)).toBe(0);
+    expect(outText).toContain("board defer <n> --until");
+    outText = "";
+    expect(run(["help", "no-such-verb"], ctx)).toBe(64);
+    expect(outText).toContain("no such verb");
+  });
+});
+
+describe("bootstrap and add (audit C2/C4)", () => {
+  it("writeBootstrapConfig validates flags, writes .ralph.json once, refuses overwrite", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ralph-boot-"));
+    expect(() => writeBootstrapConfig(dir, {})).toThrow(UsageError);
+    expect(() => writeBootstrapConfig(dir, { owner: "o", repo: "r", project: "x" })).toThrow(UsageError);
+    const path = writeBootstrapConfig(dir, { owner: "o", repo: "r", project: "7" });
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ owner: "o", repo: "r", projectNumber: 7 });
+    expect(() => writeBootstrapConfig(dir, { owner: "o", repo: "r", project: "7" })).toThrow(/already exists/);
+  });
+
+  it("add refuses a foreign issue under the default deny posture, with the env named", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(() => run(["add", "https://github.com/other/repo/issues/9"], ctx)).toThrow(/RALPH_ALLOW_FOREIGN_REPO_ITEMS|foreign/i);
+  });
+});
+
+describe("readiness merge-gate checks its stated alternative (audit C1)", () => {
+  it("required status checks on the default branch satisfy the rung without a scripted gate", () => {
+    const gh = new FakeGh();
+    const base = makeCtx(gh);
+    const ctx: Ctx = {
+      ...base,
+      exec: (argv, stdin) => {
+        const cmd = argv.join(" ");
+        if (cmd === "gh api --hostname github.com repos/cdubiel08/ralph-hero")
+          return { code: 0, stdout: JSON.stringify({ default_branch: "main" }), stderr: "" };
+        if (cmd === "gh api --hostname github.com repos/cdubiel08/ralph-hero/rules/branches/main")
+          return {
+            code: 0,
+            stdout: JSON.stringify([{ type: "pull_request" }, { type: "required_status_checks" }]),
+            stderr: "",
+          };
+        return base.exec(argv, stdin);
+      },
+    };
+    const rep = readiness(ctx);
+    const gate = rep.checks.find((c) => c.name === "merge-gate")!;
+    expect(gate.status).toBe("ok");
+    expect(gate.detail).toContain("required status checks");
+  });
+
+  it("unreadable rules stay a miss — a read we could not make is not 'satisfied'", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh); // FakeGh answers code 1 for the repo API
+    const rep = readiness(ctx);
+    const gate = rep.checks.find((c) => c.name === "merge-gate")!;
+    expect(gate.status).toBe("miss");
   });
 });

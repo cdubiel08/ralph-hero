@@ -101,15 +101,37 @@
 
 set -euo pipefail
 
+# Printed by -h/--help, which short-circuits in the arg loop BEFORE the merge
+# policy is read — help must work in a repo with no policy and no gh auth.
 usage() {
   cat <<'EOF'
 Usage: pr-gate-watch.sh PR_NUMBER [--watch] [--interval SECONDS]
 
-  --watch             poll until a terminal verdict; print each state change
-  --interval SECONDS  poll interval in --watch mode (default 30)
+Answers one question about a PR on a merge-gated repo: WHOSE TURN IS IT.
+Never wait on `gh pr checks` — the ralph-attestation status is pending by
+design until scripts/attest-pr.sh runs, so a pending-poll loop cannot fire.
 
-Verdicts: GATE-READY | GATE-YOURS | GATE-WAIT | GATE-FAIL | GATE-DONE
-Exit: 0 terminal, 10 still waiting, 2 usage error.
+  --watch             poll until a terminal verdict; print each state change
+  --interval SECONDS  poll interval in --watch mode (default 30, must be > 0)
+  -h, --help          this text
+
+Verdicts (one line on stdout, precedence top wins):
+  GATE-DONE            PR is not open — nothing to wait for          exit 0
+  GATE-FAIL <gate>     policy / ci / attestation / review / merge /
+                       apply is red — the line names the fix         exit 0
+  GATE-YOURS <what>    your move (review nudge, or run attest-pr.sh) exit 0
+  GATE-WAIT <what>     someone else's move; --watch keeps polling    exit 10
+  GATE-READY           green + reviewed + attested → merge-pr.sh     exit 0
+
+Annotations appended to verdicts (measure, never gate): advisory-findings
+count, linkage drift, ruleset contexts, review staleness, convergence, the
+unresolved-thread reader (scripts/review-threads.sh), and — in --watch mode —
+a silent-reviewer note once the same GATE-WAIT review verdict has persisted
+past RALPH_REVIEW_ANSWER_MAX_MIN minutes (default 30; 0 disables; fractional
+values accepted). Annotations extend the line after the verdict token; the
+token stream a Monitor parses does not change.
+
+Exit: 0 terminal verdict, 10 still waiting, 2 usage error, 1 gh unreachable.
 EOF
 }
 
@@ -196,6 +218,7 @@ CONVERGENCE_SH="${RALPH_CONVERGENCE_SH:-$PROJECT_ROOT/scripts/review-convergence
 LINKAGE_DRIFT_SH="${RALPH_LINKAGE_DRIFT_SH:-$PROJECT_ROOT/scripts/pr-linkage-drift.sh}"
 RULESET_CONTEXTS_SH="${RALPH_RULESET_CONTEXTS_SH:-$PROJECT_ROOT/scripts/ruleset-contexts.sh}"
 STALENESS_SH="${RALPH_REVIEW_STALENESS_SH:-$PROJECT_ROOT/scripts/review-staleness.sh}"
+THREADS_SH="${RALPH_REVIEW_THREADS_SH:-$PROJECT_ROOT/scripts/review-threads.sh}"
 # The "not evaluated" evidence value: review mode, an exempt author, or a PR
 # that is already closed. ok=false is inert wherever the ladder waives review.
 CODEX_NONE='{"ok":false,"turn":"reviewer","detail":"review evidence not evaluated","reviewer":"","review_url":""}'
@@ -948,6 +971,22 @@ gather() {
       fi
       ;;
   esac
+
+  # The thread READER, handed back with the one verdict that says "adjudicate
+  # the findings" (audit A4). GATE-YOURS review names the problem — unresolved
+  # threads, a review to answer — and until now handed back no tool, so every
+  # session hand-rolled the same reviewThreads GraphQL (107 literals measured
+  # across 7 sessions). Not a gate, not a verdict change: one runnable line,
+  # only where the next move is reading threads, and only when the script
+  # actually ships in this repo — naming a tool a host repo does not have
+  # would be a redirect to a dead end (the GH-1717 rule).
+  case "$verdict" in
+    "GATE-YOURS review"*)
+      if [ -x "$THREADS_SH" ]; then
+        verdict="${verdict} | read the threads: bash scripts/review-threads.sh $PR --unresolved (reply: --reply <id> -m; resolve+nudge: --resolve <id>)"
+      fi
+      ;;
+  esac
   printf '%s' "$verdict"
 }
 
@@ -1016,17 +1055,80 @@ if [ "$WATCH" = false ]; then
   exit 10
 fi
 
+# --- silent-reviewer annotation (audit B7, reshaped) -------------------------
+# A review round that never completes had no bound: GH-1849 capped the number
+# of rounds, but a round whose reviewer simply never answers is not a round —
+# a whole session was lost polling a silent Codex (feature-gh-1829), and 16
+# GATE-WAIT review verdicts named the wait with no deadline. Deliberately NOT
+# a new verdict: this file already documents (at the convergence block) why a
+# GATE-STALLED would have to outrank GATE-YOURS to be seen, and would then be
+# telling a driver "do not act" from a classifier whose entire contract is
+# naming whose turn it is. So: once the SAME GATE-WAIT review verdict has
+# persisted past RALPH_REVIEW_ANSWER_MAX_MIN (default 30; 0 disables;
+# fractional minutes accepted), the line is re-printed ONCE with a note
+# appended — the verdict token is unchanged, the exit semantics are unchanged,
+# the escalation stays the driver's. The `board move` suggestion appears only
+# when the issue number is derivable from the head branch (`board name`'s
+# grammar, legacy included); guessing a number would be worse than omitting it.
+: "${RALPH_REVIEW_ANSWER_MAX_MIN:=30}"
+case "$RALPH_REVIEW_ANSWER_MAX_MIN" in
+  ''|*[!0-9.]*|*.*.*) RALPH_REVIEW_ANSWER_MAX_MIN=30 ;;  # non-numeric → default
+esac
+ANSWER_MAX_SEC=$(awk -v m="$RALPH_REVIEW_ANSWER_MAX_MIN" 'BEGIN{printf "%d", m*60}')
+
+silent_reviewer_note() { # <since_epoch> -> the note text (one line, no newline)
+  local since="$1" now mins meta sha branch issue since_iso consider
+  now=$(date +%s)
+  mins=$(( (now - since) / 60 ))
+  # One cheap read, at most once per persisted verdict — the note fires once.
+  meta=$(gh pr view "$PR" --json headRefOid,headRefName 2>/dev/null) || meta=""
+  sha=$(jq -r '.headRefOid // ""' <<<"$meta" 2>/dev/null) || sha=""
+  branch=$(jq -r '.headRefName // ""' <<<"$meta" 2>/dev/null) || branch=""
+  issue=""
+  if [[ "$branch" =~ ^(feat|fix|chore|docs|apply)/([0-9]+)- ]]; then
+    issue="${BASH_REMATCH[2]}"
+  elif [[ "$branch" =~ ^feature/GH-([0-9]+)$ ]]; then
+    issue="${BASH_REMATCH[1]}"
+  fi
+  # BSD date first (this repo's dev machines), GNU as the fallback (CI).
+  since_iso=$(date -u -r "$since" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d "@$since" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || echo "epoch $since")
+  consider=""
+  if [ -n "$issue" ]; then
+    consider=" — consider: board move $issue human-needed --why 'reviewer silent since $since_iso'"
+  fi
+  printf 'note: reviewer silent at head %s for %s min%s' "${sha:0:8}" "$mins" "$consider"
+}
+
 # --watch: emit only on state change, so a Monitor gets one notification per
 # meaningful transition rather than one per poll. Transient gh failures must
 # not kill a long watch, so they are tolerated until they look permanent.
+# `last` holds the BARE verdict even when the note-augmented line is printed,
+# so the note re-prints the line exactly once and later identical polls stay
+# silent — a per-poll growing "for N min" would be one line per poll, which is
+# the notification spam the state-change rule exists to prevent.
 last=""
 fails=0
+verdict_since=$(date +%s)
+silent_noted=false
 while :; do
   if line=$(snapshot); then
     fails=0
     if [ "$line" != "$last" ]; then
       printf '%s\n' "$line"
       last="$line"
+      verdict_since=$(date +%s)
+      silent_noted=false
+    elif [ "$silent_noted" = false ] && [ "$ANSWER_MAX_SEC" -gt 0 ]; then
+      case "$line" in
+        "GATE-WAIT review"*)
+          if [ $(( $(date +%s) - verdict_since )) -ge "$ANSWER_MAX_SEC" ]; then
+            printf '%s | %s\n' "$line" "$(silent_reviewer_note "$verdict_since")"
+            silent_noted=true
+          fi
+          ;;
+      esac
     fi
     if is_terminal "$line"; then exit 0; fi
   else

@@ -19,13 +19,12 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   BOARD_STATES,
-  type BranchKind,
   BRANCH_KIND_CHARS,
   branchKindFor,
   CLAIM_MAX_HOLDERS,
@@ -42,7 +41,6 @@ import {
   heartbeat,
   isContractId,
   isMember,
-  isValidHolder,
   type Lane,
   LANE_CHARS,
   type LiveLintDeps,
@@ -84,7 +82,14 @@ export type State = (typeof STATES)[number];
  *  (surfaced by `tend-queue`), not as a state. */
 export const MACHINE: Record<State, readonly State[]> = {
   Backlog: ["In Progress", "Done", "Canceled"],
-  "In Progress": ["In Review", "Human Needed", "Backlog", "Canceled"],
+  // In Progress → Done is legal for the same reason Backlog → Done is
+  // (GH-1777): the Done evidence gates key on the DESTINATION, so a unit whose
+  // completion is not a PR — an apply unit closing on its evidence comment, a
+  // decision unit closing on its recorded artifact — closes through the gated
+  // lane instead of laundering through a fictional In Review hop that drops
+  // its --why. Nothing is weakened: the gates run identically on every edge
+  // into Done.
+  "In Progress": ["In Review", "Done", "Human Needed", "Backlog", "Canceled"],
   "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
   "Human Needed": ["In Progress", "Backlog", "Canceled"],
   Done: [],
@@ -185,6 +190,36 @@ export function claimExpiry(claim: Claim, ttlMin: number): Date {
 
 /** Local-time HH:MM. The expiry hint only fires inside the final quarter of the
  *  TTL, so the time it names is always minutes away — a date would be noise. */
+// ---------------------------------------------------------------------------
+// Defer — "the precondition is not met" as a typed, parking write lane.
+// The mark lives in a project TEXT field ("Defer"), which rides the
+// fieldValues page every walk already pays for — zero extra GraphQL cost,
+// visible as a board column, and never a label (rankNext's eligibility is a
+// function of dependency edges and field values, never labels — GH-1803).
+// Value grammar mirrors Claim's: `{recheck-iso|-}|{condition}`.
+// ---------------------------------------------------------------------------
+
+export interface DeferMark {
+  recheck: Date | null; // when to look again; null = no date, condition-only
+  condition: string; // the observable the item waits on
+}
+
+export function parseDefer(raw: string | null | undefined): DeferMark | null {
+  if (!raw || !raw.trim()) return null;
+  const idx = raw.indexOf("|");
+  if (idx < 0) return { recheck: null, condition: raw.trim() };
+  const iso = raw.slice(0, idx).trim();
+  const t = new Date(iso).getTime();
+  return {
+    recheck: iso !== "-" && Number.isFinite(t) ? new Date(iso) : null,
+    condition: raw.slice(idx + 1).trim(),
+  };
+}
+
+export function formatDefer(m: DeferMark): string {
+  return `${m.recheck ? m.recheck.toISOString() : "-"}|${m.condition}`;
+}
+
 export function formatLocalHm(d: Date): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
@@ -214,6 +249,10 @@ export interface QueueItemCore {
   fieldValuesTruncated: boolean; // fail closed: state/claim reads unreliable = not eligible
   claim: Claim | null;
   claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited)
+  /** Defer mark ("the precondition is not met") — a deferred item never
+   *  ranks. Optional so pure-ranking fixtures stay terse; every walk
+   *  populates it (the field rides the same fieldValues page). */
+  defer?: DeferMark | null;
   // Tend-lane inputs (GH-1712) — optional so pure-ranking fixtures stay terse;
   // listItemsFull always populates them.
   updatedAt?: string | null;
@@ -369,8 +408,14 @@ export function rankNext(
   eligible: QueueItemWithBlockers[];
   blocked: QueueItemWithBlockers[];
   inFlightEpics: InFlightEpic[];
+  deferred: QueueItemWithBlockers[];
 } {
-  const backlog = items.filter((i) => i.state === "Backlog" && !i.claim);
+  // A deferred item never ranks — its stated precondition is not met, and
+  // re-dispatching it burns a session to rediscover that. Returned as its own
+  // bucket, not folded into `blocked`: a defer is a judgment on the record
+  // (`board defer --clear` lifts it), while blocked is a dependency fact.
+  const deferred = items.filter((i) => i.state === "Backlog" && !i.claim && i.defer);
+  const backlog = items.filter((i) => i.state === "Backlog" && !i.claim && !i.defer);
   const ineligible = (i: QueueItemWithBlockers) =>
     i.openBlockers.length > 0 || i.blockersTruncated || i.fieldValuesTruncated;
   const blocked = backlog.filter(ineligible);
@@ -491,7 +536,7 @@ export function rankNext(
         ...(childrenBlocked !== undefined ? { childrenBlocked } : {}),
       };
     });
-  return { eligible, blocked, inFlightEpics };
+  return { eligible, blocked, inFlightEpics, deferred };
 }
 
 /** A blocked item whose every open blocker the board itself calls finished. */
@@ -501,10 +546,11 @@ export interface StaleBlockedEdge {
 }
 
 export interface EmptyQueueReport {
-  diagnosis: "no-items" | "human-needed" | "epic-in-flight" | "stale-blocked" | null;
+  diagnosis: "no-items" | "human-needed" | "epic-in-flight" | "stale-blocked" | "all-deferred" | null;
   humanNeededCount: number;
   staleBlockedEdges: StaleBlockedEdge[];
   inFlightEpics: InFlightEpic[];
+  deferredCount: number;
 }
 
 /** Board states that assert the work is finished; an item parked here still
@@ -524,8 +570,10 @@ export function diagnoseEmptyQueue(
   eligible: QueueItemWithBlockers[],
   blocked: QueueItemWithBlockers[],
   inFlightEpics: InFlightEpic[] = [],
+  deferred: QueueItemWithBlockers[] = [],
 ): EmptyQueueReport {
   const humanNeededCount = items.filter((i) => i.state === "Human Needed").length;
+  const deferredCount = deferred.length;
   // Match on openBlockerLabels, not bare numbers: issue numbers repeat across
   // repos, and `items` is own-repo only, so a foreign owner/repo#9 must never
   // resolve against our own #9. Own-repo labels are exactly "#N".
@@ -548,8 +596,9 @@ export function diagnoseEmptyQueue(
     : humanNeededCount > 0 ? "human-needed"
     : inFlightEpics.length > 0 ? "epic-in-flight"
     : staleBlockedEdges.length > 0 ? "stale-blocked"
+    : deferredCount > 0 && blocked.length === 0 ? "all-deferred"
     : null;
-  return { diagnosis, humanNeededCount, staleBlockedEdges, inFlightEpics };
+  return { diagnosis, humanNeededCount, staleBlockedEdges, inFlightEpics, deferredCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -822,6 +871,25 @@ function findRepoRoot(startDir: string): string {
   }
 }
 
+/** Write the .ralph.json `board bootstrap` runs from (audit C2). Refuses to
+ *  overwrite: there is no --force anywhere in this CLI, and a config that
+ *  already exists is edited by hand, not clobbered by a bring-up command. */
+export function writeBootstrapConfig(repoRoot: string, flags: Record<string, unknown>): string {
+  const owner = typeof flags.owner === "string" ? flags.owner.trim() : "";
+  const repo = typeof flags.repo === "string" ? flags.repo.trim() : "";
+  const project = Number(flags.project);
+  if (!owner || !repo || !Number.isInteger(project) || project <= 0) {
+    throw new UsageError(
+      "bootstrap requires --owner <owner> --repo <repo> --project <number> (optional --host <ghe-host>)",
+    );
+  }
+  const path = join(repoRoot, ".ralph.json");
+  if (existsSync(path)) throw new UsageError(`${path} already exists — edit it by hand instead of re-bootstrapping`);
+  const host = typeof flags.host === "string" && flags.host ? { host: flags.host } : {};
+  writeFileSync(path, JSON.stringify({ owner, repo, projectNumber: project, ...host }, null, 2) + "\n");
+  return path;
+}
+
 /** Config precedence: .ralph.json > tracked .claude/settings.json env block.
  *  process.env fills only lockTtlMin/holder (never scope — scope is repo-anchored). */
 export function loadConfig(repoRoot: string): Config {
@@ -866,7 +934,8 @@ export function loadConfig(repoRoot: string): Config {
   if (!owner || !repo || !projectNumber) {
     throw new UsageError(
       "config missing: need owner/repo/projectNumber from .ralph.json or .claude/settings.json env " +
-        "(RALPH_GH_OWNER, RALPH_GH_REPO, RALPH_GH_PROJECT_NUMBER)",
+        "(RALPH_GH_OWNER, RALPH_GH_REPO, RALPH_GH_PROJECT_NUMBER). " +
+        "New here? `board bootstrap --owner <o> --repo <r> --project <n>` writes .ralph.json and provisions the board.",
     );
   }
 
@@ -1215,6 +1284,29 @@ export const realExec: ExecFn = (argv, stdin) => {
 
 export class UsageError extends Error {}
 export class RefusalError extends Error {} // invariant refusal — exit 2
+/** Temporary failure — exit 75 (EX_TEMPFAIL): "wait and re-run", never "this
+ *  request is malformed". Rate limits and lane budget deferrals land here so
+ *  a caller can distinguish backing off from being wrong (the gh-budget.sh
+ *  exit-4 typing, extended into board.ts's own error surface — audit B2). */
+export class TransientError extends Error {
+  constructor(
+    message: string,
+    public readonly resetAt: string | null = null,
+  ) {
+    super(message);
+  }
+}
+
+/** Synchronous nap for the transport retry — reads only, bounded, jittered. */
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Transport-shaped failure: the request may never have reached GitHub, so a
+ *  READ is safe to retry. An HTTP error body or GraphQL errors are NOT
+ *  transport — those answers are real and retrying them is spend. */
+const TRANSPORT_RE =
+  /\b(i\/o timeout|timed? ?out|connection (reset|refused|closed)|TLS handshake|unexpected EOF|temporary failure|no such host|network is unreachable|could not resolve host)\b/i;
 
 /** GraphQL-level failure (body.errors non-empty). Carries the structured
  *  error types so callers can branch on `NOT_FOUND` etc. instead of matching
@@ -1328,6 +1420,24 @@ export function instrumentQuery(query: string): { query: string; instrumented: b
 /** Cumulative points observed this process, for the per-command totals line. */
 export const gqlCost = { calls: 0, points: 0 };
 
+/** One ledger line per spending invocation (audit B2): attribution was the
+ *  actual blocker in the 5000-pt exhaustion incident — the burner was
+ *  invisible to every transcript. Best-effort by construction: a failed
+ *  append must never fail the command that did the real work. */
+export function appendBudgetLedger(cmd: string, now: Date): void {
+  if (gqlCost.calls === 0) return;
+  try {
+    const dir = join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(
+      join(dir, "budget.jsonl"),
+      JSON.stringify({ at: now.toISOString(), cmd, calls: gqlCost.calls, points: gqlCost.points }) + "\n",
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
 function costLabel(query: string): string {
   const brace = selectionSetStart(query);
   const first = query.slice(brace + 1).match(/[A-Za-z_][A-Za-z0-9_]*/);
@@ -1339,7 +1449,11 @@ export function ghGraphQL<T = any>(
   query: string,
   variables: Record<string, unknown>,
 ): T {
-  const measuring = process.env.RALPH_GQL_COST === "1";
+  // Instrumentation is on by default (measured cost-neutral, GH-1801):
+  // the per-invocation ledger below needs the numbers even when nobody is
+  // watching stderr. RALPH_GQL_COST=0 disables; =1 additionally narrates.
+  const measuring = process.env.RALPH_GQL_COST !== "0";
+  const narrate = process.env.RALPH_GQL_COST === "1";
   const sent = measuring ? instrumentQuery(query) : { query, instrumented: false };
   // Read-your-writes, half one (GH-1806): mark BEFORE the wire, because a
   // mutation that lands and then fails to report back (non-zero exit,
@@ -1349,12 +1463,28 @@ export function ghGraphQL<T = any>(
   if (mutating) markLocalWrite(ctx);
   // --hostname keeps API traffic on the same host the scope gate verified —
   // a GHE config must not silently query github.com.
-  const r = ctx.exec(
-    ["gh", "api", "graphql", "--hostname", ctx.cfg.host, "--input", "-"],
-    JSON.stringify({ query: sent.query, variables }),
-  );
+  const argv = ["gh", "api", "graphql", "--hostname", ctx.cfg.host, "--input", "-"];
+  const payload = JSON.stringify({ query: sent.query, variables });
+  let r = ctx.exec(argv, payload);
+  // Bounded jittered retry on TRANSPORT failures, reads only (audit B2): a
+  // TLS flap and a refusal must stop being indistinguishable, and the ad-hoc
+  // remedy was hand-typed sleeps. Mutations never retry — GH-1973's read-back
+  // over retry choice stands, and mutationCache's no-replay rule with it.
+  for (let attempt = 0; r.code !== 0 && !mutating && attempt < 2; attempt++) {
+    const said = `${r.stderr} ${r.stdout}`;
+    if (!TRANSPORT_RE.test(said)) break;
+    sleepMs(200 * (attempt + 1) + Math.floor(Math.random() * 150));
+    r = ctx.exec(argv, payload);
+  }
   if (r.code !== 0) {
-    throw new Error(`gh api graphql failed (exit ${r.code}): ${r.stderr.trim() || r.stdout.trim()}`);
+    const said = (r.stderr.trim() || r.stdout.trim());
+    // gh already failed on the limit: still typed 4→75, not passed through —
+    // "wait for the reset" and "this request is malformed" are different
+    // remedies (the gh-budget.sh rule).
+    if (/rate limit/i.test(said)) throw new TransientError(`gh api graphql rate limited: ${said}`);
+    if (TRANSPORT_RE.test(said) && !mutating)
+      throw new TransientError(`gh api graphql transport failure (retried): ${said}`);
+    throw new Error(`gh api graphql failed (exit ${r.code}): ${said}`);
   }
   let body: any;
   try {
@@ -1364,6 +1494,13 @@ export function ghGraphQL<T = any>(
     throw new Error(`gh api graphql returned unparseable output: ${r.stdout.slice(0, 200)}`);
   }
   if (body.errors?.length) {
+    if (body.errors.some((e: any) => e?.type === "RATE_LIMITED")) {
+      const reset = body.data?.[COST_ALIAS]?.resetAt ?? null;
+      throw new TransientError(
+        `GraphQL rate limited${reset ? ` (resets ${reset})` : ""}: ${body.errors.map((e: any) => e.message).join("; ")}`,
+        reset,
+      );
+    }
     throw new GraphQLError(
       `GraphQL: ${body.errors.map((e: any) => e.message).join("; ")}`,
       body.errors.map((e: any) => e?.type).filter((t: unknown): t is string => typeof t === "string"),
@@ -1374,11 +1511,12 @@ export function ghGraphQL<T = any>(
     if (rl) {
       gqlCost.calls += 1;
       gqlCost.points += rl.cost;
-      process.stderr.write(
-        `[gql-cost] ${costLabel(query)} cost=${rl.cost} nodes=${rl.nodeCount} ` +
-          `used=${rl.used}/${rl.limit} remaining=${rl.remaining} resetAt=${rl.resetAt} ` +
-          `| session calls=${gqlCost.calls} points=${gqlCost.points}\n`,
-      );
+      if (narrate)
+        process.stderr.write(
+          `[gql-cost] ${costLabel(query)} cost=${rl.cost} nodes=${rl.nodeCount} ` +
+            `used=${rl.used}/${rl.limit} remaining=${rl.remaining} resetAt=${rl.resetAt} ` +
+            `| session calls=${gqlCost.calls} points=${gqlCost.points}\n`,
+        );
     }
     // Callers destructure known keys, but leaving the probe in would leak into
     // --json output paths that re-emit whole nodes. Only OUR alias is removed —
@@ -1456,6 +1594,7 @@ interface BoardCache {
 
 const STATE_FIELD = "Workflow State";
 const CLAIM_FIELD = "Claim";
+export const DEFER_FIELD = "Defer";
 const STATUS_FIELD = "Status";
 const ESTIMATE_FIELD = "Estimate";
 const PRIORITY_FIELD = "Priority";
@@ -1641,6 +1780,7 @@ export interface Issue {
   fieldValuesTruncated: boolean; // >FIELD_VALUE_PAGE values — state/claim reads unreliable, mutations refuse
   claim: Claim | null;
   claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited); join/leave refuse
+  defer: DeferMark | null; // Defer mark — parked out of next/frontier until cleared
   estimate: string | null;
   priority: string | null;
   labels: string[];
@@ -1743,6 +1883,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       fieldValuesTruncated: fieldValuesTruncated(item?.fieldValues),
       claim: parseClaim(fv[CLAIM_FIELD]),
       claimRaw: fv[CLAIM_FIELD] ?? null,
+      defer: parseDefer(fv[DEFER_FIELD]),
       estimate: fv[ESTIMATE_FIELD] ?? null,
       priority: fv[PRIORITY_FIELD] ?? null,
       labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
@@ -2150,9 +2291,73 @@ function guardHolder(ctx: Ctx, issue: Issue): void {
   );
 }
 
+export const DECISION_EVIDENCE_MARKER = "<!-- ralph-decision-evidence:v1 -->";
+
+/** Decision evidence: the typed close for a unit that legitimately ends with
+ *  no PR — a decision recorded in thoughts/, a spike whose outcome is a
+ *  document. A comment carrying the marker names the artifact; the gate
+ *  accepts it the way it accepts apply evidence. The marker check is
+ *  code-masked (lastMarkerIndex), so prose QUOTING the marker does not pass
+ *  it; the artifact is read from the raw line, since backticks around a path
+ *  are how comments write one. */
+export function decisionEvidence(comments: readonly string[]): string | null {
+  for (let i = comments.length - 1; i >= 0; i--) {
+    if (lastMarkerIndex(comments[i], DECISION_EVIDENCE_MARKER) < 0) continue;
+    const m = /^\s*artifact:\s*(\S[^\n]*)$/m.exec(comments[i]);
+    if (m) return m[1].replace(/`/g, "").trim();
+  }
+  return null;
+}
+
+/** The Done evidence gates, shared verbatim by the fresh transition and the
+ *  same-state re-drive — two callers may not disagree about what "evidenced"
+ *  means (the GH-1732 rule, one layer up).
+ *
+ *  Apply-kind close gate (GH-1693). PREVENTIVE, not advisory: an apply unit
+ *  reaches Done only on shape-valid `ralph-apply-evidence:v1`. There is
+ *  deliberately NO --why escape for it. --why means "completed without a
+ *  merged PR", which is the NORMAL case for an apply unit — so honouring it
+ *  would hand every apply issue a one-flag bypass of the only gate that makes
+ *  the kind mean anything. A merged PR is not an escape either: a merge is
+ *  exactly the thing this kind refuses to accept as proof. */
+function guardDoneEvidence(ctx: Ctx, issue: Issue, why: string | undefined): void {
+  if (isApplyIssue(ctx.cfg, issue.labels, issue.labelsTruncated)) {
+    const failure = applyEvidenceFailure(ctx, issue.number);
+    if (failure) {
+      throw new RefusalError(
+        `#${issue.number} is an apply unit (label "${ctx.cfg.apply.label}") — Done requires deployed-and-verified evidence: ${failure}. ` +
+          `Post one with scripts/apply-evidence.sh, or move it to Human Needed if the apply cannot be done. ` +
+          `(--why does not bypass this.)`,
+      );
+    }
+    return;
+  }
+  if (why || issue.prs.some((p) => p.merged)) return;
+  // Parity with deliver-queue's linkage (GH-1732): a merged PR reaches the
+  // issue through the closing reference OR the branch convention. The
+  // no-closing-keyword population is exactly the one the close-out lane
+  // exists for, so refusing it here made `--why` the routine path and
+  // drained the flag of meaning.
+  if (branchLinkedMergedPr(ctx, issue.number)) return;
+  // Decision evidence — checked last: it costs a comment-trail read, and only
+  // the path that would otherwise refuse pays it. An unreadable trail is not
+  // evidence (fail closed, same direction as every other read here).
+  try {
+    if (decisionEvidence(fetchApplyMeta(ctx, issue.number).comments)) return;
+  } catch {
+    /* unreadable trail is not evidence */
+  }
+  throw new UsageError(
+    `moving #${issue.number} to Done requires a merged linked PR — none found ` +
+      `(neither a closing reference nor a merged PR on this issue's branch — see \`board name ${issue.number}\`). ` +
+      `For a unit that ends without a PR, record the outcome: \`board move ${issue.number} done --decision "<artifact path>"\`. ` +
+      `Pass --why "<how this was completed>" to complete without either.`,
+  );
+}
+
 export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {}): Issue {
   // Cache freshness resolved BEFORE any write; the body never retries.
-  const cache = mutationCache(ctx, [[STATE_FIELD, to]], [CLAIM_FIELD]);
+  const cache = mutationCache(ctx, [[STATE_FIELD, to]], [CLAIM_FIELD, DEFER_FIELD]);
   {
     // Fail closed BEFORE any write: a truncated field-value page means the
     // state and claim just read may be wrong — the legality check and claim
@@ -2169,6 +2374,24 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       throw new RefusalError(
         `#${issue.number} is in legacy state "${from}" — set a v2 state on it in the board UI before mutating it`,
       );
+    }
+    // Same-state moves are RETRIES, not violations: a lost response and a
+    // failed write are indistinguishable to a caller, so the retry has to be
+    // the safe move — the refusal it used to get ("Done → Done: illegal")
+    // carried no safety value (the noop mutates nothing) and turned every
+    // half-applied close into a human repair. Mutate nothing that already
+    // holds; re-drive only the side effect the earlier call left missing — a
+    // terminal state whose issue close never landed — and on the SAME
+    // evidence a fresh move would demand, because the board saying "Done" is
+    // not evidence (a UI write can say anything). The --why comment is also
+    // skipped: on a retry it is already on the record, and re-posting it
+    // would make every retry a duplicate.
+    if (from === to && to !== "In Progress") {
+      const needsClose = (to === "Done" || to === "Canceled") && issue.issueState === "OPEN";
+      if (!needsClose) return issue; // pure noop — read back, nothing to re-drive
+      if (to === "Done") guardDoneEvidence(ctx, issue, opts.why);
+      closeIssue(ctx, issue.nodeId, to === "Done" ? "COMPLETED" : "NOT_PLANNED");
+      return fetchIssue(ctx, issue.number);
     }
     // Same-state In Progress is claim (re)acquisition, not a transition:
     // adopting claimless WIP or refreshing one's own claim. Fully guarded by
@@ -2188,42 +2411,13 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         `moving to Human Needed requires --why "<the exact decision needed>" — it becomes the escalation comment`,
       );
     }
-    // Done requires evidence: a merged linked PR, or an explicit --why on the
-    // record. Intent lane only — reconcile() reflects reality unchecked.
+    // Done requires evidence: a merged linked PR, typed decision evidence, or
+    // an explicit --why on the record. Intent lane only — reconcile() reflects
+    // reality unchecked. The gates key on the DESTINATION (guardDoneEvidence,
+    // shared with the same-state re-drive above), which is what makes every
+    // edge into Done equally strong.
     const doneWithoutMergedPr = to === "Done" && !issue.prs.some((p) => p.merged);
-    const applyKind = isApplyIssue(ctx.cfg, issue.labels, issue.labelsTruncated);
-    if (doneWithoutMergedPr && !opts.why && !applyKind) {
-      // Parity with deliver-queue's linkage (GH-1732): a merged PR reaches the
-      // issue through the closing reference OR the branch convention. The
-      // no-closing-keyword population is exactly the one the close-out lane
-      // exists for, so refusing it here made `--why` the routine path and
-      // drained the flag of meaning.
-      if (!branchLinkedMergedPr(ctx, issue.number)) {
-        throw new UsageError(
-          `moving #${issue.number} to Done requires a merged linked PR — none found ` +
-            `(neither a closing reference nor a merged PR on this issue's branch — see \`board name ${issue.number}\`). ` +
-            `Pass --why "<how this was completed>" to complete without one.`,
-        );
-      }
-    }
-    // Apply-kind close gate (GH-1693). PREVENTIVE, not advisory: an apply unit
-    // reaches Done only on shape-valid `ralph-apply-evidence:v1`.
-    //
-    // There is deliberately NO --why escape here. --why means "completed
-    // without a merged PR", which is the NORMAL case for an apply unit — so
-    // honouring it would hand every apply issue a one-flag bypass of the only
-    // gate that makes the kind mean anything. A merged PR is not an escape
-    // either: a merge is exactly the thing this kind refuses to accept as proof.
-    if (to === "Done" && applyKind) {
-      const failure = applyEvidenceFailure(ctx, issue.number);
-      if (failure) {
-        throw new RefusalError(
-          `#${issue.number} is an apply unit (label "${ctx.cfg.apply.label}") — Done requires deployed-and-verified evidence: ${failure}. ` +
-            `Post one with scripts/apply-evidence.sh, or move it to Human Needed if the apply cannot be done. ` +
-            `(--why does not bypass this.)`,
-        );
-      }
-    }
+    if (to === "Done") guardDoneEvidence(ctx, issue, opts.why);
 
     const itemId = requireItem(issue);
     const leavingInProgress = from === "In Progress" && to !== "In Progress";
@@ -2312,6 +2506,13 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         clearField(ctx, cache, itemId, CLAIM_FIELD);
         if (rest) setText(ctx, cache, itemId, CLAIM_FIELD, formatClaim(rest));
       }
+    }
+
+    // Claiming lifts a defer: taking the unit asserts its stated precondition
+    // now holds (or is being tested) — a mark left behind would hide the item
+    // from `next` again the moment the claim releases.
+    if (enteringInProgress && issue.defer && cache.fields[DEFER_FIELD]) {
+      clearField(ctx, cache, itemId, DEFER_FIELD);
     }
 
     try {
@@ -2959,6 +3160,49 @@ export function localSessionLease(ctx: Ctx): LeaseProbe | null {
     if (!prior || prior.expiresAt < hold.expiresAt) holds.set(number, hold);
   }
   return (number: number) => holds.get(number) ?? null;
+}
+
+/** Every local per-(worktree, unit) lease, for `board who` (audit A2): the
+ *  machine-shared sessions dir already names holder, unit and worktree in one
+ *  readdir at zero API cost — the question "who is working" was unanswerable
+ *  without grepping this file. Null = could not read, never "nobody". */
+export interface LeaseRow {
+  issue: number;
+  session: string;
+  worktree: string;
+  since: string;
+  expiresAt: string;
+  stale: boolean;
+  ours: boolean;
+}
+export function readLocalLeases(ctx: Ctx): LeaseRow[] | null {
+  if (!ctx.session?.dir) return null;
+  let names: string[];
+  try {
+    names = readdirSync(ctx.session.dir);
+  } catch {
+    return null;
+  }
+  const ttlMs = ctx.cfg.lockTtlMin * 60_000;
+  const cutoff = ctx.now().getTime() - ttlMs;
+  const rows: LeaseRow[] = [];
+  for (const name of names) {
+    const m = /^wt-(\d+)-[0-9a-f]{16}\.json$/.exec(name);
+    if (!m) continue;
+    const held = readWorktreeLock(join(ctx.session.dir, name));
+    if (!held) continue;
+    rows.push({
+      issue: Number(m[1]),
+      session: held.lock.session,
+      worktree: held.lock.worktree,
+      since: held.lock.since,
+      expiresAt: new Date(held.freshMs + ttlMs).toISOString(),
+      stale: held.freshMs < cutoff,
+      ours: held.lock.session === (ctx.session.id ?? ""),
+    });
+  }
+  rows.sort((a, b) => a.issue - b.issue);
+  return rows;
 }
 
 /** Refuse a SECOND, distinct unit driven from one session. Re-claiming the
@@ -3920,6 +4164,7 @@ function toQueueItem(
     fieldValuesTruncated: fvTruncated,
     claim: parseClaim(fv[CLAIM_FIELD]),
     claimRaw: fv[CLAIM_FIELD] ?? null,
+    defer: parseDefer(fv[DEFER_FIELD]),
     ...(select.blockers ? blockerParts() : {}),
     ...(select.labels
       ? {
@@ -4846,6 +5091,26 @@ export function classifyDeliver(
   const queue: DeliverRow[] = [];
   let convBudget = convergence === null ? 0 : opts.convergenceMax;
   for (const row of ordered) {
+    // Reviewer rate-limited (audit B7): the gate's own text says the external
+    // reviewer cannot answer right now, so a session dispatched at this row
+    // would only rediscover the wait. Its own blocked row — never withheld
+    // silently — and self-clearing: the next pass re-reads the gate, and a
+    // reviewer that answered stops matching. Matched on the probe's recorded
+    // text, no new API read; nothing here escalates (the measure/decide split).
+    if (/rate.?limit/i.test(`${row.verdict ?? ""} ${row.gate ?? ""}`)) {
+      blocked.push({
+        number: row.number,
+        title: row.title,
+        pr: row.pr,
+        reason: "reviewer-rate-limited",
+        verdict: row.verdict ?? null,
+        gate: row.gate ?? null,
+        deltaAt: row.deltaAt ?? null,
+        windowExpiresAt: null,
+        detail: row.gate ?? row.verdict ?? "",
+      });
+      continue;
+    }
     if (convBudget <= 0 || row.pr === null) {
       queue.push(row);
       continue;
@@ -5563,6 +5828,36 @@ export function pendingProposal(comments: string[]): { at: string | null } | nul
   return pending;
 }
 
+/** The newest ACCEPTED resolution no later proposal supersedes (audit B9).
+ *  `resolve --accept` records a decision the board cannot otherwise observe —
+ *  the item still needs its disposition performed (`move done` / `cancel`),
+ *  and an accepted-but-unmoved item rendered exactly like an unactioned one.
+ *  Excluded: resolutions whose payload says `actioned` (the reopen path — the
+ *  reopen IS the action), and, for legacy payloads, notes naming `board
+ *  reopen`. */
+export function acceptedUnactioned(comments: string[]): { at: string | null } | null {
+  let accepted: { at: string | null } | null = null;
+  for (const body of comments) {
+    const proposed = lastMarkerIndex(body, TEND_PROPOSAL_MARKER);
+    const resolved = lastMarkerIndex(body, TEND_RESOLUTION_MARKER);
+    if (proposed < 0 && resolved < 0) continue;
+    if (resolved > proposed) {
+      const isAccepted = /"disposition"\s*:\s*"accepted"/.test(body);
+      const isActioned = /"actioned"\s*:\s*true/.test(body) || /Resolved by `board reopen`/.test(body);
+      if (isAccepted && !isActioned) {
+        const m = /"at"\s*:\s*"([^"]+)"/.exec(body);
+        const t = m ? new Date(m[1]).getTime() : NaN;
+        accepted = { at: Number.isFinite(t) ? m![1] : null };
+      } else {
+        accepted = null;
+      }
+    } else {
+      accepted = null; // a newer proposal re-arms `pending`; nothing accepted stands
+    }
+  }
+  return accepted;
+}
+
 export interface TendOpts {
   staleDays: number; // RALPH_STALE_DAYS — Backlog items with no updates
   auditDays: number; // RALPH_AUDIT_DAYS — Done-audit lookback
@@ -5790,6 +6085,7 @@ export function resolveProposal(
   issue: Issue,
   disposition: "accepted" | "rejected",
   note?: string,
+  actioned = false, // true when the acceptance IS the action (the reopen path)
 ): { at: string | null } | null {
   const trail = fetchHistories(ctx, [issue.number]).get(issue.number);
   if (!trail)
@@ -5803,6 +6099,7 @@ export function resolveProposal(
     at: ctx.now().toISOString(),
     ...(pending.at ? { proposed_at: pending.at } : {}),
     ...(note ? { note } : {}),
+    ...(actioned ? { actioned: true } : {}),
   });
   addComment(
     ctx,
@@ -6064,6 +6361,37 @@ export function setPriority(ctx: Ctx, number: number, value: string | null): Iss
   } else {
     assertPriorityOption(cache, value);
     setSingleSelect(ctx, cache, itemId, PRIORITY_FIELD, value);
+  }
+  return fetchIssue(ctx, number);
+}
+
+/** Park / unpark an item (audit B8): "the precondition is not met" as a typed
+ *  write instead of an unrepresentable fact that costs a session per re-rank.
+ *  Metadata-only — never touches the state field or the claim. The comment is
+ *  provenance, posted BEFORE the field write (the transition() ordering rule:
+ *  an interrupted run leaves the reason, not a bare mark). */
+export function setDefer(ctx: Ctx, number: number, mark: DeferMark | null): Issue {
+  const issue = fetchIssue(ctx, number);
+  const itemId = requireItem(issue);
+  const cache = mutationCache(ctx, [[DEFER_FIELD]]);
+  if (mark === null) {
+    if (issue.defer) {
+      addComment(
+        ctx,
+        issue.nodeId,
+        `\`board defer --clear\` (by \`${ctx.cfg.holder}\`): precondition lifted — ${issue.defer.condition}`,
+      );
+      clearField(ctx, cache, itemId, DEFER_FIELD);
+    }
+  } else {
+    addComment(
+      ctx,
+      issue.nodeId,
+      `\`board defer\` (by \`${ctx.cfg.holder}\`): parked — ${mark.condition}` +
+        (mark.recheck ? `\nRecheck by ${mark.recheck.toISOString()}.` : "") +
+        `\n\nLifted by \`board defer ${number} --clear\` or by claiming the unit.`,
+    );
+    setText(ctx, cache, itemId, DEFER_FIELD, formatDefer(mark));
   }
   return fetchIssue(ctx, number);
 }
@@ -7288,9 +7616,20 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   const auth = ctx.exec(["gh", "auth", "status"]);
   add("gh-auth", auth.code === 0 ? "ok" : "fail", auth.code === 0 ? "authenticated" : auth.stderr.trim());
 
-  // scope
+  // scope — "not a repo" and "no origin remote" are different bring-up steps,
+  // and the gate every mutation depends on should name which is missing
+  // rather than leave it an archaeology finding (audit C2).
   const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
-  if (remote.code !== 0) add("scope", "warn", "no origin remote");
+  if (remote.code !== 0) {
+    const inRepo = ctx.exec(["git", "-C", ctx.repoRoot, "rev-parse", "--is-inside-work-tree"]);
+    add(
+      "scope",
+      "warn",
+      inRepo.code !== 0
+        ? `not a git repository (${ctx.repoRoot}) — every mutation's scope gate needs one`
+        : "no origin remote — `git remote add origin <url>`; the scope gate compares it against the configured repo",
+    );
+  }
   else if (scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) add("scope", "ok", remote.stdout.trim());
   else add("scope", "fail", `origin ${remote.stdout.trim()} != configured ${ctx.cfg.host}/${ctx.cfg.owner}/${ctx.cfg.repo}`);
 
@@ -7489,6 +7828,72 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       // surfacing it is enough.
       add("claim-garbled", garbled.length === 0 ? "ok" : "warn", garbled.length === 0 ? "none" : `unparseable Claim text (want "holder[+holder2...]|iso8601"): ${garbled.map((i) => `#${i.number}`).join(" ")}`);
 
+      // Stranded local work (audit B6's mirror row): a worktree with
+      // uncommitted changes whose branch parses as an issue branch while that
+      // issue carries no claim — the shape a TTL release leaves behind, which
+      // until now only a human's memory surfaced. INFO always: resuming or
+      // re-claiming is a judgment, and --fix must never touch a working tree.
+      // Machine-local by nature (git reads only), own try/catch so an odd git
+      // cannot change doctor's exit code.
+      try {
+        const wt = ctx.exec(["git", "-C", ctx.repoRoot, "worktree", "list", "--porcelain"]);
+        if (wt.code !== 0) {
+          add("worktree-uncommitted", "info", "not evaluated: git worktree list failed");
+        } else {
+          const claimed = new Set(items.filter((i) => i.claim).map((i) => i.number));
+          const rows: string[] = [];
+          for (const block of wt.stdout.trim().split(/\n\n+/)) {
+            const path = /^worktree (.+)$/m.exec(block)?.[1];
+            const branch = /^branch refs\/heads\/(.+)$/m.exec(block)?.[1];
+            if (!path || !branch) continue;
+            const parsed = parseBranchName(branch);
+            if (!parsed || claimed.has(parsed.issue)) continue;
+            const st = ctx.exec(["git", "-C", path, "status", "--porcelain"]);
+            if (st.code !== 0 || !st.stdout.trim()) continue; // unreadable = not evidence
+            rows.push(`#${parsed.issue}(${path})`);
+          }
+          add(
+            "worktree-uncommitted",
+            rows.length === 0 ? "ok" : "info",
+            rows.length === 0
+              ? "none"
+              : `uncommitted work in issue worktrees with no live board claim — resume the session or \`board claim N\` there: ${rows.join(" ")}`,
+          );
+        }
+      } catch (e) {
+        add("worktree-uncommitted", "info", `not evaluated: ${(e as Error).message}`);
+      }
+
+      // Defer marks past their recheck instant (audit B8). INFO by
+      // construction: a defer is a judgment on the record, and lifting it is
+      // one too — --strict never escalates, --fix never acts. The marker only
+      // renders when the remedy applies (GH-2052's rule).
+      const deferElapsed = items.filter(
+        (i) => i.defer?.recheck && i.defer.recheck.getTime() <= ctx.now().getTime(),
+      );
+      add(
+        "defer-elapsed",
+        deferElapsed.length === 0 ? "ok" : "info",
+        deferElapsed.length === 0
+          ? "none"
+          : `deferred items past their recheck instant — re-test the condition and \`board defer N --clear\` or re-defer: ` +
+            deferElapsed.map((i) => `#${i.number}(${i.defer!.condition})`).join(" "),
+      );
+
+      // Null-Priority intake (audit B5). INFO with the remedy named: a null
+      // priority sinks below stale backlog in `next`, so these items are
+      // invisible to every ranking lane until someone triages them.
+      const untriaged = items.filter((i) => i.state === "Backlog" && !i.priority);
+      add(
+        "untriaged-priority",
+        untriaged.length === 0 ? "ok" : "info",
+        untriaged.length === 0
+          ? "none"
+          : `${untriaged.length} Backlog item(s) with no Priority — invisible to next/frontier ranking; ` +
+            `\`board priority N P0..P3\`: ${untriaged.slice(0, 10).map((i) => `#${i.number}`).join(" ")}` +
+            (untriaged.length > 10 ? ` +${untriaged.length - 10} more` : ""),
+      );
+
       // Apply-kind sweep (GH-1693). Inert — three `ok` lines — on a repo that
       // has not opted in, and on an opted-in board with no apply issues.
       if (!ctx.cfg.apply.enabled) {
@@ -7605,6 +8010,12 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
             const days = Number.isFinite(t) ? (ctx.now().getTime() - t) / 86_400_000 : null;
             if (days === null) proposals.push(`#${i.number}(undated)`);
             else if (days >= ctx.cfg.smells.proposalDays) proposals.push(`#${i.number}(${Math.floor(days)}d)`);
+          } else {
+            // Accepted but never moved (audit B9): the decision is on the
+            // record and the item still sits open — surfaced immediately, no
+            // age threshold, because someone already decided.
+            const a = acceptedUnactioned(h.comments);
+            if (a) proposals.push(`#${i.number}(accepted${a.at ? ` ${a.at.slice(0, 10)}` : ""}, unactioned)`);
           }
         }
         add(
@@ -7647,7 +8058,38 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       // Fix loops are per-item fault-isolated: one unwritable item logs its
       // own fail line and the sweep keeps going.
       if (opts.fix) {
-        for (const i of [...terminalDrift, ...closedDrift]) {
+        // Terminal drift is the board being AHEAD of GitHub — the shape a
+        // half-applied `move done` leaves (field written, close lost to the
+        // network). Reconcile would demote the finished work to Backlog, so
+        // the close is COMPLETED instead — but only on the same evidence a
+        // fresh move would demand (a UI write saying "Done" is not evidence).
+        // No evidence, or any read failure → reconcile demotes as before:
+        // the repair may not be weaker than the gate it repairs around.
+        for (const i of terminalDrift) {
+          try {
+            const issue = fetchIssue(ctx, i.number);
+            const terminal = issue.state === "Done" || issue.state === "Canceled";
+            if (issue.issueState !== "OPEN" || !terminal) {
+              add("fix", "ok", reconcile(ctx, i.number));
+              continue;
+            }
+            try {
+              if (issue.state === "Done") guardDoneEvidence(ctx, issue, undefined);
+              closeIssue(ctx, issue.nodeId, issue.state === "Done" ? "COMPLETED" : "NOT_PLANNED");
+              addComment(
+                ctx,
+                issue.nodeId,
+                `\`board doctor --fix\`: board said "${issue.state}" but the issue was still open — completed the close.`,
+              );
+              add("fix", "ok", `#${i.number}: completed the close the board was ahead of ("${issue.state}")`);
+            } catch {
+              add("fix", "ok", reconcile(ctx, i.number));
+            }
+          } catch (e) {
+            add("fix", "fail", `#${i.number}: ${(e as Error).message}`);
+          }
+        }
+        for (const i of closedDrift) {
           try {
             add("fix", "ok", reconcile(ctx, i.number));
           } catch (e) {
@@ -7660,8 +8102,29 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         // item is most likely a transition() mid-write (the claim lands before
         // the state) — clearing it would race the writer; the anomaly is
         // reported above and the next sweep gets it once the TTL expires.
+        //
+        // A stale BOARD claim can still be driven locally: a network flap that
+        // ate the heartbeat's board write leaves the per-(worktree, unit) lock
+        // (GH-1956) fresh while the board's copy ages out. The lock ages on
+        // the SAME RALPH_LOCK_TTL_MIN clock — deliberately, "the source is
+        // gone" has exactly one definition here — so this consult adds signal
+        // only where the two writes diverged, and a genuinely dead session
+        // still costs one TTL and is then released. Null probe (unreadable
+        // sessions dir) keeps today's release: "could not read the lease"
+        // never blocks the remedy.
+        const lease = localSessionLease(ctx);
         for (const i of stale) {
           try {
+            const hold = lease?.(i.number) ?? null;
+            if (hold) {
+              add(
+                "claim-idle-but-driven",
+                "info",
+                `#${i.number}: board claim is stale but a live local session holds the worktree lock ` +
+                  `(${hold.worktree}, lease expires ${hold.expiresAt}) — left alone`,
+              );
+              continue;
+            }
             const issue = fetchIssue(ctx, i.number);
             if (!issue.itemId) continue;
             // Staleness is re-verified on the fresh read, never trusted from
@@ -7819,6 +8282,43 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     add("herdr-cockpit", "info", `not evaluated: ${(e as Error).message}`);
   }
 
+  // GraphQL spend attribution (audit B2). INFO always: a number is a fact,
+  // never a breach — the exhaustion incident's real blocker was that no
+  // surface said WHO was spending. Reads the per-invocation ledger every
+  // command already appends; an absent ledger is a young machine, not a
+  // problem.
+  try {
+    const ledger = join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "budget.jsonl");
+    if (!existsSync(ledger)) {
+      add("gql-spend", "ok", "no spend ledger yet (~/.ralph/budget.jsonl appends per invocation)");
+    } else {
+      const cutoff = ctx.now().getTime() - 24 * 3600_000;
+      const byCmd = new Map<string, number>();
+      let total = 0;
+      for (const line of readFileSync(ledger, "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const j = JSON.parse(line);
+          if (new Date(j.at).getTime() < cutoff) continue;
+          byCmd.set(j.cmd, (byCmd.get(j.cmd) ?? 0) + (j.points ?? 0));
+          total += j.points ?? 0;
+        } catch {
+          /* one garbled line is not a broken ledger */
+        }
+      }
+      const top = [...byCmd.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+      add(
+        "gql-spend",
+        "ok",
+        total === 0
+          ? "0 points recorded in the last 24h"
+          : `${total} points in 24h — top: ${top.map(([c, p]) => `${c}=${p}`).join(" ")} (~/.ralph/budget.jsonl)`,
+      );
+    }
+  } catch (e) {
+    add("gql-spend", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
   // Installed-plugin floor (GH-1825). INFO level always — see the section
   // above. Its own try/catch keeps a throwing filesystem read out of the exit
   // code, exactly as the smells and volume blocks do.
@@ -7952,6 +8452,10 @@ export function readiness(ctx: Ctx): ReadinessReport {
 
   let prStatus: ReadinessCheck["status"] = "info";
   let prDetail = "could not verify (repo API unavailable)";
+  // Kept for the merge-gate check below (audit C1): a recommendation whose
+  // alternative the tool can check and doesn't is a false positive that
+  // trains operators to ignore the report. null = unreadable, never "no".
+  let branchRules: Array<{ type?: string }> | null = null;
   const repoInfo = ctx.exec(["gh", "api", "--hostname", ctx.cfg.host, `repos/${ctx.cfg.owner}/${ctx.cfg.repo}`]);
   if (repoInfo.code === 0) {
     try {
@@ -7961,7 +8465,8 @@ export function readiness(ctx: Ctx): ReadinessReport {
         `repos/${ctx.cfg.owner}/${ctx.cfg.repo}/rules/branches/${def}`,
       ]);
       if (rules.code === 0) {
-        const requiresPr = (JSON.parse(rules.stdout) as Array<{ type?: string }>).some(
+        branchRules = JSON.parse(rules.stdout) as Array<{ type?: string }>;
+        const requiresPr = branchRules.some(
           (r) => r.type === "pull_request",
         );
         prStatus = requiresPr ? "ok" : "miss";
@@ -7976,9 +8481,17 @@ export function readiness(ctx: Ctx): ReadinessReport {
 
   // — Level 3: what the scheduler-owned loop leans on. —
   const hasGate = existsSync(join(ctx.repoRoot, "scripts", "merge-pr.sh"));
+  // The named alternative, CHECKED (audit C1): required status checks under
+  // the effective branch rules satisfy this rung without a scripted gate.
+  // Unreadable rules stay a miss — a read we could not make is not "satisfied".
+  const requiredChecks = branchRules?.some((r) => r.type === "required_status_checks") ?? false;
   add(
-    3, "merge-gate", hasGate ? "ok" : "miss",
-    hasGate ? "scripts/merge-pr.sh present" : "no scripted merge gate",
+    3, "merge-gate", hasGate || requiredChecks ? "ok" : "miss",
+    hasGate
+      ? "scripts/merge-pr.sh present"
+      : requiredChecks
+        ? "no scripted gate, but required status checks are active on the default branch — the stated alternative, verified"
+        : "no scripted merge gate",
     hasGate
       ? undefined
       : "before agents merge unattended, script the merge verdict — the plugin ships the whole family as an " +
@@ -8146,7 +8659,8 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
     }
   }
 
-  if (!cache.fields[CLAIM_FIELD]) {
+  for (const textField of [CLAIM_FIELD, DEFER_FIELD]) {
+    if (cache.fields[textField]) continue;
     ghGraphQL(
       ctx,
       `mutation($projectId: ID!, $name: String!) {
@@ -8154,10 +8668,10 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
           projectV2Field { ... on ProjectV2FieldCommon { id } }
         }
       }`,
-      { projectId: cache.projectId, name: CLAIM_FIELD },
+      { projectId: cache.projectId, name: textField },
     );
-    created.push({ name: CLAIM_FIELD });
-    note(`created "${CLAIM_FIELD}" text field`);
+    created.push({ name: textField });
+    note(`created "${textField}" text field`);
   }
 
   for (const { name, options } of ADVISORY_FIELDS) {
@@ -8266,6 +8780,10 @@ export function liveLintDeps(ctx: Ctx): LiveLintDeps {
 const HELP = `board — the ralph v2 board CLI (sole sanctioned mutation path)
 
 reads
+  brief [--json]              ONE orientation read: next head, queue counts,
+                              deliver/tend counts, local session leases
+  who [--json]                who is driving what on this machine — the
+                              per-(worktree, unit) leases, zero API
   get NNN [--json]            issue: state, claim, parent/children, blockers, PRs
   list [--state S] [--json]   open items on the board — a bounded own-repo
                               read (open issues only), not a full project
@@ -8533,7 +9051,62 @@ change oracle (GH-1804)
   It sees comments, body edits, labels and open/close. It does NOT see
   Workflow State, Claim, or dependency edges — so a transition-busy board
   returns 304 the whole way and T_max, not the oracle, is what bounds
-  staleness. doctor never uses it: it mutates from what it read.`;
+  staleness. doctor never uses it: it mutates from what it read.
+v0.2.0 additions
+  defer NNN --until "<condition>" [--recheck ISO] | --clear
+                              park a Backlog item out of ranking until its
+                              stated precondition holds; claiming lifts it
+  move NNN done --decision <artifact>
+                              typed close for a unit with no PR: records
+                              ralph-decision-evidence:v1 naming the artifact
+  bootstrap --owner O --repo R --project N [--host H]
+                              first-run bring-up: writes .ralph.json, links
+                              the repo, runs setup, prints next steps
+  add <issue-url>             add an issue by URL (cross-repo path, gated on
+                              RALPH_ALLOW_FOREIGN_REPO_ITEMS)
+  help <verb>                 per-verb usage with an example
+  dep NNN --blocked-by M      alias for --on (the CLI's own vocabulary)
+
+  Same-state moves are safe retries: a noop, or completing a half-applied
+  terminal close on the same evidence a fresh move demands.
+`;
+
+/** Per-verb usage (audit A5): `board help <verb>` — one usage line, one
+ *  example, the flags that matter. The monolith HELP above stays the index. */
+export const VERB_HELP: Record<string, string> = {
+  next: "board next [--json] [--fresh]\n  The ranked work queue's head. Empty is typed (--json: diagnosis).\n  example: board next",
+  frontier: "board frontier [--json]\n  next's eligible queue re-projected with per-item explanations (fleet feed).\n  example: board frontier --json",
+  brief: "board brief [--json]\n  One orientation read: next head, queue counts, deliver/tend counts, local leases.\n  example: board brief",
+  who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  example: board who",
+  list: "board list [--state <s>] [--json]\n  Items by state. Full-board scan — prefer next/brief for orientation.\n  example: board list --state human",
+  get: "board get <n> [--json]\n  One issue with board fields, parity with what move/claim write.\n  example: board get 1234",
+  create: "board create --title <t> [--body <b>] [--parent <n>] [--estimate XS..XL] [--priority P0..P3] [--apply] [--state <s>]\n  Files an issue onto the board. Retry-safe (twin dedupe, GH-1973).\n  example: board create --title \"fix the gate\" --priority P1",
+  claim: "board claim <n> [--steal] | board claim show <n>\n  Take a unit (Backlog→In Progress). --steal only after TTL expiry.\n  example: board claim 1234",
+  release: "board release <n> -m \"<where you stopped>\"\n  Give a unit back (→Backlog) with the handoff note.\n  example: board release 1234 -m \"tests red on X; next: fix parser\"",
+  move: "board move <n> <state> [--why <w>] [--decision <artifact>]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact, or --why.\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
+  answer: "board answer <n> -m \"<the decision>\" [--comment-only] [--any-state]\n  Answer a Human Needed item and resume it.\n  example: board answer 1234 -m \"ship option B\"",
+  cancel: "board cancel <n> -m \"<reason>\"\n  Cancel (→Canceled, closes NOT_PLANNED). Reopen is the only exit.\n  example: board cancel 1234 -m \"superseded by #1300\"",
+  reopen: "board reopen <n>\n  The one exit from Done/Canceled (→Backlog); accepts a pending reopen proposal.\n  example: board reopen 1234",
+  defer: "board defer <n> --until \"<condition>\" [--recheck <ISO>] | board defer <n> --clear\n  Park a Backlog item out of ranking until its stated precondition holds.\n  Claiming the unit also lifts it. doctor surfaces elapsed rechecks.\n  example: board defer 1234 --until \"GH-2088 lands\" --recheck 2026-09-01T00:00:00Z",
+  dep: "board dep <blocked> --on <blocking> [--rm]   (--blocked-by = --on)\n  Dependency edge; blocked items never rank.\n  example: board dep 1234 --blocked-by 1200",
+  link: "board link <parent> <child>\n  Sub-issue edge (the tree parent-check rolls up).\n  example: board link 1200 1234",
+  priority: "board priority <n> <P0..P3|--clear>\n  Set/clear Priority. Null priority sinks below stale backlog in next.\n  example: board priority 1234 P1",
+  comment: "board comment <n> -m \"<body>\"\n  Plain comment through the sanctioned path.\n  example: board comment 1234 -m \"blocked on infra\"",
+  resolve: "board resolve <n> --accept | --reject -m \"<why not>\"\n  Dispose of a tend closure proposal. --accept prints the gated follow-up.\n  example: board resolve 1234 --reject -m \"still needed for the demo\"",
+  adopt: "board adopt <n>\n  Put an off-board issue onto the board (Backlog).\n  example: board adopt 1234",
+  add: "board add <issue-url>\n  Add an issue by URL — the sanctioned cross-repo path, gated on RALPH_ALLOW_FOREIGN_REPO_ITEMS.\n  example: board add https://github.com/o/r/issues/9",
+  reconcile: "board reconcile <n>\n  Reality sync: GitHub open/closed wins over the board.\n  example: board reconcile 1234",
+  "parent-check": "board parent-check <n>\n  Roll a parent forward when every child is closed.\n  example: board parent-check 1200",
+  "deliver-queue": "board deliver-queue [--json]\n  Quiescent In Review items with actionable PR signal (the deliver lane's selector).\n  example: board deliver-queue --json",
+  "tend-queue": "board tend-queue [--json]\n  Backlog-hygiene and Done-audit rows (the tend lane's selector).\n  example: board tend-queue",
+  doctor: "board doctor [--fix] [--strict] [--fresh]\n  Invariant sweep + advisory lines. --fix corrects drift; info lines are never escalated.\n  example: board doctor --fix",
+  readiness: "board readiness [--json]\n  Advisory agent-readiness report (3 levels) — recommendations, never gates.\n  example: board readiness",
+  setup: "board setup\n  Idempotent field provisioning; prints exactly which steps are manual.\n  example: board setup",
+  bootstrap: "board bootstrap --owner <o> --repo <r> --project <n> [--host <ghe>]\n  First-run bring-up: writes .ralph.json, links the repo, runs setup, prints next steps.\n  example: board bootstrap --owner me --repo my-app --project 7",
+  prune: "board prune [--apply] [--limit N]\n  Remove long-closed terminal items from the PROJECT (issues untouched). Dry run until --apply.\n  example: board prune",
+  name: "board name <n> [--json]\n  THE branch/agent name grammar for a unit (never rebuild slugify in shell).\n  example: board name 1234",
+  peer: "board peer <n>\n  Resolve the unit's live messaging address from the enumerated sessions.\n  example: board peer 1234",
+};
 
 interface ParsedArgs {
   positional: string[];
@@ -8553,8 +9126,9 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
 /** Flags that take a value. Declared beside the booleans so arity is a property
  *  of the flag rather than of the token that happens to follow it. */
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
-  "body", "candidates", "estimate", "holder", "label", "lane", "limit",
-  "message", "on", "out", "parent", "priority", "state", "title", "why",
+  "blocked-by", "body", "candidates", "decision", "estimate", "holder", "host",
+  "label", "lane", "limit", "message", "on", "out", "owner", "parent", "priority",
+  "project", "recheck", "repo", "state", "title", "until", "why",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -8598,7 +9172,10 @@ function issueLine(i: Issue): string {
   const parent = i.parent ? ` parent=#${i.parent.number}` : "";
   const blockers = i.blockedBy.filter((b) => b.issueState === "OPEN").map((b) => `#${b.number}`);
   const blocked = blockers.length ? ` blockedBy=${blockers.join(",")}` : "";
-  return `#${i.number} [${i.state ?? "no-state"}]${claim}${parent}${blocked} ${i.title}`;
+  const defer = i.defer
+    ? ` deferred(${i.defer.condition}${i.defer.recheck ? `, recheck ${i.defer.recheck.toISOString().slice(0, 10)}` : ""})`
+    : "";
+  return `#${i.number} [${i.state ?? "no-state"}]${claim}${defer}${parent}${blocked} ${i.title}`;
 }
 
 /** Exactly one line, whatever the tier. With no diagnosis it is byte-identical
@@ -8613,7 +9190,9 @@ function emptyQueueLine(blocked: QueueItemWithBlockers[], dx: EmptyQueueReport):
     const who = e.holder ? ` claimed by ${e.holder}` : " in flight";
     return `queue empty — epic #${e.root} is being worked (child #${e.child}${who})`;
   }
-  if (!blocked.length) return "queue empty";
+  if (dx.diagnosis === "all-deferred")
+    return `queue empty — ${dx.deferredCount} deferred awaiting their stated preconditions (board list shows them; board defer N --clear lifts one)`;
+  if (!blocked.length) return dx.deferredCount ? `queue empty (${dx.deferredCount} deferred)` : "queue empty";
   const stale = dx.diagnosis === "stale-blocked" ? dx.staleBlockedEdges[0] : null;
   const hint = stale
     ? ` — #${stale.number}'s blockers are all resolved on the board; stale edge? board dep ${stale.number} --on ${stale.blockers[0]} --rm`
@@ -8650,8 +9229,8 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 
 const MUTATING = new Set([
   "create", "claim", "release", "move", "cancel", "reopen", "answer", "priority",
-  "link", "dep", "comment", "adopt", "reconcile", "parent-check",
-  "resolve", "setup",
+  "defer", "link", "dep", "comment", "adopt", "reconcile", "parent-check",
+  "resolve", "setup", "add", "bootstrap",
 ]);
 
 export function run(argv: string[], ctx: Ctx): number {
@@ -8690,13 +9269,181 @@ export function run(argv: string[], ctx: Ctx): number {
     }
   }
 
+  // Lane budget pre-flight (audit B2): the ranking/selector lanes are the
+  // repo's recurring GraphQL spenders, and a pass that starts under an
+  // exhausted budget half-completes and loses its markers. Checked BEFORE any
+  // read; REST /rate_limit is free and its budget is measurably independent
+  // of the GraphQL one (GH-1804's measurement). Fails OPEN on an unreadable
+  // budget — a transient outage must never read as starvation (GH-1817).
+  if (["next", "frontier", "deliver-queue", "tend-queue", "brief"].includes(cmd)) {
+    const floor = Number(process.env.RALPH_GH_BUDGET_FLOOR ?? 500);
+    if (Number.isFinite(floor) && floor > 0) {
+      const r = ctx.exec(["gh", "api", "--hostname", ctx.cfg.host, "rate_limit"]);
+      if (r.code === 0) {
+        try {
+          const g = JSON.parse(r.stdout)?.resources?.graphql;
+          if (g && typeof g.remaining === "number" && g.remaining < floor) {
+            process.stderr.write(
+              `BUDGET-DEFER graphql remaining=${g.remaining} < floor=${floor} (RALPH_GH_BUDGET_FLOOR) reset=${g.reset}\n`,
+            );
+            return 75;
+          }
+        } catch {
+          /* unreadable budget: proceed — see fail-open note above */
+        }
+      }
+    }
+  }
+
   switch (cmd) {
     case undefined:
     case "help":
     case "--help":
-    case "-h":
+    case "-h": {
+      const topic = positional[0];
+      if (topic) {
+        const entry = VERB_HELP[topic];
+        if (entry) out(entry);
+        else {
+          out(`no such verb "${topic}" — verbs with per-verb help: ${Object.keys(VERB_HELP).sort().join(", ")}`);
+          return 64;
+        }
+        return 0;
+      }
       out(HELP);
       return 0;
+    }
+
+    case "brief": {
+      // One orientation read (audit A2): what sessions spent 5-15 discovery
+      // calls re-assembling. Reads only; the three lanes share this
+      // invocation's item-cache walk, so the marginal cost is the deliver and
+      // tend detail, not three scans. Probes are OFF (no merge-pr dry-runs) —
+      // a brief is a glance, not a gate run.
+      const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+      const own = full.open;
+      const closedEdges = closedTreeEdges(ctx, own);
+      const order = priorityOptionOrder(ctx, { values: own.map((i) => i.priority), fresh: flags.fresh === true });
+      const { eligible, blocked, inFlightEpics, deferred } = rankNext(own, closedEdges, order);
+      const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics, deferred);
+      const dq = deliverQueue(ctx, parseDeliverOpts(), null, null);
+      const tq = tendQueue(ctx);
+      const who = readLocalLeases(ctx);
+      const brief = {
+        next: eligible.slice(0, 3).map((i) => ({ number: i.number, title: i.title, priority: i.priority })),
+        counts: {
+          eligible: eligible.length,
+          blocked: blocked.length,
+          deferred: dx.deferredCount,
+          humanNeeded: dx.humanNeededCount,
+          deliver: dq.queue.length,
+          deliverBlocked: dq.blocked.length,
+          tend: tq.queue.length,
+        },
+        // null = the lease dir could not be read — distinct from [] (nobody).
+        leases: who,
+        cache: cacheFacts(full),
+      };
+      if (flags.json) {
+        json(brief);
+        return 0;
+      }
+      out(
+        eligible.length === 0
+          ? `next: ${emptyQueueLine(blocked, dx)}`
+          : `next: ${eligible.slice(0, 3).map((i) => `#${i.number}${i.priority ? ` ${i.priority}` : ""} ${i.title}`).join("; ")}`,
+      );
+      out(
+        `queues: ${eligible.length} eligible, ${blocked.length} blocked, ${dx.deferredCount} deferred, ` +
+          `${dx.humanNeededCount} human-needed | deliver ${dq.queue.length} (+${dq.blocked.length} blocked) | tend ${tq.queue.length}`,
+      );
+      if (who === null) out(`leases: not evaluated (no session dir)`);
+      else if (who.length === 0) out(`leases: none — no local session is driving a unit`);
+      else for (const l of who) out(`  lease: #${l.issue} ${l.ours ? "(this session)" : l.session} in ${l.worktree}${l.stale ? " STALE" : ` until ${l.expiresAt}`}`);
+      if (cacheNote(full)) out(`  ${cacheNote(full)}`);
+      return 0;
+    }
+
+    case "who": {
+      // Machine-local, zero API: the per-(worktree, unit) leases `board claim`
+      // already publishes (GH-1929/1956), printed instead of grepped for.
+      const rows = readLocalLeases(ctx);
+      if (flags.json) {
+        json({ leases: rows });
+        return 0;
+      }
+      if (rows === null) out("leases: not evaluated — sessions dir unreadable (distinct from nobody working)");
+      else if (rows.length === 0) out("no local session leases — nobody on this machine is driving a unit");
+      else for (const l of rows) out(`#${l.issue} ${l.ours ? "(this session)" : l.session} in ${l.worktree} since ${l.since}${l.stale ? " STALE (past TTL)" : ` — lease until ${l.expiresAt}`}`);
+      return 0;
+    }
+
+    case "bootstrap": {
+      // .ralph.json exists by the time run() sees this (pre-existing, or just
+      // written by the no-config path in main from these same flags).
+      if (typeof flags.owner === "string" && (flags.owner !== ctx.cfg.owner || flags.repo !== ctx.cfg.repo)) {
+        out(
+          `note: config already present (${ctx.cfg.owner}/${ctx.cfg.repo}, project #${ctx.cfg.projectNumber}) — ` +
+            `flags ignored; edit .ralph.json to change scope`,
+        );
+      }
+      // Repo→project linkage is advisory (setup warns when absent); linking
+      // needs the project scope, so a failure is a printed manual step.
+      const link = ctx.exec([
+        "gh", "project", "link", String(ctx.cfg.projectNumber),
+        "--owner", ctx.cfg.owner, "--repo", `${ctx.cfg.owner}/${ctx.cfg.repo}`,
+      ]);
+      out(
+        link.code === 0
+          ? `linked ${ctx.cfg.owner}/${ctx.cfg.repo} to project #${ctx.cfg.projectNumber}`
+          : `MANUAL: could not link the repo to project #${ctx.cfg.projectNumber} (${(link.stderr || link.stdout).trim().slice(0, 120)}) — link it in the project UI`,
+      );
+      const rep = setup(ctx, out);
+      out("");
+      out(`config: .ralph.json is authoritative; the tracked settings env block is the alternative:`);
+      out(`  "env": { "RALPH_GH_OWNER": "${ctx.cfg.owner}", "RALPH_GH_REPO": "${ctx.cfg.repo}", "RALPH_GH_PROJECT_NUMBER": "${ctx.cfg.projectNumber}" }`);
+      out(`next: \`board readiness\` reports what this repo is ready for; \`board doctor\` sweeps invariants`);
+      return rep.ok ? 0 : 1;
+    }
+
+    case "add": {
+      // The one sanctioned non-own-repo add path (audit C4) — the guard
+      // CLAUDE.md documents as "exists so a future non-own-repo add path
+      // trips" is exactly what gates it: RALPH_ALLOW_FOREIGN_REPO_ITEMS
+      // unset/false refuses with the reason.
+      const url = positional[0];
+      if (!url || !/^https?:\/\//.test(url)) throw new UsageError(`add requires an issue URL (board add https://github.com/o/r/issues/N)`);
+      const parsedRepo = repoFromIssueUrl(url);
+      const numMatch = /\/issues\/(\d+)$/.exec(url);
+      if (!parsedRepo || !numMatch) throw new UsageError(`not an issue URL: ${url}`);
+      const num = Number(numMatch[1]);
+      // Policy check BEFORE the read (on the typed URL — refusing costs no
+      // API), and again after on the URL GitHub returned, which is the
+      // authoritative one (the GH-1815 rule: comparing cfg against itself
+      // asserts nothing; a redirect could differ from what was typed).
+      assertBoardAddAllowed(ctx, url, num);
+      const [owner, name] = parsedRepo.split("/");
+      const data = ghGraphQL<any>(
+        ctx,
+        `query($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) { issue(number: $number) { id url title } }
+        }`,
+        { owner, name, number: num },
+      );
+      const issueNode = data.repository?.issue;
+      if (!issueNode) throw new UsageError(`issue not found: ${url}`);
+      assertBoardAddAllowed(ctx, issueNode.url, num);
+      const cache = ensureCache(ctx);
+      ghGraphQL(
+        ctx,
+        `mutation($projectId: ID!, $contentId: ID!) {
+          addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
+        }`,
+        { projectId: cache.projectId, contentId: issueNode.id },
+      );
+      out(`added ${parsedRepo}#${num} to the board (${issueNode.title})`);
+      return 0;
+    }
 
     case "get": {
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
@@ -8822,9 +9569,9 @@ export function run(argv: string[], ctx: Ctx): number {
         values: own.map((i) => i.priority),
         fresh: flags.fresh === true,
       });
-      const { eligible, blocked, inFlightEpics } = rankNext(own, closedEdges, order);
+      const { eligible, blocked, inFlightEpics, deferred } = rankNext(own, closedEdges, order);
       // --json carries the diagnosis as fields, never as the prose line.
-      const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics);
+      const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics, deferred);
       if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked, ...dx, cache: cacheFacts(full) });
       else if (eligible.length === 0) {
         // The empty answer is where staleness matters MOST — a loop reads
@@ -9137,7 +9884,8 @@ export function run(argv: string[], ctx: Ctx): number {
       if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`release requires -m "<where you stopped and what's next>"`);
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
       const after = transition(ctx, issue, "Backlog", { why: flags.m });
-      out(issueLine(after));
+      if (issue.state === "Backlog") out(`noop: #${after.number} already "Backlog" (nothing to do)`);
+      else out(issueLine(after));
       return 0;
     }
 
@@ -9145,8 +9893,24 @@ export function run(argv: string[], ctx: Ctx): number {
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
       const to = positional[1] ? parseStateArg(positional[1]) : null;
       if (!to) throw new UsageError(`move requires a target state (${STATES.join(" | ")})`);
+      if (typeof flags.decision === "string" && flags.decision) {
+        // Evidence BEFORE the state write, same ordering rule as --why: an
+        // interrupted run leaves the record, not a bare state.
+        addComment(
+          ctx,
+          issue.nodeId,
+          `**Decision evidence** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${DECISION_EVIDENCE_MARKER}\nartifact: ${flags.decision}`,
+        );
+      }
+      const noop = issue.state === to && to !== "In Progress";
       const after = transition(ctx, issue, to, { why: typeof flags.why === "string" ? flags.why : undefined });
-      out(issueLine(after));
+      if (noop) {
+        out(
+          issue.issueState === "OPEN" && after.issueState === "CLOSED"
+            ? `noop: #${after.number} already "${to}" — completed the issue close the earlier move left half-applied`
+            : `noop: #${after.number} already "${to}" (nothing to do)`,
+        );
+      } else out(issueLine(after));
       return 0;
     }
 
@@ -9177,7 +9941,13 @@ export function run(argv: string[], ctx: Ctx): number {
       if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`cancel requires -m "<reason>"`);
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
       const after = transition(ctx, issue, "Canceled", { why: flags.m });
-      out(issueLine(after));
+      if (issue.state === "Canceled") {
+        out(
+          issue.issueState === "OPEN" && after.issueState === "CLOSED"
+            ? `noop: #${after.number} already "Canceled" — completed the issue close the earlier cancel left half-applied`
+            : `noop: #${after.number} already "Canceled" (nothing to do)`,
+        );
+      } else out(issueLine(after));
       return 0;
     }
 
@@ -9191,7 +9961,7 @@ export function run(argv: string[], ctx: Ctx): number {
       // Best-effort by construction — the reopen already happened, and a
       // failure to annotate it must not report the reopen as failed.
       try {
-        const p = resolveProposal(ctx, issue, "accepted", "Resolved by `board reopen`.");
+        const p = resolveProposal(ctx, issue, "accepted", "Resolved by `board reopen`.", true);
         if (p) out(`resolved the pending tend proposal on #${issue.number} (accepted)`);
       } catch (e) {
         process.stderr.write(
@@ -9219,6 +9989,43 @@ export function run(argv: string[], ctx: Ctx): number {
         return 1;
       }
       out(`#${number}: tend proposal ${reject ? "rejected" : "accepted"}${p.at ? ` (proposed ${p.at})` : ""}`);
+      if (!reject) {
+        // Accepting records the decision; the disposition is still a gated
+        // state move this verb deliberately does not perform (its charter:
+        // rejection is the one disposition nothing else observes). Name the
+        // follow-up so accepted-but-unmoved stops being a discovery.
+        out(`  complete the disposition: board move ${number} done --why "<how>" (delivered) or board cancel ${number} -m "<why>" (duplicate/superseded)`);
+      }
+      return 0;
+    }
+
+    case "defer": {
+      const number = requireNumber(positional[0]);
+      if (flags.clear) {
+        const after = setDefer(ctx, number, null);
+        out(after.defer ? `#${number}: defer clear did not stick — re-run` : `#${number}: defer cleared`);
+        return 0;
+      }
+      const condition = typeof flags.until === "string" ? flags.until.trim() : "";
+      if (!condition)
+        throw new UsageError(
+          `defer requires --until "<observable condition>" (what must become true before this ranks again), or --clear`,
+        );
+      let recheck: Date | null = null;
+      if (typeof flags.recheck === "string" && flags.recheck) {
+        const t = new Date(flags.recheck).getTime();
+        // Refused at write time, never misfiled: a recheck nobody can parse is
+        // a defer that silently never resurfaces.
+        if (!Number.isFinite(t)) throw new UsageError(`--recheck must be an ISO-8601 instant, got "${flags.recheck}"`);
+        recheck = new Date(t);
+      }
+      const after = setDefer(ctx, number, { recheck, condition });
+      out(
+        `#${number}: deferred — ${condition}` +
+          (recheck ? ` (recheck by ${recheck.toISOString()})` : "") +
+          ` — parked out of next/frontier until cleared or claimed`,
+      );
+      if (after.state !== "Backlog") out(`  note: state is "${after.state}" — defer only parks Backlog ranking`);
       return 0;
     }
 
@@ -9232,7 +10039,14 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "dep": {
       const blocked = requireNumber(positional[0]);
-      const blocking = requireNumber(typeof flags.on === "string" ? flags.on : undefined, "--on <blocking issue>");
+      // --blocked-by is an alias for --on: the CLI's own output and JSON say
+      // "blockedBy", and every observed first use typed it — a CLI that
+      // disagrees with its own vocabulary is the defect, not the typist.
+      const onFlag =
+        typeof flags.on === "string" ? flags.on
+        : typeof flags["blocked-by"] === "string" ? flags["blocked-by"]
+        : undefined;
+      const blocking = requireNumber(onFlag, "--on <blocking issue> (--blocked-by also accepted)");
       setDependency(ctx, blocked, blocking, !!flags.rm);
       out(`#${blocked} ${flags.rm ? "no longer" : "is"} blocked by #${blocking}`);
       return 0;
@@ -9615,7 +10429,30 @@ const isMain = (() => {
 if (isMain) {
   try {
     const repoRoot = findRepoRoot(process.cwd());
-    const cfg = loadConfig(repoRoot);
+    let cfg: Config;
+    try {
+      cfg = loadConfig(repoRoot);
+    } catch (e) {
+      // Config-free carve-outs (audit C2): `help` must never exit 64 on a
+      // fresh clone — learning that `board bootstrap` exists cannot require
+      // the config bootstrap creates — and `bootstrap` is HOW config appears.
+      const bare = process.argv.slice(2);
+      const cmd = bare[0];
+      if (!(e instanceof UsageError)) throw e;
+      if (cmd === undefined || cmd === "help" || cmd === "--help" || cmd === "-h") {
+        const topic = bare[1];
+        process.stdout.write((topic && VERB_HELP[topic] ? VERB_HELP[topic] : HELP) + "\n");
+        process.exit(0);
+      }
+      if (cmd === "bootstrap") {
+        const { flags } = parseArgs(bare.slice(1));
+        const path = writeBootstrapConfig(repoRoot, flags);
+        process.stdout.write(`wrote ${path}\n`);
+        cfg = loadConfig(repoRoot);
+      } else {
+        throw e;
+      }
+    }
     const ctx: Ctx = {
       exec: realExec,
       cfg,
@@ -9631,7 +10468,13 @@ if (isMain) {
         dir: join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "sessions"),
       },
     };
-    process.exit(run(process.argv.slice(2), ctx));
+    let code: number;
+    try {
+      code = run(process.argv.slice(2), ctx);
+    } finally {
+      appendBudgetLedger(process.argv[2] ?? "(none)", new Date());
+    }
+    process.exit(code);
   } catch (e) {
     if (e instanceof UsageError) {
       process.stderr.write(`usage: ${e.message}\n`);
@@ -9640,6 +10483,11 @@ if (isMain) {
     if (e instanceof RefusalError) {
       process.stderr.write(`refused: ${e.message}\n`);
       process.exit(2);
+    }
+    if (e instanceof TransientError) {
+      // EX_TEMPFAIL: wait and re-run — never "this request is malformed".
+      process.stderr.write(`temporary: ${e.message}\n`);
+      process.exit(75);
     }
     process.stderr.write(`error: ${(e as Error).message}\n`);
     process.exit(1);

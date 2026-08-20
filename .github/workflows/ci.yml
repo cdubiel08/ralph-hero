@@ -21,6 +21,8 @@ jobs:
         run: npm ci
       - name: Typecheck board.ts
         run: npx tsc --noEmit
+      - name: Lint (eslint, ralph/scripts)
+        run: npm run lint
       - name: board.ts test suite
         # Directory, not filename: a new *.test.ts beside board.ts (e.g. the
         # metrics registry) must not be silently skipped by CI.

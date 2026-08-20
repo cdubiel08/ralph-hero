@@ -26,7 +26,6 @@ import {
   rankNext,
   RefusalError,
   run,
-  UsageError,
 } from "./board.js";
 import * as boardApi from "./board.js";
 import { FakeGh, makeCtx, NOW, refusalMessage } from "./board.testkit.js";
