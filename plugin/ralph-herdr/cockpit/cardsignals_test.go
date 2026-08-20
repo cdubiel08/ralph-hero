@@ -9,6 +9,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -295,6 +296,88 @@ func TestParseClosedRefusesAPayloadWithNoItemsArray(t *testing.T) {
 	// meter and away from the spawn verb.
 	if cards[0].State != doneState || cards[0].ClosedAt == "" || cards[0].Repo != "o/r" {
 		t.Errorf("closed card = %+v", cards[0])
+	}
+}
+
+// A board CLI that predates card-signals refuses the subcommand, and the
+// cockpit rendered that refusal indistinguishably from a rate limit — every
+// chip UNREAD, cause undiagnosable from the screen (GH-2073, observed
+// 2026-08-18). The skew must be named: the resolved path, its version when
+// the path carries one, and the remedy.
+func TestStaleBoardCLIIsNamedNotRenderedAsATransientFailure(t *testing.T) {
+	// The verbatim refusal a pre-0.1.168 board.ts emits (measured on 0.1.167).
+	refusal := "usage: unknown command \"card-signals\" — run `board help`"
+
+	got := explainStaleBoardCLI("/home/u/.claude/plugins/cache/mp/ralph/0.1.150/scripts/board", refusal)
+	for _, want := range []string{"predates card-signals", "0.1.168", "ralph 0.1.150", "/home/u/.claude/plugins/cache/mp/ralph/0.1.150/scripts/board", "/plugin", "RALPH_HERDR_BOARD"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skew diagnosis %q must carry %q", got, want)
+		}
+	}
+
+	// A path with no version component still names itself — a guessed version
+	// would be worse than none.
+	got = explainStaleBoardCLI("/repo/ralph/scripts/board", refusal)
+	if !strings.Contains(got, "/repo/ralph/scripts/board") || strings.Contains(got, "(ralph ") {
+		t.Errorf("vendored-path diagnosis %q must name the path and invent no version", got)
+	}
+
+	// Anything that is not the usage refusal falls through to the ordinary
+	// naming path: a rate limit, a timeout, a crash are NOT version skew.
+	for _, combined := range []string{
+		"API rate limit exceeded",
+		"gh api graphql failed (exit 1)",
+		"",
+		"unknown command \"closed\" — run `board help`", // a different subcommand is a different bug
+	} {
+		if got := explainStaleBoardCLI("/any/board", combined); got != "" {
+			t.Errorf("explainStaleBoardCLI(%q) = %q, want fall-through", combined, got)
+		}
+	}
+}
+
+// End to end: the skew diagnosis must reach signalsMsg.err, where the banner
+// reads it — and a genuinely transient failure must keep its ordinary naming.
+func TestFetchSignalsNamesTheSkewOnTheWireIn(t *testing.T) {
+	boardPath := "/h/.claude/plugins/cache/mp/ralph/0.1.150/scripts/board"
+	r := &fakeRunner{respond: func(prog string, args []string) (string, string, error) {
+		if prog == boardPath && len(args) > 0 && args[0] == "card-signals" {
+			return "", "usage: unknown command \"card-signals\" — run `board help`", errors.New("exit status 64")
+		}
+		return "", "", nil
+	}}
+	msg := fetchSignalsCmd(Config{Board: boardPath}, r)().(signalsMsg)
+	if msg.ok {
+		t.Fatal("a refused read must not report ok")
+	}
+	if !strings.Contains(msg.err, "predates card-signals") || !strings.Contains(msg.err, "ralph 0.1.150") {
+		t.Errorf("signalsMsg.err = %q, want the named skew", msg.err)
+	}
+
+	r = &fakeRunner{respond: func(string, []string) (string, string, error) {
+		return "", "boom", errors.New("exit status 1")
+	}}
+	msg = fetchSignalsCmd(Config{Board: boardPath}, r)().(signalsMsg)
+	if strings.Contains(msg.err, "predates card-signals") {
+		t.Errorf("a non-skew failure diagnosed as skew: %q", msg.err)
+	}
+}
+
+func TestPluginPathVersionReadsOnlyTheCacheShape(t *testing.T) {
+	tests := []struct{ path, want string }{
+		{"/h/.claude/plugins/cache/mp/ralph/0.1.150/scripts/board", "0.1.150"},
+		{"/h/.claude/plugins/cache/mp/ralph/10.20.3/scripts/board", "10.20.3"},
+		// A vendored checkout: …/ralph/scripts/board has no version component.
+		{"/repo/ralph/scripts/board", ""},
+		// A repo directory named ralph must not read its child dir as a version.
+		{"/h/ralph/main/scripts/board", ""},
+		{"board", ""},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		if got := pluginPathVersion(tc.path); got != tc.want {
+			t.Errorf("pluginPathVersion(%q) = %q, want %q", tc.path, got, tc.want)
+		}
 	}
 }
 
