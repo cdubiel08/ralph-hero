@@ -20,6 +20,17 @@
     "scripts/lib/merge-evidence.sh": "94585c10870019e73278a22af9f9372ef4f987671976a20f9b5506c55b22155a",
     ".github/workflows/validate-attestation.yml": "362b1421f23cf1e88a1ae0959c63f698e90b2c0de7a5b4c5530e3ab0cc236497",
     ".github/workflows/state-guard.yml": "4c23fd09515a03262e7f423e45733366e65ad4016094234a4b6c9a901af13fa7",
-    ".github/workflows/doctor.yml": "e851de240963f070345f6476054302210ff328040d8d739e1b25bc0fd4c26163"
+    ".github/workflows/doctor.yml": "e851de240963f070345f6476054302210ff328040d8d739e1b25bc0fd4c26163",
+    ".claude/hooks/ralph-kit-orient.sh": "7fc4bbb2908942462c915c52b42174c09a953db66b9ba5a269b270405ea53c52",
+    ".claude/hooks/funnel-gate-watch.sh": "b029e7925218f55e636df4400177f1d4432e9447eadee1ac02c3202ed1786168",
+    ".claude/hooks/lib/cmdscan.sh": "3d07f64c836358880d41ade7207df4fd57972e3f31133a2c1a1903673a13c07e"
+  },
+  "sources": {
+    ".claude/hooks/ralph-kit-orient.sh": "ralph/scripts/kit-src/ralph-kit-orient.sh",
+    ".claude/hooks/funnel-gate-watch.sh": "ralph/hooks/funnel-gate-watch.sh",
+    ".claude/hooks/lib/cmdscan.sh": "ralph/hooks/lib/cmdscan.sh"
+  },
+  "fragments": {
+    "CLAUDE.md": { "kit": "fragments/CLAUDE.md", "src": "ralph/scripts/kit-src/claude-md-fragment.md", "sha256": "27e224aa892f3ece03c0c84d1bcde7bd251d125a8ee9d8aaeba60283f253c7be" }
   }
 }

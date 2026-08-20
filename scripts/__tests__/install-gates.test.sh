@@ -43,10 +43,25 @@ echo "install-gates.test.sh"
 HOST="$(new_host host1)"
 out="$(cd "$HOST" && bash "$INSTALLER")"
 n="$(jq -r '.files | length' "$HOST/.github/ralph-kit.json")"
-if [ -x "$HOST/scripts/merge-pr.sh" ] && [ -f "$HOST/.github/workflows/validate-attestation.yml" ] && [ "$n" = 18 ]; then
-  pass "fresh install lands 18 files + stamp; scripts executable"
+if [ -x "$HOST/scripts/merge-pr.sh" ] && [ -f "$HOST/.github/workflows/validate-attestation.yml" ] && [ "$n" = 21 ]; then
+  pass "fresh install lands 21 files + stamp; scripts executable"
 else
   fail "fresh install (files=$n)"
+fi
+# Advisory hooks (audit C3): installed under .claude/hooks/, never registered.
+if [ -x "$HOST/.claude/hooks/ralph-kit-orient.sh" ] && [ -x "$HOST/.claude/hooks/funnel-gate-watch.sh" ] \
+   && [ -f "$HOST/.claude/hooks/lib/cmdscan.sh" ] && [ ! -f "$HOST/.claude/settings.json" ] \
+   && grep -q "SessionStart" <<<"$out"; then
+  pass "advisory hooks installed; settings.json never written; registration printed"
+else
+  fail "advisory hook install"
+fi
+# CLAUDE.md fragment: created with the marker block, stamped under .fragments.
+if grep -q "BEGIN ralph-kit" "$HOST/CLAUDE.md" && grep -q "pr-gate-watch.sh" "$HOST/CLAUDE.md" \
+   && jq -e '.fragments["CLAUDE.md"]' "$HOST/.github/ralph-kit.json" >/dev/null; then
+  pass "CLAUDE.md created with the ralph-kit block and stamped"
+else
+  fail "CLAUDE.md fragment on fresh install"
 fi
 # Board workflows are withheld from a boardless host (GH-2088): not installed,
 # not stamped, named with the remedy.
@@ -73,8 +88,10 @@ fi
 
 # --- idempotent second run --------------------------------------------------
 out="$(cd "$HOST" && bash "$INSTALLER")"
-if grep -q "0 installed, 0 updated, 18 already current, 0 skipped" <<<"$out"; then
-  pass "second run is a no-op"
+# 22 = 21 files + the CLAUDE.md fragment block (fragments count in the same
+# summary; they are units of installed content, just merged not copied).
+if grep -q "0 installed, 0 updated, 22 already current, 0 skipped" <<<"$out"; then
+  pass "second run is a no-op (fragment included)"
 else
   fail "second run: $(grep 'installed,' <<<"$out")"
 fi
@@ -125,8 +142,8 @@ HOST4="$(new_host host4)"
 echo '{"owner":"o","repo":"r","projectNumber":7}' > "$HOST4/.ralph.json"
 (cd "$HOST4" && bash "$INSTALLER" >/dev/null)
 n4="$(jq -r '.files | length' "$HOST4/.github/ralph-kit.json")"
-if [ "$n4" = 20 ] && [ -f "$HOST4/.github/workflows/state-guard.yml" ]; then
-  pass "fresh install into a board-configured host lands all 20 files"
+if [ "$n4" = 23 ] && [ -f "$HOST4/.github/workflows/state-guard.yml" ]; then
+  pass "fresh install into a board-configured host lands all 23 files"
 else
   fail "board-configured fresh install (files=$n4)"
 fi
@@ -167,6 +184,63 @@ if [ -f "$HOST/.github/workflows/state-guard.yml" ] && [ -f "$HOST/.github/workf
   pass "configuring .ralph.json then re-running installs the board workflows"
 else
   fail "board workflows not installed after board config"
+fi
+
+# --- CLAUDE.md fragment lifecycle (audit C3) ---------------------------------
+HOST5="$(new_host host5)"
+printf '# Host guidance\n\nOur own rules.\n' > "$HOST5/CLAUDE.md"
+(cd "$HOST5" && bash "$INSTALLER" >/dev/null)
+if grep -q "Our own rules." "$HOST5/CLAUDE.md" && grep -q "BEGIN ralph-kit" "$HOST5/CLAUDE.md"; then
+  pass "pre-existing CLAUDE.md gets the block appended, host prose untouched"
+else
+  fail "fragment append into existing CLAUDE.md"
+fi
+# Host edits INSIDE the markers: respected on re-run, replaced under --force.
+perl -pi -e 's/never bare/HOST EDIT never bare/' "$HOST5/CLAUDE.md"
+out="$(cd "$HOST5" && bash "$INSTALLER")"
+if grep -q "SKIPPED    CLAUDE.md" <<<"$out" && grep -q "HOST EDIT" "$HOST5/CLAUDE.md"; then
+  pass "host-edited fragment block skipped, edit preserved"
+else
+  fail "host-edited fragment block clobbered or not reported"
+fi
+(cd "$HOST5" && bash "$INSTALLER" --force >/dev/null)
+if ! grep -q "HOST EDIT" "$HOST5/CLAUDE.md" && grep -q "Our own rules." "$HOST5/CLAUDE.md"; then
+  pass "--force replaces the block; host prose outside the markers still untouched"
+else
+  fail "--force fragment replace"
+fi
+# Host deletes the block after an install: an opt-out, respected until --force.
+printf '# Host guidance\n\nOur own rules.\n' > "$HOST5/CLAUDE.md"
+out="$(cd "$HOST5" && bash "$INSTALLER")"
+if grep -q "SKIPPED    CLAUDE.md" <<<"$out" && ! grep -q "BEGIN ralph-kit" "$HOST5/CLAUDE.md"; then
+  pass "removed fragment block stays removed across runs"
+else
+  fail "removed fragment block was re-added or not reported"
+fi
+
+# --- orient hook behavior (advisory, one line, exit 0) -----------------------
+line="$(cd "$HOST5" && bash .claude/hooks/ralph-kit-orient.sh)"
+if [ $? -eq 0 ] && grep -q "bash scripts/pr-gate-watch.sh <PR> --watch" <<<"$line"; then
+  pass "orient hook names the gate family and the after-push command"
+else
+  fail "orient hook (gates installed): $line"
+fi
+HOST6="$(new_host host6)"
+echo '{"owner":"o","repo":"r","projectNumber":7}' > "$HOST6/.ralph.json"
+mkdir -p "$HOST6/.claude/hooks"
+cp "$HOST5/.claude/hooks/ralph-kit-orient.sh" "$HOST6/.claude/hooks/"
+line="$(cd "$HOST6" && bash .claude/hooks/ralph-kit-orient.sh)"
+if grep -q "board configured, gates not installed" <<<"$line"; then
+  pass "orient hook flags a board-configured repo with no gates"
+else
+  fail "orient hook (board, no gates): $line"
+fi
+NOREPO="$TMP_ROOT/norepo"; mkdir -p "$NOREPO"
+line="$(cd "$NOREPO" && GIT_CEILING_DIRECTORIES="$TMP_ROOT" bash "$HOST5/.claude/hooks/ralph-kit-orient.sh")"
+if [ $? -eq 0 ] && [ -z "$line" ]; then
+  pass "orient hook prints nothing outside a git repo and still exits 0"
+else
+  fail "orient hook (no repo) printed: $line"
 fi
 
 # --- stamp is valid JSON every time ----------------------------------------
