@@ -93,6 +93,7 @@ import {
   transition,
   TransientError,
   UsageError,
+  writeBootstrapConfig,
 } from "./board.js";
 
 // ---------------------------------------------------------------------------
@@ -7279,5 +7280,118 @@ describe("typed transport handling", () => {
     } finally {
       errSpy.mockRestore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batch 5 (v0.2.0): brief / who / help <verb> / bootstrap / add / C1
+// ---------------------------------------------------------------------------
+
+describe("orientation verbs (audit A2/A5)", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  let outText: string;
+  let spy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+    outText = "";
+    spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      outText += String(s);
+      return true;
+    }) as any;
+  });
+  afterEach(() => spy.mockRestore());
+
+  it("brief: one read carries next head, queue counts, deliver/tend counts and leases", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1" });
+    gh.issues.set(2, { number: 2, state: "In Review", prs: [{ number: 9, merged: false }] });
+    gh.issues.set(3, { number: 3, state: "Backlog", defer: "-|later" });
+    expect(run(["brief"], ctx)).toBe(0);
+    expect(outText).toContain("next: #1");
+    expect(outText).toMatch(/1 eligible.*1 deferred/s);
+    expect(outText).toContain("deliver");
+  });
+
+  it("brief --json is the same facts, typed; leases null ≠ []", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(run(["brief", "--json"], ctx)).toBe(0);
+    const j = JSON.parse(outText);
+    expect(j.next[0].number).toBe(1);
+    expect(j.counts.eligible).toBe(1);
+    expect(j.leases).toBeNull(); // makeCtx has no session dir — not evaluated, never "nobody"
+  });
+
+  it("who reads the local leases and says 'not evaluated' when the dir is unreadable", () => {
+    expect(run(["who"], ctx)).toBe(0);
+    expect(outText).toContain("not evaluated");
+    outText = "";
+    const dir = mkdtempSync(join(tmpdir(), "ralph-who-"));
+    writeFileSync(
+      join(dir, "wt-42-0123456789abcdef.json"),
+      JSON.stringify({ session: "s-1", worktree: "/wt/42", since: NOW.toISOString() }),
+    );
+    const ctx2: Ctx = { ...ctx, session: { id: "s-1", dir } };
+    expect(run(["who"], ctx2)).toBe(0);
+    expect(outText).toContain("#42 (this session) in /wt/42");
+  });
+
+  it("help <verb> prints the per-verb entry; unknown verb exits 64 with the list", () => {
+    expect(run(["help", "defer"], ctx)).toBe(0);
+    expect(outText).toContain("board defer <n> --until");
+    outText = "";
+    expect(run(["help", "no-such-verb"], ctx)).toBe(64);
+    expect(outText).toContain("no such verb");
+  });
+});
+
+describe("bootstrap and add (audit C2/C4)", () => {
+  it("writeBootstrapConfig validates flags, writes .ralph.json once, refuses overwrite", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ralph-boot-"));
+    expect(() => writeBootstrapConfig(dir, {})).toThrow(UsageError);
+    expect(() => writeBootstrapConfig(dir, { owner: "o", repo: "r", project: "x" })).toThrow(UsageError);
+    const path = writeBootstrapConfig(dir, { owner: "o", repo: "r", project: "7" });
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ owner: "o", repo: "r", projectNumber: 7 });
+    expect(() => writeBootstrapConfig(dir, { owner: "o", repo: "r", project: "7" })).toThrow(/already exists/);
+  });
+
+  it("add refuses a foreign issue under the default deny posture, with the env named", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(() => run(["add", "https://github.com/other/repo/issues/9"], ctx)).toThrow(/RALPH_ALLOW_FOREIGN_REPO_ITEMS|foreign/i);
+  });
+});
+
+describe("readiness merge-gate checks its stated alternative (audit C1)", () => {
+  it("required status checks on the default branch satisfy the rung without a scripted gate", () => {
+    const gh = new FakeGh();
+    const base = makeCtx(gh);
+    const ctx: Ctx = {
+      ...base,
+      exec: (argv, stdin) => {
+        const cmd = argv.join(" ");
+        if (cmd === "gh api --hostname github.com repos/cdubiel08/ralph-hero")
+          return { code: 0, stdout: JSON.stringify({ default_branch: "main" }), stderr: "" };
+        if (cmd === "gh api --hostname github.com repos/cdubiel08/ralph-hero/rules/branches/main")
+          return {
+            code: 0,
+            stdout: JSON.stringify([{ type: "pull_request" }, { type: "required_status_checks" }]),
+            stderr: "",
+          };
+        return base.exec(argv, stdin);
+      },
+    };
+    const rep = readiness(ctx);
+    const gate = rep.checks.find((c) => c.name === "merge-gate")!;
+    expect(gate.status).toBe("ok");
+    expect(gate.detail).toContain("required status checks");
+  });
+
+  it("unreadable rules stay a miss — a read we could not make is not 'satisfied'", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh); // FakeGh answers code 1 for the repo API
+    const rep = readiness(ctx);
+    const gate = rep.checks.find((c) => c.name === "merge-gate")!;
+    expect(gate.status).toBe("miss");
   });
 });

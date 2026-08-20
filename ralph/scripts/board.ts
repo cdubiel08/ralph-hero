@@ -873,6 +873,25 @@ function findRepoRoot(startDir: string): string {
   }
 }
 
+/** Write the .ralph.json `board bootstrap` runs from (audit C2). Refuses to
+ *  overwrite: there is no --force anywhere in this CLI, and a config that
+ *  already exists is edited by hand, not clobbered by a bring-up command. */
+export function writeBootstrapConfig(repoRoot: string, flags: Record<string, unknown>): string {
+  const owner = typeof flags.owner === "string" ? flags.owner.trim() : "";
+  const repo = typeof flags.repo === "string" ? flags.repo.trim() : "";
+  const project = Number(flags.project);
+  if (!owner || !repo || !Number.isInteger(project) || project <= 0) {
+    throw new UsageError(
+      "bootstrap requires --owner <owner> --repo <repo> --project <number> (optional --host <ghe-host>)",
+    );
+  }
+  const path = join(repoRoot, ".ralph.json");
+  if (existsSync(path)) throw new UsageError(`${path} already exists — edit it by hand instead of re-bootstrapping`);
+  const host = typeof flags.host === "string" && flags.host ? { host: flags.host } : {};
+  writeFileSync(path, JSON.stringify({ owner, repo, projectNumber: project, ...host }, null, 2) + "\n");
+  return path;
+}
+
 /** Config precedence: .ralph.json > tracked .claude/settings.json env block.
  *  process.env fills only lockTtlMin/holder (never scope — scope is repo-anchored). */
 export function loadConfig(repoRoot: string): Config {
@@ -917,7 +936,8 @@ export function loadConfig(repoRoot: string): Config {
   if (!owner || !repo || !projectNumber) {
     throw new UsageError(
       "config missing: need owner/repo/projectNumber from .ralph.json or .claude/settings.json env " +
-        "(RALPH_GH_OWNER, RALPH_GH_REPO, RALPH_GH_PROJECT_NUMBER)",
+        "(RALPH_GH_OWNER, RALPH_GH_REPO, RALPH_GH_PROJECT_NUMBER). " +
+        "New here? `board bootstrap --owner <o> --repo <r> --project <n>` writes .ralph.json and provisions the board.",
     );
   }
 
@@ -3142,6 +3162,49 @@ export function localSessionLease(ctx: Ctx): LeaseProbe | null {
     if (!prior || prior.expiresAt < hold.expiresAt) holds.set(number, hold);
   }
   return (number: number) => holds.get(number) ?? null;
+}
+
+/** Every local per-(worktree, unit) lease, for `board who` (audit A2): the
+ *  machine-shared sessions dir already names holder, unit and worktree in one
+ *  readdir at zero API cost — the question "who is working" was unanswerable
+ *  without grepping this file. Null = could not read, never "nobody". */
+export interface LeaseRow {
+  issue: number;
+  session: string;
+  worktree: string;
+  since: string;
+  expiresAt: string;
+  stale: boolean;
+  ours: boolean;
+}
+export function readLocalLeases(ctx: Ctx): LeaseRow[] | null {
+  if (!ctx.session?.dir) return null;
+  let names: string[];
+  try {
+    names = readdirSync(ctx.session.dir);
+  } catch {
+    return null;
+  }
+  const ttlMs = ctx.cfg.lockTtlMin * 60_000;
+  const cutoff = ctx.now().getTime() - ttlMs;
+  const rows: LeaseRow[] = [];
+  for (const name of names) {
+    const m = /^wt-(\d+)-[0-9a-f]{16}\.json$/.exec(name);
+    if (!m) continue;
+    const held = readWorktreeLock(join(ctx.session.dir, name));
+    if (!held) continue;
+    rows.push({
+      issue: Number(m[1]),
+      session: held.lock.session,
+      worktree: held.lock.worktree,
+      since: held.lock.since,
+      expiresAt: new Date(held.freshMs + ttlMs).toISOString(),
+      stale: held.freshMs < cutoff,
+      ours: held.lock.session === (ctx.session.id ?? ""),
+    });
+  }
+  rows.sort((a, b) => a.issue - b.issue);
+  return rows;
 }
 
 /** Refuse a SECOND, distinct unit driven from one session. Re-claiming the
@@ -7555,9 +7618,20 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   const auth = ctx.exec(["gh", "auth", "status"]);
   add("gh-auth", auth.code === 0 ? "ok" : "fail", auth.code === 0 ? "authenticated" : auth.stderr.trim());
 
-  // scope
+  // scope — "not a repo" and "no origin remote" are different bring-up steps,
+  // and the gate every mutation depends on should name which is missing
+  // rather than leave it an archaeology finding (audit C2).
   const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
-  if (remote.code !== 0) add("scope", "warn", "no origin remote");
+  if (remote.code !== 0) {
+    const inRepo = ctx.exec(["git", "-C", ctx.repoRoot, "rev-parse", "--is-inside-work-tree"]);
+    add(
+      "scope",
+      "warn",
+      inRepo.code !== 0
+        ? `not a git repository (${ctx.repoRoot}) — every mutation's scope gate needs one`
+        : "no origin remote — `git remote add origin <url>`; the scope gate compares it against the configured repo",
+    );
+  }
   else if (scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) add("scope", "ok", remote.stdout.trim());
   else add("scope", "fail", `origin ${remote.stdout.trim()} != configured ${ctx.cfg.host}/${ctx.cfg.owner}/${ctx.cfg.repo}`);
 
@@ -8380,6 +8454,10 @@ export function readiness(ctx: Ctx): ReadinessReport {
 
   let prStatus: ReadinessCheck["status"] = "info";
   let prDetail = "could not verify (repo API unavailable)";
+  // Kept for the merge-gate check below (audit C1): a recommendation whose
+  // alternative the tool can check and doesn't is a false positive that
+  // trains operators to ignore the report. null = unreadable, never "no".
+  let branchRules: Array<{ type?: string }> | null = null;
   const repoInfo = ctx.exec(["gh", "api", "--hostname", ctx.cfg.host, `repos/${ctx.cfg.owner}/${ctx.cfg.repo}`]);
   if (repoInfo.code === 0) {
     try {
@@ -8389,7 +8467,8 @@ export function readiness(ctx: Ctx): ReadinessReport {
         `repos/${ctx.cfg.owner}/${ctx.cfg.repo}/rules/branches/${def}`,
       ]);
       if (rules.code === 0) {
-        const requiresPr = (JSON.parse(rules.stdout) as Array<{ type?: string }>).some(
+        branchRules = JSON.parse(rules.stdout) as Array<{ type?: string }>;
+        const requiresPr = branchRules.some(
           (r) => r.type === "pull_request",
         );
         prStatus = requiresPr ? "ok" : "miss";
@@ -8404,9 +8483,17 @@ export function readiness(ctx: Ctx): ReadinessReport {
 
   // — Level 3: what the scheduler-owned loop leans on. —
   const hasGate = existsSync(join(ctx.repoRoot, "scripts", "merge-pr.sh"));
+  // The named alternative, CHECKED (audit C1): required status checks under
+  // the effective branch rules satisfy this rung without a scripted gate.
+  // Unreadable rules stay a miss — a read we could not make is not "satisfied".
+  const requiredChecks = branchRules?.some((r) => r.type === "required_status_checks") ?? false;
   add(
-    3, "merge-gate", hasGate ? "ok" : "miss",
-    hasGate ? "scripts/merge-pr.sh present" : "no scripted merge gate",
+    3, "merge-gate", hasGate || requiredChecks ? "ok" : "miss",
+    hasGate
+      ? "scripts/merge-pr.sh present"
+      : requiredChecks
+        ? "no scripted gate, but required status checks are active on the default branch — the stated alternative, verified"
+        : "no scripted merge gate",
     hasGate
       ? undefined
       : "before agents merge unattended, script the merge verdict — the plugin ships the whole family as an " +
@@ -8695,6 +8782,10 @@ export function liveLintDeps(ctx: Ctx): LiveLintDeps {
 const HELP = `board — the ralph v2 board CLI (sole sanctioned mutation path)
 
 reads
+  brief [--json]              ONE orientation read: next head, queue counts,
+                              deliver/tend counts, local session leases
+  who [--json]                who is driving what on this machine — the
+                              per-(worktree, unit) leases, zero API
   get NNN [--json]            issue: state, claim, parent/children, blockers, PRs
   list [--state S] [--json]   open items on the board — a bounded own-repo
                               read (open issues only), not a full project
@@ -8962,7 +9053,62 @@ change oracle (GH-1804)
   It sees comments, body edits, labels and open/close. It does NOT see
   Workflow State, Claim, or dependency edges — so a transition-busy board
   returns 304 the whole way and T_max, not the oracle, is what bounds
-  staleness. doctor never uses it: it mutates from what it read.`;
+  staleness. doctor never uses it: it mutates from what it read.
+v0.2.0 additions
+  defer NNN --until "<condition>" [--recheck ISO] | --clear
+                              park a Backlog item out of ranking until its
+                              stated precondition holds; claiming lifts it
+  move NNN done --decision <artifact>
+                              typed close for a unit with no PR: records
+                              ralph-decision-evidence:v1 naming the artifact
+  bootstrap --owner O --repo R --project N [--host H]
+                              first-run bring-up: writes .ralph.json, links
+                              the repo, runs setup, prints next steps
+  add <issue-url>             add an issue by URL (cross-repo path, gated on
+                              RALPH_ALLOW_FOREIGN_REPO_ITEMS)
+  help <verb>                 per-verb usage with an example
+  dep NNN --blocked-by M      alias for --on (the CLI's own vocabulary)
+
+  Same-state moves are safe retries: a noop, or completing a half-applied
+  terminal close on the same evidence a fresh move demands.
+`;
+
+/** Per-verb usage (audit A5): `board help <verb>` — one usage line, one
+ *  example, the flags that matter. The monolith HELP above stays the index. */
+export const VERB_HELP: Record<string, string> = {
+  next: "board next [--json] [--fresh]\n  The ranked work queue's head. Empty is typed (--json: diagnosis).\n  example: board next",
+  frontier: "board frontier [--json]\n  next's eligible queue re-projected with per-item explanations (fleet feed).\n  example: board frontier --json",
+  brief: "board brief [--json]\n  One orientation read: next head, queue counts, deliver/tend counts, local leases.\n  example: board brief",
+  who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  example: board who",
+  list: "board list [--state <s>] [--json]\n  Items by state. Full-board scan — prefer next/brief for orientation.\n  example: board list --state human",
+  get: "board get <n> [--json]\n  One issue with board fields, parity with what move/claim write.\n  example: board get 1234",
+  create: "board create --title <t> [--body <b>] [--parent <n>] [--estimate XS..XL] [--priority P0..P3] [--apply] [--state <s>]\n  Files an issue onto the board. Retry-safe (twin dedupe, GH-1973).\n  example: board create --title \"fix the gate\" --priority P1",
+  claim: "board claim <n> [--steal] | board claim show <n>\n  Take a unit (Backlog→In Progress). --steal only after TTL expiry.\n  example: board claim 1234",
+  release: "board release <n> -m \"<where you stopped>\"\n  Give a unit back (→Backlog) with the handoff note.\n  example: board release 1234 -m \"tests red on X; next: fix parser\"",
+  move: "board move <n> <state> [--why <w>] [--decision <artifact>]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact, or --why.\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
+  answer: "board answer <n> -m \"<the decision>\" [--comment-only] [--any-state]\n  Answer a Human Needed item and resume it.\n  example: board answer 1234 -m \"ship option B\"",
+  cancel: "board cancel <n> -m \"<reason>\"\n  Cancel (→Canceled, closes NOT_PLANNED). Reopen is the only exit.\n  example: board cancel 1234 -m \"superseded by #1300\"",
+  reopen: "board reopen <n>\n  The one exit from Done/Canceled (→Backlog); accepts a pending reopen proposal.\n  example: board reopen 1234",
+  defer: "board defer <n> --until \"<condition>\" [--recheck <ISO>] | board defer <n> --clear\n  Park a Backlog item out of ranking until its stated precondition holds.\n  Claiming the unit also lifts it. doctor surfaces elapsed rechecks.\n  example: board defer 1234 --until \"GH-2088 lands\" --recheck 2026-09-01T00:00:00Z",
+  dep: "board dep <blocked> --on <blocking> [--rm]   (--blocked-by = --on)\n  Dependency edge; blocked items never rank.\n  example: board dep 1234 --blocked-by 1200",
+  link: "board link <parent> <child>\n  Sub-issue edge (the tree parent-check rolls up).\n  example: board link 1200 1234",
+  priority: "board priority <n> <P0..P3|--clear>\n  Set/clear Priority. Null priority sinks below stale backlog in next.\n  example: board priority 1234 P1",
+  comment: "board comment <n> -m \"<body>\"\n  Plain comment through the sanctioned path.\n  example: board comment 1234 -m \"blocked on infra\"",
+  resolve: "board resolve <n> --accept | --reject -m \"<why not>\"\n  Dispose of a tend closure proposal. --accept prints the gated follow-up.\n  example: board resolve 1234 --reject -m \"still needed for the demo\"",
+  adopt: "board adopt <n>\n  Put an off-board issue onto the board (Backlog).\n  example: board adopt 1234",
+  add: "board add <issue-url>\n  Add an issue by URL — the sanctioned cross-repo path, gated on RALPH_ALLOW_FOREIGN_REPO_ITEMS.\n  example: board add https://github.com/o/r/issues/9",
+  reconcile: "board reconcile <n>\n  Reality sync: GitHub open/closed wins over the board.\n  example: board reconcile 1234",
+  "parent-check": "board parent-check <n>\n  Roll a parent forward when every child is closed.\n  example: board parent-check 1200",
+  "deliver-queue": "board deliver-queue [--json]\n  Quiescent In Review items with actionable PR signal (the deliver lane's selector).\n  example: board deliver-queue --json",
+  "tend-queue": "board tend-queue [--json]\n  Backlog-hygiene and Done-audit rows (the tend lane's selector).\n  example: board tend-queue",
+  doctor: "board doctor [--fix] [--strict] [--fresh]\n  Invariant sweep + advisory lines. --fix corrects drift; info lines are never escalated.\n  example: board doctor --fix",
+  readiness: "board readiness [--json]\n  Advisory agent-readiness report (3 levels) — recommendations, never gates.\n  example: board readiness",
+  setup: "board setup\n  Idempotent field provisioning; prints exactly which steps are manual.\n  example: board setup",
+  bootstrap: "board bootstrap --owner <o> --repo <r> --project <n> [--host <ghe>]\n  First-run bring-up: writes .ralph.json, links the repo, runs setup, prints next steps.\n  example: board bootstrap --owner me --repo my-app --project 7",
+  prune: "board prune [--apply] [--limit N]\n  Remove long-closed terminal items from the PROJECT (issues untouched). Dry run until --apply.\n  example: board prune",
+  name: "board name <n> [--json]\n  THE branch/agent name grammar for a unit (never rebuild slugify in shell).\n  example: board name 1234",
+  peer: "board peer <n>\n  Resolve the unit's live messaging address from the enumerated sessions.\n  example: board peer 1234",
+};
 
 interface ParsedArgs {
   positional: string[];
@@ -8982,9 +9128,9 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
 /** Flags that take a value. Declared beside the booleans so arity is a property
  *  of the flag rather than of the token that happens to follow it. */
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
-  "blocked-by", "body", "candidates", "decision", "estimate", "holder", "label",
-  "lane", "limit", "message", "on", "out", "parent", "priority", "recheck", "state",
-  "title", "until", "why",
+  "blocked-by", "body", "candidates", "decision", "estimate", "holder", "host",
+  "label", "lane", "limit", "message", "on", "out", "owner", "parent", "priority",
+  "project", "recheck", "repo", "state", "title", "until", "why",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -9086,7 +9232,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 const MUTATING = new Set([
   "create", "claim", "release", "move", "cancel", "reopen", "answer", "priority",
   "defer", "link", "dep", "comment", "adopt", "reconcile", "parent-check",
-  "resolve", "setup", "add",
+  "resolve", "setup", "add", "bootstrap",
 ]);
 
 export function run(argv: string[], ctx: Ctx): number {
@@ -9155,9 +9301,151 @@ export function run(argv: string[], ctx: Ctx): number {
     case undefined:
     case "help":
     case "--help":
-    case "-h":
+    case "-h": {
+      const topic = positional[0];
+      if (topic) {
+        const entry = VERB_HELP[topic];
+        if (entry) out(entry);
+        else {
+          out(`no such verb "${topic}" — verbs with per-verb help: ${Object.keys(VERB_HELP).sort().join(", ")}`);
+          return 64;
+        }
+        return 0;
+      }
       out(HELP);
       return 0;
+    }
+
+    case "brief": {
+      // One orientation read (audit A2): what sessions spent 5-15 discovery
+      // calls re-assembling. Reads only; the three lanes share this
+      // invocation's item-cache walk, so the marginal cost is the deliver and
+      // tend detail, not three scans. Probes are OFF (no merge-pr dry-runs) —
+      // a brief is a glance, not a gate run.
+      const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+      const own = full.open;
+      const closedEdges = closedTreeEdges(ctx, own);
+      const order = priorityOptionOrder(ctx, { values: own.map((i) => i.priority), fresh: flags.fresh === true });
+      const { eligible, blocked, inFlightEpics, deferred } = rankNext(own, closedEdges, order);
+      const dx = diagnoseEmptyQueue(own, eligible, blocked, inFlightEpics, deferred);
+      const dq = deliverQueue(ctx, parseDeliverOpts(), null, null);
+      const tq = tendQueue(ctx);
+      const who = readLocalLeases(ctx);
+      const brief = {
+        next: eligible.slice(0, 3).map((i) => ({ number: i.number, title: i.title, priority: i.priority })),
+        counts: {
+          eligible: eligible.length,
+          blocked: blocked.length,
+          deferred: dx.deferredCount,
+          humanNeeded: dx.humanNeededCount,
+          deliver: dq.queue.length,
+          deliverBlocked: dq.blocked.length,
+          tend: tq.queue.length,
+        },
+        // null = the lease dir could not be read — distinct from [] (nobody).
+        leases: who,
+        cache: cacheFacts(full),
+      };
+      if (flags.json) {
+        json(brief);
+        return 0;
+      }
+      out(
+        eligible.length === 0
+          ? `next: ${emptyQueueLine(blocked, dx)}`
+          : `next: ${eligible.slice(0, 3).map((i) => `#${i.number}${i.priority ? ` ${i.priority}` : ""} ${i.title}`).join("; ")}`,
+      );
+      out(
+        `queues: ${eligible.length} eligible, ${blocked.length} blocked, ${dx.deferredCount} deferred, ` +
+          `${dx.humanNeededCount} human-needed | deliver ${dq.queue.length} (+${dq.blocked.length} blocked) | tend ${tq.queue.length}`,
+      );
+      if (who === null) out(`leases: not evaluated (no session dir)`);
+      else if (who.length === 0) out(`leases: none — no local session is driving a unit`);
+      else for (const l of who) out(`  lease: #${l.issue} ${l.ours ? "(this session)" : l.session} in ${l.worktree}${l.stale ? " STALE" : ` until ${l.expiresAt}`}`);
+      if (cacheNote(full)) out(`  ${cacheNote(full)}`);
+      return 0;
+    }
+
+    case "who": {
+      // Machine-local, zero API: the per-(worktree, unit) leases `board claim`
+      // already publishes (GH-1929/1956), printed instead of grepped for.
+      const rows = readLocalLeases(ctx);
+      if (flags.json) {
+        json({ leases: rows });
+        return 0;
+      }
+      if (rows === null) out("leases: not evaluated — sessions dir unreadable (distinct from nobody working)");
+      else if (rows.length === 0) out("no local session leases — nobody on this machine is driving a unit");
+      else for (const l of rows) out(`#${l.issue} ${l.ours ? "(this session)" : l.session} in ${l.worktree} since ${l.since}${l.stale ? " STALE (past TTL)" : ` — lease until ${l.expiresAt}`}`);
+      return 0;
+    }
+
+    case "bootstrap": {
+      // .ralph.json exists by the time run() sees this (pre-existing, or just
+      // written by the no-config path in main from these same flags).
+      if (typeof flags.owner === "string" && (flags.owner !== ctx.cfg.owner || flags.repo !== ctx.cfg.repo)) {
+        out(
+          `note: config already present (${ctx.cfg.owner}/${ctx.cfg.repo}, project #${ctx.cfg.projectNumber}) — ` +
+            `flags ignored; edit .ralph.json to change scope`,
+        );
+      }
+      // Repo→project linkage is advisory (setup warns when absent); linking
+      // needs the project scope, so a failure is a printed manual step.
+      const link = ctx.exec([
+        "gh", "project", "link", String(ctx.cfg.projectNumber),
+        "--owner", ctx.cfg.owner, "--repo", `${ctx.cfg.owner}/${ctx.cfg.repo}`,
+      ]);
+      out(
+        link.code === 0
+          ? `linked ${ctx.cfg.owner}/${ctx.cfg.repo} to project #${ctx.cfg.projectNumber}`
+          : `MANUAL: could not link the repo to project #${ctx.cfg.projectNumber} (${(link.stderr || link.stdout).trim().slice(0, 120)}) — link it in the project UI`,
+      );
+      const rep = setup(ctx, out);
+      out("");
+      out(`config: .ralph.json is authoritative; the tracked settings env block is the alternative:`);
+      out(`  "env": { "RALPH_GH_OWNER": "${ctx.cfg.owner}", "RALPH_GH_REPO": "${ctx.cfg.repo}", "RALPH_GH_PROJECT_NUMBER": "${ctx.cfg.projectNumber}" }`);
+      out(`next: \`board readiness\` reports what this repo is ready for; \`board doctor\` sweeps invariants`);
+      return rep.ok ? 0 : 1;
+    }
+
+    case "add": {
+      // The one sanctioned non-own-repo add path (audit C4) — the guard
+      // CLAUDE.md documents as "exists so a future non-own-repo add path
+      // trips" is exactly what gates it: RALPH_ALLOW_FOREIGN_REPO_ITEMS
+      // unset/false refuses with the reason.
+      const url = positional[0];
+      if (!url || !/^https?:\/\//.test(url)) throw new UsageError(`add requires an issue URL (board add https://github.com/o/r/issues/N)`);
+      const parsedRepo = repoFromIssueUrl(url);
+      const numMatch = /\/issues\/(\d+)$/.exec(url);
+      if (!parsedRepo || !numMatch) throw new UsageError(`not an issue URL: ${url}`);
+      const num = Number(numMatch[1]);
+      // Policy check BEFORE the read (on the typed URL — refusing costs no
+      // API), and again after on the URL GitHub returned, which is the
+      // authoritative one (the GH-1815 rule: comparing cfg against itself
+      // asserts nothing; a redirect could differ from what was typed).
+      assertBoardAddAllowed(ctx, url, num);
+      const [owner, name] = parsedRepo.split("/");
+      const data = ghGraphQL<any>(
+        ctx,
+        `query($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) { issue(number: $number) { id url title } }
+        }`,
+        { owner, name, number: num },
+      );
+      const issueNode = data.repository?.issue;
+      if (!issueNode) throw new UsageError(`issue not found: ${url}`);
+      assertBoardAddAllowed(ctx, issueNode.url, num);
+      const cache = ensureCache(ctx);
+      ghGraphQL(
+        ctx,
+        `mutation($projectId: ID!, $contentId: ID!) {
+          addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
+        }`,
+        { projectId: cache.projectId, contentId: issueNode.id },
+      );
+      out(`added ${parsedRepo}#${num} to the board (${issueNode.title})`);
+      return 0;
+    }
 
     case "get": {
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
@@ -10143,7 +10431,30 @@ const isMain = (() => {
 if (isMain) {
   try {
     const repoRoot = findRepoRoot(process.cwd());
-    const cfg = loadConfig(repoRoot);
+    let cfg: Config;
+    try {
+      cfg = loadConfig(repoRoot);
+    } catch (e) {
+      // Config-free carve-outs (audit C2): `help` must never exit 64 on a
+      // fresh clone — learning that `board bootstrap` exists cannot require
+      // the config bootstrap creates — and `bootstrap` is HOW config appears.
+      const bare = process.argv.slice(2);
+      const cmd = bare[0];
+      if (!(e instanceof UsageError)) throw e;
+      if (cmd === undefined || cmd === "help" || cmd === "--help" || cmd === "-h") {
+        const topic = bare[1];
+        process.stdout.write((topic && VERB_HELP[topic] ? VERB_HELP[topic] : HELP) + "\n");
+        process.exit(0);
+      }
+      if (cmd === "bootstrap") {
+        const { flags } = parseArgs(bare.slice(1));
+        const path = writeBootstrapConfig(repoRoot, flags);
+        process.stdout.write(`wrote ${path}\n`);
+        cfg = loadConfig(repoRoot);
+      } else {
+        throw e;
+      }
+    }
     const ctx: Ctx = {
       exec: realExec,
       cfg,
