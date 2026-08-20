@@ -142,6 +142,56 @@ eq "the last segment is delimited too" \
   'git push --force origin feat/x||' \
   "$(segs 'git push --force origin feat/x')"
 
+echo "== cs_command_word: where a pattern sits decides what it means =="
+
+# The command-position rule (ways-of-working audit B4): a mutation name in an
+# argument to grep/rg/sed/awk/python is data, the same bytes after `gh` in
+# command position are a mutation being run. The POLICY (which words count)
+# stays in each rail; only the reading of "which token is the command" is
+# shared here.
+
+eq "a plain command word" \
+  'gh' \
+  "$(cs_command_word 'gh api graphql -f query=x')"
+
+eq "a pathed command word is returned whole (callers match */gh)" \
+  '/usr/local/bin/gh' \
+  "$(cs_command_word '/usr/local/bin/gh api graphql')"
+
+eq "VAR=value prefixes are environment, not the command" \
+  'gh' \
+  "$(cs_command_word 'GH_PAGER= GH_TOKEN=x gh api graphql')"
+
+eq "a subshell paren does not hide the command word" \
+  'gh' \
+  "$(cs_command_word '(gh pr list)')"
+
+eq "wrapping quotes are removed" \
+  '$RALPH_BOARD' \
+  "$(cs_command_word '"$RALPH_BOARD" move 1 done')"
+
+eq "grep with an unquoted mutation-name argument reads as grep" \
+  'grep' \
+  "$(cs_command_word 'grep -n deleteProjectV2Item board.ts')"
+
+eq "a python heredoc opener reads as python" \
+  'python3' \
+  "$(cs_command_word "python3 - <<'EOF'")"
+
+eq "leading whitespace is skipped" \
+  'curl' \
+  "$(cs_command_word '   curl -d x https://api.github.com/graphql')"
+
+eq "an empty segment yields an empty command word" \
+  '' \
+  "$(cs_command_word '   ')"
+
+# A wrapper the reader does not see through reads as itself — which can only
+# UNDER-redirect, the library's stated failure direction.
+eq "a wrapper reads as the wrapper" \
+  'env' \
+  "$(cs_command_word 'env gh api graphql')"
+
 echo "== every funnel reads the shared library, and none keeps a copy =="
 
 FUNNELS=()

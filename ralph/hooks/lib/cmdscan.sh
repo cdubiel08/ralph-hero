@@ -130,3 +130,53 @@ cs_segments() {
 cs_strip_quotes() {
   printf '%s' "$1" | awk -v MODE=strip -v SEP="$CS_SEP" -v KEEP_SUBST="${2:-0}" "$_CS_AWK"
 }
+
+# cs_command_word SEGMENT
+# Prints the segment's COMMAND WORD — the first token after leading
+# whitespace, subshell parens and VAR=value assignment prefixes, with any
+# wrapping quote characters removed. Empty output means no command word was
+# found.
+#
+# What a pattern means depends on where it sits: `deleteProjectV2Item` as an
+# argument to grep/rg/sed/awk/python is data being read or edited, while the
+# same bytes after `gh api graphql -f query=` are a mutation being RUN. The
+# rails use this to count a pattern only in segments whose command word can
+# actually reach the API it names — text in any other command's arguments is
+# never a mutation. A wrapper the reader does not see through (`env`, `xargs`,
+# `bash -c`) reads as the wrapper's own name, which UNDER-redirects — the
+# library's stated failure direction.
+cs_command_word() {
+  local tok rest
+  # A segment holds no unquoted newline (cs_segments splits on those), so the
+  # command word sits on the first line; anything past a quoted multi-line
+  # span is arguments.
+  rest="${1%%$'\n'*}"
+  while [ -n "$rest" ]; do
+    tok=""
+    read -r tok rest <<<"$rest" || break
+    [ -n "$tok" ] || break
+    # Wrapping quotes and a subshell's `(` do not change what runs.
+    while :; do
+      case "$tok" in
+        \(* | \'* | \"*) tok="${tok#?}" ;;
+        *) break ;;
+      esac
+    done
+    while :; do
+      case "$tok" in
+        *\' | *\") tok="${tok%?}" ;;
+        *) break ;;
+      esac
+    done
+    [ -n "$tok" ] || continue
+    case "$tok" in
+      # A VAR=value prefix is environment, not the command.
+      [A-Za-z_]*=*) continue ;;
+      *)
+        printf '%s\n' "$tok"
+        return 0
+        ;;
+    esac
+  done
+  return 0
+}
