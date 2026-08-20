@@ -257,6 +257,7 @@ run_case() {
     RALPH_MERGE_POLICY_FILE="${policy:-/nonexistent-policy.json}" \
     RALPH_APPLY_KEYWORDS_SH="${APPLY_KEYWORDS_STUB:-/nonexistent-apply-keywords.sh}" \
     RALPH_CODEX_EVIDENCE_SH="${CODEX_EVIDENCE_STUB:-$REPO_ROOT/scripts/codex-review-evidence.sh}" \
+    RALPH_COPILOT_EVIDENCE_SH="${COPILOT_EVIDENCE_STUB:-$REPO_ROOT/scripts/copilot-review-evidence.sh}" \
     bash "$SCRIPT" 123 "$@" 2>&1)
   actual=$?
   set -e
@@ -1112,6 +1113,47 @@ run_case "an unreadable comment list is retry-able, not a refusal" 75 "$POLICY" 
   setup_comments_unreadable
 expect_not_merged "unreadable comment list"
 expect_out "the refusal names the attestation gate, not the reviewer" "PENDING — attestation"
+
+# --- request-mode dispatch (GH-2087) ----------------------------------------
+# A review-request policy must run the Copilot-shaped predicate, never the
+# comment-marker one — the two scripts read different request protocols, and
+# pointing a Copilot repo at the marker script waits forever on a comment its
+# reviewer never reads. The fixtures are discriminating: the OTHER protocol's
+# stub crashes, so a wrong dispatch cannot pass by accident.
+COPILOT_POLICY="$TMP_ROOT/copilot-policy.json"
+cat >"$COPILOT_POLICY" <<'EOF'
+{
+  "version": 1,
+  "attestation": { "required": true },
+  "external_review": { "required": true, "request_mode": "review-request" }
+}
+EOF
+
+PASSING_EVIDENCE="$TMP_ROOT/passing-evidence.sh"
+printf '#!/usr/bin/env bash\necho %s\n' \
+  "'{\"ok\":true,\"turn\":\"\",\"detail\":\"stub ok\",\"reviewer\":\"copilot-pull-request-reviewer[bot]\",\"review_url\":\"\"}'" \
+  >"$PASSING_EVIDENCE"
+chmod +x "$PASSING_EVIDENCE"
+CRASH_IF_INVOKED="$TMP_ROOT/crash-if-invoked.sh"
+printf '#!/usr/bin/env bash\necho "wrong protocol script invoked" >&2\nexit 9\n' >"$CRASH_IF_INVOKED"
+chmod +x "$CRASH_IF_INVOKED"
+
+COPILOT_EVIDENCE_STUB="$PASSING_EVIDENCE" CODEX_EVIDENCE_STUB="$CRASH_IF_INVOKED" \
+  run_case "review-request policy dispatches to the Copilot predicate" 0 "$COPILOT_POLICY" setup_no_ext
+expect_merged "review-request dispatch"
+
+COPILOT_EVIDENCE_STUB="$CRASH_IF_INVOKED" CODEX_EVIDENCE_STUB="$PASSING_EVIDENCE" \
+  run_case "comment-marker policy never runs the Copilot predicate" 0 "$POLICY" setup_no_ext
+expect_merged "comment-marker dispatch"
+
+COPILOT_EVIDENCE_STUB=/nonexistent-copilot-evidence.sh \
+  run_case "review-request mode with no evidence script is refused" 1 "$COPILOT_POLICY" setup_no_ext
+expect_out "missing Copilot evidence script is named" "is missing"
+
+BAD_REQUEST_MODE_POLICY="$TMP_ROOT/bad-request-mode.json"
+echo '{ "external_review": { "required": true, "request_mode": "review_request" } }' >"$BAD_REQUEST_MODE_POLICY"
+run_case "an unrecognized request_mode fails closed like invalid JSON" 1 "$BAD_REQUEST_MODE_POLICY" setup_no_ext
+expect_not_merged "unrecognized request_mode"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"

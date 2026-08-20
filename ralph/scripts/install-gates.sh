@@ -252,6 +252,11 @@ MANUAL steps this installer cannot perform:
    .github/ralph-merge-policy.json — set external_review.required:true with
    the bot's login, and for findings-mode reviewers (no APPROVED verb) add
    "trigger" and "head_marker" (the ralph-hero policy is the worked example).
+   For GitHub Copilot code review, set "request_mode": "review-request"
+   instead — no trigger or marker; the bot defaults to
+   copilot-pull-request-reviewer[bot] and reviews are engaged by requesting
+   the reviewer 'Copilot' (GH-2087). Note a request on a repo without Copilot
+   code review is silently dropped by GitHub — read the request back.
 
 5. Apply units (optional): if this repo has work whose completion is a DEPLOY
    rather than a merge (terraform, secrets, rulesets, scheduled jobs), add an

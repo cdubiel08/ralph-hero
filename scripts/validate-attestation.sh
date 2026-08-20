@@ -80,12 +80,13 @@ policy=$(me_policy_load "$POLICY_FILE")
 policy_rc=$?
 set -e
 if [[ "$policy_rc" -eq 2 ]]; then
-  out failure "merge policy file is not valid JSON: $POLICY_FILE"
+  out failure "merge policy file is not valid JSON (or names an unrecognized request_mode): $POLICY_FILE"
 fi
 attestation_required=$(me_policy_get "$policy" attestationRequired)
 external_required=$(me_policy_get "$policy" externalRequired)
 external_bot=$(me_policy_get "$policy" bot)
 external_evidence_mode=$(me_policy_get "$policy" mode)
+external_request_mode=$(me_policy_get "$policy" requestMode)
 
 if [[ "$attestation_required" != "true" ]]; then
   out success "attestation not required by policy"
@@ -159,9 +160,16 @@ if [[ "$external_required" == "true" ]]; then
       out pending "awaiting external review by $external_bot at ${head_sha:0:8}"
     fi
   else
-    codex_evidence_sh="${RALPH_CODEX_EVIDENCE_SH:-$SCRIPT_DIR/codex-review-evidence.sh}"
+    # Which script is the request protocol's (GH-2087), same dispatch as
+    # merge-pr.sh gate 5: comment-marker → Codex-shaped, review-request →
+    # Copilot-shaped.
+    if [[ "$external_request_mode" == "review-request" ]]; then
+      codex_evidence_sh="${RALPH_COPILOT_EVIDENCE_SH:-$SCRIPT_DIR/copilot-review-evidence.sh}"
+    else
+      codex_evidence_sh="${RALPH_CODEX_EVIDENCE_SH:-$SCRIPT_DIR/codex-review-evidence.sh}"
+    fi
     if [[ ! -x "$codex_evidence_sh" ]]; then
-      out failure "external_review names head_marker (findings mode) but $codex_evidence_sh is missing"
+      out failure "external_review derives findings mode but its evidence script $codex_evidence_sh is missing"
     fi
     # An unusable answer is pending — retry-able — never a silent success.
     set +e

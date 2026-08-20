@@ -186,13 +186,14 @@ POLICY=$(me_policy_load "$POLICY_FILE")
 POLICY_RC=$?
 set -e
 if [[ "$POLICY_RC" -eq 2 ]]; then
-  block "policy" "merge policy file is not valid JSON: $POLICY_FILE"
+  block "policy" "merge policy file is not valid JSON (or names an unrecognized request_mode): $POLICY_FILE"
 fi
 ATTESTATION_REQUIRED=$(me_policy_get "$POLICY" attestationRequired)
 EXTERNAL_REQUIRED=$(me_policy_get "$POLICY" externalRequired)
 EXTERNAL_BOT=$(me_policy_get "$POLICY" bot)
 EXTERNAL_TRIGGER=$(me_policy_get "$POLICY" trigger)
 EXTERNAL_EVIDENCE_MODE=$(me_policy_get "$POLICY" mode)
+EXTERNAL_REQUEST_MODE=$(me_policy_get "$POLICY" requestMode)
 
 # ---------------------------------------------------------------------------
 # Gate 0: PR core facts (single fetch)
@@ -356,13 +357,19 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
       evidence_detail="no current APPROVED $EXTERNAL_BOT review at head ${head_sha:0:8} yet — comment '$EXTERNAL_TRIGGER' to trigger one"
     fi
   else
-    # --- findings mode: one scoped review per head, P0-clean ---------------
+    # --- findings mode: one scoped review per head ------------------------
     # The predicate lives in ONE script, which validate-attestation.sh and
     # pr-gate-watch.sh also run: three readers of the same evidence with three
     # copies of the rule is how a gate and its watcher come to disagree.
-    CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review-evidence.sh}"
+    # Which script is the request protocol's (GH-2087): the comment-marker
+    # protocol is Codex-shaped, the review-request protocol is Copilot-shaped.
+    if [[ "$EXTERNAL_REQUEST_MODE" == "review-request" ]]; then
+      CODEX_EVIDENCE_SH="${RALPH_COPILOT_EVIDENCE_SH:-$PROJECT_ROOT/scripts/copilot-review-evidence.sh}"
+    else
+      CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review-evidence.sh}"
+    fi
     if [[ ! -x "$CODEX_EVIDENCE_SH" ]]; then
-      block "policy" "external_review names head_marker (findings mode) but $CODEX_EVIDENCE_SH is missing"
+      block "policy" "external_review derives findings mode but its evidence script $CODEX_EVIDENCE_SH is missing"
     fi
     # Captured, not inherited (same pattern as gate 6): under `set -e` a
     # crashed predicate would kill this script mid-gate, and a runner would see

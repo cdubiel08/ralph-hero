@@ -57,10 +57,14 @@
 #   review   — a formal APPROVED review by the policy bot at the CURRENT head.
 #              The default, so a policy that names no marker behaves exactly
 #              as it always has.
-#   findings — opted into by naming head_marker (GH-1847): ONE scoped review
-#              per head, blocking only on unresolved P0 threads. Reviewers
-#              like Codex have no APPROVED verb, so under `review` mode their
-#              verdict is invisible and the watcher would wait forever.
+#   findings — opted into by naming head_marker (GH-1847) or request_mode:
+#              review-request (GH-2087): ONE scoped review per head. Reviewers
+#              like Codex and Copilot have no APPROVED verb, so under `review`
+#              mode their verdict is invisible and the watcher would wait
+#              forever. Which predicate script runs is the request protocol's:
+#              comment-marker → codex-review-evidence.sh (blocks on P0),
+#              review-request → copilot-review-evidence.sh (blocks on every
+#              unresolved bot thread — no severity markup exists to scope by).
 #
 # This classifier must never be a SECOND reader of the same evidence with its
 # own opinion: a watcher that says "wait for review" while the gate says PASS
@@ -170,16 +174,23 @@ set -e
 if [ "$POLICY_RC" -eq 2 ]; then
   # Fail CLOSED, like merge-pr.sh: a corrupt policy must not read as
   # "no external review required" and green-light a merge.
-  POLICY_ERROR="merge policy file is not valid JSON: $POLICY_FILE"
+  POLICY_ERROR="merge policy file is not valid JSON (or names an unrecognized request_mode): $POLICY_FILE"
   POLICY=$(jq -n "$ME_JQ_LIB me_policy_none")
 fi
 POLICY_MODE=$(jq -r '.mode' <<<"$POLICY")
+POLICY_REQUEST_MODE=$(jq -r '.requestMode' <<<"$POLICY")
 POLICY_EXTERNAL=$(jq -r '.externalRequired | tostring' <<<"$POLICY")
 POLICY_ATTESTATION=$(jq -r '.attestationRequired | tostring' <<<"$POLICY")
 
 # Test-only override, same pattern merge-pr.sh gate 6 uses.
 APPLY_KEYWORDS_SH="${RALPH_APPLY_KEYWORDS_SH:-$PROJECT_ROOT/scripts/apply-keywords.sh}"
-CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review-evidence.sh}"
+# Findings mode's predicate script is the request protocol's (GH-2087), the
+# same dispatch merge-pr.sh gate 5 and validate-attestation.sh make.
+if [ "$POLICY_REQUEST_MODE" = "review-request" ]; then
+  CODEX_EVIDENCE_SH="${RALPH_COPILOT_EVIDENCE_SH:-$PROJECT_ROOT/scripts/copilot-review-evidence.sh}"
+else
+  CODEX_EVIDENCE_SH="${RALPH_CODEX_EVIDENCE_SH:-$PROJECT_ROOT/scripts/codex-review-evidence.sh}"
+fi
 ADVISORY_SH="${RALPH_ADVISORY_FINDINGS_SH:-$PROJECT_ROOT/scripts/advisory-findings.sh}"
 CONVERGENCE_SH="${RALPH_CONVERGENCE_SH:-$PROJECT_ROOT/scripts/review-convergence.sh}"
 LINKAGE_DRIFT_SH="${RALPH_LINKAGE_DRIFT_SH:-$PROJECT_ROOT/scripts/pr-linkage-drift.sh}"
@@ -284,6 +295,14 @@ def is_attest: .name == $attest;
      | (($policy.bot // "") | ascii_downcase) as $b
      | ($n != "" and (($b | contains($n)) or ($n | contains($b))))
    ) | any))                                             as $rl_is_reviewer
+# The remedy for "get a review moving" depends on the REQUEST PROTOCOL
+# (GH-2087): comment mode posts the trigger, review-request mode re-requests
+# the reviewer — telling a Copilot repo to post `@codex review` is advice its
+# reviewer does not read, which is the same defect the trigger interpolation
+# below fixed for host repos with a custom trigger.
+| (if $policy.requestMode == "review-request"
+   then "re-request a \($policy.bot) review (gh api -X POST repos/{owner}/{repo}/pulls/\($num)/requested_reviewers -f 'reviewers[]=Copilot')"
+   else "comment '\($policy.trigger)'" end)              as $request_hint
 # When the policy names a reviewer, only that reviewer's verdicts are gate
 # evidence. With no policy (or external review not required) there is no
 # configured identity to filter on, so any approval counts — still head-bound.
@@ -489,7 +508,7 @@ def is_attest: .name == $attest;
     # reviewer does not read, and the watcher would stop on advice that cannot
     # be followed (codex P2, PR #1764). Every other review branch already
     # interpolates it; this one was the holdout.
-    "GATE-YOURS review: \($rl_names) rate-limited — its check PASSES but it reviewed nothing; post `\($policy.trigger)`\(if $policy.mode == "findings" then " followed by a blank line and '<!-- \($policy.headMarker): \($head) -->' — gate 5 cannot bind a request without the marker" else "" end)"
+    "GATE-YOURS review: \($rl_names) rate-limited — its check PASSES but it reviewed nothing; \($request_hint)\(if $policy.mode == "findings" and $policy.requestMode == "comment" then " followed by a blank line and '<!-- \($policy.headMarker): \($head) -->' — gate 5 cannot bind a request without the marker" else "" end)"
   elif $unanswered_findings and (($review_ok | not) or ($attested_current | not)) then
     # Adjudicating threads does not convert a COMMENTED review into the
     # APPROVED object gate 5 requires, and neither does attesting. Only a
@@ -514,7 +533,7 @@ def is_attest: .name == $attest;
        # Ranked BELOW the caller's own move and above the plain wait, in both
        # modes: where waiting is the right answer, a rate-limited reviewer is
        # the useful thing to say about it.
-       "GATE-WAIT review: \($rl_names) reports pass but is rate-limited and reviewed nothing; gate 5 is waiting on \($policy.bot) at \($head[0:8]) — comment '\($policy.trigger)'"
+       "GATE-WAIT review: \($rl_names) reports pass but is rate-limited and reviewed nothing; gate 5 is waiting on \($policy.bot) at \($head[0:8]) — \($request_hint)"
      elif $policy.mode == "findings" then
        "GATE-WAIT review: \($codex.detail)"
      elif $ext_required and $any_request_at != "" then

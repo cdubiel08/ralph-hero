@@ -57,19 +57,39 @@ def me_fenced_json:
 #              gate-5 behavior and the default, so a policy naming a
 #              formal-review bot keeps merging rather than silently inheriting
 #              a protocol its reviewer does not speak.
-#   findings — the reviewer has no APPROVED verb and emits severity-tagged
-#              findings instead (Codex). Opted into by naming head_marker,
-#              which is what binds the one scoped review to this head.
+#   findings — the reviewer has no APPROVED verb and emits findings instead.
+#              Two request protocols, carried in `requestMode` (GH-2087):
+#                comment        — a trigger comment + head marker binds the one
+#                                 scoped review to this head (Codex). Opted
+#                                 into by naming head_marker.
+#                review-request — the reviewer is engaged via a GitHub review
+#                                 request (Copilot). Opted into by
+#                                 external_review.request_mode. The request is
+#                                 not head-bound, but the ANSWER is (a review
+#                                 object carries commit_id), which is the
+#                                 binding gate 5 reads.
+#
+# The review-request bot default is Copilot, measured 2026-08-19 (public
+# corpus, n=31): reviews are filed by copilot-pull-request-reviewer[bot],
+# while the login one REQUESTS is `Copilot` — the asymmetry lives in the
+# evidence script, not here.
 def me_policy:
-  {
+  (.external_review.request_mode // "comment") as $rm
+  | {
     attestationRequired: (.attestation.required // false),
     externalRequired:    (.external_review.required // false),
-    bot:                 (.external_review.bot // "chatgpt-codex-connector[bot]"),
+    requestMode:         $rm,
+    bot:                 (.external_review.bot
+                          // (if $rm == "review-request"
+                              then "copilot-pull-request-reviewer[bot]"
+                              else "chatgpt-codex-connector[bot]" end)),
     trigger:             (.external_review.trigger // "@codex review"),
     headMarker:          (.external_review.head_marker // ""),
     exemptAuthors:       (.exempt_authors // [])
   }
-  | .mode = (if .headMarker != "" then "findings" else "review" end);
+  | .mode = (if .requestMode == "review-request" then "findings"
+             elif .headMarker != "" then "findings"
+             else "review" end);
 
 # No policy file at all: gates 4-5 are off, so a repo that has not opted in
 # merges through its own flow untouched. Same object shape, so no reader needs
@@ -78,6 +98,7 @@ def me_policy_none:
   {
     attestationRequired: false,
     externalRequired:    false,
+    requestMode:         "comment",
     bot:                 "",
     trigger:             "",
     headMarker:          "",
@@ -187,6 +208,15 @@ me_policy_load() {
     return 0
   fi
   if ! jq -e . "$file" >/dev/null 2>&1; then
+    return 2
+  fi
+  # An unrecognized request_mode is a MALFORMED policy, same class as invalid
+  # JSON: a typo ("review_request") silently deriving comment mode would point
+  # gate 5 at a marker protocol the configured reviewer never speaks, and the
+  # gate would wait forever on evidence that cannot arrive. Exit 2 so gates
+  # fail closed while the two non-gating readers keep their default fallback.
+  if ! jq -e '(.external_review.request_mode // "comment")
+              | IN("comment", "review-request")' "$file" >/dev/null 2>&1; then
     return 2
   fi
   jq -c "$ME_JQ_LIB me_policy" "$file"
