@@ -50,6 +50,15 @@ type Config struct {
 	// resolved once (ralph_ledger_path's rules). "" = no scope discoverable,
 	// which costs the age chip and nothing else.
 	LedgerPath string
+	// MarksGlob matches board.ts's local write stamps (~/.ralph/cache/
+	// items-marks-*.json, GH-1806/audit A6): a newer mtime is evidence of a
+	// verified local write, and the board is refetched NOW instead of at the
+	// backed-off cadence. "" disables the channel; the poll remains.
+	MarksGlob string
+	// HeartbeatPath is where this cockpit stamps its liveness each tick
+	// (audit D6d) so a dead cockpit is a readable fact, not a discovery.
+	// "" disables the write.
+	HeartbeatPath string
 	// Glyphs gates the Nerd Font codepoints. Default ASCII — see signals.go.
 	Glyphs glyphSet
 }

@@ -330,6 +330,14 @@ case "$key" in
   pane-report-metadata)
     respond "cli:pane:report-metadata" "ok" '{}' pane-report-metadata
     ;;
+  pane-read)
+    # `pane read <ID> …` — the spawn path's modal probe consumes .read. The
+    # default is an empty pane: the probe must find nothing unless a test
+    # supplies modal-shaped content via a pane-read.<ID>.json fixture.
+    respond "cli:pane:read" "pane_read" \
+      '{"read":{"pane_id":"p1","lines":[]}}' \
+      "pane-read.${3-}" pane-read
+    ;;
   pane-process-info)
     # `pane process-info --pane <ID>` — the id is not positional, so the
     # per-pane fixture key is scanned out of argv rather than read from $3.

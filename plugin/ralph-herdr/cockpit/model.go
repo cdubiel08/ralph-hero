@@ -271,6 +271,10 @@ type Model struct {
 	pollEvery time.Duration
 	boardSig  string
 	agentSig  string
+	// lastMarkSeen is the newest board.ts write-stamp mtime already acted on
+	// (marks.go, audit A6). Zero until the first successful read, which seeds
+	// the baseline without triggering a refetch.
+	lastMarkSeen time.Time
 
 	// Agent overlay (decoration).
 	agents  map[int][]Agent // issue → live agents, w-lane first then by name
