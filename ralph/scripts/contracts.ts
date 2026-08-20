@@ -572,6 +572,7 @@ export const DELIVER_REASONS = [
   "retry-window",
   "deferred",
   "convergence-stalled", // GH-1977: review-convergence.sh says `stalled`/`cap-reached` — held OUT of the queue so an unattended lane stops re-requesting, surfaced as its own blocked row so it never reads as "merged"
+  "reviewer-rate-limited", // audit B7: the merge gate's own text says the external reviewer is rate-limited — a session dispatched now would only rediscover the wait. Self-clearing: the next pass re-reads the gate
   "local-session-active", // GH-1929: a live session on THIS machine holds the GH-1956 worktree lock for this unit — it may be sitting on unpushed local commits, which no remote signal can see. Held OUT of the queue until the lock ages out on RALPH_LOCK_TTL_MIN
 ] as const;
 /** THE tend-lane category list (same single-declaration rule): board.ts

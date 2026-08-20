@@ -11,6 +11,7 @@ import { createHash as cryptoCreateHash } from "node:crypto";
 import { join } from "node:path";
 import { BRANCH_KIND_CHARS } from "./contracts.js";
 import {
+  acceptedUnactioned,
   adopt,
   answer,
   APPLY_EVIDENCE_MARKER,
@@ -7062,4 +7063,115 @@ describe("defer parks an item out of ranking", () => {
     expect(line.detail).toContain("board priority");
   });
 
+});
+
+// ---------------------------------------------------------------------------
+// Batch 3 (v0.2.0): stale-claim lock consult, stranded worktrees, accepted-
+// but-unmoved proposals, reviewer-rate-limited deliver rows
+// ---------------------------------------------------------------------------
+
+describe("doctor --fix consults the local worktree lock before releasing a stale claim", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("a fresh local lock holds the release and reports claim-idle-but-driven", () => {
+    const staleSince = new Date(NOW.getTime() - 200 * 60_000);
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", staleSince) });
+    // A live peer session's lock, fresh on the same TTL clock (the network-
+    // flap divergence: local heartbeat landed, board write did not).
+    const dir = mkdtempSync(join(tmpdir(), "ralph-locks-"));
+    writeFileSync(
+      join(dir, "wt-1-0123456789abcdef.json"),
+      JSON.stringify({ session: "peer-session", worktree: "/tmp/wt", since: NOW.toISOString() }),
+    );
+    const ctx2: Ctx = { ...ctx, session: { id: "my-session", dir } };
+    const rep = doctor(ctx2, { fix: true });
+    const line = rep.checks.find((c) => c.name === "claim-idle-but-driven");
+    expect(line?.level).toBe("info");
+    expect(gh.mutations.filter((m) => m.includes("clearField(#1"))).toEqual([]);
+    expect(gh.issues.get(1)!.claim).not.toBeNull();
+  });
+
+  it("no lock (or unreadable dir) keeps today's release exactly", () => {
+    const staleSince = new Date(NOW.getTime() - 200 * 60_000);
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", staleSince) });
+    doctor(ctx, { fix: true });
+    expect(gh.mutations).toContain("clearField(#1, F_claim)");
+    expect(gh.mutations).toContain("setState(#1, Backlog)");
+  });
+});
+
+describe("doctor surfaces stranded worktrees (uncommitted work, no claim)", () => {
+  it("dirty issue-branch worktree with no board claim is an info row; claimed or clean ones are not", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(7, { number: 7, state: "Backlog" });
+    gh.issues.set(8, { number: 8, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    gh.worktreeList = [
+      "worktree /repo\nHEAD abc\nbranch refs/heads/main",
+      "worktree /wt/feat-7\nHEAD abc\nbranch refs/heads/feat/7-something",
+      "worktree /wt/feat-8\nHEAD abc\nbranch refs/heads/feat/8-claimed",
+      "worktree /wt/clean-9\nHEAD abc\nbranch refs/heads/fix/9-clean",
+    ].join("\n\n");
+    gh.dirtyWorktrees = new Set(["/wt/feat-7", "/wt/feat-8"]);
+    const rep = doctor(ctx);
+    const line = rep.checks.find((c) => c.name === "worktree-uncommitted")!;
+    expect(line.level).toBe("info");
+    expect(line.detail).toContain("#7(/wt/feat-7)");
+    expect(line.detail).not.toContain("#8"); // claimed — someone is driving it
+    expect(line.detail).not.toContain("#9"); // clean — nothing stranded
+  });
+});
+
+describe("accepted-but-unmoved proposals (audit B9)", () => {
+  const proposal = `${TEND_PROPOSAL_MARKER}\n\`\`\`json\n{"action":"close-as-delivered","at":"2026-07-20T00:00:00Z"}\n\`\`\``;
+  const accepted = (extra = "") =>
+    `${TEND_RESOLUTION_MARKER}\n\`\`\`json\n{"disposition":"accepted","at":"2026-07-21T00:00:00Z"${extra}}\n\`\`\``;
+
+  it("acceptedUnactioned: accepted stands; rejected, actioned, reopen-note, and re-armed all clear it", () => {
+    expect(acceptedUnactioned([proposal, accepted()])).toEqual({ at: "2026-07-21T00:00:00Z" });
+    expect(acceptedUnactioned([proposal, accepted(',"actioned":true')])).toBeNull();
+    expect(
+      acceptedUnactioned([
+        proposal,
+        `Resolved by \`board reopen\`.\n${accepted()}`,
+      ]),
+    ).toBeNull();
+    expect(acceptedUnactioned([proposal, accepted(), proposal])).toBeNull(); // re-armed
+    expect(
+      acceptedUnactioned([proposal, `${TEND_RESOLUTION_MARKER}\n\`\`\`json\n{"disposition":"rejected","at":"x"}\n\`\`\``]),
+    ).toBeNull();
+  });
+
+  it("the smell line lists an accepted-unactioned Backlog item immediately", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", comments: [proposal, accepted()] });
+    const rep = doctor(ctx);
+    const line = rep.checks.find((c) => c.name === "tend-proposal-stale")!;
+    expect(line.level).toBe("info");
+    expect(line.detail).toContain("#1(accepted 2026-07-21, unactioned)");
+  });
+
+  it("resolve --accept prints the follow-up disposition commands", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", comments: [proposal] });
+    let outText = "";
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      outText += String(s);
+      return true;
+    });
+    try {
+      expect(run(["resolve", "1", "--accept"], ctx)).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(outText).toContain("complete the disposition");
+    expect(outText).toContain("board move 1 done");
+  });
 });

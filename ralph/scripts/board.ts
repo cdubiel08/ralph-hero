@@ -4961,6 +4961,26 @@ export function classifyDeliver(
   const queue: DeliverRow[] = [];
   let convBudget = convergence === null ? 0 : opts.convergenceMax;
   for (const row of ordered) {
+    // Reviewer rate-limited (audit B7): the gate's own text says the external
+    // reviewer cannot answer right now, so a session dispatched at this row
+    // would only rediscover the wait. Its own blocked row — never withheld
+    // silently — and self-clearing: the next pass re-reads the gate, and a
+    // reviewer that answered stops matching. Matched on the probe's recorded
+    // text, no new API read; nothing here escalates (the measure/decide split).
+    if (/rate.?limit/i.test(`${row.verdict ?? ""} ${row.gate ?? ""}`)) {
+      blocked.push({
+        number: row.number,
+        title: row.title,
+        pr: row.pr,
+        reason: "reviewer-rate-limited",
+        verdict: row.verdict ?? null,
+        gate: row.gate ?? null,
+        deltaAt: row.deltaAt ?? null,
+        windowExpiresAt: null,
+        detail: row.gate ?? row.verdict ?? "",
+      });
+      continue;
+    }
     if (convBudget <= 0 || row.pr === null) {
       queue.push(row);
       continue;
@@ -5678,6 +5698,36 @@ export function pendingProposal(comments: string[]): { at: string | null } | nul
   return pending;
 }
 
+/** The newest ACCEPTED resolution no later proposal supersedes (audit B9).
+ *  `resolve --accept` records a decision the board cannot otherwise observe —
+ *  the item still needs its disposition performed (`move done` / `cancel`),
+ *  and an accepted-but-unmoved item rendered exactly like an unactioned one.
+ *  Excluded: resolutions whose payload says `actioned` (the reopen path — the
+ *  reopen IS the action), and, for legacy payloads, notes naming `board
+ *  reopen`. */
+export function acceptedUnactioned(comments: string[]): { at: string | null } | null {
+  let accepted: { at: string | null } | null = null;
+  for (const body of comments) {
+    const proposed = lastMarkerIndex(body, TEND_PROPOSAL_MARKER);
+    const resolved = lastMarkerIndex(body, TEND_RESOLUTION_MARKER);
+    if (proposed < 0 && resolved < 0) continue;
+    if (resolved > proposed) {
+      const isAccepted = /"disposition"\s*:\s*"accepted"/.test(body);
+      const isActioned = /"actioned"\s*:\s*true/.test(body) || /Resolved by `board reopen`/.test(body);
+      if (isAccepted && !isActioned) {
+        const m = /"at"\s*:\s*"([^"]+)"/.exec(body);
+        const t = m ? new Date(m[1]).getTime() : NaN;
+        accepted = { at: Number.isFinite(t) ? m![1] : null };
+      } else {
+        accepted = null;
+      }
+    } else {
+      accepted = null; // a newer proposal re-arms `pending`; nothing accepted stands
+    }
+  }
+  return accepted;
+}
+
 export interface TendOpts {
   staleDays: number; // RALPH_STALE_DAYS — Backlog items with no updates
   auditDays: number; // RALPH_AUDIT_DAYS — Done-audit lookback
@@ -5905,6 +5955,7 @@ export function resolveProposal(
   issue: Issue,
   disposition: "accepted" | "rejected",
   note?: string,
+  actioned = false, // true when the acceptance IS the action (the reopen path)
 ): { at: string | null } | null {
   const trail = fetchHistories(ctx, [issue.number]).get(issue.number);
   if (!trail)
@@ -5918,6 +5969,7 @@ export function resolveProposal(
     at: ctx.now().toISOString(),
     ...(pending.at ? { proposed_at: pending.at } : {}),
     ...(note ? { note } : {}),
+    ...(actioned ? { actioned: true } : {}),
   });
   addComment(
     ctx,
@@ -7635,6 +7687,42 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       // surfacing it is enough.
       add("claim-garbled", garbled.length === 0 ? "ok" : "warn", garbled.length === 0 ? "none" : `unparseable Claim text (want "holder[+holder2...]|iso8601"): ${garbled.map((i) => `#${i.number}`).join(" ")}`);
 
+      // Stranded local work (audit B6's mirror row): a worktree with
+      // uncommitted changes whose branch parses as an issue branch while that
+      // issue carries no claim — the shape a TTL release leaves behind, which
+      // until now only a human's memory surfaced. INFO always: resuming or
+      // re-claiming is a judgment, and --fix must never touch a working tree.
+      // Machine-local by nature (git reads only), own try/catch so an odd git
+      // cannot change doctor's exit code.
+      try {
+        const wt = ctx.exec(["git", "-C", ctx.repoRoot, "worktree", "list", "--porcelain"]);
+        if (wt.code !== 0) {
+          add("worktree-uncommitted", "info", "not evaluated: git worktree list failed");
+        } else {
+          const claimed = new Set(items.filter((i) => i.claim).map((i) => i.number));
+          const rows: string[] = [];
+          for (const block of wt.stdout.trim().split(/\n\n+/)) {
+            const path = /^worktree (.+)$/m.exec(block)?.[1];
+            const branch = /^branch refs\/heads\/(.+)$/m.exec(block)?.[1];
+            if (!path || !branch) continue;
+            const parsed = parseBranchName(branch);
+            if (!parsed || claimed.has(parsed.issue)) continue;
+            const st = ctx.exec(["git", "-C", path, "status", "--porcelain"]);
+            if (st.code !== 0 || !st.stdout.trim()) continue; // unreadable = not evidence
+            rows.push(`#${parsed.issue}(${path})`);
+          }
+          add(
+            "worktree-uncommitted",
+            rows.length === 0 ? "ok" : "info",
+            rows.length === 0
+              ? "none"
+              : `uncommitted work in issue worktrees with no live board claim — resume the session or \`board claim N\` there: ${rows.join(" ")}`,
+          );
+        }
+      } catch (e) {
+        add("worktree-uncommitted", "info", `not evaluated: ${(e as Error).message}`);
+      }
+
       // Defer marks past their recheck instant (audit B8). INFO by
       // construction: a defer is a judgment on the record, and lifting it is
       // one too — --strict never escalates, --fix never acts. The marker only
@@ -7781,6 +7869,12 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
             const days = Number.isFinite(t) ? (ctx.now().getTime() - t) / 86_400_000 : null;
             if (days === null) proposals.push(`#${i.number}(undated)`);
             else if (days >= ctx.cfg.smells.proposalDays) proposals.push(`#${i.number}(${Math.floor(days)}d)`);
+          } else {
+            // Accepted but never moved (audit B9): the decision is on the
+            // record and the item still sits open — surfaced immediately, no
+            // age threshold, because someone already decided.
+            const a = acceptedUnactioned(h.comments);
+            if (a) proposals.push(`#${i.number}(accepted${a.at ? ` ${a.at.slice(0, 10)}` : ""}, unactioned)`);
           }
         }
         add(
@@ -7867,8 +7961,29 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         // item is most likely a transition() mid-write (the claim lands before
         // the state) — clearing it would race the writer; the anomaly is
         // reported above and the next sweep gets it once the TTL expires.
+        //
+        // A stale BOARD claim can still be driven locally: a network flap that
+        // ate the heartbeat's board write leaves the per-(worktree, unit) lock
+        // (GH-1956) fresh while the board's copy ages out. The lock ages on
+        // the SAME RALPH_LOCK_TTL_MIN clock — deliberately, "the source is
+        // gone" has exactly one definition here — so this consult adds signal
+        // only where the two writes diverged, and a genuinely dead session
+        // still costs one TTL and is then released. Null probe (unreadable
+        // sessions dir) keeps today's release: "could not read the lease"
+        // never blocks the remedy.
+        const lease = localSessionLease(ctx);
         for (const i of stale) {
           try {
+            const hold = lease?.(i.number) ?? null;
+            if (hold) {
+              add(
+                "claim-idle-but-driven",
+                "info",
+                `#${i.number}: board claim is stale but a live local session holds the worktree lock ` +
+                  `(${hold.worktree}, lease expires ${hold.expiresAt}) — left alone`,
+              );
+              continue;
+            }
             const issue = fetchIssue(ctx, i.number);
             if (!issue.itemId) continue;
             // Staleness is re-verified on the fresh read, never trusted from
@@ -9428,7 +9543,7 @@ export function run(argv: string[], ctx: Ctx): number {
       // Best-effort by construction — the reopen already happened, and a
       // failure to annotate it must not report the reopen as failed.
       try {
-        const p = resolveProposal(ctx, issue, "accepted", "Resolved by `board reopen`.");
+        const p = resolveProposal(ctx, issue, "accepted", "Resolved by `board reopen`.", true);
         if (p) out(`resolved the pending tend proposal on #${issue.number} (accepted)`);
       } catch (e) {
         process.stderr.write(
@@ -9456,6 +9571,13 @@ export function run(argv: string[], ctx: Ctx): number {
         return 1;
       }
       out(`#${number}: tend proposal ${reject ? "rejected" : "accepted"}${p.at ? ` (proposed ${p.at})` : ""}`);
+      if (!reject) {
+        // Accepting records the decision; the disposition is still a gated
+        // state move this verb deliberately does not perform (its charter:
+        // rejection is the one disposition nothing else observes). Name the
+        // follow-up so accepted-but-unmoved stops being a discovery.
+        out(`  complete the disposition: board move ${number} done --why "<how>" (delivered) or board cancel ${number} -m "<why>" (duplicate/superseded)`);
+      }
       return 0;
     }
 

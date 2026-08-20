@@ -165,6 +165,12 @@ export class FakeGh {
 
   expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
 
+  /** `git worktree list --porcelain` output served to doctor's stranded-work
+   *  sweep; empty = a repo with no worktrees. */
+  worktreeList = "";
+  /** Worktree paths `git status --porcelain` reports dirty. */
+  dirtyWorktrees = new Set<string>();
+
   exec: (argv: string[], stdin?: string) => ExecResult = (argv, stdin) => {
     const cmd = argv.join(" ");
     if (cmd.startsWith("gh api graphql")) {
@@ -176,6 +182,11 @@ export class FakeGh {
     if (cmd.startsWith("gh auth status")) return ok("");
     if (cmd.startsWith("git") && cmd.includes("remote"))
       return ok("git@github.com:cdubiel08/ralph-hero.git\n");
+    if (cmd.startsWith("git") && cmd.includes("worktree list")) return ok(this.worktreeList);
+    if (cmd.startsWith("git") && cmd.includes("status --porcelain")) {
+      const dir = argv[2]; // git -C <dir> status --porcelain
+      return ok(this.dirtyWorktrees.has(dir) ? " M file.ts\n" : "");
+    }
     if (cmd.startsWith("gh run list")) return ok(this.runListJson);
     return { code: 1, stdout: "", stderr: `unexpected: ${cmd}` };
   };
