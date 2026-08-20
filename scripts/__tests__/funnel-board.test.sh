@@ -23,12 +23,15 @@ pass() { echo "  PASS: $1"; ((PASS++)) || true; }
 fail() { echo "  FAIL: $1"; ((FAIL++)) || true; }
 
 # run_hook <command> -> sets LAST_OUT, LAST_ERR, LAST_RC
+# RALPH_BOARD is unset for the default cases: shell profiles export RALPH_*
+# vars, and the hook prefers RALPH_BOARD in its refusal text by design — the
+# assertions on that text must not depend on the machine running the suite.
 run_hook() {
   local cmd="$1"
   local payload
   payload=$(jq -n --arg cmd "$cmd" '{tool_input: {command: $cmd}}')
   set +e
-  LAST_OUT=$(printf '%s' "$payload" | bash "$HOOK" 2>"$TMP_ROOT/stderr")
+  LAST_OUT=$(printf '%s' "$payload" | env -u RALPH_BOARD bash "$HOOK" 2>"$TMP_ROOT/stderr")
   LAST_RC=$?
   set -e
   LAST_ERR=$(<"$TMP_ROOT/stderr")
@@ -210,6 +213,90 @@ expect_rc "a comment on one line does not silence the next" 2
 # ...and a `#` inside quotes is not a comment at all.
 run_hook 'gh issue create --title T --body "fixes #2058 for good"; git status'
 expect_rc "a hash inside a quoted body is not a comment" 0
+
+# --- B4 (ways-of-working audit): command position + widened self-allow ------
+#
+# BLOCKED_PATTERNS were substring-matched in every segment regardless of the
+# command word, so pure READS of the mutation names — grep over board.ts, a
+# python heredoc editing it, a board comment quoting one — were refused as
+# though they ran a mutation (2 of 3 funnel-board trips in one audit shard
+# were false positives). Mutation names now count only in segments whose
+# command word is gh or curl; every board-CLI spelling the session is told to
+# use is self-allowed. All narrowings UNDER-redirect — the safe direction for
+# a rail that is never enforcement.
+
+# Observed shape: grep -n "deleteProjectV2Item…" board.ts (feat-2050,
+# feature-gh-1788, feature-gh-1815). Unquoted variant is the live one — the
+# quoted form was already stripped.
+run_hook 'grep -n deleteProjectV2Item ralph/scripts/board.ts'
+expect_rc "grep of a mutation name over board.ts passes (unquoted arg)" 0
+run_hook 'grep -n "updateProjectV2ItemFieldValue" ralph/scripts/board.ts'
+expect_rc "grep of a mutation name over board.ts passes (quoted arg)" 0
+run_hook 'rg -c addProjectV2ItemById ralph/scripts/'
+expect_rc "rg of a mutation name passes" 0
+
+# Observed shape: a python heredoc EDITING board.ts source refused
+# (feat-1948). Each heredoc line is its own segment; none has gh/curl in
+# command position.
+run_hook "python3 - <<'EOF'
+import re
+src = open('ralph/scripts/board.ts').read()
+src = src.replace('deleteProjectV2Item(', 'deleteProjectV2Item( ')
+open('ralph/scripts/board.ts', 'w').write(src)
+EOF"
+expect_rc "python heredoc editing board.ts passes" 0
+
+# Observed shape: sanctioned `board comment` blocked because the mutation
+# name appeared in the comment body (feature-gh-1815) — including the worst
+# case, a body that also says `gh api`, which the whole-segment exception
+# used to match.
+run_hook 'board comment 1815 -m "the fix guards updateProjectV2ItemFieldValue"'
+expect_rc "bare-board comment quoting a mutation name passes" 0
+run_hook 'board comment 1815 -m "went through gh api graphql updateProjectV2ItemFieldValue"'
+expect_rc "board comment whose body says gh api + mutation passes" 0
+
+# The widened self-allow: every spelling the session is actually told to use.
+run_hook '"$RALPH_BOARD" move 2 done -m "addSubIssue fixed"'
+expect_rc 'quoted $RALPH_BOARD invocation passes' 0
+run_hook '$RALPH_BOARD claim 12'
+expect_rc 'bare $RALPH_BOARD invocation passes' 0
+run_hook '"${RALPH_BOARD}" comment 3 -m "removeSubIssue note"'
+expect_rc 'braced ${RALPH_BOARD} invocation passes' 0
+run_hook '~/.ralph/bin/board move 2 done -m "addSubIssue note"'
+expect_rc 'tilde shim path invocation passes' 0
+run_hook '/Users/someone/.ralph/bin/board next'
+expect_rc 'absolute shim path invocation passes' 0
+run_hook '$HOME/.ralph/bin/board list'
+expect_rc '$HOME shim path invocation passes' 0
+run_hook 'board move 7 in-review'
+expect_rc "bare 'board' invocation passes" 0
+
+# Narrowing regressions: the self-allow is command-anchored, and gh/curl in
+# command position still redirect.
+run_hook 'echo board move 7 done; gh project item-edit --id X'
+expect_rc "'board' as an echo argument does not exempt a later raw mutation" 2
+run_hook 'board get 1; gh project item-edit --id X'
+expect_rc "bare-board invocation does not exempt a chained raw mutation" 2
+run_hook 'curl -d query=mutation+deleteProjectV2Item https://api.github.com/graphql'
+expect_rc "curl carrying an unquoted mutation still redirects" 2
+run_hook '/opt/homebrew/bin/gh api graphql -f query="mutation { addSubIssue(input:{}) }"'
+expect_rc "pathed gh api mutation still redirects" 2
+
+# The refusal names the CLI the session actually calls: RALPH_BOARD when the
+# session published one, the plugin-root fallback otherwise (already covered
+# by test 1's "names the board CLI").
+payload=$(jq -n --arg cmd 'gh project item-edit --id ITEM --field-id F' '{tool_input: {command: $cmd}}')
+set +e
+LAST_OUT=$(printf '%s' "$payload" | env RALPH_BOARD=/stable/spelling/board bash "$HOOK" 2>"$TMP_ROOT/stderr")
+LAST_RC=$?
+set -e
+LAST_ERR=$(<"$TMP_ROOT/stderr")
+expect_rc "redirect still fires with RALPH_BOARD set" 2
+if [[ "$LAST_ERR" == *"/stable/spelling/board"* ]]; then
+  pass "refusal text prefers RALPH_BOARD when set"
+else
+  fail "refusal text ignores RALPH_BOARD: $LAST_ERR"
+fi
 
 # ---------------------------------------------------------------------------
 echo
