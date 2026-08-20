@@ -70,13 +70,34 @@ stamped_hash() { # previous install's record for one dest, "" if none
   jq -r --arg f "$1" '.files[$f] // ""' "$STAMP" 2>/dev/null || printf ''
 }
 
-installed=0 updated=0 current=0 skipped=0
+# The board-driven workflows (state-guard + doctor, GH-2088) run the board CLI
+# against this repo's OWN board — a repo with no board configured would burn a
+# 15-minute cron doing nothing, so they are withheld until a board config
+# exists. Withheld is not skipped: never stamped, so configuring .ralph.json
+# and re-running installs them cleanly.
+BOARD_WORKFLOWS=".github/workflows/state-guard.yml .github/workflows/doctor.yml"
+board_configured=0
+if { [ -f "$TARGET/.ralph.json" ] && jq -e '.projectNumber' "$TARGET/.ralph.json" >/dev/null 2>&1; } \
+   || { [ -f "$TARGET/.claude/settings.json" ] && jq -e '.env.RALPH_GH_PROJECT_NUMBER' "$TARGET/.claude/settings.json" >/dev/null 2>&1; }; then
+  board_configured=1
+fi
+
+installed=0 updated=0 current=0 skipped=0 withheld=0
 declare -a skipped_files=()
 new_stamp_entries="" # dest\thash lines for files this run vouches for
 
 while IFS= read -r dest; do
   src="$KIT_DIR/$(kit_path "$dest")"
   [ -f "$src" ] || { echo "install-gates: kit file missing: $src" >&2; exit 2; }
+  case " $BOARD_WORKFLOWS " in
+    *" $dest "*)
+      if [ "$board_configured" != 1 ] && [ ! -f "$TARGET/$dest" ] && [ -z "$(stamped_hash "$dest")" ]; then
+        echo "  WITHHELD   $dest — no board configured (.ralph.json with projectNumber); configure one, then re-run"
+        withheld=$((withheld + 1))
+        continue
+      fi
+      ;;
+  esac
   kit_hash="$(sha256 "$src")"
   out="$TARGET/$dest"
   if [ ! -f "$out" ]; then
@@ -186,7 +207,9 @@ mkdir -p "$TARGET/.github"
 
 echo
 echo "install-gates: ralph $VERSION → $TARGET"
-echo "  $installed installed, $updated updated, $current already current, $skipped skipped"
+summary="$installed installed, $updated updated, $current already current, $skipped skipped"
+[ "$withheld" -gt 0 ] && summary="$summary, $withheld withheld (no board)"
+echo "  $summary"
 if [ "$skipped" -gt 0 ]; then
   echo "  skipped (host-modified, respected): ${skipped_files[*]}"
 fi
@@ -241,10 +264,15 @@ MANUAL steps this installer cannot perform:
    classify). Adapting it to this repo's layout is expected — the installer
    respects the local copy on every future run.
 
-7. NOT installed: state-guard.yml and doctor.yml (the board's server-side
-   corrective wall and weekly sweep). Both run the board CLI from the repo
-   tree, which this repo does not carry. Tracked upstream as GH-2088; until
-   then board corrections happen from sessions, not from Actions.
+7. state-guard.yml and doctor.yml (the board's server-side corrective wall
+   and weekly strict sweep) are installed only when this repo has a board
+   configured (.ralph.json with projectNumber, or the settings env block) —
+   configure one, then re-run this installer. At run time they fetch the
+   board CLI from the kit's source repo at the release tag the kit stamp
+   pins (GH-2088), and they need the ROUTING_PAT secret: a classic PAT with
+   project scope, created under Settings -> Secrets and variables -> Actions.
+   A configured board with a missing PAT fails loudly by design; a repo with
+   no board config exits idle.
 
 Re-run this installer after a plugin update to pick up gate fixes; files you
 have modified locally are never overwritten without --force. 'board doctor'

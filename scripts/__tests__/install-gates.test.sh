@@ -48,6 +48,17 @@ if [ -x "$HOST/scripts/merge-pr.sh" ] && [ -f "$HOST/.github/workflows/validate-
 else
   fail "fresh install (files=$n)"
 fi
+# Board workflows are withheld from a boardless host (GH-2088): not installed,
+# not stamped, named with the remedy.
+if grep -q "WITHHELD   .github/workflows/state-guard.yml" <<<"$out" \
+   && grep -q "WITHHELD   .github/workflows/doctor.yml" <<<"$out" \
+   && [ ! -f "$HOST/.github/workflows/state-guard.yml" ] \
+   && [ ! -f "$HOST/.github/workflows/doctor.yml" ] \
+   && ! jq -e '.files[".github/workflows/state-guard.yml"]' "$HOST/.github/ralph-kit.json" >/dev/null; then
+  pass "board workflows withheld from a boardless host, never stamped"
+else
+  fail "board-workflow withholding"
+fi
 if jq -e '.external_review.required == false and .attestation.required == true and (.exempt_authors | length) == 4' \
     "$HOST/.github/ralph-merge-policy.json" >/dev/null; then
   pass "policy seed: attestation on, external review off, bot authors exempt"
@@ -109,6 +120,17 @@ else
   fail "--force did not reinstall"
 fi
 
+# --- fresh install into a board-configured host lands everything ------------
+HOST4="$(new_host host4)"
+echo '{"owner":"o","repo":"r","projectNumber":7}' > "$HOST4/.ralph.json"
+(cd "$HOST4" && bash "$INSTALLER" >/dev/null)
+n4="$(jq -r '.files | length' "$HOST4/.github/ralph-kit.json")"
+if [ "$n4" = 19 ] && [ -f "$HOST4/.github/workflows/state-guard.yml" ]; then
+  pass "fresh install into a board-configured host lands all 19 files"
+else
+  fail "board-configured fresh install (files=$n4)"
+fi
+
 # --- upgrade: unmodified old copy is updated, modified copy is not ----------
 HOST2="$(new_host host2)"
 (cd "$HOST2" && bash "$INSTALLER" >/dev/null)
@@ -134,6 +156,17 @@ if grep -q "retired    scripts/ruleset-contexts.sh" <<<"$out" \
   pass "file retired from the kit is named, kept, and stays in the stamp"
 else
   fail "retired-file handling"
+fi
+
+# --- board workflows install once a board is configured (GH-2088) -----------
+echo '{"owner":"o","repo":"r","projectNumber":7}' > "$HOST/.ralph.json"
+out="$(cd "$HOST" && bash "$INSTALLER")"
+if [ -f "$HOST/.github/workflows/state-guard.yml" ] && [ -f "$HOST/.github/workflows/doctor.yml" ] \
+   && jq -e '.files[".github/workflows/doctor.yml"]' "$HOST/.github/ralph-kit.json" >/dev/null \
+   && ! grep -q "WITHHELD" <<<"$out"; then
+  pass "configuring .ralph.json then re-running installs the board workflows"
+else
+  fail "board workflows not installed after board config"
 fi
 
 # --- stamp is valid JSON every time ----------------------------------------

@@ -37,6 +37,8 @@ KIT_FILES=(
   "scripts/lib/gh-budget.sh"
   "scripts/lib/merge-evidence.sh"
   ".github/workflows/validate-attestation.yml"
+  ".github/workflows/state-guard.yml"
+  ".github/workflows/doctor.yml"
 )
 
 # Where a destination path lives inside the kit dir: scripts/** keeps its
