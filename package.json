@@ -5,6 +5,8 @@
   "scripts": {
     "board": "tsx ralph/scripts/board.ts",
     "test:board": "vitest run ralph/scripts/",
+    "lint": "eslint ralph/scripts/",
+    "lint:sh": "shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh ralph/scripts/kit-src/*.sh",
     "test:naming": "bash plugin/ralph-herdr/tests/naming.test.sh",
     "test:spawn": "bash plugin/ralph-herdr/tests/spawn.test.sh",
     "test:watcher": "bash plugin/ralph-herdr/tests/watcher.test.sh",
@@ -28,8 +30,10 @@
   "devDependencies": {
     "@cucumber/cucumber": "^13.2.1",
     "@types/node": "^22.10.0",
+    "eslint": "^10.8.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^3.0.0"
   }
 }
