@@ -614,8 +614,12 @@ ralph_sessions_dir() {
   printf '%s\n' "${RALPH_HERDR_SESSIONS_DIR:-${RALPH_HOME:-$HOME/.ralph}/sessions}"
 }
 
-# _ralph_file_mtime FILE — epoch mtime, BSD stat first (macOS), GNU second.
-_ralph_file_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+# _ralph_file_mtime FILE — epoch mtime, GNU stat first, BSD second. GNU MUST
+# come first: on GNU, `stat -f %m FILE` SUCCEEDS and prints the mount point
+# ("/"), so a BSD-first probe returns garbage on Linux and every lock reads
+# as garbled — observed as CI (ubuntu) skipping a lock the mac read fine.
+# `stat -c` on BSD fails cleanly, so this order is safe on both.
+_ralph_file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 
 # ralph_worktree_lock_holder N — print one line describing a LIVE per-
 # (worktree, unit) lock on issue N, or nothing. Read-only and advisory (audit
