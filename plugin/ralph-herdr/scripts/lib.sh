@@ -545,12 +545,14 @@ ralph_worktree_source_dir() {
 # RALPH_HERDR_SPAWNED_AGENT — the name is derived in here, so callers that
 # watch or report must read it back rather than reconstruct it. The durable
 # ref (name#epoch) is exported alongside as RALPH_HERDR_SPAWNED_REF the
-# moment the agent is live (dry-run: planned), same read-back rule.
+# moment the pane exists (dry-run: planned), same read-back rule.
 #
-# Phase 2: once the agent is LIVE this function appends the C7 spawn record
-# to the events ledger (the documented carve-out — see ledger.sh) and pushes
-# the spawn-time C8 tokens onto the pane. Both are observations: a failed
-# append or push warns and never aborts the spawn — reconcile discovers the
+# Phase 2 (amended by the 2026-08-19 audit, D2b): the C7 spawn record is
+# appended AT PANE CREATION — provisional, so a spawner killed before `agent
+# start` still leaves a sweepable row — and closed with reason `never_started`
+# on the paths that prove no worker exists; the spawn-time C8 tokens are
+# pushed once the agent is LIVE. Both are observations: a failed append or
+# push warns and never aborts the spawn — reconcile discovers an unledgered
 # agent later (eventually-honest), and tokens are chrome.
 # Returns: 0 spawned (or dry-run plan printed); 2 skipped — a session already
 #          owns issue N (from the pre-check: no mutation attempted; from the
@@ -601,6 +603,152 @@ ralph_branch_for_issue() {
     branch="$legacy"
   fi
   printf '%s\n' "$branch"
+}
+
+# ── spawn-path additions (2026-08-19 ways-of-working audit, D1/D2/D3) ───────
+
+# ralph_sessions_dir — the machine-shared per-(worktree, unit) lock directory
+# board.ts's claim path publishes (GH-1956, worktreeLockPath). Read here, never
+# written: `board claim` is the one writer, and that acquisition is mandatory.
+ralph_sessions_dir() {
+  printf '%s\n' "${RALPH_HERDR_SESSIONS_DIR:-${RALPH_HOME:-$HOME/.ralph}/sessions}"
+}
+
+# _ralph_file_mtime FILE — epoch mtime, BSD stat first (macOS), GNU second.
+_ralph_file_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+
+# ralph_worktree_lock_holder N — print one line describing a LIVE per-
+# (worktree, unit) lock on issue N, or nothing. Read-only and advisory (audit
+# D3): the spawn pre-check SKIPs on a live lock, because the pane it would
+# open is exactly the "correctly refused, fully wasted" pane observed when a
+# spawner raced a session already driving the unit (eef416fb / feat-1965).
+# It can only SKIP, never override — the enforcement stays at `board claim`
+# (GH-1948/GH-1956), which is where the lock is taken and read back.
+#
+# Failure directions, deliberately split: a lock we can READ and that is fresh
+# on the board claim's own clock (RALPH_LOCK_TTL_MIN, the one staleness
+# definition) skips the spawn; an absent or unreadable sessions dir asserts
+# NOTHING and the spawn proceeds — a failed local read must not block work the
+# real guard would admit, and the claim protocol inside the session is the
+# backstop. The filename match is anchored so `wt-19290-…` is never read as a
+# hold on #1929 (the GH-1996 prefix-match trap).
+ralph_worktree_lock_holder() {
+  local n="$1" dir f m now ttl cutoff wt since
+  dir=$(ralph_sessions_dir)
+  [ -d "$dir" ] || return 0
+  ttl="${RALPH_LOCK_TTL_MIN:-120}"
+  case "$ttl" in '' | *[!0-9]* | 0) ttl=120 ;; esac
+  now=$(date +%s)
+  cutoff=$((now - ttl * 60))
+  for f in "$dir"/wt-"$n"-*.json; do
+    [ -f "$f" ] || continue
+    case "${f##*/}" in "wt-$n-"????????????????.json) : ;; *) continue ;; esac
+    m=$(_ralph_file_mtime "$f") || continue
+    case "$m" in '' | *[!0-9]*) continue ;; esac
+    [ "$m" -ge "$cutoff" ] || continue # aged out on the board claim's clock
+    wt=$(jq -r '.worktree // "unknown"' "$f" 2>/dev/null) || continue
+    since=$(jq -r '.since // "unknown"' "$f" 2>/dev/null) || since="unknown"
+    printf 'a live local session holds it (lock %s, worktree %s, since %s; self-clears %s min after its last touch)\n' \
+      "${f##*/}" "$wt" "$since" "$ttl"
+    return 0
+  done
+  return 0
+}
+
+# provision_worktree DIR — make a fresh worktree runnable BEFORE the session
+# lands in it (audit D1: 46 mid-work npm installs across ~28 sessions, seven
+# sessions of wrong-tsc/vitest config deaths, red attestations from
+# node_modules-less trees — a failure the repo had already memorialized and
+# that recurred anyway, i.e. a mechanism gap, not a knowledge gap).
+#
+# Order: the host repo's own executable scripts/provision-worktree.sh when
+# present (the repo states its own recipe), else the lockfile-matched install
+# when node_modules is absent, else nothing. Which path was taken is PRINTED
+# into the spawn output either way.
+#
+# FAIL-OPEN by design, stated rather than implied: a failed install prints and
+# the spawn continues — the agent can still read and plan, and the fail-closed
+# half of this audit finding lives at the evidence gate (attest refusing
+# unrunnable runs), which is the mutation path, not a spawn hook.
+provision_worktree() {
+  local wt="${1-}" rc=0 tool=""
+  if [ -z "$wt" ] || [ ! -d "$wt" ]; then
+    echo "provision: skipped (no worktree path readable from the response)"
+    return 0
+  fi
+  if [ -x "$wt/scripts/provision-worktree.sh" ]; then
+    echo "provision: running $wt/scripts/provision-worktree.sh"
+    (cd "$wt" && bash scripts/provision-worktree.sh) || rc=$?
+    [ "$rc" -eq 0 ] ||
+      echo "provision: scripts/provision-worktree.sh exited $rc — continuing (fail-open; the attest gate is the fail-closed half)" >&2
+    return 0
+  fi
+  if [ -d "$wt/node_modules" ]; then
+    echo "provision: node_modules already present — nothing to do"
+    return 0
+  fi
+  if [ -f "$wt/package-lock.json" ]; then
+    tool="npm ci --no-audit --no-fund"
+  elif [ -f "$wt/pnpm-lock.yaml" ]; then
+    tool="pnpm install --frozen-lockfile"
+  elif [ -f "$wt/yarn.lock" ]; then
+    tool="yarn install --frozen-lockfile"
+  fi
+  if [ -z "$tool" ]; then
+    echo "provision: no provision script and no lockfile — nothing to do"
+    return 0
+  fi
+  if ! command -v "${tool%% *}" >/dev/null 2>&1; then
+    echo "provision: ${tool%% *} not on PATH — skipping; by hand: cd $wt && $tool" >&2
+    return 0
+  fi
+  echo "provision: $tool (fresh worktree: lockfile present, node_modules absent)"
+  # shellcheck disable=SC2086  # $tool is one of the three fixed strings above
+  (cd "$wt" && $tool) || rc=$?
+  [ "$rc" -eq 0 ] ||
+    echo "provision: '$tool' exited $rc — continuing (fail-open; attest refuses unrunnable evidence downstream)" >&2
+  return 0
+}
+
+# spawn_modal_probe PANE — best-effort probe for the known blocking modals
+# (audit D2: three spawns lost to an onboarding modal — trust prompt, theme
+# picker, login — visible only to a human look). One pane read, matched
+# against the observed modal strings; a hit prints one machine-greppable
+# `pane-blocked-modal` line. Decoration: every failure returns 0 silently —
+# an unreadable pane is not evidence of a modal, and this probe gates nothing.
+spawn_modal_probe() {
+  local pane="${1-}" out text line err
+  [ -n "$pane" ] || return 0
+  err=$(ralph_diag_file)
+  out=$(ralph_herdr_call pane_read pane read "$pane" --lines 40 --source visible 2>"$err") || {
+    [ "$err" = /dev/null ] || rm -f "$err" 2>/dev/null || true
+    return 0
+  }
+  [ "$err" = /dev/null ] || rm -f "$err" 2>/dev/null || true
+  text=$(jq -r '.read
+    | if type == "object" then ((.lines // .text // .content // empty)
+        | if type == "array" then join("\n") else tostring end)
+      else tostring end' <<<"$out" 2>/dev/null) || text=""
+  [ -n "$text" ] || return 0
+  line=$(printf '%s\n' "$text" |
+    grep -iE 'trust the files|choose the text style|select login method|welcome to claude|press enter to continue|paste code here if' |
+    head -1) || line=""
+  [ -n "$line" ] || return 0
+  echo "pane-blocked-modal $pane — $(printf '%s' "$line" | ralph_sanitize)"
+  return 0
+}
+
+# _ralph_spawn_close REF LEDGER REASON — close a provisional spawn record for
+# a worker that never started (audit D2b). Best-effort: a failed append warns
+# and leaves the row open, which reconcile's pane-proved phase E then closes.
+_ralph_spawn_close() {
+  local ref="${1-}" ledger="${2-}" reason="${3-}"
+  { [ -n "$ref" ] && [ -n "$ledger" ]; } || return 0
+  RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$(jq -nc \
+    --arg ts "$(date -u +%FT%TZ)" --arg ref "$ref" --arg r "$reason" \
+    '{ts: $ts, ev: "exit", agent_ref: $ref, reason: $r, via: "spawn"}')" ||
+    echo "spawn: could not close the provisional record for $ref ($reason) — reconcile will prove it gone" >&2
+  return 0
 }
 
 spawn_work_session() {
@@ -666,6 +814,19 @@ spawn_work_session() {
     select(.name == $legacy or (.name | startswith($pfx))) | .name' 2>/dev/null | head -1)
   if [ -n "$live" ]; then
     echo "SKIP $live already live"
+    return 2
+  fi
+
+  # Audit D3: consult the per-(worktree, unit) lock `board claim` publishes
+  # (GH-1956) before opening a pane. The herd read above sees herdr sessions;
+  # this sees the OTHER population — a hand-started `claude`, a fork, any
+  # local session that claimed N without ever passing a spawner. Read-only,
+  # skip-only: the lock stays the enforcement, at claim; a stale read here
+  # costs one refused pane, which was the baseline.
+  local lockline
+  lockline=$(ralph_worktree_lock_holder "$n") || lockline=""
+  if [ -n "$lockline" ]; then
+    echo "SKIP GH-$n — $lockline"
     return 2
   fi
 
@@ -772,6 +933,62 @@ spawn_work_session() {
     fi
   fi
 
+  # Provisional ledger record, AT PANE CREATION (audit D2b). The record used
+  # to be appended only after `agent start` succeeded, so a spawner killed
+  # between the worktree opening and the agent starting left NOTHING — no
+  # ledger row, no claim, no board state: outage-killed rendered identical to
+  # finished, and 2-3 dead workers per incident were found by the user, not by
+  # any sweep. Appending the spawn record here means a pre-start death leaves
+  # an OPEN row bound to the pane and its shell pid, which reconcile phase E's
+  # pane-proved verdict (GH-1809) closes as `crashed`/`restart_killed`. The
+  # paths below that PROVE the worker never started close the row themselves
+  # (reason `never_started`); the paths where the agent is live leave it open,
+  # because a live worker is exactly what an open row means. Residual, stated:
+  # a hand-run reconcile in the seconds between this append and the harness
+  # process appearing could read the row as `crashed` and close it early — the
+  # worker then goes live unledgered and phase B re-discovers it on the next
+  # pass (the ledger is eventually-honest by design).
+  #
+  # The token PUSH stays where it was — after the agent is live — because a
+  # spawn that loses the start race would otherwise stamp its own root/epoch
+  # tokens over the winner's on the shared pane.
+  ts=$(date -u +%FT%TZ)
+  # The pane's shell pid, read once now: reconcile compares it later to tell a
+  # rebuilt pane (herdr restart) from a worker that died inside a surviving one
+  # (GH-1809). Best-effort — a failure costs the restart/crash distinction,
+  # never the spawn.
+  local shell_pid=""
+  shell_pid=$(ralph_herdr_call pane_process_info pane process-info --pane "$pane" 2>/dev/null |
+    jq -r '.process_info.shell_pid // empty' 2>/dev/null) || shell_pid=""
+  case "$shell_pid" in '' | *[!0-9]*) shell_pid="" ;; esac
+  [ -n "$shell_pid" ] || echo "could not read pane $pane's shell pid — reconcile will not be able to tell a restart from a crash for $agent" >&2
+  record=""
+  ledger=""
+  if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
+    RALPH_HERDR_SPAWNED_REF="$ref"
+    record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "$pane" "$ts" \
+      "$shell_pid" "$RALPH_HERDR_SPAWNED_WORKTREE") || record=""
+    ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
+    if [ -n "$record" ] && [ -n "$ledger" ]; then
+      RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" || {
+        echo "spawn ledger append failed for $ref — reconcile will discover it" >&2
+        record=""
+      }
+    else
+      echo "spawn ledger: ${ledger:+record build failed}${ledger:-no board scope discoverable from $REPO} — reconcile will discover $ref" >&2
+      record=""
+    fi
+  else
+    ref=""
+    echo "no durable ref derivable for $agent — spawning unledgered (reconcile will discover it)" >&2
+  fi
+
+  # Audit D1: make the fresh checkout runnable BEFORE the session starts.
+  # After the provisional record on purpose — the record is one cheap append,
+  # while an install can run for a minute, and a spawner killed mid-install
+  # should still have left the sweepable row.
+  provision_worktree "$RALPH_HERDR_SPAWNED_WORKTREE"
+
   # A confirmed-live name collision at start means a session already owns
   # issue N: the name is always w<N>-<slug>, so any live agent holding it
   # would have matched the w<N>-* pre-check — it either spawned inside the
@@ -786,54 +1003,32 @@ spawn_work_session() {
   if ! agent_start_when_ready "$agent" "$pane"; then
     if printf '%s\n' "$(ralph_agents_json 2>/dev/null)" | jq -e --arg name "$agent" \
         'select(.name == $name)' >/dev/null 2>&1; then
+      # The winner's own record is the live one; ours never became a worker,
+      # so the provisional row is closed rather than left for a sweep to prove.
+      _ralph_spawn_close "$ref" "$ledger" never_started
       echo "SKIP $agent already live (lost the spawn race for GH-$n) — leaving the worktree pane $pane to the winning session"
       return 2
     fi
+    _ralph_spawn_close "$ref" "$ledger" never_started
     echo "agent start $agent failed — see the herdr error above (exhausted startup retries and non-collision refusals land here); not spawning" >&2
     return 1
   fi
   # Past this point the agent is LIVE — a prompt-delivery failure must not exit
   # silently and strand an idle session with no work, and hold_pane must not
-  # claim "no session spawned" about it.
+  # claim "no session spawned" about it. The provisional ledger row stays OPEN
+  # on every failure below: a live worker is exactly what an open row means.
   export RALPH_HERDR_AGENT_LIVE=1
 
-  # Spawn record + spawn tokens, BEFORE the prompt: a live-but-unprompted
-  # agent still belongs in the ledger. The ledger resolves from $REPO (not
-  # $PWD — same scope board.ts reads), and every failure here is a warning,
-  # never an abort: reconcile discovers an unledgered live agent, and tokens
-  # are chrome. The pushed tokens are read back off the record so the pane
-  # chrome and the ledger can never disagree at spawn.
-  ts=$(date -u +%FT%TZ)
-  # The pane's shell pid, read once now: reconcile compares it later to tell a
-  # rebuilt pane (herdr restart) from a worker that died inside a surviving one
-  # (GH-1809). Best-effort like every other observation on this path — a
-  # failure costs the restart/crash distinction, never the spawn.
-  local shell_pid=""
-  shell_pid=$(ralph_herdr_call pane_process_info pane process-info --pane "$pane" 2>/dev/null |
-    jq -r '.process_info.shell_pid // empty' 2>/dev/null) || shell_pid=""
-  case "$shell_pid" in '' | *[!0-9]*) shell_pid="" ;; esac
-  [ -n "$shell_pid" ] || echo "could not read pane $pane's shell pid — reconcile will not be able to tell a restart from a crash for $agent" >&2
-  if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
-    RALPH_HERDR_SPAWNED_REF="$ref"
-    record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "$pane" "$ts" \
-      "$shell_pid" "$RALPH_HERDR_SPAWNED_WORKTREE") || record=""
-    ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
-    if [ -n "$record" ] && [ -n "$ledger" ]; then
-      RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" ||
-        echo "spawn ledger append failed for $ref — reconcile will discover it" >&2
-    else
-      echo "spawn ledger: ${ledger:+record build failed}${ledger:-no board scope discoverable from $REPO} — reconcile will discover $ref" >&2
-    fi
-    if [ -n "$record" ]; then
-      set --
-      while IFS= read -r kv; do
-        [ -n "$kv" ] || continue
-        set -- "$@" "$kv"
-      done < <(jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' <<<"$record" 2>/dev/null || true)
-      [ "$#" -ge 1 ] && ralph_tokens_push "$pane" "$@"
-    fi
-  else
-    echo "no durable ref derivable for $agent — spawning unledgered (reconcile will discover it)" >&2
+  # Spawn tokens, now that the agent (and not a race's winner) owns the pane.
+  # Read back off the record so the pane chrome and the ledger can never
+  # disagree at spawn; failures cost chrome, never the spawn.
+  if [ -n "$record" ]; then
+    set --
+    while IFS= read -r kv; do
+      [ -n "$kv" ] || continue
+      set -- "$@" "$kv"
+    done < <(jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' <<<"$record" 2>/dev/null || true)
+    [ "$#" -ge 1 ] && ralph_tokens_push "$pane" "$@"
   fi
 
   ralph_herdr_agent_prompt "$agent" "/ralph:work $n" >/dev/null || {
@@ -847,10 +1042,33 @@ spawn_work_session() {
   # occupied and working (GH-1926). The agent is left live and the pane intact:
   # the manual submit below recovers it, and reconcile already knows the
   # ledgered worker.
-  if ! spawn_turn_started "$agent"; then
-    echo "spawn NOT confirmed for GH-$n — agent $agent is LIVE in pane $pane holding an unsubmitted prompt; submit it with: herdr pane send-keys $pane Enter" >&2
+  #
+  # The wait is re-asked in chunks up to RALPH_HERDR_SPAWN_CONFIRM_SEC (~60s,
+  # audit D2a): herdr's own agent_status is the oracle — never the pane token,
+  # which is decoration nothing may gate on (tokens.sh's header). On timeout
+  # the failure carries a machine-greppable SPAWN-UNCONFIRMED token, the exact
+  # resubmit command, and one pane-content probe for the known blocking modals.
+  local confirm_total="${RALPH_HERDR_SPAWN_CONFIRM_SEC:-60}" confirm_waited=0 chunk turn_ok="" turn_err
+  case "$confirm_total" in '' | *[!0-9]* | 0) confirm_total=60 ;; esac
+  chunk="${RALPH_HERDR_TURN_WAIT_SEC:-20}"
+  case "$chunk" in '' | *[!0-9]* | 0) chunk=20 ;; esac
+  turn_err=$(ralph_diag_file)
+  while :; do
+    if spawn_turn_started "$agent" 2>"$turn_err"; then
+      turn_ok=1
+      break
+    fi
+    confirm_waited=$((confirm_waited + chunk))
+    [ "$confirm_waited" -lt "$confirm_total" ] || break
+  done
+  if [ -z "$turn_ok" ]; then
+    [ -s "$turn_err" ] && cat "$turn_err" >&2
+    [ "$turn_err" = /dev/null ] || rm -f "$turn_err" 2>/dev/null || true
+    spawn_modal_probe "$pane"
+    echo "SPAWN-UNCONFIRMED $pane — GH-$n's agent $agent is LIVE holding an unsubmitted prompt (no turn within ~${confirm_total}s); submit it with: herdr pane send-keys $pane Enter" >&2
     return 1
   fi
+  [ "$turn_err" = /dev/null ] || rm -f "$turn_err" 2>/dev/null || true
 
   RALPH_HERDR_SPAWNED_AGENT="$agent"
   echo "spawned GH-$n on $branch (pane $pane, agent $agent)"

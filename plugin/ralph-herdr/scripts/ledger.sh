@@ -20,11 +20,15 @@
 #   the last pane that would have proven it is gone (GH-1933).
 #   ev vocabulary: spawn | state | adopt | exit | discover | lost ("lost" is
 #   reserved; today a lost agent is recorded as ev=exit reason=lost).
-#     spawn     appended by lib.sh's spawn path AT SPAWN TIME — the one
+#     spawn     appended by lib.sh's spawn path AT PANE CREATION — the one
 #               documented carve-out from "the watcher is the sole appender"
 #               (spawn happens before any event hook can fire; a single-line
 #               O_APPEND write stays atomic). Embeds the C7 LineageRecord as
-#               .lineage and the C8 token map as .tokens.
+#               .lineage and the C8 token map as .tokens. Provisional since
+#               the 2026-08-19 audit (D2b): written before `agent start`, so
+#               a spawner killed pre-start leaves a sweepable open row; the
+#               spawn path itself closes it ({ev: exit, reason: never_started,
+#               via: spawn}) on the paths that prove no worker ever existed.
 #     state     watcher: {agent_status} (raw herdr status) or {state}
 #               (lifecycle token value, e.g. "orphaned").
 #     adopt     watcher orphan pass: {parent: new, prev_parent: old}.

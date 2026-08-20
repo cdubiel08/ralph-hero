@@ -16,11 +16,21 @@ import (
 const noMuxBanner = "no multiplexer — observe/reply degraded to board verbs"
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		fetchBoardCmd(m.cfg, m.runner),
 		fetchAgentsCmd(m.cfg, m.runner),
 		tea.Tick(m.cfg.Interval, func(t time.Time) tea.Msg { return tickMsg(t) }),
-	)
+	}
+	// Seed the write-stamp watch (the first observation is a baseline, never a
+	// trigger — Init is already fetching) and stamp liveness immediately, so a
+	// cockpit that dies inside its first interval still left one heartbeat.
+	if c := checkMarksCmd(m.cfg); c != nil {
+		cmds = append(cmds, c)
+	}
+	if c := heartbeatCmd(m.cfg); c != nil {
+		cmds = append(cmds, c)
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -45,6 +55,15 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			fetchAgentsCmd(m.cfg, m.runner), // overlay refresh every tick
 			tea.Tick(m.cfg.Interval, func(t time.Time) tea.Msg { return tickMsg(t) }),
 		}
+		// Two free local side channels ride the fixed tick: the write-stamp
+		// watch (audit A6 — a local board write is visible here one stat
+		// ahead of any poll) and the liveness heartbeat (audit D6d).
+		if c := checkMarksCmd(m.cfg); c != nil {
+			cmds = append(cmds, c)
+		}
+		if c := heartbeatCmd(m.cfg); c != nil {
+			cmds = append(cmds, c)
+		}
 		if !m.pollInFlight && m.pollDue(time.Time(msg)) {
 			m.pollInFlight = true
 			cmds = append(cmds, fetchBoardCmd(m.cfg, m.runner))
@@ -61,6 +80,32 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			cmds = append(cmds, fetchDoneCmd(m.cfg, m.runner))
 		}
 		return m, tea.Batch(cmds...)
+
+	case marksMsg:
+		// board.ts's local write stamp moved (audit A6). Three cases, in the
+		// only safe order: a zero time is a failed or absent read and asserts
+		// NOTHING; the first successful read is a baseline (Init already
+		// fetched); a LATER mtime is evidence of a verified local write —
+		// snap the cadence and refetch now, without waiting out the backoff.
+		// The channel can only SHORTEN staleness (GH-1806's rule): a missed
+		// stamp costs one ordinary poll interval, nothing more.
+		if msg.at.IsZero() {
+			return m, nil
+		}
+		if m.lastMarkSeen.IsZero() {
+			m.lastMarkSeen = msg.at
+			return m, nil
+		}
+		if !msg.at.After(m.lastMarkSeen) {
+			return m, nil
+		}
+		m.lastMarkSeen = msg.at
+		m.snapToFloor()
+		if m.pollInFlight {
+			return m, nil // the running fetch will carry the write
+		}
+		m.pollInFlight = true
+		return m, fetchBoardCmd(m.cfg, m.runner)
 
 	case boardMsg:
 		m.pollInFlight = false

@@ -95,6 +95,79 @@ function runOneline(pluginVersion: string, stampVersion: string): string {
   }
 }
 
+/** Two on-disk plugin trees for the content-hash check (audit D4): a source
+ *  tree and an "installed" tree at the registered plugin_root, with EQUAL
+ *  version strings — the founding case is trees differing while versions read
+ *  equal, so the version check alone stays green throughout. */
+function runContentOneline(opts: { drift: boolean; installedMissing?: boolean }): string {
+  const dir = mkdtempSync(join(tmpdir(), "herdr-content-"));
+  const src = join(dir, "src");
+  const inst = join(dir, "inst");
+  for (const tree of [src, ...(opts.installedMissing ? [] : [inst])]) {
+    mkdirSync(join(tree, "scripts"), { recursive: true });
+    writeFileSync(join(tree, "scripts", "lib.sh"), "echo same\n");
+    writeFileSync(join(tree, "herdr-plugin.toml"), 'version = "0.9.9"\n');
+  }
+  if (!opts.installedMissing && opts.drift) {
+    writeFileSync(join(inst, "scripts", "lib.sh"), "echo DIFFERENT\n");
+  }
+  const pluginsJson = join(dir, "plugins.json");
+  writeFileSync(
+    pluginsJson,
+    JSON.stringify([
+      {
+        plugin_id: "ralph-herdr",
+        plugin_root: inst,
+        version: "0.9.9",
+        source: { kind: "github", owner: "o", repo: "r", subdir: "s", requested_ref: "main" },
+      },
+    ]),
+  );
+  const stamp = join(dir, "herdr-plugin-version");
+  writeFileSync(stamp, "0.9.9\n");
+  const repo = join(dir, "repo");
+  mkdirSync(repo, { recursive: true });
+  try {
+    return execFileSync("bash", [SETUP_SH, "check", "--oneline"], {
+      encoding: "utf8",
+      stdio: "pipe",
+      timeout: SUBPROCESS_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        HERDR_BIN_PATH: fakeHerdr(),
+        RALPH_HERDR_PLUGINS_JSON: pluginsJson,
+        RALPH_HERDR_VERSION_STAMP: stamp,
+        RALPH_HERDR_REPO: repo,
+        RALPH_HERDR_CONTENT_SOURCE: src,
+      },
+    });
+  } catch (e: any) {
+    if (e?.status === 1 && typeof e.stdout === "string") return e.stdout;
+    throw e;
+  }
+}
+
+describe("herdr-setup.sh content freshness hashes trees, never trusts versions (audit D4)", () => {
+  it("differing trees under EQUAL versions is a gap naming the sync remedy", () => {
+    const out = runContentOneline({ drift: true });
+    expect(out.trim().split("\n")).toHaveLength(1);
+    expect(out).toContain("ralph-herdr-content:");
+    expect(out).not.toContain("ralph-herdr-version:"); // versions read equal — that check stays green
+    expect(out).toContain("herdr-plugin-sync.sh");
+  }, SUBPROCESS_TIMEOUT_MS);
+
+  it("identical trees produce no content gap", () => {
+    const out = runContentOneline({ drift: false });
+    expect(out).not.toContain("ralph-herdr-content");
+  }, SUBPROCESS_TIMEOUT_MS);
+
+  it("an unreadable installed tree is not evaluated — never a gap, never a pass", () => {
+    const out = runContentOneline({ drift: false, installedMissing: true });
+    // note-level only: --oneline carries gaps, and this must not be one.
+    expect(out).not.toContain("ralph-herdr-content");
+  }, SUBPROCESS_TIMEOUT_MS);
+});
+
 describe("herdr-setup.sh --oneline carries the finding, not just its name", () => {
   it("a stale ralph-herdr plugin relays both versions and the remedy command", () => {
     const out = runOneline("0.5.1", "0.5.2");

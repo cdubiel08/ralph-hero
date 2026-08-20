@@ -11,6 +11,9 @@
 #   herdr-setup.sh [check] [--oneline]   report each prerequisite; no mutations
 #   herdr-setup.sh fix                   perform the safely-automatable steps,
 #                                        print exact manual commands for the rest
+#   herdr-setup.sh reap [--apply] [--limit N]
+#                                        sweep zombie panes / orphaned processes
+#                                        (dry run by default — see the reap block)
 #
 # Exit codes (check): 0 fully wired · 1 gaps found · 2 herdr not installed.
 # --oneline prints exactly one machine-readable line ("herdr: …") for doctor,
@@ -36,13 +39,235 @@ PLUGIN_SPEC="cdubiel08/ralph-hero/plugin/ralph-herdr"
 
 MODE="check"
 ONELINE=""
+REAP_APPLY=""
+REAP_LIMIT=50
+prev=""
 for arg in "$@"; do
+  if [ "$prev" = "--limit" ]; then
+    case "$arg" in
+      '' | *[!0-9]* | 0) echo "herdr-setup.sh: --limit needs a positive integer (got '$arg')" >&2; exit 64 ;;
+    esac
+    REAP_LIMIT="$arg"
+    prev=""
+    continue
+  fi
   case "$arg" in
-    check | fix) MODE="$arg" ;;
+    check | fix | reap) MODE="$arg" ;;
     --oneline) ONELINE=1 ;;
-    *) echo "herdr-setup.sh: unknown argument '$arg' (usage: [check|fix] [--oneline])" >&2; exit 64 ;;
+    --apply) REAP_APPLY=1 ;;
+    --limit) prev="--limit" ;;
+    *) echo "herdr-setup.sh: unknown argument '$arg' (usage: [check|fix|reap] [--oneline] [--apply] [--limit N])" >&2; exit 64 ;;
   esac
 done
+[ "$prev" = "--limit" ] && { echo "herdr-setup.sh: --limit needs a value" >&2; exit 64; }
+if [ "$MODE" != "reap" ] && { [ -n "$REAP_APPLY" ] || [ "$REAP_LIMIT" != 50 ]; }; then
+  echo "herdr-setup.sh: --apply/--limit belong to the reap verb" >&2
+  exit 64
+fi
+
+# ── reap: zombie panes, orphaned daemons, stale unknown panes (audit D6) ─────
+#
+# doctor-orphans.sh commits to REPORT, NEVER REAP, and states the argument:
+# "a sweep that kills on a snapshot read is one partial snapshot away from
+# killing live work." That argument is answered here rather than skated past,
+# and the answer is four bounds, not a counter-doctrine:
+#
+#   1. DRY RUN by default. Nothing is closed or killed until a human, having
+#      read exactly what would happen, re-runs with --apply — so the snapshot
+#      read is never the thing that kills; the human's assertion is.
+#   2. Every action requires a reading the snapshot CANNOT fake: the cwd or
+#      checkout missing from the LOCAL FILESYSTEM. A partial snapshot can make
+#      a live pane invisible (which here means it is left alone — invisible
+#      panes are never candidates); it cannot make a directory vanish from
+#      disk. The one pass keyed on snapshot-side facts alone (unknown-status
+#      panes) additionally requires a positive process-info read: no
+#      foreground process AND a shell older than 60 min — and an unreadable
+#      process-info disqualifies, never qualifies.
+#   3. Ownership-unclear is LISTED, never acted on: only ralph-named agents
+#      (grammar B / legacy gh-N) are actionable; every other finding prints
+#      with no command run against it, --apply or not.
+#   4. A per-sweep --limit (default 50) bounds the blast radius of any wrong
+#      premise to one bounded, attended pass.
+#
+# Board state is NEVER written here: for each reaped unit the operator is
+# handed `board claim show N` — releasing a dead worker's claim stays
+# reconcile's pane-proved job (claim-recover.sh), which requires evidence this
+# sweep does not collect.
+#
+# Exit: 0 nothing to reap · 1 candidates found (dry run) or actions performed ·
+#       2 not evaluable · 64 bad invocation.
+if [ "$MODE" = "reap" ]; then
+  command -v "$HERDR" >/dev/null 2>&1 || { echo "reap: not evaluable — herdr is not installed (looked for '$HERDR')" >&2; exit 2; }
+  command -v jq >/dev/null 2>&1 || { echo "reap: not evaluable — jq is required" >&2; exit 2; }
+
+  # The strict transport boundary ships in the herdr plugin; resolve it the
+  # same way the lineage/orphans relays below do. No boundary, no sweep.
+  _rp_json="${RALPH_HERDR_PLUGINS_JSON:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins.json}"
+  _rp_root=""
+  [ -f "$_rp_json" ] && _rp_root=$(jq -r 'map(select(.plugin_id == "ralph-herdr")) | .[0].plugin_root // empty' "$_rp_json" 2>/dev/null) || _rp_root=""
+  _rp_scripts=""
+  for _cand in "${RALPH_HERDR_SCRIPTS_DIR:-}" "$_rp_root/scripts" "$REPO/plugin/ralph-herdr/scripts" "$SCRIPT_DIR/../../plugin/ralph-herdr/scripts"; do
+    [ -n "$_cand" ] && [ -f "$_cand/transport.sh" ] && { _rp_scripts="$_cand"; break; }
+  done
+  if [ -z "$_rp_scripts" ]; then
+    echo "reap: not evaluable — the ralph-herdr plugin's transport boundary was not found (install the herdr plugin, or run from a vendored checkout)" >&2
+    exit 2
+  fi
+  # shellcheck source=/dev/null
+  . "$_rp_scripts/sanitize.sh"
+  # shellcheck source=/dev/null
+  . "$_rp_scripts/transport.sh"
+
+  snap=$(ralph_herdr_snapshot) || { echo "reap: not evaluable — herdr snapshot unavailable (an unreadable herd must never read as a reapable one)" >&2; exit 2; }
+
+  [ -n "$REAP_APPLY" ] && echo "reap: APPLY mode — acting, limit $REAP_LIMIT action(s)" ||
+    echo "reap: DRY RUN — nothing is closed or killed; re-run with --apply to act (limit $REAP_LIMIT)"
+
+  findings=0
+  acted=0
+  budget_hit=""
+  # act DESC CMD... — print the finding; under --apply (and budget) run CMD.
+  act() {
+    local desc="$1"
+    shift
+    findings=$((findings + 1))
+    if [ -z "$REAP_APPLY" ]; then
+      echo "  WOULD $desc — $*"
+      return 0
+    fi
+    if [ "$acted" -ge "$REAP_LIMIT" ]; then
+      budget_hit=1
+      echo "  SKIP  $desc — per-sweep limit $REAP_LIMIT reached (re-run to continue)"
+      return 0
+    fi
+    acted=$((acted + 1))
+    echo "  REAP  $desc — $*"
+    local out rc=0
+    out=$("$@" 2>&1) || rc=$?
+    if [ "$rc" -ne 0 ] || jq -e '.error' <<<"$out" >/dev/null 2>&1; then
+      echo "        failed (rc $rc): $(printf '%s' "$out" | head -c 200 | tr '\n' ' ' | ralph_sanitize)"
+    fi
+    return 0
+  }
+  listed() { findings=$((findings + 1)); echo "  LIST  $1 — ownership unclear, never acted on: $2"; }
+
+  # ── (a) agents whose recorded checkout/cwd no longer exists on disk ────────
+  # The zombie-pane shape: reconcile exits the worker `lost` when its worktree
+  # dir is deleted (scope resolution fails closed), and can never re-discover
+  # it — the pane sits forever, invisible to every scoped surface.
+  rows=$(printf '%s' "$snap" | jq -r '
+    (.workspaces // [] | map({key: .workspace_id, value: (.worktree.checkout_path // "")}) | from_entries) as $ws
+    | (.panes // [] | map({key: .pane_id, value: (.cwd // "")}) | from_entries) as $pc
+    | (.agents // [])[]
+    | [ (.name // ""), (.pane_id // ""),
+        (($ws[.workspace_id // ""] // "") | if . == "" then ($pc[.pane_id // ""] // (.cwd // "")) else . end) ]
+    | @tsv' 2>/dev/null) || rows=""
+  while IFS=$'\t' read -r a_name a_pane a_dir; do
+    [ -n "$a_name" ] && [ -n "$a_pane" ] || continue
+    [ -n "$a_dir" ] || continue
+    [ ! -d "$a_dir" ] || continue
+    unit=$(printf '%s' "$a_name" | grep -Eo '^(gh-|[a-z])[0-9]+' | grep -Eo '[0-9]+' || true)
+    if printf '%s' "$a_name" | grep -Eq '^gh-[0-9]+$|^ralph-(deliver|tend)$|^[a-z][0-9]+-[a-z].*$'; then
+      act "close pane $a_pane (agent $a_name: checkout '$a_dir' is gone from disk)" "$HERDR" pane close "$a_pane"
+      [ -n "$unit" ] && echo "        operator: board claim show $unit — reap never writes board state; a stale claim self-clears at TTL or releases via reconcile's pane-proved pass"
+    else
+      listed "agent $a_name (pane $a_pane)" "checkout '$a_dir' is gone, but the name is not ralph's — not ours to close"
+    fi
+  done <<EOF_ZOMBIES
+$rows
+EOF_ZOMBIES
+
+  # ── (b) processes whose cwd is a deleted worktree (the daemon-leak shape) ──
+  # Recognised by HERDR_PANE_ID in the environment (doctor-orphans' probe) plus
+  # a cwd read straight from the kernel via lsof — a local, un-fakeable fact.
+  ps_out=$(ps -AEwwo pid=,user=,command= 2>/dev/null || true)
+  case "$ps_out" in *PATH=*) ;; *) ps_out=$(ps axewwo pid=,user=,command= 2>/dev/null || true) ;; esac
+  me=$(id -un)
+  if command -v lsof >/dev/null 2>&1; then
+    case "$ps_out" in
+      *PATH=*)
+        while read -r p_pid p_user p_rest; do
+          case "$p_rest" in *HERDR_PANE_ID=*) ;; *) continue ;; esac
+          case "$p_pid" in '' | *[!0-9]*) continue ;; esac
+          [ "$p_pid" != "$$" ] || continue
+          cwd=$(lsof -a -p "$p_pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1) || cwd=""
+          [ -n "$cwd" ] || continue
+          [ ! -d "$cwd" ] || continue
+          # Command = the row's prefix up to the first VAR= token (ps prints
+          # the environment after the command line — doctor-orphans.sh's rule),
+          # scanned with globbing off because the row is full of `*`.
+          cmd=""
+          set -f
+          for _tok in $p_rest; do
+            case "$_tok" in [A-Za-z_]*=*) break ;; esac
+            cmd="$cmd $_tok"
+          done
+          set +f
+          cmd=$(printf '%s' "${cmd# }" | cut -c1-100)
+          if [ "$p_user" = "$me" ]; then
+            act "kill pid $p_pid (cwd '$cwd' is a deleted worktree; $cmd)" kill "$p_pid"
+          else
+            listed "pid $p_pid (user $p_user)" "cwd '$cwd' deleted, but the process is not $me's — not ours to kill"
+          fi
+        done <<EOF_PROCS
+$ps_out
+EOF_PROCS
+        ;;
+      *) echo "  note  orphan-process pass skipped — this ps shows no environments" ;;
+    esac
+  else
+    echo "  note  orphan-process pass skipped — lsof not available to read a process's cwd"
+  fi
+  # Stale pid files under the ralph home: a *.pid naming a dead pid is a
+  # leftover no scheduler will clean. Removed only under --apply.
+  for pf in "${RALPH_HOME:-$HOME/.ralph}"/*.pid; do
+    [ -f "$pf" ] || continue
+    fpid=$(head -1 "$pf" 2>/dev/null | tr -dc '0-9') || fpid=""
+    [ -n "$fpid" ] || continue
+    kill -0 "$fpid" 2>/dev/null && continue
+    act "remove stale pidfile $pf (pid $fpid is dead)" rm -f "$pf"
+  done
+
+  # ── (c) unknown-status panes: no foreground process, older than 60 min ─────
+  # Three positive readings required; an unreadable process-info DISQUALIFIES.
+  unk=$(printf '%s' "$snap" | jq -r '
+    (.agents // [])[] | select((.agent_status // "unknown") == "unknown")
+    | [(.name // ""), (.pane_id // "")] | @tsv' 2>/dev/null) || unk=""
+  while IFS=$'\t' read -r u_name u_pane; do
+    [ -n "$u_pane" ] || continue
+    pinfo=$(ralph_herdr_call pane_process_info pane process-info --pane "$u_pane" 2>/dev/null) || continue
+    fg=$(jq -r '(.process_info.foreground_processes // []) | length' <<<"$pinfo" 2>/dev/null) || continue
+    [ "$fg" = "0" ] || continue
+    spid=$(jq -r '.process_info.shell_pid // empty' <<<"$pinfo" 2>/dev/null) || spid=""
+    case "$spid" in '' | *[!0-9]*) continue ;; esac
+    et=$(ps -p "$spid" -o etime= 2>/dev/null | tr -d ' ') || et=""
+    [ -n "$et" ] || continue
+    # etime: [[dd-]hh:]mm:ss — older than 60 min = has a day part or an hour part.
+    case "$et" in
+      *-* | *:*:*) : ;;
+      *) continue ;;
+    esac
+    if printf '%s' "${u_name:-}" | grep -Eq '^gh-[0-9]+$|^ralph-(deliver|tend)$|^[a-z][0-9]+-[a-z].*$'; then
+      act "close pane $u_pane (agent ${u_name:-<unnamed>}: status unknown, no foreground process, shell up $et)" "$HERDR" pane close "$u_pane"
+    else
+      listed "pane $u_pane (agent ${u_name:-<unnamed>})" "unknown status, idle shell up $et, but the name is not ralph's"
+    fi
+  done <<EOF_UNK
+$unk
+EOF_UNK
+
+  echo
+  if [ "$findings" -eq 0 ]; then
+    echo "reap: nothing to reap — every agent's checkout exists, no orphaned processes, no stale unknown panes"
+    exit 0
+  fi
+  if [ -n "$REAP_APPLY" ]; then
+    echo "reap: $findings finding(s), $acted action(s) performed${budget_hit:+ (limit reached — re-run to continue)}"
+  else
+    echo "reap: $findings finding(s) — DRY RUN, nothing was touched; re-run with --apply to act"
+  fi
+  exit 1
+fi
 
 # Gaps accumulate as "name|how to close it" lines; notes are advisory only and
 # never affect the exit code.
@@ -171,6 +396,89 @@ else
     gap "ralph-herdr-version" "$plugin_ver < $stamp_ver expected by this ralph, so the cockpit is EXECUTING PLUGIN CODE OLDER than this ralph relies on — fixes released since $stamp_ver are not in effect in the copy it runs; herdr has no auto-update, reinstall: $reinstall"
   else
     note "ralph-herdr-version" "$plugin_ver < $stamp_ver expected by this ralph, so the cockpit is executing plugin code older than this ralph relies on — local source at ${PLUGIN_ROOT:-unknown}; update that checkout"
+  fi
+fi
+
+# ── ralph-herdr plugin content freshness (2026-08-19 audit, D4) ──────────────
+# The version check above compares two STRINGS, and the strings were measured
+# equal while the trees differed (f96286a7) — four merged≠installed incidents
+# ran merged fixes unexecuted for a day each. So the subject here is CONTENT:
+# a sorted sha256 over the plugin's behavior surface (scripts/**, cockpit's
+# non-test Go source + go.mod/go.sum, the manifest), computed identically on
+# the source tree beside this ralph copy and on herdr's registered install.
+# MIRRORS plugin/ralph-herdr/scripts/herdr-plugin-sync.sh's tree_hash — change
+# the two together. Every unreadable input degrades to a note ("not
+# evaluated"), never a pass and never a gap: hashing can only under-report
+# freshness, never claim it.
+_hsu_sha256() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d' ' -f1; else sha256sum | cut -d' ' -f1; fi
+}
+_hsu_tree_hash() {
+  local dir="$1"
+  [ -d "$dir/scripts" ] || return 1
+  (
+    cd "$dir" 2>/dev/null || exit 1
+    {
+      find scripts -type f 2>/dev/null
+      find cockpit -type f \( -name '*.go' ! -name '*_test.go' -o -name 'go.mod' -o -name 'go.sum' \) 2>/dev/null
+      [ -f herdr-plugin.toml ] && printf 'herdr-plugin.toml\n'
+    } | LC_ALL=C sort | while IFS= read -r _f; do
+      [ -f "$_f" ] || continue
+      printf '%s ' "$_f"
+      _hsu_sha256 <"$_f"
+    done
+  ) | _hsu_sha256
+}
+CONTENT_SRC="${RALPH_HERDR_CONTENT_SOURCE:-}"
+if [ -z "$CONTENT_SRC" ]; then
+  for _c in "$REPO/plugin/ralph-herdr" "$SCRIPT_DIR/../../plugin/ralph-herdr"; do
+    [ -d "$_c/scripts" ] && { CONTENT_SRC="$_c"; break; }
+  done
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  note "ralph-herdr-content" "not evaluated (jq unavailable)"
+elif [ -z "$PLUGIN_ROOT" ] || [ ! -d "$PLUGIN_ROOT" ]; then
+  note "ralph-herdr-content" "not evaluated (herdr records no readable plugin_root for ralph-herdr)"
+elif [ -z "$CONTENT_SRC" ]; then
+  note "ralph-herdr-content" "not evaluated (no plugin/ralph-herdr source tree beside this ralph copy — plugin-installed ralph has nothing to hash against)"
+else
+  src_hash=$(_hsu_tree_hash "$CONTENT_SRC" 2>/dev/null) || src_hash=""
+  inst_hash=$(_hsu_tree_hash "$PLUGIN_ROOT" 2>/dev/null) || inst_hash=""
+  if [ -z "$src_hash" ] || [ -z "$inst_hash" ]; then
+    note "ralph-herdr-content" "not evaluated (a tree could not be hashed: source ${src_hash:-unreadable}, installed ${inst_hash:-unreadable})"
+  elif [ "$src_hash" = "$inst_hash" ]; then
+    pass "ralph-herdr-content" "installed tree matches the source tree (content hash $(printf '%.16s' "$src_hash"))"
+  else
+    gap "ralph-herdr-content" "the INSTALLED ralph-herdr tree differs from the source tree even though versions may read equal — the cockpit is executing code that does not match this checkout; sync and verify: bash $CONTENT_SRC/scripts/herdr-plugin-sync.sh (prints the exact reinstall, runs it, re-hashes)"
+  fi
+fi
+
+# ── cockpit heartbeat (2026-08-19 audit, D6d) ────────────────────────────────
+# The Go cockpit writes ${RALPH_HOME:-~/.ralph}/cockpit.heartbeat.json on
+# every tick (pid + instant). A cockpit that died — GraphQL exhaustion killed
+# one silently, discovered only when the user asked — leaves a stale file
+# whose pid no longer runs. NOTE level always: the cockpit is optional chrome,
+# and its absence is not a wiring gap. Four states, none conflated: no file
+# (never ran / pre-heartbeat build), fresh+alive (ok), stale or pid-dead
+# (cockpit-down, with the relaunch), unreadable (not evaluated).
+HB_FILE="${RALPH_HERDR_HEARTBEAT_FILE:-${RALPH_HOME:-$HOME/.ralph}/cockpit.heartbeat.json}"
+if [ ! -f "$HB_FILE" ]; then
+  note "cockpit-heartbeat" "no heartbeat file at $HB_FILE — no cockpit has run here (or it predates the heartbeat); launch: herdr plugin action invoke cockpit --plugin ralph-herdr"
+elif ! command -v jq >/dev/null 2>&1; then
+  note "cockpit-heartbeat" "not evaluated (jq unavailable)"
+else
+  hb_pid=$(jq -r '.pid // empty' "$HB_FILE" 2>/dev/null) || hb_pid=""
+  hb_age=""
+  hb_mtime=$(stat -f %m "$HB_FILE" 2>/dev/null || stat -c %Y "$HB_FILE" 2>/dev/null) || hb_mtime=""
+  case "$hb_mtime" in '' | *[!0-9]*) hb_mtime="" ;; esac
+  [ -n "$hb_mtime" ] && hb_age=$(( ($(date +%s) - hb_mtime) / 60 ))
+  case "$hb_pid" in '' | *[!0-9]*) hb_pid="" ;; esac
+  if [ -z "$hb_pid" ] || [ -z "$hb_mtime" ]; then
+    note "cockpit-heartbeat" "not evaluated (heartbeat file unreadable)"
+  elif kill -0 "$hb_pid" 2>/dev/null && [ "$hb_age" -le 5 ]; then
+    note "cockpit-heartbeat" "cockpit alive (pid $hb_pid, heartbeat ${hb_age}m old)"
+  else
+    note "cockpit-heartbeat" "cockpit-down — last heartbeat ${hb_age:-?}m ago, pid ${hb_pid} $(kill -0 "$hb_pid" 2>/dev/null && echo 'alive but silent' || echo 'gone'); relaunch: herdr plugin action invoke cockpit --plugin ralph-herdr (unattended: see CHEATSHEET §3's launchd KeepAlive note)"
   fi
 fi
 

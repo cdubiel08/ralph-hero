@@ -136,6 +136,10 @@ func resolveConfig(args []string, getenv func(string) string) (Config, error) {
 	// takes the ASCII set.
 	cfg.LedgerPath = ledgerPath(cfg.Repo, getenv)
 	cfg.Glyphs = resolveGlyphs(getenv("RALPH_COCKPIT_GLYPHS"))
+	// The local write stamp watch (audit A6) and the liveness heartbeat
+	// (audit D6d) — both machine-local, both optional, neither fails startup.
+	cfg.MarksGlob = marksGlob(getenv)
+	cfg.HeartbeatPath = heartbeatPath(getenv)
 	return cfg, nil
 }
 

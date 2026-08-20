@@ -11,6 +11,7 @@ been run for real or read straight out of the source it invokes.
 | Launch a fleet on workable items | `bash plugin/ralph-herdr/scripts/work-fleet.sh` (add issue numbers for exactly those) | 6 |
 | Open the cockpit | `herdr plugin action invoke cockpit --plugin ralph-herdr` | 3 |
 | Board state / who's working | `board list` · `board next` · `herdr agent list` | 7 |
+| Fleet health at a glance (incl. dead-before-start) | `bash plugin/ralph-herdr/scripts/fleet-status.sh` | 7 |
 | Spawn one worker on issue NNN | `bash plugin/ralph-herdr/scripts/work-fleet.sh NNN` | 6 |
 | Answer a blocked session | `board answer NNN -m "..."` then attend the pane | 5 |
 | Something's weird | `board doctor` · `bash plugin/ralph-herdr/scripts/doctor.sh` | 10 |
@@ -185,6 +186,24 @@ the read actually used, so a repo that raises `RALPH_AUDIT_DAYS` is never told
 because a host without the font renders tofu at the wrong advance width, which
 shears the fixed-stride card grid the mouse maps clicks through.
 
+**Is the cockpit alive?** The Go TUI stamps
+`~/.ralph/cockpit.heartbeat.json` (pid + instant) every tick, and
+`ralph/scripts/herdr-setup.sh check` reads it as the `cockpit-heartbeat` note
+— a dead cockpit (observed: killed silently by GraphQL exhaustion, found only
+when the user asked) shows as `cockpit-down` with the relaunch command instead
+of an `unknown` pane nobody questions. For unattended supervision, a launchd
+job with `KeepAlive` restarting the cockpit pane is the recipe — sketch, to
+copy and own (`~/Library/LaunchAgents/dev.herdr.ralph-cockpit.plist`):
+
+```xml
+<key>ProgramArguments</key>
+<array><string>/bin/bash</string><string>-lc</string>
+  <string>herdr plugin action invoke cockpit --plugin ralph-herdr</string></array>
+<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+```
+
+(Attended use needs none of this — the heartbeat note is the whole story.)
+
 ## 4. Names (grammar B)
 
 Sessions the cockpit spawns are named `<lane><issue>-<slug>[--<gen>]`, ≤32
@@ -275,6 +294,28 @@ herdr agent wait <agent> --until blocked && herdr notification show "<agent> nee
 Agent commands are JSON-native (no `--json` flag). `wait` with no timeout hangs
 on purpose and returns instantly if the state already matches.
 
+**The fleet at a glance** — one table (or `--json`) instead of a hand-rolled
+`herdr agent list | python3 …` reshape: agent, pane, herdr's `agent_status`,
+the pane's state token, unit, worktree, age from the ledger, and a derived
+HEALTH column whose one load-bearing verdict is `dead-before-start`
+(agent_status idle/done while the spawner's `spawned` token was never
+overwritten — the session died before its first self-report):
+
+```bash
+bash plugin/ralph-herdr/scripts/fleet-status.sh [--json]
+```
+
+**Message an agent** with the team template (status verb, FROM/AT,
+FILE/FOUND/CHANGED sections) instead of a hand-built heredoc; refusals come
+back as distinct exit codes (0 delivered · 4 unconfirmed · 2 refused ·
+3 unreachable). `--wait` is stripped, loudly, when the target is the lead
+(`o`-lane, or `$RALPH_HERDR_LEAD`) — a lead blocked on your reply while you
+wait on its is the documented deadlock:
+
+```bash
+bash plugin/ralph-herdr/scripts/fleet-send.sh w1743-fix-claim-race status -m "rebased; attesting next"
+```
+
 ## 8. Drive an agent by hand
 
 ```bash
@@ -339,6 +380,23 @@ herdr agent explain <agent> --json          # WHY herdr believes the state — e
                                             # detection rule with evidence
 herdr plugin log list --plugin ralph-herdr  # what the actions actually ran
 herdr plugin install cdubiel08/ralph-hero/plugin/ralph-herdr --yes   # update (replaces pin)
+bash plugin/ralph-herdr/scripts/herdr-plugin-sync.sh [--check]
+                                            # is the INSTALLED plugin this tree's
+                                            # code? Content hash, never version
+                                            # strings (versions were measured equal
+                                            # while trees differed). Prints the
+                                            # exact reinstall, runs it, VERIFIES by
+                                            # re-hashing; --check reports only
+bash ralph/scripts/herdr-setup.sh reap      # zombie panes (checkout gone from
+                                            # disk), processes rooted in deleted
+                                            # worktrees, hour-idle unknown panes.
+                                            # DRY RUN by default — every action
+                                            # printed; --apply to act, --limit N
+                                            # (50) bounds one sweep; anything
+                                            # whose ownership is unclear is LISTED,
+                                            # never touched. Board state is never
+                                            # written: claims release via
+                                            # reconcile's pane-proved pass or TTL
 ```
 
 Don't `plugin link` a dev checkout long-term: the link serves whatever branch
