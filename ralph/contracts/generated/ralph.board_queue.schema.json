@@ -114,6 +114,37 @@
                         "null"
                       ]
                     },
+                    "defer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "recheck": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "condition": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "recheck",
+                            "condition"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "openBlockerLabels": {
                       "type": "array",
                       "items": {
@@ -282,6 +313,37 @@
                       "null"
                     ]
                   },
+                  "defer": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "recheck": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "condition": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "recheck",
+                          "condition"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "openBlockerLabels": {
                     "type": "array",
                     "items": {
@@ -446,6 +508,37 @@
                       "null"
                     ]
                   },
+                  "defer": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "recheck": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "condition": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "recheck",
+                          "condition"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "openBlockerLabels": {
                     "type": "array",
                     "items": {
@@ -523,7 +616,8 @@
                     "no-items",
                     "human-needed",
                     "epic-in-flight",
-                    "stale-blocked"
+                    "stale-blocked",
+                    "all-deferred"
                   ]
                 },
                 {
@@ -532,6 +626,10 @@
               ]
             },
             "humanNeededCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "deferredCount": {
               "type": "integer",
               "minimum": 0
             },
@@ -681,6 +779,7 @@
                         "retry-window",
                         "deferred",
                         "convergence-stalled",
+                        "reviewer-rate-limited",
                         "local-session-active"
                       ]
                     },
@@ -778,6 +877,7 @@
                       "retry-window",
                       "deferred",
                       "convergence-stalled",
+                      "reviewer-rate-limited",
                       "local-session-active"
                     ]
                   },
@@ -871,6 +971,7 @@
                       "retry-window",
                       "deferred",
                       "convergence-stalled",
+                      "reviewer-rate-limited",
                       "local-session-active"
                     ]
                   },
