@@ -19,6 +19,19 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Fixed
 
+- **Fleet spawns tell the host provisioner where the worktree is (GH-2106)** —
+  `provision_worktree` ran `bash scripts/provision-worktree.sh` with no
+  argument, so a host script opening with `${1:?Usage}` exited 1 on *every*
+  spawn. Provisioning is fail-open, so the run continued and each agent landed
+  in a tree with no install — unable to type-check, test or build until it
+  rediscovered that itself (observed on every spawn of one pilot repo's fleet
+  run). The worktree path is now passed as `$1`; a host script that ignores
+  argv is unaffected. The provisioner's rc is also carried out of the spawn, so
+  `work-fleet.sh`'s summary names the spawns that landed unprovisioned instead
+  of leaving the only trace in mid-spawn stderr — a provisioner failing on
+  every spawn read exactly like one broken host script. ralph-herdr plugin
+  0.10.0 → 0.10.1 (stamp pair in lockstep).
+
 - **The cockpit action is focus-or-open (GH-2074)** — invoking `Ralph: cockpit`
   twice used to stack a second cockpit over the live one (measured 2026-08-18 on
   three live agent panes). The action now runs `scripts/cockpit-open.sh` in the

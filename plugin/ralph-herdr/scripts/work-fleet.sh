@@ -152,7 +152,7 @@ frontier_verdict() {
 RALPH_HERDR_RUN_ID=$(ralph_run_id)
 export RALPH_HERDR_RUN_ID
 
-spawned="" spawned_issues="" skipped="" failed=""
+spawned="" spawned_issues="" skipped="" failed="" unprovisioned=""
 for n in $NUMBERS; do
   echo "── GH-$n ──"
   # Only the explicit list needs the check — the frontier queue IS the eligible
@@ -171,6 +171,15 @@ for n in $NUMBERS; do
     0)
       spawned="$spawned ${RALPH_HERDR_SPAWNED_AGENT:?spawn reported success without an agent name}"
       spawned_issues="$spawned_issues $n"
+      # GH-2106: provisioning is fail-open, so a tree that never got its
+      # install still spawns green — the only trace was one stderr line in the
+      # middle of that spawn's own output, which is where a provisioner broken
+      # on EVERY spawn hid for a whole run. Carried to the summary so the
+      # operator sees it beside the agent names they are about to watch.
+      case "${RALPH_HERDR_SPAWNED_PROVISION_RC:-}" in
+        '' | 0) : ;;
+        *) unprovisioned="$unprovisioned GH-$n(rc=$RALPH_HERDR_SPAWNED_PROVISION_RC)" ;;
+      esac
       # C3 FleetBrief per spawn — an observation; a failed write never costs
       # the session. Dry runs write nothing (the plan already printed).
       if [ "${RALPH_HERDR_DRY_RUN:-}" != "true" ]; then
@@ -194,6 +203,12 @@ else
 fi
 echo "  skipped:${skipped:- (none)}"
 echo "  failed: ${failed:- (none)}"
+# Printed only when something failed: unlike the three lines above, most runs
+# attempt no provisioning at all (no host script, no lockfile), so a standing
+# "(none)" would report "nothing failed" for runs where nothing ran.
+if [ -n "$unprovisioned" ]; then
+  echo "  provision FAILED:$unprovisioned — those worktrees may be uninstalled (provisioning is fail-open); provision by hand before trusting a build or test there"
+fi
 
 if [ -n "$REFILL" ]; then
   if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then

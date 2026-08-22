@@ -535,6 +535,62 @@ rm -f "$FAKE_HERDR_FIXTURES/pane-read.pM1.json" "$FAKE_HERDR_FIXTURES/pane-read.
 printf '{"agent":{"name":"w","agent_status":"working","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":9}}\n' \
   >"$FAKE_HERDR_FIXTURES/agent-wait-until.json"
 
+# ── provision_worktree: the host script is told WHERE (GH-2106) ─────────────
+# The call used to be `(cd "$wt" && bash scripts/provision-worktree.sh)` with no
+# argv, so a host script opening with `${1:?Usage}` — the shape a pilot repo
+# ships — exited 1 on every spawn of every fleet. Provisioning is fail-open, so
+# the run continued and each agent landed in a tree with no install: it could
+# not type-check, test or build until it rediscovered that for itself.
+PROV="$TMP/prov-wt"
+mkdir -p "$PROV/scripts"
+cat >"$PROV/scripts/provision-worktree.sh" <<'PROVEOF'
+#!/usr/bin/env bash
+set -u
+worktree_path="${1:?Usage: $0 <worktree_path>}"
+echo "provisioned $worktree_path"
+PROVEOF
+chmod +x "$PROV/scripts/provision-worktree.sh"
+
+# Redirected rather than captured in `$( )`: the out-variable would not survive
+# the subshell, and the spawn path calls provision_worktree in-process too.
+RALPH_HERDR_SPAWNED_PROVISION_RC=""
+provision_worktree "$PROV" >"$TMP/prov.out" 2>&1
+prov_rc=$?
+prov_out=$(cat "$TMP/prov.out")
+is "provision: a host script requiring the path succeeds" "0" "$prov_rc"
+case "$prov_out" in
+  *"provisioned $PROV"*) ok "provision: the host script is handed the worktree path" ;;
+  *) not_ok "provision: the host script is handed the worktree path — got '$prov_out'" ;;
+esac
+is "provision: a clean run records rc 0" "0" "$RALPH_HERDR_SPAWNED_PROVISION_RC"
+
+# Fail-open is unchanged — but the rc is now RECORDED, so the fleet summary can
+# name the spawn instead of leaving the only trace in mid-spawn stderr.
+cat >"$PROV/scripts/provision-worktree.sh" <<'PROVEOF'
+#!/usr/bin/env bash
+exit 3
+PROVEOF
+chmod +x "$PROV/scripts/provision-worktree.sh"
+RALPH_HERDR_SPAWNED_PROVISION_RC=""
+provision_worktree "$PROV" >"$TMP/prov.out" 2>&1
+prov_rc=$?
+prov_out=$(cat "$TMP/prov.out")
+is "provision: a failing host script still fails OPEN (rc 0)" "0" "$prov_rc"
+is "provision: the failing rc is recorded for the summary" "3" "$RALPH_HERDR_SPAWNED_PROVISION_RC"
+case "$prov_out" in
+  *"exited 3"*) ok "provision: the failure names the host script's own code" ;;
+  *) not_ok "provision: the failure names the host script's own code — got '$prov_out'" ;;
+esac
+
+# A run that attempted NOTHING must not record a success: "no provisioner ran"
+# and "provisioning passed" are different answers and the summary reads the rc.
+rm -rf "$PROV/scripts"
+RALPH_HERDR_SPAWNED_PROVISION_RC=""
+provision_worktree "$PROV" >"$TMP/prov.out" 2>&1
+prov_rc=$?
+is "provision: no script and no lockfile does nothing (rc 0)" "0" "$prov_rc"
+is "provision: an unattempted run records no rc at all" "" "$RALPH_HERDR_SPAWNED_PROVISION_RC"
+
 # ── ralph_herdr_tab_create: the lane spawns' tab goes through the adapter ────
 # deliver-pass.sh and tend-pass.sh used to capture `tab create` stdout and pull
 # a pane id out of it. A refusal lands on stderr with stdout empty, so that
