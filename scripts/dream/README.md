@@ -179,7 +179,7 @@ to reach Gemma and the knowledge config:
 |----------|------------------|---------|
 | `PATH` | `/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin` | Homebrew + system binaries for `uv` |
 | `RALPH_KNOWLEDGE_CONFIG` | `/Users/dubiel/.ralph/knowledge.config.json` | Roots + ignore globs for scanner |
-| `RALPH_LLM_URL` | `http://localhost:8000` | Gemma lab OpenAI-compatible endpoint |
+| `RALPH_LLM_URL` | `http://localhost:12000` | OpenAI-compatible endpoint (the model gate's serving port) |
 
 If Gemma is unreachable at fire time the pipeline fails open (empty
 reflections, single warning in stderr) per the shared constraint

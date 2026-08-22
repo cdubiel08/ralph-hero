@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - import guard
 
 log = logging.getLogger("ralph.dream.meta_reflect")
 
-DEFAULT_LLM_URL = "http://localhost:8000"
+DEFAULT_LLM_URL = "http://localhost:12000"
 DEFAULT_LLM_MODEL = "mlx-community/gemma-4-26b-a4b-it-mxfp8"
 DEFAULT_LLM_TIMEOUT_S = int(os.environ.get("RALPH_DREAM_LLM_TIMEOUT_S", "180"))
 
@@ -702,6 +702,20 @@ def run_meta_reflect(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_llm_url(cli_value: str | None, cfg: dict) -> str:
+    """Endpoint precedence: --llm-url > $RALPH_LLM_URL > config > default.
+
+    The env var is the knob the launchd plists and README have always
+    advertised; before GH-2110 nothing read it, so a stale hardcoded
+    default silently won and every LLM call hit a dead port.
+    """
+    return (
+        cli_value
+        or os.environ.get("RALPH_LLM_URL")
+        or cfg.get("llm_url")
+        or DEFAULT_LLM_URL
+    )
+
 def _load_config(path: Path | None) -> dict:
     if path is None or not Path(path).exists():
         return {}
@@ -730,7 +744,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS)
     parser.add_argument("--min-reflections", type=int, default=DEFAULT_MIN_REFLECTIONS)
     parser.add_argument("--max-candidates", type=int, default=DEFAULT_MAX_CANDIDATES)
-    parser.add_argument("--llm-url", default=None)
+    parser.add_argument(
+        "--llm-url",
+        default=None,
+        help=(
+            "OpenAI-compatible endpoint root. Falls back to $RALPH_LLM_URL, "
+            f"then config.yaml llm_url, then {DEFAULT_LLM_URL}."
+        ),
+    )
     parser.add_argument("--model", default=None)
     parser.add_argument(
         "--config",
@@ -751,7 +772,7 @@ def main(argv: list[str] | None = None) -> int:
     wiki_dir = _expand(
         args.wiki_dir or cfg.get("wiki_dir") or "~/projects/thoughts/wiki"
     )
-    llm_url = args.llm_url or cfg.get("llm_url") or DEFAULT_LLM_URL
+    llm_url = _resolve_llm_url(args.llm_url, cfg)
     model = args.model or cfg.get("llm_model") or DEFAULT_LLM_MODEL
 
     staged = run_meta_reflect(
