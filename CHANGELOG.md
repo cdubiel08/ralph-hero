@@ -19,6 +19,56 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Added
 
+- **Dead leases are no longer stale ones, and `board reap-leases` clears them
+  (GH-2108)** — `board brief` printed every per-(worktree, unit) lock on the
+  machine, forever. Measured on the reporting machine: 126 locks, **83 of them
+  naming a checkout that no longer existed** (the ones the GH-2103 sweep
+  removed, plus ordinary finished sessions), the oldest a week old, and of the
+  43 live ones only **6** belonged to the repo the brief was for. The five real
+  holds were unreadable under the tombstones.
+
+  Three separable fixes, one per question the issue posed:
+
+  - **Dead vs stale.** `readLocalLeases` now classifies each lock's worktree as
+    `present`/`missing`/`unknown`. Staleness asks whether the holder might come
+    back — the right question for a checkout that exists, and the wrong one
+    forever for a checkout that is gone, since nothing can refresh that lock.
+    `board who` renders `missing` as **DEAD**, checked *before* the age test so
+    a lock swept minutes ago is not reported as live. `ENOENT` is the only
+    reading that means gone: a permission error, an unmounted volume or a
+    symlink loop is `unknown` and treated as present everywhere, because an
+    unreadable path is not evidence of removal and the two mistakes do not cost
+    the same.
+  - **Scope.** `brief` is the repo-scoped orientation read, so it now shows only
+    leases on this repo's own checkouts — issue numbers are per-repo, so another
+    checkout's `lease: #76` names a *different* issue and the line was a wrong
+    statement, not just noise. Repo identity is the resolved git common dir,
+    read from the checkout's own `.git` (no exec), and compared only when **both**
+    sides resolved: an unresolved side is `unknown`, never `different`, so no real
+    lease is withheld because a read failed. What is held back is **counted and
+    named** in one line, with `board who` pointed at as the machine-wide surface
+    that still lists everything — withholding silently would recreate the defect
+    one layer down. `--json` stays unfiltered; the new fields let a machine
+    reader apply its own cut.
+  - **Reaping.** `board reap-leases [--apply] [--json]` removes lock files whose
+    worktree is gone — dry run by default, zero API. **The predicate is the
+    missing checkout, never the lock's age**: a lease is what `deliver-queue`
+    reads for `local-session-active` (GH-1929), so anything able to delete one
+    must be unable to delete a live one, and age cannot tell them apart (a
+    session idle three hours still owns its tree and its unpushed commits) while
+    a missing directory can. The state is re-read at the moment of deletion, not
+    trusted from the classification pass, since `git worktree add` can restore
+    the path in between. Machine-wide like `who`, because a dead lock's repo can
+    no longer be read off a directory that does not exist.
+
+  `localSessionLease` — deliver's *blocking* predicate — is deliberately
+  untouched: a dead lease there self-clears on `RALPH_LOCK_TTL_MIN`, so its
+  cost is bounded at one TTL on one unit, while `brief`'s was unbounded and
+  permanent. Adding a worktree test to a blocking read is a separable judgment
+  with its own failure direction. Also corrected: the comment on
+  `worktreeLockPath` claimed a 7-day pruner reaped these files. There is none,
+  and there never was — which is how they accumulated.
+
 - **The Intake tier — filing an issue is no longer approving it (GH-2077)** —
   a seventh Workflow State, upstream of Backlog, for work that is tracked but
   not yet approved for autonomous pickup. Before it, `next`'s pool was every

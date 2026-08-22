@@ -21,7 +21,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   BOARD_STATES,
@@ -2929,8 +2929,13 @@ export function readSessionBinding(ctx: Ctx): SessionBinding | null {
 // this, the same asymmetry GH-1948's binding already relies on.
 
 /** The lock's identity: (worktree, unit). Digested, because a worktree path is
- *  not a safe filename and is unbounded; `.json` so the 7-day pruner reaps it
- *  along with everything else in this directory. */
+ *  not a safe filename and is unbounded.
+ *
+ *  An earlier version of this comment claimed a 7-day pruner reaped these
+ *  along with everything else in the directory. There is no such pruner and
+ *  there never was, which is how 126 locks accumulated on one machine with two
+ *  thirds of them pointing at deleted checkouts. `board reap-leases` is the
+ *  reaper (GH-2108), and its predicate is the missing checkout, not age. */
 export function worktreeLockPath(ctx: Ctx, number: number): string | null {
   // No session id is not a policy choice, same as everywhere in this block:
   // not evaluated. A lock with no owner name could never be read back.
@@ -3211,6 +3216,86 @@ export function localSessionLease(ctx: Ctx): LeaseProbe | null {
   return (number: number) => holds.get(number) ?? null;
 }
 
+/** Is the checkout a lock names still on disk?
+ *
+ *  DEAD IS NOT STALE (GH-2108). Staleness asks whether the holder might come
+ *  back, and it is the right question for a lease whose checkout still exists.
+ *  It is the wrong question — and gives the wrong answer forever — for one
+ *  whose worktree was deleted: nothing can refresh that lock, so it is not
+ *  aging toward anything, and rendering it as STALE tells a reader to wait for
+ *  a session that cannot return. Measured on the reporting machine: 83 of 126
+ *  locks named a directory that no longer existed, the oldest a week old, and
+ *  the five real holds were buried under them in the one command an operator
+ *  reads to orient.
+ *
+ *  ENOENT is the ONLY reading that means gone. A permission error, an
+ *  unmounted volume, a symlink loop — every other failure is "unknown", which
+ *  every consumer here treats as present. A path we could not read is never
+ *  evidence that the checkout was removed, and the two mistakes do not cost
+ *  the same: keeping a dead row is noise, while dropping or reaping a live one
+ *  loses a real hold. */
+export type WorktreeState = "present" | "missing" | "unknown";
+function worktreeState(path: string): WorktreeState {
+  if (!path) return "unknown"; // a record with no worktree asserts nothing
+  try {
+    statSync(path);
+    return "present";
+  } catch (e) {
+    return (e as NodeJS.ErrnoException)?.code === "ENOENT" ? "missing" : "unknown";
+  }
+}
+
+/** The repo a checkout belongs to, as the resolved path of its git common dir.
+ *
+ *  The sessions dir is machine-global while `brief` is repo-scoped, so without
+ *  this every lease on the machine printed into every repo's brief — 37 of the
+ *  43 live locks on the reporting machine belonged to two other repos. That is
+ *  not merely noise: issue numbers are per-repo, so another checkout's
+ *  `lease: #76` names a DIFFERENT issue than this repo's #76, and the line is
+ *  a wrong statement rather than an irrelevant one.
+ *
+ *  Pure fs, no exec: a linked worktree's `.git` is a file pointing at
+ *  `<common>/worktrees/<name>`, and a main checkout's is the common dir
+ *  itself. Returns null on any shape it does not recognise or cannot resolve,
+ *  and callers compare only when BOTH sides resolved — an unresolved side is
+ *  "unknown", never "different", so a real lease is never withheld because a
+ *  read failed. (Resolving both sides also settles the /var vs /private/var
+ *  symlink split on macOS, which an unresolved comparison would score as two
+ *  different repos.) */
+function gitCommonDir(dir: string): string | null {
+  const dot = join(dir, ".git");
+  let st;
+  try {
+    st = statSync(dot);
+  } catch {
+    return null;
+  }
+  if (st.isDirectory()) {
+    try {
+      return realpathSync(dot);
+    } catch {
+      return null;
+    }
+  }
+  let txt: string;
+  try {
+    txt = readFileSync(dot, "utf8");
+  } catch {
+    return null;
+  }
+  const m = /^\s*gitdir:\s*(.+?)\s*$/m.exec(txt);
+  if (!m) return null;
+  let p = isAbsolute(m[1]) ? m[1] : resolve(dir, m[1]);
+  // A LINKED worktree points into <common>/worktrees/<name>; any other `.git`
+  // file (a submodule's) already names the common dir.
+  if (basename(dirname(p)) === "worktrees") p = dirname(dirname(p));
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
 /** Every local per-(worktree, unit) lease, for `board who` (audit A2): the
  *  machine-shared sessions dir already names holder, unit and worktree in one
  *  readdir at zero API cost — the question "who is working" was unanswerable
@@ -3223,6 +3308,14 @@ export interface LeaseRow {
   expiresAt: string;
   stale: boolean;
   ours: boolean;
+  /** The lock file itself — what `reap-leases` unlinks, and the only handle a
+   *  reader has on a record it wants to name. */
+  file: string;
+  /** GH-2108. "missing" is DEAD, and is never rendered as STALE anywhere. */
+  worktreeState: WorktreeState;
+  /** Whether this lock's checkout belongs to the configured repo. null = could
+   *  not tell (either side unresolved), which is kept, never withheld. */
+  sameRepo: boolean | null;
 }
 export function readLocalLeases(ctx: Ctx): LeaseRow[] | null {
   if (!ctx.session?.dir) return null;
@@ -3234,12 +3327,19 @@ export function readLocalLeases(ctx: Ctx): LeaseRow[] | null {
   }
   const ttlMs = ctx.cfg.lockTtlMin * 60_000;
   const cutoff = ctx.now().getTime() - ttlMs;
+  // Resolved once: the answer is the same for every row, and a failure here
+  // leaves every sameRepo unknown rather than marking every row foreign.
+  const ourCommon = ctx.repoRoot ? gitCommonDir(ctx.repoRoot) : null;
   const rows: LeaseRow[] = [];
   for (const name of names) {
     const m = /^wt-(\d+)-[0-9a-f]{16}\.json$/.exec(name);
     if (!m) continue;
-    const held = readWorktreeLock(join(ctx.session.dir, name));
+    const file = join(ctx.session.dir, name);
+    const held = readWorktreeLock(file);
     if (!held) continue;
+    const state = worktreeState(held.lock.worktree);
+    // Only a checkout that is actually there can be asked what repo it is.
+    const theirCommon = state === "present" ? gitCommonDir(held.lock.worktree) : null;
     rows.push({
       issue: Number(m[1]),
       session: held.lock.session,
@@ -3248,10 +3348,61 @@ export function readLocalLeases(ctx: Ctx): LeaseRow[] | null {
       expiresAt: new Date(held.freshMs + ttlMs).toISOString(),
       stale: held.freshMs < cutoff,
       ours: held.lock.session === (ctx.session.id ?? ""),
+      file,
+      worktreeState: state,
+      sameRepo: ourCommon && theirCommon ? ourCommon === theirCommon : null,
     });
   }
   rows.sort((a, b) => a.issue - b.issue);
   return rows;
+}
+
+/** What the REPO-SCOPED orientation read shows, and what it holds back
+ *  (GH-2108). Split out from `brief` so the cut itself is pinned rather than
+ *  only its rendering.
+ *
+ *  Two exclusions, both toward keeping the row: a checkout that is gone
+ *  (`missing`, never `unknown`), and a checkout that resolved to a DIFFERENT
+ *  repo (`sameRepo === false`, never `null`). Everything the reader could not
+ *  classify is shown, because the cost of a stray row is a line of noise and
+ *  the cost of a wrong exclusion is a real hold nobody sees. */
+export function partitionBriefLeases(rows: LeaseRow[]): {
+  shown: LeaseRow[];
+  dead: number;
+  foreign: number;
+} {
+  const shown = rows.filter((l) => l.worktreeState !== "missing" && l.sameRepo !== false);
+  const dead = rows.filter((l) => l.worktreeState === "missing").length;
+  return { shown, dead, foreign: rows.length - shown.length - dead };
+}
+
+/** The only writer over the lease records (GH-2108) — separated from the
+ *  reader so the one thing that cannot be read off the code is pinned: the
+ *  worktree state is RE-CHECKED at the moment of deletion, not trusted from
+ *  the classification pass. `git worktree add` can restore the very path
+ *  between the two, and the restored checkout's lock is live again.
+ *
+ *  `probe` is the seam that makes that re-check testable; nothing in
+ *  production passes anything but the real one. */
+export function reapDeadLeases(
+  dead: LeaseRow[],
+  probe: (path: string) => WorktreeState = worktreeState,
+): { removed: string[]; failed: { file: string; reason: string }[] } {
+  const removed: string[] = [];
+  const failed: { file: string; reason: string }[] = [];
+  for (const l of dead) {
+    if (probe(l.worktree) !== "missing") {
+      failed.push({ file: l.file, reason: "worktree reappeared between the read and the delete — left alone" });
+      continue;
+    }
+    try {
+      unlinkSync(l.file);
+      removed.push(l.file);
+    } catch (e) {
+      failed.push({ file: l.file, reason: (e as Error).message });
+    }
+  }
+  return { removed, failed };
 }
 
 /** Refuse a SECOND, distinct unit driven from one session. Re-claiming the
@@ -8891,7 +9042,13 @@ reads
   brief [--json]              ONE orientation read: next head, queue counts,
                               deliver/tend counts, local session leases
   who [--json]                who is driving what on this machine — the
-                              per-(worktree, unit) leases, zero API
+                              per-(worktree, unit) leases, zero API. A lock
+                              whose checkout was deleted reads DEAD, never
+                              STALE: nothing can refresh it
+  reap-leases [--apply]       remove local lock files whose worktree is gone
+              [--json]        (dry run by default). Keyed on the checkout being
+                              absent, never on age — a live lease may not be
+                              deletable by a clock. Zero API
   get NNN [--json]            issue: state, claim, parent/children, blockers, PRs
   list [--state S] [--json]   open items on the board — a bounded own-repo
                               read (open issues only), not a full project
@@ -9189,7 +9346,8 @@ export const VERB_HELP: Record<string, string> = {
   next: "board next [--json] [--fresh]\n  The ranked work queue's head. Empty is typed (--json: diagnosis).\n  example: board next",
   frontier: "board frontier [--json]\n  next's eligible queue re-projected with per-item explanations (fleet feed).\n  example: board frontier --json",
   brief: "board brief [--json]\n  One orientation read: next head, queue counts, deliver/tend counts, local leases.\n  example: board brief",
-  who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  example: board who",
+  who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  A lease whose worktree was deleted prints DEAD, not STALE: nothing can refresh it, so it is\n  not aging toward anything. `board reap-leases` clears those.\n  example: board who",
+  "reap-leases": "board reap-leases [--apply] [--json]\n  Remove local lock files whose worktree no longer exists. Dry run unless --apply. Zero API.\n  The predicate is the missing CHECKOUT, never the lock's age: a lease is what deliver-queue\n  reads for local-session-active, so a clock may not be allowed to delete a live one. Any read\n  failure that is not ENOENT leaves the lock alone.\n  example: board reap-leases --apply",
   list: "board list [--state <s>] [--json]\n  Items by state. Full-board scan — prefer next/brief for orientation.\n  example: board list --state human",
   get: "board get <n> [--json]\n  One issue with board fields, parity with what move/claim write.\n  example: board get 1234",
   create: "board create (--intake | --backlog | --state <s>) --title <t> [--body <b>] [--parent <n>] [--estimate XS..XL] [--priority P0..P3] [--apply]\n  Files an issue onto the board. Retry-safe (twin dedupe, GH-1973).\n  The landing state is REQUIRED — there is no default, because filing is not approving:\n    --intake   tracked, not yet approved; invisible to next/frontier (Priority/Estimate optional)\n    --backlog  approved and ready to work (Priority and Estimate REQUIRED)\n  example: board create --backlog --title \"fix the gate\" --priority P1 --estimate S",
@@ -9470,9 +9628,23 @@ export function run(argv: string[], ctx: Ctx): number {
         `queues: ${eligible.length} eligible, ${blocked.length} blocked, ${dx.deferredCount} deferred, ` +
           `${dx.humanNeededCount} human-needed | deliver ${dq.queue.length} (+${dq.blocked.length} blocked) | tend ${tq.queue.length}`,
       );
+      // GH-2108: brief is the REPO-SCOPED orientation read, so it prints the
+      // leases on this repo's own checkouts and states, in one line, what it
+      // left out. Withholding silently would recreate the defect one layer
+      // down — an operator could not tell "nothing held here" from "the reader
+      // dropped it" — so the counts and the machine-wide surface that still
+      // lists everything are both named. --json is unfiltered by design: the
+      // three new fields let a machine reader apply whichever cut it wants.
       if (who === null) out(`leases: not evaluated (no session dir)`);
-      else if (who.length === 0) out(`leases: none — no local session is driving a unit`);
-      else for (const l of who) out(`  lease: #${l.issue} ${l.ours ? "(this session)" : l.session} in ${l.worktree}${l.stale ? " STALE" : ` until ${l.expiresAt}`}`);
+      else {
+        const { shown, dead, foreign } = partitionBriefLeases(who);
+        if (shown.length === 0) out(`leases: none for this repo — no local session is driving a unit here`);
+        else for (const l of shown) out(`  lease: #${l.issue} ${l.ours ? "(this session)" : l.session} in ${l.worktree}${l.stale ? " STALE" : ` until ${l.expiresAt}`}`);
+        const withheld: string[] = [];
+        if (foreign) withheld.push(`${foreign} on another repo's checkout`);
+        if (dead) withheld.push(`${dead} dead (worktree deleted — \`board reap-leases\` clears them)`);
+        if (withheld.length) out(`  leases withheld: ${withheld.join(", ")} — \`board who\` lists every lease on this machine`);
+      }
       if (cacheNote(full)) out(`  ${cacheNote(full)}`);
       return 0;
     }
@@ -9487,8 +9659,74 @@ export function run(argv: string[], ctx: Ctx): number {
       }
       if (rows === null) out("leases: not evaluated — sessions dir unreadable (distinct from nobody working)");
       else if (rows.length === 0) out("no local session leases — nobody on this machine is driving a unit");
-      else for (const l of rows) out(`#${l.issue} ${l.ours ? "(this session)" : l.session} in ${l.worktree} since ${l.since}${l.stale ? " STALE (past TTL)" : ` — lease until ${l.expiresAt}`}`);
+      else {
+        // Machine-wide is this verb's whole question, so nothing is withheld
+        // here — but DEAD is checked before STALE (GH-2108). A deleted
+        // checkout is not aging toward anything, and a lock swept minutes ago
+        // is dead while still inside its TTL, so the age test would call it
+        // live.
+        for (const l of rows) {
+          const status =
+            l.worktreeState === "missing"
+              ? " DEAD (worktree deleted — nothing can refresh this lock)"
+              : l.stale
+                ? " STALE (past TTL)"
+                : ` — lease until ${l.expiresAt}`;
+          out(`#${l.issue} ${l.ours ? "(this session)" : l.session} in ${l.worktree} since ${l.since}${status}`);
+        }
+        const dead = rows.filter((l) => l.worktreeState === "missing").length;
+        if (dead) out(`${dead} dead lease(s) — \`board reap-leases --apply\` removes locks whose checkout is gone`);
+      }
       return 0;
+    }
+
+    case "reap-leases": {
+      // GH-2108. Nothing removed these files, so they accumulated forever —
+      // 126 locks on the reporting machine, two thirds of them pointing at
+      // checkouts the GH-2103 sweep had removed, the oldest a week old.
+      //
+      // THE PREDICATE IS "THE CHECKOUT IS GONE", NEVER "THE LOCK IS OLD". A
+      // lease is the mechanism deliver-queue reads for local-session-active
+      // (GH-1929), so anything able to delete one must be unable to delete a
+      // live one. Age cannot tell them apart — a session idle for three hours
+      // still owns its tree and its unpushed commits — while a missing
+      // directory can: no session can be driving a checkout that is not
+      // there, and nothing can ever refresh the lock again. Any read failure
+      // that is not ENOENT stays "unknown" and is left alone.
+      //
+      // Machine-wide, like `who`: the sessions dir is shared by every repo on
+      // the box, and a dead lock's own repo can no longer be read off a
+      // directory that does not exist. Scoping this to the configured repo
+      // would leave exactly the rows nobody can attribute.
+      const rows = readLocalLeases(ctx);
+      if (rows === null) {
+        // Not "nothing to reap" — the same distinction every lease reader here
+        // keeps. A dir we could not read has told us nothing.
+        if (flags.json) json({ evaluated: false, applied: false, dead: [], removed: 0, failed: [] });
+        else out("leases: not evaluated — sessions dir unreadable (distinct from nothing to reap)");
+        return 0;
+      }
+      const dead = rows.filter((l) => l.worktreeState === "missing");
+      const applying = !!flags.apply;
+      const { removed, failed } = applying
+        ? reapDeadLeases(dead)
+        : { removed: [] as string[], failed: [] as { file: string; reason: string }[] };
+      if (flags.json) {
+        json({ evaluated: true, applied: applying, dead, removed: removed.length, removedFiles: removed, failed });
+        return failed.length ? 1 : 0;
+      }
+      if (dead.length === 0) {
+        out(`nothing to reap — every one of the ${rows.length} local lease(s) names a checkout that still exists`);
+        return 0;
+      }
+      for (const l of dead) out(`  ${applying ? "REAP" : "dead"}: #${l.issue} ${l.session} — worktree gone: ${l.worktree}`);
+      if (!applying) {
+        out(`${dead.length} dead lease(s) of ${rows.length} — DRY RUN, nothing was touched; re-run with --apply to remove them`);
+        return 0;
+      }
+      out(`reaped ${removed.length} of ${dead.length} dead lease(s)`);
+      for (const f of failed) out(`  KEPT ${f.file}: ${f.reason}`);
+      return failed.length ? 1 : 0;
     }
 
     case "bootstrap": {

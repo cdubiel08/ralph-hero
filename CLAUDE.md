@@ -113,7 +113,17 @@ demands (`doctor --fix` does the same instead of demoting finished work).
 Backlog items out of ranking via a Defer text field riding the fieldValues
 page (zero extra GraphQL); claiming lifts it; doctor surfaces elapsed
 rechecks. Orientation is one read: **`board brief`** (queues + leases) and
-**`board who`** (the GH-1956 leases, zero API). **`board bootstrap`** is the
+**`board who`** (the GH-1956 leases, zero API). **A lease whose checkout was
+deleted is DEAD, not stale (GH-2108)** — staleness asks whether the holder
+might come back, which is unanswerable-forever for a lock nothing can refresh,
+and the two rendered identically until 83 of this machine's 126 locks were
+tombstones. `who` is machine-wide and withholds nothing; `brief` is repo-scoped
+and shows only this repo's live leases (another checkout's `#76` names a
+*different* issue), counting and naming what it held back rather than dropping
+it silently. `board reap-leases [--apply]` is the reaper, keyed on the **missing
+checkout and never on age** — a lease is deliver's `local-session-active` signal,
+so a clock may not be allowed to delete a live one; every read failure that is
+not ENOENT leaves the lock alone. **`board bootstrap`** is the
 config-free first-run bring-up; **`board add <url>`** is the sanctioned
 cross-repo add behind `RALPH_ALLOW_FOREIGN_REPO_ITEMS`. Transport failures
 and rate limits are typed **exit 75** (EX_TEMPFAIL, reads retried bounded;
