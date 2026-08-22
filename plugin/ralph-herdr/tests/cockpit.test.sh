@@ -61,6 +61,10 @@ mkdir -p "$FAKE_HERDR_FIXTURES" "$FAKE_BOARD_FIXTURES"
 # Guard: no subprocess may ever fall back to the real ~/.ralph.
 export RALPH_HERDR_LEDGER_ROOT="$TMP/guard-root"
 unset ANTHROPIC_API_KEY 2>/dev/null || true
+# This suite may itself be RUN from inside a herdr pane, and the launcher's
+# pane stamp reads HERDR_PANE_ID. Leaked in, it makes the ladder rows record
+# the RUNNER's pane as the cockpit and makes the no-pane-id row unexpressible.
+unset HERDR_PANE_ID 2>/dev/null || true
 
 n=0 pass=0 fail=0
 ok()     { n=$((n + 1)); pass=$((pass + 1)); echo "ok $n - $1"; }
@@ -97,6 +101,10 @@ clear_logs() { : >"$FAKE_HERDR_LOG"; : >"$FAKE_BOARD_LOG"; }
 TREE="$TMP/tree"
 mkdir -p "$TREE/scripts" "$TREE/cockpit"
 cp "$SCRIPTS/cockpit-launch.sh" "$TREE/scripts/cockpit-launch.sh"
+# The launcher sources these to stamp its pane (GH-2074). Neither has a
+# top-level side effect, and with HERDR_PANE_ID unset the stamp returns before
+# it touches the filesystem — so the ladder rows below stay hermetic.
+cp "$SCRIPTS/ledger.sh" "$SCRIPTS/cockpit-pane.sh" "$TREE/scripts/"
 # Rung stubs: record that they ran, never open a UI.
 printf '#!/bin/bash\necho "FZF-RUNG ran"\n' >"$TREE/scripts/cockpit-fzf.sh"
 printf '#!/bin/bash\necho "DASH-RUNG ran"\n' >"$TREE/scripts/dashboard.sh"
@@ -480,6 +488,126 @@ line_has "preview: no agent falls back to the issue's comment tail" "$out" "comm
 is "preview: the fallback read went through gh issue view" "1" \
   "$(log_count "$FAKE_BOARD_LOG" 'gh issue view 7 --comments')"
 is "preview: no agent means no herdr traffic" "0" "$(log_count "$FAKE_HERDR_LOG" 'agent read')"
+
+# ═══ 4. focus-or-open — cockpit-open.sh + the launcher's pane stamp ══════════
+# GH-2074: invoking the cockpit action twice used to stack two cockpits, because
+# the manifest's inline `plugin pane open` was unconditional. The action now
+# runs cockpit-open.sh in the action process. Every row here is hermetic: the
+# record file is redirected with RALPH_HERDR_COCKPIT_PANE_FILE, the snapshot
+# comes from fake-herdr, and the "live" pid is a real sleep this test owns.
+PANEREC="$TMP/cockpit.pane.json"
+export RALPH_HERDR_COCKPIT_PANE_FILE="$PANEREC"
+
+# A snapshot that contains pane wCK:p9 — the fixture the record will name.
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[{"pane_id":"wCK:p9","workspace_id":"wCK","tab_id":"wCK:t1",
+           "terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+
+# A real live pid this test owns, and a pid that is certainly dead.
+sleep 300 & LIVE_PID=$!
+DEAD_PID=$!
+( sleep 0 ) & DEAD_PID=$!; wait "$DEAD_PID" 2>/dev/null || true
+
+run_open() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" "$TMP" 2>&1) || RC=$?; }
+
+# ── no record at all → open (today's behavior, unchanged) ────────────────────
+rm -f "$PANEREC"; clear_logs
+run_open
+is "open: no record exits 0" "0" "$RC"
+line_has "open: says why it opened" "$OUT" "no live cockpit"
+is "open: opened a cockpit pane" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open --plugin ralph-herdr --entrypoint cockpit')"
+is "open: kept the split-right placement the action had" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" '--placement split --direction right')"
+is "open: focused nothing" "0" "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+is "open: no record means no snapshot was even read" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'api snapshot')"
+
+# ── live record (pid alive + pane in the snapshot) → FOCUS, never a 2nd pane ─
+printf '{"pane":"wCK:p9","pid":%s,"at":"2026-08-22T00:00:00Z","repo":"%s"}\n' \
+  "$LIVE_PID" "$TMP" >"$PANEREC"
+clear_logs
+run_open
+is "focus: exits 0" "0" "$RC"
+line_has "focus: names the pane it focused" "$OUT" "wCK:p9"
+is "focus: focused the recorded pane" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus wCK:p9')"
+is "focus: opened NOTHING — the whole point" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+
+# ── dead pid, pane still in the snapshot → open ──────────────────────────────
+# A pane outlives the process inside it (herdr fires pane.exited and leaves the
+# pane), so pane-liveness alone would focus a dead cockpit forever.
+printf '{"pane":"wCK:p9","pid":%s,"at":"2026-08-22T00:00:00Z","repo":"%s"}\n' \
+  "$DEAD_PID" "$TMP" >"$PANEREC"
+clear_logs
+run_open
+is "dead pid: opened a fresh cockpit" "1" "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+is "dead pid: focused nothing" "0" "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+is "dead pid: never asked for a snapshot (the cheap fact is checked first)" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'api snapshot')"
+
+# ── live pid, pane GONE from the snapshot → open ─────────────────────────────
+# The mirror case: a pid can be reused after its pane is closed.
+printf '{"pane":"wCK:pGONE","pid":%s,"at":"2026-08-22T00:00:00Z","repo":"%s"}\n' \
+  "$LIVE_PID" "$TMP" >"$PANEREC"
+clear_logs
+run_open
+is "pane gone: opened a fresh cockpit" "1" "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+is "pane gone: focused nothing" "0" "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+
+# ── unreadable snapshot → open (fail-OPEN, stated in cockpit-pane.sh) ────────
+# A refused read must never leave the human with no cockpit; the stated price
+# is a duplicate pane while the server is degraded.
+printf '{"pane":"wCK:p9","pid":%s,"at":"2026-08-22T00:00:00Z","repo":"%s"}\n' \
+  "$LIVE_PID" "$TMP" >"$PANEREC"
+printf 'not json at all' >"$FAKE_HERDR_FIXTURES/api-snapshot.raw"
+clear_logs
+run_open
+is "bad snapshot: still exits 0" "0" "$RC"
+is "bad snapshot: fails OPEN, never closed" "1" "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+is "bad snapshot: focused nothing" "0" "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.raw"
+
+# ── a garbage record is not a live cockpit ───────────────────────────────────
+printf 'not json\n' >"$PANEREC"
+clear_logs
+run_open
+is "garbage record: opened" "1" "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+is "garbage record: focused nothing" "0" "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+
+kill "$LIVE_PID" 2>/dev/null || true
+wait "$LIVE_PID" 2>/dev/null || true
+
+# ── the launcher's stamp: what makes any of the above findable ───────────────
+# Records the PANE, and the pid it records is the RUNG's (exec preserves $$).
+rm -f "$PANEREC"
+printf '#!/bin/bash\necho "TUI ran pid=$$"\n' >"$TREE/cockpit/ralph-cockpit"
+chmod +x "$TREE/cockpit/ralph-cockpit"
+RC=0
+OUT=$(cd "$TMP" && PATH="$BASEBIN:$PATH" HERDR_PANE_ID="wCK:p9" \
+  "$REAL_BASH" "$TREE/scripts/cockpit-launch.sh" 2>&1) || RC=$?
+is "stamp: the launch still exits 0" "0" "$RC"
+is "stamp: recorded the pane it runs in" "wCK:p9" \
+  "$(jq -r '.pane // empty' "$PANEREC" 2>/dev/null)"
+is "stamp: the recorded pid is the rung's own (exec keeps \$\$)" \
+  "$(printf '%s\n' "$OUT" | sed -n 's/^TUI ran pid=//p')" \
+  "$(jq -r '.pid // empty' "$PANEREC" 2>/dev/null)"
+
+# No pane id → no record, a warning, and a launch that still runs. The honest
+# degradation: a later open finds nothing and opens, which is what it did before.
+rm -f "$PANEREC"
+RC=0
+OUT=$(cd "$TMP" && PATH="$BASEBIN:$PATH" "$REAL_BASH" "$TREE/scripts/cockpit-launch.sh" 2>&1) || RC=$?
+is "stamp: no HERDR_PANE_ID still launches" "0" "$RC"
+line_has "stamp: and the TUI still ran" "$OUT" "TUI ran"
+line_has "stamp: says the next open cannot focus this pane" "$OUT" "HERDR_PANE_ID"
+is "stamp: wrote no record" "" "$(cat "$PANEREC" 2>/dev/null)"
+rm -f "$TREE/cockpit/ralph-cockpit"
+unset RALPH_HERDR_COCKPIT_PANE_FILE
 
 echo "1..$n"
 echo "# $pass passed, $fail failed"

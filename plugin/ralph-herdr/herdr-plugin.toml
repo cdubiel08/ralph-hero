@@ -11,9 +11,9 @@
 
 id = "ralph-herdr"
 name = "Ralph Herdr"
-version = "0.9.0"
+version = "0.10.0"
 min_herdr_version = "0.8.0"
-description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets; v4 adds the card substrate: issue/PR link handlers (click → focus-or-offer), a comment-first Human Needed answer pane, and attend carrying the blocking question; v5 adds the cockpit pane: a three-column board TUI (Go) over a degradation ladder — fzf fallback, then the dashboard — that loses chrome, never verbs; v6 adds fork right/down/tab — open a pane already holding a running session's context, via `claude --resume <id> --fork-session`; v7 (2026-08-19 audit) adds worktree provisioning at spawn, provisional ledger rows + spawn-delivery verification with a modal probe, the lock-aware spawn pre-check, fleet-status/fleet-send, herdr-plugin-sync (content-hash freshness), and the cockpit's write-stamp watch + liveness heartbeat."
+description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets; v4 adds the card substrate: issue/PR link handlers (click → focus-or-offer), a comment-first Human Needed answer pane, and attend carrying the blocking question; v5 adds the cockpit pane: a three-column board TUI (Go) over a degradation ladder — fzf fallback, then the dashboard — that loses chrome, never verbs; v6 adds fork right/down/tab — open a pane already holding a running session's context, via `claude --resume <id> --fork-session`; v7 (2026-08-19 audit) adds worktree provisioning at spawn, provisional ledger rows + spawn-delivery verification with a modal probe, the lock-aware spawn pre-check, fleet-status/fleet-send, herdr-plugin-sync (content-hash freshness), and the cockpit's write-stamp watch + liveness heartbeat; v8 makes the cockpit action focus-or-open (GH-2074) so invoking it twice focuses the live cockpit instead of stacking a second."
 platforms = ["macos", "linux"]
 
 # --- Build -------------------------------------------------------------------
@@ -82,6 +82,12 @@ command = [
 # Go TUI when present, the fzf fallback when not, the dashboard when neither.
 # Split right like the dashboard: the cockpit is a persistent side surface,
 # not a transient popup.
+#
+# Unlike its siblings this action does NOT open a pane inline (GH-2074): it
+# runs scripts/cockpit-open.sh in the ACTION process, which focuses the live
+# cockpit for this board when there is one and opens the pane (with the same
+# placement) when there is not. Inline `pane open` was unconditional by
+# construction, so invoking the action twice stacked two cockpits.
 [[actions]]
 id = "cockpit"
 title = "Ralph: cockpit"
@@ -89,7 +95,7 @@ contexts = ["workspace"]
 command = [
   "bash",
   "-c",
-  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint cockpit --placement split --direction right --cwd "$cwd" --focus'''
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec bash "$HERDR_PLUGIN_ROOT/scripts/cockpit-open.sh" "$cwd"'''
 ]
 
 [[actions]]

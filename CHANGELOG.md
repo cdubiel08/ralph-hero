@@ -17,6 +17,17 @@ to a version heading when that artifact next releases. Full tag history:
 
 ## [Unreleased]
 
+### Fixed
+
+- **The cockpit action is focus-or-open (GH-2074)** — invoking `Ralph: cockpit`
+  twice used to stack a second cockpit over the live one (measured 2026-08-18 on
+  three live agent panes). The action now runs `scripts/cockpit-open.sh` in the
+  action process; `cockpit-launch.sh` records its pane per board, and "live" is
+  checked as two independent facts (the pid still runs *and* the pane is still in
+  a validated snapshot). Every unreadable read still opens — the fail-open
+  direction the ladder already takes. ralph-herdr plugin 0.9.0 → 0.10.0 (stamp
+  pair in lockstep).
+
 ### Changed — the v2 rewrite (GH-1662)
 
 - **ralph is now v2**: two skills (`/ralph:work`, `/ralph:board`), one read-only
