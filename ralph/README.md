@@ -27,9 +27,9 @@ This is ralph v2 (GH-1662). Design record (normative): [`../thoughts/shared/idea
 Six states, one machine, defined once in `board.ts`:
 
 ```text
-Backlog → In Progress → In Review → Done
-              ↕︎              ↓
-         Human Needed ←──────┘        Canceled (explicit cancel; reopen is the only exit from a terminal state)
+Intake → Backlog → In Progress → In Review → Done
+                        ↕︎              ↓
+                   Human Needed ←──────┘        Canceled (explicit cancel; reopen is the only exit from a terminal state)
 ```
 
 - A **claim** is `{holder}|{iso8601}` in a `Claim` text field on the board, TTL 120 min. `claim --steal` evicts a stale holder and posts an eviction comment. **No `--force` flag exists anywhere** — a stale TTL is the only side door.
@@ -71,7 +71,7 @@ In an installed plugin the CLI lives at `${CLAUDE_PLUGIN_ROOT}/scripts/board` (i
 
 - `/ralph:board` — catch up, triage, form new tickets, answer Human Needed items, run doctor. Read-mostly; the Projects V2 UI is the dashboard.
 - `/ralph:work NNN` — drive one issue end-to-end. Also accepts an outcome description (creates the issue first) or empty args (folds Human Needed replies, then takes `board next`).
-- The CLI directly: `board get NNN`, `board list --state human`, `board next`, `board tree NNN`, `board create --title …`, `board claim NNN`, `board move NNN in-review`, `board doctor --fix`, `board readiness`.
+- The CLI directly: `board get NNN`, `board list --state human`, `board next`, `board tree NNN`, `board create --intake --title …` / `board create --backlog --title … --priority P1 --estimate S`, `board claim NNN`, `board move NNN in-review`, `board doctor --fix`, `board readiness`.
 
 ## Lanes and how to drive them
 

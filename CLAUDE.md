@@ -30,13 +30,76 @@ ralph-knowledge builds/tests from `plugin/ralph-knowledge/` (`npm ci && npm run 
 
 ## The Board (source of truth)
 
-Six states, one machine, three write lanes — all in `ralph/scripts/board.ts` (~1,100 ln + ~700 test ln; run via `ralph/scripts/board`, a bun→tsx shim):
+Seven states, one machine, three write lanes — all in `ralph/scripts/board.ts` (run via `ralph/scripts/board`, a bun→tsx shim):
 
 ```text
-Backlog → In Progress → In Review → Done
-              ↕︎    ↘︎         ↓
-         Human Needed ←──────┘        Canceled (explicit cancel; reopen = only exit from terminal)
+Intake → Backlog → In Progress → In Review → Done
+                        ↕︎    ↘︎         ↓
+                   Human Needed ←──────┘   Canceled (explicit cancel; reopen = only exit from terminal)
 ```
+
+**Intake (GH-2077) is the approval tier.** Before it, filing an issue WAS
+approving it for autonomous pickup — `next`'s pool is every unclaimed Backlog
+item — so every way to track unapproved work was dishonest (fake blocker, fake
+claim, P3-and-hope) or kept it off the board entirely, invisible to `tend`,
+`doctor`, and anyone accountable for it. An empty `board next` was ambiguous
+the way GH-2048 showed for PRs: "no work" and "work that was never filable"
+rendered identically. Design record (normative):
+`thoughts/shared/ideas/2026-08-18-GH-2060-intake-tier-design.md`.
+
+Why a seventh STATE rather than a field or a label: **exclusion is by
+construction**. Every eligibility read already filters `state === "Backlog"`,
+so an Intake item drops out of `next`/`frontier` with zero predicate change —
+there is no reader to forget. A separate `Approval` field makes eligibility a
+two-field join whose unset value must read as *approved* for back-compat,
+which fails **open** on any reader that forgets it; a label is foreclosed
+twice over (eligibility is never a function of labels, and the ranking lanes
+skip the `labels` connection for cost, GH-1803). Promotion is a `transition`,
+so approval inherits the gated, comment-trailed lane every other state change
+uses, and a state renders as a board column for free.
+
+The edges are **strictly one-way**: `Intake → Backlog | Canceled`, nothing
+else. `Backlog → Intake` loses the argument `Backlog → Human Needed` already
+lost — a demotion edge is a way to hide work from the queue; scope that
+collapses is Canceled plus a fresh Intake item, and the edge cannot be cheaply
+removed once scripts lean on it. `Intake → In Progress` is absent, which is
+what makes **`board claim` on an unapproved item refuse via the MACHINE** — no
+second predicate, no special code. Approval — the `Intake → Backlog` move —
+refuses without a **Priority and an Estimate**: Backlog means approved *and
+rankable*, and an approval landing a null-priority item has not approved it
+into the queue, it has lost it (`next` sorts null behind every real option and
+no lane names it).
+
+**`create` has no default landing state**, and that is a deliberate breaking
+change: `--intake` (minimal detail, Priority/Estimate optional) or `--backlog`
+(both REQUIRED, each missing one named in the refusal), neither → a refusal
+naming both lanes. Intake-by-default would silently pile up the loop's own
+follow-up filings awaiting approval; Backlog-by-default is the status quo this
+closes; a config default would make a bare `create` mean different things in
+two repos. The bar itself lives in ONE helper (`backlogReadinessGaps`) that
+both the approval edge and the create lane call — two spellings of "approved
+and rankable" held apart by a comment is the GH-1843 drift shape. This
+supersedes GH-1792's stderr nudge, which existed only because there was no
+lane for "I do not know the priority yet"; that filing has `--intake` now, so
+the bar is enforced instead of suggested.
+
+Surfaces: `next`/`frontier` exclude Intake by construction (pinned by a test,
+because the day someone rewrites the filter as `state !== "Done"` nothing else
+would notice) — **including the epic in-flight probe**, which was written as
+`state !== "Backlog"` and would have read an unapproved *child* as work in
+progress, demoting its root out of the queue and reporting an in-flight epic
+whose holder cannot exist. `list` shows Intake by default (hiding a tier from
+the human truth-telling surface recreates the invisibility). `tend-queue`'s
+existing `unformed` category takes Intake items with their age. `doctor` gains
+an advisory `intake-stale` line (`RALPH_SMELL_INTAKE_DAYS`, 14) under the info
+rules in full — never strict-escalated, never fixed, because the only remedies
+are a human's approval or rejection. `deliver-queue`, `prune` and
+`board-volume` are untouched by construction. **One manual UI step per board**:
+the API cannot add an option to an existing field, so `setup` prints it and
+until the option exists every Intake filing and move fails closed on
+`mutationCache`'s missing-option refusal. Deliberately unchanged: state-guard
+**adoption still lands Backlog** (an auto-adopted release-failure filing,
+GH-1952, must reach a driver unattended), and so does `reopen`.
 
 v0.2.0 (the 2026-08-19 ways-of-working audit; full rationale in CHANGELOG.md):
 **In Progress → Done is legal** — gates key on the destination (the GH-1777
@@ -74,7 +137,7 @@ An issue carrying the configured apply label (`apply.label`, default `ralph:appl
 
 | | |
 |---|---|
-| **Decomposition** | infra-touching units split into a ship issue + one or more apply units (`board create --apply`, which resolves the configured `apply.label` rather than a literal); settings-only changes get *only* an apply unit |
+| **Decomposition** | infra-touching units split into a ship issue + one or more apply units (`board create --backlog --apply`, which resolves the configured `apply.label` rather than a literal); settings-only changes get *only* an apply unit |
 | **Merge gate 6** | `scripts/apply-keywords.sh` — no closing keyword may bind an apply unit, and an infra-touching PR may not close a ship issue with no apply twin. Re-published server-side as the `ralph-apply-keywords` status (recomputed on `edited`, since that's how a closing keyword arrives after CI went green) |
 | **Close gate** | `transition()` refuses Done without a shape-valid `ralph-apply-evidence:v1` comment (`scripts/apply-evidence.sh` posts one). No `--why` escape, no merged-PR escape. `kind=run` evidence must bind `run.head_sha == merge_sha` — and, since that proves which tree the run checked out but not that the operator named the right tree, the script also refuses a run that does not **descend from the fix merge** (GH-1961). A run triggered before the fix landed is recent, green, and produces a healthy artifact while having executed the *old* workflow file, because `actions/checkout` pins to the run's own event SHA; recency and a green conclusion are not ancestry. The fix merge is **derived, never typed** — the apply unit's `blockedBy` twin is the ship issue and its merged closing PR carries the commit — so the rule needs no prose to find its subject. A candidate counts as a required ancestor only if it is **reachable from the default branch** — tested, not read off the PR's recorded base name, which is a proxy that a branch rename silently invalidates while history survives it; a merge into a stacked base that never landed is still excluded, which is what the proxy was there for. `--fix-merge <sha>` **adds** to the derived set and can never suppress it: an override that replaced derivation would let an operator name a weak ancestor and skip the real fix, which is this issue's own defect handed a flag. The two failure modes are deliberately not alike: a question with **no subject** (no twin, no closing PR merged to the default branch) records `ancestry: not_evaluated` *with a reason* and proceeds, since a settings-only unit legitimately has no ship twin; a question **with** a subject that the compare API leaves unanswered **refuses and posts nothing**, because a failed read rendering as a pass is the very defect the check removes, and evidence is the one artifact no later reader re-opens. `--fix-merge <sha>` gives the no-subject case a subject |
 | **Surfacing** | doctor's `merged-unapplied`, `apply-verify-elapsed` (honours `<!-- ralph-verify-after: ISO -->` in the body), `apply-closed-unevidenced` (strict-fail; `--fix` reopens to Human Needed) |
@@ -152,7 +215,7 @@ The job now fetches and advances onto main's tip before reading anything, floors
 
 ## Configuration
 
-Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` (+ optional `RALPH_GH_HOST` for GHE). A repo-root `.ralph.json` (`{owner, repo, projectNumber, host?}`) takes precedence when present. Auth is gh-keychain (`gh auth login -s repo,project`). Machine-local: `RALPH_LOCK_TTL_MIN`, `RALPH_CLAIM_HOLDER`, `RALPH_TICK_RUNNER`, `RALPH_TICK_TIMEOUT_MIN`, `RALPH_ALLOW_API_BILLING`, `RALPH_SMELL_CLAIM_EXPIRIES` / `RALPH_SMELL_ESCALATIONS` / `RALPH_SMELL_REVIEW_DAYS` / `RALPH_SMELL_PROPOSAL_DAYS` (doctor's state-smell thresholds, 2/3/7/7), `RALPH_GQL_COST=1` (log GitHub's own `rateLimit{cost}` per query to stderr — measurement mode, cost-neutral; observed table: `thoughts/shared/research/2026-08-11-graphql-cost-measurement.md`), `RALPH_VOLUME_MAX_ITEMS` / `RALPH_PRUNE_AFTER_DAYS` (board-volume advisory + prune age window, 800/180), `RALPH_ALLOW_FOREIGN_REPO_ITEMS` (GH-1815 — multi-repo opt-in; unset = deny, and unset is distinguishable from an explicit `false` so doctor can say which), `RALPH_ITEM_CACHE_TTL_SEC` (item-cache Δ, default 90, 0 disables, max 600 — see below), `RALPH_ITEM_ORACLE_MAX_SEC` (GH-1804 — T_max, the hard staleness ceiling the change oracle may extend a cached walk to, default 600, 0 disables, max 3600), `RALPH_REVIEW_ROUND_CAP` (GH-1849 — review round cap, default 5; unattended lanes set 2), `RALPH_DELIVER_CONVERGENCE_MAX` (GH-1977 — convergence checks `deliver-queue` spends per pass, default 3), `RALPH_CREATE_DEDUPE_SEC` (GH-1973 — how far back `board create`'s duplicate guard looks, default 300, 0 disables), `RALPH_PR_ORPHAN_IGNORE_AUTHORS` (GH-2048 — authors whose unlinked open PRs `board pr-orphans` skips, default `dependabot,renovate,github-actions`; a trailing `[bot]` is stripped on both sides because GraphQL's `author.login` omits it while REST and the UI write it, and the suffixed spelling matched nothing; set it EMPTY to surface everyone), `RALPH_SESSION_ID` (GH-1948 — overrides `CLAUDE_CODE_SESSION_ID` as the session→unit binding key, for non-Claude runners; unset and no Claude id = the guard is not evaluated), `RALPH_GH_BUDGET_FLOOR` (GH-1817 — GraphQL points below which a polling loop backs off instead of spending, default 500), `~/.ralph/config` (`autopilot=true`).
+Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` (+ optional `RALPH_GH_HOST` for GHE). A repo-root `.ralph.json` (`{owner, repo, projectNumber, host?}`) takes precedence when present. Auth is gh-keychain (`gh auth login -s repo,project`). Machine-local: `RALPH_LOCK_TTL_MIN`, `RALPH_CLAIM_HOLDER`, `RALPH_TICK_RUNNER`, `RALPH_TICK_TIMEOUT_MIN`, `RALPH_ALLOW_API_BILLING`, `RALPH_SMELL_CLAIM_EXPIRIES` / `RALPH_SMELL_ESCALATIONS` / `RALPH_SMELL_REVIEW_DAYS` / `RALPH_SMELL_PROPOSAL_DAYS` / `RALPH_SMELL_INTAKE_DAYS` (doctor's state-smell thresholds, 2/3/7/7/14), `RALPH_GQL_COST=1` (log GitHub's own `rateLimit{cost}` per query to stderr — measurement mode, cost-neutral; observed table: `thoughts/shared/research/2026-08-11-graphql-cost-measurement.md`), `RALPH_VOLUME_MAX_ITEMS` / `RALPH_PRUNE_AFTER_DAYS` (board-volume advisory + prune age window, 800/180), `RALPH_ALLOW_FOREIGN_REPO_ITEMS` (GH-1815 — multi-repo opt-in; unset = deny, and unset is distinguishable from an explicit `false` so doctor can say which), `RALPH_ITEM_CACHE_TTL_SEC` (item-cache Δ, default 90, 0 disables, max 600 — see below), `RALPH_ITEM_ORACLE_MAX_SEC` (GH-1804 — T_max, the hard staleness ceiling the change oracle may extend a cached walk to, default 600, 0 disables, max 3600), `RALPH_REVIEW_ROUND_CAP` (GH-1849 — review round cap, default 5; unattended lanes set 2), `RALPH_DELIVER_CONVERGENCE_MAX` (GH-1977 — convergence checks `deliver-queue` spends per pass, default 3), `RALPH_CREATE_DEDUPE_SEC` (GH-1973 — how far back `board create`'s duplicate guard looks, default 300, 0 disables), `RALPH_PR_ORPHAN_IGNORE_AUTHORS` (GH-2048 — authors whose unlinked open PRs `board pr-orphans` skips, default `dependabot,renovate,github-actions`; a trailing `[bot]` is stripped on both sides because GraphQL's `author.login` omits it while REST and the UI write it, and the suffixed spelling matched nothing; set it EMPTY to surface everyone), `RALPH_SESSION_ID` (GH-1948 — overrides `CLAUDE_CODE_SESSION_ID` as the session→unit binding key, for non-Claude runners; unset and no Claude id = the guard is not evaluated), `RALPH_GH_BUDGET_FLOOR` (GH-1817 — GraphQL points below which a polling loop backs off instead of spending, default 500), `~/.ralph/config` (`autopilot=true`).
 
 ### Item cache — reads may be stale, writes see truth (GH-1806)
 

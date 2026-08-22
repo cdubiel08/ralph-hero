@@ -77,6 +77,8 @@ import {
   QUEUE_SELECT_NO_LABELS,
   priorityOptionOrder,
   rankNext,
+  backlogReadinessGaps,
+  type DoctorReport,
   readiness,
   realExec,
   reconcile,
@@ -102,6 +104,10 @@ import {
 describe("state machine", () => {
   it("encodes exactly the designed transition table — terminal states have no move edges", () => {
     expect(MACHINE).toEqual({
+      // Intake (GH-2077) is strictly one-way: approval or rejection, nothing
+      // else. No `Intake → In Progress` is what makes `board claim` on an
+      // unapproved item refuse via the machine rather than via special code.
+      Intake: ["Backlog", "Canceled"],
       Backlog: ["In Progress", "Done", "Canceled"],
       // In Progress → Done: the GH-1777 argument extended — gates key on the
       // destination, so apply/decision units close through the gated lane
@@ -118,6 +124,11 @@ describe("state machine", () => {
     const illegal: Array<[string, string]> = [
       ["Backlog", "In Review"],
       ["Backlog", "Human Needed"],
+      ["Backlog", "Intake"], // GH-2077: no demotion edge — a way to hide work from the queue
+      ["Intake", "In Progress"], // approval cannot be skipped by claiming
+      ["Intake", "In Review"],
+      ["Intake", "Human Needed"],
+      ["Intake", "Done"],
       ["Human Needed", "In Review"],
       ["Human Needed", "Done"],
       ["Done", "In Progress"],
@@ -1186,8 +1197,8 @@ describe("guards at the CLI boundary", () => {
     it("a caller retry adopts its own recent twin instead of filing a duplicate", () => {
       const gh = new FakeGh();
       const ctx = makeCtx(gh);
-      const first = createIssue(ctx, { title: "same title" });
-      const second = createIssue(ctx, { title: "same title" });
+      const first = createIssue(ctx, { title: "same title", state: "Intake" });
+      const second = createIssue(ctx, { title: "same title", state: "Intake" });
       expect(second.number).toBe(first.number);
       expect(gh.createdIssues.length).toBe(1);
     });
@@ -1196,7 +1207,7 @@ describe("guards at the CLI boundary", () => {
       const gh = new FakeGh();
       const ctx = makeCtx(gh);
       gh.loseCreateResponse = true;
-      const issue = createIssue(ctx, { title: "lost response" });
+      const issue = createIssue(ctx, { title: "lost response", state: "Intake" });
       expect(gh.createdIssues.length).toBe(1);
       expect(issue.number).toBe(gh.createdIssues[0].number);
     });
@@ -1206,15 +1217,15 @@ describe("guards at the CLI boundary", () => {
       const ctx = makeCtx(gh);
       gh.loseCreateResponse = true;
       gh.failTwinSearch = true;
-      expect(() => createIssue(ctx, { title: "unknowable" })).toThrow(/may or may not have been created/);
+      expect(() => createIssue(ctx, { title: "unknowable", state: "Intake" })).toThrow(/may or may not have been created/);
     });
 
     it("a foreign author's identical title is never adopted", () => {
       const gh = new FakeGh();
       const ctx = makeCtx(gh);
-      createIssue(ctx, { title: "shared title" });
+      createIssue(ctx, { title: "shared title", state: "Intake" });
       gh.createdIssues[0].author = { login: "someone-else" };
-      const mine = createIssue(ctx, { title: "shared title" });
+      const mine = createIssue(ctx, { title: "shared title", state: "Intake" });
       expect(gh.createdIssues.length).toBe(2);
       expect(mine.number).not.toBe(gh.createdIssues[0].number);
     });
@@ -1222,17 +1233,17 @@ describe("guards at the CLI boundary", () => {
     it("an out-of-window twin is not adopted — the guard is bounded, not a title lock", () => {
       const gh = new FakeGh();
       const ctx = makeCtx(gh);
-      createIssue(ctx, { title: "old title" });
+      createIssue(ctx, { title: "old title", state: "Intake" });
       gh.createdIssues[0].createdAt = new Date(Date.now() - 3600_000).toISOString();
-      createIssue(ctx, { title: "old title" });
+      createIssue(ctx, { title: "old title", state: "Intake" });
       expect(gh.createdIssues.length).toBe(2);
     });
 
     it("--allow-duplicate files anyway", () => {
       const gh = new FakeGh();
       const ctx = makeCtx(gh);
-      createIssue(ctx, { title: "on purpose" });
-      createIssue(ctx, { title: "on purpose", allowDuplicate: true });
+      createIssue(ctx, { title: "on purpose", state: "Intake" });
+      createIssue(ctx, { title: "on purpose", allowDuplicate: true, state: "Intake" });
       expect(gh.createdIssues.length).toBe(2);
     });
 
@@ -1240,7 +1251,7 @@ describe("guards at the CLI boundary", () => {
       const gh = new FakeGh();
       const ctx = makeCtx(gh);
       gh.failTwinSearch = true;
-      const issue = createIssue(ctx, { title: "during a flap" });
+      const issue = createIssue(ctx, { title: "during a flap", state: "Intake" });
       expect(issue.number).toBe(gh.createdIssues[0].number);
     });
   });
@@ -2523,7 +2534,11 @@ describe("next: tiered queue-empty diagnosis", () => {
   it("tier 2 — an empty board names intake, not just emptiness", () => {
     const ctx = makeCtx(new FakeGh());
     run(["next"], ctx);
-    expect(said()).toBe("queue empty — nothing on the board; intake via /ralph:board or board create --title ...");
+    // GH-2077: "nothing approved" and "nothing filed" are different boards, so
+    // the empty-queue line names the Intake lane and how to look at it.
+    expect(said()).toContain("queue empty — nothing approved");
+    expect(said()).toContain("board create --intake");
+    expect(said()).toContain("board list --state intake");
   });
 
   it("tier 3 — Human Needed outranks the blocked report; still exactly one line", () => {
@@ -3192,7 +3207,7 @@ describe("doctor — state smells (GH-1715)", () => {
     const c = smell(doctor(makeCtx(gh)), "repeated-claim-expiry");
     expect(c.level).toBe("info");
     expect(c.detail).toContain("#1(2 expired claims)");
-    expect(c.detail).toContain("board create --parent N");
+    expect(c.detail).toContain("board create --backlog --parent N");
     expect(c.detail).not.toContain("#2(");
     expect(c.detail).not.toContain("#3(");
   });
@@ -3326,6 +3341,7 @@ describe("state-smell thresholds", () => {
       escalations: 3,
       reviewDays: 7,
       proposalDays: 7,
+      intakeDays: 14,
     });
     expect(
       parseSmellThresholds({
@@ -3333,8 +3349,9 @@ describe("state-smell thresholds", () => {
         RALPH_SMELL_ESCALATIONS: "5",
         RALPH_SMELL_REVIEW_DAYS: "14",
         RALPH_SMELL_PROPOSAL_DAYS: "3",
+        RALPH_SMELL_INTAKE_DAYS: "30",
       }),
-    ).toEqual({ claimExpiries: 4, escalations: 5, reviewDays: 14, proposalDays: 3 });
+    ).toEqual({ claimExpiries: 4, escalations: 5, reviewDays: 14, proposalDays: 3, intakeDays: 30 });
   });
 
   it("a bad value warns and falls back — an advisory threshold never fails the sweep", () => {
@@ -3390,7 +3407,7 @@ describe("priority is writable through the CLI (GH-1789)", () => {
   it("create --priority sets it, so a filed issue is reachable by next", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
-    const issue = createIssue(ctx, { title: "urgent", priority: "P0" });
+    const issue = createIssue(ctx, { title: "urgent", priority: "P0", estimate: "S", state: "Backlog" });
     expect(issue.priority).toBe("P0");
     expect(gh.mutations).toContain(`setPriority(#${issue.number}, P0)`);
   });
@@ -3398,7 +3415,7 @@ describe("priority is writable through the CLI (GH-1789)", () => {
   it("an unknown priority is refused BEFORE the issue exists", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
-    expect(() => createIssue(ctx, { title: "x", priority: "P9" })).toThrow(UsageError);
+    expect(() => createIssue(ctx, { title: "x", priority: "P9", state: "Intake" })).toThrow(UsageError);
     expect(gh.mutations.filter((m) => m.startsWith("createIssue"))).toEqual([]);
     expect(gh.issues.size).toBe(0);
   });
@@ -3408,10 +3425,10 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     gh.omitFields = ["Priority"];
     gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
     const ctx = makeCtx(gh);
-    const issue = createIssue(ctx, { title: "x", priority: "Now" }); // a scheme setup never seeded is accepted
+    const issue = createIssue(ctx, { title: "x", priority: "Now", state: "Intake" }); // a scheme setup never seeded is accepted
     expect(issue.priority).toBe("Now");
     expect(gh.mutations).toContain(`setPriority(#${issue.number}, Now)`);
-    expect(() => createIssue(ctx, { title: "y", priority: "P0" })).toThrow(/Now, Later/);
+    expect(() => createIssue(ctx, { title: "y", priority: "P0", state: "Intake" })).toThrow(/Now, Later/);
   });
 
   it("the setter corrects a mis-filed backlog item, and --clear removes it", () => {
@@ -3480,7 +3497,7 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     gh.createdFields.push({ name: "Priority", dataType: "SINGLE_SELECT", options: ["Now", "Later"] });
     const ctx = makeCtx(gh);
     staleP0P3Cache(ctx);
-    expect(() => createIssue(ctx, { title: "x", priority: "P0" })).toThrow(/Now, Later/);
+    expect(() => createIssue(ctx, { title: "x", priority: "P0", state: "Intake" })).toThrow(/Now, Later/);
     expect(gh.issues.size).toBe(0);
     expect(gh.mutations.filter((m) => m.startsWith("createIssue"))).toEqual([]);
   });
@@ -3727,7 +3744,7 @@ describe("priority is writable through the CLI (GH-1789)", () => {
 
       expect(() => setPriority(ctx, 1, "P0")).toThrow(new RegExp(`${dataType}, not SINGLE_SELECT`));
       expect(() => setPriority(ctx, 1, null)).toThrow(new RegExp(`${dataType}, not SINGLE_SELECT`));
-      expect(() => createIssue(ctx, { title: "x", priority: "P0" })).toThrow(UsageError);
+      expect(() => createIssue(ctx, { title: "x", priority: "P0", state: "Intake" })).toThrow(UsageError);
       // Nothing was written, and above all nothing was CLEARED.
       expect(gh.mutations.filter((m) => m.includes("clearField") || m.startsWith("setPriority"))).toEqual([]);
       expect(gh.issues.size).toBe(1); // the create never happened
@@ -3781,7 +3798,7 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     };
     let err: Error | null = null;
     try {
-      createIssue(ctx, { title: "x", priority: "High Priority" });
+      createIssue(ctx, { title: "x", priority: "High Priority", state: "Intake" });
     } catch (e) {
       err = e as Error;
     }
@@ -3843,7 +3860,7 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     };
     let err: Error | null = null;
     try {
-      createIssue(ctx, { title: "infra", priority: "P0", estimate: "S", labels: ["ralph:apply"] });
+      createIssue(ctx, { title: "infra", priority: "P0", estimate: "S", labels: ["ralph:apply"], state: "Backlog" });
     } catch (e) {
       err = e as Error;
     }
@@ -3873,7 +3890,7 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     let err: Error | null = null;
     try {
-      createIssue(ctx, { title: "infra", priority: "P0", labels: ["ralph:apply"] });
+      createIssue(ctx, { title: "infra", priority: "P0", labels: ["ralph:apply"], state: "Intake" });
     } catch (e) {
       err = e as Error;
     }
@@ -3902,7 +3919,7 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     let err: Error | null = null;
     try {
-      createIssue(ctx, { title: "x", priority: "P0", estimate: "S" });
+      createIssue(ctx, { title: "x", priority: "P0", estimate: "S", state: "Backlog" });
     } catch (e) {
       err = e as Error;
     }
@@ -4007,79 +4024,212 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     // The LIBRARY refuses it too, not just the CLI message: `undefined` is the
     // only way to say "no priority", so an empty string is a request that must
     // fail validation before the issue exists.
-    expect(() => createIssue(ctx, { title: "x", priority: "" })).toThrow(UsageError);
+    expect(() => createIssue(ctx, { title: "x", priority: "", state: "Intake" })).toThrow(UsageError);
     expect(gh.issues.size).toBe(0);
     // …while omitting it entirely is still the supported unprioritized path.
-    expect(createIssue(ctx, { title: "ok" }).priority).toBeNull();
+    expect(createIssue(ctx, { title: "ok", state: "Intake" }).priority).toBeNull();
   });
 });
 
-describe("create nudges toward Priority without gating it (GH-1792)", () => {
-  const stderrOf = (fn: () => void): string => {
-    let buf = "";
-    const spy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
-      buf += String(s);
-      return true;
+describe("the Intake tier (GH-2077)", () => {
+  describe("exclusion from the ranking lanes is BY CONSTRUCTION, not by a predicate", () => {
+    // The deciding property of the whole design: every eligibility read already
+    // filters `state === "Backlog"`, so an Intake item is invisible to `next`
+    // and `frontier` with ZERO predicate change — there is no reader to
+    // forget. This test exists to make that a pinned fact rather than an
+    // argument, because the day someone rewrites the filter as
+    // `state !== "Done"` it stops being true and nothing else would notice.
+    const mk = (n: number, over: Partial<QueueItem> = {}): QueueItem => ({
+      number: n, repo: "cdubiel08/ralph-hero", title: `t${n}`, state: "Backlog",
+      priority: "P1", hasParent: false, parentNumber: null, openBlockers: [],
+      openBlockerLabels: [], blockersTruncated: false, fieldValuesTruncated: false,
+      claim: null, claimRaw: null, labels: [], labelsTruncated: false, closedBlockers: [],
+      ...over,
     });
+
+    it("an Intake item is neither eligible NOR blocked NOR deferred — it is simply not in the queue", () => {
+      const r = rankNext([mk(1, { state: "Intake" }), mk(2)]);
+      expect(r.eligible.map((i) => i.number)).toEqual([2]);
+      expect(r.blocked.map((i) => i.number)).toEqual([]);
+      expect(r.deferred.map((i) => i.number)).toEqual([]);
+      // "Blocked" would be the wrong reading and a worse one: it says a
+      // dependency is in the way, when what is missing is a human's approval.
+    });
+
+    it("an Intake CHILD does not suppress its epic root — it is upstream of Backlog, not past it", () => {
+      // The one place the by-construction argument does NOT hold on its own:
+      // the in-flight probe was written as `state !== "Backlog"`, which reads
+      // an unapproved child as work in progress, demotes the root out of the
+      // queue and reports an "in-flight epic" whose holder cannot exist.
+      const r = rankNext([
+        mk(1, { priority: "P0" }),
+        mk(5, { hasParent: true, parentNumber: 1, state: "Intake" }),
+      ]);
+      expect(r.inFlightEpics).toEqual([]);
+      expect(r.eligible.map((i) => i.number)).toEqual([1]);
+    });
+  });
+
+  describe("approval is the Intake → Backlog transition, and it has a bar", () => {
+    it("refuses without a Priority, naming what to add", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "Intake", estimate: "S" });
+      expect(() => run(["move", "1", "backlog"], ctx)).toThrow(/no Priority/);
+      expect(gh.issues.get(1)!.state).toBe("Intake"); // refused BEFORE the write
+    });
+
+    it("refuses without an Estimate", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "Intake", priority: "P1" });
+      expect(() => run(["move", "1", "backlog"], ctx)).toThrow(/no Estimate/);
+      expect(gh.issues.get(1)!.state).toBe("Intake");
+    });
+
+    it("accepts a formed item — and the bar is the SAME text `create --backlog` uses", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "Intake", priority: "P1", estimate: "S" });
+      run(["move", "1", "backlog"], ctx);
+      expect(gh.issues.get(1)!.state).toBe("Backlog");
+      // One helper, two callers: the approval edge and the create lane are two
+      // spellings of "approved and rankable", and a bar living in both places
+      // is the GH-1843 drift shape.
+      expect(backlogReadinessGaps(null, "S")).toHaveLength(1);
+      expect(backlogReadinessGaps("P1", null)).toHaveLength(1);
+      expect(backlogReadinessGaps(null, null)).toHaveLength(2);
+      expect(backlogReadinessGaps("P1", "S")).toEqual([]);
+    });
+
+    it("claiming an Intake item is refused by the MACHINE — no special code to forget", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "Intake", priority: "P1", estimate: "S" });
+      expect(() => run(["claim", "1"], ctx)).toThrow(/illegal transition/);
+      expect(gh.issues.get(1)!.state).toBe("Intake");
+      expect(gh.issues.get(1)!.claim ?? null).toBeNull();
+    });
+
+    it("there is no way back to Intake — a demotion edge would be a way to hide work", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1", estimate: "S" });
+      expect(() => run(["move", "1", "intake"], ctx)).toThrow(/illegal transition/);
+    });
+  });
+
+  describe("surfaces", () => {
+    it("`list` shows Intake by default — hiding a tier from the human surface recreates the invisibility", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "Intake" });
+      gh.issues.set(2, { number: 2, state: "Backlog", priority: "P1" });
+      const said: string[] = [];
+      const spy = vi.spyOn(process.stdout, "write").mockImplementation((x) => {
+        said.push(String(x));
+        return true;
+      });
+      try {
+        run(["list"], ctx);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(said.join("")).toContain("#1 [Intake]");
+      expect(said.join("")).toContain("#2 [Backlog]");
+    });
+
+    it("doctor surfaces aging intake as an ADVISORY line — never strict-escalated, never fixed", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
+      gh.issues.set(1, { number: 1, state: "Intake", createdAt: daysAgo(20) });
+      gh.issues.set(2, { number: 2, state: "Intake", createdAt: daysAgo(3) }); // young
+      // An unreadable createdAt is NOT evidence that anyone has been waiting.
+      gh.issues.set(3, { number: 3, state: "Intake", createdAt: null });
+
+      const line = (r: DoctorReport) => r.checks.find((c) => c.name === "intake-stale")!;
+      const lax = line(doctor(ctx));
+      expect(lax.level).toBe("info");
+      expect(lax.detail).toContain("#1");
+      expect(lax.detail).not.toContain("#2");
+      expect(lax.detail).not.toContain("#3");
+      expect(lax.detail).toMatch(/board move N backlog/); // the remedy is named
+      // Advisory in full: it neither fails the sweep nor escalates under
+      // --strict. The only remedies are a human's approval or rejection, so a
+      // check that could go red would be crying wolf about a decision nobody
+      // is late on.
+      expect(line(doctor(ctx, { strict: true })).level).toBe("info");
+    });
+
+    it("doctor says `ok` when nothing has aged — a healthy board gets no marker", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1" });
+      expect(doctor(ctx).checks.find((c) => c.name === "intake-stale")!.level).toBe("ok");
+    });
+  });
+});
+
+describe("the --backlog lane GATES what GH-1792 could only nudge about (GH-2077)", () => {
+  // GH-1792 shipped a stderr HINT because `create` had no lane: a bare filing
+  // landed in Backlog, and gating it there would have refused fast human
+  // capture that legitimately does not know the priority yet. The intake tier
+  // removes that trade — the "I do not know yet" filing has its own lane now —
+  // so Backlog can carry the bar the hint only described.
+  it("refuses a --backlog filing with no Priority, naming BOTH the flag and the other lane", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(() => run(["create", "--backlog", "--title", "x", "--estimate", "S"], ctx)).toThrow(
+      /--priority P0\.\.P3/,
+    );
+    expect(() => run(["create", "--backlog", "--title", "x", "--estimate", "S"], ctx)).toThrow(
+      /--intake/,
+    );
+    expect(gh.issues.size).toBe(0); // refused BEFORE the issue exists
+  });
+
+  it("refuses a --backlog filing with no Estimate", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(() => run(["create", "--backlog", "--title", "x", "--priority", "P1"], ctx)).toThrow(
+      /--estimate XS\.\.XL/,
+    );
+    expect(gh.issues.size).toBe(0);
+  });
+
+  it("names EVERY gap at once — fixing one and being refused again is the hint failing", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    let err: Error | null = null;
     try {
-      fn();
-    } finally {
-      spy.mockRestore();
+      run(["create", "--backlog", "--title", "x"], ctx);
+    } catch (e) {
+      err = e as Error;
     }
-    return buf;
-  };
-
-  it("names the CONSEQUENCE, not merely the omission — and the issue is still filed", () => {
-    const gh = new FakeGh();
-    const ctx = makeCtx(gh);
-    let issue: ReturnType<typeof createIssue> | null = null;
-    const err = stderrOf(() => {
-      issue = createIssue(ctx, { title: "unprioritized" });
-    });
-    expect(issue!.number).toBeGreaterThan(0); // a hint is not a gate
-    expect(issue!.priority).toBeNull();
-    expect(err).toMatch(/sort LAST in `board next`/);
-    expect(err).toMatch(/named by no lane/);
-    expect(err).toMatch(new RegExp(`board priority ${issue!.number} <option>`));
-    // The options come from the board, not a hardcoded P0..P3.
-    expect(err).toMatch(/this board's options: P0, P1, P2, P3/);
+    expect(err!.message).toMatch(/no Priority/);
+    expect(err!.message).toMatch(/no Estimate/);
   });
 
-  it("stays silent when a priority was set", () => {
+  it("--intake asks for neither — that is the whole point of the lane", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
-    const err = stderrOf(() => createIssue(ctx, { title: "urgent", priority: "P0" }));
-    expect(err).not.toMatch(/no Priority/);
-  });
-
-  it("stays silent on a board that has no Priority field — the remedy would not exist", () => {
-    // The precedent's own rule (hint-pr-linkage, GH-1717): a hint is honest
-    // only when the thing it asks for is available. `board priority` refuses
-    // on such a board, so nudging toward it teaches the reader to ignore hints.
-    const gh = new FakeGh();
-    gh.omitFields = ["Priority"];
-    const ctx = makeCtx(gh);
-    const err = stderrOf(() => createIssue(ctx, { title: "x" }));
-    expect(err).not.toMatch(/no Priority/);
-  });
-
-  it("stays silent on a Priority field ralph will not write — a TEXT field of that name", () => {
-    const gh = new FakeGh();
-    gh.omitFields = ["Priority"];
-    gh.createdFields.push({ name: "Priority", dataType: "TEXT" });
-    const ctx = makeCtx(gh);
-    const err = stderrOf(() => createIssue(ctx, { title: "x" }));
-    expect(err).not.toMatch(/no Priority/);
-  });
-
-  it("filing without a priority is not an error exit — the CLI still returns 0", () => {
-    const gh = new FakeGh();
-    const ctx = makeCtx(gh);
-    let code = -1;
-    stderrOf(() => {
-      code = run(["create", "--title", "hint me"], ctx);
-    });
+    const code = run(["create", "--intake", "--title", "not formed yet"], ctx);
     expect(code).toBe(0);
+    const filed = [...gh.issues.values()].at(-1)!;
+    expect(filed.state).toBe("Intake");
+    expect(filed.priority ?? null).toBeNull();
+  });
+
+  it("a fully-formed --backlog filing is accepted and lands ranked", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const issue = createIssue(ctx, {
+      title: "ready", priority: "P1", estimate: "S", state: "Backlog",
+    });
+    expect(issue.state).toBe("Backlog");
+    expect(issue.priority).toBe("P1");
+    expect(gh.mutations).toContain("setField(F_estimate)");
   });
 });
 
@@ -4097,7 +4247,7 @@ describe("create --label", () => {
     };
     const ctx = makeCtx(gh);
     const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const issue = createIssue(ctx, { title: "apply: turn it on", labels: ["ralph:apply"] });
+    const issue = createIssue(ctx, { title: "apply: turn it on", labels: ["ralph:apply"], state: "Intake" });
     expect(issue.number).toBeGreaterThan(0); // the issue exists regardless
     expect(edits[0]).toContain("--add-label");
     expect(edits[0]).toContain("ralph:apply");
@@ -4228,7 +4378,7 @@ describe("create --apply", () => {
     };
     const ctx = mkCtx(gh, "kind/apply");
     const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    run(["create", "--title", "apply: it", "--apply", "--label", "infra"], ctx);
+    run(["create", "--intake", "--title", "apply: it", "--apply", "--label", "infra"], ctx);
     out.mockRestore();
     expect(edits[0]).toContain("kind/apply");
     expect(edits[0]).toContain("infra");
@@ -4236,8 +4386,8 @@ describe("create --apply", () => {
 
   it("refuses --apply when the repo has not opted in — the label would be decoration", () => {
     const ctx = makeCtx(new FakeGh()); // apply disabled
-    expect(() => run(["create", "--title", "apply: it", "--apply"], ctx)).toThrow(UsageError);
-    expect(() => run(["create", "--title", "apply: it", "--apply"], ctx)).toThrow(/apply` block/);
+    expect(() => run(["create", "--intake", "--title", "apply: it", "--apply"], ctx)).toThrow(UsageError);
+    expect(() => run(["create", "--intake", "--title", "apply: it", "--apply"], ctx)).toThrow(/apply` block/);
   });
 });
 
@@ -6425,7 +6575,7 @@ describe("foreign-repo posture (GH-1815)", () => {
 
     it("create still works — its issue is born in the configured repo", () => {
       const gh = new FakeGh();
-      const issue = createIssue(makeCtx(gh), { title: "t", body: "b" });
+      const issue = createIssue(makeCtx(gh), { title: "t", body: "b", state: "Intake" });
       expect(issue.number).toBeGreaterThan(0);
       expect(gh.issues.get(issue.number)!.onBoard).toBe(true);
     });

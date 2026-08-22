@@ -550,8 +550,14 @@ export const INVOKED_BY = ["human", "agent", "scheduler"] as const;
  *  in board.ts because board.ts imports this file (a reverse import would be
  *  a cycle); board.ts re-exports it as STATES (`STATES = BOARD_STATES`), so
  *  drift between the machine and the C2/C6 schemas is impossible by
- *  construction, not guarded by a test. */
+ *  construction, not guarded by a test.
+ *
+ *  `Intake` (GH-2077) is FIRST because it is upstream of Backlog: tracked but
+ *  not yet approved for autonomous pickup. Every ranking lane filters
+ *  `state === "Backlog"`, so an Intake item is excluded from `next`/`frontier`
+ *  with zero predicate change — there is no reader to forget. */
 export const BOARD_STATES = [
+  "Intake",
   "Backlog",
   "In Progress",
   "In Review",

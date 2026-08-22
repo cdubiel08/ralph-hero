@@ -9,9 +9,9 @@ A [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) t
 Six board states, one typed CLI, no prescribed phases:
 
 ```text
-Backlog → In Progress → In Review → Done
-              ↕︎              ↓
-         Human Needed ←──────┘        Canceled
+Intake → Backlog → In Progress → In Review → Done
+                        ↕︎              ↓
+                   Human Needed ←──────┘        Canceled
 ```
 
 - **`ralph/scripts/board`** is the sole board mutation path: transition legality, claims with TTL (no `--force` anywhere — a stale claim is the only override), a scope gate refusing writes from the wrong repo, and a `doctor` invariant sweep. ~1,100 lines of TypeScript with a vitest contract suite, shipped inside the plugin — no npm dependency.
