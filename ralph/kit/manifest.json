@@ -3,7 +3,7 @@
   "files": {
     "scripts/advisory-findings.sh": "91d3f882542d9107c49947b23019aaf84fbd07ba25aa266867963e7b591cfad5",
     "scripts/apply-evidence.sh": "fe3b63d0831ffba3e17407e398f229afcded343397691cc1b8c4ade938aba262",
-    "scripts/apply-keywords.sh": "59e1c6ea0b85e3eed6dd828e642bce83e99095de06cfd333fcbdf63088f51eb7",
+    "scripts/apply-keywords.sh": "5fa8a8475c8ccae8ccb8c2988ba8f25db25e00bc53e69b8251ca14b5179dfeec",
     "scripts/attest-pr.sh": "cb03071431f013fe5527f1f87fb7b04432cac22642f39461402ecd9431d6bf06",
     "scripts/codex-review-evidence.sh": "40c3e763e58741fa056067e3ba27bf501583b187cbd45a74a72c68442c74b2ad",
     "scripts/copilot-review-evidence.sh": "44928bb673c17b1db6627331ca7587eec4c412a3f6782da34e51b2b02d702813",

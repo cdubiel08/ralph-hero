@@ -202,8 +202,8 @@ untwinned=$(jq -r --arg L "$APPLY_LABEL" '
 if [[ -n "$untwinned" ]]; then
   echo "APPLY KEYWORDS FAIL — PR #$PR_NUMBER touches infrastructure (${infra_hits% }) and closes $untwinned, which has no apply twin."
   echo "  A merge is not a deploy. File the apply unit and link it, then re-run:"
-  echo "    board create --label $APPLY_LABEL --parent <the unit's parent> \\"
-  echo "      --title 'apply: <what must become true in the real world>' --estimate XS"
+  echo "    board create --backlog --label $APPLY_LABEL --parent <the unit's parent> \\"
+  echo "      --title 'apply: <what must become true in the real world>' --priority P1 --estimate XS"
   echo "  (or, if this diff genuinely deploys itself, drop the infra path from apply.infraPaths in $POLICY_FILE)"
   exit 1
 fi

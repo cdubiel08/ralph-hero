@@ -81,6 +81,21 @@ export type State = (typeof STATES)[number];
  *  resumed — it files as a `<!-- ralph-tend:v1 proposed -->` marker comment
  *  (surfaced by `tend-queue`), not as a state. */
 export const MACHINE: Record<State, readonly State[]> = {
+  // Intake (GH-2077) is strictly one-way. Approval IS the `Intake → Backlog`
+  // transition, gated on Priority + Estimate below: Backlog means
+  // approved-and-ready, and an approval that lands an unrankable item just
+  // recreates the null-priority sink `next` already sorts last.
+  //
+  // `Backlog → Intake` is deliberately NOT legal, on the argument
+  // `Backlog → Human Needed` already lost: a demotion edge is a way to hide
+  // work from the queue. Scope that collapses under review is Canceled plus a
+  // fresh Intake item. The edge can be added later if a real need shows; it
+  // cannot be cheaply removed once scripts lean on it.
+  //
+  // `Intake → In Progress` is NOT legal either, which is what makes
+  // `board claim` on an Intake item refuse via the MACHINE — no special code,
+  // no second predicate to forget. Approval cannot be skipped by claiming.
+  Intake: ["Backlog", "Canceled"],
   Backlog: ["In Progress", "Done", "Canceled"],
   // In Progress → Done is legal for the same reason Backlog → Done is
   // (GH-1777): the Done evidence gates key on the DESTINATION, so a unit whose
@@ -109,6 +124,7 @@ export const LEGACY_STATES = [
 
 /** Best-effort sync to the built-in Status field (UI coherence only). */
 export const STATUS_SYNC: Record<State, string> = {
+  Intake: "Todo",
   Backlog: "Todo",
   "In Progress": "In Progress",
   "In Review": "In Progress",
@@ -129,6 +145,7 @@ export function legalTransition(from: State, to: State): boolean {
 export function parseStateArg(raw: string): State | null {
   const norm = raw.trim().toLowerCase().replace(/[-_]+/g, " ");
   const aliases: Record<string, State> = {
+    intake: "Intake",
     backlog: "Backlog",
     "in progress": "In Progress",
     wip: "In Progress",
@@ -491,9 +508,13 @@ export function rankNext(
     // In flight = actively worked: claimed, or in a WORKING state. A terminal
     // board state (Done/Canceled) on a still-open issue is reconcile DRIFT,
     // not flight — counting it would suppress the epic and assert work that
-    // does not exist, for as long as the corrective cron stays broken.
+    // does not exist, for as long as the corrective cron stays broken. Intake
+    // is the same shape one step earlier (GH-2077): it is UPSTREAM of Backlog,
+    // not past it, so an unapproved child must not suppress its epic root —
+    // that would hide the root behind work nobody has approved, and the
+    // "in-flight epic" line would name a holder that cannot exist.
     const inFlight = desc.find(
-      (d) => (d.state !== "Backlog" && !TERMINAL_BOARD_STATES.has(d.state)) || d.claim,
+      (d) => (!UNSTARTED_BOARD_STATES.has(d.state) && !TERMINAL_BOARD_STATES.has(d.state)) || d.claim,
     );
     if (inFlight) {
       demoted.add(i.number);
@@ -556,6 +577,10 @@ export interface EmptyQueueReport {
 /** Board states that assert the work is finished; an item parked here still
  *  open on GitHub is the contradiction a stale blocked edge is made of. */
 const TERMINAL_BOARD_STATES = new Set(["Done", "Canceled"]);
+/** States that are BEFORE work, not during it: Backlog (approved, unstarted)
+ *  and Intake (not yet approved). The epic ranker's in-flight probe keys on
+ *  this rather than on `!== "Backlog"` — see rankNext. */
+const UNSTARTED_BOARD_STATES = new Set(["Backlog", "Intake"]);
 
 /** Why nothing is actionable, from data the caller already fetched — no new
  *  round trip. Tiers are mutually exclusive, first match wins, and `diagnosis`
@@ -977,6 +1002,7 @@ export interface SmellThresholds {
   escalations: number; // Human Needed re-entries = the question is not converging
   reviewDays: number; // days In Review with a quiet PR
   proposalDays: number; // GH-1777: days a tend closure proposal has gone unanswered
+  intakeDays: number; // GH-2077: days an Intake item has waited for an approval decision
 }
 
 export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
@@ -984,6 +1010,11 @@ export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
   escalations: 3,
   reviewDays: 7,
   proposalDays: 7,
+  // Deliberately the longest default here: an unapproved item is not a
+  // failure, it is a decision nobody has needed to make yet. Two weeks is the
+  // point at which "nobody has looked" becomes the likelier reading than
+  // "nobody has needed to".
+  intakeDays: 14,
 });
 
 export function parseSmellThresholds(
@@ -1002,6 +1033,7 @@ export function parseSmellThresholds(
     escalations: positive("RALPH_SMELL_ESCALATIONS", SMELL_DEFAULTS.escalations),
     reviewDays: positive("RALPH_SMELL_REVIEW_DAYS", SMELL_DEFAULTS.reviewDays),
     proposalDays: positive("RALPH_SMELL_PROPOSAL_DAYS", SMELL_DEFAULTS.proposalDays),
+    intakeDays: positive("RALPH_SMELL_INTAKE_DAYS", SMELL_DEFAULTS.intakeDays),
   };
 }
 
@@ -2405,6 +2437,23 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     }
     if (from !== null && opts.isReopen && !["Done", "Canceled"].includes(from)) {
       throw new RefusalError(`reopen is for Done/Canceled issues; #${issue.number} is "${from}"`);
+    }
+    // Approval gate (GH-2077). `Intake → Backlog` is the approval edge, and
+    // Backlog means approved-AND-RANKABLE: `next` sorts a null priority behind
+    // every real one and no lane names it at all, so an approval that lands an
+    // unrankable item has not approved it into the queue, it has lost it. Same
+    // bar as `create --backlog`, stated by the same helper so the two spellings
+    // of "ready for work" cannot drift. Truncated field values already refused
+    // above, so absence here is GitHub's assertion, not a short read.
+    if (from === "Intake" && to === "Backlog") {
+      const missing = backlogReadinessGaps(issue.priority, issue.estimate);
+      if (missing.length > 0) {
+        throw new UsageError(
+          `#${issue.number} is not ready for Backlog — ${missing.join("; ")}\n` +
+            `Backlog means approved and rankable. Set them, then move it again; ` +
+            `leave it in Intake if it is not yet approved.`,
+        );
+      }
     }
     if (to === "Human Needed" && !opts.why) {
       throw new UsageError(
@@ -5927,6 +5976,7 @@ export function classifyTend(
   };
   const dayMs = 86_400_000;
   const backlog = open.filter((i) => i.state === "Backlog");
+  const formation = open.filter((i) => i.state === "Backlog" || i.state === "Intake");
   const seen = new Set<number>(); // one row per issue — first category (spec order) wins
   const rows: { [K in TendCategory]: TendRow[] } = {
     proposed: [],
@@ -5974,7 +6024,13 @@ export function classifyTend(
   //    ranking does not need to invent a default on the item's behalf.
   //    Truncated field values fail closed: absence GitHub never asserted is not
   //    evidence of an unset field.
-  for (const i of backlog) {
+  //    Intake items join this category with their age (GH-2077): an intake
+  //    item that has sat unformed for a week is exactly what tend exists to
+  //    find, and the tier's whole point is that pending intake stops being
+  //    invisible. The predicate is unchanged — an Intake item that already
+  //    carries a Priority and an Estimate is formed, and its only remaining
+  //    need is a human's approval, which is doctor's `intake-stale` line.
+  for (const i of formation) {
     const t = ms(i.createdAt);
     const old = t !== null && now.getTime() - t > UNFORMED_DAYS * dayMs;
     if (
@@ -6115,13 +6171,42 @@ export function resolveProposal(
 // Create / link / dep
 // ---------------------------------------------------------------------------
 
+/** THE Backlog readiness bar (GH-2077), in one place: the approval edge
+ *  (`Intake → Backlog`) and the `create --backlog` lane are two spellings of
+ *  the same claim — "this is approved and rankable" — and a bar that lived in
+ *  both would be the GH-1843 shape, a rule held together by a comment asking
+ *  its copies to stay in sync.
+ *
+ *  Returns one plain-English gap per unset field, each naming exactly what to
+ *  add. Empty = ready. Hints name the FLAG on the create path and the field on
+ *  the move path, so the caller is told the remedy it can actually run — see
+ *  the two call sites for the surrounding sentence. */
+export function backlogReadinessGaps(
+  priority: string | null | undefined,
+  estimate: string | null | undefined,
+): string[] {
+  const gaps: string[] = [];
+  if (!priority)
+    gaps.push(
+      `it has no ${PRIORITY_FIELD} (unprioritized items sort LAST in \`board next\` and are named by no lane)`,
+    );
+  if (!estimate) gaps.push(`it has no ${ESTIMATE_FIELD} (nothing sizes the unit)`);
+  return gaps;
+}
+
 export interface CreateOpts {
   title: string;
   body?: string;
   parent?: number;
   estimate?: string;
   priority?: string;
-  state?: State;
+  /** The LANDING STATE, required (GH-2077). Deliberately not optional: a bare
+   *  `create` used to land in Backlog — that is, filing an issue silently
+   *  approved it for autonomous pickup, which is the gap the intake tier
+   *  closes. Making it required puts the choice on `tsc` for programmatic
+   *  callers and on a loud UsageError for the CLI, rather than on a default
+   *  nobody types and nobody sees. */
+  state: State;
   labels?: string[];
   /** Skip the duplicate guard — the operator asserts a second issue with this
    *  exact title, filed minutes after the first, is what they meant. */
@@ -6397,10 +6482,25 @@ export function setDefer(ctx: Ctx, number: number, mark: DeferMark | null): Issu
 }
 
 export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
-  if (opts.state && ["Done", "Canceled"].includes(opts.state)) {
+  if (["Done", "Canceled"].includes(opts.state)) {
     throw new UsageError(
       `cannot create an issue in terminal state "${opts.state}" — create it open, then move/cancel it`,
     );
+  }
+  // The Backlog lane's evidentiary bar, refused BEFORE the issue exists — the
+  // same reason priority validation runs here rather than after createIssue.
+  // Landing an unrankable item in Backlog is what `--intake` exists to make
+  // unnecessary, so the hint names that lane too: "not ready" and "not yet
+  // approved" are different answers and the caller knows which one is true.
+  if (opts.state === "Backlog") {
+    const missing = backlogReadinessGaps(opts.priority, opts.estimate);
+    if (missing.length > 0) {
+      throw new UsageError(
+        `--backlog means approved and ready, but ${missing.join("; and ")}.\n` +
+          `Add \`--priority P0..P3\` (P1 = the default lane for real work) and ` +
+          `\`--estimate XS..XL\` — or file with \`--intake\` if this is not yet approved.`,
+      );
+    }
   }
   // Priority is validated BEFORE the issue exists — a bad option must cost a
   // usage error, not an orphaned issue nobody's selector will ever surface.
@@ -6411,7 +6511,7 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
   // `undefined` is the only way to say "no priority"; anything else, empty
   // string included, is a request that must be validated and can fail.
   const wantsPriority = opts.priority !== undefined;
-  const needs: Array<[string, string?]> = [[STATE_FIELD, opts.state ?? "Backlog"]];
+  const needs: Array<[string, string?]> = [[STATE_FIELD, opts.state]];
   if (wantsPriority) needs.push([PRIORITY_FIELD]);
   // …and validated against a LIVE option set: a cached option GitHub has since
   // deleted would pass here and fail after createIssue (see mutationCache).
@@ -6519,8 +6619,8 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
     );
     const itemId = added.addProjectV2ItemById.item.id;
 
-    setSingleSelect(ctx, cache, itemId, STATE_FIELD, opts.state ?? "Backlog");
-    syncStatus(ctx, cache, itemId, opts.state ?? "Backlog");
+    setSingleSelect(ctx, cache, itemId, STATE_FIELD, opts.state);
+    syncStatus(ctx, cache, itemId, opts.state);
     // Unlike estimate, a failed priority write is FATAL-loud: a null priority
     // is what makes an issue invisible to `next`, so it may not pass as a warn.
     //
@@ -6610,49 +6710,18 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
           `${unapplied.length === 1 ? "write" : "writes"} did NOT land:\n  - ${unapplied.join("\n  - ")}`,
       );
     }
-    const filed = fetchIssue(ctx, issue.number);
-    warnUnprioritized(cache, filed);
-    return filed;
+    return fetchIssue(ctx, issue.number);
   }
 }
 
-/** GH-1792. An item filed with no priority is not deprioritized, it is LOST:
- *  `priorityRank` sorts null behind every real option, so `next` names it last
- *  and no lane names it at all. Nothing told the filer that, and the doctor
- *  `unformed` leg only notices after UNFORMED_DAYS — by which time the tree it
- *  belonged to has been worked around.
- *
- *  A hint, never a gate: stderr so stdout stays the parseable issue line, and
- *  `create` still returns 0. Fast human capture through `/ralph:board` may
- *  legitimately not know the priority yet, and forcing an answer buys a
- *  reflexive default that carries no information.
- *
- *  Silent unless the remedy is real. The board must hold a SINGLE_SELECT
- *  Priority with at least one option — on a board with a TEXT field of that
- *  name, or none at all, `board priority` refuses, and a hint whose command
- *  cannot succeed teaches the reader to ignore hints. The options are read
- *  from the cache rather than hardcoded P0..P3 for the same reason the ranker
- *  reads them: `setup` never edits an existing field, so a host repo's own
- *  scheme is the truth.
- *
- *  Keyed on the FILED issue's own priority rather than on "no --priority was
- *  passed": `create` can adopt a same-title twin (GH-1973) that already
- *  carries one, and a hint that names a field it never read would be telling
- *  the operator to fix something already correct. A truncated field-value page
- *  fails closed for the reason it does everywhere else — absence GitHub never
- *  asserted is not evidence of an unset field. */
-function warnUnprioritized(cache: BoardCache, issue: Issue): void {
-  if (issue.priority !== null || issue.fieldValuesTruncated) return;
-  const field = cache.fields[PRIORITY_FIELD];
-  if (!field || field.dataType !== "SINGLE_SELECT") return;
-  const options = field.optionOrder ?? Object.keys(field.options ?? {});
-  if (options.length === 0) return;
-  process.stderr.write(
-    `note: #${issue.number} has no ${PRIORITY_FIELD} — unprioritized items sort LAST in \`board next\` ` +
-      `and are named by no lane. Set one: \`board priority ${issue.number} <option>\` ` +
-      `(this board's options: ${options.join(", ")}), or pass --priority on create.\n`,
-  );
-}
+/** GH-1792's stderr nudge ("this item has no Priority and will be named by no
+ *  lane") is GONE, replaced by the `--backlog` lane gate above (GH-2077). It
+ *  existed because `create` had no lane: a bare filing landed in Backlog, and
+ *  refusing there would have blocked the fast human capture that legitimately
+ *  does not know a priority yet. The intake tier removes that trade — that
+ *  filing has `--intake` now — so the bar the hint described is enforced
+ *  instead of suggested, and a hint that can no longer fire on the lane it was
+ *  written for is worse than none. */
 
 /** Node ids only, one aliased round trip for any number of issues. link/dep/
  *  comment need exactly this — paying fetchIssue's full payload (100 labels,
@@ -7894,6 +7963,36 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
             (untriaged.length > 10 ? ` +${untriaged.length - 10} more` : ""),
       );
 
+      // Aging intake (GH-2077). Advisory in full: an Intake item is TRACKED
+      // and deliberately not eligible, so this is never an invariant breach —
+      // `--strict` does not escalate it and `--fix` may not act on it, because
+      // the only remedies are a human's approval or a human's cancellation.
+      // Its whole job is to keep pending intake from becoming invisible again
+      // by a different route: a queue that is empty because nothing is
+      // approved must not read like a queue that is empty because there is
+      // nothing to do (GH-2048's lesson, one tier upstream).
+      //
+      // An unreadable/absent createdAt does NOT count as aged: a date GitHub
+      // never asserted is not evidence that anyone has been waiting.
+      const intakeDayMs = 86_400_000;
+      const agedIntake = items
+        .filter((i) => i.state === "Intake")
+        .map((i) => {
+          const t = i.createdAt ? Date.parse(i.createdAt) : NaN;
+          return { number: i.number, days: Number.isFinite(t) ? (ctx.now().getTime() - t) / intakeDayMs : null };
+        })
+        .filter((r) => r.days !== null && r.days >= ctx.cfg.smells.intakeDays);
+      add(
+        "intake-stale",
+        agedIntake.length === 0 ? "ok" : "info",
+        agedIntake.length === 0
+          ? "none"
+          : `${agedIntake.length} Intake item(s) awaiting an approval decision ≥${ctx.cfg.smells.intakeDays}d — ` +
+            `approve (\`board move N backlog\`, needs Priority + Estimate) or reject (\`board cancel N -m "why"\`): ` +
+            agedIntake.slice(0, 10).map((r) => `#${r.number}(${Math.floor(r.days!)}d)`).join(" ") +
+            (agedIntake.length > 10 ? ` +${agedIntake.length - 10} more` : ""),
+      );
+
       // Apply-kind sweep (GH-1693). Inert — three `ok` lines — on a repo that
       // has not opted in, and on an opted-in board with no apply issues.
       if (!ctx.cfg.apply.enabled) {
@@ -8024,7 +8123,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
           expiries.length === 0
             ? "none"
             : `claims lost repeatedly — empirically too large for one tick; ` +
-              `split via \`board create --parent N\`: ${expiries.join(" ")}`,
+              `split via \`board create --backlog --parent N\`: ${expiries.join(" ")}`,
         );
         add(
           "escalation-ping-pong",
@@ -8641,14 +8740,23 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
       },
     );
     created.push({ name: STATE_FIELD, options: STATES });
-    note(`created "${STATE_FIELD}" single-select with the 6 v2 states`);
+    note(`created "${STATE_FIELD}" single-select with the ${STATES.length} v2 states`);
   } else {
     const names = Object.keys(stateField.options ?? {});
     const missing = STATES.filter((s) => !names.includes(s));
     if (missing.length) {
       note(
         `MANUAL: add option(s) ${missing.join(", ")} to "${STATE_FIELD}" in the board UI ` +
-          `(the API cannot edit an existing field's option set)`,
+          `(the API cannot edit an existing field's option set)` +
+          // Named rather than left to be inferred: until the option exists,
+          // `create --intake` and `move N intake` fail closed on mutationCache's
+          // missing-option refusal, which points back at `board setup` — this
+          // is the far end of that pointer, so it has to say what the option
+          // buys and not just that it is absent.
+          (missing.includes("Intake")
+            ? ` — until "Intake" exists, \`board create --intake\` and \`board move N intake\` refuse (fail closed); ` +
+              `Intake is the tracked-but-not-yet-approved tier, invisible to \`board next\`/\`frontier\``
+            : ""),
       );
     }
     const legacy = names.filter((n) => !isState(n));
@@ -8916,7 +9024,9 @@ mutations
                               removed in GH-1869: nothing creates multi-holder
                               claims; existing ones are still read and cleaned)
   release NNN -m "why"        In Progress → Backlog; parking comment required
-  move NNN <state> [--why W]  any legal transition; Human Needed requires --why
+  move NNN <state> [--why W]  any legal transition; Human Needed requires --why.
+                              Intake → Backlog is APPROVAL: it refuses without
+                              a Priority and an Estimate.
   answer NNN -m "decision"    Human Needed → In Progress, COMMENT-FIRST: the
                               answer lands as an issue comment (**Answer** —
                               the durable half) BEFORE any state write, so a
@@ -8965,7 +9075,9 @@ maintenance
                               machine's own comment trail — never gates, never
                               fixed; thresholds via RALPH_SMELL_CLAIM_EXPIRIES
                               (2), RALPH_SMELL_ESCALATIONS (3),
-                              RALPH_SMELL_REVIEW_DAYS (7).
+                              RALPH_SMELL_REVIEW_DAYS (7),
+                              RALPH_SMELL_INTAKE_DAYS (14 — "intake-stale":
+                              items awaiting an approval decision).
                               "foreign-repo-policy" reports the posture in
                               effect and whether it was configured or
                               defaulted; "foreign-items" warns when items from
@@ -9080,7 +9192,7 @@ export const VERB_HELP: Record<string, string> = {
   who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  example: board who",
   list: "board list [--state <s>] [--json]\n  Items by state. Full-board scan — prefer next/brief for orientation.\n  example: board list --state human",
   get: "board get <n> [--json]\n  One issue with board fields, parity with what move/claim write.\n  example: board get 1234",
-  create: "board create --title <t> [--body <b>] [--parent <n>] [--estimate XS..XL] [--priority P0..P3] [--apply] [--state <s>]\n  Files an issue onto the board. Retry-safe (twin dedupe, GH-1973).\n  example: board create --title \"fix the gate\" --priority P1",
+  create: "board create (--intake | --backlog | --state <s>) --title <t> [--body <b>] [--parent <n>] [--estimate XS..XL] [--priority P0..P3] [--apply]\n  Files an issue onto the board. Retry-safe (twin dedupe, GH-1973).\n  The landing state is REQUIRED — there is no default, because filing is not approving:\n    --intake   tracked, not yet approved; invisible to next/frontier (Priority/Estimate optional)\n    --backlog  approved and ready to work (Priority and Estimate REQUIRED)\n  example: board create --backlog --title \"fix the gate\" --priority P1 --estimate S",
   claim: "board claim <n> [--steal] | board claim show <n>\n  Take a unit (Backlog→In Progress). --steal only after TTL expiry.\n  example: board claim 1234",
   release: "board release <n> -m \"<where you stopped>\"\n  Give a unit back (→Backlog) with the handoff note.\n  example: board release 1234 -m \"tests red on X; next: fix parser\"",
   move: "board move <n> <state> [--why <w>] [--decision <artifact>]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact, or --why.\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
@@ -9121,6 +9233,7 @@ interface ParsedArgs {
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
+  "intake", "backlog",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
@@ -9182,7 +9295,7 @@ function issueLine(i: Issue): string {
  *  to what an empty queue has always printed. */
 function emptyQueueLine(blocked: QueueItemWithBlockers[], dx: EmptyQueueReport): string {
   if (dx.diagnosis === "no-items")
-    return `queue empty — nothing on the board; intake via /ralph:board or board create --title ...`;
+    return `queue empty — nothing approved; file work with \`board create --backlog\` (ready to work) or \`board create --intake\` (tracked, awaiting approval), or via /ralph:board. \`board list --state intake\` shows what is waiting on a decision`;
   if (dx.diagnosis === "human-needed")
     return `queue empty — ${dx.humanNeededCount} in Human Needed awaiting answers (/ralph:board walks the queue)`;
   if (dx.diagnosis === "epic-in-flight") {
@@ -9780,8 +9893,33 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "create": {
       if (typeof flags.title !== "string" || !flags.title) throw new UsageError("--title required");
-      const state = typeof flags.state === "string" ? parseStateArg(flags.state) : null;
-      if (typeof flags.state === "string" && !state) throw new UsageError(`unknown state "${flags.state}"`);
+      // The landing state is CHOSEN, never defaulted (GH-2077). A bare
+      // `create` used to land in Backlog, which meant filing an issue silently
+      // approved it for autonomous pickup — the gap the intake tier closes.
+      // Three spellings, one resolved answer: `--intake`, `--backlog`, and the
+      // pre-existing `--state <s>` for the states neither lane names. Two at
+      // once is a refusal rather than a precedence rule nobody can recall.
+      const explicitState = typeof flags.state === "string" ? parseStateArg(flags.state) : null;
+      if (typeof flags.state === "string" && !explicitState)
+        throw new UsageError(`unknown state "${flags.state}"`);
+      const lanes = [
+        flags.intake === true ? ("Intake" as State) : null,
+        flags.backlog === true ? ("Backlog" as State) : null,
+        explicitState,
+      ].filter((x): x is State => x !== null);
+      if (lanes.length > 1)
+        throw new UsageError(
+          `pick ONE landing state: --intake, --backlog and --state name ${lanes.join(", ")} — ` +
+            `which one is intended cannot be guessed`,
+        );
+      const state = lanes[0];
+      if (!state)
+        throw new UsageError(
+          "create needs a landing state — there is no default, because filing an issue is not approving it:\n" +
+            "  --intake    track it now, not yet approved for pickup (Priority/Estimate optional)\n" +
+            "  --backlog   approved and ready to work (Priority and Estimate REQUIRED)\n" +
+            "An intake item is invisible to `board next`/`frontier`; `board move NNN backlog` approves it.",
+        );
       // A valueless `--priority` parses as boolean true; `--priority ""` (an
       // unset shell variable) parses as an empty string. Silently coercing
       // either to "no priority" would file the very last-sorting item the flag
@@ -9795,7 +9933,7 @@ export function run(argv: string[], ctx: Ctx): number {
         parent: typeof flags.parent === "string" ? requireNumber(flags.parent, "--parent") : undefined,
         estimate: typeof flags.estimate === "string" ? flags.estimate : undefined,
         priority: typeof flags.priority === "string" ? flags.priority : undefined,
-        state: state ?? undefined,
+        state,
         allowDuplicate: flags["allow-duplicate"] === true,
         // --apply resolves the CONFIGURED label rather than a literal, so a
         // repo that renamed it (apply.label) cannot end up with apply units

@@ -475,7 +475,7 @@ giving each sibling its own checkout — and a sibling with its own checkout is
 just a normal worker on a normal issue. So that is the replacement:
 
 ```bash
-board create --title "…" --body "…"   # decompose into real issues
+board create --backlog --title "…" --body "…" --priority P1 --estimate M   # decompose into real issues
 board dep NNN --needs MMM             # record the edges
 # then work-fleet: one worker per issue, own worktree, own claim
 ```

@@ -17,6 +17,45 @@ to a version heading when that artifact next releases. Full tag history:
 
 ## [Unreleased]
 
+### Added
+
+- **The Intake tier — filing an issue is no longer approving it (GH-2077)** —
+  a seventh Workflow State, upstream of Backlog, for work that is tracked but
+  not yet approved for autonomous pickup. Before it, `next`'s pool was every
+  unclaimed Backlog item, so every way to hold unapproved work was dishonest
+  (fake blocker, fake claim, P3-and-hope) or kept it off the board entirely —
+  invisible to `tend`, `doctor`, and anyone accountable for it, with an empty
+  `board next` reading identically whether there was no work or no *filable*
+  work (GH-2048's ambiguity, one tier upstream). Implements the GH-2060 design
+  record.
+
+  Exclusion is **by construction**, which is why it is a state and not a field
+  or a label: every eligibility read already filters `state === "Backlog"`, so
+  an Intake item leaves `next`/`frontier` with zero predicate change and there
+  is no reader to forget. Edges are strictly one-way — `Intake → Backlog |
+  Canceled` — so `board claim` on an unapproved item refuses via the MACHINE
+  rather than via special code, and there is no demotion edge back (the
+  argument `Backlog → Human Needed` already lost). Approval is the
+  `Intake → Backlog` move and refuses without a Priority and an Estimate:
+  Backlog means approved *and rankable*.
+
+  **Breaking:** `board create` has no default landing state. Pass `--intake`
+  (Priority/Estimate optional) or `--backlog` (both required, each missing one
+  named in the refusal); neither is a refusal naming both lanes. This
+  supersedes GH-1792's stderr nudge, which existed only because there was no
+  lane for "I do not know the priority yet".
+
+  Surfaces: `list` shows Intake by default, `tend-queue`'s `unformed` category
+  takes Intake items with their age, and `doctor` gains an advisory
+  `intake-stale` line (`RALPH_SMELL_INTAKE_DAYS`, 14 — never strict-escalated,
+  never fixed). The epic in-flight probe was widened too: written as
+  `state !== "Backlog"`, it would have read an unapproved *child* as work in
+  progress and demoted its root out of the queue. **One manual UI step per
+  board** — the API cannot add an option to an existing field, so `setup`
+  prints it and until it exists every Intake filing fails closed with that
+  hint. Deliberately unchanged: state-guard adoption and `reopen` still land in
+  Backlog.
+
 ### Fixed
 
 - **Fleet spawns tell the host provisioner where the worktree is (GH-2106)** —

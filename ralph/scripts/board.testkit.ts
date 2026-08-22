@@ -198,6 +198,7 @@ export class FakeGh {
       truncated = false,
       priority?: string | null,
       defer?: string | null,
+      estimate?: string | null,
     ) => ({
       pageInfo: { hasNextPage: truncated },
       nodes: [
@@ -205,6 +206,10 @@ export class FakeGh {
         ...(claim ? [{ text: claim, field: { name: "Claim" } }] : []),
         ...(priority ? [{ name: priority, field: { name: "Priority" } }] : []),
         ...(defer ? [{ text: defer, field: { name: "Defer" } }] : []),
+        // Estimate rides the same fieldValues page the real read pages, and
+        // `fetchIssue` has always mapped it — the fake simply had no caller
+        // that read it back until the GH-2077 approval gate did.
+        ...(estimate ? [{ name: estimate, field: { name: "Estimate" } }] : []),
       ],
     });
     return {
@@ -265,7 +270,7 @@ export class FakeGh {
                   id: `ITEM_${fi.number}`,
                   isArchived: fi.archived ?? false,
                   project: { id: PROJECT_ID },
-                  fieldValues: fieldValues(fi.state, fi.claim, fi.fieldValuesTruncated ?? false, fi.priority, fi.defer),
+                  fieldValues: fieldValues(fi.state, fi.claim, fi.fieldValuesTruncated ?? false, fi.priority, fi.defer, fi.estimate),
                 },
               ],
       },

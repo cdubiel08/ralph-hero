@@ -41,6 +41,7 @@
     "board_state_claimed": {
       "type": "string",
       "enum": [
+        "Intake",
         "Backlog",
         "In Progress",
         "In Review",

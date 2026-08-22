@@ -157,7 +157,10 @@ dir=$(setup_case "$POLICY_ON" "$UNTWINNED" "$INFRA_FILES")
 run_case "$dir"
 expect "infra PR + untwinned ship issue is refused" 1 "has no apply twin"
 expect "and the message names the offending path" 1 ".github/workflows/ci.yml"
-expect "and prints the exact command to fix it" 1 "board create --label ralph:apply"
+# GH-2077: `create` has no default landing state, so the remedy names its lane.
+# A command missing --backlog would be refused by the CLI the moment it is run,
+# which is the whole failure mode a "runnable remedy" assertion exists to catch.
+expect "and prints the exact command to fix it" 1 "board create --backlog --label ralph:apply"
 
 dir=$(setup_case "$POLICY_ON" "$TWINNED_SUB" "$INFRA_FILES")
 run_case "$dir"
