@@ -269,6 +269,14 @@ herdr plugin action invoke work-these --plugin ralph-herdr  # the same, prompted
 `--refill` is frontier policy and is refused with an explicit list — a named
 list is a closed set, so there is nothing to top it back up from.
 
+Every candidate prints the dependency state the frontier asserted about it
+(`deps: #2060 CLOSED`, `deps: none`) — the guard is observable, not just
+trusted (GH-2109). Beyond the wired graph, a **ranked** candidate whose body
+names an OPEN own-repo issue that no `board dep` edge records is refused by
+name; the fix is `board dep NNN --on N`, and naming the issue explicitly is the
+override. An unreadable body prints `body refs: NOT CHECKED` and spawns anyway
+— it never renders as clean.
+
 The shared-claim `work-issue-fleet` (several sessions on ONE issue, one
 worktree) was removed in GH-1774: siblings raced on the index, the branch, and
 each other's uncommitted files, and no amount of claim bookkeeping made that

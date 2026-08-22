@@ -33,14 +33,21 @@ BIN="$TMP/bin"
 mkdir -p "$BIN"
 printf '#!/bin/bash\nexec bash "%s" "$@"\n' "$SCRIPT_DIR/fake-herdr.sh" >"$BIN/herdr"
 printf '#!/bin/bash\nexec bash "%s" "$@"\n' "$SCRIPT_DIR/fake-board.sh" >"$BIN/board"
-chmod +x "$BIN/herdr" "$BIN/board"
+# dep-refs.sh (GH-2109) reaches for `gh` on PATH to read a candidate's BODY.
+# Stubbing it HERE rather than per-test is deliberate: $BIN is already ahead of
+# the real gh for every test in this file, so no test can hit the live API by
+# forgetting to opt in — the hermetic direction is the default one.
+printf '#!/bin/bash\nexec bash "%s" "$@"\n' "$SCRIPT_DIR/fake-gh.sh" >"$BIN/gh"
+chmod +x "$BIN/herdr" "$BIN/board" "$BIN/gh"
 export PATH="$BIN:$PATH"
 export HERDR_BIN_PATH="$BIN/herdr"
 export FAKE_HERDR_FIXTURES="$TMP/fixtures"
 export FAKE_HERDR_LOG="$TMP/herdr.log"
 export FAKE_BOARD_FIXTURES="$TMP/board-fixtures"
 export FAKE_BOARD_LOG="$TMP/board.log"
-mkdir -p "$FAKE_HERDR_FIXTURES" "$FAKE_BOARD_FIXTURES"
+export FAKE_GH_FIXTURES="$TMP/gh-fixtures"
+export FAKE_GH_LOG="$TMP/gh.log"
+mkdir -p "$FAKE_HERDR_FIXTURES" "$FAKE_BOARD_FIXTURES" "$FAKE_GH_FIXTURES"
 # The healthy post-prompt world (GH-1926): the spawned agent left idle and a
 # turn is running. The fake's bare default is `idle`, which the spawn path now
 # refuses to count as a spawn — so a fleet test that wants a successful spawn
@@ -780,6 +787,178 @@ line_has "work-fleet: the capability is discoverable from --help" \
   "$OUT" "work-fleet.sh [--refill] [ISSUE...]"
 
 rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
+rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc
+
+# ═══ 10. work-fleet.sh — the guard is observable, and sees past the graph ════
+# GH-2109, two halves.
+#
+# (a) The guard was INVISIBLE. The ranked path printed `── GH-N ──` and spawned;
+#     nothing said a dependency check had run, so "guarded and clean" and
+#     "unguarded" rendered identically to whoever read the output. The frontier
+#     read already carries every edge with its state, so the evidence is free.
+#
+# (b) The guard was exactly as complete as the `board dep` graph, and that graph
+#     is sparser than the real dependency structure — dependencies get written
+#     in prose and only sometimes get wired.
+gh_body() { # gh_body N TEXT — the body dep-refs.sh will read for issue N
+  jq -nc --arg b "$2" '{data:{repository:{issue:{body:$b}}}}' >"$FAKE_GH_FIXTURES/gh-body.$1.json"
+}
+gh_state() { # gh_state JSON — the batched alias answer, keyed r<N>
+  printf '{"data":{"repository":%s}}\n' "$1" >"$FAKE_GH_FIXTURES/gh-state.json"
+}
+clear_gh() { rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc; }
+
+# ── (a) the evidence line ────────────────────────────────────────────────────
+clear_gh
+printf '{"frontier":[{"number":501,"title":"One","blockers":[{"number":77,"state":"CLOSED"}]}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+run_wf
+is "dep evidence: a guarded spawn still exits 0" "0" "$RC"
+line_has "dep evidence: the frontier's own edge is printed with its state" "$OUT" "deps: #77 CLOSED"
+line_has "dep evidence: and the spawn still happens" "$OUT" "would spawn GH-501"
+
+printf '{"frontier":[{"number":501,"title":"One","blockers":[]}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+run_wf
+line_has "dep evidence: an empty edge list reads as none, and says the frontier said so" \
+  "$OUT" "deps: none (frontier reports no dependency edges)"
+
+# A board CLI whose frontier carries no blocker list at all cannot be reported
+# as having none — that collapse is this issue's own subject.
+printf '{"frontier":[{"number":501,"title":"One"}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+run_wf
+line_has "dep evidence: an unreported edge list is NOT reported as none" \
+  "$OUT" "deps: not reported by this board CLI"
+line_lacks "dep evidence: and never borrows none's wording" "$OUT" "deps: none"
+
+# The `next` fallback spells the same fact under two other keys.
+rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
+printf '{"next":{"number":501,"title":"One","openBlockers":[],"closedBlockers":[88]},"queue":[{"number":501,"title":"One","openBlockers":[],"closedBlockers":[88]}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/next.json"
+run_wf
+line_has "dep evidence: the next-shaped fallback reports the same edge" "$OUT" "deps: #88 CLOSED"
+rm -f "$FAKE_BOARD_FIXTURES/next.json"
+
+# Evidence is owed on BOTH paths — the operator reads the same output either way.
+printf '{"frontier":[{"number":501,"title":"One","blockers":[{"number":77,"state":"CLOSED"}]}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+run_wf 501
+line_has "dep evidence: an explicitly named issue reports its edges too" "$OUT" "deps: #77 CLOSED"
+
+# ── (b) the unwired body reference ───────────────────────────────────────────
+clear_gh
+printf '{"frontier":[{"number":501,"title":"One","blockers":[]},{"number":502,"title":"Two","blockers":[]}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+gh_body 501 'Needs the parser from #777 before this can start.'
+gh_state '{"r777":{"number":777,"state":"OPEN"}}'
+: >"$FAKE_HERDR_LOG"
+: >"$FAKE_BOARD_LOG"
+# One slot, two ranked candidates: the only way #502 could appear is if the
+# refusal promoted it, which is the question this section is asking.
+RC=0
+OUT=$(RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+  RALPH_HERDR_LEDGER="$WFL" RALPH_HERDR_DRY_RUN=true ANTHROPIC_API_KEY= \
+  RALPH_HERDR_FLEET=1 bash "$SCRIPTS/work-fleet.sh" </dev/null 2>&1) || RC=$?
+is "unwired ref: a refused spawn is a skip, not a failure" "0" "$RC"
+line_has "unwired ref: the refusal names the reference" "$OUT" "SKIP body names OPEN #777"
+line_has "unwired ref: and names the two remedies" "$OUT" "wire it (board dep 501 --on N) or name this issue explicitly (work-fleet 501)"
+line_lacks "unwired ref: the refused issue is not spawned" "$OUT" "would spawn GH-501"
+line_has "unwired ref: the summary carries the skip" "$OUT" "skipped: GH-501"
+# SKIP, never backfill: refusing a spawn is not licence to choose replacement
+# work off a prose heuristic. #502 was never in the top-1 slice and stays out.
+is "unwired ref: nothing is backfilled into the freed slot" "0" \
+  "$(printf '%s\n' "$OUT" | grep -c 'would spawn GH-502' || true)"
+# Refusing BEFORE the spawn is the whole point: no herd write, no board write.
+is "unwired ref: a refused spawn reaches herdr not at all" "0" \
+  "$(wc -l <"$FAKE_HERDR_LOG" | tr -d ' ')"
+is "unwired ref: and never mutates the board" "0" \
+  "$(log_count "$FAKE_BOARD_LOG" '^\(move\|claim\|answer\) ')"
+
+# The explicit list IS the override — the operator named this issue, and a
+# check that over-reports by construction may not be inescapable.
+run_wf 501
+is "unwired ref: naming the issue explicitly still spawns it" "0" "$RC"
+line_has "unwired ref: the explicit path is the sanctioned override" "$OUT" "would spawn GH-501"
+
+# A CLOSED reference is not work anything is waiting on. `repository.issue`
+# answering null (a pull request, or a stranger) lands here too.
+gh_state '{"r777":{"number":777,"state":"CLOSED"},"r888":null}'
+run_wf
+line_has "unwired ref: a closed reference is not a dependency" "$OUT" "body refs: no unwired OPEN reference"
+line_has "unwired ref: and the spawn proceeds" "$OUT" "would spawn GH-501"
+
+# The subject is the reference the GRAPH does not have. One that is already
+# wired is reported by the evidence line and must not be refused twice.
+clear_gh
+printf '{"frontier":[{"number":501,"title":"One","blockers":[{"number":777,"state":"CLOSED"}]}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+gh_body 501 'Needs the parser from #777 before this can start.'
+gh_state '{"r777":{"number":777,"state":"OPEN"}}'
+run_wf
+line_has "unwired ref: an already-wired reference is not unwired" "$OUT" "body refs: no unwired OPEN reference"
+line_has "unwired ref: the wired edge shows up as evidence instead" "$OUT" "deps: #777 CLOSED"
+
+# Fail OPEN, loudly: an unreadable body is a rate limit, not a clean board —
+# but "not checked" may never borrow "checked and clean"'s wording.
+clear_gh
+printf '{"frontier":[{"number":501,"title":"One","blockers":[]}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+gh_body 501 'Needs #777.'
+echo 1 >"$FAKE_GH_FIXTURES/gh-body.rc"
+run_wf
+is "unwired ref: an unreadable body never grounds the fleet" "0" "$RC"
+line_has "unwired ref: the failed read is spawned over, and said out loud" "$OUT" "body refs: NOT CHECKED"
+line_has "unwired ref: fail-open means the spawn still happens" "$OUT" "would spawn GH-501"
+line_lacks "unwired ref: a failed read never renders as a clean one" "$OUT" "no unwired OPEN reference"
+clear_gh
+
+# ── dep-refs.sh's own bias-toward-silence bounds ─────────────────────────────
+DR() { RC=0; OUT=$(bash "$SCRIPTS/dep-refs.sh" "$@" 2>&1) || RC=$?; }
+
+gh_body 501 'Design lives in `#777` and:
+```
+blocked by #778
+```
+so neither is a dependency.'
+gh_state '{"r777":{"number":777,"state":"OPEN"},"r778":{"number":778,"state":"OPEN"}}'
+DR 501
+is "dep-refs: code is prose about references, not references" "0" "$(jq -r '.count' <<<"$OUT")"
+
+gh_body 501 'This supersedes #501 itself and otherorg/otherrepo#888.'
+gh_state '{"r501":{"number":501,"state":"OPEN"},"r888":{"number":888,"state":"OPEN"}}'
+DR 501
+is "dep-refs: an issue naming itself is not blocked on itself, and a foreign ref is not an edge here" \
+  "0" "$(jq -r '.count' <<<"$OUT")"
+
+gh_body 501 'Follows GH-777 and cdubiel08/ralph-hero#779.'
+gh_state '{"r777":{"number":777,"state":"OPEN"},"r779":{"number":779,"state":"OPEN"}}'
+DR 501
+is "dep-refs: GH-N and an own-repo slug are the same reference as #N" "2" "$(jq -r '.count' <<<"$OUT")"
+is "dep-refs: the summary names them" "#777 #779" "$(jq -r '.summary' <<<"$OUT")"
+
+DR 501 "777,779"
+is "dep-refs: wired numbers are dropped — the subject is what the graph lacks" \
+  "0" "$(jq -r '.count' <<<"$OUT")"
+
+gh_body 501 'Refs #777.'
+gh_state '{"r777":{"number":777,"state":"OPEN"}}'
+RALPH_HERDR_DEP_REF_CAP=0 DR 501
+is "dep-refs: a zero cap resolves nothing and says so" "0" "$(jq -r '.count' <<<"$OUT")"
+line_has "dep-refs: past the cap is reported, never dropped in silence" "$OUT" "past the cap of 0"
+
+echo 1 >"$FAKE_GH_FIXTURES/gh-state.rc"
+gh_body 501 'Refs #777.'
+DR 501
+is "dep-refs: an unreadable resolve is not evaluated" "false" "$(jq -r '.ok' <<<"$OUT")"
+is "dep-refs: and reports nothing rather than nothing-found" "0" "$(jq -r '.count' <<<"$OUT")"
+clear_gh
+
+DR 501x
+is "dep-refs: a non-numeric issue is a usage error" "2" "$RC"
+
+rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
+clear_gh
 
 # ═══ 7. restart re-arm — reconcile phase F (GH-1862) ═════════════════════════
 # The edge trigger cannot survive the restart, because the restart is what kills
