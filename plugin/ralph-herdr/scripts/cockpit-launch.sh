@@ -17,10 +17,24 @@
 #
 # One log line per taken rung — 'cockpit: rung N (<reason>)' — so a pane
 # that opens on the "wrong" surface says why on its first line.
+#
+# Before exec'ing a rung this pane RECORDS itself as the board's cockpit
+# (GH-2074), so scripts/cockpit-open.sh can focus it instead of opening a
+# second one. Done here rather than in the Go TUI because all four rungs are
+# equally "the cockpit" — the TUI's own heartbeat answers a different question
+# for a different reader (cockpit-pane.sh's header states the split). The
+# stamp is best-effort by contract and cannot fail a launch.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COCKPIT_BIN="$SCRIPT_DIR/../cockpit/ralph-cockpit"
+
+# shellcheck source=ledger.sh
+. "$SCRIPT_DIR/ledger.sh"
+# shellcheck source=cockpit-pane.sh
+. "$SCRIPT_DIR/cockpit-pane.sh"
+# $$ survives the exec below, so the recorded pid is the rung's own.
+ralph_cockpit_pane_stamp "$PWD" "${HERDR_PANE_ID:-}" "$$"
 
 if [ -x "$COCKPIT_BIN" ]; then
   echo "cockpit: rung 1 (built TUI at $COCKPIT_BIN; poll-only is the shipped mode — rung 2)"

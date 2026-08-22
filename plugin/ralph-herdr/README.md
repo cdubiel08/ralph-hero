@@ -84,7 +84,7 @@ herdr's shapes map onto ralph's without translation:
 | `deliver-pass` | split (down) | `board deliver-queue` → empty means spawn nothing (the lane contract). Otherwise a new tab hosts agent `ralph-deliver` running `/ralph:deliver`; cockpit pane watches |
 | `tend-pass` | split (down) | same shape over `board tend-queue` → agent `ralph-tend` running `/ralph:tend` |
 | `doctor` | popup | runs `board doctor` once, holds the popup open until Enter |
-| `cockpit` | split (right) | the board cockpit through the degradation ladder (`scripts/cockpit-launch.sh`): the built Go TUI when present, the verb-complete fzf fallback when not, the read-only dashboard when neither — the pane's first line names the rung it took and why. See [The cockpit](#the-cockpit-phase-5-and-its-degradation-ladder) |
+| `cockpit` | split (right) | **focus-or-open** (GH-2074): `scripts/cockpit-open.sh` focuses this board's live cockpit when there is one, else opens the pane. The pane runs the degradation ladder (`scripts/cockpit-launch.sh`): the built Go TUI when present, the verb-complete fzf fallback when not, the read-only dashboard when neither — the pane's first line names the rung it took and why. See [The cockpit](#the-cockpit-phase-5-and-its-degradation-ladder) |
 | `dashboard` | split (right) | read-only watch loop: board `next` (number/title/estimate + queue depth), deliver-queue, tend-queue, Human Needed count. No doctor call in the loop — doctor is its own action |
 
 The watcher (`scripts/notify-watch.sh`) tracks one or many agents. Single target:
@@ -234,11 +234,32 @@ write path:
 
 ## The cockpit (Phase 5) and its degradation ladder
 
-One action, five rungs. `Ralph: cockpit` opens a right-split pane running
-`scripts/cockpit-launch.sh`, which probes the host and execs the best surface
-it can — logging `cockpit: rung N (<reason>)` as its first line so a pane that
-opened on the "wrong" surface says why. The doctrine is fixed: **every rung
-loses chrome, never a verb.**
+One action, five rungs. `Ralph: cockpit` runs `scripts/cockpit-open.sh` in the
+action process, which focuses this board's live cockpit when there is one and
+otherwise opens a right-split pane running `scripts/cockpit-launch.sh` — the
+probe that execs the best surface the host can serve, logging
+`cockpit: rung N (<reason>)` as its first line so a pane that opened on the
+"wrong" surface says why. The doctrine is fixed: **every rung loses chrome,
+never a verb.**
+
+**Focus-or-open (GH-2074).** The action used to open a pane unconditionally, so
+invoking it twice stacked two cockpits over each other — measured on three live
+agent panes, 2026-08-18. herdr exposes `plugin pane focus <pane_id>` but no way
+to *list* a plugin's panes (snapshot pane objects carry no plugin or entrypoint
+field), so the cockpit records its own pane: `cockpit-launch.sh` stamps
+`~/.ralph/<owner>/<repo>/cockpit.pane.json` before exec'ing a rung — every rung,
+not just the Go TUI, whose separate heartbeat answers "is a cockpit alive?" for
+`herdr-setup.sh check` and carries no pane id. "Live" is checked as two
+independent facts, because either alone lies: the pid is still running (a pane
+outlives its process — herdr fires `pane.exited` and leaves the pane) *and* the
+pane is still in a validated snapshot (a pid can be reused after its pane is
+closed). Scoped per board rather than one global file, or a cockpit opened for
+one repo would overwrite another's record and duplicate on its next open.
+Every unreadable read **opens** — a duplicate pane costs a pane, a refusal costs
+the cockpit, the same fail-open direction as the ladder itself — so this is an
+idempotence convenience, never a guarantee. The `[[panes]]` entrypoint is
+unchanged, so a deliberate second cockpit needs no flag: open it directly with
+`herdr plugin pane open --plugin ralph-herdr --entrypoint cockpit`.
 
 | Rung | Surface | Taken when | What it loses |
 |---|---|---|---|

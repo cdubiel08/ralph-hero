@@ -133,6 +133,17 @@ Notes that save confusion:
 line names the rung it took: the Go TUI when built, the fzf fallback when not,
 the read-only dashboard when neither. Every rung keeps the verbs.
 
+**Invoking it twice focuses, it does not stack (GH-2074).** The action runs
+`scripts/cockpit-open.sh`, which focuses this board's live cockpit when there
+is one. "Live" is two facts, because either alone lies: the pane is still in
+herdr's snapshot (a pid outlives a closed pane) *and* the process inside it is
+still running (a pane outlives its process). The launcher records the pane on
+every rung, so this works on the fzf and dashboard rungs too. Every unreadable
+read OPENS — a duplicate pane costs a pane, a refusal costs the cockpit — so a
+degraded server can still stack two. A deliberate second cockpit needs no flag:
+`herdr plugin pane open --plugin ralph-herdr --entrypoint cockpit --placement
+split --direction right --cwd "$PWD" --focus` opens one directly.
+
 TUI: three columns — In Progress / In Review / Human Needed (board states
 verbatim; Human Needed cards show the blocking question).
 
