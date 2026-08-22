@@ -4,7 +4,7 @@
 # Idempotent. Steps:
 #   1. Write ~/.ralph/knowledge.config.json with discovered thoughts roots
 #      (SKIP if file already exists).
-#   2. Probe http://localhost:8000/v1/models for Gemma (non-blocking;
+#   2. Probe http://localhost:12000/v1/models for Gemma (non-blocking;
 #      prints a `gemma-up` hint if down but does NOT exit non-zero).
 #   3. Render scripts/dream/launchd/com.dubiel.dream-loop.plist.template
 #      with __HOME__ / __PROJECTS_DIR__ / __USER__ → user's actual values
@@ -121,7 +121,7 @@ EOF
 # Step 2: probe Gemma — non-blocking.
 # ----------------------------------------------------------------------
 step_probe_gemma() {
-    local gemma_url="${RALPH_LLM_URL:-http://localhost:8000}/v1/models"
+    local gemma_url="${RALPH_LLM_URL:-http://localhost:12000}/v1/models"
     if curl -fsS --max-time 2 "${gemma_url}" >/dev/null 2>&1; then
         ok "gemma probe (${gemma_url})"
     else

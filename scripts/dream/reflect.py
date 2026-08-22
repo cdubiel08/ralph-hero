@@ -14,7 +14,9 @@ Pipeline:
    Noise points (label ``-1``) are discarded.
 3. :func:`synthesize_reflection` sends an A-Mem-inspired prompt per
    cluster to a local OpenAI-compatible chat completions endpoint
-   (default ``http://localhost:8000``). On any network or parse error we
+   (``--llm-url``, else ``$RALPH_LLM_URL``, else ``config.yaml``'s
+   ``llm_url``, else ``http://localhost:12000``). On any network or parse
+   error we
    fail open: log a single warning and skip the cluster.
 4. :func:`write_reflection` emits markdown files under
    ``<base_dir>/reflections/YYYY/MM/DD/<slug>.md`` with deterministic
@@ -48,8 +50,9 @@ except ImportError:  # pragma: no cover - import guard
 
 log = logging.getLogger("ralph.dream.reflect")
 
-# Default LLM endpoint / model. Both overridable via CLI + config.yaml.
-DEFAULT_LLM_URL = "http://localhost:8000"
+# Default LLM endpoint / model. Both overridable via CLI + config.yaml;
+# the endpoint also honours $RALPH_LLM_URL (see `_resolve_llm_url`).
+DEFAULT_LLM_URL = "http://localhost:12000"
 DEFAULT_LLM_MODEL = "mlx-community/gemma-4-26b-a4b-it-mxfp8"
 
 # Title slug: ASCII kebab, capped at this many chars so filenames stay
@@ -1479,6 +1482,20 @@ def write_reflection(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_llm_url(cli_value: str | None, cfg: dict) -> str:
+    """Endpoint precedence: --llm-url > $RALPH_LLM_URL > config > default.
+
+    The env var is the knob the launchd plists and README have always
+    advertised; before GH-2110 nothing read it, so a stale hardcoded
+    default silently won and every LLM call hit a dead port.
+    """
+    return (
+        cli_value
+        or os.environ.get("RALPH_LLM_URL")
+        or cfg.get("llm_url")
+        or DEFAULT_LLM_URL
+    )
+
 def _load_config(path: Path | None) -> dict:
     """Load ``config.yaml`` next to this script. Empty dict if absent."""
     if path is None:
@@ -1625,7 +1642,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--llm-url",
         default=None,
-        help=f"OpenAI-compatible endpoint root (default: {DEFAULT_LLM_URL}).",
+        help=(
+            "OpenAI-compatible endpoint root. Falls back to $RALPH_LLM_URL, "
+            f"then config.yaml llm_url, then {DEFAULT_LLM_URL}."
+        ),
     )
     parser.add_argument(
         "--model",
@@ -1714,7 +1734,7 @@ def main(argv: list[str] | None = None) -> int:
     base_dir = _expand_path(args.base_dir or cfg.get("base_dir"))
     if base_dir is None:
         parser.error("base_dir must be set via --base-dir or config.yaml")
-    llm_url = args.llm_url or cfg.get("llm_url") or DEFAULT_LLM_URL
+    llm_url = _resolve_llm_url(args.llm_url, cfg)
     model = args.model or cfg.get("llm_model") or DEFAULT_LLM_MODEL
 
     # --- Backfill mode (GH-1511) ---------------------------------------
