@@ -673,7 +673,11 @@ ralph_worktree_lock_holder() {
 # FAIL-OPEN by design, stated rather than implied: a failed install prints and
 # the spawn continues — the agent can still read and plan, and the fail-closed
 # half of this audit finding lives at the evidence gate (attest refusing
-# unrunnable runs), which is the mutation path, not a spawn hook.
+# unrunnable runs), which is the mutation path, not a spawn hook. The rc is
+# recorded in RALPH_HERDR_SPAWNED_PROVISION_RC so a fleet's summary can name
+# the spawns that landed unprovisioned (GH-2106) — a provisioner failing on
+# every spawn read, in the per-spawn log alone, exactly like one broken host
+# script, and went unnoticed for a whole run.
 provision_worktree() {
   local wt="${1-}" rc=0 tool=""
   if [ -z "$wt" ] || [ ! -d "$wt" ]; then
@@ -682,7 +686,12 @@ provision_worktree() {
   fi
   if [ -x "$wt/scripts/provision-worktree.sh" ]; then
     echo "provision: running $wt/scripts/provision-worktree.sh"
-    (cd "$wt" && bash scripts/provision-worktree.sh) || rc=$?
+    # The worktree path is passed as argv1 (GH-2106): a host script that
+    # ignores argv is unaffected, one that reads it (`${1:?Usage}`) exited 1 on
+    # EVERY spawn without it — fail-open, so the log said "continuing" and the
+    # agent landed in an uninstalled tree that could not type-check or test.
+    (cd "$wt" && bash scripts/provision-worktree.sh "$wt") || rc=$?
+    RALPH_HERDR_SPAWNED_PROVISION_RC="$rc"
     [ "$rc" -eq 0 ] ||
       echo "provision: scripts/provision-worktree.sh exited $rc — continuing (fail-open; the attest gate is the fail-closed half)" >&2
     return 0
@@ -709,6 +718,7 @@ provision_worktree() {
   echo "provision: $tool (fresh worktree: lockfile present, node_modules absent)"
   # shellcheck disable=SC2086  # $tool is one of the three fixed strings above
   (cd "$wt" && $tool) || rc=$?
+  RALPH_HERDR_SPAWNED_PROVISION_RC="$rc"
   [ "$rc" -eq 0 ] ||
     echo "provision: '$tool' exited $rc — continuing (fail-open; attest refuses unrunnable evidence downstream)" >&2
   return 0
@@ -768,9 +778,13 @@ spawn_work_session() {
   # investigators) opens its tab beside the driver rather than wherever herdr
   # would otherwise put it.
   RALPH_HERDR_SPAWNED_WORKSPACE=""
+  # provision_worktree's rc, empty until a provisioner actually ran — "no
+  # provisioning was attempted" and "provisioning succeeded" are different
+  # answers and a summary may not print one as the other.
+  RALPH_HERDR_SPAWNED_PROVISION_RC=""
   export RALPH_HERDR_SPAWNED_AGENT RALPH_HERDR_SPAWNED_REF
   export RALPH_HERDR_SPAWNED_PANE RALPH_HERDR_SPAWNED_WORKTREE
-  export RALPH_HERDR_SPAWNED_WORKSPACE
+  export RALPH_HERDR_SPAWNED_WORKSPACE RALPH_HERDR_SPAWNED_PROVISION_RC
   case "$n" in ''|*[!0-9]*) echo "spawn_work_session: bad issue number '$n'" >&2; return 1 ;; esac
   branch=$(ralph_branch_for_issue "$n") || return 1
 
