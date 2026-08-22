@@ -27,6 +27,17 @@
 # dependency-aware (unclaimed Backlog, no open blockers, truncation fails
 # closed). One probe, one read (fleet.sh normalizes both to {next, queue}).
 #
+# That filter is exactly as complete as the `board dep` graph, and the graph is
+# sparser than the real dependency structure — dependencies get written in prose
+# and only sometimes get wired (GH-2109). So every candidate additionally has
+# its BODY scanned for OPEN own-repo references no edge records, and on the
+# RANKED path one of those refuses the spawn: nobody chose that issue, and a
+# claim, a branch, a worktree and a whole session are cheaper to not spend. The
+# EXPLICIT list is the override by construction — the operator named it — which
+# is what keeps a check that over-reports by design from being inescapable.
+# Both paths print the dependency state the frontier asserted, because a guard
+# nobody can see is one nobody has grounds to trust.
+#
 # REFILL (--refill / RALPH_HERDR_REFILL=1) — STAYS OPT-IN: the claim-TTL probe
 # (design §3.1/§5) ran 2026-08-11 and returned NO-GO for default/unattended
 # arming — a restart restores pane topology but kills every pane's process, so
@@ -46,6 +57,8 @@
 #   RALPH_HERDR_REFILL      "1" → arm refill (same as --refill)
 #   RALPH_HERDR_REFILL_TTL_MIN   arming TTL, minutes (default 120)
 #   RALPH_HERDR_REFILL_BUDGET    max total spawns this run (default 8)
+#   RALPH_HERDR_DEP_REF_CAP body references dep-refs.sh resolves per candidate
+#                           (default 10; past the cap is reported, not dropped)
 #   RALPH_HERDR_DRY_RUN     "true" → per-issue plans printed, nothing spawned,
 #                           nothing armed, no briefs written
 set -euo pipefail
@@ -72,7 +85,14 @@ usage: work-fleet.sh [--refill] [ISSUE...]
               only — refused with an explicit list, which is a closed set.
   -h, --help  this.
 
+Every candidate prints the dependency state the frontier asserted about it
+(`deps: #N CLOSED` / `deps: none`), so the guard is observable rather than
+trusted. On the RANKED path only, a candidate whose BODY names an OPEN own-repo
+issue that no `board dep` edge records is refused and named — wire the edge, or
+name the issue explicitly, which is the override.
+
 Knobs: RALPH_HERDR_FLEET, RALPH_HERDR_REFILL / _TTL_MIN / _BUDGET,
+       RALPH_HERDR_DEP_REF_CAP (body references resolved per candidate, 10),
        RALPH_HERDR_DRY_RUN=true (plans everything, spawns and arms nothing).
 EOF
 }
@@ -148,6 +168,85 @@ frontier_verdict() {
   return 1
 }
 
+# dep_evidence N QUEUE_JSON — the dependency state the frontier ASSERTED about
+# N, printed rather than trusted (GH-2109). The ranked path prints `── GH-N ──`
+# and spawns; it printed no evidence a dependency check ran at all, deliberately
+# ("re-asking the frontier of its own head would be a tautology"), which is
+# right for the machine and wrong for the operator reading the output — an
+# orchestrator running the cheat-sheet command could not tell "guarded and
+# clean" from "unguarded", so it had no basis to trust the spawn. Same
+# "absence and silence read alike" failure GH-1971 and GH-2052 fixed elsewhere.
+#
+# Free: `board frontier --json` already carries every edge with its state
+# (frontierView, board.ts) and the `next` fallback carries the same fact under
+# two keys. No extra read, so the evidence costs nothing to print.
+#
+# A board CLI old enough to carry NEITHER spelling says so. "not reported" and
+# "none" must not render alike — that is this line's own subject.
+dep_evidence() {
+  local n="$1" q="$2"
+  jq -r --argjson n "$n" '
+    [.queue[]? | select(.number == $n)] | .[0] // {} |
+    if has("blockers") then
+      (.blockers // []) as $b
+      | if ($b | length) == 0 then "deps: none (frontier reports no dependency edges)"
+        else "deps: " + ($b | map("#" + (.number | tostring) + " " + (.state // "?")) | join(" ")) end
+    elif (has("openBlockers") or has("closedBlockers")) then
+      ((.openBlockers // []) | map("#" + tostring + " OPEN")) as $o
+      | ((.closedBlockers // []) | map("#" + tostring + " CLOSED")) as $c
+      | if (($o + $c) | length) == 0 then "deps: none (frontier reports no dependency edges)"
+        else "deps: " + (($o + $c) | join(" ")) end
+    else "deps: not reported by this board CLI (no blocker list in the frontier read) — NOT the same as none"
+    end' <<<"$q" 2>/dev/null || echo "deps: not reported (frontier read unparseable) — NOT the same as none"
+}
+
+# unwired_refs N QUEUE_JSON — OPEN own-repo issues N's BODY names that the
+# `board dep` graph does not record (GH-2109). Prints exactly one line, always,
+# and returns 1 only when the spawn should be refused.
+#
+# The guard is exactly as complete as the dep graph, and that graph is sparser
+# than the real dependency structure: dependencies get written in prose and only
+# sometimes get wired. Measured on this board 2026-08-22, roughly half the open
+# items carried a body reference no edge recorded.
+#
+# Fails OPEN, loudly. An unreadable body is a rate limit or a flap, not a clean
+# board, and a guard that grounds the whole fleet during an outage would be
+# ripped out within a week — but "not checked" is PRINTED rather than passed off
+# as "checked and clean", which is the distinction this whole issue is about.
+#
+# Prints DIRECTLY rather than into a caller's command substitution: the passing
+# verdicts are the ones worth reading, and a `why=$(...)` capture would discard
+# precisely the evidence this line exists to produce.
+#
+# Wired edges are handed to the scanner out of the frontier read already in
+# hand, so the graph half of the comparison costs no second board call.
+unwired_refs() {
+  local n="$1" q="$2" wired out detail
+  [ -x "$SCRIPT_DIR/dep-refs.sh" ] || {
+    echo "  body refs: NOT CHECKED — dep-refs.sh is absent from this install"
+    return 0
+  }
+  wired=$(jq -r --argjson n "$n" '
+    [.queue[]? | select(.number == $n)] | .[0] // {} |
+    ((.blockers // []) | map(.number)) + (.openBlockers // []) + (.closedBlockers // [])
+    | map(tostring) | join(",")' <<<"$q" 2>/dev/null) || wired=""
+  out=$(bash "$SCRIPT_DIR/dep-refs.sh" "$n" "$wired" 2>/dev/null) || out=""
+  detail=""
+  [ -n "$out" ] && detail=$(jq -r '.detail // ""' <<<"$out" 2>/dev/null) || detail=""
+  if [ -z "$out" ] || [ "$(jq -r '.ok // false' <<<"$out" 2>/dev/null)" != "true" ]; then
+    echo "  body refs: NOT CHECKED — ${detail:-dep-refs.sh produced no verdict}"
+    return 0
+  fi
+  if [ "$(jq -r '.count' <<<"$out")" -eq 0 ]; then
+    echo "  body refs: no unwired OPEN reference${detail:+ ($detail)}"
+    return 0
+  fi
+  printf 'SKIP body names OPEN %s with no dependency edge — wire it (board dep %s --on N) or name this issue explicitly (work-fleet %s)\n' \
+    "$(jq -r '.summary' <<<"$out")" "$n" "$n"
+  return 1
+}
+
+
 # One run id for the whole fleet: briefs land under it, and --refill arms it.
 RALPH_HERDR_RUN_ID=$(ralph_run_id)
 export RALPH_HERDR_RUN_ID
@@ -159,6 +258,25 @@ for n in $NUMBERS; do
   # set, so re-asking it of its own head would be a tautology.
   if [ -n "$ISSUES" ] && ! why=$(frontier_verdict "$n" "$QUEUE_JSON"); then
     echo "SKIP $why"
+    skipped="$skipped GH-$n"
+    continue
+  fi
+  # Printed for BOTH paths and before either decision: the operator is owed the
+  # dependency state whichever way the issue got here (GH-2109).
+  echo "  $(dep_evidence "$n" "$QUEUE_JSON")"
+  # The unwired-reference guard runs on the RANKED path only, and that is the
+  # whole override. On an explicit list the operator NAMED this issue — that is
+  # the "operator keeps individual autonomy" remedy this check was filed with,
+  # and applying the guard there too would leave a heuristic that over-reports
+  # by construction with no way past it. On the ranked path nobody chose the
+  # issue, so a body reference to work that does not exist yet is reason enough
+  # not to spend a claim, a branch, a worktree and a session on it.
+  #
+  # SKIP, never backfill with the next-ranked candidate: the guard's job is to
+  # refuse a bad spawn, not to choose replacement work off a prose heuristic.
+  # Under-spawning is visible in the summary and recoverable by naming the
+  # issue; silently substituting different work is neither.
+  if [ -z "$ISSUES" ] && ! unwired_refs "$n" "$QUEUE_JSON"; then
     skipped="$skipped GH-$n"
     continue
   fi
