@@ -109,27 +109,56 @@ priority**) across multiple issues in a single tool call"
 
 Three things follow, and each one is load-bearing.
 
-**1. It was not ruled against; it was collateral.** The commit that removed it removed the
-whole 20.7k-line server. No record in `thoughts/` argues bulk field editing was wrong.
-So this design is not re-proposing something the repo rejected — but neither may it claim
-v1 as an endorsement. The question is genuinely open, which is why it is being decided here.
+**1. It was not ruled against — it was affirmatively kept, twice, in the month it died.**
+GH-1563 (2026-07-19) put it on the prune-candidate table as "Capable but bypassed — wire
+in or delete"; the disposition was *wire in* (`8dc8dddf`), and seven siblings on that same
+table were deleted while this one was pulled back. Eight days later GH-1591/1592
+(`a2cdbe71`) made it the **survivor of a merge**, deleting `archive_items` *into* it. Then
+GH-1662 Phase 2 (`e5ba8446`) deleted both of its consumer skills — `caretake` and `plan` —
+in a prose-volume collapse whose commit message never says batch, bulk or archive, and
+Phase 4 deleted the server four days later.
 
-**2. Its generic-field shape let bulk state writes ship unguarded — the precise failure
-Decision 2 forecloses.** `batch_update` took Workflow State because a tool with a "which
-fields?" parameter naturally does. Its own plan treats the guard as someone else's
-dependency: *"If #19 has not landed, `batch_update` uses direct state names **without
-transition validation**"* (GH-0021 plan, Implementation Approach). It shipped that way,
-and the fix needed its own unit a year later — `a352a7c4`, GH-1615, which enforced
-"transition legality ahead of ALL mutation … per-issue in `batch_update` (**with its own
-fail-closed current-state fetch, distinct from the pre-existing fail-open**
-`skipIfAtOrPast` optimization)", and in passing found `create_issue` to be "the sixth,
-previously-unvalidated Workflow State writer."
+`grep -niE 'batch|bulk'` over both v2 design records returns **zero hits**: not in the kept
+list, not in the dropped list, which disposes of the whole MCP server as one line item with
+no per-tool ruling. **Nobody ruled on bulk.** So this design is not re-proposing something
+the repo rejected — but neither may it claim v1 as an endorsement. The question is genuinely
+open, which is why it is being decided here.
 
-Six writers of one field, one of them bulk and fail-open, retrofitted with a guard by a
-dedicated unit. That is the GH-1843 shape and the bulk-`move` hazard, both realized, in
-this repo, from this exact feature. Decision 2 is not a hypothetical precaution — it is
-the one structural difference that would have prevented it, because a verb that names its
-field in the verb has no parameter for Workflow State to arrive through.
+It was also *used*: the v1 PostToolUse activity log records **31 `batch_update` invocations
+across 7 distinct sessions** in the 2026-05-03 → 2026-06-15 window it covers, two sessions
+firing 6-8 calls in half an hour. Sustained use, not a smoke test.
+
+**2. Its generic-field shape let bulk state writes ship unguarded for five months — the
+precise failure Decision 2 forecloses.** `batch_update` took Workflow State because a tool
+with a `field: z.enum(["workflow_state","estimate","priority"])` parameter naturally does.
+Its own plan treated the guard as someone else's dependency: *"If #19 has not landed,
+`batch_update` uses direct state names **without transition validation**"* (GH-0021 plan,
+Implementation Approach). It shipped that way on 2026-02-18, and what that meant is stated
+without hedging in the audit that eventually found it
+(`thoughts/shared/research/2026-07-26-GH-1592-server-side-invariants-sweep.md:117,149`):
+
+> `batch_update` with `field: "workflow_state"`: no validation of any kind — not
+> `isValidState`, not lock guard, not command allowlist… **This is the widest bypass and is
+> absent from every issue body.** … `batch_update` can set `In Progress` on N issues with
+> zero checks.
+
+The guard landed 2026-07-26 (`a352a7c4`, GH-1615) — "transition legality ahead of ALL
+mutation … per-issue in `batch_update`, **with its own fail-closed current-state fetch,
+distinct from the pre-existing fail-open** `skipIfAtOrPast` optimization" — and found
+`create_issue` to be "the sixth, previously-unvalidated Workflow State writer." Five months
+unguarded, closed only because an audit went looking, five days before the tool was deleted.
+
+Six writers of one field, one of them bulk and fail-open, invisible to every issue body
+until swept. That is the GH-1843 shape and the bulk-`move` hazard, both realized, in this
+repo, from this exact feature. Decision 2 is not a hypothetical precaution — it is the one
+structural difference that would have prevented it, because a verb that names its field in
+the verb has no parameter for Workflow State to arrive through.
+
+v1 saw the principle clearly for the adjacent case and pinned it with a test: no `force`
+flag ever reached the bulk path, because "bulk force is exactly the disaster the guard
+exists to prevent; repair goes through `save_issue(force: true)` **one issue at a time**"
+(`batch-tools.test.ts:699`). The same reasoning applied to the field enum would have
+excluded `workflow_state` on day one.
 
 **3. Its cost model does not survive the v2 rewrite, and copying it would be the GH-1807
 mistake.** GH-0021 planned aliased *mutations* — `u1:`/`u2:` `updateProjectV2ItemFieldValue`
@@ -141,11 +170,34 @@ batching the *reads* is where the measured waste actually is. Same conclusion th
 reached about caching — "cache invalidation happens once per batch, not per-item" — which
 v2 gets from `mutationCache` for free.
 
-One v1 decision is deliberately **not** inherited: GH-0021 chose "not adding rollback
-semantics (field updates are idempotent; partial results are acceptable)" and reported
-per-issue status instead. That is right for a tool a model calls and can re-read; it is
-wrong for a CLI a human types, where a mistyped number that silently does nothing is
-discovered later or never. Hence fail-closed resolution before the first write (Decision 4).
+**4. Three of this record's decisions are things v1 already got right, and one is the thing
+it got wrong.** Worth stating plainly, because it means Decisions 3-5 are not novel:
+
+- **Targets were an explicit list, never a selector** — `issues: z.array(z.number()).min(1).max(50)`.
+  The one selector in the tool (`filter: {workflowStates, updatedBefore?, maxItems?}`) belonged
+  to the *archive* half folded in later, never to field updates. Decision 3 agrees.
+- **No dry run on field updates, deliberately** — "Not adding pre-execution confirmation
+  prompts (tool callers decide what to batch)" (GH-0021, *What We're NOT Doing*). The final
+  `dryRun` parameter's own description reads "Archive mode with `filter` only." Decision 4 agrees,
+  and for the same reason: an explicit list needs no dry run to become visible.
+- **Zero audit comments** — `batch-tools.ts` contains no comment-writing code at all. v1 bulk
+  was no worse than v1 single-issue here; neither wrote an automatic trail. Decision 5 agrees.
+- **The one it got wrong is the field enum**, which is point 2 and the whole of Decision 2.
+
+What is **not** inherited is its failure handling. GH-0021 chose "not adding rollback semantics
+(field updates are idempotent; partial results are acceptable)", reporting per-issue status and
+continuing; a thrown mutation failed a whole 50-issue chunk and moved to the next one, with **no
+consecutive-failure breaker at all**. That is defensible for a tool a model calls and can
+re-read; it is wrong for a CLI a human types, where a mistyped number that silently does nothing
+is discovered later or never, and it is wrong on a budget where a rate limit mid-run would burn
+every remaining chunk. Hence the breaker (Decision 4) and fail-closed resolution before the first
+write — for which v1 supplies its own precedent in the adjacent tool: `create_sub_issues` enforced
+its estimate ceiling up front so that "a violation creates **ZERO** issues."
+
+And one v1 near-miss is exactly why Decision 4 keeps `--json` honest: review found a
+`{issues, dryRun: true}` call that **archived for real and reported `dryRun: false`**
+(`d01119aa`). It was caught on the branch and never reached main — but it is the same defect
+`prune`'s "never silently reports a dry run" rule exists to prevent, arriving independently.
 
 ## Decision 1 — Give `Estimate` a single-item verb, before anything bulk
 
@@ -154,6 +206,10 @@ discovered later or never. Hence fail-closed resolution before the first write (
 liveOptionFields: [ESTIMATE_FIELD])` → `setSingleSelect`/`clearField` → read-back.
 Options come from the live field, not a hardcoded `XS..XL`, for the reason `priority`
 already gives — a host repo owns its scheme.
+
+This is also a **v1 → v2 regression**, not merely an omission: v1 could set Estimate on an
+existing issue (it is in `batch_update`'s field enum, and `create_sub_issues` set it
+per-child), and the capability was lost with the server without anyone ruling on it.
 
 The deciding property is that **this is the whole fix for the population that
 motivated the ask.** Six unsized Backlog items exist because no verb can size them,
@@ -332,10 +388,17 @@ optimization is worth having.** If only one is ever built, GH-2128 is the one.
    row per issue keeps the lane readable — but it means the missing-Estimate signal is
    currently both unremediable *and* invisible for exactly the items that have it. Worth a
    separate look; it is not this unit's to fix, and the argument here does not rest on it.
-5. **This record does not establish that anyone will use the bulk form.** The measured
-   waste is certain; the demand is inferred from one ten-item correction described in the
-   unit's own body. Unit 1 stands on its own merits. If units 2-3 are cut, nothing about
-   the board is left broken — which is the honest reason they are ranked second.
+5. **Demand is evidenced after all, but not for the shape recommended.** An earlier draft of
+   this record said demand was inferred from one ten-item correction in the unit's body. That
+   understated it: v1's PostToolUse activity log records **31 `batch_update` invocations across
+   7 distinct sessions** in the six-week window it covers, two sessions firing 6-8 calls in
+   half an hour. But `batch_update` took **workflow_state, estimate and priority**, and nothing
+   in that log says how the 31 split across the three. If most were state changes — the field
+   Decision 2 excludes on purpose — the recommendation serves less of that demand than the raw
+   count suggests, and the honest reading is "bulk field editing was used", not "bulk *priority
+   and estimate* editing was used." That split was not chased. GH-2130 stays P3 on the
+   uncertainty; GH-2128 does not depend on it, because it closes a defect rather than an
+   inefficiency.
 
 ## Evidence
 
@@ -356,6 +419,11 @@ optimization is worth having.** If only one is ever built, GH-2128 is the one.
 - `thoughts/shared/plans/2026-02-16-GH-0021-batch-operations.md` — v1's `batch_update` plan: scope (state/estimate/priority), aliased mutations, and the "without transition validation" coordination note.
 - `689898f1` — `batch_update` ships; `75d125a5` (GH-1611) absorbs `archive_items`; `65ec3f56` (GH-1662 Phase 4) deletes it with the whole MCP server.
 - `a352a7c4` (GH-1615) — transition legality retrofitted per-issue into `batch_update`, replacing a fail-open optimization; names `create_issue` as "the sixth, previously-unvalidated Workflow State writer."
+- `thoughts/shared/research/2026-07-26-GH-1592-server-side-invariants-sweep.md:117,149` — "the widest bypass and is absent from every issue body"; "`batch_update` can set `In Progress` on N issues with zero checks."
+- `8dc8dddf` (GH-1566) — `batch_update` kept and wired in while seven prune-candidate siblings were deleted; `e5ba8446` (GH-1662 Phase 2) — its two consumer skills deleted without naming it. Neither v2 design record mentions batch or bulk at all.
+- `batch-tools.test.ts:699` — no bulk `force`, pinned by test: "repair goes through `save_issue(force: true)` one issue at a time."
+- `d01119aa` — a `dryRun: true` field call that archived for real and reported `dryRun: false`, caught in review before main.
+- v1 activity log (`~/.ralph-hero/activity/`, 2026-05-03 → 2026-06-15) — 31 `batch_update` invocations across 7 sessions.
 - GH-1843 — one rule in five copies; the drift shape Decision 2 is structured against.
 - GH-1817 — this board's GraphQL budget driven to 0/5000; why 700 pts for 50 field writes is worth avoiding.
 - GH-1807 — cost tracks `nodeCount`; why the batched document must be probed, not derived.
