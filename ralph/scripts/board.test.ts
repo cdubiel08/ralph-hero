@@ -79,6 +79,7 @@ import {
   rankNext,
   backlogReadinessGaps,
   type DoctorReport,
+  integrationPolicy,
   readiness,
   realExec,
   reconcile,
@@ -2824,6 +2825,137 @@ describe("readiness", () => {
     const report = readiness(ctx);
     expect(report.checks.find((c) => c.name === "pr-required")?.status).toBe("info");
     expect(report.readyFor).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Readiness integration policy (GH-2138) — Level-3 concurrency checks that
+// emit a RECOMMENDED POLICY, never a table; unreadable inputs read info,
+// never miss; nothing here can move readyFor.
+// ---------------------------------------------------------------------------
+
+const RS = "\x1e";
+
+/** Overlay repo metadata, effective branch rules, first-parent history, and
+ *  the closed-PR window on the FakeGh exec. Omitted pieces stay unreadable
+ *  (FakeGh's base exec answers exit 1), which IS the degraded case. */
+function withIntegration(
+  gh: FakeGh,
+  opts: {
+    rules?: Array<Record<string, unknown>>;
+    gitLog?: string;
+    pulls?: Array<{ created_at: string; merged_at: string | null }>;
+  },
+) {
+  const base = gh.exec;
+  gh.exec = (argv, stdin) => {
+    const cmd = argv.join(" ");
+    if (cmd === "gh api --hostname github.com repos/cdubiel08/ralph-hero")
+      return { code: 0, stdout: JSON.stringify({ default_branch: "main" }), stderr: "" };
+    if (cmd.endsWith("rules/branches/main")) {
+      if (!opts.rules) return { code: 1, stdout: "", stderr: "HTTP 500" };
+      return { code: 0, stdout: JSON.stringify(opts.rules), stderr: "" };
+    }
+    if (argv[0] === "git" && argv.includes("log")) {
+      if (opts.gitLog === undefined) return { code: 1, stdout: "", stderr: "bad revision" };
+      // Only origin/main answers — the worktree's HEAD is a feature branch.
+      return argv.includes("origin/main")
+        ? { code: 0, stdout: opts.gitLog, stderr: "" }
+        : { code: 1, stdout: "", stderr: "bad revision" };
+    }
+    if (cmd.includes("/pulls?state=closed") && opts.pulls)
+      return { code: 0, stdout: JSON.stringify(opts.pulls), stderr: "" };
+    return base(argv, stdin);
+  };
+}
+
+/** n landings a day apart; files(i) = what landing i touched. */
+function landings(n: number, files: (i: number) => string[]): string {
+  let out = "";
+  for (let i = 0; i < n; i++) {
+    out += `${RS}${1_700_000_000 + i * 86_400}\n${files(i).join("\n")}\n`;
+  }
+  return out;
+}
+
+describe("readiness integration policy (GH-2138)", () => {
+  const policyCheck = (gh: FakeGh) => {
+    const ctx = makeCtx(gh, "me@test", mkdtempSync(join(tmpdir(), "readiness-integ-")));
+    const report = readiness(ctx);
+    return { report, check: report.checks.find((c) => c.name === "integration-policy")! };
+  };
+
+  it("a merge queue reads ok — the recommended policy is already in place", () => {
+    const gh = new FakeGh();
+    withIntegration(gh, { rules: [{ type: "pull_request" }, { type: "merge_queue" }] });
+    const { check } = policyCheck(gh);
+    expect(check.level).toBe(3);
+    expect(check.status).toBe("ok");
+    expect(check.detail).toContain("merge queue active");
+    expect(check.recommend).toBeUndefined();
+  });
+
+  it("strict without a queue recommends a merge queue by name (the org-standard case)", () => {
+    const gh = new FakeGh();
+    withIntegration(gh, {
+      rules: [
+        { type: "pull_request" },
+        { type: "required_status_checks", parameters: { strict_required_status_checks_policy: true } },
+      ],
+    });
+    const { check } = policyCheck(gh);
+    expect(check.status).toBe("info"); // advisory, never a gap
+    expect(check.detail).toContain("require-up-to-date");
+    expect(check.recommend).toContain("merge queue");
+  });
+
+  it("a hot collision surface with no queue and strict unset names the file and the decision", () => {
+    const gh = new FakeGh();
+    withIntegration(gh, {
+      rules: [{ type: "pull_request" }],
+      // 12 landings; package-lock.json in 6 of them (≥ ceil(12·0.3)=4 → hot)
+      gitLog: landings(12, (i) => (i % 2 === 0 ? ["package-lock.json", `src/f${i}.ts`] : [`src/f${i}.ts`])),
+      pulls: [{ created_at: "2026-08-01T00:00:00Z", merged_at: "2026-08-02T00:00:00Z" }],
+    });
+    const { check } = policyCheck(gh);
+    expect(check.status).toBe("info");
+    expect(check.detail).toContain("package-lock.json (6/12)");
+    expect(check.detail).toContain("median PR lifetime 24h");
+    expect(check.recommend).toContain("substrate, not decomposition");
+    expect(check.recommend).toContain("merge queue before narrowing agent concurrency");
+  });
+
+  it("a quiet measured repo reads ok with the load it measured — a decision, not a table", () => {
+    const gh = new FakeGh();
+    withIntegration(gh, {
+      rules: [{ type: "pull_request" }],
+      gitLog: landings(12, (i) => [`src/f${i}.ts`]), // no shared files at all
+    });
+    const { check } = policyCheck(gh);
+    expect(check.status).toBe("ok");
+    expect(check.detail).toContain("no integration pressure measured");
+    expect(check.detail).toContain("landings/wk");
+  });
+
+  it("an unreadable ruleset degrades to info and recommends nothing — never a manufactured gap", () => {
+    const gh = new FakeGh();
+    withIntegration(gh, { gitLog: landings(12, (i) => [`src/f${i}.ts`]) }); // rules omitted = unreadable
+    const { report, check } = policyCheck(gh);
+    expect(check.status).toBe("info");
+    expect(check.detail).toContain("not evaluated");
+    expect(check.recommend).toBeUndefined();
+    // and it can never move readyFor: no "miss" exists for this check
+    expect(report.checks.filter((c) => c.name === "integration-policy" && c.status === "miss")).toEqual([]);
+  });
+
+  it("too few landings refuses to assess collision rather than guessing", () => {
+    const verdict = integrationPolicy({
+      mergeQueue: false, strict: false, mergesPerWeek: 2, medianPrHours: null,
+      hotFiles: null, mergesMeasured: 3,
+    });
+    expect(verdict.status).toBe("info");
+    expect(verdict.detail).toContain("3 landing(s) measured, need 10");
+    expect(verdict.recommend).toBeUndefined();
   });
 });
 

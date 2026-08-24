@@ -8634,6 +8634,106 @@ export const READINESS_LEVELS: Record<ReadinessLevel, string> = {
   3: "autonomous loop (scheduler-owned ticks)",
 };
 
+// — Integration policy (GH-2138) — Level-3 concurrency checks that emit a
+// RECOMMENDED POLICY, not a table: a report that outputs a decision gets
+// read; one that outputs a table joins the twelve unread dependabot PRs
+// (GH-2048's honest limit). Ralph recommends a merge queue and never
+// implements one (a named non-goal — GitHub ships this). Advisory twice
+// over: status is only ever ok/info, so nothing here can move readyFor.
+
+/** First-parent landings measured for the collision surface. */
+const INTEGRATION_MERGE_WINDOW = 50;
+/** A file is "hot" when it appears in at least this share of the window. */
+const INTEGRATION_HOT_SHARE = 0.3;
+/** Below this many landings a collision share is noise, not a signal. */
+const INTEGRATION_MIN_SAMPLE = 10;
+
+export interface IntegrationSignals {
+  /** null on every input = unreadable — and a check we cannot run must not
+   *  manufacture a gap, so each null degrades the verdict toward info. */
+  mergeQueue: boolean | null;
+  /** ruleset "require branches to be up to date" (strict status checks) */
+  strict: boolean | null;
+  mergesPerWeek: number | null;
+  medianPrHours: number | null;
+  /** files in ≥ INTEGRATION_HOT_SHARE of measured landings, formatted
+   *  "path (n/window)"; [] = measured and quiet; null = not measured. */
+  hotFiles: string[] | null;
+  /** landings the window actually held — 0 = history unreadable/empty. */
+  mergesMeasured: number;
+}
+
+/** The decision, pure. Exported for tests. */
+export function integrationPolicy(
+  s: IntegrationSignals,
+): { status: "ok" | "info"; detail: string; recommend?: string } {
+  const load: string[] = [];
+  if (s.mergesPerWeek !== null) load.push(`${s.mergesPerWeek} landings/wk on the default branch`);
+  if (s.medianPrHours !== null) load.push(`median PR lifetime ${s.medianPrHours}h`);
+  const loadStr = load.length ? ` — measured: ${load.join(", ")}` : "";
+
+  if (s.mergeQueue === true) {
+    return {
+      status: "ok",
+      detail:
+        "merge queue active — verified-as-landed with no human or agent rebasing; " +
+        `no integration-policy change recommended${loadStr}`,
+    };
+  }
+  if (s.mergeQueue === null) {
+    // Unreadable ruleset: the recommendation hinges on whether a queue
+    // exists, so there is no honest decision to emit — say so, recommend
+    // nothing, and never render the unread as a gap.
+    return {
+      status: "info",
+      detail: `not evaluated: branch ruleset unreadable (merge queue / require-up-to-date unknown)${loadStr}`,
+    };
+  }
+  if (s.strict === true) {
+    // The org-standard case ("PRs must be up to date with main"): strict
+    // without a queue forces a rebase after every merge whether or not
+    // anything conflicts — O(n²) — for a property the queue buys exactly
+    // once, at the only moment freshness is worth anything.
+    return {
+      status: "info",
+      detail:
+        "require-up-to-date (strict) is set with no merge queue — every merge obsoletes every open " +
+        `PR's freshness, a rebase bill paid by humans or agents${loadStr}`,
+      recommend:
+        "enable GitHub's merge queue on the default branch — it rebases and tests speculatively " +
+        "exactly once at merge time, delivering tested-against-HEAD with nobody rebasing",
+    };
+  }
+  if (s.hotFiles === null) {
+    return {
+      status: "info",
+      detail:
+        (s.mergesMeasured > 0
+          ? `collision surface not assessed (${s.mergesMeasured} landing(s) measured, ` +
+            `need ${INTEGRATION_MIN_SAMPLE})`
+          : "collision surface not measured (default-branch history unreadable)") +
+        `; no merge queue, strict unset${loadStr}`,
+    };
+  }
+  if (s.hotFiles.length > 0) {
+    return {
+      status: "info",
+      detail:
+        `high collision surface with no merge queue and strict unset: ${s.hotFiles.join(", ")}` +
+        loadStr,
+      recommend:
+        "this churn is substrate, not decomposition — recommend a merge queue before narrowing " +
+        "agent concurrency",
+    };
+  }
+  return {
+    status: "ok",
+    detail:
+      "no integration pressure measured — plain PRs against an un-strict default branch fit " +
+      `this load (no hot files in the last ${s.mergesMeasured} landings)${loadStr}`,
+  };
+}
+
 export function readiness(ctx: Ctx): ReadinessReport {
   const checks: ReadinessCheck[] = [];
   const add = (
@@ -8718,20 +8818,27 @@ export function readiness(ctx: Ctx): ReadinessReport {
   // Kept for the merge-gate check below (audit C1): a recommendation whose
   // alternative the tool can check and doesn't is a false positive that
   // trains operators to ignore the report. null = unreadable, never "no".
-  let branchRules: Array<{ type?: string }> | null = null;
+  type BranchRule = {
+    type?: string;
+    parameters?: { strict_required_status_checks_policy?: boolean };
+  };
+  let branchRules: BranchRule[] | null = null;
+  // Kept for the integration-policy check below (GH-2138): the merge history
+  // that measures collision has to be read off the DEFAULT branch, not
+  // whatever branch this worktree happens to have checked out.
+  let defaultBranch: string | null = null;
   const repoInfo = ctx.exec(["gh", "api", "--hostname", ctx.cfg.host, `repos/${ctx.cfg.owner}/${ctx.cfg.repo}`]);
   if (repoInfo.code === 0) {
     try {
       const def = JSON.parse(repoInfo.stdout).default_branch as string;
+      defaultBranch = def;
       const rules = ctx.exec([
         "gh", "api", "--hostname", ctx.cfg.host,
         `repos/${ctx.cfg.owner}/${ctx.cfg.repo}/rules/branches/${def}`,
       ]);
       if (rules.code === 0) {
-        branchRules = JSON.parse(rules.stdout) as Array<{ type?: string }>;
-        const requiresPr = branchRules.some(
-          (r) => r.type === "pull_request",
-        );
+        branchRules = JSON.parse(rules.stdout) as BranchRule[];
+        const requiresPr = branchRules.some((r) => r.type === "pull_request");
         prStatus = requiresPr ? "ok" : "miss";
         prDetail = requiresPr ? `"${def}" requires PRs (active ruleset)` : `no PR-required rule on "${def}"`;
       }
@@ -8784,6 +8891,85 @@ export function readiness(ctx: Ctx): ReadinessReport {
         "scheduled jobs), add an `apply` block to .github/ralph-merge-policy.json — the board then refuses to " +
         "call such work Done without deployed-and-verified evidence. Repos whose changes go live on merge need none of it",
   );
+
+  // Integration policy (GH-2138). Level 3 is the home because concurrency
+  // policy only becomes a question once the autonomous loop runs — which is
+  // what Level 3 IS; a repo driving interactively hears nothing new
+  // elsewhere. Every measurement below degrades to null on any failed read,
+  // and integrationPolicy() renders null as info, never miss.
+  {
+    const mergeQueue = branchRules === null ? null : branchRules.some((r) => r.type === "merge_queue");
+    const strict =
+      branchRules === null
+        ? null
+        : branchRules.some(
+            (r) =>
+              r.type === "required_status_checks" &&
+              r.parameters?.strict_required_status_checks_policy === true,
+          );
+
+    // Collision surface + velocity: first-parent landings on the DEFAULT
+    // branch (origin's view first — this worktree's HEAD is usually a
+    // feature branch). `-m` with `--first-parent` makes merge commits show
+    // their first-parent diff, so squash-merge and merge-commit repos
+    // measure the same thing: what each landing touched.
+    let mergesPerWeek: number | null = null;
+    let hotFiles: string[] | null = null;
+    let mergesMeasured = 0;
+    const refCandidates = defaultBranch ? [`origin/${defaultBranch}`, defaultBranch, "HEAD"] : ["HEAD"];
+    for (const ref of refCandidates) {
+      const log = ctx.exec([
+        "git", "-C", ctx.repoRoot, "log", "--first-parent", "-m",
+        "-n", String(INTEGRATION_MERGE_WINDOW), "--format=%x1e%ct", "--name-only", ref, "--",
+      ]);
+      if (log.code !== 0) continue;
+      const chunks = log.stdout.split("\x1e").map((c) => c.trim()).filter(Boolean);
+      mergesMeasured = chunks.length;
+      const times: number[] = [];
+      const touched = new Map<string, number>();
+      for (const chunk of chunks) {
+        const lines = chunk.split("\n").map((l) => l.trim()).filter(Boolean);
+        const ct = Number(lines.shift());
+        if (Number.isFinite(ct)) times.push(ct);
+        for (const f of new Set(lines)) touched.set(f, (touched.get(f) ?? 0) + 1);
+      }
+      if (times.length >= 2) {
+        // Floor the span at a day so a burst of landings reads as high
+        // velocity rather than dividing by zero.
+        const weeks = Math.max((Math.max(...times) - Math.min(...times)) / 604_800, 1 / 7);
+        mergesPerWeek = Math.round((mergesMeasured / weeks) * 10) / 10;
+      }
+      if (mergesMeasured >= INTEGRATION_MIN_SAMPLE) {
+        const floor = Math.ceil(mergesMeasured * INTEGRATION_HOT_SHARE);
+        hotFiles = [...touched.entries()]
+          .filter(([, n]) => n >= floor)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([f, n]) => `${f} (${n}/${mergesMeasured})`);
+      }
+      break;
+    }
+
+    // Median PR lifetime: the last window of closed PRs, merged ones only.
+    let medianPrHours: number | null = null;
+    const pulls = ctx.exec([
+      "gh", "api", "--hostname", ctx.cfg.host,
+      `repos/${ctx.cfg.owner}/${ctx.cfg.repo}/pulls?state=closed&per_page=${INTEGRATION_MERGE_WINDOW}`,
+    ]);
+    if (pulls.code === 0) {
+      try {
+        const hours = (JSON.parse(pulls.stdout) as Array<{ created_at?: string; merged_at?: string | null }>)
+          .filter((p) => p.merged_at && p.created_at)
+          .map((p) => (Date.parse(p.merged_at!) - Date.parse(p.created_at!)) / 3_600_000)
+          .filter((h) => Number.isFinite(h) && h >= 0)
+          .sort((a, b) => a - b);
+        if (hours.length > 0) medianPrHours = Math.round(hours[Math.floor(hours.length / 2)] * 10) / 10;
+      } catch { /* unreadable payload = not measured, never a gap */ }
+    }
+
+    const pol = integrationPolicy({ mergeQueue, strict, mergesPerWeek, medianPrHours, hotFiles, mergesMeasured });
+    add(3, "integration-policy", pol.status, pol.detail, pol.recommend);
+  }
   // `||`, not `??`: tick.sh's `${RALPH_HOME:-...}` treats empty as unset, and
   // this row must read the same files the scripts write.
   const ralphHome = process.env.RALPH_HOME || join(homedir(), ".ralph");
