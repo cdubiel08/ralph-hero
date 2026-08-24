@@ -29,6 +29,8 @@ The board CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/board` — that placeholder reso
 - **Outcome, no issue** → `board create --backlog --title … --body … --priority P0..P3 --estimate XS..XL` first. The board knows before you start. There is no default landing state: `--backlog` is approved work (Priority and Estimate required); `--intake` files something tracked but not yet approved, which no lane will pick up.
 - **Empty** → fold any replies on Human Needed items first (`board list --state human`), then `board next` and say in one line why you're taking it.
 
+Anything you file — the outcome above, a follow-up, a decomposition — is shaped by [references/work-shape.md](references/work-shape.md): the unit definition (one issue = one PR, independently mergeable), Estimate as agent context budget, blocked-by vs parent, never rebase for freshness alone. Read it before filing.
+
 Claim it: `board claim NNN`. A live foreign claim → pick other work.
 
 ## Boundaries
