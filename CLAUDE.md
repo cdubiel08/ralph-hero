@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-`ralph` v2 (GH-1662) — a Claude Code plugin for board-driven autonomous development over a GitHub Projects V2 board. Two skills, one read-only agent, one typed board CLI, four hooks (three courtesy funnels + one PostToolUse observation), and a scheduler-owned loop. The driving model sequences its own research/plan/build/verify; enforcement is code, not prose. Design record (normative): `thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`.
+`ralph` v2 (GH-1662) — a Claude Code plugin for board-driven autonomous development over a GitHub Projects V2 board. Two skills, one read-only agent, one typed board CLI, four hooks (three courtesy funnels + one PostToolUse observation), and a scheduler-owned loop. The driving model sequences its own research/plan/build/verify; enforcement is code, not prose. Design record (normative): `thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`. The shape of the *work* the board carries — units, sizing, ordering, freshness — is `thoughts/shared/ideas/2026-08-23-board-work-shape-design.md` (normative), with its §2 vocabulary projected verbatim into the root `CONTEXT.md`.
 
 **Operator asks — answer from `plugin/ralph-herdr/CHEATSHEET.md`, don't re-derive:** "launch a fleet" → `bash plugin/ralph-herdr/scripts/work-fleet.sh [NNN...]` (§6); "open the cockpit" → `herdr plugin action invoke cockpit --plugin ralph-herdr` (§3); "what's on the board / who's working" → `board list` / `board next` / `herdr agent list` (§7). Measured (GH-2074/GH-2075): without this pointer every session re-discovers these paths in 5–15 tool calls, and haiku lands on `tick.sh` instead of the fleet.
 
