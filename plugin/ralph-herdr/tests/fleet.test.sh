@@ -789,6 +789,59 @@ line_has "work-fleet: the capability is discoverable from --help" \
 rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
 rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc
 
+# ═══ 10. work-fleet.sh — the in-flight file surface at spawn (GH-2139) ═══════
+# Fact, never prediction: the surface is what open fleet PRs already hold, one
+# `surface:` line per PR labelled by unit. Advisory like the deps: line — it
+# never refuses a spawn — and the three empty-ish renderings are pinned
+# DISTINCT: "none in flight" (a real clean answer), "NOT CHECKED for #N" (one
+# unreadable file list), "NOT CHECKED — could not list" (the list read failed).
+printf '{"frontier":[{"number":501,"title":"One"}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+
+run_wf
+is "surface: exits 0 with no open PRs" "0" "$RC"
+line_has "surface: no open PRs is the honest empty" "$OUT" "surface: none in flight"
+line_lacks "surface: a clean empty is never NOT CHECKED" "$OUT" "surface: NOT CHECKED"
+
+cat >"$FAKE_GH_FIXTURES/gh-prs.json" <<'EOF'
+[{"number":901,"headRefName":"feat/601-alpha-thing"},
+ {"number":902,"headRefName":"dependabot/npm_and_yarn/foo-1.2.3"},
+ {"number":903,"headRefName":"feature/GH-77"}]
+EOF
+printf '{"files":[{"path":"a/one.sh"},{"path":"b/two.ts"}]}\n' \
+  >"$FAKE_GH_FIXTURES/gh-pr-files.901.json"
+printf '{"files":[{"path":"c/three.md"}]}\n' \
+  >"$FAKE_GH_FIXTURES/gh-pr-files.903.json"
+run_wf
+line_has "surface: a fleet PR prints its unit and files" \
+  "$OUT" "surface: GH-601 (#901): a/one.sh b/two.ts"
+line_has "surface: the legacy feature/GH-N grammar still resolves" \
+  "$OUT" "surface: GH-77 (#903): c/three.md"
+line_lacks "surface: a non-fleet branch is not part of the surface" "$OUT" "#902"
+line_lacks "surface: with PRs in flight, none-in-flight does not print" \
+  "$OUT" "none in flight"
+line_has "surface: the spawn still happens beside the surface" "$OUT" "would spawn GH-501"
+
+printf '1\n' >"$FAKE_GH_FIXTURES/gh-pr-files.901.rc"
+run_wf
+is "surface: one unreadable file list never blocks the spawn" "0" "$RC"
+line_has "surface: the unreadable PR is named NOT CHECKED, per PR" \
+  "$OUT" "surface: NOT CHECKED for #901"
+line_has "surface: the readable sibling still prints" "$OUT" "surface: GH-77 (#903)"
+rm -f "$FAKE_GH_FIXTURES/gh-pr-files.901.rc"
+
+printf '1\n' >"$FAKE_GH_FIXTURES/gh-prs.rc"
+run_wf
+is "surface: an unreadable PR list never blocks the spawn" "0" "$RC"
+line_has "surface: a failed list read says NOT CHECKED, loudly" \
+  "$OUT" "surface: NOT CHECKED — could not list open PRs"
+line_lacks "surface: could-not-read never renders as none-in-flight" \
+  "$OUT" "surface: none in flight"
+line_has "surface: the spawn proceeds through the failed read" "$OUT" "would spawn GH-501"
+
+rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
+rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc
+
 # ═══ 10. work-fleet.sh — the guard is observable, and sees past the graph ════
 # GH-2109, two halves.
 #
