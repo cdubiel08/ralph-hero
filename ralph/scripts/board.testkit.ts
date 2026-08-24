@@ -922,6 +922,9 @@ export class FakeGh {
       } else if (variables.optionId && (variables.fieldId === "F_priority" || variables.fieldId === "F_Priority") && fi) {
         fi.priority = String(variables.optionId).replace(/^[^_]*_/, "");
         this.mutations.push(`setPriority(#${itemNum}, ${fi.priority})`);
+      } else if (variables.optionId && (variables.fieldId === "F_estimate" || variables.fieldId === "F_Estimate") && fi) {
+        fi.estimate = String(variables.optionId).replace(/^[^_]*_/, "");
+        this.mutations.push(`setEstimate(#${itemNum}, ${fi.estimate})`);
       } else {
         this.mutations.push(`setField(${variables.fieldId})`);
       }
@@ -933,6 +936,7 @@ export class FakeGh {
       if (fi && variables.fieldId === "F_claim" && !this.stickyClaim) fi.claim = null;
       if (fi && variables.fieldId === "F_defer") fi.defer = null;
       if (fi && (variables.fieldId === "F_priority" || variables.fieldId === "F_Priority")) fi.priority = null;
+      if (fi && (variables.fieldId === "F_estimate" || variables.fieldId === "F_Estimate")) fi.estimate = null;
       this.mutations.push(`clearField(#${itemNum}, ${variables.fieldId})`);
       return data({ clearProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
     }
