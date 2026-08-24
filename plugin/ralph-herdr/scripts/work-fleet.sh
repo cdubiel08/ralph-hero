@@ -59,6 +59,9 @@
 #   RALPH_HERDR_REFILL_BUDGET    max total spawns this run (default 8)
 #   RALPH_HERDR_DEP_REF_CAP body references dep-refs.sh resolves per candidate
 #                           (default 10; past the cap is reported, not dropped)
+#   RALPH_HERDR_SURFACE_CAP open fleet PRs whose file lists the in-flight
+#                           surface reads (default 10; past the cap is
+#                           reported, not dropped)
 #   RALPH_HERDR_DRY_RUN     "true" → per-issue plans printed, nothing spawned,
 #                           nothing armed, no briefs written
 set -euo pipefail
@@ -91,8 +94,14 @@ trusted. On the RANKED path only, a candidate whose BODY names an OPEN own-repo
 issue that no `board dep` edge records is refused and named — wire the edge, or
 name the issue explicitly, which is the override.
 
+Before any spawn the run prints the IN-FLIGHT FILE SURFACE — the files every
+currently-open fleet PR holds, one `surface:` line per PR labelled by unit, or
+`surface: none in flight`. Fact, never prediction: advisory like the deps:
+line, and an unreadable list prints NOT CHECKED rather than rendering empty.
+
 Knobs: RALPH_HERDR_FLEET, RALPH_HERDR_REFILL / _TTL_MIN / _BUDGET,
        RALPH_HERDR_DEP_REF_CAP (body references resolved per candidate, 10),
+       RALPH_HERDR_SURFACE_CAP (open fleet PR file lists read, 10),
        RALPH_HERDR_DRY_RUN=true (plans everything, spawns and arms nothing).
 EOF
 }
@@ -246,6 +255,85 @@ unwired_refs() {
   return 1
 }
 
+# inflight_surface — the files every currently-open FLEET PR holds, one
+# `surface:` line per PR labelled by unit (GH-2139). FACT, never prediction:
+# at spawn time nobody knows which files a unit WILL touch, so predicted
+# overlap is a guess dressed as a measurement — the filing rejected both
+# predicting from history (wrong for any unit doing something new, which is
+# most of them) and a declared-surface field (unset exactly when it matters).
+# What IS knowable is what the fleet currently holds open: the branches
+# deliver-queue already sees.
+#
+# Advisory by construction, same character as the deps: line — never refuses a
+# spawn, never reorders, never substitutes work. Fails OPEN, loudly: an
+# unreadable list prints NOT CHECKED and never renders as an empty surface
+# (the GH-1971/GH-2052 rule — absence and silence must not read alike — so
+# "none in flight", "NOT CHECKED for #N" and "could not list" are three
+# distinct renderings, pinned by test).
+#
+# Bounded: one `gh pr list` plus one `gh pr view --json files` per open fleet
+# PR, capped at RALPH_HERDR_SURFACE_CAP (10); past the cap is REPORTED, not
+# dropped. Branch→unit is the closed BRANCH_KINDS set (contracts.ts) plus the
+# legacy feature/GH-N — a kind this spelling ever misses UNDER-reports (that
+# PR drops out of the surface), never refuses anything, which is the safe
+# direction for an advisory line.
+inflight_surface() {
+  local cap list rows n branch unit rest files shown=0 over=0 any=""
+  cap="${RALPH_HERDR_SURFACE_CAP:-10}"
+  case "$cap" in '' | *[!0-9]*) cap=10 ;; esac
+  command -v gh >/dev/null 2>&1 || {
+    echo "surface: NOT CHECKED — gh is not on PATH (not the same as none in flight)"
+    return 0
+  }
+  if ! list=$(cd "$REPO" 2>/dev/null && gh pr list --state open --limit 100 --json number,headRefName 2>/dev/null); then
+    echo "surface: NOT CHECKED — could not list open PRs (not the same as none in flight)"
+    return 0
+  fi
+  rows=$(jq -r '.[] | "\(.number)\t\(.headRefName)"' <<<"$list" 2>/dev/null) || {
+    echo "surface: NOT CHECKED — open-PR list unparseable (not the same as none in flight)"
+    return 0
+  }
+  while IFS=$'\t' read -r n branch; do
+    [ -n "$n" ] || continue
+    unit=""
+    case "$branch" in
+      feature/GH-*)
+        rest="${branch#feature/GH-}"
+        case "$rest" in *[!0-9]* | "") : ;; *) unit="$rest" ;; esac
+        ;;
+      feat/*-* | fix/*-* | chore/*-* | docs/*-* | apply/*-*)
+        rest="${branch#*/}"
+        rest="${rest%%-*}"
+        case "$rest" in *[!0-9]* | "") : ;; *) unit="$rest" ;; esac
+        ;;
+    esac
+    [ -n "$unit" ] || continue # not a fleet branch — not this fleet's surface
+    any=1
+    if [ "$shown" -ge "$cap" ]; then
+      over=$((over + 1))
+      continue
+    fi
+    shown=$((shown + 1))
+    if files=$(cd "$REPO" 2>/dev/null && gh pr view "$n" --json files 2>/dev/null) &&
+      files=$(jq -r '[.files[].path] | join(" ")' <<<"$files" 2>/dev/null); then
+      echo "surface: GH-$unit (#$n): ${files:-(no files)}"
+    else
+      echo "surface: NOT CHECKED for #$n (file list unreadable — not the same as empty)"
+    fi
+  done <<<"$rows"
+  if [ -z "$any" ]; then
+    echo "surface: none in flight"
+  elif [ "$over" -gt 0 ]; then
+    echo "surface: $over more open fleet PR(s) not read — past the cap of $cap (RALPH_HERDR_SURFACE_CAP)"
+  fi
+}
+
+
+# The in-flight file surface, printed once before anything spawns (GH-2139):
+# what the fleet already holds open is a fact; what a new unit will touch is
+# not. Advisory beside the per-candidate deps: lines — never a refusal, and a
+# dry run still prints it (it is a read).
+inflight_surface
 
 # One run id for the whole fleet: briefs land under it, and --refill arms it.
 RALPH_HERDR_RUN_ID=$(ralph_run_id)
