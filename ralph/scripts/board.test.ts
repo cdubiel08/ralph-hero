@@ -87,6 +87,7 @@ import {
   run,
   scopeMatches,
   setDependency,
+  setEstimate,
   setPriority,
   setup,
   SMELL_DEFAULTS,
@@ -3871,7 +3872,7 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     expect(edits[0]).toContain("--add-label");
     expect(edits[0]).toContain("ralph:apply");
     // …and so did the estimate: the failure no longer aborts remaining setup.
-    expect(gh.mutations).toContain("setField(F_estimate)");
+    expect(gh.mutations.join(" ")).toMatch(/setEstimate\(#\d+, S\)/);
   });
 
   it("a create failure names EVERY unapplied write, not just the first", () => {
@@ -3927,6 +3928,9 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     expect(err!.message).toMatch(/2 requested writes did NOT land/);
     expect(err!.message).toMatch(/Priority/);
     expect(err!.message).toMatch(/Estimate S/);
+    // GH-2126: the remedy is the CLI's own verb, never "set it in the board UI".
+    expect(err!.message).toMatch(/board estimate \d+ S/);
+    expect(err!.message).not.toMatch(/board UI/);
   });
 
   it("the suppression list survives a refresh, and its cap cannot become a refresh loop", () => {
@@ -4028,6 +4032,86 @@ describe("priority is writable through the CLI (GH-1789)", () => {
     expect(gh.issues.size).toBe(0);
     // …while omitting it entirely is still the supported unprioritized path.
     expect(createIssue(ctx, { title: "ok", state: "Intake" }).priority).toBeNull();
+  });
+});
+
+describe("estimate is writable through the CLI (GH-2126)", () => {
+  it("the setter sets and --clear removes, same shape as priority", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", estimate: null });
+    expect(setEstimate(ctx, 1, "S").estimate).toBe("S");
+    expect(gh.mutations).toContain("setEstimate(#1, S)");
+    expect(setEstimate(ctx, 1, null).estimate).toBeNull();
+    expect(gh.mutations).toContain("clearField(#1, F_estimate)");
+  });
+
+  it("refuses an unknown option naming the LIVE options, and writes nothing", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(() => setEstimate(ctx, 1, "XXL")).toThrow(/XS, S, M, L, XL/);
+    expect(gh.mutations.filter((m) => m.startsWith("setEstimate"))).toEqual([]);
+  });
+
+  it("validates against a host repo's own scheme, never a hardcoded XS..XL", () => {
+    const gh = new FakeGh();
+    gh.omitFields = ["Estimate"];
+    gh.createdFields.push({ name: "Estimate", dataType: "SINGLE_SELECT", options: ["Small", "Big"] });
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(setEstimate(ctx, 1, "Big").estimate).toBe("Big");
+    expect(() => setEstimate(ctx, 1, "S")).toThrow(/Small, Big/);
+  });
+
+  it("refuses to write or CLEAR a custom non-single-select Estimate", () => {
+    // The destructive direction: a host board's NUMBER Estimate (GitHub's own
+    // template) holds data `board get` cannot show — clearing it would erase
+    // it invisibly. Same rule the Priority setter enforces.
+    const gh = new FakeGh();
+    gh.omitFields = ["Estimate"];
+    gh.createdFields.push({ name: "Estimate", dataType: "NUMBER" });
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(() => setEstimate(ctx, 1, "S")).toThrow(/NUMBER, not SINGLE_SELECT/);
+    expect(() => setEstimate(ctx, 1, null)).toThrow(/NUMBER, not SINGLE_SELECT/);
+    expect(gh.mutations.filter((m) => m.startsWith("setEstimate") || m.includes("clearField"))).toEqual([]);
+  });
+
+  it("`estimate` is scope-gated and refuses an archived item, like every mutation", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.exec = (argv, stdin) => {
+      if (argv.join(" ").includes("remote get-url"))
+        return { code: 0, stdout: "git@github.com:someone-else/other.git\n", stderr: "" };
+      return gh.exec(argv, stdin);
+    };
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(() => run(["estimate", "1", "S"], ctx)).toThrow(RefusalError);
+    const gh2 = new FakeGh();
+    const ctx2 = makeCtx(gh2);
+    gh2.issues.set(2, { number: 2, state: "Backlog", archived: true });
+    expect(() => setEstimate(ctx2, 2, "S")).toThrow(RefusalError);
+  });
+
+  it("the CLI case requires a value or --clear, never both", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(() => run(["estimate", "1"], ctx)).toThrow(/estimate NNN <option>/);
+    expect(() => run(["estimate", "1", "S", "--clear"], ctx)).toThrow(/--clear takes no estimate value/);
+  });
+
+  it("GH-2126 acceptance: an intake filing is approvable end-to-end with no UI step", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const filed = createIssue(ctx, { title: "needs sizing", state: "Intake" });
+    expect(filed.priority).toBeNull();
+    expect(filed.estimate).toBeNull();
+    setPriority(ctx, filed.number, "P2");
+    expect(setEstimate(ctx, filed.number, "S").estimate).toBe("S");
+    expect(run(["move", String(filed.number), "backlog"], ctx)).toBe(0);
+    expect(gh.issues.get(filed.number)!.state).toBe("Backlog");
   });
 });
 
@@ -4229,7 +4313,7 @@ describe("the --backlog lane GATES what GH-1792 could only nudge about (GH-2077)
     });
     expect(issue.state).toBe("Backlog");
     expect(issue.priority).toBe("P1");
-    expect(gh.mutations).toContain("setField(F_estimate)");
+    expect(gh.mutations.join(" ")).toMatch(/setEstimate\(#\d+, S\)/);
   });
 });
 

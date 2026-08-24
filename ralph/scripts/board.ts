@@ -6425,24 +6425,24 @@ export function findRecentTwin(
  *  then reported `(none)`, because issue reads only recognise a single-select
  *  Priority: destructive, and invisible in the output. Both paths refuse by
  *  dataType first, naming what the board actually has. */
-function assertPrioritySingleSelect(cache: BoardCache): void {
-  const field = cache.fields[PRIORITY_FIELD];
+function assertAdvisorySingleSelect(cache: BoardCache, fieldName: string): void {
+  const field = cache.fields[fieldName];
   if (field && field.dataType !== "SINGLE_SELECT") {
     throw new UsageError(
-      `this board's ${PRIORITY_FIELD} field is ${field.dataType}, not SINGLE_SELECT — ralph ranks a ` +
-        `single-select ${PRIORITY_FIELD} and will neither write nor CLEAR a custom ${field.dataType} field ` +
+      `this board's ${fieldName} field is ${field.dataType}, not SINGLE_SELECT — ralph reads a ` +
+        `single-select ${fieldName} and will neither write nor CLEAR a custom ${field.dataType} field ` +
         `(clearing it would erase data \`board get\` cannot even show you). Convert it in the Projects UI, ` +
-        `or leave ${PRIORITY_FIELD} to the board.`,
+        `or leave ${fieldName} to the board.`,
     );
   }
 }
 
-function assertPriorityOption(cache: BoardCache, value: string): void {
-  assertPrioritySingleSelect(cache);
-  const options = Object.keys(cache.fields[PRIORITY_FIELD]?.options ?? {});
+function assertAdvisoryOption(cache: BoardCache, fieldName: string, value: string): void {
+  assertAdvisorySingleSelect(cache, fieldName);
+  const options = Object.keys(cache.fields[fieldName]?.options ?? {});
   if (!options.includes(value)) {
     throw new UsageError(
-      `unknown ${PRIORITY_FIELD} "${value}" — this board's options are: ${options.join(", ") || "(none)"}`,
+      `unknown ${fieldName} "${value}" — this board's options are: ${options.join(", ") || "(none)"}`,
     );
   }
 }
@@ -6580,7 +6580,10 @@ export function priorityOptionOrder(
 /** The setter `next` needed all along: an item filed without a priority ranks
  *  dead last, and until now the only fix was the Projects V2 UI — i.e. off the
  *  sanctioned path. `null` clears the field. */
-export function setPriority(ctx: Ctx, number: number, value: string | null): Issue {
+/** One setter for both advisory single-selects (Priority, Estimate) — two
+ *  spellings of "set an advisory single-select" is the GH-1843 drift seed
+ *  (GH-2126). */
+function setAdvisoryField(ctx: Ctx, number: number, fieldName: string, value: string | null): Issue {
   const issue = fetchIssue(ctx, number);
   const itemId = requireItem(issue);
   // Live schema on BOTH branches. The set is what a value is judged against —
@@ -6589,16 +6592,24 @@ export function setPriority(ctx: Ctx, number: number, value: string | null): Iss
   // `satisfied()` while holding an obsolete id, and every clear would fail
   // against it until some unrelated op happened to refresh. `--clear`
   // validating nothing was the wrong reason to skip the read.
-  const cache = mutationCache(ctx, [[PRIORITY_FIELD]], [], [PRIORITY_FIELD]);
+  const cache = mutationCache(ctx, [[fieldName]], [], [fieldName]);
   if (value === null) {
     // Refuse BEFORE clearing: this is the destructive direction.
-    assertPrioritySingleSelect(cache);
-    clearField(ctx, cache, itemId, PRIORITY_FIELD);
+    assertAdvisorySingleSelect(cache, fieldName);
+    clearField(ctx, cache, itemId, fieldName);
   } else {
-    assertPriorityOption(cache, value);
-    setSingleSelect(ctx, cache, itemId, PRIORITY_FIELD, value);
+    assertAdvisoryOption(cache, fieldName, value);
+    setSingleSelect(ctx, cache, itemId, fieldName, value);
   }
   return fetchIssue(ctx, number);
+}
+
+export function setPriority(ctx: Ctx, number: number, value: string | null): Issue {
+  return setAdvisoryField(ctx, number, PRIORITY_FIELD, value);
+}
+
+export function setEstimate(ctx: Ctx, number: number, value: string | null): Issue {
+  return setAdvisoryField(ctx, number, ESTIMATE_FIELD, value);
 }
 
 /** Park / unpark an item (audit B8): "the precondition is not met" as a typed
@@ -6677,7 +6688,7 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
     wantsPriority ? [] : [PRIORITY_FIELD],
     wantsPriority ? [PRIORITY_FIELD] : [],
   );
-  if (wantsPriority) assertPriorityOption(cache, opts.priority!);
+  if (wantsPriority) assertAdvisoryOption(cache, PRIORITY_FIELD, opts.priority!);
   {
     // GH-1973: a lost RESPONSE and a failed WRITE are indistinguishable to the
     // caller, and the safe-looking response — retry — is the one that files a
@@ -6799,7 +6810,9 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
         // below claims to name EVERY write that did not land, and a claim of
         // completeness that quietly omits one is worse than no claim.
         estimateFailure = (e as Error).message;
-        process.stderr.write(`warn: estimate not set: ${estimateFailure}\n`);
+        process.stderr.write(
+          `warn: estimate not set (\`board estimate ${issue.number} ${shQuote(opts.estimate)}\` retries it): ${estimateFailure}\n`,
+        );
       }
     }
     // Labels are applied via `gh issue edit` rather than GraphQL: it resolves
@@ -6847,7 +6860,7 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
       const unapplied = [
         `${PRIORITY_FIELD} (\`board priority ${issue.number} ${shQuote(opts.priority!)}\`): ${priorityFailure}`,
         ...(estimateFailure !== null
-          ? [`${ESTIMATE_FIELD} ${opts.estimate} (set it in the board UI): ${estimateFailure}`]
+          ? [`${ESTIMATE_FIELD} ${opts.estimate} (\`board estimate ${issue.number} ${shQuote(opts.estimate!)}\`): ${estimateFailure}`]
           : []),
         ...(labelFailure !== null
           ? [`labels ${opts.labels!.join(",")} (\`gh issue edit ${issue.number} --add-label …\`): ${labelFailure}`]
@@ -9168,6 +9181,11 @@ mutations
                               hardcoded P0..P3 — a host repo owns its scheme,
                               and \`next\` orders a custom one by the field's
                               option ORDER (a trailing digit is the fallback)
+  estimate NNN <option>       set Estimate on an existing item (--clear removes
+                              it). Same live-option rule as priority — never a
+                              hardcoded XS..XL. Approval (Intake → Backlog)
+                              gates on Priority AND Estimate, so this is how an
+                              intake filing becomes approvable from the CLI
   claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim.
                               Binds this session to the unit (GH-1948): a second
                               DISTINCT unit from one session is refused (contract
@@ -9500,7 +9518,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 
 const MUTATING = new Set([
   "create", "claim", "release", "move", "cancel", "reopen", "answer", "priority",
-  "defer", "link", "dep", "comment", "adopt", "reconcile", "parent-check",
+  "estimate", "defer", "link", "dep", "comment", "adopt", "reconcile", "parent-check",
   "resolve", "setup", "add", "bootstrap",
 ]);
 
@@ -10198,15 +10216,20 @@ export function run(argv: string[], ctx: Ctx): number {
       return 0;
     }
 
-    case "priority": {
+    case "priority":
+    case "estimate": {
       const number = requireNumber(positional[0]);
       const value = positional[1];
       if (!flags.clear && !value)
-        throw new UsageError("priority NNN <option> (or --clear) required");
+        throw new UsageError(`${cmd} NNN <option> (or --clear) required`);
       if (flags.clear && value)
-        throw new UsageError("--clear takes no priority value");
-      const issue = setPriority(ctx, number, flags.clear ? null : value!);
-      out(`#${issue.number} priority=${issue.priority ?? "(none)"} ${issue.title}`);
+        throw new UsageError(`--clear takes no ${cmd} value`);
+      const issue =
+        cmd === "priority"
+          ? setPriority(ctx, number, flags.clear ? null : value!)
+          : setEstimate(ctx, number, flags.clear ? null : value!);
+      const after = cmd === "priority" ? issue.priority : issue.estimate;
+      out(`#${issue.number} ${cmd}=${after ?? "(none)"} ${issue.title}`);
       return 0;
     }
 
