@@ -13,19 +13,22 @@
  * the board. Both halves are pinned below.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   CLAIM_MAX_HOLDERS,
   type Claim,
+  claimMaxEstimate,
   encodeClaim,
   fetchIssue,
   formatClaim,
+  guardClaimEstimate,
   heartbeat,
   isMember,
   listItems,
   parseClaim,
   removeHolder,
   transition,
+  UsageError,
 } from "./board.js";
 import * as boardApi from "./board.js";
 import * as contractsApi from "./contracts.js";
@@ -150,5 +153,157 @@ describe("ClaimV2 through the board machine", () => {
     const [item] = listItems(ctx);
     expect(item.claim).toBeNull();
     expect(item.claimRaw).toBe("hand-edited note to self");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Claim-size ceiling (GH-2134): RALPH_CLAIM_MAX_ESTIMATE — refuse at/above,
+// warn one notch under, not-evaluated on absence, loud on garbage config.
+// ---------------------------------------------------------------------------
+
+const CEILING_ENV = "RALPH_CLAIM_MAX_ESTIMATE";
+const origCeiling = process.env[CEILING_ENV];
+
+afterEach(() => {
+  if (origCeiling === undefined) delete process.env[CEILING_ENV];
+  else process.env[CEILING_ENV] = origCeiling;
+});
+
+describe("claimMaxEstimate (env parsing)", () => {
+  it("unset defaults to XL; empty/whitespace disables; value is case-insensitive", () => {
+    expect(claimMaxEstimate(undefined)).toBe("XL");
+    expect(claimMaxEstimate("")).toBeNull();
+    expect(claimMaxEstimate("   ")).toBeNull();
+    expect(claimMaxEstimate("m")).toBe("M");
+    expect(claimMaxEstimate("L")).toBe("L");
+  });
+
+  it("garbage is a LOUD config error naming the scale — never a silent pass", () => {
+    expect(() => claimMaxEstimate("XXL")).toThrow(UsageError);
+    expect(() => claimMaxEstimate("huge")).toThrow(/XS, S, M, L, XL/);
+    expect(() => claimMaxEstimate("huge")).toThrow(/RALPH_CLAIM_MAX_ESTIMATE/);
+  });
+});
+
+describe("guardClaimEstimate (the judgment)", () => {
+  const silent = () => {};
+
+  it("XL refuses at the default ceiling, naming the remedy verb and the var", () => {
+    delete process.env[CEILING_ENV];
+    expect(() => guardClaimEstimate({ number: 7, estimate: "XL" }, silent)).toThrow(
+      /board estimate 7 L/,
+    );
+    expect(() => guardClaimEstimate({ number: 7, estimate: "XL" }, silent)).toThrow(
+      /RALPH_CLAIM_MAX_ESTIMATE/,
+    );
+  });
+
+  it("L warns and proceeds at the default ceiling; M and below are silent", () => {
+    delete process.env[CEILING_ENV];
+    const warned: string[] = [];
+    guardClaimEstimate({ number: 7, estimate: "L" }, (m) => warned.push(m));
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain("one notch under");
+    guardClaimEstimate({ number: 7, estimate: "M" }, (m) => warned.push(m));
+    guardClaimEstimate({ number: 7, estimate: "XS" }, (m) => warned.push(m));
+    expect(warned).toHaveLength(1);
+  });
+
+  it("no Estimate, or a value outside the scale, is NOT EVALUATED — never refused (GH-1952 adoption)", () => {
+    delete process.env[CEILING_ENV];
+    const warned: string[] = [];
+    guardClaimEstimate({ number: 7, estimate: null }, (m) => warned.push(m));
+    guardClaimEstimate({ number: 7, estimate: "XXL" }, (m) => warned.push(m));
+    expect(warned).toHaveLength(0);
+  });
+
+  it("a lowered ceiling shifts both tiers: ceiling L refuses L and XL, warns M", () => {
+    process.env[CEILING_ENV] = "L";
+    const warned: string[] = [];
+    expect(() => guardClaimEstimate({ number: 7, estimate: "L" }, silent)).toThrow(/ceiling L/);
+    expect(() => guardClaimEstimate({ number: 7, estimate: "XL" }, silent)).toThrow(/ceiling L/);
+    guardClaimEstimate({ number: 7, estimate: "M" }, (m) => warned.push(m));
+    expect(warned).toHaveLength(1);
+  });
+
+  it("empty disables the guard entirely — XL claims without a word", () => {
+    process.env[CEILING_ENV] = "";
+    const warned: string[] = [];
+    guardClaimEstimate({ number: 7, estimate: "XL" }, (m) => warned.push(m));
+    expect(warned).toHaveLength(0);
+  });
+});
+
+describe("claim-size ceiling through the board machine", () => {
+  it("a fresh claim on an XL item refuses BEFORE any write — board untouched", () => {
+    delete process.env[CEILING_ENV];
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog", estimate: "XL" });
+    const ctx = makeCtx(gh);
+    const msg = refusalMessage(() => transition(ctx, fetchIssue(ctx, 1), "In Progress"));
+    expect(msg).toContain("board estimate 1");
+    expect(gh.issues.get(1)!.claim ?? null).toBeNull();
+    expect(gh.issues.get(1)!.state).toBe("Backlog");
+    expect(gh.mutations).toHaveLength(0);
+  });
+
+  it("a steal is a fresh acquisition and is judged — the stale claim survives the refusal", () => {
+    delete process.env[CEILING_ENV];
+    const gh = new FakeGh();
+    const stale = new Date(NOW.getTime() - 10 * 60 * 60_000);
+    const wire = `gone@elsewhere|${stale.toISOString()}`;
+    gh.issues.set(1, { number: 1, state: "In Progress", estimate: "XL", claim: wire });
+    const ctx = makeCtx(gh);
+    refusalMessage(() => transition(ctx, fetchIssue(ctx, 1), "In Progress", { steal: true }));
+    expect(gh.issues.get(1)!.claim).toBe(wire); // no eviction happened
+    expect(gh.mutations).toHaveLength(0);
+  });
+
+  it("a heartbeat by a current holder passes on an XL item — resume is not relitigated (rule 9)", () => {
+    delete process.env[CEILING_ENV];
+    const gh = new FakeGh();
+    const old = new Date(NOW.getTime() - 30 * 60_000);
+    gh.issues.set(1, { number: 1, state: "In Progress", estimate: "XL", claim: `me@test|${old.toISOString()}` });
+    const ctx = makeCtx(gh);
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(after.claim?.since.toISOString()).toBe(NOW.toISOString());
+  });
+
+  it("an L item claims, with the warning on stderr", () => {
+    delete process.env[CEILING_ENV];
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog", estimate: "L" });
+    const ctx = makeCtx(gh);
+    const orig = process.stderr.write.bind(process.stderr);
+    const seen: string[] = [];
+    process.stderr.write = ((chunk: string) => {
+      seen.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    } finally {
+      process.stderr.write = orig;
+    }
+    expect(gh.issues.get(1)!.claim).toBe(`me@test|${NOW.toISOString()}`);
+    expect(seen.join("")).toContain("one notch under the claim ceiling XL");
+  });
+
+  it("no Estimate claims exactly as today — pinned (GH-1952 adoption path)", () => {
+    delete process.env[CEILING_ENV];
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const ctx = makeCtx(gh);
+    transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(gh.issues.get(1)!.claim).toBe(`me@test|${NOW.toISOString()}`);
+  });
+
+  it("a garbage ceiling refuses the claim loudly instead of silently disarming", () => {
+    process.env[CEILING_ENV] = "banana";
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog", estimate: "S" });
+    const ctx = makeCtx(gh);
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(UsageError);
+    expect(gh.mutations).toHaveLength(0);
   });
 });
