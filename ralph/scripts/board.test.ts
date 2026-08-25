@@ -15,7 +15,9 @@ import {
   adopt,
   answer,
   DEP_CANDIDATES_DISCLAIMER,
+  DEP_FILING_PRINT_CAP,
   depCandidateTerms,
+  depFilingThreshold,
   parseDepCandidatesCap,
   scoreDepCandidates,
   APPLY_EVIDENCE_MARKER,
@@ -7918,5 +7920,149 @@ describe("dep-candidates (GH-2135) — recall-biased dependency selector", () =>
       expect(text).toContain("candidates are NOT dependencies");
       expect(text).toContain("absence of overlap is not evidence of independence");
     });
+  });
+});
+
+describe("filing-path dependency check (GH-2137) — create prints dep-candidates", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  /** Run argv capturing BOTH streams — the advisory lives on stderr, and the
+   *  create's own output must stay untouched on stdout. */
+  const captureBoth = (argv: string[], c: Ctx = ctx) => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const so = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      stdout.push(String(s));
+      return true;
+    });
+    const se = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+      stderr.push(String(s));
+      return true;
+    });
+    let code: number;
+    try {
+      code = run(argv, c);
+    } finally {
+      so.mockRestore();
+      se.mockRestore();
+    }
+    return { code, stdout: stdout.join(""), stderr: stderr.join("") };
+  };
+
+  it("depFilingThreshold is three fully-distinctive shared terms' weight, population-relative", () => {
+    expect(depFilingThreshold(2)).toBeCloseTo(3 * Math.log(3 / 2));
+    expect(depFilingThreshold(100)).toBeCloseTo(3 * Math.log(101 / 2));
+    // The bar RISES with the population — an absolute score would silently
+    // loosen as the backlog grows.
+    expect(depFilingThreshold(100)).toBeGreaterThan(depFilingThreshold(2));
+  });
+
+  it("prints high-overlap candidates on stderr when the bar clears; filing output untouched", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", title: "cachetoken oracleblade etagfrost walkspine sibling" });
+    gh.issues.set(2, { number: 2, state: "Backlog", title: "zeppelin quartz aardvark" });
+    const r = captureBoth([
+      "create", "--backlog", "--priority", "P1", "--estimate", "S",
+      "--title", "cachetoken oracleblade etagfrost walkspine follow-up",
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain("possible dependencies");
+    expect(r.stderr).toContain("#1");
+    expect(r.stderr).toContain(DEP_CANDIDATES_DISCLAIMER);
+    expect(r.stderr).toContain("board dep");
+    expect(r.stderr).not.toContain("#2"); // low overlap never rides along
+    expect(r.stdout).toContain("https://"); // the create's own output survives
+  });
+
+  it("prints NOTHING when no candidate clears the bar — an every-filing banner trains readers to skip it", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", title: "zeppelin quartz phosphor" });
+    const r = captureBoth([
+      "create", "--intake", "--title", "cachetoken oracleblade etagfrost walkspine",
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.stderr).not.toContain("possible dependencies");
+    expect(r.stderr).not.toContain("NOT CHECKED");
+  });
+
+  it("both lanes run the check — --intake prints too", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", title: "cachetoken oracleblade etagfrost walkspine sibling" });
+    const r = captureBoth([
+      "create", "--intake", "--title", "cachetoken oracleblade etagfrost walkspine follow-up",
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain("possible dependencies");
+  });
+
+  it("scores the BODY, not just the title (the selector's own contract)", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", title: "unrelated words here", body: "cachetoken oracleblade etagfrost walkspine detail" });
+    const r = captureBoth([
+      "create", "--intake", "--title", "also unrelated title",
+      "--body", "the cachetoken oracleblade etagfrost walkspine mechanism",
+    ]);
+    expect(r.stderr).toContain("possible dependencies");
+    expect(r.stderr).toContain("#1");
+  });
+
+  it("the selector is CALLED, not reimplemented — the pool predicate's exclusions hold on the filing path", () => {
+    // Massive overlap on every item; only the unclaimed Backlog one may print.
+    gh.issues.set(1, { number: 1, state: "Backlog", title: "cachetoken oracleblade etagfrost walkspine open" });
+    gh.issues.set(2, { number: 2, state: "Backlog", title: "cachetoken oracleblade etagfrost walkspine claimed", claim: encodeClaim("a@h", NOW) });
+    gh.issues.set(3, { number: 3, state: "In Progress", title: "cachetoken oracleblade etagfrost walkspine running" });
+    gh.issues.set(4, { number: 4, state: "Intake", title: "cachetoken oracleblade etagfrost walkspine unapproved" });
+    const r = captureBoth([
+      "create", "--backlog", "--priority", "P1", "--estimate", "S",
+      "--title", "cachetoken oracleblade etagfrost walkspine twin",
+    ]);
+    expect(r.stderr).toContain("#1");
+    expect(r.stderr).not.toContain("#2");
+    expect(r.stderr).not.toContain("#3");
+    expect(r.stderr).not.toContain("#4");
+  });
+
+  it("caps the print at DEP_FILING_PRINT_CAP and points at the full list", () => {
+    // Each candidate shares FOUR terms unique to it and the target — df=2, so
+    // every pair clears the bar on its own distinctive vocabulary. A single
+    // shared phrase across all of them would be priced to nothing by df.
+    const terms = (n: number) => `dep${n}a dep${n}b dep${n}c dep${n}d`;
+    const all: string[] = [];
+    for (let n = 1; n <= DEP_FILING_PRINT_CAP + 2; n++) {
+      gh.issues.set(n, { number: n, state: "Backlog", title: `${terms(n)} variant` });
+      all.push(terms(n));
+    }
+    const r = captureBoth([
+      "create", "--intake", "--title", "umbrella filing", "--body", all.join(" "),
+    ]);
+    const rows = r.stderr.match(/^ {2}#\d+ /gm) ?? [];
+    expect(rows.length).toBe(DEP_FILING_PRINT_CAP);
+    expect(r.stderr).toContain("full list: board dep-candidates");
+  });
+
+  it("a failed candidates read prints NOT CHECKED and the filing still succeeds (the write outranks the advisory)", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", title: "cachetoken oracleblade sibling" });
+    const realExec = gh.exec.bind(gh);
+    let created = false;
+    const flaky: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (stdin?.includes("createIssue")) created = true;
+        // Break the open-issues walk only AFTER the create landed — the
+        // transport failure this test injects is on the advisory's read.
+        if (created && stdin?.includes("issues(states: OPEN"))
+          return { code: 1, stdout: "", stderr: "boom" };
+        return realExec(argv, stdin);
+      },
+    };
+    const r = captureBoth(
+      ["create", "--intake", "--title", "cachetoken oracleblade follow-up"],
+      flaky,
+    );
+    expect(r.code).toBe(0); // filing succeeded
+    expect(r.stdout).toContain("https://");
+    expect(r.stderr).toContain("NOT CHECKED");
+    expect(r.stderr).toContain("this is not an empty candidate list");
   });
 });

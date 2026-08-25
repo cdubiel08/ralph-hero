@@ -6531,6 +6531,124 @@ function fetchIssueBodies(ctx: Ctx, numbers: number[]): Map<number, { title: str
   return out;
 }
 
+/** The dep-candidates read, whole: population walk, pool predicate, body
+ *  fetch, scoring. ONE definition for both write points (GH-2137) — the CLI
+ *  verb and the filing path in `create` — because two spellings of the pool
+ *  predicate is the GH-1843 drift seed, and the issue's own acceptance pins
+ *  "called, not reimplemented".
+ *
+ *  Pool: OPEN, UNCLAIMED Backlog — rankNext's own predicate (`!claim`), so
+ *  the selector and the ranker agree about what "unclaimed" means. Deferred
+ *  items stay IN: recall bias — a parked item is still real future work an
+ *  edge can point at. Wired-either-direction, self, and recorded
+ *  parent/child edges are out: the subject is the edge the graph does NOT
+ *  have (dep-refs.sh's rule, kept here).
+ *
+ *  `target.body === undefined` means "fetch it" (the CLI verb, which has only
+ *  a number); the filing path passes the body it just wrote and skips the
+ *  extra alias. */
+export function readDepCandidates(
+  ctx: Ctx,
+  target: { number: number; title: string; body?: string; parentNumber: number | null },
+  wired: Set<number>,
+  presetWalk?: ReturnType<typeof listOwnOpenWalk>,
+): {
+  candidates: DepCandidate[];
+  considered: number;
+  cap: number;
+  capped: number;
+  docCount: number;
+  walk: ReturnType<typeof listOwnOpenWalk>;
+} {
+  const cap = parseDepCandidatesCap(process.env.RALPH_DEP_CANDIDATES_MAX);
+  const walk = presetWalk ?? listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+  const n = target.number;
+  const pool = walk.open.filter(
+    (i) =>
+      i.number !== n &&
+      i.state === "Backlog" &&
+      !i.claim &&
+      !wired.has(i.number) &&
+      !(i.openBlockers ?? []).includes(n) &&
+      !(i.closedBlockers ?? []).includes(n) &&
+      i.parentNumber !== n &&
+      i.number !== target.parentNumber,
+  );
+  const fetchNumbers =
+    target.body === undefined ? [n, ...pool.map((i) => i.number)] : pool.map((i) => i.number);
+  const bodies = fetchIssueBodies(ctx, fetchNumbers);
+  const targetDoc: DepCandidateDoc = {
+    number: n,
+    title: bodies.get(n)?.title ?? target.title,
+    body: target.body ?? bodies.get(n)?.body ?? "",
+  };
+  const poolDocs: DepCandidateDoc[] = pool.map((i) => ({
+    number: i.number,
+    title: bodies.get(i.number)?.title ?? i.title,
+    body: bodies.get(i.number)?.body ?? "",
+  }));
+  const { candidates, capped } = scoreDepCandidates(targetDoc, poolDocs, cap);
+  return { candidates, considered: pool.length, cap, capped, docCount: poolDocs.length + 1, walk };
+}
+
+/** Candidates the FILING path prints, at most. The full recall-biased list is
+ *  one `board dep-candidates NNN` away and the print says so; a ten-row
+ *  stderr block on every create is the "a dozen rows and nobody reads it"
+ *  failure GH-2048 names. */
+export const DEP_FILING_PRINT_CAP = 3;
+
+/** The filing path's "high overlap" bar (GH-2137): the weight of THREE
+ *  maximally-distinctive shared terms — df=2, i.e. terms only the new issue
+ *  and the candidate carry — in this population's own scale
+ *  (`3 * log((docCount+1)/2)`, the same smoothed weight scoreDepCandidates
+ *  assigns). Population-relative on purpose: an absolute score threshold
+ *  silently loosens as the backlog grows, because every term's weight rises
+ *  with N. The CLI verb keeps NO threshold — it is the judge's full recall
+ *  surface; only the unasked-for print on the filing path needs a floor. */
+export function depFilingThreshold(docCount: number): number {
+  return 3 * Math.log((docCount + 1) / 2);
+}
+
+/** The filing-path dependency check (GH-2137): after a create lands, the SAME
+ *  selector runs against the new issue's title+body and prints high-overlap
+ *  candidates on stderr. Advisory by construction — the write already
+ *  happened, nothing here can refuse it, and EVERY failure is caught and
+ *  printed as NOT CHECKED (GH-1971's rule: a filing that silently skipped the
+ *  check would render exactly like a filing with no dependencies). */
+function printFilingDepCandidates(
+  ctx: Ctx,
+  issue: { number: number; title: string; blockedBy: Array<{ number: number; repo?: string | null }> },
+  body: string,
+  parentNumber: number | null,
+): void {
+  try {
+    // A fresh filing has no edges, but `create` can ADOPT a twin (GH-1973)
+    // that already carries some — same own-repo filter the CLI verb applies.
+    const self = `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase();
+    const wired = new Set<number>();
+    for (const b of issue.blockedBy)
+      if (!b.repo || b.repo.toLowerCase() === self) wired.add(b.number);
+    const read = readDepCandidates(
+      ctx,
+      { number: issue.number, title: issue.title, body, parentNumber },
+      wired,
+    );
+    const floor = depFilingThreshold(read.docCount);
+    const hits = read.candidates.filter((c) => c.score >= floor).slice(0, DEP_FILING_PRINT_CAP);
+    if (hits.length === 0) return;
+    process.stderr.write(
+      `possible dependencies (${DEP_CANDIDATES_DISCLAIMER}):\n` +
+        hits.map((c) => `  #${c.number} ${c.score.toFixed(2)} ${c.title} (shared: ${c.terms.join(" ")})\n`).join("") +
+        `  wire a real one: board dep ${issue.number} --on <m> — full list: board dep-candidates ${issue.number}\n`,
+    );
+  } catch {
+    process.stderr.write(
+      `dep-candidates: NOT CHECKED — the read failed; this is not an empty candidate list ` +
+        `(the filing succeeded; \`board dep-candidates ${issue.number}\` retries the check)\n`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Create / link / dep
 // ---------------------------------------------------------------------------
@@ -10567,14 +10685,12 @@ export function run(argv: string[], ctx: Ctx): number {
     case "dep-candidates": {
       const n = requireNumber(positional[0]);
       try {
-        const cap = parseDepCandidatesCap(process.env.RALPH_DEP_CANDIDATES_MAX);
-        const walk = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
-        const own = walk.open;
         // The target's already-wired edges, both directions. From the walk
         // when it is there; a just-filed issue can sit inside the cache TTL,
         // so an absent target gets one authoritative read instead of an
         // error a caller on the filing path would hit every time.
-        const t = own.find((i) => i.number === n);
+        const cliWalk = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+        const t = cliWalk.open.find((i) => i.number === n);
         const wired = new Set<number>();
         let targetTitle: string;
         let targetParent: number | null;
@@ -10591,39 +10707,16 @@ export function run(argv: string[], ctx: Ctx): number {
           for (const b of issue.blockedBy)
             if (!b.repo || b.repo.toLowerCase() === self) wired.add(b.number);
         }
-        // OPEN, UNCLAIMED Backlog — rankNext's own predicate (`!claim`), so
-        // the selector and the ranker agree about what "unclaimed" means.
-        // Deferred items stay IN: recall bias — a parked item is still real
-        // future work an edge can point at. Wired-either-direction, self,
-        // and recorded parent/child edges are out: the subject is the edge
-        // the graph does NOT have (dep-refs.sh's rule, kept here).
-        const pool = own.filter(
-          (i) =>
-            i.number !== n &&
-            i.state === "Backlog" &&
-            !i.claim &&
-            !wired.has(i.number) &&
-            !(i.openBlockers ?? []).includes(n) &&
-            !(i.closedBlockers ?? []).includes(n) &&
-            i.parentNumber !== n &&
-            i.number !== targetParent,
+        const { candidates, considered, cap, capped, walk } = readDepCandidates(
+          ctx,
+          { number: n, title: targetTitle, parentNumber: targetParent },
+          wired,
+          cliWalk,
         );
-        const bodies = fetchIssueBodies(ctx, [n, ...pool.map((i) => i.number)]);
-        const targetDoc: DepCandidateDoc = {
-          number: n,
-          title: bodies.get(n)?.title ?? targetTitle,
-          body: bodies.get(n)?.body ?? "",
-        };
-        const poolDocs: DepCandidateDoc[] = pool.map((i) => ({
-          number: i.number,
-          title: bodies.get(i.number)?.title ?? i.title,
-          body: bodies.get(i.number)?.body ?? "",
-        }));
-        const { candidates, capped } = scoreDepCandidates(targetDoc, poolDocs, cap);
         if (flags.json)
           json({
             target: n,
-            considered: pool.length,
+            considered,
             cap,
             capped,
             disclaimer: DEP_CANDIDATES_DISCLAIMER,
@@ -10632,7 +10725,7 @@ export function run(argv: string[], ctx: Ctx): number {
           });
         else {
           out(
-            `dep-candidates for #${n}: ${candidates.length} of ${pool.length} unclaimed Backlog items share terms (cap ${cap})`,
+            `dep-candidates for #${n}: ${candidates.length} of ${considered} unclaimed Backlog items share terms (cap ${cap})`,
           );
           out(`  note: ${DEP_CANDIDATES_DISCLAIMER}`);
           for (const c of candidates)
@@ -10720,6 +10813,20 @@ export function run(argv: string[], ctx: Ctx): number {
       });
       out(issueLine(issue));
       out(issue.url);
+      // The filing-path dependency check (GH-2137), AFTER the create's own
+      // output: the write outranks the advisory, so nothing here can refuse
+      // or fail the filing — every failure inside prints NOT CHECKED and
+      // returns. Both lanes run it; a dependency is a fact about the work,
+      // not about which tier it landed in.
+      // Scored on the text the filer TYPED (flags), not the fetched
+      // round-trip: they are the same bytes on a clean create, and on an
+      // adopted twin the typed text is still the intent being filed.
+      printFilingDepCandidates(
+        ctx,
+        { number: issue.number, title: flags.title, blockedBy: issue.blockedBy },
+        typeof flags.body === "string" ? flags.body : "",
+        issue.parentNumber,
+      );
       return 0;
     }
 
