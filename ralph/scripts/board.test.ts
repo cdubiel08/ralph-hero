@@ -128,7 +128,9 @@ describe("state machine", () => {
       // instead of a fictional In Review hop that drops their --why.
       "In Progress": ["In Review", "Done", "Human Needed", "Backlog", "Canceled"],
       "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
-      "Human Needed": ["In Progress", "Backlog", "Canceled"],
+      // GH-2078: no Backlog edge — an answered item resumes or dies; a
+      // parking edge out of an escalation loses the question.
+      "Human Needed": ["In Progress", "Canceled"],
       Done: [],
       Canceled: [],
     });
@@ -145,6 +147,7 @@ describe("state machine", () => {
       ["Intake", "Done"],
       ["Human Needed", "In Review"],
       ["Human Needed", "Done"],
+      ["Human Needed", "Backlog"], // GH-2078: answered work resumes or dies, never parks
       ["Done", "In Progress"],
       ["Done", "Backlog"], // exit is reopen, never move
       ["Canceled", "Backlog"],
@@ -914,6 +917,34 @@ describe("transition engine", () => {
     expect(() => transition(ctx, fetchIssue(ctx, 1), "Human Needed")).toThrow(UsageError);
     transition(ctx, fetchIssue(ctx, 1), "Human Needed", { why: "need a decision on X" });
     expect(gh.comments.some((c) => c.body.includes("need a decision on X"))).toBe(true);
+  });
+
+  // GH-2078: backward moves are exceptional, not routine — the reason is
+  // machine-required and lands as a comment, so demotions are auditable.
+  it("In Progress → Backlog requires --why and posts it as the parking comment", () => {
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Backlog")).toThrow(UsageError);
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Backlog")).toThrow(/board release 1 -m/);
+    expect(gh.mutations).toEqual([]); // refused before any write
+    const after = transition(ctx, fetchIssue(ctx, 1), "Backlog", { why: "tests red on X; next: fix parser" });
+    expect(after.state).toBe("Backlog");
+    expect(gh.comments.some((c) => c.body.includes("**Parked**") && c.body.includes("tests red on X"))).toBe(true);
+  });
+
+  it("In Review → In Progress requires --why and posts it as the demotion comment", () => {
+    gh.issues.set(1, { number: 1, state: "In Review" });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(UsageError);
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/board claim 1 --why/);
+    expect(gh.mutations).toEqual([]); // refused before any write
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Progress", { why: "review found P0: races on the cache key" });
+    expect(after.state).toBe("In Progress");
+    expect(gh.comments.some((c) => c.body.includes("**Demoted for rework**") && c.body.includes("races on the cache key"))).toBe(true);
+  });
+
+  it("answer's resume (Human Needed → In Progress) needs no --why — it is not a demotion", () => {
+    gh.issues.set(1, { number: 1, state: "Human Needed" });
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(after.state).toBe("In Progress");
   });
 
   it("Done closes the issue as COMPLETED; Canceled as NOT_PLANNED", () => {
