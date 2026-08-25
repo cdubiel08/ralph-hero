@@ -49,7 +49,7 @@ Only in repos that opted in (`board readiness` says whether yours has). There, a
 
 ## Model tiers
 
-sonnet is the default for everything; haiku for mechanical fan-out. Frontier (`fable`, else `opus`) only as in-session bookends on feature/epic units — plan authorship/critique and the final group review — via `Agent(model="fable")` or the plan-critique / adversarial-review workflows. XS/S singles never touch frontier. A blocked step gets one re-dispatch at `opus`; a second block → Human Needed. (`CLAUDE_CODE_SUBAGENT_MODEL=opus` is the harness escape hatch for non-Fable accounts; it flattens every tier.)
+sonnet is the default for everything; haiku for mechanical fan-out. Frontier (`fable`, else `opus`) only as in-session bookends on epic roots and M units (both per [references/work-shape.md](references/work-shape.md) — epic is derived, Estimate is the scale; L/XL decompose before work, so they reach a bookend only as the M-or-smaller units they become) — plan authorship/critique and the final group review — via `Agent(model="fable")` or the plan-critique / adversarial-review workflows. XS/S singles never touch frontier. A blocked step gets one re-dispatch at `opus`; a second block → Human Needed. (`CLAUDE_CODE_SUBAGENT_MODEL=opus` is the harness escape hatch for non-Fable accounts; it flattens every tier.)
 
 ## Peers — what may cross between agents (GH-1890)
 
