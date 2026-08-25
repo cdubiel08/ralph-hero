@@ -179,7 +179,7 @@ Branch and agent names are **derived, once** (GH-1807) — `board name NNN` is t
 
 Five skills under `ralph/skills/` (`work` is the only execution verb; `deliver` and `tend` are the lanes; `board` and `help` are human surfaces), one read-only agent (`ralph/agents/investigator.md`), and optional ultracode fan-out equipment in `.claude/workflows/`. Each skill's own description is the routing contract.
 
-Model tiers (stated once in work/SKILL.md): sonnet default, haiku for mechanical fan-out, frontier (`fable`→`opus`) only as in-session bookends on feature/epic units; XS/S singles never touch frontier; escalate-never-preempt. `CLAUDE_CODE_SUBAGENT_MODEL=opus` is the harness escape hatch (flattens every tier).
+Model tiers (stated once in work/SKILL.md): sonnet default, haiku for mechanical fan-out, frontier (`fable`→`opus`) only as in-session bookends on epic roots and M units; XS/S singles never touch frontier; escalate-never-preempt. `CLAUDE_CODE_SUBAGENT_MODEL=opus` is the harness escape hatch (flattens every tier).
 
 ## The Loop
 
