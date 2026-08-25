@@ -6385,6 +6385,153 @@ export function resolveProposal(
 }
 
 // ---------------------------------------------------------------------------
+// Dependency-candidate selector (GH-2135)
+// ---------------------------------------------------------------------------
+//
+// `board dep-candidates NNN` answers one question: which OPEN, UNCLAIMED
+// Backlog items might this issue depend on (or vice versa)? It hands scored
+// candidates to a judge; it NEVER writes an edge — the edge is the agent's
+// act, on the record.
+//
+// This is one of TWO members of a family, and their biases run in OPPOSITE
+// directions on purpose — do not "fix" one into the other (GH-2135):
+//
+//   * plugin/ralph-herdr/scripts/dep-refs.sh — prose references, biased
+//     toward SILENCE, at the SPAWN surfaces (work-fleet; GH-2120 extends to
+//     refill/work-next). Its caller treats a hit as a refusal, so a false
+//     positive blocks real work.
+//   * this selector — term overlap, biased toward RECALL, at the WRITE
+//     surfaces (filing, tend). A MISSED dependency causes a wrong parallel
+//     spawn and a rebase cascade; a false candidate costs one judgment call
+//     an agent was already making. The output states that candidates are not
+//     dependencies, so a reader cannot mistake the bias for a verdict.
+//
+// Scoring is document-frequency-weighted term overlap over title + body:
+// a term's weight is log(N/df), so a word every open item carries ("board",
+// "ralph") weighs nothing on any board without a hand-kept stopword list,
+// while a term two items share and the rest lack carries the score. Rejected
+// alternatives are in the design record (2026-08-23-board-work-shape-design):
+// a bare skill instruction degrades silently as the backlog grows, and a
+// semantic index is a subsystem for a problem term overlap probably solves.
+
+export const DEP_CANDIDATES_CAP_DEFAULT = 10;
+
+export const DEP_CANDIDATES_DISCLAIMER =
+  "candidates are NOT dependencies — term overlap only, biased toward recall; judge each before wiring an edge";
+
+/** Glue words that would dominate tiny populations before df-weighting has
+ *  enough documents to price them. Deliberately small: df does the real work. */
+const DEP_TERM_STOPWORDS = new Set([
+  "the", "and", "for", "that", "this", "with", "not", "are", "was", "its",
+  "has", "have", "had", "but", "when", "from", "into", "over", "then", "than",
+  "each", "all", "any", "can", "cannot", "may", "must", "does", "did", "also",
+  "only", "which", "what", "who", "how", "where", "why", "will", "would",
+  "should", "could", "been", "being", "because", "one", "two", "here", "there",
+  "never", "always", "same", "other", "our", "out", "you", "your",
+]);
+
+/** Tokenize into overlap terms: lowercase runs of [a-z0-9_-], length ≥ 3,
+ *  hyphen/underscore-preserving so `dep-refs`, `tend-queue` and `GH-2120`
+ *  survive as the distinctive tokens they are. */
+export function depCandidateTerms(text: string): Set<string> {
+  const terms = new Set<string>();
+  for (const m of text.toLowerCase().matchAll(/[a-z0-9][a-z0-9_-]*/g)) {
+    const t = m[0].replace(/[_-]+$/, "");
+    if (t.length >= 3 && !DEP_TERM_STOPWORDS.has(t)) terms.add(t);
+  }
+  return terms;
+}
+
+export interface DepCandidateDoc {
+  number: number;
+  title: string;
+  body: string;
+}
+
+export interface DepCandidate {
+  number: number;
+  title: string;
+  score: number;
+  /** Shared terms, most distinctive first — the judge's foothold. */
+  terms: string[];
+}
+
+/** Score the pool against the target. Pure — population filtering (state,
+ *  claim, wiring) happens at the caller, where the walk's facts live. */
+export function scoreDepCandidates(
+  target: DepCandidateDoc,
+  pool: DepCandidateDoc[],
+  cap: number,
+): { candidates: DepCandidate[]; capped: number } {
+  const docs = [target, ...pool].map((d) => ({
+    number: d.number,
+    title: d.title,
+    terms: depCandidateTerms(`${d.title}\n${d.body}`),
+  }));
+  const n = docs.length;
+  const df = new Map<string, number>();
+  for (const d of docs) for (const t of d.terms) df.set(t, (df.get(t) ?? 0) + 1);
+  // log((N+1)/df), SMOOTHED on purpose: a term in every document is nearly
+  // worthless (~1/N) but never zero — zeroing would disqualify candidates on
+  // tiny populations where df statistics mean nothing, which is a precision
+  // move inside a selector whose declared bias is recall. Ranking, not
+  // qualification, is where ubiquity gets priced.
+  const weight = (t: string) => Math.log((n + 1) / (df.get(t) ?? n));
+  const targetTerms = docs[0].terms;
+  const scored: DepCandidate[] = [];
+  for (const d of docs.slice(1)) {
+    const shared = [...d.terms].filter((t) => targetTerms.has(t));
+    if (shared.length === 0) continue;
+    const score = shared.reduce((s, t) => s + weight(t), 0);
+    shared.sort((a, b) => weight(b) - weight(a) || (a < b ? -1 : 1));
+    scored.push({ number: d.number, title: d.title, score, terms: shared.slice(0, 6) });
+  }
+  scored.sort((a, b) => b.score - a.score || a.number - b.number);
+  const candidates = scored.slice(0, cap);
+  return { candidates, capped: scored.length - candidates.length };
+}
+
+export function parseDepCandidatesCap(raw: string | undefined): number {
+  const v = Number(raw ?? DEP_CANDIDATES_CAP_DEFAULT);
+  return Number.isFinite(v) && v >= 1 ? Math.floor(v) : DEP_CANDIDATES_CAP_DEFAULT;
+}
+
+/** Bodies per round trip in the dep-candidates batch read. */
+const DEP_BODY_BATCH = 50;
+
+/** Title + body for a set of issues, batched behind `db{k}:` aliases. Plain
+ *  fields only — ZERO nested connections, so the whole batch rides at the
+ *  1-pt floor (the GH-1803 cost model charges per connection, never per
+ *  field; measured with RALPH_GQL_COST=1 on this repo 2026-08-24: cost=1,
+ *  nodes=0, for a 16-issue batch).
+ *  A null alias (deleted/transferred mid-flight) is a real answer and is
+ *  skipped; an unreadable repository is an error, never an empty map. */
+function fetchIssueBodies(ctx: Ctx, numbers: number[]): Map<number, { title: string; body: string }> {
+  const out = new Map<number, { title: string; body: string }>();
+  for (let i = 0; i < numbers.length; i += DEP_BODY_BATCH) {
+    const batch = numbers.slice(i, i + DEP_BODY_BATCH);
+    const aliases = batch
+      .map((n, k) => `db${k}: issue(number: ${n}) { number title body }`)
+      .join("\n");
+    const d: any = ghGraphQL(
+      ctx,
+      `query($owner: String!, $repo: String!) {
+        repository(owner: $owner, name: $repo) { ${aliases} }
+      }`,
+      { owner: ctx.cfg.owner, repo: ctx.cfg.repo },
+    );
+    const repo = d.repository;
+    if (!repo) throw new Error(`could not read issue bodies for ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+    batch.forEach((n, k) => {
+      const c = repo[`db${k}`];
+      if (!c) return;
+      out.set(n, { title: c.title ?? "", body: c.body ?? "" });
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Create / link / dep
 // ---------------------------------------------------------------------------
 
@@ -9391,6 +9538,17 @@ reads
                               judgment (and every closure, as a marker-comment
                               proposal) belongs to /ralph:tend. Knobs:
                               RALPH_STALE_DAYS (30), RALPH_AUDIT_DAYS (14)
+  dep-candidates <n> [--json] which OPEN, UNCLAIMED Backlog items might #n
+                              depend on (or vice versa) — df-weighted term
+                              overlap on title + body, handed to a judge.
+                              Recall-biased ON PURPOSE (the opposite of
+                              dep-refs.sh's silence bias: a missed dependency
+                              costs a wrong parallel spawn; a false candidate
+                              costs one judgment call). NEVER writes an edge;
+                              candidates are not dependencies. Already-wired,
+                              parent/child, and self excluded. Cap:
+                              RALPH_DEP_CANDIDATES_MAX (10). An unreadable
+                              read prints NOT CHECKED, never an empty list
   card-signals [--json]       the VIEWER's read (GH-2062, ralph-herdr cockpit):
                               In Review items with their linked PRs
                               {number, state, merged, mergeable, checks} — the
@@ -9644,6 +9802,8 @@ export const VERB_HELP: Record<string, string> = {
   "parent-check": "board parent-check <n>\n  Roll a parent forward when every child is closed.\n  example: board parent-check 1200",
   "deliver-queue": "board deliver-queue [--json]\n  Quiescent In Review items with actionable PR signal (the deliver lane's selector).\n  example: board deliver-queue --json",
   "tend-queue": "board tend-queue [--json]\n  Backlog-hygiene and Done-audit rows (the tend lane's selector).\n  example: board tend-queue",
+  "dep-candidates":
+    "board dep-candidates <n> [--json]\n  Unclaimed Backlog items that might depend on #n (or vice versa), by term overlap — recall-biased, never writes an edge.\n  example: board dep-candidates 2135",
   doctor: "board doctor [--fix] [--strict] [--fresh]\n  Invariant sweep + advisory lines. --fix corrects drift; info lines are never escalated.\n  example: board doctor --fix",
   readiness: "board readiness [--json]\n  Advisory agent-readiness report (3 levels) — recommendations, never gates.\n  example: board readiness",
   setup: "board setup\n  Idempotent field provisioning; prints exactly which steps are manual.\n  example: board setup",
@@ -9821,7 +9981,7 @@ export function run(argv: string[], ctx: Ctx): number {
   // read; REST /rate_limit is free and its budget is measurably independent
   // of the GraphQL one (GH-1804's measurement). Fails OPEN on an unreadable
   // budget — a transient outage must never read as starvation (GH-1817).
-  if (["next", "frontier", "deliver-queue", "tend-queue", "brief"].includes(cmd)) {
+  if (["next", "frontier", "deliver-queue", "tend-queue", "dep-candidates", "brief"].includes(cmd)) {
     const floor = Number(process.env.RALPH_GH_BUDGET_FLOOR ?? 500);
     if (Number.isFinite(floor) && floor > 0) {
       const r = ctx.exec(["gh", "api", "--hostname", ctx.cfg.host, "rate_limit"]);
@@ -10402,6 +10562,96 @@ export function run(argv: string[], ctx: Ctx): number {
           out(`  then #${r.number} [${r.category}]${r.title ? ` ${r.title}` : ""}`);
       }
       return 0;
+    }
+
+    case "dep-candidates": {
+      const n = requireNumber(positional[0]);
+      try {
+        const cap = parseDepCandidatesCap(process.env.RALPH_DEP_CANDIDATES_MAX);
+        const walk = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+        const own = walk.open;
+        // The target's already-wired edges, both directions. From the walk
+        // when it is there; a just-filed issue can sit inside the cache TTL,
+        // so an absent target gets one authoritative read instead of an
+        // error a caller on the filing path would hit every time.
+        const t = own.find((i) => i.number === n);
+        const wired = new Set<number>();
+        let targetTitle: string;
+        let targetParent: number | null;
+        if (t) {
+          targetTitle = t.title;
+          targetParent = t.parentNumber;
+          for (const b of t.openBlockers ?? []) wired.add(b);
+          for (const b of t.closedBlockers ?? []) wired.add(b);
+        } else {
+          const issue = fetchIssue(ctx, n);
+          targetTitle = issue.title;
+          targetParent = issue.parentNumber;
+          const self = `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase();
+          for (const b of issue.blockedBy)
+            if (!b.repo || b.repo.toLowerCase() === self) wired.add(b.number);
+        }
+        // OPEN, UNCLAIMED Backlog — rankNext's own predicate (`!claim`), so
+        // the selector and the ranker agree about what "unclaimed" means.
+        // Deferred items stay IN: recall bias — a parked item is still real
+        // future work an edge can point at. Wired-either-direction, self,
+        // and recorded parent/child edges are out: the subject is the edge
+        // the graph does NOT have (dep-refs.sh's rule, kept here).
+        const pool = own.filter(
+          (i) =>
+            i.number !== n &&
+            i.state === "Backlog" &&
+            !i.claim &&
+            !wired.has(i.number) &&
+            !(i.openBlockers ?? []).includes(n) &&
+            !(i.closedBlockers ?? []).includes(n) &&
+            i.parentNumber !== n &&
+            i.number !== targetParent,
+        );
+        const bodies = fetchIssueBodies(ctx, [n, ...pool.map((i) => i.number)]);
+        const targetDoc: DepCandidateDoc = {
+          number: n,
+          title: bodies.get(n)?.title ?? targetTitle,
+          body: bodies.get(n)?.body ?? "",
+        };
+        const poolDocs: DepCandidateDoc[] = pool.map((i) => ({
+          number: i.number,
+          title: bodies.get(i.number)?.title ?? i.title,
+          body: bodies.get(i.number)?.body ?? "",
+        }));
+        const { candidates, capped } = scoreDepCandidates(targetDoc, poolDocs, cap);
+        if (flags.json)
+          json({
+            target: n,
+            considered: pool.length,
+            cap,
+            capped,
+            disclaimer: DEP_CANDIDATES_DISCLAIMER,
+            candidates,
+            cache: cacheFacts(walk),
+          });
+        else {
+          out(
+            `dep-candidates for #${n}: ${candidates.length} of ${pool.length} unclaimed Backlog items share terms (cap ${cap})`,
+          );
+          out(`  note: ${DEP_CANDIDATES_DISCLAIMER}`);
+          for (const c of candidates)
+            out(`  #${c.number} ${c.score.toFixed(2)} ${c.title} (shared: ${c.terms.join(" ")})`);
+          if (capped > 0) out(`  (+${capped} more past cap ${cap} — RALPH_DEP_CANDIDATES_MAX raises it)`);
+          if (candidates.length === 0)
+            out("  no overlap found — absence of overlap is not evidence of independence");
+          if (cacheNote(walk)) out(`  ${cacheNote(walk)}`);
+        }
+        return 0;
+      } catch (e) {
+        // GH-1971's rule, load-bearing here: a filing path that silently
+        // skipped the check would render exactly like a filing with no
+        // dependencies. Exit codes keep their lane meanings (75 transport,
+        // 1 error); a usage error is the caller's, not a failed check.
+        if (!(e instanceof UsageError))
+          process.stderr.write("dep-candidates: NOT CHECKED — the read failed; this is not an empty candidate list\n");
+        throw e;
+      }
     }
 
     case "create": {

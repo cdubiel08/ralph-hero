@@ -846,6 +846,18 @@ export class FakeGh {
       }
       return data({ repository: out });
     }
+    // Dep-candidates body batch (GH-2135): aliased plain-field lookups, no
+    // `number` variable — must precede the single-issue branch too.
+    if (query.includes("db0: issue(number")) {
+      const out: Record<string, any> = {};
+      for (const m of query.matchAll(/db(\d+): issue\(number: (\d+)\)/g)) {
+        const fi = this.issues.get(Number(m[2]));
+        out[`db${m[1]}`] = fi
+          ? { number: fi.number, title: fi.title ?? `Issue ${fi.number}`, body: fi.body ?? "" }
+          : null;
+      }
+      return data({ repository: out });
+    }
     if (query.includes("issue(number")) {
       const fi = this.issues.get(variables.number);
       if (!fi) return data({ repository: { issue: null } });
