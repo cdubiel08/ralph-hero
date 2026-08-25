@@ -208,7 +208,7 @@ describe("metrics: mutation round trips (exact — a retry doubles a pin and fai
 });
 
 describe("metrics: doctor sweep", () => {
-  it("doctor on a 3-item board = 4 round trips warm (page walk + history chunk + refresh-as-check + PR-orphan sweep)", () => {
+  it("doctor on a 3-item board = 6 round trips warm (page walk + history chunk + refresh-as-check + PR-orphan sweep + deps-unwired inputs)", () => {
     const gh = new FakeGh();
     flatBoard(gh, 3);
     const { ctx, m } = warmCtx(gh);
@@ -217,8 +217,11 @@ describe("metrics: doctor sweep", () => {
     // one history chunk for 3 open items (1), and the GH-2048 orphan sweep (1 —
     // one page per 100 OPEN PRs, and it cannot be folded into any of the
     // others: they are all rooted at issues or at the project, and this is the
-    // one question about work that reached neither).
-    expect(m.graphql).toBe(4);
+    // one question about work that reached neither). GH-2136 adds the
+    // deps-unwired inputs: one bodies batch (plain aliased fields, 1-pt
+    // floor) + one comments-only trail chunk over the unclaimed Backlog —
+    // both bounded by live work, neither scales with closed history.
+    expect(m.graphql).toBe(6);
     expect(m.mutations).toBe(0); // no --fix, no writes — pinned
   });
 });
@@ -233,7 +236,7 @@ describe("metrics: tend-queue (GH-1891)", () => {
    *  open page and the closed WINDOW page are both bounded by live work, so a
    *  board with 55 long-closed items costs exactly what a board with none
    *  does. A regression here is a reader that went back to the scan. */
-  it("tend-queue on a board of 5 open + 55 long-closed = 3 round trips warm", () => {
+  it("tend-queue on a board of 5 open + 55 long-closed = 4 round trips warm", () => {
     const gh = new FakeGh();
     const old = new Date(NOW.getTime() - 400 * 86_400_000).toISOString();
     const stale = new Date(NOW.getTime() - 45 * 86_400_000).toISOString();
@@ -245,10 +248,13 @@ describe("metrics: tend-queue (GH-1891)", () => {
       });
     const { ctx, m } = warmCtx(gh);
     runQuiet(["tend-queue", "--json"], ctx);
-    // 1 open page + 1 closed-window page + 1 trail chunk for the 5 queued open
-    // items (all stale-body). No audit trail chunk: every close here is outside
-    // the 14-day window, so the audit fetches nothing.
-    expect(m.graphql).toBe(3);
+    // 1 open page + 1 closed-window page + 1 deps-unwired bodies batch for
+    // the 5-item unclaimed Backlog pool (GH-2136, plain aliased fields at the
+    // 1-pt floor) + 1 trail chunk for the 5 queued open items (all
+    // stale-body; the dep-judgment markers ride this same read). No audit
+    // trail chunk: every close here is outside the 14-day window, so the
+    // audit fetches nothing.
+    expect(m.graphql).toBe(4);
     expect(m.mutations).toBe(0); // a selector never writes — pinned
   });
 

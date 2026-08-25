@@ -588,6 +588,7 @@ export const TEND_CATEGORIES = [
   "stale-body", // Backlog, no updates in staleDays — grep the live tree before trusting it
   "deps-cleared", // Backlog, every blocker closed — the wait is over (or the edge is stale)
   "deps-truncated", // Backlog, blocker list truncated — the board cannot see its own edges
+  "deps-unwired", // GH-2136: Backlog, unclaimed, with unjudged high-overlap dep candidates (overlap ≥ RALPH_DEP_OVERLAP_MIN) — tend judges each: wire (`board dep`) or dismiss (`board dep --dismiss`)
   "unformed", // no estimate OR no priority, no parent, no deps, older than 7 days — likely raw intake
   "done-audit", // closed recently, no audit marker — the cursor is the marker comment
 ] as const;
@@ -867,6 +868,19 @@ function zTendRow(mode: Mode) {
     title: z.string(),
     category: z.enum(TEND_CATEGORIES),
     at: zIsoUtc.nullable(),
+    // GH-2136: present only on deps-unwired rows — the judge's inputs travel
+    // with the row so no second read is needed.
+    candidates: z
+      .array(
+        obj(mode, {
+          number: zIssue,
+          title: z.string(),
+          score: z.number(),
+          overlap: z.number(),
+          terms: z.array(z.string()),
+        }),
+      )
+      .optional(),
   });
 }
 

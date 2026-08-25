@@ -1085,6 +1085,7 @@
                         "stale-body",
                         "deps-cleared",
                         "deps-truncated",
+                        "deps-unwired",
                         "unformed",
                         "done-audit"
                       ]
@@ -1099,6 +1100,41 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "candidates": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "number": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "score": {
+                            "type": "number"
+                          },
+                          "overlap": {
+                            "type": "number"
+                          },
+                          "terms": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "number",
+                          "title",
+                          "score",
+                          "overlap",
+                          "terms"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
@@ -1133,6 +1169,7 @@
                       "stale-body",
                       "deps-cleared",
                       "deps-truncated",
+                      "deps-unwired",
                       "unformed",
                       "done-audit"
                     ]
@@ -1147,6 +1184,41 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "candidates": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "score": {
+                          "type": "number"
+                        },
+                        "overlap": {
+                          "type": "number"
+                        },
+                        "terms": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "number",
+                        "title",
+                        "score",
+                        "overlap",
+                        "terms"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
@@ -1177,6 +1249,7 @@
                       "stale-body",
                       "deps-cleared",
                       "deps-truncated",
+                      "deps-unwired",
                       "unformed",
                       "done-audit"
                     ]
@@ -1191,6 +1264,41 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "candidates": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "score": {
+                          "type": "number"
+                        },
+                        "overlap": {
+                          "type": "number"
+                        },
+                        "terms": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "number",
+                        "title",
+                        "score",
+                        "overlap",
+                        "terms"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
