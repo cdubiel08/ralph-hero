@@ -16,10 +16,16 @@ import {
   answer,
   DEP_CANDIDATES_DISCLAIMER,
   DEP_FILING_PRINT_CAP,
+  DEP_OVERLAP_MIN_DEFAULT,
   depCandidateTerms,
   depFilingThreshold,
+  depPairKey,
+  depsUnwiredMap,
+  dismissedDepPairs,
   parseDepCandidatesCap,
+  parseDepOverlapMin,
   scoreDepCandidates,
+  TEND_DEP_JUDGED_MARKER,
   APPLY_EVIDENCE_MARKER,
   APPLY_LABEL_DEFAULT,
   applyEvidenceFailure,
@@ -3447,7 +3453,9 @@ describe("doctor — state smells (GH-1715)", () => {
     };
     const c = smell(doctor(ctx), "repeated-claim-expiry");
     expect(c.detail).toContain("#25(2 expired claims)");
-    expect(historyQueries).toBe(2); // 25 items, chunk of 20 — not 25 round trips
+    // 25 items: 2 history chunks of 20 (smells) + 1 comments-only trail
+    // chunk of 100 (GH-2136 deps-unwired dismissal read) — not 25 round trips
+    expect(historyQueries).toBe(3);
   });
 
   it("one failed history chunk does not kill the others — smells evaluate over surviving chunks", () => {
@@ -8064,5 +8072,314 @@ describe("filing-path dependency check (GH-2137) — create prints dep-candidate
     expect(r.stdout).toContain("https://");
     expect(r.stderr).toContain("NOT CHECKED");
     expect(r.stderr).toContain("this is not an empty candidate list");
+  });
+});
+
+describe("deps-unwired (GH-2136) — tend category + doctor advisory line", () => {
+  const days = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();
+  const dismissalComment = (target: number, dismissed: number[]) =>
+    `**Dependency judged: no edge**\n\n${TEND_DEP_JUDGED_MARKER}\n\`\`\`json\n` +
+    JSON.stringify({ target, dismissed, at: days(0) }) +
+    "\n```";
+
+  describe("overlap coefficient (pure)", () => {
+    it("a document contained in a larger one scores overlap 1.0; disjoint docs never qualify", () => {
+      const target = { number: 1, title: "alpha beta gamma", body: "" };
+      const pool = [
+        { number: 2, title: "alpha beta gamma delta epsilon", body: "" },
+        { number: 3, title: "zeta eta theta", body: "" },
+      ];
+      const { candidates } = scoreDepCandidates(target, pool, 10);
+      expect(candidates.map((c) => c.number)).toEqual([2]);
+      expect(candidates[0].overlap).toBeCloseTo(1.0, 10);
+    });
+
+    it("partial overlap lands strictly between 0 and 1", () => {
+      const target = { number: 1, title: "alpha beta gamma delta", body: "" };
+      const pool = [{ number: 2, title: "alpha beta zeta eta", body: "" }];
+      const { candidates } = scoreDepCandidates(target, pool, 10);
+      expect(candidates[0].overlap).toBeGreaterThan(0);
+      expect(candidates[0].overlap).toBeLessThan(1);
+    });
+  });
+
+  describe("parseDepOverlapMin", () => {
+    it("defaults to 0.2 and refuses out-of-range values with a warning", () => {
+      const err: string[] = [];
+      const spy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+        err.push(String(s));
+        return true;
+      });
+      try {
+        expect(parseDepOverlapMin(undefined)).toBe(DEP_OVERLAP_MIN_DEFAULT);
+        expect(parseDepOverlapMin("0.35")).toBe(0.35);
+        expect(parseDepOverlapMin("1")).toBe(1);
+        expect(err).toEqual([]); // valid values never warn
+        expect(parseDepOverlapMin("0")).toBe(DEP_OVERLAP_MIN_DEFAULT); // 0 = whole backlog
+        expect(parseDepOverlapMin("1.5")).toBe(DEP_OVERLAP_MIN_DEFAULT);
+        expect(parseDepOverlapMin("banana")).toBe(DEP_OVERLAP_MIN_DEFAULT);
+        expect(err.length).toBe(3);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  describe("dismissedDepPairs (marker reader)", () => {
+    it("reads the payload's own target, symmetric and cumulative across comments", () => {
+      const pairs = dismissedDepPairs([dismissalComment(5, [3]), dismissalComment(2, [7, 9])]);
+      expect(pairs.has(depPairKey(3, 5))).toBe(true); // canonical, either order
+      expect(pairs.has(depPairKey(5, 3))).toBe(true);
+      expect(pairs.has(depPairKey(2, 7))).toBe(true);
+      expect(pairs.has(depPairKey(2, 9))).toBe(true);
+      expect(pairs.size).toBe(3); // cumulative — a later marker never un-judges an earlier pair
+    });
+
+    it("a marker quoted inside a code fence is prose, not a judgment (GH-1826)", () => {
+      const quoted = "docs say:\n```\n" + TEND_DEP_JUDGED_MARKER + '\n{"target":1,"dismissed":[2]}\n```';
+      expect(dismissedDepPairs([quoted]).size).toBe(0);
+    });
+
+    it("a payload with no target contributes nothing", () => {
+      expect(dismissedDepPairs([`${TEND_DEP_JUDGED_MARKER}\n\`\`\`json\n{"dismissed":[2]}\n\`\`\``]).size).toBe(0);
+    });
+  });
+
+  describe("depsUnwiredMap (pure)", () => {
+    const poolItem = (
+      n: number,
+      over: Partial<{
+        openBlockers: number[];
+        closedBlockers: number[];
+        blockersTruncated: boolean;
+        parentNumber: number | null;
+      }> = {},
+    ) => ({
+      number: n,
+      title: `t${n}`,
+      openBlockers: [],
+      closedBlockers: [],
+      blockersTruncated: false,
+      parentNumber: null,
+      ...over,
+    });
+    const twin = (n: number) => [n, { title: "widget frobnicator cache oracle", body: "" }] as const;
+
+    it("both endpoints of an unjudged high-overlap pair surface, candidates attached", () => {
+      const map = depsUnwiredMap(
+        [poolItem(1), poolItem(2)],
+        new Map([twin(1), twin(2)]),
+        new Set(),
+        0.2,
+        10,
+      );
+      expect([...map.keys()].sort()).toEqual([1, 2]);
+      expect(map.get(1)![0].number).toBe(2);
+      expect(map.get(1)![0].overlap).toBeCloseTo(1, 10);
+    });
+
+    it("wired pairs (either direction), parent/child, and dismissed pairs are excluded", () => {
+      const bodies = new Map([twin(1), twin(2), twin(3), twin(4)]);
+      expect(
+        depsUnwiredMap([poolItem(1, { openBlockers: [2] }), poolItem(2)], bodies, new Set(), 0.2, 10).size,
+      ).toBe(0);
+      expect(
+        depsUnwiredMap([poolItem(1, { closedBlockers: [2] }), poolItem(2)], bodies, new Set(), 0.2, 10).size,
+      ).toBe(0);
+      expect(
+        depsUnwiredMap([poolItem(1, { parentNumber: 2 }), poolItem(2)], bodies, new Set(), 0.2, 10).size,
+      ).toBe(0);
+      expect(
+        depsUnwiredMap(
+          [poolItem(1), poolItem(2)],
+          bodies,
+          new Set([depPairKey(2, 1)]),
+          0.2,
+          10,
+        ).size,
+      ).toBe(0);
+    });
+
+    it("a truncated blocker list removes the item from BOTH roles — unwired cannot be asserted over unseen edges", () => {
+      const map = depsUnwiredMap(
+        [poolItem(1, { blockersTruncated: true }), poolItem(2)],
+        new Map([twin(1), twin(2)]),
+        new Set(),
+        0.2,
+        10,
+      );
+      expect(map.size).toBe(0);
+    });
+
+    it("below-threshold overlap never qualifies; an unfetched body scores nothing", () => {
+      const bodies = new Map([
+        [1, { title: "alpha beta gamma delta epsilon zeta", body: "" }],
+        [2, { title: "alpha omega psi chi phi upsilon", body: "" }],
+      ] as const);
+      expect(depsUnwiredMap([poolItem(1), poolItem(2)], new Map(bodies), new Set(), 0.5, 10).size).toBe(0);
+      expect(
+        depsUnwiredMap([poolItem(1), poolItem(2)], new Map([[1, bodies.get(1)!]]), new Set(), 0.1, 10).size,
+      ).toBe(0);
+    });
+
+    it("the cap applies to what survives the threshold and exclusions", () => {
+      const bodies = new Map([twin(1), twin(2), twin(3), twin(4)]);
+      const map = depsUnwiredMap([poolItem(1), poolItem(2), poolItem(3), poolItem(4)], bodies, new Set(), 0.2, 2);
+      expect(map.get(1)!.length).toBe(2);
+    });
+  });
+
+  describe("classifyTend integration", () => {
+    const days2 = days;
+    const item = (n: number, over: Partial<QueueItem> = {}): QueueItem => ({
+      number: n,
+      repo: "cdubiel08/ralph-hero",
+      title: `t${n}`,
+      state: "Backlog",
+      priority: "P2",
+      hasParent: false,
+      parentNumber: null,
+      openBlockers: [],
+      openBlockerLabels: [],
+      blockersTruncated: false,
+      fieldValuesTruncated: false,
+      claim: null,
+      claimRaw: null,
+      labels: [],
+      labelsTruncated: false,
+      closedBlockers: [],
+      updatedAt: days2(1),
+      createdAt: days2(2),
+      estimate: "S",
+      ...over,
+    });
+    const cand = (n: number) => ({ number: n, title: `t${n}`, score: 5, overlap: 0.9, terms: ["shared"] });
+
+    it("deps-unwired rows carry their candidates inline — no second read for the judge", () => {
+      const res = classifyTend(
+        [item(1), item(2)],
+        [],
+        TEND_DEFAULTS,
+        NOW,
+        new Map(),
+        new Map([
+          [1, [cand(2)]],
+          [2, [cand(1)]],
+        ]),
+      );
+      expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+        [1, "deps-unwired"],
+        [2, "deps-unwired"],
+      ]);
+      expect(res.queue[0].candidates).toEqual([cand(2)]);
+    });
+
+    it("earlier categories win via the seen set; deps-unwired outranks unformed", () => {
+      const res = classifyTend(
+        [
+          item(1, { closedBlockers: [9] }), // deps-cleared AND unwired-candidate → deps-cleared wins
+          item(2, { estimate: null, createdAt: days2(9) }), // unformed AND unwired-candidate → deps-unwired wins
+        ],
+        [],
+        TEND_DEFAULTS,
+        NOW,
+        new Map(),
+        new Map([
+          [1, [cand(2)]],
+          [2, [cand(1)]],
+        ]),
+      );
+      expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+        [1, "deps-cleared"],
+        [2, "deps-unwired"],
+      ]);
+      expect(res.queue[0].candidates).toBeUndefined();
+    });
+  });
+
+  describe("through the CLI", () => {
+    let gh: FakeGh;
+    let ctx: Ctx;
+    beforeEach(() => {
+      gh = new FakeGh();
+      ctx = makeCtx(gh);
+    });
+    const fresh = { updatedAt: days(1), createdAt: days(2), estimate: "S", priority: "P2" };
+    const twinIssue = (n: number, over: Record<string, unknown> = {}) => {
+      gh.issues.set(n, { number: n, state: "Backlog", title: "widget frobnicator cache oracle", ...fresh, ...over });
+    };
+
+    it("tend-queue surfaces both endpoints as deps-unwired with candidates inline", () => {
+      twinIssue(1);
+      twinIssue(2);
+      const res = tendQueue(ctx, TEND_DEFAULTS);
+      expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+        [1, "deps-unwired"],
+        [2, "deps-unwired"],
+      ]);
+      expect(res.queue[0].candidates![0].number).toBe(2);
+      expect(res.queue[0].candidates![0].overlap).toBeGreaterThanOrEqual(0.2);
+      expect(res.queue[0].candidates![0].terms.length).toBeGreaterThan(0);
+    });
+
+    it("a claimed item is out of the pool; a wired pair never surfaces", () => {
+      twinIssue(1);
+      twinIssue(2, { claim: encodeClaim("a@h", NOW) });
+      expect(tendQueue(ctx, TEND_DEFAULTS).queue).toEqual([]);
+      gh.issues.get(2)!.claim = undefined;
+      gh.issues.set(2, { number: 2, state: "Backlog", title: "widget frobnicator cache oracle", ...fresh, blockedBy: [{ number: 1, state: "OPEN" }] });
+      expect(tendQueue(ctx, TEND_DEFAULTS).queue).toEqual([]);
+    });
+
+    it("board dep --dismiss writes the marker the classifier reads — one judgment clears BOTH rows", () => {
+      twinIssue(1);
+      twinIssue(2);
+      run(["dep", "1", "--on", "2", "--dismiss", "-m", "shared vocabulary, no build-order edge"], ctx);
+      expect(gh.mutations).toContain("addComment");
+      const body = gh.comments[0].body;
+      expect(body).toContain(TEND_DEP_JUDGED_MARKER);
+      expect(body).toContain('"target":1');
+      expect(body).toContain("shared vocabulary, no build-order edge");
+      // Round-trip: the written comment IS the trail the selector reads.
+      gh.issues.get(1)!.comments = [body];
+      expect(tendQueue(ctx, TEND_DEFAULTS).queue).toEqual([]);
+    });
+
+    it("--dismiss refuses --rm and self-dismissal", () => {
+      expect(() => run(["dep", "1", "--on", "2", "--dismiss", "--rm"], ctx)).toThrow(/mutually exclusive/);
+      expect(() => run(["dep", "1", "--on", "1", "--dismiss"], ctx)).toThrow(/itself/);
+      expect(gh.mutations).toEqual([]);
+    });
+
+    it("doctor carries the advisory i line, names tend, and --strict never escalates it", () => {
+      twinIssue(1);
+      twinIssue(2);
+      const baseline = doctor(makeCtx(new FakeGh()), { fix: false, strict: true }).ok;
+      const r = doctor(ctx, { fix: false, strict: true });
+      const c = r.checks.find((x) => x.name === "deps-unwired")!;
+      expect(c.level).toBe("info");
+      expect(c.detail).toContain("tend");
+      expect(c.detail).toContain("#1 #2");
+      expect(r.ok).toBe(baseline); // info never moves the exit code, strict included
+    });
+
+    it("doctor reads ok when the pair is judged, and degrades to not evaluated on a failed read", () => {
+      twinIssue(1, { comments: [dismissalComment(1, [2])] });
+      twinIssue(2);
+      const clean = doctor(ctx, { fix: false, strict: false });
+      expect(clean.checks.find((x) => x.name === "deps-unwired")!.level).toBe("ok");
+
+      const inner = gh.exec;
+      gh.exec = (argv: string[], stdin?: string) =>
+        stdin?.includes("db0: issue(number")
+          ? { code: 1, stdout: "", stderr: "simulated bodies failure" }
+          : inner(argv, stdin);
+      const baseline = doctor(makeCtx(new FakeGh()), { fix: false, strict: true }).ok;
+      const r = doctor(ctx, { fix: false, strict: true });
+      const c = r.checks.find((x) => x.name === "deps-unwired")!;
+      expect(c.level).toBe("info");
+      expect(c.detail).toContain("not evaluated");
+      expect(r.ok).toBe(baseline); // a failed advisory read never changes the exit code
+    });
   });
 });

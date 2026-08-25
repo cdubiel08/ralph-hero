@@ -6015,6 +6015,56 @@ export const TEND_PROPOSAL_MARKER = "<!-- ralph-tend:v1 proposed -->";
  *  Payload: `{"disposition": "accepted"|"rejected", "at": iso, "note": "…"}`. */
 export const TEND_RESOLUTION_MARKER = "<!-- ralph-tend:v1 resolved -->";
 
+/** The dep-judgment marker (GH-2136) — the durable "no edge here" record.
+ *  `deps-unwired` surfaces unjudged candidate pairs; wiring an edge is
+ *  observable (blockedBy), but a judgment of "these are NOT dependent" changes
+ *  nothing the board can see, so without a written record the same pair would
+ *  re-surface every pass forever — the GH-1777 argument, one surface over.
+ *  Written by `board dep NNN --on MMM --dismiss`, never hand-composed
+ *  (GH-1826's quoting trap; GH-2129's no-CLI-writer class).
+ *  Payload: `{"target": N, "dismissed": [M, ...], "at": iso, "note"?: "…"}`.
+ *  Judgments are CUMULATIVE across markers — each covers specific pairs, so
+ *  last-wins semantics would silently un-judge earlier pairs. */
+export const TEND_DEP_JUDGED_MARKER = "<!-- ralph-tend:v1 dep-judged -->";
+
+/** Canonical undirected pair key — a dismissal clears BOTH endpoints' rows. */
+export const depPairKey = (a: number, b: number): string =>
+  `${Math.min(a, b)}|${Math.max(a, b)}`;
+
+/** Every dismissed pair a comment trail records, as canonical pair keys.
+ *  The payload's own `target` binds the pair — not the issue the trail came
+ *  from — so a quoted marker inside a code span is masked (lastMarkerIndex)
+ *  and a payload that names no target contributes nothing. */
+export function dismissedDepPairs(comments: string[]): Set<string> {
+  const pairs = new Set<string>();
+  for (const body of comments) {
+    if (lastMarkerIndex(body, TEND_DEP_JUDGED_MARKER) < 0) continue;
+    const t = /"target"\s*:\s*(\d+)/.exec(body);
+    const d = /"dismissed"\s*:\s*\[([\d,\s]*)\]/.exec(body);
+    if (!t || !d) continue;
+    const target = Number(t[1]);
+    for (const m of d[1].matchAll(/\d+/g)) pairs.add(depPairKey(target, Number(m[0])));
+  }
+  return pairs;
+}
+
+export const DEP_OVERLAP_MIN_DEFAULT = 0.2;
+
+/** RALPH_DEP_OVERLAP_MIN — the `deps-unwired` qualification threshold on the
+ *  scale-free `overlap` coefficient. A fact about a board's vocabulary
+ *  density, not doctrine (measured here 2026-08-24: max 0.36; ≥0.2 → 5
+ *  pairs; ≥0.1 → 40). Out-of-range values warn and use the default — 0 would
+ *  put the whole backlog in the category, >1 is unsatisfiable. */
+export function parseDepOverlapMin(raw: string | undefined): number {
+  if (raw === undefined) return DEP_OVERLAP_MIN_DEFAULT;
+  const v = Number(raw);
+  if (Number.isFinite(v) && v > 0 && v <= 1) return v;
+  process.stderr.write(
+    `warn: RALPH_DEP_OVERLAP_MIN="${raw}" is not in (0, 1] — using ${DEP_OVERLAP_MIN_DEFAULT}\n`,
+  );
+  return DEP_OVERLAP_MIN_DEFAULT;
+}
+
 /** Blank every character of a span except its newlines, so masking a region
  *  preserves every later index — marker positions within one comment are
  *  COMPARED (last one wins), so a mask that shifted offsets would reorder them. */
@@ -6161,6 +6211,9 @@ export interface TendRow {
   category: TendCategory;
   /** The timestamp that put it in the queue (ordering input, oldest first). */
   at: string | null;
+  /** GH-2136: deps-unwired rows only — the judge's inputs travel with the
+   *  row, so acting on the queue needs no second read. */
+  candidates?: DepCandidate[];
 }
 
 export interface TendQueueResult {
@@ -6185,6 +6238,10 @@ export function classifyTend(
   /** number → the proposal's `at` (null when the payload was unreadable), for
    *  the open items whose trails were read. Absent = no proposal on file. */
   proposals: Map<number, string | null> = new Map(),
+  /** GH-2136: number → its unjudged high-overlap candidates, computed by the
+   *  caller (depsUnwiredMap) where the bodies and dismissal trails live.
+   *  Absent/empty = the category is empty — this stays a pure classifier. */
+  depsUnwired: Map<number, DepCandidate[]> = new Map(),
 ): TendQueueResult {
   const ms = (iso: string | null | undefined): number | null => {
     if (!iso) return null;
@@ -6200,13 +6257,25 @@ export function classifyTend(
     "stale-body": [],
     "deps-cleared": [],
     "deps-truncated": [],
+    "deps-unwired": [],
     unformed: [],
     "done-audit": [],
   };
-  const push = (cat: TendCategory, i: { number: number; title?: string }, at: string | null) => {
+  const push = (
+    cat: TendCategory,
+    i: { number: number; title?: string },
+    at: string | null,
+    candidates?: DepCandidate[],
+  ) => {
     if (seen.has(i.number)) return;
     seen.add(i.number);
-    rows[cat].push({ number: i.number, title: i.title ?? "", category: cat, at });
+    rows[cat].push({
+      number: i.number,
+      title: i.title ?? "",
+      category: cat,
+      at,
+      ...(candidates ? { candidates } : {}),
+    });
   };
 
   // 0. Pending proposals (GH-1777). FIRST in spec order deliberately: an item
@@ -6230,6 +6299,17 @@ export function classifyTend(
   }
   for (const i of backlog) {
     if (i.blockersTruncated) push("deps-truncated", i, i.updatedAt ?? null);
+  }
+  // 2b. Unjudged high-overlap dependency candidates (GH-2136) — the third
+  //     deps-* sibling, deliberately NOT folded into `unformed` (which means
+  //     "missing Priority or Estimate" — a different question; collapsing
+  //     them would make a clean sweep of formation work silently assert
+  //     dependency hygiene nobody checked). The map is computed by the
+  //     caller; spec order means proposed/stale-body/deps-cleared/truncated
+  //     outrank it via `seen`.
+  for (const i of backlog) {
+    const cands = depsUnwired.get(i.number);
+    if (cands && cands.length > 0) push("deps-unwired", i, i.updatedAt ?? null, cands);
   }
   // 3. Formation candidates: likely unformed intake. A MISSING PRIORITY counts
   //    equally with a missing estimate (GH-1796): `priorityRank` sorts null
@@ -6292,7 +6372,15 @@ export function classifyTend(
     return ta - tb || a.number - b.number;
   };
   const queue = (
-    ["proposed", "stale-body", "deps-cleared", "deps-truncated", "unformed", "done-audit"] as const
+    [
+      "proposed",
+      "stale-body",
+      "deps-cleared",
+      "deps-truncated",
+      "deps-unwired",
+      "unformed",
+      "done-audit",
+    ] as const
   ).flatMap((cat) => rows[cat].sort(oldestFirst));
   return { next: queue[0] ?? null, queue, blocked: [], observationSlot: true };
 }
@@ -6326,19 +6414,50 @@ export function tendQueue(ctx: Ctx, opts: TendOpts = parseTendOpts()): TendQueue
   // item no longer qualifies for any category (it was formed or updated since)
   // drops out of this queue — doctor's `tend-proposal-stale` line, which reads
   // every open item's trail, is the backstop that keeps it visible.
-  const first = classifyTend(open, closed, opts, ctx.now());
+  // deps-unwired inputs (GH-2136): one bodies batch over the unclaimed
+  // Backlog (1 pt / 50, zero nested connections) + in-memory pairwise
+  // scoring. An unreadable bodies read PROPAGATES — typed like every other
+  // failed selector read — because a category that silently emptied on a
+  // failed fetch would render exactly like a judged-clean board.
+  const pool = open
+    .filter((i) => i.state === "Backlog" && !i.claim)
+    .map((i) => ({
+      number: i.number,
+      title: i.title,
+      openBlockers: i.openBlockers ?? [],
+      closedBlockers: i.closedBlockers ?? [],
+      blockersTruncated: i.blockersTruncated,
+      parentNumber: i.parentNumber ?? null,
+    }));
+  const minOverlap = parseDepOverlapMin(process.env.RALPH_DEP_OVERLAP_MIN);
+  const cap = parseDepCandidatesCap(process.env.RALPH_DEP_CANDIDATES_MAX);
+  const bodies =
+    pool.length >= 2 ? fetchIssueBodies(ctx, pool.map((i) => i.number)) : new Map<number, { title: string; body: string }>();
+  const unwired = depsUnwiredMap(pool, bodies, new Set(), minOverlap, cap);
+  const first = classifyTend(open, closed, opts, ctx.now(), new Map(), unwired);
   const candidates = new Set(open.map((i) => i.number));
   const numbers = first.queue.map((r) => r.number).filter((n) => candidates.has(n));
   const proposals = new Map<number, string | null>();
+  // Dismissed pairs ride the SAME trail fetch as the proposal cursor. Honest
+  // limit: only pass-1 queue rows' trails are read, so a dismissal recorded
+  // on an item outside the queue is invisible here — but every unjudged pair
+  // puts BOTH endpoints in the queue, so the judging item's own trail is
+  // fetched whenever the pair still surfaces. Doctor reads the full pool's
+  // trails and is the backstop.
+  const dismissed = new Set<string>();
   if (numbers.length > 0) {
     const openTrails = fetchCommentTrails(ctx, numbers);
     for (const n of numbers) {
-      const p = pendingProposal(openTrails.get(n) ?? []);
+      const trail = openTrails.get(n) ?? [];
+      const p = pendingProposal(trail);
       if (p) proposals.set(n, p.at);
+      for (const k of dismissedDepPairs(trail)) dismissed.add(k);
     }
   }
-  if (proposals.size === 0) return first;
-  return classifyTend(open, closed, opts, ctx.now(), proposals);
+  if (proposals.size === 0 && dismissed.size === 0) return first;
+  const judged =
+    dismissed.size === 0 ? unwired : depsUnwiredMap(pool, bodies, dismissed, minOverlap, cap);
+  return classifyTend(open, closed, opts, ctx.now(), proposals, judged);
 }
 
 /** Dispose of a pending closure proposal by writing the durable resolution
@@ -6452,6 +6571,13 @@ export interface DepCandidate {
   number: number;
   title: string;
   score: number;
+  /** Normalized overlap coefficient in [0,1]: shared-term weight over the
+   *  SMALLER document's total weight (GH-2136). `score` scales with body
+   *  length and backlog size, so a threshold on it rots as the board grows;
+   *  this is the scale-free number `deps-unwired` thresholds on. min() rather
+   *  than union: a small unit whose vocabulary is contained in a big epic's
+   *  is exactly the containment a dependency edge looks like. */
+  overlap: number;
   /** Shared terms, most distinctive first — the judge's foothold. */
   terms: string[];
 }
@@ -6477,14 +6603,18 @@ export function scoreDepCandidates(
   // move inside a selector whose declared bias is recall. Ranking, not
   // qualification, is where ubiquity gets priced.
   const weight = (t: string) => Math.log((n + 1) / (df.get(t) ?? n));
+  const totalWeight = (terms: Set<string>) => [...terms].reduce((s, t) => s + weight(t), 0);
   const targetTerms = docs[0].terms;
+  const targetTotal = totalWeight(targetTerms);
   const scored: DepCandidate[] = [];
   for (const d of docs.slice(1)) {
     const shared = [...d.terms].filter((t) => targetTerms.has(t));
     if (shared.length === 0) continue;
     const score = shared.reduce((s, t) => s + weight(t), 0);
+    const denom = Math.min(targetTotal, totalWeight(d.terms));
+    const overlap = denom > 0 ? score / denom : 0;
     shared.sort((a, b) => weight(b) - weight(a) || (a < b ? -1 : 1));
-    scored.push({ number: d.number, title: d.title, score, terms: shared.slice(0, 6) });
+    scored.push({ number: d.number, title: d.title, score, overlap, terms: shared.slice(0, 6) });
   }
   scored.sort((a, b) => b.score - a.score || a.number - b.number);
   const candidates = scored.slice(0, cap);
@@ -6647,6 +6777,58 @@ function printFilingDepCandidates(
         `(the filing succeeded; \`board dep-candidates ${issue.number}\` retries the check)\n`,
     );
   }
+}
+
+/** The `deps-unwired` population (GH-2136): for each unclaimed Backlog item,
+ *  its unjudged high-overlap candidates. Pure — the caller supplies bodies
+ *  and the dismissed-pair set from wherever its trails live (tendQueue rides
+ *  the trail fetch it already does; doctor reads comment trails).
+ *
+ *  Fail-closed exclusions: an item with a TRUNCATED blocker list is out
+ *  entirely (both as target and candidate) — with an unseen tail of edges we
+ *  cannot assert any pair is unwired, and the item is already a
+ *  `deps-truncated` row. Already-wired pairs (either direction) and
+ *  parent/child pairs are out: the subject is the edge the graph does NOT
+ *  have. Items with no fetched body are skipped — a body GitHub never
+ *  returned scores nothing. */
+export function depsUnwiredMap(
+  pool: Array<{
+    number: number;
+    title: string;
+    openBlockers: number[];
+    closedBlockers: number[];
+    blockersTruncated: boolean;
+    parentNumber: number | null;
+  }>,
+  bodies: Map<number, { title: string; body: string }>,
+  dismissed: Set<string>,
+  minOverlap: number,
+  cap: number,
+): Map<number, DepCandidate[]> {
+  const eligible = pool.filter((i) => !i.blockersTruncated && bodies.has(i.number));
+  const out = new Map<number, DepCandidate[]>();
+  if (eligible.length < 2) return out;
+  const excluded = new Set<string>(dismissed);
+  for (const i of eligible) {
+    for (const b of [...i.openBlockers, ...i.closedBlockers]) excluded.add(depPairKey(i.number, b));
+    if (i.parentNumber !== null) excluded.add(depPairKey(i.number, i.parentNumber));
+  }
+  const doc = (i: { number: number }): DepCandidateDoc => ({
+    number: i.number,
+    title: bodies.get(i.number)!.title,
+    body: bodies.get(i.number)!.body,
+  });
+  for (const target of eligible) {
+    const others = eligible.filter((i) => i.number !== target.number).map(doc);
+    // Uncapped at the scorer: the threshold and pair exclusions decide
+    // membership; the cap applies to what SURVIVES them.
+    const { candidates } = scoreDepCandidates(doc(target), others, others.length);
+    const kept = candidates
+      .filter((c) => c.overlap >= minOverlap && !excluded.has(depPairKey(target.number, c.number)))
+      .slice(0, cap);
+    if (kept.length > 0) out.set(target.number, kept);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -8649,6 +8831,59 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         for (const n of SMELL_CHECKS) add(n, "info", `not evaluated: ${(e as Error).message}`);
       }
 
+      // Unjudged high-overlap dependency candidates (GH-2136). Advisory in
+      // full — the info rules verbatim: `--strict` never escalates it, `--fix`
+      // never acts on it (wiring an edge is a judgment, not a repair), and a
+      // throwing read degrades to `not evaluated`. It exists because tend is
+      // capped at RALPH_TEND_BATCH per pass, so an unwired candidate can sit
+      // for many passes without ever being the item under judgment — this
+      // line is the count that keeps that backlog visible, and tend is the
+      // remedy it names. Own try/catch for the same reason the smells have
+      // one: no advisory hint is worth changing doctor's exit code.
+      try {
+        const pool = items
+          .filter((i) => i.state === "Backlog" && !i.claim)
+          .map((i) => ({
+            number: i.number,
+            title: i.title,
+            openBlockers: i.openBlockers ?? [],
+            closedBlockers: i.closedBlockers ?? [],
+            blockersTruncated: i.blockersTruncated,
+            parentNumber: i.parentNumber ?? null,
+          }));
+        let unwired = new Map<number, DepCandidate[]>();
+        if (pool.length >= 2) {
+          const bodies = fetchIssueBodies(ctx, pool.map((i) => i.number));
+          // Comments-only trails (GH-1891 doctrine): dismissal markers are
+          // comments, and this line reads no state history.
+          const trails = fetchCommentTrails(ctx, pool.map((i) => i.number));
+          const dismissed = new Set<string>();
+          for (const t of trails.values()) for (const k of dismissedDepPairs(t)) dismissed.add(k);
+          unwired = depsUnwiredMap(
+            pool,
+            bodies,
+            dismissed,
+            parseDepOverlapMin(process.env.RALPH_DEP_OVERLAP_MIN),
+            parseDepCandidatesCap(process.env.RALPH_DEP_CANDIDATES_MAX),
+          );
+        }
+        const nums = [...unwired.keys()].sort((a, b) => a - b);
+        add(
+          "deps-unwired",
+          nums.length === 0 ? "ok" : "info",
+          nums.length === 0
+            ? "none"
+            : `${nums.length} Backlog item(s) with unjudged high-overlap dependency candidates ` +
+              `(overlap ≥ ${parseDepOverlapMin(process.env.RALPH_DEP_OVERLAP_MIN)}) — tend judges each ` +
+              `(\`board tend-queue\` carries the candidates; wire \`board dep N --on M\` or dismiss ` +
+              `\`board dep N --on M --dismiss\`): ` +
+              nums.slice(0, 10).map((n) => `#${n}`).join(" ") +
+              (nums.length > 10 ? ` +${nums.length - 10} more` : ""),
+        );
+      } catch (e) {
+        add("deps-unwired", "info", `not evaluated: ${(e as Error).message}`);
+      }
+
       // Fix loops are per-item fault-isolated: one unwritable item logs its
       // own fail line and the sweep keeps going.
       if (opts.fix) {
@@ -9651,11 +9886,14 @@ reads
                               carries the same count as an advisory i line
   tend-queue [--json]         tend lane (GH-1712): Backlog hygiene + Done audit
                               — pending closure proposals, stale bodies,
-                              cleared/truncated deps, unformed intake,
+                              cleared/truncated deps, unjudged high-overlap
+                              dep candidates (deps-unwired, GH-2136 — the
+                              candidate list rides the row), unformed intake,
                               unaudited closes. Classification only;
                               judgment (and every closure, as a marker-comment
                               proposal) belongs to /ralph:tend. Knobs:
-                              RALPH_STALE_DAYS (30), RALPH_AUDIT_DAYS (14)
+                              RALPH_STALE_DAYS (30), RALPH_AUDIT_DAYS (14),
+                              RALPH_DEP_OVERLAP_MIN (0.2)
   dep-candidates <n> [--json] which OPEN, UNCLAIMED Backlog items might #n
                               depend on (or vice versa) — df-weighted term
                               overlap on title + body, handed to a judge.
@@ -9765,7 +10003,10 @@ mutations
                               observable — REJECTION, "leave it open". Exits 1
                               when nothing is pending; -m required to reject
   link PARENT CHILD           add sub-issue edge
-  dep NNN --on MMM [--rm]     NNN is blocked by MMM (--rm removes)
+  dep NNN --on MMM [--rm]     NNN is blocked by MMM (--rm removes);
+                              --dismiss [-m why] records "judged, NO edge"
+                              instead — the durable answer to a deps-unwired
+                              candidate (GH-2136)
   comment NNN -m "body"
 
 maintenance
@@ -9909,7 +10150,7 @@ export const VERB_HELP: Record<string, string> = {
   cancel: "board cancel <n> -m \"<reason>\"\n  Cancel (→Canceled, closes NOT_PLANNED). Reopen is the only exit.\n  example: board cancel 1234 -m \"superseded by #1300\"",
   reopen: "board reopen <n>\n  The one exit from Done/Canceled (→Backlog); accepts a pending reopen proposal.\n  example: board reopen 1234",
   defer: "board defer <n> --until \"<condition>\" [--recheck <ISO>] | board defer <n> --clear\n  Park a Backlog item out of ranking until its stated precondition holds.\n  Claiming the unit also lifts it. doctor surfaces elapsed rechecks.\n  example: board defer 1234 --until \"GH-2088 lands\" --recheck 2026-09-01T00:00:00Z",
-  dep: "board dep <blocked> --on <blocking> [--rm]   (--blocked-by = --on)\n  Dependency edge; blocked items never rank.\n  example: board dep 1234 --blocked-by 1200",
+  dep: "board dep <blocked> --on <blocking> [--rm|--dismiss [-m why]]   (--blocked-by = --on)\n  Dependency edge; blocked items never rank. --dismiss records the judgment that the pair is NOT dependent (clears it from tend's deps-unwired).\n  example: board dep 1234 --blocked-by 1200",
   link: "board link <parent> <child>\n  Sub-issue edge (the tree parent-check rolls up).\n  example: board link 1200 1234",
   priority: "board priority <n> <P0..P3|--clear>\n  Set/clear Priority. Null priority sinks below stale backlog in next.\n  example: board priority 1234 P1",
   comment: "board comment <n> -m \"<body>\"\n  Plain comment through the sanctioned path.\n  example: board comment 1234 -m \"blocked on infra\"",
@@ -9944,7 +10185,7 @@ interface ParsedArgs {
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
-  "intake", "backlog",
+  "intake", "backlog", "dismiss",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
@@ -10676,8 +10917,13 @@ export function run(argv: string[], ctx: Ctx): number {
       else if (!res.next) out("tend queue empty — one clean sweep");
       else {
         out(`tend next: #${res.next.number} [${res.next.category}]${res.next.title ? ` ${res.next.title}` : ""}`);
+        for (const c of res.next.candidates ?? [])
+          out(`    candidate #${c.number} overlap=${c.overlap.toFixed(2)} ${c.title} (shared: ${c.terms.join(" ")})`);
         for (const r of res.queue.slice(1, 8))
-          out(`  then #${r.number} [${r.category}]${r.title ? ` ${r.title}` : ""}`);
+          out(
+            `  then #${r.number} [${r.category}]${r.title ? ` ${r.title}` : ""}` +
+              (r.candidates?.length ? ` (${r.candidates.length} candidate${r.candidates.length === 1 ? "" : "s"})` : ""),
+          );
       }
       return 0;
     }
@@ -10729,7 +10975,9 @@ export function run(argv: string[], ctx: Ctx): number {
           );
           out(`  note: ${DEP_CANDIDATES_DISCLAIMER}`);
           for (const c of candidates)
-            out(`  #${c.number} ${c.score.toFixed(2)} ${c.title} (shared: ${c.terms.join(" ")})`);
+            out(
+              `  #${c.number} ${c.score.toFixed(2)} (overlap ${c.overlap.toFixed(2)}) ${c.title} (shared: ${c.terms.join(" ")})`,
+            );
           if (capped > 0) out(`  (+${capped} more past cap ${cap} — RALPH_DEP_CANDIDATES_MAX raises it)`);
           if (candidates.length === 0)
             out("  no overlap found — absence of overlap is not evidence of independence");
@@ -11060,6 +11308,31 @@ export function run(argv: string[], ctx: Ctx): number {
         : typeof flags["blocked-by"] === "string" ? flags["blocked-by"]
         : undefined;
       const blocking = requireNumber(onFlag, "--on <blocking issue> (--blocked-by also accepted)");
+      // --dismiss (GH-2136): the judgment that these two are NOT dependent,
+      // recorded durably so `deps-unwired` stops surfacing the pair. A typed
+      // writer, deliberately: hand-composed markers are the GH-1826 quoting
+      // trap, and a category keyed on a marker with no CLI writer is the
+      // GH-2129 class.
+      if (flags.dismiss) {
+        if (flags.rm) throw new UsageError("--dismiss and --rm are mutually exclusive");
+        if (blocked === blocking) throw new UsageError("cannot dismiss an issue against itself");
+        const note = typeof flags.m === "string" && flags.m ? flags.m : undefined;
+        const payload = JSON.stringify({
+          target: blocked,
+          dismissed: [blocking],
+          at: ctx.now().toISOString(),
+          ...(note ? { note } : {}),
+        });
+        addComment(
+          ctx,
+          fetchNodeIds(ctx, [blocked]).get(blocked)!,
+          `**Dependency judged: no edge** between #${blocked} and #${blocking} (\`board\` by \`${ctx.cfg.holder}\`)` +
+            (note ? `:\n\n${note}` : "") +
+            `\n\n${TEND_DEP_JUDGED_MARKER}\n\`\`\`json\n${payload}\n\`\`\``,
+        );
+        out(`#${blocked}: dismissed dependency candidate #${blocking} (judged, no edge)`);
+        return 0;
+      }
       setDependency(ctx, blocked, blocking, !!flags.rm);
       out(`#${blocked} ${flags.rm ? "no longer" : "is"} blocked by #${blocking}`);
       return 0;
