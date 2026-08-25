@@ -106,7 +106,14 @@ export const MACHINE: Record<State, readonly State[]> = {
   // into Done.
   "In Progress": ["In Review", "Done", "Human Needed", "Backlog", "Canceled"],
   "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
-  "Human Needed": ["In Progress", "Backlog", "Canceled"],
+  // `Human Needed → Backlog` removed (GH-2078): an answered item RESUMES
+  // (`→ In Progress`, the edge `answer` owns) or DIES (`→ Canceled`). A
+  // parking edge out of an escalation is a way to lose the question — the
+  // item re-enters the eligible pool and the next claimant re-derives the
+  // very context the escalation existed to hand over. "Answered: not now"
+  // is recorded but NOT decided (possibly `→ Intake` once judged); it does
+  // not resurrect this edge in the meantime.
+  "Human Needed": ["In Progress", "Canceled"],
   Done: [],
   Canceled: [],
 };
@@ -2517,6 +2524,24 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         `moving to Human Needed requires --why "<the exact decision needed>" — it becomes the escalation comment`,
       );
     }
+    // Backward edges are exceptional, not routine (GH-2078): the reason is
+    // machine-required and posted as a comment, so every demotion is auditable
+    // instead of implicit. The two edges are named individually — a general
+    // "backward" predicate would need an ordering the states do not carry.
+    if (from === "In Progress" && to === "Backlog" && !opts.why) {
+      throw new UsageError(
+        `In Progress → Backlog is a demotion and requires the reason on the record: ` +
+          `\`board release ${issue.number} -m "<where you stopped, what's next>"\` ` +
+          `(or \`board move ${issue.number} backlog --why\`).`,
+      );
+    }
+    if (from === "In Review" && to === "In Progress" && !opts.why) {
+      throw new UsageError(
+        `In Review → In Progress is a demotion and requires the reason on the record: ` +
+          `\`board claim ${issue.number} --why "<the rework this resumes for>"\` ` +
+          `(or \`board move ${issue.number} in-progress --why\`).`,
+      );
+    }
     // Done requires evidence: a merged linked PR, typed decision evidence, or
     // an explicit --why on the record. Intent lane only — reconcile() reflects
     // reality unchecked. The gates key on the DESTINATION (guardDoneEvidence,
@@ -2589,6 +2614,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         to === "Human Needed" ? "Decision needed"
         : to === "Canceled" ? "Canceled"
         : doneWithoutMergedPr ? "Completed without merged PR"
+        : from === "In Review" && to === "In Progress" ? "Demoted for rework"
         : "Parked";
       addComment(ctx, issue.nodeId, `**${header}** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${opts.why}`);
     }
@@ -9952,7 +9978,9 @@ mutations
                               hardcoded XS..XL. Approval (Intake → Backlog)
                               gates on Priority AND Estimate, so this is how an
                               intake filing becomes approvable from the CLI
-  claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim.
+  claim NNN [--steal] [--why W]  Backlog/Human Needed/In Review → In Progress; sets
+                              Claim. Claiming from In Review is a DEMOTION and
+                              requires --why "<the rework>" (GH-2078).
                               Binds this session to the unit (GH-1948): a second
                               DISTINCT unit from one session is refused (contract
                               rule 9). Re-claiming the same unit always passes;
@@ -9970,7 +9998,11 @@ mutations
                               removed in GH-1869: nothing creates multi-holder
                               claims; existing ones are still read and cleaned)
   release NNN -m "why"        In Progress → Backlog; parking comment required
-  move NNN <state> [--why W]  any legal transition; Human Needed requires --why.
+  move NNN <state> [--why W]  any legal transition; Human Needed requires --why,
+                              and so do the two demotions (In Progress →
+                              Backlog, In Review → In Progress) — backward
+                              moves are exceptional and the reason is posted
+                              as a comment (GH-2078).
                               Intake → Backlog is APPROVAL: it refuses without
                               a Priority and an Estimate.
   answer NNN -m "decision"    Human Needed → In Progress, COMMENT-FIRST: the
@@ -10143,9 +10175,9 @@ export const VERB_HELP: Record<string, string> = {
   list: "board list [--state <s>] [--json]\n  Items by state. Full-board scan — prefer next/brief for orientation.\n  example: board list --state human",
   get: "board get <n> [--json]\n  One issue with board fields, parity with what move/claim write.\n  example: board get 1234",
   create: "board create (--intake | --backlog | --state <s>) --title <t> [--body <b>] [--parent <n>] [--estimate XS..XL] [--priority P0..P3] [--apply]\n  Files an issue onto the board. Retry-safe (twin dedupe, GH-1973).\n  The landing state is REQUIRED — there is no default, because filing is not approving:\n    --intake   tracked, not yet approved; invisible to next/frontier (Priority/Estimate optional)\n    --backlog  approved and ready to work (Priority and Estimate REQUIRED)\n  example: board create --backlog --title \"fix the gate\" --priority P1 --estimate S",
-  claim: "board claim <n> [--steal] | board claim show <n>\n  Take a unit (Backlog→In Progress). --steal only after TTL expiry.\n  example: board claim 1234",
+  claim: "board claim <n> [--steal] [--why <w>] | board claim show <n>\n  Take a unit (Backlog→In Progress). --steal only after TTL expiry.\n  Claiming from In Review demotes and requires --why \"<the rework>\".\n  example: board claim 1234",
   release: "board release <n> -m \"<where you stopped>\"\n  Give a unit back (→Backlog) with the handoff note.\n  example: board release 1234 -m \"tests red on X; next: fix parser\"",
-  move: "board move <n> <state> [--why <w>] [--decision <artifact>]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact, or --why.\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
+  move: "board move <n> <state> [--why <w>] [--decision <artifact>]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact, or --why.\n  Demotions (In Progress→Backlog, In Review→In Progress) require --why (GH-2078).\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
   answer: "board answer <n> -m \"<the decision>\" [--comment-only] [--any-state]\n  Answer a Human Needed item and resume it.\n  example: board answer 1234 -m \"ship option B\"",
   cancel: "board cancel <n> -m \"<reason>\"\n  Cancel (→Canceled, closes NOT_PLANNED). Reopen is the only exit.\n  example: board cancel 1234 -m \"superseded by #1300\"",
   reopen: "board reopen <n>\n  The one exit from Done/Canceled (→Backlog); accepts a pending reopen proposal.\n  example: board reopen 1234",
@@ -11136,7 +11168,12 @@ export function run(argv: string[], ctx: Ctx): number {
         return 0;
       }
       const issue = fetchIssue(ctx, requireNumber(positional[0]));
-      const after = transition(ctx, issue, "In Progress", { steal: !!flags.steal });
+      const after = transition(ctx, issue, "In Progress", {
+        steal: !!flags.steal,
+        // In Review → In Progress is a demotion and the machine requires the
+        // reason (GH-2078); claiming back a reviewed item carries it here.
+        why: typeof flags.why === "string" ? flags.why : undefined,
+      });
       out(issueLine(after));
       return 0;
     }

@@ -101,6 +101,22 @@ until the option exists every Intake filing and move fails closed on
 **adoption still lands Backlog** (an auto-adopted release-failure filing,
 GH-1952, must reach a driver unattended), and so does `reopen`.
 
+**Backward edges are tightened (GH-2078, the second GH-2060 unit).** The two
+demotions — `In Progress → Backlog` and `In Review → In Progress` — refuse
+without a `--why`, which lands as a comment before the state write: backward
+moves are exceptional, and the reason is auditable instead of implicit
+(`release` already carried it as `-m`; `board claim` gained `--why` because
+claiming an In Review item IS the demotion lane GH-1816 showed being
+over-used). `Human Needed → Backlog` is REMOVED from the machine: an answered
+item resumes (`→ In Progress`, the edge `answer` owns) or dies (`→ Canceled`)
+— a parking edge out of an escalation loses the question, since the item
+re-enters the eligible pool and the next claimant re-derives the context the
+escalation existed to hand over. "Answered: not now, park it" is recorded but
+undecided (possibly `Human Needed → Intake`); it does not resurrect the edge
+meanwhile. Deliberately untouched: doctor's stale-claim demotion (a direct
+field write, In Progress only, already commented) and reconcile (reality lane,
+never MACHINE-guarded).
+
 v0.2.0 (the 2026-08-19 ways-of-working audit; full rationale in CHANGELOG.md):
 **In Progress → Done is legal** — gates key on the destination (the GH-1777
 argument extended), so apply units close on their evidence comment and
