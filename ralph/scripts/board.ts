@@ -1635,8 +1635,10 @@ const PRIORITY_FIELD = "Priority";
  *  degrade gracefully without them, so doctor warns (never fails) and setup
  *  creates them when absent — but a host repo's existing scheme is respected:
  *  setup never edits an existing field's options or type. */
+export const ESTIMATE_SCALE: readonly string[] = ["XS", "S", "M", "L", "XL"];
+
 const ADVISORY_FIELDS: ReadonlyArray<{ name: string; options: readonly string[] }> = [
-  { name: ESTIMATE_FIELD, options: ["XS", "S", "M", "L", "XL"] },
+  { name: ESTIMATE_FIELD, options: ESTIMATE_SCALE },
   { name: PRIORITY_FIELD, options: ["P0", "P1", "P2", "P3"] },
 ];
 
@@ -2387,6 +2389,61 @@ function guardDoneEvidence(ctx: Ctx, issue: Issue, why: string | undefined): voi
   );
 }
 
+/** Claim-size ceiling (GH-2134). The ceiling is an environment fact, not
+ *  doctrine — context windows move, so "too big for one session" belongs in a
+ *  var (precedent: RALPH_LOCK_TTL_MIN, RALPH_REVIEW_ROUND_CAP), and setting it
+ *  empty removes the guard with no doctrine rewrite.
+ *
+ *  unset → default "XL"; empty/whitespace → disabled (null); a value outside
+ *  the Estimate scale is a LOUD config error, never a silent pass — unlike
+ *  parseTtlMin's warn-and-default, because a typo here would silently disarm a
+ *  guard whose whole output is a refusal, and nothing downstream would notice. */
+export function claimMaxEstimate(raw: string | undefined = process.env.RALPH_CLAIM_MAX_ESTIMATE): string | null {
+  if (raw === undefined) return "XL";
+  const v = raw.trim().toUpperCase();
+  if (v === "") return null;
+  if (ESTIMATE_SCALE.includes(v)) return v;
+  throw new UsageError(
+    `RALPH_CLAIM_MAX_ESTIMATE="${raw}" is not an Estimate option (${ESTIMATE_SCALE.join(", ")}). ` +
+      `Set one of those, or set it empty to disable the claim-size ceiling.`,
+  );
+}
+
+/** Refuse a fresh claim at/above the ceiling; warn one notch under it. No
+ *  override flag — the explicit assertion that a unit is not really that size
+ *  is re-estimating it (\`board estimate\`), one visible command, exactly how
+ *  --steal relates to a stale claim. No Estimate, or a value outside the
+ *  scale (a host repo's own scheme): not evaluated, never refused —
+ *  estimate-less Backlog items exist by design (GH-1952 adoption) and are
+ *  exactly what unattended loops claim. */
+export function guardClaimEstimate(
+  issue: Pick<Issue, "number" | "estimate">,
+  warn: (msg: string) => void = (m) => process.stderr.write(m),
+): void {
+  const ceiling = claimMaxEstimate();
+  if (ceiling === null) return;
+  if (!issue.estimate) return;
+  const rank = ESTIMATE_SCALE.indexOf(issue.estimate);
+  if (rank === -1) return;
+  const cap = ESTIMATE_SCALE.indexOf(ceiling);
+  if (rank >= cap) {
+    const smaller = ESTIMATE_SCALE[Math.max(cap - 1, 0)];
+    throw new RefusalError(
+      `#${issue.number} is estimated ${issue.estimate} — at or above the claim ceiling ` +
+        `${ceiling} (RALPH_CLAIM_MAX_ESTIMATE). A unit this size is decomposition, not one session. ` +
+        `If it is genuinely smaller, say so on the board: \`board estimate ${issue.number} ${smaller}\` ` +
+        `(or smaller), then claim again.`,
+    );
+  }
+  if (rank === cap - 1) {
+    warn(
+      `warn: #${issue.number} is estimated ${issue.estimate} — one notch under the claim ceiling ` +
+        `${ceiling} (RALPH_CLAIM_MAX_ESTIMATE). An ${issue.estimate} that is genuinely one session exists; ` +
+        `consider decomposing before building.\n`,
+    );
+  }
+}
+
 export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {}): Issue {
   // Cache freshness resolved BEFORE any write; the body never retries.
   const cache = mutationCache(ctx, [[STATE_FIELD, to]], [CLAIM_FIELD, DEFER_FIELD]);
@@ -2478,6 +2535,15 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     const priorBinding = enteringInProgress ? readSessionBinding(ctx) : null;
     let spokeTo: WorktreeLock | null = null;
     if (enteringInProgress) {
+      // Size ceiling (GH-2134) — FIRST and only on fresh acquisition: a
+      // heartbeat or resume by a current holder is not the moment to relitigate
+      // size (refusing it would strand in-flight work mid-unit; rule 9 says a
+      // re-claim of the same unit always passes). A steal IS a fresh
+      // acquisition and is judged. Pure read, so a refusal leaves the board
+      // untouched.
+      if (!(issue.claim && isMember(issue.claim, ctx.cfg.holder))) {
+        guardClaimEstimate(issue);
+      }
       guardSessionUnit(priorBinding, issue.number);
       // Second only to the rule-9 guard, and for the same reason: a PRE-check,
       // so a refused claim leaves #N exactly as it found it. Skipped when this
@@ -9377,7 +9443,12 @@ mutations
                               DISTINCT unit from one session is refused (contract
                               rule 9). Re-claiming the same unit always passes;
                               a fresh session is the only remedy — there is no
-                              --force. Inert where no session id is published
+                              --force. Inert where no session id is published.
+                              Size ceiling (GH-2134): a fresh claim refuses at/
+                              above RALPH_CLAIM_MAX_ESTIMATE (default XL) and
+                              warns one notch under it — the remedy is
+                              \`board estimate NNN <size>\`, on the record; set
+                              the var empty to disable. No Estimate = not judged
   claim leave NNN --holder H  remove a holder from an existing shared claim;
                               non-member leave is a no-op; the LAST one out
                               clears the field. Never transitions state — board
