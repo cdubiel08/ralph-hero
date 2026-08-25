@@ -20,6 +20,12 @@
 # refuses with a named override rather than filtering silently, and why every
 # bound below pushes toward silence:
 #
+# Its sibling runs the OPPOSITE bias on purpose (GH-2135): `board
+# dep-candidates NNN` is term-overlap, recall-biased, at the WRITE surfaces
+# (filing, tend) — there a MISSED dependency costs a wrong parallel spawn,
+# while here a false hit blocks a spawn. Two mechanisms, two biases, because
+# the cost asymmetry flips between spawn and filing. Do not merge them.
+#
 #   * code is prose about references, not references: fenced blocks AND inline
 #     spans are stripped before matching (pr-linkage-drift.sh proved the inline
 #     half is not hypothetical);

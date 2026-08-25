@@ -14,6 +14,10 @@ import {
   acceptedUnactioned,
   adopt,
   answer,
+  DEP_CANDIDATES_DISCLAIMER,
+  depCandidateTerms,
+  parseDepCandidatesCap,
+  scoreDepCandidates,
   APPLY_EVIDENCE_MARKER,
   APPLY_LABEL_DEFAULT,
   applyEvidenceFailure,
@@ -7755,5 +7759,164 @@ describe("readiness merge-gate checks its stated alternative (audit C1)", () => 
     const rep = readiness(ctx);
     const gate = rep.checks.find((c) => c.name === "merge-gate")!;
     expect(gate.status).toBe("miss");
+  });
+});
+
+describe("dep-candidates (GH-2135) — recall-biased dependency selector", () => {
+  describe("term scoring (pure)", () => {
+    it("keeps hyphenated identifiers whole and drops glue words", () => {
+      const t = depCandidateTerms("Extend dep-refs.sh to the refill and work-next surfaces");
+      expect(t.has("dep-refs")).toBe(true);
+      expect(t.has("work-next")).toBe(true);
+      expect(t.has("the")).toBe(false);
+      expect(t.has("and")).toBe(false);
+      expect(t.has("to")).toBe(false); // length < 3
+    });
+
+    it("weighs down board-wide vocabulary without a stopword list", () => {
+      // "board" appears in every doc; "cursor" is shared with exactly one.
+      const target = { number: 1, title: "board cursor walk", body: "" };
+      const pool = [
+        { number: 2, title: "board cursor drops", body: "" },
+        { number: 3, title: "board colors", body: "" },
+        { number: 4, title: "board fonts", body: "" },
+      ];
+      const { candidates } = scoreDepCandidates(target, pool, 10);
+      // The distinctive shared term wins; "board"-only overlap ranks far
+      // below but is NOT disqualified — recall bias prices ubiquity in the
+      // ranking, never in the qualification.
+      expect(candidates[0].number).toBe(2);
+      expect(candidates[0].terms).toContain("cursor");
+      expect(candidates.map((c) => c.number)).toEqual([2, 3, 4]);
+      expect(candidates[0].score).toBeGreaterThan(candidates[1].score * 2);
+    });
+
+    it("scores on body terms, not just titles", () => {
+      const target = { number: 1, title: "a", body: "the mutationCache refusal path" };
+      const pool = [
+        { number: 2, title: "b", body: "extend the mutationCache read" },
+        { number: 3, title: "c", body: "unrelated prose entirely" },
+      ];
+      const { candidates } = scoreDepCandidates(target, pool, 10);
+      expect(candidates.map((c) => c.number)).toEqual([2]);
+    });
+
+    it("honours the cap and reports what it dropped, highest scores kept", () => {
+      const target = { number: 1, title: "alpha beta gamma delta", body: "" };
+      const pool = [
+        { number: 2, title: "alpha beta gamma", body: "" },
+        { number: 3, title: "alpha beta", body: "" },
+        { number: 4, title: "alpha", body: "" },
+      ];
+      const { candidates, capped } = scoreDepCandidates(target, pool, 2);
+      expect(candidates.map((c) => c.number)).toEqual([2, 3]);
+      expect(capped).toBe(1);
+    });
+
+    it("ties break by issue number, ascending", () => {
+      const target = { number: 1, title: "alpha", body: "" };
+      const pool = [
+        { number: 9, title: "alpha", body: "" },
+        { number: 3, title: "alpha", body: "" },
+      ];
+      const { candidates } = scoreDepCandidates(target, pool, 10);
+      expect(candidates.map((c) => c.number)).toEqual([3, 9]);
+    });
+  });
+
+  describe("parseDepCandidatesCap", () => {
+    it("defaults to 10 and refuses nonsense", () => {
+      expect(parseDepCandidatesCap(undefined)).toBe(10);
+      expect(parseDepCandidatesCap("25")).toBe(25);
+      expect(parseDepCandidatesCap("0")).toBe(10);
+      expect(parseDepCandidatesCap("-3")).toBe(10);
+      expect(parseDepCandidatesCap("banana")).toBe(10);
+    });
+  });
+
+  describe("through the CLI", () => {
+    let gh: FakeGh;
+    let ctx: Ctx;
+    beforeEach(() => {
+      gh = new FakeGh();
+      ctx = makeCtx(gh);
+    });
+
+    const capture = (argv: string[]) => {
+      const said: string[] = [];
+      const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+        said.push(String(s));
+        return true;
+      });
+      try {
+        run(argv, ctx);
+      } finally {
+        spy.mockRestore();
+      }
+      return said.join("");
+    };
+
+    it("excludes self, claimed, non-Backlog, wired (both directions), and parent/child", () => {
+      gh.issues.set(1, { number: 1, state: "Backlog", title: "widget frobnicator core", parent: 8 });
+      gh.issues.set(2, { number: 2, state: "Backlog", title: "widget frobnicator docs" }); // the one real candidate
+      gh.issues.set(3, { number: 3, state: "Backlog", title: "widget frobnicator claimed", claim: encodeClaim("a@h", NOW) });
+      gh.issues.set(4, { number: 4, state: "In Progress", title: "widget frobnicator running" });
+      gh.issues.set(5, { number: 5, state: "Backlog", title: "widget frobnicator wired", blockedBy: [{ number: 1, state: "OPEN" }] });
+      gh.issues.set(6, { number: 6, state: "Backlog", title: "widget frobnicator child", parent: 1 });
+      gh.issues.set(7, { number: 7, state: "Intake", title: "widget frobnicator unapproved" });
+      gh.issues.set(8, { number: 8, state: "Backlog", title: "widget frobnicator parent epic" });
+
+      const res = JSON.parse(capture(["dep-candidates", "1", "--json"]));
+      expect(res.candidates.map((c: any) => c.number)).toEqual([2]);
+      expect(res.disclaimer).toBe(DEP_CANDIDATES_DISCLAIMER);
+      expect(res.target).toBe(1);
+    });
+
+    it("excludes items the target is wired to (target.blockedBy)", () => {
+      gh.issues.set(1, { number: 1, state: "Backlog", title: "widget core", blockedBy: [{ number: 2, state: "OPEN" }] });
+      gh.issues.set(2, { number: 2, state: "Backlog", title: "widget base" });
+      gh.issues.set(3, { number: 3, state: "Backlog", title: "widget extras" });
+      const res = JSON.parse(capture(["dep-candidates", "1", "--json"]));
+      expect(res.candidates.map((c: any) => c.number)).toEqual([3]);
+    });
+
+    it("keeps deferred Backlog items in the pool (recall bias)", () => {
+      gh.issues.set(1, { number: 1, state: "Backlog", title: "cache oracle etag" });
+      gh.issues.set(2, { number: 2, state: "Backlog", title: "cache oracle recheck", defer: "2099-01-01T00:00:00Z|until the API ships" });
+      const res = JSON.parse(capture(["dep-candidates", "1", "--json"]));
+      expect(res.candidates.map((c: any) => c.number)).toEqual([2]);
+    });
+
+    it("says NOT CHECKED on stderr and keeps the error when the read fails", () => {
+      const err: string[] = [];
+      const spy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+        err.push(String(s));
+        return true;
+      });
+      const broken = { ...ctx, exec: () => ({ code: 1, stdout: "", stderr: "boom" }) };
+      try {
+        expect(() => run(["dep-candidates", "1"], broken)).toThrow();
+      } finally {
+        spy.mockRestore();
+      }
+      expect(err.join("")).toContain("NOT CHECKED");
+    });
+
+    it("the body batch document carries ZERO nested connections (cost floor)", () => {
+      gh.issues.set(1, { number: 1, state: "Backlog", title: "gadget one" });
+      gh.issues.set(2, { number: 2, state: "Backlog", title: "gadget two" });
+      capture(["dep-candidates", "1", "--json"]);
+      const doc = gh.queries.find((q) => q.includes("db0: issue(number"));
+      expect(doc).toBeDefined();
+      expect(doc!).not.toMatch(/first:/);
+    });
+
+    it("text output carries the disclaimer even when nothing overlaps", () => {
+      gh.issues.set(1, { number: 1, state: "Backlog", title: "aardvark umbrella" });
+      gh.issues.set(2, { number: 2, state: "Backlog", title: "zeppelin quartz" });
+      const text = capture(["dep-candidates", "1"]);
+      expect(text).toContain("candidates are NOT dependencies");
+      expect(text).toContain("absence of overlap is not evidence of independence");
+    });
   });
 });
