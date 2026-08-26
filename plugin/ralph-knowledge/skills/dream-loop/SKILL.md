@@ -99,6 +99,9 @@ After it completes, run the **Verify** checks to confirm the wiring took. `/ralp
 Read-only. Run what applies, report as facts with counts and paths:
 
 ```bash
+# Run state — read this FIRST (GH-2112): last run's terminal outcome
+cat ~/.ralph-hero/dream-state.json
+
 # DB schema + tier breakdown
 sqlite3 ~/.ralph-hero/knowledge.db "SELECT * FROM meta WHERE key='schema_version'"
 sqlite3 ~/.ralph-hero/knowledge.db "SELECT memory_tier, COUNT(*) FROM documents GROUP BY memory_tier"
@@ -108,13 +111,14 @@ echo "On disk:  $(find ~/projects/thoughts/dream-memories -name '*.md' | wc -l)"
 echo "Indexed:  $(sqlite3 ~/.ralph-hero/knowledge.db 'SELECT COUNT(*) FROM documents WHERE path LIKE "%dream-memories%"')"
 
 # Local model reachability
-curl -fsS http://localhost:8000/v1/models | jq '.data[].id'
+curl -fsS "${RALPH_LLM_URL:-http://localhost:12000}/v1/models" | jq '.data[].id'
 
 # launchd nightly job (if installed): PID "-" when idle, exit status 0 after a clean run
 launchctl list | grep dream-loop
 ```
 
 Interpretation notes:
+- Run state `outcome`: `empty`/`deferred` are healthy zeroes; `failed` means clusters were attempted and nothing was written — the defect (an alarm issue is auto-filed on the board for it). A `run_at` older than ~2 days means the loop is not firing at all — the one class the state file records only by its absence of freshness.
 - `schema_version=3` is **correct, not stale** — the `wiki`-tier CHECK-constraint change is labeled "Migration v4" in `db.ts` but deliberately does not bump the meta stamp.
 - Four tiers exist: `doc` (curated), `raw` (dream ingest), `reflection` (synthesized), `wiki` (human-curated via `/ralph-knowledge:curate`; not writable by the record tool). A healthy post-run breakdown shows raw and reflection counts growing.
 - Zero reflections with nonzero raws usually means the model was unreachable at run time (the pipeline fails open) — check reachability above, then re-run reflect for the window.

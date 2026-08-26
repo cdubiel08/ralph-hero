@@ -1152,6 +1152,173 @@ def emit_process_improvement_issue(
 
 
 # ---------------------------------------------------------------------------
+# Run-state record + defect-zero alarm (GH-2112)
+# ---------------------------------------------------------------------------
+#
+# A pipeline that produced nothing and a pipeline that had nothing to produce
+# rendered identically on every surface anyone looks at (GH-2110 went
+# unnoticed for a day this way). Two mechanisms fix that:
+#
+# 1. ``write_run_state`` records every terminal outcome of ``main()`` in a
+#    small JSON file, with the two zeroes explicitly distinct: ``empty`` /
+#    ``deferred`` are healthy, ``failed`` (clusters attempted, 0 written) is
+#    the defect. ``--mode verify`` of the dream-loop skill reads it first.
+# 2. ``emit_dream_failure_issue`` makes the defect-zero run LOUD: it files a
+#    single standing GitHub issue (the GH-1952 release-failure pattern), which
+#    state-guard adopts onto the board — the surface a driver actually reads.
+#
+# Honest limit (same one GH-1952 states): a run that never fires at all —
+# launchd silent non-fire, an ``ingest &&`` short-circuit, a crash before
+# ``main()`` — writes no state and files nothing. The state file's timestamp
+# makes that class detectable by a verify pass; it is not detected here.
+
+# Env > config.yaml ``state_path`` > default, matching the knob pattern above.
+DEFAULT_STATE_PATH = "~/.ralph-hero/dream-state.json"
+
+DREAM_FAILURE_ISSUE_TITLE = (
+    "dream-loop: nightly reflection run failed (0 written with clusters attempted)"
+)
+DREAM_FAILURE_MARKER = "<!-- ralph-dream-health:v1 -->"
+
+
+def write_run_state(
+    state_path: Path | str,
+    *,
+    outcome: str,
+    exit_code: int,
+    candidates: int = 0,
+    clusters: int = 0,
+    written: int = 0,
+    reason: str = "",
+    mode: str = "nightly",
+    now: datetime | None = None,
+) -> Path | None:
+    """Best-effort record of a run's terminal outcome.
+
+    ``outcome`` is one of ``wrote`` / ``deferred`` / ``empty`` / ``failed``.
+    Never raises: a state-write failure logs a warning and returns ``None`` —
+    the record must not be able to fail the run it records.
+    """
+    import json
+
+    payload = {
+        "run_at": (now or datetime.now(tz=timezone.utc)).isoformat(),
+        "mode": mode,
+        "outcome": outcome,
+        "exit_code": exit_code,
+        "candidates": candidates,
+        "clusters": clusters,
+        "written": written,
+        "reason": reason,
+    }
+    try:
+        path = Path(state_path).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+        return path
+    except OSError as exc:
+        log.warning("Could not write dream run state to %s: %s", state_path, exc)
+        return None
+
+
+def emit_dream_failure_issue(
+    *,
+    candidates: int,
+    clusters: int,
+    state_path: Path | str,
+    repo: str | None = None,
+) -> str | None:
+    """File ONE standing alarm issue for a defect-zero run.
+
+    Deduplicated by exact-title search over open issues, so a failure that
+    repeats nightly keeps one alarm rather than filing one issue per night.
+    A failed dedup read WARNS AND FILES (the GH-1973 direction: the outage
+    that breaks the read is the one that needs the alarm; worst case is a
+    duplicate, not silence). Returns the issue URL, ``"<existing>"`` when an
+    open alarm already stands, or ``None`` when filing itself failed.
+    """
+    import json
+
+    list_cmd = [
+        "gh", "issue", "list",
+        "--state", "open",
+        "--search", f'"{DREAM_FAILURE_ISSUE_TITLE}" in:title',
+        "--json", "title,url",
+    ]
+    if repo:
+        list_cmd += ["--repo", repo]
+    try:
+        result = subprocess.run(
+            list_cmd, capture_output=True, text=True, timeout=60
+        )
+        if result.returncode == 0:
+            for row in json.loads(result.stdout or "[]"):
+                if row.get("title") == DREAM_FAILURE_ISSUE_TITLE:
+                    log.info(
+                        "Dream failure alarm already open: %s", row.get("url")
+                    )
+                    return "<existing>"
+        else:
+            log.warning(
+                "Dedup read for dream failure alarm failed (rc=%d): %s "
+                "-- filing anyway",
+                result.returncode,
+                (result.stderr or "").strip(),
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "Dedup read for dream failure alarm failed: %s -- filing anyway",
+            exc,
+        )
+
+    body = (
+        f"{DREAM_FAILURE_MARKER}\n"
+        f"The nightly dream-loop reflection run attempted **{clusters} "
+        f"cluster(s)** over {candidates} unreflected candidate(s) and wrote "
+        f"**zero reflections**. That is the defect zero — a healthy quiet "
+        f"night is `outcome: empty` or `deferred` in the run state, never "
+        f"`failed`.\n"
+        f"\n"
+        f"Likely causes: unreachable LLM endpoint, unloaded model, or a "
+        f"rotten knowledge DB (see GH-2110 for the class).\n"
+        f"\n"
+        f"- Run state: `{state_path}`\n"
+        f"- Log: `~/Library/Logs/ralph-dream-loop.err`\n"
+        f"- Verify: `/ralph-knowledge:dream-loop --mode verify`\n"
+        f"\n"
+        f"Auto-filed by `scripts/dream/reflect.py` (GH-2112). This is a "
+        f"standing alarm: it is filed once and not re-filed while open. "
+        f"Close it when the pipeline writes again.\n"
+    )
+    create_cmd = [
+        "gh", "issue", "create",
+        "--title", DREAM_FAILURE_ISSUE_TITLE,
+        "--body", body,
+    ]
+    if repo:
+        create_cmd += ["--repo", repo]
+    try:
+        result = subprocess.run(
+            create_cmd, capture_output=True, text=True, timeout=60
+        )
+        if result.returncode != 0:
+            log.warning(
+                "Could not file dream failure alarm (rc=%d): %s",
+                result.returncode,
+                (result.stderr or "").strip(),
+            )
+            return None
+        url = result.stdout.strip()
+        log.info("Filed dream failure alarm: %s", url)
+        return url
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not file dream failure alarm: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # LLM synthesis
 # ---------------------------------------------------------------------------
 
@@ -1736,6 +1903,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("base_dir must be set via --base-dir or config.yaml")
     llm_url = _resolve_llm_url(args.llm_url, cfg)
     model = args.model or cfg.get("llm_model") or DEFAULT_LLM_MODEL
+    state_path = _expand_path(
+        os.environ.get("RALPH_DREAM_STATE_PATH")
+        or cfg.get("state_path")
+        or DEFAULT_STATE_PATH
+    )
 
     # --- Backfill mode (GH-1511) ---------------------------------------
     if args.backfill:
@@ -1756,16 +1928,27 @@ def main(argv: list[str] | None = None) -> int:
             batch_days=args.backfill_batch_days,
         )
         print(f"Backfill wrote {written} reflection(s).")
+        backfill_rc = 0
+        backfill_reason = "backfill run; per-bucket detail in logs"
         if written and not args.no_reindex:
             reindex_cmd = cfg.get("reindex_cmd")
             if reindex_cmd:
                 rc = _run_reindex(reindex_cmd)
                 if rc != 0:
                     log.warning("Post-backfill reindex exited with code %d", rc)
-                    return rc
+                    backfill_rc = rc
+                    backfill_reason = f"post-backfill reindex exited rc={rc}"
             else:
                 log.info("No reindex_cmd in config; skipping post-backfill reindex")
-        return 0
+        write_run_state(
+            state_path,
+            outcome="wrote" if written else "empty",
+            exit_code=backfill_rc,
+            written=written,
+            reason=backfill_reason,
+            mode="backfill",
+        )
+        return backfill_rc
 
     log.info(
         "Reflecting since %s (window_days=%d) | db=%s base_dir=%s llm_url=%s model=%s",
@@ -1790,6 +1973,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not memories:
         print("No raw memories in window; nothing to reflect.")
+        write_run_state(
+            state_path,
+            outcome="empty",
+            exit_code=0,
+            reason="no unreflected candidates in window",
+        )
         return 0
 
     # Accumulation trigger gate (Phase 1). Enforced only on real runs;
@@ -1799,6 +1988,13 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Trigger gate: %s", gate_reason)
     if not args.dry_run and not fire:
         print(f"Deferring reflection ({len(memories)} unreflected): {gate_reason}")
+        write_run_state(
+            state_path,
+            outcome="deferred",
+            exit_code=0,
+            candidates=len(memories),
+            reason=gate_reason,
+        )
         return 0
 
     if args.dry_run:
@@ -1878,6 +2074,26 @@ def main(argv: list[str] | None = None) -> int:
             "detect the silent failure.",
             len(clusters),
         )
+        # GH-2112: the defect zero must not read like a quiet night. Record
+        # it, then file the standing board alarm (dedup'd; best-effort).
+        write_run_state(
+            state_path,
+            outcome="failed",
+            exit_code=1,
+            candidates=len(memories),
+            clusters=len(clusters),
+            written=0,
+            reason=(
+                "clusters attempted but zero reflections written; "
+                "see WARNING logs"
+            ),
+        )
+        emit_dream_failure_issue(
+            candidates=len(memories),
+            clusters=len(clusters),
+            state_path=state_path,
+            repo=getattr(args, "gh_repo", None),
+        )
         return 1
 
     # GH-1504: reindex the just-written reflections so they are searchable
@@ -1885,17 +2101,29 @@ def main(argv: list[str] | None = None) -> int:
     # was written, when --no-reindex is passed, or when no reindex_cmd is
     # configured (e.g. tests). A reindex failure is surfaced as a non-zero
     # exit so dream-now/launchd logs show it.
+    final_rc = 0
+    final_reason = ""
     if written_paths and not args.no_reindex:
         reindex_cmd = cfg.get("reindex_cmd")
         if reindex_cmd:
             rc = _run_reindex(reindex_cmd)
             if rc != 0:
                 log.warning("Post-reflect reindex exited with code %d", rc)
-                return rc
+                final_rc = rc
+                final_reason = f"post-reflect reindex exited rc={rc}"
         else:
             log.info("No reindex_cmd in config; skipping post-reflect reindex")
 
-    return 0
+    write_run_state(
+        state_path,
+        outcome="wrote",
+        exit_code=final_rc,
+        candidates=len(memories),
+        clusters=len(clusters),
+        written=len(written_paths),
+        reason=final_reason,
+    )
+    return final_rc
 
 
 if __name__ == "__main__":
