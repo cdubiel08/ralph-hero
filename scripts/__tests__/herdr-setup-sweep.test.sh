@@ -55,6 +55,9 @@ git -C "$PILE/unmerged" add more.txt
 git -C "$PILE/unmerged" commit -qm "unpushed work"
 git -C "$TMP_ROOT/repo" worktree add -q "$PILE/ws-idle" -b feat/4-idle
 git -C "$TMP_ROOT/repo" worktree add -q "$PILE/ws-live" -b feat/5-live
+git -C "$TMP_ROOT/repo" worktree add -q "$PILE/ws-stale-token" -b feat/6-stale-token
+git -C "$TMP_ROOT/repo" worktree add -q "$PILE/ws-blocked-token" -b feat/7-blocked-token
+git -C "$TMP_ROOT/repo" worktree add -q "$PILE/ws-no-status" -b feat/8-no-status
 mkdir "$PILE/stray-dir"
 
 # --- herdr stub ---------------------------------------------------------------
@@ -77,7 +80,9 @@ STUB
 chmod +x "$BIN/herdr"
 
 SNAP="$TMP_ROOT/snapshot.json"
-jq -n --arg idle "$PILE/ws-idle" --arg live "$PILE/ws-live" '
+jq -n --arg idle "$PILE/ws-idle" --arg live "$PILE/ws-live" \
+      --arg staletok "$PILE/ws-stale-token" --arg blockedtok "$PILE/ws-blocked-token" \
+      --arg nostatus "$PILE/ws-no-status" '
   { id: "t",
     result: { type: "session_snapshot",
       snapshot: { protocol: 19, version: "0.8.0",
@@ -85,8 +90,21 @@ jq -n --arg idle "$PILE/ws-idle" --arg live "$PILE/ws-live" '
           { workspace_id: "wIdle", agent_status: "idle",
             worktree: { checkout_path: $idle, is_linked_worktree: true } },
           { workspace_id: "wLive", agent_status: "working",
-            worktree: { checkout_path: $live, is_linked_worktree: true } } ],
-        panes: [], agents: [] } } }' >"$SNAP"
+            worktree: { checkout_path: $live, is_linked_worktree: true } },
+          # GH-2118: finished session that never cleared its self-report token
+          { workspace_id: "wStaleTok", agent_status: "idle",
+            worktree: { checkout_path: $staletok, is_linked_worktree: true } },
+          # blocked token outranks a done agent — that tree waits on a human
+          { workspace_id: "wBlockedTok", agent_status: "done",
+            worktree: { checkout_path: $blockedtok, is_linked_worktree: true } },
+          # no known agent status anywhere — the token keeps its authority
+          { workspace_id: "wNoStatus",
+            worktree: { checkout_path: $nostatus, is_linked_worktree: true } } ],
+        panes: [
+          { pane_id: "p1", workspace_id: "wStaleTok", tokens: { state: "reporting" } },
+          { pane_id: "p2", workspace_id: "wBlockedTok", tokens: { state: "blocked" } },
+          { pane_id: "p3", workspace_id: "wNoStatus", tokens: { state: "working" } } ],
+        agents: [] } } }' >"$SNAP"
 
 HLOG="$TMP_ROOT/herdr.log"
 : >"$HLOG"
@@ -118,6 +136,16 @@ expect "unmerged head LISTED" "$out" "LIST  worktree $PILE/unmerged — not merg
 expect "live session LISTED" "$out" "LIST  worktree $PILE/ws-live (workspace wLive) — session is live (working)"
 expect "stray dir LISTED, remove-by-hand" "$out" "LIST  dir $PILE/stray-dir — not a linked worktree"
 refute "live worktree never a WOULD row" "$out" "WOULD remove workspace wLive"
+# GH-2118: idle agent + leftover 'reporting' token = finished, not live
+expect "stale token on an idle agent → WOULD remove, override named" "$out" \
+  "WOULD remove workspace wStaleTok + checkout $PILE/ws-stale-token (clean, merged into origin/main, session idle; stale 'reporting' pane token overridden — its agent is idle/done)"
+refute "stale token never reads as live" "$out" "worktree $PILE/ws-stale-token (workspace wStaleTok) — session is live"
+expect "blocked token outranks a done agent — LISTED live" "$out" \
+  "LIST  worktree $PILE/ws-blocked-token (workspace wBlockedTok) — session is live (blocked)"
+refute "blocked-token worktree never a WOULD row" "$out" "WOULD remove workspace wBlockedTok"
+expect "token with no known agent status stays authoritative — LISTED live" "$out" \
+  "LIST  worktree $PILE/ws-no-status (workspace wNoStatus) — session is live (working)"
+refute "no-status worktree never a WOULD row" "$out" "WOULD remove workspace wNoStatus"
 [ "$RC" -eq 1 ] && pass "dry run with findings exits 1" || fail "dry run with findings exits 1" "rc=$RC"
 for d in merged-clean dirty unmerged ws-idle ws-live stray-dir; do
   [ -d "$PILE/$d" ] || { fail "dry run touched nothing" "$d is gone"; break; }
@@ -157,7 +185,13 @@ grep -q "worktree remove --workspace wIdle" "$HLOG" &&
 grep -q "worktree remove --workspace wLive" "$HLOG" &&
   fail "live workspace never removed" "$(cat "$HLOG")" ||
   pass "live workspace never removed"
-for d in dirty unmerged ws-live stray-dir; do
+grep -q "worktree remove --workspace wStaleTok" "$HLOG" &&
+  pass "stale-token workspace removed through herdr (GH-2118)" ||
+  fail "stale-token workspace removed through herdr (GH-2118)" "$(cat "$HLOG")"
+grep -Eq "worktree remove --workspace (wBlockedTok|wNoStatus)" "$HLOG" &&
+  fail "blocked-token and no-status workspaces never removed" "$(cat "$HLOG")" ||
+  pass "blocked-token and no-status workspaces never removed"
+for d in dirty unmerged ws-live ws-blocked-token ws-no-status stray-dir; do
   [ -d "$PILE/$d" ] || { fail "listed trees survive --apply" "$d is gone"; break; }
 done
 [ -d "$PILE/dirty" ] && pass "listed trees survive --apply"

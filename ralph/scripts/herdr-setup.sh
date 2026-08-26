@@ -339,8 +339,15 @@ if [ "$MODE" = "sweep" ]; then
   echo "sweep: merged is judged against the LOCAL $base — a stale ref only under-collects; \`git -C $main_root fetch origin\` refreshes it"
 
   # Per-workspace liveness from the snapshot, joined on checkout path. A
-  # status that is not idle/done (unknown included) or a live-ish pane token
-  # counts as live; dead-before-start markers (spawned/briefed) do not — the
+  # status that is not idle/done (unknown included) counts as live; a pane
+  # token does too, but working/reporting only WHILE some owning agent could
+  # still be running — nothing clears the token on exit, so when every known
+  # status says idle/done the token is stale and fleet-status's rule applies
+  # (GH-2118: three merged units held their trees a full TTL on it). Absent or
+  # unreadable statuses keep the token authoritative — narrowing there would
+  # turn a snapshot gap into a removal. A `blocked` token stays live
+  # regardless: that session is waiting on a human, the one tree that must
+  # survive. Dead-before-start markers (spawned/briefed) never count — the
   # git readings below still gate those trees on their own facts.
   ws_tsv=$(printf '%s' "$snap" | jq -r '
     (.panes // []) as $panes
@@ -350,11 +357,17 @@ if [ "$MODE" = "sweep" ]; then
     | . as $w
     | ($agents | map(select((.workspace_id // "") == $w.workspace_id) | (.agent_status // "unknown"))) as $as
     | ($panes | map(select((.workspace_id // "") == $w.workspace_id) | ((.tokens // {}).state // "")) | map(select(. != ""))) as $ts
-    | ((([$w.agent_status // ""] + $as) | map(select(. != "" and . != "idle" and . != "done")))
-       + ($ts | map(select(. == "working" or . == "blocked" or . == "reporting")))) as $live
+    | (([$w.agent_status // ""] + $as) | map(select(. != ""))) as $known
+    | ($known | map(select(. != "idle" and . != "done"))) as $liveAgents
+    | (($known | length) > 0 and ($liveAgents | length) == 0) as $finished
+    | ($liveAgents
+       + ($ts | map(select(. == "blocked")))
+       + (if $finished then [] else ($ts | map(select(. == "working" or . == "reporting"))) end)) as $live
+    | (if $finished then ($ts | map(select(. == "working" or . == "reporting")) | unique) else [] end) as $stale
     | [$w.worktree.checkout_path, $w.workspace_id,
        (if ($live | length) > 0 then "live" else "idle" end),
-       ($live | unique | join(","))]
+       ($live | unique | join(",")),
+       ($stale | join(","))]
     | @tsv' 2>/dev/null) || ws_tsv=""
 
   wt_list=$(git -C "$REPO" worktree list --porcelain 2>/dev/null) ||
@@ -401,10 +414,11 @@ EOF_WTLIST
       continue ;;
     esac
 
-    wsid=""
+    wsid="" stale_tok=""
     ws_line=$(awk -F'\t' -v p="$wt" '$1 == p { print; exit }' <<<"$ws_tsv")
     if [ -n "$ws_line" ]; then
       wsid=$(cut -f2 <<<"$ws_line")
+      stale_tok=$(cut -f5 <<<"$ws_line")
       if [ "$(cut -f3 <<<"$ws_line")" = "live" ]; then
         listed "worktree $wt (workspace $wsid)" "session is live ($(cut -f4 <<<"$ws_line")) — never touched"
         continue
@@ -436,7 +450,9 @@ EOF_WTLIST
     fi
 
     if [ -n "$wsid" ]; then
-      act "remove workspace $wsid + checkout $wt (clean, merged into $base, session idle)" "$HERDR" worktree remove --workspace "$wsid"
+      idle_why="session idle"
+      [ -n "$stale_tok" ] && idle_why="session idle; stale '$stale_tok' pane token overridden — its agent is idle/done"
+      act "remove workspace $wsid + checkout $wt (clean, merged into $base, $idle_why)" "$HERDR" worktree remove --workspace "$wsid"
     else
       act "remove worktree $wt (clean, merged into $base, no herdr workspace)" git -C "$main_root" worktree remove "$wt"
     fi
