@@ -1404,3 +1404,274 @@ class TestMainClassifierIntegration:
         out = capsys.readouterr().out
         assert "Dry run" in out
         assert "process-improvement candidate" in out
+
+
+# ---------------------------------------------------------------------------
+# Run-state record + defect-zero alarm (GH-2112)
+# ---------------------------------------------------------------------------
+
+
+def _read_state(tmp_path: Path) -> dict[str, Any]:
+    import json
+
+    return json.loads((tmp_path / "dream-state.json").read_text(encoding="utf-8"))
+
+
+def _basic_cfg(tmp_path: Path, db: Path) -> Path:
+    import yaml as _yaml
+
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        _yaml.safe_dump(
+            {"base_dir": str(tmp_path / "out"), "knowledge_db": str(db)}
+        ),
+        encoding="utf-8",
+    )
+    return cfg_path
+
+
+class TestRunState:
+    """GH-2112: every terminal path of main() leaves a machine-readable
+    record, and the two zeroes are explicitly distinct outcomes."""
+
+    def test_failure_path_records_failed_and_files_alarm(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        monkeypatch: pytest.MonkeyPatch,
+        dream_state_isolation: list[dict],
+    ) -> None:
+        _force_gate_fire(monkeypatch)
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+        cfg_path = _basic_cfg(tmp_path, db)
+        monkeypatch.setattr(
+            reflect, "synthesize_reflection", lambda *a, **kw: None
+        )
+
+        rc = reflect.main(["--config", str(cfg_path), "--since", "2026-04-18"])
+        assert rc == 1
+        state = _read_state(tmp_path)
+        assert state["outcome"] == "failed"
+        assert state["exit_code"] == 1
+        assert state["written"] == 0
+        assert state["clusters"] > 0
+        assert state["candidates"] > 0
+        # The standing alarm fired, with the counts the state records.
+        assert len(dream_state_isolation) == 1
+        assert dream_state_isolation[0]["clusters"] == state["clusters"]
+        assert dream_state_isolation[0]["candidates"] == state["candidates"]
+
+    def test_empty_window_records_empty_no_alarm(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        dream_state_isolation: list[dict],
+    ) -> None:
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, [])
+        cfg_path = _basic_cfg(tmp_path, db)
+
+        rc = reflect.main(["--config", str(cfg_path), "--since", "2026-04-18"])
+        assert rc == 0
+        state = _read_state(tmp_path)
+        assert state["outcome"] == "empty"
+        assert state["exit_code"] == 0
+        assert dream_state_isolation == []
+
+    def test_deferred_gate_records_deferred_no_alarm(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        monkeypatch: pytest.MonkeyPatch,
+        dream_state_isolation: list[dict],
+    ) -> None:
+        # Thresholds far above the fixture size so the gate defers.
+        monkeypatch.setenv("RALPH_DREAM_MIN_UNREFLECTED", "999")
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+        cfg_path = _basic_cfg(tmp_path, db)
+
+        rc = reflect.main(["--config", str(cfg_path), "--since", "2026-04-18"])
+        assert rc == 0
+        state = _read_state(tmp_path)
+        assert state["outcome"] == "deferred"
+        assert state["candidates"] > 0
+        assert "deferring" in state["reason"]
+        assert dream_state_isolation == []
+
+    def test_success_records_wrote(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        monkeypatch: pytest.MonkeyPatch,
+        dream_state_isolation: list[dict],
+    ) -> None:
+        _force_gate_fire(monkeypatch)
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+        cfg_path = _basic_cfg(tmp_path, db)
+
+        def fake_synth(cluster, *a, **kw):  # noqa: ANN001, ARG001
+            return {
+                "title": "State Theme",
+                "summary": "summary",
+                "insights": ["insight"],
+                "source_ids": [m.id for m in cluster],
+                "cluster_size": len(cluster),
+            }
+
+        monkeypatch.setattr(reflect, "synthesize_reflection", fake_synth)
+
+        rc = reflect.main(["--config", str(cfg_path), "--since", "2026-04-18"])
+        assert rc == 0
+        state = _read_state(tmp_path)
+        assert state["outcome"] == "wrote"
+        assert state["written"] > 0
+        assert state["exit_code"] == 0
+        assert dream_state_isolation == []
+
+    def test_dry_run_writes_no_state(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        monkeypatch: pytest.MonkeyPatch,
+        dream_state_isolation: list[dict],
+    ) -> None:
+        _force_gate_fire(monkeypatch)
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+        cfg_path = _basic_cfg(tmp_path, db)
+
+        rc = reflect.main(
+            ["--config", str(cfg_path), "--since", "2026-04-18", "--dry-run"]
+        )
+        assert rc == 0
+        assert not (tmp_path / "dream-state.json").exists()
+        assert dream_state_isolation == []
+
+    def test_state_write_failure_never_fails_the_run(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level("WARNING", logger="ralph.dream.reflect")
+        # Point the state path UNDER a regular file so mkdir/replace fails.
+        blocker = tmp_path / "blocker"
+        blocker.write_text("", encoding="utf-8")
+        monkeypatch.setenv(
+            "RALPH_DREAM_STATE_PATH", str(blocker / "dream-state.json")
+        )
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, [])
+        cfg_path = _basic_cfg(tmp_path, db)
+
+        rc = reflect.main(["--config", str(cfg_path), "--since", "2026-04-18"])
+        assert rc == 0
+        assert any(
+            "Could not write dream run state" in rec.message
+            for rec in caplog.records
+        )
+
+
+class TestEmitDreamFailureIssue:
+    """Unit tests for the standing alarm (real function, stubbed gh)."""
+
+    def _result(self, rc: int, stdout: str = "", stderr: str = ""):
+        import subprocess as _sp
+
+        return _sp.CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr=stderr)
+
+    def test_open_alarm_dedupes(
+        self, monkeypatch: pytest.MonkeyPatch, real_emit_dream_failure_issue
+    ) -> None:
+        import json
+
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):  # noqa: ANN001, ARG001
+            calls.append(cmd)
+            payload = [
+                {
+                    "title": reflect.DREAM_FAILURE_ISSUE_TITLE,
+                    "url": "https://github.com/x/y/issues/1",
+                }
+            ]
+            return self._result(0, stdout=json.dumps(payload))
+
+        monkeypatch.setattr(reflect.subprocess, "run", fake_run)
+        got = real_emit_dream_failure_issue(
+            candidates=50, clusters=6, state_path="/tmp/s.json"
+        )
+        assert got == "<existing>"
+        assert len(calls) == 1  # list only; no create
+
+    def test_no_open_alarm_files_one(
+        self, monkeypatch: pytest.MonkeyPatch, real_emit_dream_failure_issue
+    ) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):  # noqa: ANN001, ARG001
+            calls.append(cmd)
+            if "list" in cmd:
+                return self._result(0, stdout="[]")
+            return self._result(0, stdout="https://github.com/x/y/issues/2\n")
+
+        monkeypatch.setattr(reflect.subprocess, "run", fake_run)
+        got = real_emit_dream_failure_issue(
+            candidates=50, clusters=6, state_path="/tmp/s.json"
+        )
+        assert got == "https://github.com/x/y/issues/2"
+        assert len(calls) == 2
+        create_cmd = calls[1]
+        assert "create" in create_cmd
+        body = create_cmd[create_cmd.index("--body") + 1]
+        assert reflect.DREAM_FAILURE_MARKER in body
+        assert "6 cluster(s)" in body
+
+    def test_failed_dedup_read_warns_and_files(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        real_emit_dream_failure_issue,
+    ) -> None:
+        caplog.set_level("WARNING", logger="ralph.dream.reflect")
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):  # noqa: ANN001, ARG001
+            calls.append(cmd)
+            if "list" in cmd:
+                return self._result(1, stderr="rate limited")
+            return self._result(0, stdout="https://github.com/x/y/issues/3\n")
+
+        monkeypatch.setattr(reflect.subprocess, "run", fake_run)
+        got = real_emit_dream_failure_issue(
+            candidates=50, clusters=6, state_path="/tmp/s.json"
+        )
+        assert got == "https://github.com/x/y/issues/3"
+        assert any("filing anyway" in rec.message for rec in caplog.records)
+
+    def test_create_failure_returns_none(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        real_emit_dream_failure_issue,
+    ) -> None:
+        caplog.set_level("WARNING", logger="ralph.dream.reflect")
+
+        def fake_run(cmd, **kw):  # noqa: ANN001, ARG001
+            if "list" in cmd:
+                return self._result(0, stdout="[]")
+            return self._result(1, stderr="no auth")
+
+        monkeypatch.setattr(reflect.subprocess, "run", fake_run)
+        got = real_emit_dream_failure_issue(
+            candidates=50, clusters=6, state_path="/tmp/s.json"
+        )
+        assert got is None
+        assert any(
+            "Could not file dream failure alarm" in rec.message
+            for rec in caplog.records
+        )

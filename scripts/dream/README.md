@@ -147,6 +147,29 @@ Expected output (column ordering: PID, last-exit-status, label):
 A `-` in the PID column means the agent is registered but not currently
 running. The last-exit-status is `0` after a successful run.
 
+## Run state (GH-2112)
+
+Nobody reads a launchd exit code, and a pipeline that produced nothing
+looked identical to one that had nothing to produce (GH-2110 ran for a
+day that way). Two mechanisms make a bad night loud:
+
+- **`~/.ralph-hero/dream-state.json`** — written by `reflect.py` on
+  every terminal path (env `RALPH_DREAM_STATE_PATH` > config
+  `state_path` > default). Fields: `run_at`, `mode`, `outcome`,
+  `exit_code`, `candidates`, `clusters`, `written`, `reason`. The two
+  zeroes are distinct outcomes: `empty` / `deferred` are healthy,
+  `failed` (clusters attempted, 0 written) is the defect. `--dry-run`
+  writes nothing.
+- **A standing board alarm** — the `failed` path also files one GitHub
+  issue via `gh` (title-deduplicated: one open alarm, never one per
+  night), which state-guard adopts onto the board. Close it when the
+  pipeline writes again.
+
+Honest limit: a run that never fires at all — launchd silent non-fire,
+an `ingest &&` short-circuit, a crash before `main()` — writes no state
+and files nothing. A stale `run_at` (> ~2 days) is how that class is
+detected, by whoever runs a verify pass.
+
 ## Logs
 
 - `~/Library/Logs/ralph-dream-loop.out` — `ingest.py` + `reflect.py` stdout.
