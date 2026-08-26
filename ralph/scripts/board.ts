@@ -2798,6 +2798,10 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
           `state is now "${to}" but the claim remains; re-run the move or let doctor release it`,
       );
     }
+    // The demotion edge returns the unit to the eligible pool, so the local
+    // lock must not outlive the claim there (GH-2107). After the verify, so a
+    // failed state write never disarms the guard on a unit still being driven.
+    if (from === "In Progress" && to === "Backlog") releaseWorktreeLock(ctx, issue.number);
 
     // Parent gate: a child reaching In Review/Done may advance the parent.
     if ((to === "In Review" || to === "Done") && after.parent) {
@@ -3195,6 +3199,26 @@ function takeWorktreeLock(ctx: Ctx, number: number, spoke: WorktreeLock | null):
   const won = readWorktreeLock(path);
   if (won && won.lock.session === ctx.session!.id) return;
   throw peerRefusal(ctx, number, ctx.repoRoot, won?.lock.since ?? "unknown");
+}
+
+/** The release edge gives the unit back to the pool, so this session's lock
+ *  goes with the claim (GH-2107): left behind, the board says Backlog while
+ *  the fleet's lease probe says taken, and the unit is unspawnable for a full
+ *  TTL. Own lock only — a fresh lock naming another session is a live driver
+ *  this session may not disarm — and best-effort: a failed unlink restores the
+ *  status quo (the TTL self-clear), never blocks the release. In Progress →
+ *  In Review deliberately does NOT clear: deliver reads that lease for the
+ *  unpushed-commits case (GH-1929), so there the lock must outlive the claim. */
+function releaseWorktreeLock(ctx: Ctx, number: number): void {
+  const path = worktreeLockPath(ctx, number);
+  if (!path) return; // no session id or repo root: not evaluated
+  const held = readWorktreeLock(path);
+  if (!held || held.lock.session !== ctx.session!.id) return;
+  try {
+    unlinkSync(path);
+  } catch {
+    /* best-effort — the TTL remains the backstop */
+  }
 }
 
 function peerRefusal(ctx: Ctx, number: number, worktree: string, since: string): RefusalError {
