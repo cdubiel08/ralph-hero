@@ -13,7 +13,7 @@
  * can go pick the other work it was just told to pick.
  */
 
-import { mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -600,5 +600,61 @@ describe("worktree race between distinct sessions (GH-1956)", () => {
     gh.issues.set(2, { number: 2, state: "Backlog" });
     const other = at("other");
     expect(() => transition(other, fetchIssue(other, 2), "In Progress")).not.toThrow();
+  });
+});
+
+describe("release clears the session's own worktree lock (GH-2107)", () => {
+  let gh: FakeGh;
+  let dir: string;
+  beforeEach(() => {
+    gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    dir = mkdtempSync(join(tmpdir(), "board-session-"));
+  });
+
+  const at = (id: string | null) => makeCtx(gh, "me@test", "/repo", { session: { id, dir } });
+
+  it("release deletes the lock — the unit is immediately spawnable, not TTL-parked", () => {
+    const ctx = at("driver");
+    transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(existsSync(worktreeLockPath(ctx, 1)!)).toBe(true);
+
+    transition(ctx, fetchIssue(ctx, 1), "Backlog", { why: "handing back to the pool" });
+    expect(existsSync(worktreeLockPath(ctx, 1)!)).toBe(false);
+
+    // A fresh session claims immediately — no --steal, no TTL wait. This is
+    // the reproduced GH-2107 flow: answer → release → fleet spawn.
+    const next = at("next-session");
+    expect(() => transition(next, fetchIssue(next, 1), "In Progress")).not.toThrow();
+    expect(gh.issues.get(1)!.state).toBe("In Progress");
+  });
+
+  it("never deletes a PEER's lock — a non-owning demoter leaves the live driver's guard armed", () => {
+    const driver = at("driver");
+    transition(driver, fetchIssue(driver, 1), "In Progress");
+
+    // A different session on the same machine passes guardHolder (the board
+    // holder is user@host for both) and demotes — the lock is not its to take.
+    const other = at("other");
+    transition(other, fetchIssue(other, 1), "Backlog", { why: "parking from elsewhere" });
+    expect(JSON.parse(readFileSync(worktreeLockPath(driver, 1)!, "utf8")).session).toBe("driver");
+  });
+
+  it("In Progress → In Review KEEPS the lock — deliver's lease outlives the claim (GH-1929)", () => {
+    const ctx = at("driver");
+    transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    transition(ctx, fetchIssue(ctx, 1), "In Review");
+    expect(existsSync(worktreeLockPath(ctx, 1)!)).toBe(true);
+  });
+
+  it("a session with no id is NOT EVALUATED — the release proceeds and deletes nothing", () => {
+    const owner = at("driver");
+    transition(owner, fetchIssue(owner, 1), "In Progress");
+
+    const anon = at(null);
+    expect(() =>
+      transition(anon, fetchIssue(anon, 1), "Backlog", { why: "anonymous release" }),
+    ).not.toThrow();
+    expect(existsSync(worktreeLockPath(owner, 1)!)).toBe(true);
   });
 });
