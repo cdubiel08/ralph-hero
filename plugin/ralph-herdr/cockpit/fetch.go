@@ -103,6 +103,7 @@ func argsBoardFrontier() []string { return []string{"frontier", "--json"} }
 // nobody is looking at.
 func argsCardSignals() []string { return []string{"card-signals", "--json"} }
 func argsBoardClosed() []string { return []string{"closed", "--json"} }
+func argsBoardInbox() []string  { return []string{"inbox", "--json"} }
 func argsBoardAnswer(n int, msg string) []string {
 	return []string{"answer", strconv.Itoa(n), "-m", msg}
 }
@@ -215,6 +216,18 @@ type doneMsg struct {
 	windowDays int
 	ok         bool
 	err        string
+}
+
+// inboxMsg carries `board inbox` Tier 1 (GH-2181). Same split again: `ok`
+// false is a failed read, which the column names rather than drawing as an
+// empty inbox. withheld is the GH-2108 honesty line — rows the classifier
+// held back, counted by reason, so "nothing here" and "the reader dropped it"
+// can never render alike.
+type inboxMsg struct {
+	cards    []Card
+	withheld string
+	ok       bool
+	err      string
 }
 
 type peekMsg struct {
@@ -415,6 +428,65 @@ func parseClosed(out string) ([]Card, int, error) {
 		})
 	}
 	return cards, payload.WindowDays, nil
+}
+
+// parseInbox reads `board inbox --json` Tier 1 into Inbox cards, in the CLI's
+// own section order (decisions, proposals, approvals, deliver-blocked — the
+// precedence classifyInbox already decided). Same pointer rule: an absent
+// `tier1` object is a failed read, never an empty inbox.
+func parseInbox(out string) ([]Card, string, error) {
+	type row struct {
+		Number   int     `json:"number"`
+		Repo     *string `json:"repo"`
+		Title    string  `json:"title"`
+		Queue    string  `json:"queue"`
+		Priority *string `json:"priority"`
+		Estimate *string `json:"estimate"`
+		Detail   *string `json:"detail"`
+		Verb     string  `json:"verb"`
+	}
+	var payload struct {
+		Tier1 *struct {
+			Decisions      []row `json:"decisions"`
+			Proposals      []row `json:"proposals"`
+			Approvals      []row `json:"approvals"`
+			DeliverBlocked []row `json:"deliverBlocked"`
+			Withheld       []struct {
+				Reason string `json:"reason"`
+				Count  int    `json:"count"`
+			} `json:"withheld"`
+		} `json:"tier1"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return nil, "", fmt.Errorf("inbox --json: %w", err)
+	}
+	if payload.Tier1 == nil {
+		return nil, "", fmt.Errorf("inbox --json: payload carries no tier1 object — a malformed read is not an empty inbox")
+	}
+	deref := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	var cards []Card
+	for _, rows := range [][]row{
+		payload.Tier1.Decisions, payload.Tier1.Proposals,
+		payload.Tier1.Approvals, payload.Tier1.DeliverBlocked,
+	} {
+		for _, r := range rows {
+			cards = append(cards, Card{
+				Number: r.Number, Repo: deref(r.Repo), Title: r.Title,
+				State: inboxState, Priority: deref(r.Priority), Estimate: deref(r.Estimate),
+				Question: deref(r.Detail), Queue: r.Queue, Verb: r.Verb,
+			})
+		}
+	}
+	parts := make([]string, 0, len(payload.Tier1.Withheld))
+	for _, w := range payload.Tier1.Withheld {
+		parts = append(parts, fmt.Sprintf("%d %s", w.Count, w.Reason))
+	}
+	return cards, strings.Join(parts, ", "), nil
 }
 
 // parseAgents validates a protocol-19 session_snapshot envelope and returns
@@ -1019,6 +1091,28 @@ func fetchDoneCmd(cfg Config, r Runner) tea.Cmd {
 			return doneMsg{err: perr.Error()}
 		}
 		return doneMsg{cards: cards, windowDays: days, ok: true}
+	}
+}
+
+// fetchInboxCmd reads `board inbox` Tier 1. Dispatched only while the Inbox
+// view is on screen — it is a four-queue walk (the priciest read this unit
+// dispatches) and behind a key nobody may ever press.
+func fetchInboxCmd(cfg Config, r Runner) tea.Cmd {
+	return func() tea.Msg {
+		deadline := boardDeadline(cfg)
+		probe := &rateProbe{cfg: cfg, r: r}
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
+		out, stderr, err := r.Run(ctx, cfg.Board, argsBoardInbox()...)
+		timedOut := ctx.Err() == context.DeadlineExceeded
+		cancel()
+		if err != nil {
+			return inboxMsg{err: explainReadFailure(probe, deadline, timedOut, stderr+out, err)}
+		}
+		cards, withheld, perr := parseInbox(out)
+		if perr != nil {
+			return inboxMsg{err: perr.Error()}
+		}
+		return inboxMsg{cards: cards, withheld: withheld, ok: true}
 	}
 }
 

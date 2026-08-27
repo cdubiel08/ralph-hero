@@ -36,6 +36,12 @@ var columnStates = [3]string{"In Progress", "In Review", "Human Needed"}
 // verbatim, so a Done card is recognisable by the same test as every other.
 const doneState = "Done"
 
+// inboxState marks a card sourced from `board inbox` Tier 1 (GH-2181). NOT a
+// board Workflow State — an inbox row is a cross-queue derivation (Human
+// Needed, tend proposals, Intake approvals, deliver-blocked), so the card
+// carries its queue kind in Queue and its disposition command in Verb.
+const inboxState = "Inbox"
+
 // Card is one board item in a column. Everything here comes from the board
 // CLI — never from herdr.
 type Card struct {
@@ -55,6 +61,11 @@ type Card struct {
 	// for it, which is why line 3 must not fall through to the meter that
 	// renders an UNSET priority as a defect.
 	ClosedAt string
+	// Queue and Verb are set only on Inbox cards: which human queue the row
+	// came from (decision/proposal/approval/deliver-blocked) and the literal
+	// disposition command — the invariant that admitted the row to Tier 1.
+	Queue string
+	Verb  string
 }
 
 // PR chip fates (GH-2062). Five, and the two that mean "we did not find out"
@@ -310,6 +321,19 @@ type Model struct {
 	lastDone       time.Time
 	doneInFlight   bool
 
+	// showInbox swaps the same third column to `board inbox` Tier 1 (the `I`
+	// key, GH-2181) — the fourth view on the D-toggle precedent, so showDone
+	// and showInbox are mutually exclusive by construction (each key clears
+	// the other). Same lazy-read contract: dispatched only while on screen,
+	// with "not read yet", "read failed" and "inbox empty" kept distinct.
+	showInbox     bool
+	inboxCards    []Card
+	inboxOK       bool
+	inboxErr      string
+	inboxWithheld string // "N reason, M reason" — GH-2108: held-back rows are counted, never dropped silently
+	lastInbox     time.Time
+	inboxInFlight bool
+
 	// Cursor + mode.
 	col, row int
 	mode     Mode
@@ -383,6 +407,9 @@ func (m Model) glyphSet() glyphSet {
 // here, so the `D` swap cannot leave one of them addressing Human Needed while
 // another draws Done.
 func (m Model) columnCards(idx int) []Card {
+	if idx == 2 && m.showInbox {
+		return m.inboxCards
+	}
 	if idx == 2 && m.showDone {
 		return m.doneCards
 	}
@@ -393,6 +420,9 @@ func (m Model) columnCards(idx int) []Card {
 // the title on purpose: it is the audit window, not all history, and a header
 // reading a bare "Done" would claim completeness it does not have.
 func (m Model) columnTitle(idx int) string {
+	if idx == 2 && m.showInbox {
+		return "Inbox"
+	}
 	if idx == 2 && m.showDone {
 		return m.doneTitle()
 	}
@@ -556,6 +586,15 @@ func (m Model) doneDue(now time.Time) bool {
 		return false
 	}
 	return m.lastDone.IsZero() || !now.Before(m.lastDone.Add(m.cfg.SignalInterval))
+}
+
+// inboxDue gates the inbox read the same way: shown-only, so a cockpit nobody
+// has pressed `I` on never pays for the four-queue walk.
+func (m Model) inboxDue(now time.Time) bool {
+	if m.inboxInFlight || !m.showInbox {
+		return false
+	}
+	return m.lastInbox.IsZero() || !now.Before(m.lastInbox.Add(m.cfg.SignalInterval))
 }
 
 // diffTargets lists the (agent_ref, checkout) pairs worth measuring: live

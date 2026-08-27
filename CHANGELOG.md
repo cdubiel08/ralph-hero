@@ -19,6 +19,22 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Added
 
+- **Cockpit Inbox view — `I` swaps the third column to `board inbox` Tier 1
+  (GH-2181, unit E of #2176)** — the fourth view on the `D`-toggle precedent:
+  same column, same lazy shown-only read (dispatched on the keypress, refreshed
+  on the second cadence only while on screen), same cursor clamp, and the two
+  toggles displace each other rather than stacking. Cards keep the CLI's own
+  section order (decisions > proposals > approvals > deliver-blocked) and carry
+  their queue kind in the right slot; a decision card renders its why-line
+  under the same phone-answerable contract as Human Needed (`a` disposes it in
+  place), every other card renders its **literal disposition verb**, and
+  `s` on an inbox card is a named refusal pointing at that verb. The GH-2108
+  honesty rules carry through: unread, read-failed, and genuinely-empty render
+  distinctly (a failed refresh over a non-empty list banners as stale), and
+  withheld deliver rows are counted in a footer, never dropped silently.
+  `InboxRow` gains a `repo` field (nameWithOwner) so the cockpit's `g` browser
+  verb works on inbox cards without re-deriving config.
+
 - **`board inbox` — the human's single surface, two tiers (GH-2180, unit D of
   #2176)** — one walk over the four human queues: Human Needed decisions (each
   carrying the first line of its latest `**Decision needed**` comment), tend

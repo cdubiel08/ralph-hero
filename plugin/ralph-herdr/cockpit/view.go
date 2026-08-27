@@ -130,6 +130,11 @@ func viewModel(m Model) string {
 	if m.showDone && !m.doneOK && m.doneErr != "" {
 		banner = append(banner, styleErr.Render(m.doneTitle()+" stale: "+m.doneErr))
 	}
+	// Same shape for the Inbox view: a failed REFRESH over a non-empty list
+	// must not leave stale decisions looking current.
+	if m.showInbox && !m.inboxOK && m.inboxErr != "" {
+		banner = append(banner, styleErr.Render("Inbox stale: "+m.inboxErr))
+	}
 	if !m.herdrOK {
 		banner = append(banner, styleBanner.Render(noMuxBanner))
 	}
@@ -164,7 +169,7 @@ func legend(m Model) string {
 	if m.mode == ModePeek || m.mode == ModeDag {
 		return "esc close"
 	}
-	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · d diff · D done⇄human · g browser · q quit"
+	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · d diff · D done⇄human · I inbox⇄human · g browser · q quit"
 }
 
 // bodyHeightOf mirrors viewModel's body sizing — shared with hitTest so the
@@ -260,7 +265,18 @@ func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
 		// "the read broke" rendered as "nothing shipped in 14 days" is a
 		// confident lie about the busiest column on the board.
 		empty, style := "  (none)", styleDim
-		if idx == 2 && m.showDone {
+		if idx == 2 && m.showInbox {
+			// The same three-way honesty split as Done: unread, failed, and
+			// genuinely empty must never render alike.
+			switch {
+			case !m.inboxOK && m.inboxErr != "":
+				empty, style = "  (inbox read failed: "+m.inboxErr+")", styleErr
+			case !m.inboxOK:
+				empty = "  (reading the inbox…)"
+			default:
+				empty = "  (inbox empty — no decisions waiting)"
+			}
+		} else if idx == 2 && m.showDone {
 			switch {
 			case !m.doneOK && m.doneErr != "":
 				empty, style = "  (closed-issue read failed: "+m.doneErr+")", styleErr
@@ -272,6 +288,13 @@ func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
 		}
 		b.WriteString(truncate(style.Render(empty), width))
 		b.WriteString("\n")
+		if idx == 2 && m.showInbox && m.inboxOK && m.inboxWithheld != "" {
+			// GH-2108's rule carried through: rows the classifier held back
+			// are counted here, so an empty inbox over withheld rows cannot
+			// read as "nothing is waiting anywhere".
+			b.WriteString(truncate(styleDim.Render("  withheld: "+m.inboxWithheld+" (self-clearing)"), width))
+			b.WriteString("\n")
+		}
 		return lipgloss.NewStyle().Width(width).Render(b.String())
 	}
 	// The window follows the cursor (colWindow) — j/k can never move the
@@ -289,6 +312,12 @@ func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
 			parts = append(parts, fmt.Sprintf("+%d more", len(cards)-end))
 		}
 		b.WriteString(truncate(styleDim.Render("  "+strings.Join(parts, " · ")), width))
+		b.WriteString("\n")
+	}
+	if idx == 2 && m.showInbox && m.inboxOK && m.inboxWithheld != "" {
+		// After the cards (and past hitTest's card stride, so it can never
+		// shift a click): the held-back count, same honesty rule as above.
+		b.WriteString(truncate(styleDim.Render("  withheld: "+m.inboxWithheld+" (self-clearing)"), width))
 	}
 	return lipgloss.NewStyle().Width(width).Render(b.String())
 }
@@ -339,6 +368,13 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		chip = diffChip(m, card)
 	case columnStates[1]:
 		chip = prChip(m, card, g)
+	case inboxState:
+		// The right slot's one fact for an inbox card is WHICH human queue
+		// admitted it — the section header the CLI prints, carried per card
+		// because the column interleaves four queues.
+		if card.Queue != "" {
+			chip = styleMeta.Render(card.Queue)
+		}
 	}
 	avail := inner - lipgloss.Width(left) - 2
 	if chip != "" {
@@ -370,6 +406,19 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		// would be a lie about a card nobody can fix. What a closed card has
 		// is when it closed.
 		line3 = styleMeta.Render(trimTo(closedLabel(card, time.Now()), inner))
+	case card.State == inboxState && card.Queue == "decision":
+		// A decision row IS a Human Needed item: same phone-answerable
+		// contract, same rendering — the why-line owns the row, because the
+		// disposing verb is already the cockpit's own `a` on this card.
+		q := card.Question
+		if q == "" {
+			q = "(decision text unavailable — see the issue's Decision needed comment)"
+		}
+		line3 = styleQuestion.Render(trimTo("? "+q, inner))
+	case card.State == inboxState:
+		// Every other inbox row leads with its disposition: Tier 1's
+		// admission invariant is that the verb exists, so the card shows it.
+		line3 = styleMeta.Render(trimTo("→ "+card.Verb, inner))
 	case card.State == "Human Needed":
 		// The phone-answerable contract: the question line, verbatim, and it
 		// owns the whole row — a timer beside a question the human is meant to

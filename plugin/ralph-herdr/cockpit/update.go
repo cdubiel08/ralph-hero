@@ -79,6 +79,10 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			m.doneInFlight = true
 			cmds = append(cmds, fetchDoneCmd(m.cfg, m.runner))
 		}
+		if m.inboxDue(time.Time(msg)) {
+			m.inboxInFlight = true
+			cmds = append(cmds, fetchInboxCmd(m.cfg, m.runner))
+		}
 		return m, tea.Batch(cmds...)
 
 	case marksMsg:
@@ -175,6 +179,21 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		}
 		// The Done list just changed length under a cursor that may be parked
 		// past its end — the same clamp the `D` swap itself performs.
+		m.clampCursor()
+		return m, nil
+
+	case inboxMsg:
+		m.inboxInFlight = false
+		m.lastInbox = time.Now()
+		m.inboxErr = msg.err
+		if !msg.ok {
+			m.inboxOK = false
+			return m, nil
+		}
+		m.inboxOK = true
+		m.inboxCards = msg.cards
+		m.inboxWithheld = msg.withheld
+		// Same clamp as doneMsg: the list length just changed under the cursor.
 		m.clampCursor()
 		return m, nil
 
@@ -435,6 +454,9 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		// lengths, and a row index that outlives the swap would leave every
 		// verb acting on a card that is not under the cursor.
 		m.showDone = !m.showDone
+		// The two toggled views share the column, so arriving at Done leaves
+		// Inbox — one view at a time, never a stack.
+		m.showInbox = false
 		if m.col == 2 {
 			m.row = 0
 		}
@@ -453,6 +475,31 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		m.doneInFlight = true
 		return m, fetchDoneCmd(m.cfg, m.runner)
+
+	case "I":
+		// Swap the third column to the inbox — `board inbox` Tier 1, the
+		// human's decision queue (GH-2181). The fourth view on the D-toggle
+		// precedent: same column, same lazy read, same cursor clamp, and the
+		// two toggles displace each other rather than stacking.
+		m.showInbox = !m.showInbox
+		m.showDone = false
+		if m.col == 2 {
+			m.row = 0
+		}
+		m.clampCursor()
+		if !m.showInbox {
+			m.status = "third column: Human Needed"
+			return m, nil
+		}
+		// Fetch NOW rather than at the next tick — `I` is the whole signal
+		// that anyone wants this view. Refreshes ride the second cadence
+		// while the column stays up.
+		m.status = "Inbox — Tier 1 decisions, each with its disposition verb; I returns to Human Needed"
+		if m.inboxInFlight || !m.lastInbox.IsZero() {
+			return m, nil
+		}
+		m.inboxInFlight = true
+		return m, fetchInboxCmd(m.cfg, m.runner)
 
 	case "g":
 		card, ok := m.selectedCard()
@@ -607,6 +654,14 @@ func verbSpawn(m Model) (Model, tea.Cmd) {
 		// spawn path would take a claim on it; refuse here so the reason is
 		// legible instead of arriving as a board refusal two layers down.
 		m.status = fmt.Sprintf("#%d is closed (%s) — nothing to spawn; D returns to Human Needed", card.Number, m.doneTitle())
+		return m, nil
+	}
+	if card.State == inboxState {
+		// An inbox row is a decision waiting on the HUMAN — spawning a worker
+		// at it inverts the queue's whole point (and the claim would be
+		// refused by the machine anyway: Intake is unclaimable, Human Needed
+		// is a pause). The row's own verb is the way out.
+		m.status = fmt.Sprintf("#%d is an inbox %s — dispose it: %s", card.Number, card.Queue, card.Verb)
 		return m, nil
 	}
 	if !m.herdrOK {
