@@ -75,7 +75,8 @@ Rejected: a new `refs/ralph/lease/<branch>` ref (GH-1929's first option) — a s
 - **Enforcement is code.** An invariant worth having goes in `board.ts` (with a test) or `state-guard.yml` — never in skill prose, never in a bash validator. Prose states intent once; if you're writing "make sure to X" in a SKILL.md, you're in the wrong file.
 - **Three write lanes on the state field**, all in board.ts: `transition` (agent intent, MACHINE-guarded), `reconcile` (issue reality wins), `parent-check` (rollup). Nothing else writes it. There is no `--force`; a stale claim TTL is the only override path.
 - **No prescribed phases.** The work skill grants judgment; research/plan depth is sized to the unit by the driver. Don't add per-phase skills, verdict-token vocabularies, or step recipes.
-- **Every board.ts change ships with tests** (`npm run test:board` at repo root) and must keep the parity invariant: `get` reads exactly the fields `move`/`claim` write.
+- **Every board.ts change ships with tests** (`npm run test:board` at repo root).
+- **Lifecycle parity (GH-2129): a field the CLI reads or gates on must have a CLI write surface.** This used to be the prose convention right here, and it lost twice in one day — the approval edge gated on an Estimate only `create` could set (GH-2126), and every write failed closed on a state option only the UI could add (GH-2127) — because a read and its corrective verb are added by different units. It is now a test: `FIELD_PARITY` in board.ts answers for every `*_FIELD` constant, and `board.parity.test.ts` derives the enumeration from those constants (a new field opts in by existing), checks each named verb exists and addresses an *existing* issue (which is what `create` does not), and RUNS it against a fake board to prove it writes that field. An exemption is legal; its reason is the assertion. Adding a gate on a new field without a verb fails the suite by name.
 
 ## Verify locally what CI verifies (repo root)
 

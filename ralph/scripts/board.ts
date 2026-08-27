@@ -1650,6 +1650,94 @@ const ADVISORY_FIELDS: ReadonlyArray<{ name: string; options: readonly string[] 
   { name: PRIORITY_FIELD, options: ["P0", "P1", "P2", "P3"] },
 ];
 
+/** Why the advisory single-selects need no option writer: ralph validates a
+ *  value against the LIVE option set and never demands its own, so a host
+ *  board's Small/Big Estimate is legal and an unknown value is a refusal that
+ *  NAMES what exists. That is a redirect, not a deadlock — unlike a missing
+ *  Workflow State option, which fails every write closed. Which options an
+ *  advisory field carries is the board owner's call. */
+const ADVISORY_OPTIONS_EXEMPT =
+  "advisory single-select: ralph validates against the LIVE option set and never demands its own, " +
+  "so a missing option is a refusal naming what exists, never a deadlock; which options it carries is the board owner's call";
+
+/**
+ * Lifecycle parity (GH-2129) — every Project field this CLI reads or gates on
+ * must have a sanctioned CLI write surface, or a stated exemption.
+ *
+ * The class this closes: a surface that READS field state (a refusal
+ * predicate, a doctor check, a ranking input) acquires enforcement weight
+ * while the corrective verb is forgotten, because reads and writes are added
+ * by different units at different times. Two live instances on 2026-08-23 —
+ * the approval edge gated on Estimate the CLI could set only at create
+ * (GH-2126), and `mutationCache` failed every write closed on a missing state
+ * option whose only remedy was a manual UI step (GH-2127). Each was cheap to
+ * fix and the class regenerates, so the answer is a test, not a convention:
+ * `board.parity.test.ts` derives the ENUMERATION from the `*_FIELD` constants
+ * above — a new field is opted in by existing — and makes this table answer
+ * for every one of them. A field with no row fails the suite by name.
+ *
+ * Two axes per field, because they deadlock differently. `value` is who can
+ * write an ITEM's value; its verb must address an existing issue, which is
+ * exactly what `create` does not do and exactly why GH-2126 shipped a gate
+ * with no corrective verb. `options` is who can write the FIELD's option set;
+ * its verb is board-scoped, so it takes no issue number.
+ *
+ * An exemption's reason IS the assertion — parity is not symmetry, and a list
+ * of bare names would rot into a suppression file.
+ */
+export type ParitySurface =
+  /** A verb in `run()`'s dispatch that writes this field. */
+  | { verb: string }
+  /** No writer, on purpose. The reason is the thing being asserted. */
+  | { exempt: string };
+
+export interface FieldParity {
+  field: string;
+  value: ParitySurface;
+  options: ParitySurface;
+}
+
+export const FIELD_PARITY: readonly FieldParity[] = [
+  {
+    field: STATE_FIELD,
+    value: { verb: "move" },
+    // GH-2127. Removal is deliberately NOT offered: deleting an option clears
+    // the Workflow State of every item still holding it, unrecoverably, so it
+    // stays a human act in the board UI. The exemption is on removal only —
+    // the deadlock (a missing option fails every write closed) has a verb.
+    options: { verb: "setup" },
+  },
+  {
+    field: CLAIM_FIELD,
+    value: { verb: "claim" }, // `release` and the machine clear it
+    options: { exempt: "TEXT field — it has no option set to write" },
+  },
+  {
+    field: DEFER_FIELD,
+    value: { verb: "defer" },
+    options: { exempt: "TEXT field — it has no option set to write" },
+  },
+  {
+    field: STATUS_FIELD,
+    // A derived MIRROR of Workflow State (STATUS_SYNC), written on every state
+    // write and never independently. A verb that set it apart from the state
+    // would desync the board's own Status column from the machine, which is
+    // the one thing the mirror exists to prevent.
+    value: { exempt: "derived mirror of Workflow State (STATUS_SYNC); never written independently" },
+    options: { exempt: "GitHub's built-in Status field — ralph maps onto the board template's options, never authors them" },
+  },
+  {
+    field: ESTIMATE_FIELD,
+    value: { verb: "estimate" }, // GH-2126
+    options: { exempt: ADVISORY_OPTIONS_EXEMPT },
+  },
+  {
+    field: PRIORITY_FIELD,
+    value: { verb: "priority" },
+    options: { exempt: ADVISORY_OPTIONS_EXEMPT },
+  },
+];
+
 function advisoryFieldsMissing(cache: BoardCache): string[] {
   return ADVISORY_FIELDS.filter((f) => !cache.fields[f.name]).map((f) => f.name);
 }

@@ -90,8 +90,39 @@ export interface FakeIssue {
 
 /** Minimal in-memory board: answers the exact queries board.ts issues and
  *  records every mutation, so clear-then-set ordering is observable. */
+/** The fields a seeded fake board serves, hoisted to module scope (GH-2129):
+ *  the wire keys a field write by ID, while the lifecycle-parity check keys on
+ *  the field NAME, so the fake needs to resolve one to the other. */
+function defaultFields() {
+  return [
+    {
+      id: "F_state", name: "Workflow State", dataType: "SINGLE_SELECT",
+      options: [...STATES, ...LEGACY_STATES].map((s) => ({ id: `OPT_${s}`, name: s })),
+    },
+    { id: "F_claim", name: "Claim", dataType: "TEXT" },
+    { id: "F_defer", name: "Defer", dataType: "TEXT" },
+    {
+      id: "F_status", name: "Status", dataType: "SINGLE_SELECT",
+      options: ["Todo", "In Progress", "Done"].map((s) => ({ id: `S_${s}`, name: s })),
+    },
+    {
+      id: "F_estimate", name: "Estimate", dataType: "SINGLE_SELECT",
+      options: ["XS", "S", "M", "L", "XL"].map((s) => ({ id: `E_${s}`, name: s })),
+    },
+    {
+      id: "F_priority", name: "Priority", dataType: "SINGLE_SELECT",
+      options: ["P0", "P1", "P2", "P3"].map((s) => ({ id: `P_${s}`, name: s })),
+    },
+  ];
+}
+
 export class FakeGh {
   mutations: string[] = [];
+  /** Every item-field write, by field NAME (GH-2129). `mutations` records a
+   *  friendly verb only for the fields it already knows, so a field added
+   *  tomorrow lands in the `setField(...)` catch-all and is indistinguishable
+   *  from any other — which is precisely the field the parity check is for. */
+  fieldWrites: string[] = [];
   graphqlCalls = 0; // GraphQL round trips — the cost the bounded read reduces
   /** Every GraphQL document sent, verbatim. GitHub charges per CONNECTION in
    *  the DOCUMENT (GH-1803), so the query text — not what board.ts reads back
@@ -141,6 +172,14 @@ export class FakeGh {
   /** Simulate a field whose live option set cannot be read (rate limit, a
    *  node id that resolves to nothing) — the mutation must then be refused. */
   unreadableFieldOptions = false;
+
+  /** Field id -> field name, over the same list the fake serves. An id it
+   *  cannot resolve is recorded verbatim rather than dropped: an unnamed write
+   *  must not read as no write. */
+  noteFieldWrite(fieldId: string): void {
+    const known = [...defaultFields(), ...this.createdFields.map((f) => ({ id: `F_${f.name}`, name: f.name }))];
+    this.fieldWrites.push(known.find((f) => f.id === fieldId)?.name ?? fieldId);
+  }
 
   /** The mutable fixture behind a field node id. Only `createdFields` entries
    *  are addressable: the built-in defaults carry the full option set, so no
@@ -681,26 +720,7 @@ export class FakeGh {
       return data({ repository: repo });
     }
     if (query.includes("projectV2(number")) {
-      const defaults = [
-        {
-          id: "F_state", name: "Workflow State", dataType: "SINGLE_SELECT",
-          options: [...STATES, ...LEGACY_STATES].map((s) => ({ id: `OPT_${s}`, name: s })),
-        },
-        { id: "F_claim", name: "Claim", dataType: "TEXT" },
-        { id: "F_defer", name: "Defer", dataType: "TEXT" },
-        {
-          id: "F_status", name: "Status", dataType: "SINGLE_SELECT",
-          options: ["Todo", "In Progress", "Done"].map((s) => ({ id: `S_${s}`, name: s })),
-        },
-        {
-          id: "F_estimate", name: "Estimate", dataType: "SINGLE_SELECT",
-          options: ["XS", "S", "M", "L", "XL"].map((s) => ({ id: `E_${s}`, name: s })),
-        },
-        {
-          id: "F_priority", name: "Priority", dataType: "SINGLE_SELECT",
-          options: ["P0", "P1", "P2", "P3"].map((s) => ({ id: `P_${s}`, name: s })),
-        },
-      ];
+      const defaults = defaultFields();
       const created = this.createdFields.map((f) => ({
         id: `F_${f.name}`, name: f.name, dataType: f.dataType,
         options: f.options?.map((o) => ({ id: f.optionIds?.[o] ?? `${f.name}_${o}`, name: o })),
@@ -989,6 +1009,7 @@ export class FakeGh {
       } else {
         this.mutations.push(`setField(${variables.fieldId})`);
       }
+      this.noteFieldWrite(variables.fieldId as string);
       return data({ updateProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
     }
     if (query.includes("clearProjectV2ItemFieldValue")) {
@@ -999,6 +1020,7 @@ export class FakeGh {
       if (fi && (variables.fieldId === "F_priority" || variables.fieldId === "F_Priority")) fi.priority = null;
       if (fi && (variables.fieldId === "F_estimate" || variables.fieldId === "F_Estimate")) fi.estimate = null;
       this.mutations.push(`clearField(#${itemNum}, ${variables.fieldId})`);
+      this.noteFieldWrite(variables.fieldId as string);
       return data({ clearProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
     }
     if (query.includes("addComment")) {
