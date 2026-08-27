@@ -9,7 +9,19 @@
       "Bash(bash scripts/attest-pr.sh:*)",
       "Bash(./scripts/attest-pr.sh:*)",
       "Bash(bash scripts/merge-pr.sh:*)",
-      "Bash(./scripts/merge-pr.sh:*)"
+      "Bash(./scripts/merge-pr.sh:*)",
+      "Bash(bash plugin/ralph-herdr/scripts/work-fleet.sh:*)",
+      "Bash(bash plugin/ralph-herdr/scripts/work-these.sh:*)",
+      "Bash(bash plugin/ralph-herdr/scripts/tend-pass.sh:*)",
+      "Bash(bash plugin/ralph-herdr/scripts/doctor.sh:*)",
+      "Bash(herdr plugin action invoke work-fleet:*)",
+      "Bash(herdr plugin action invoke work-these:*)",
+      "Bash(herdr plugin action invoke tend-pass:*)",
+      "Bash(herdr plugin action invoke doctor:*)",
+      "Bash(/Users/dubiel/.ralph/bin/board doctor:*)",
+      "Bash(/Users/dubiel/.ralph/bin/board create:*)",
+      "Bash(/Users/dubiel/.ralph/bin/board brief:*)",
+      "Bash(/Users/dubiel/.ralph/bin/board tend-queue:*)"
     ]
   },
   "enabledPlugins": {
