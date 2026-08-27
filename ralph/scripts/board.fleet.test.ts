@@ -15,6 +15,8 @@
  * read that works from any clone and reports a fleet claim faithfully.
  */
 
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   claimLeave,
@@ -282,5 +284,64 @@ describe("claim show + CLI dispatch", () => {
     };
     expect(() => run(["claim", "leave", "1", "--holder", "w1-a"], ctx)).toThrow(RefusalError);
     expect(run(["claim", "show", "1"], ctx)).toBe(0); // read path works from any clone
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dispatch-rota.sh's fleet pass reads this CLI's frontier JSON (GH-2196).
+// The first version read `.next.number` — board next's shape — so the jq
+// always yielded empty and the pass reported idle on every run, silently.
+// These tests extract the rota's ACTUAL jq programs from the script and run
+// real jq against the CLI's real output, so a rename of either surface fails
+// CI instead of silently disarming the rota again.
+// ---------------------------------------------------------------------------
+describe("dispatch-rota fleet pass ↔ frontier --json shape (GH-2196)", () => {
+  const script = readFileSync(new URL("../examples/dispatch-rota.sh", import.meta.url), "utf8");
+  const headExpr = script.match(/head=\$\(jq -r '([^']+)' <<<"\$fj"\)/)?.[1];
+  const guardExpr = script.match(/! jq -e '([^']+)'/)?.[1];
+
+  function jqR(program: string, input: string): string {
+    return execFileSync("jq", ["-r", program], { input, encoding: "utf8" }).trim();
+  }
+  function jqPasses(program: string, input: string): boolean {
+    try {
+      execFileSync("jq", ["-e", program], { input, encoding: "utf8", stdio: ["pipe", "ignore", "ignore"] });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it("the script still carries the pinned jq programs (the grep half of the pin)", () => {
+    expect(headExpr).toBe(".frontier[0].number // empty");
+    expect(guardExpr).toBe(".frontier | type == \"array\"");
+  });
+
+  it("head extraction: the rota's own jq program pulls the queue head from the CLI's real output", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1" });
+    gh.issues.set(2, { number: 2, state: "Backlog", priority: "P0" });
+    const out = captured(["frontier", "--json"], ctx);
+    expect(jqPasses(guardExpr!, out)).toBe(true);
+    expect(jqR(headExpr!, out)).toBe("2"); // P0 outranks P1 — next's head, not empty
+  });
+
+  it("empty frontier: guard passes, head parses to no candidate — the one honest idle", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(6, { number: 6, state: "Backlog", blockedBy: [{ number: 9, state: "OPEN" }] });
+    const out = captured(["frontier", "--json"], ctx);
+    expect(jqPasses(guardExpr!, out)).toBe(true);
+    expect(jqR(headExpr!, out)).toBe("");
+  });
+
+  it("board next's shape — the bug's own input — fails the shape guard instead of reading as idle", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", priority: "P0" });
+    const out = captured(["next", "--json"], ctx);
+    expect(jqR(".next.number // empty", out)).toBe("1"); // it IS next's shape…
+    expect(jqPasses(guardExpr!, out)).toBe(false); // …and the guard refuses it loudly
   });
 });
