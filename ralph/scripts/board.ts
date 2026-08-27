@@ -2411,6 +2411,9 @@ interface MoveOpts {
   why?: string; // mandatory for Human Needed / release / cancel
   steal?: boolean; // claim only
   isReopen?: boolean;
+  /** GH-2179: address the escalation to this lead — the route marker rides
+   *  the Decision needed comment. Human Needed target only; ignored elsewhere. */
+  routeToLead?: string;
 }
 
 /** Guard for leaving In Progress: caller must be a claim MEMBER (ClaimV2 —
@@ -2710,7 +2713,16 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         : doneWithoutMergedPr ? "Completed without merged PR"
         : from === "In Review" && to === "In Progress" ? "Demoted for rework"
         : "Parked";
-      addComment(ctx, issue.nodeId, `**${header}** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${opts.why}`);
+      // GH-2179: a lead-routed escalation carries its route ON the escalation
+      // comment itself — one self-contained, board-resident record. The header
+      // stays byte-identical (ESCALATION_EVIDENCE anchors on it).
+      const routed =
+        to === "Human Needed" && opts.routeToLead
+          ? `\n\n${ESCALATION_ROUTE_MARKER}\n\`\`\`json\n` +
+            JSON.stringify({ to: "lead", lead: opts.routeToLead, at: ctx.now().toISOString() }) +
+            `\n\`\`\``
+          : "";
+      addComment(ctx, issue.nodeId, `**${header}** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${opts.why}${routed}`);
     }
 
     // Claim field: entering In Progress sets it (clear-then-set — the value carries
@@ -6650,6 +6662,172 @@ export function resolveProposal(
 }
 
 // ---------------------------------------------------------------------------
+// Lead arbitration (GH-2179) — who an escalation is ADDRESSED to.
+//
+// An escalation is the `**Decision needed**` comment transition() already
+// writes; addressing it to a team's lead appends the route marker to that SAME
+// comment, so the whole exchange is board-resident and one comment is
+// self-contained. No route marker = human-addressed — every escalation that
+// predates this, and every reality-lane correction (reconcile's apply reopen),
+// is human-addressed by construction.
+//
+// The lead dispositions a routed escalation three ways: answer or re-steer
+// (the existing `answer` verb — the Human Needed → In Progress edge disposes
+// the escalation by state), or PROMOTE (`board promote NNN`) — a durable
+// marker comment saying "this genuinely needs the human", no state change,
+// because Human Needed is already the right state; promotion changes the
+// audience, not the machine.
+//
+// The TTL bound is computed at READ time, never by a cron: a routed
+// escalation with no promotion marker and age >= RALPH_LOCK_TTL_MIN
+// classifies as auto-promoted wherever it is read. Same shape as claim
+// staleness — no tracking state exists to drift, and a dead lead costs
+// latency, never a stranded worker. An unparseable `at` fails the same
+// direction (auto-promoted): an unmeasurable clock must not strand a worker.
+//
+// Promotion deliberately does NOT validate C9 shape (the decision GH-2179 was
+// asked to make): the TTL path cannot validate by construction — a dead lead
+// plus strict validation is a stranded worker — so validating only the manual
+// path would make waiting out the TTL the permissive lane and train leads not
+// to promote. The escalation is `--why` prose, not a typed payload; `board
+// contract validate ralph.escalation` stays the deliberate check.
+// ---------------------------------------------------------------------------
+
+/** Appended (with a fenced JSON payload `{to, lead, at}`) to the escalation
+ *  comment itself when the worker addresses it to its lead. */
+export const ESCALATION_ROUTE_MARKER = "<!-- ralph-escalation:v1 routed -->";
+
+/** The lead's promotion — its own comment, after the routed escalation.
+ *  Payload: `{"at": iso, "by": holder, "note"?: "…"}`. */
+export const ESCALATION_PROMOTED_MARKER = "<!-- ralph-escalation:v1 promoted -->";
+
+export interface EscalationRoute {
+  route: "lead" | "human";
+  /** Lead's agent name from the route payload; null when unreadable. */
+  lead?: string | null;
+  /** When the escalation was routed (payload `at`); null when unreadable. */
+  at?: string | null;
+  /** Only for route "lead": pending (the lead's queue), promoted (the lead
+   *  said so), or auto-promoted (the TTL said so). */
+  disposition?: "pending" | "promoted" | "auto-promoted";
+}
+
+/** Classify the LAST escalation in a comment trail. Trail order is
+ *  chronological (`comments(last: N)`, oldest→newest), so the newest
+ *  `**Decision needed**` comment is the live escalation and everything before
+ *  it is history — a re-escalation supersedes, in either direction. A
+ *  promotion marker counts only when it lands AFTER the escalation it answers
+ *  (same rule as tend's proposal/resolution pair). */
+export function classifyEscalation(
+  comments: string[],
+  now: Date,
+  ttlMin: number,
+): EscalationRoute {
+  let lastEsc = -1;
+  let routed: { lead: string | null; at: string | null } | null = null;
+  let lastProm = -1;
+  for (let i = 0; i < comments.length; i++) {
+    const body = comments[i];
+    if (ESCALATION_EVIDENCE.test(maskCode(body))) {
+      lastEsc = i;
+      if (lastMarkerIndex(body, ESCALATION_ROUTE_MARKER) >= 0) {
+        const lead = /"lead"\s*:\s*"([^"]+)"/.exec(body);
+        const at = /"at"\s*:\s*"([^"]+)"/.exec(body);
+        const t = at ? new Date(at[1]).getTime() : NaN;
+        routed = { lead: lead ? lead[1] : null, at: Number.isFinite(t) ? at![1] : null };
+      } else {
+        routed = null;
+      }
+    }
+    if (lastMarkerIndex(body, ESCALATION_PROMOTED_MARKER) >= 0) lastProm = i;
+  }
+  if (lastEsc < 0 || !routed) return { route: "human" };
+  if (lastProm > lastEsc) return { route: "lead", ...routed, disposition: "promoted" };
+  // Unreadable `at` → auto-promoted: fail toward the human seeing it.
+  const since = routed.at ? new Date(routed.at).getTime() : NaN;
+  const expired = !Number.isFinite(since) || now.getTime() - since >= ttlMin * 60_000;
+  return { route: "lead", ...routed, disposition: expired ? "auto-promoted" : "pending" };
+}
+
+export interface EscalationRow extends EscalationRoute {
+  number: number;
+  title: string;
+}
+
+/** The arbitration queue: every Human Needed item, classified. The lead's
+ *  work is the `pending` rows; everything else (human-addressed, promoted,
+ *  auto-promoted) is the human tier — the surface `board inbox` (GH-2180)
+ *  builds on. Trails are fetched for the Human Needed subset only, so the
+ *  read is bounded by live escalations, not board size. */
+export function escalationsQueue(ctx: Ctx): EscalationRow[] {
+  const items = listItems(ctx, QUEUE_SELECT_MINIMAL).filter((i) => i.state === "Human Needed");
+  if (items.length === 0) return [];
+  const trails = fetchCommentTrails(ctx, items.map((i) => i.number));
+  return items.map((i) => ({
+    number: i.number,
+    title: i.title,
+    ...classifyEscalation(trails.get(i.number) ?? [], ctx.now(), ctx.cfg.lockTtlMin),
+  }));
+}
+
+export interface PromoteResult {
+  promoted: boolean;
+  /** Why nothing was posted when promoted=false. */
+  reason?: "already-promoted";
+  route: EscalationRoute;
+}
+
+/** The lead's promotion verb — comment-only, no state change. Refuses when
+ *  the item is not in Human Needed (promotion is about a live escalation) or
+ *  when the live escalation is not lead-routed (a human-addressed escalation
+ *  is already in front of the human by construction). Promoting an
+ *  auto-promoted escalation is allowed — it turns the TTL's implicit verdict
+ *  into the lead's explicit, durable one. Idempotent: an already-promoted
+ *  escalation is a noop, not an error, so a retry never double-posts. */
+export function promote(ctx: Ctx, number: number, opts: { note?: string } = {}): PromoteResult {
+  const issue = fetchIssue(ctx, number);
+  if (issue.fieldValuesTruncated) {
+    throw new RefusalError(
+      `#${number} has more than ${FIELD_VALUE_PAGE} project field values — ` +
+        `the state read is unreliable, refusing to promote`,
+    );
+  }
+  if (issue.state !== "Human Needed") {
+    throw new RefusalError(
+      `#${number} is "${issue.state ?? "(none)"}" — promote is for Human Needed items ` +
+        `(an escalation is a pause on in-flight work; there is nothing to promote here)`,
+    );
+  }
+  const trail = fetchCommentTrails(ctx, [number]).get(number);
+  if (!trail) {
+    throw new Error(
+      `could not read #${number}'s comment trail — cannot tell whether an escalation is routed`,
+    );
+  }
+  const route = classifyEscalation(trail, ctx.now(), ctx.cfg.lockTtlMin);
+  if (route.route !== "lead") {
+    throw new RefusalError(
+      `#${number}'s escalation is already addressed to the human — nothing to promote. ` +
+        `(Only a lead-routed escalation promotes; \`board answer ${number} -m\` disposes it either way.)`,
+    );
+  }
+  if (route.disposition === "promoted") return { promoted: false, reason: "already-promoted", route };
+  const payload = JSON.stringify({
+    at: ctx.now().toISOString(),
+    by: ctx.cfg.holder,
+    ...(opts.note ? { note: opts.note } : {}),
+  });
+  addComment(
+    ctx,
+    issue.nodeId,
+    `**Promoted to human** (\`board\` by \`${ctx.cfg.holder}\`)` +
+      (opts.note ? `:\n\n${opts.note}` : "") +
+      `\n\n${ESCALATION_PROMOTED_MARKER}\n\`\`\`json\n${payload}\n\`\`\``,
+  );
+  return { promoted: true, route: { ...route, disposition: "promoted" } };
+}
+
+// ---------------------------------------------------------------------------
 // Dependency-candidate selector (GH-2135)
 // ---------------------------------------------------------------------------
 //
@@ -10330,6 +10508,16 @@ reads
                               proposal) belongs to /ralph:tend. Knobs:
                               RALPH_STALE_DAYS (30), RALPH_AUDIT_DAYS (14),
                               RALPH_DEP_OVERLAP_MIN (0.2)
+  escalations [--json]        the arbitration queue (GH-2179): every Human
+                              Needed item, classified by who its escalation is
+                              addressed to. A lead's work is the pending rows;
+                              →human, promoted, and auto-promoted rows are the
+                              human tier. Auto-promotion is computed HERE, at
+                              read time — a lead-routed escalation older than
+                              RALPH_LOCK_TTL_MIN (120) with no promotion
+                              marker renders auto-promoted; no cron exists.
+                              Bounded: trails are fetched for Human Needed
+                              items only
   dep-candidates <n> [--json] which OPEN, UNCLAIMED Backlog items might #n
                               depend on (or vice versa) — df-weighted term
                               overlap on title + body, handed to a judge.
@@ -10427,6 +10615,14 @@ mutations
                               as a comment (GH-2078).
                               Intake → Backlog is APPROVAL: it refuses without
                               a Priority and an Estimate.
+                              Escalation addressing (GH-2179, Human Needed
+                              only): the route rides the Decision needed
+                              comment as a marker. Default = the lead when
+                              RALPH_HERDR_LEAD is set (the team spawn path
+                              sets it), else the human; --to-lead <name> is
+                              explicit, --to-human forces the reserved-set
+                              direction (spend, scope, irreversibles are
+                              never a lead's to grant)
   answer NNN -m "decision"    Human Needed → In Progress, COMMENT-FIRST: the
                               answer lands as an issue comment (**Answer** —
                               the durable half) BEFORE any state write, so a
@@ -10443,6 +10639,19 @@ mutations
                               ralph-herdr plugin owns it. Escalation payload
                               shape is checked by \`board contract validate
                               ralph.escalation\`, never by this verb
+  promote NNN [-m "note"]     lead arbitration (GH-2179): promote a lead-routed
+                              escalation to the human — a durable marker
+                              comment, NO state change (Human Needed is
+                              already the right state; promotion changes the
+                              audience, not the machine). Refuses outside
+                              Human Needed and on human-addressed escalations;
+                              noop when already promoted. The other two
+                              dispositions are \`answer\` (answer or re-steer —
+                              the resume edge disposes the escalation).
+                              Deliberately validates NO C9 shape: the TTL
+                              path cannot validate by construction, and a
+                              stricter manual path would train leads to wait
+                              out the clock instead
   cancel NNN -m "why"         any open state → Canceled (closes as not-planned)
   reopen NNN                  Done/Canceled → Backlog (reopens the issue); also
                               resolves a pending tend proposal, since reopening
@@ -10599,8 +10808,10 @@ export const VERB_HELP: Record<string, string> = {
   create: "board create (--intake | --backlog | --state <s>) --title <t> [--body <b>] [--parent <n>] [--estimate XS..XL] [--priority P0..P3] [--apply]\n  Files an issue onto the board. Retry-safe (twin dedupe, GH-1973).\n  The landing state is REQUIRED — there is no default, because filing is not approving:\n    --intake   tracked, not yet approved; invisible to next/frontier (Priority/Estimate optional)\n    --backlog  approved and ready to work (Priority and Estimate REQUIRED)\n  example: board create --backlog --title \"fix the gate\" --priority P1 --estimate S",
   claim: "board claim <n> [--steal] [--why <w>] | board claim show <n>\n  Take a unit (Backlog→In Progress). --steal only after TTL expiry.\n  Claiming from In Review demotes and requires --why \"<the rework>\".\n  example: board claim 1234",
   release: "board release <n> -m \"<where you stopped>\"\n  Give a unit back (→Backlog) with the handoff note.\n  example: board release 1234 -m \"tests red on X; next: fix parser\"",
-  move: "board move <n> <state> [--why <w>] [--decision <artifact>]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact, or --why.\n  Demotions (In Progress→Backlog, In Review→In Progress) require --why (GH-2078).\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
+  move: "board move <n> <state> [--why <w>] [--decision <artifact>] [--to-lead <name> | --to-human]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact, or --why.\n  Demotions (In Progress→Backlog, In Review→In Progress) require --why (GH-2078).\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  Human Needed only: --to-lead/--to-human address the escalation (GH-2179);\n  default is the lead when RALPH_HERDR_LEAD is set, else the human.\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
   answer: "board answer <n> -m \"<the decision>\" [--comment-only] [--any-state]\n  Answer a Human Needed item and resume it.\n  example: board answer 1234 -m \"ship option B\"",
+  promote: "board promote <n> [-m \"<note>\"] [--json]\n  Promote a lead-routed escalation to the human (GH-2179): durable marker\n  comment, no state change. Refuses outside Human Needed and on\n  human-addressed escalations; noop when already promoted.\n  example: board promote 1234 -m \"authorization, not knowledge — yours\"",
+  escalations: "board escalations [--json]\n  The arbitration queue (GH-2179): Human Needed items classified by audience.\n  pending = the lead's work; →human / promoted / auto-promoted (TTL\n  RALPH_LOCK_TTL_MIN elapsed, computed at read time) = the human tier.\n  example: board escalations --json",
   cancel: "board cancel <n> -m \"<reason>\"\n  Cancel (→Canceled, closes NOT_PLANNED). Reopen is the only exit.\n  example: board cancel 1234 -m \"superseded by #1300\"",
   reopen: "board reopen <n>\n  The one exit from Done/Canceled (→Backlog); accepts a pending reopen proposal.\n  example: board reopen 1234",
   defer: "board defer <n> --until \"<condition>\" [--recheck <ISO>] | board defer <n> --clear\n  Park a Backlog item out of ranking until its stated precondition holds.\n  Claiming the unit also lifts it. doctor surfaces elapsed rechecks.\n  example: board defer 1234 --until \"GH-2088 lands\" --recheck 2026-09-01T00:00:00Z",
@@ -10639,7 +10850,7 @@ interface ParsedArgs {
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
-  "intake", "backlog", "dismiss",
+  "intake", "backlog", "dismiss", "to-human",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
@@ -10647,7 +10858,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
   "blocked-by", "body", "candidates", "decision", "estimate", "holder", "host",
   "label", "lane", "limit", "message", "on", "out", "owner", "parent", "priority",
-  "project", "recheck", "repo", "state", "title", "until", "why",
+  "project", "recheck", "repo", "state", "title", "to-lead", "until", "why",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -10749,7 +10960,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 const MUTATING = new Set([
   "create", "claim", "release", "move", "cancel", "reopen", "answer", "priority",
   "estimate", "defer", "link", "dep", "comment", "adopt", "reconcile", "parent-check",
-  "resolve", "setup", "add", "bootstrap",
+  "resolve", "setup", "add", "bootstrap", "promote",
 ]);
 
 export function run(argv: string[], ctx: Ctx): number {
@@ -11650,8 +11861,31 @@ export function run(argv: string[], ctx: Ctx): number {
           `**Decision evidence** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${DECISION_EVIDENCE_MARKER}\nartifact: ${flags.decision}`,
         );
       }
+      // GH-2179: escalation addressing. Default keys on RALPH_HERDR_LEAD —
+      // set by the team spawn path (GH-2178), absent in solo sessions — so a
+      // team worker's escalation routes to its lead with no prose change and
+      // everyone else keeps the status quo. --to-human forces the reserved-set
+      // direction; --to-lead <name> is the explicit form.
+      const toHuman = !!flags["to-human"];
+      const toLeadFlag = typeof flags["to-lead"] === "string" ? flags["to-lead"].trim() : null;
+      if ((toHuman || toLeadFlag !== null) && to !== "Human Needed")
+        throw new UsageError(`--to-lead/--to-human address an escalation — only \`move NNN human-needed\` takes them`);
+      if (toHuman && toLeadFlag !== null)
+        throw new UsageError(`--to-lead and --to-human are exclusive`);
+      let routeToLead: string | undefined;
+      if (to === "Human Needed" && !toHuman) {
+        const envLead = (process.env.RALPH_HERDR_LEAD ?? "").trim();
+        if (toLeadFlag !== null) {
+          if (!toLeadFlag && !envLead)
+            throw new UsageError(`--to-lead requires a lead name (none given, RALPH_HERDR_LEAD unset)`);
+          routeToLead = toLeadFlag || envLead;
+        } else if (envLead) routeToLead = envLead;
+      }
       const noop = issue.state === to && to !== "In Progress";
-      const after = transition(ctx, issue, to, { why: typeof flags.why === "string" ? flags.why : undefined });
+      const after = transition(ctx, issue, to, {
+        why: typeof flags.why === "string" ? flags.why : undefined,
+        routeToLead,
+      });
       if (noop) {
         out(
           issue.issueState === "OPEN" && after.issueState === "CLOSED"
@@ -11681,6 +11915,40 @@ export function run(argv: string[], ctx: Ctx): number {
             ? `#${number}: answer commented; Human Needed → ${res.state}`
             : `#${number}: answer commented; no transition (state: ${res.state ?? "(none)"})`,
         );
+      }
+      return 0;
+    }
+
+    case "promote": {
+      const number = requireNumber(positional[0]);
+      const note =
+        typeof flags.m === "string" && flags.m ? flags.m
+        : typeof flags.message === "string" && flags.message ? flags.message
+        : undefined;
+      const res = promote(ctx, number, { note });
+      if (flags.json) json(res);
+      else if (!res.promoted) out(`noop: #${number} is already promoted (nothing to do)`);
+      else out(`#${number}: escalation promoted to the human (was ${res.route.lead ?? "lead"}-routed)`);
+      return 0;
+    }
+
+    case "escalations": {
+      const rows = escalationsQueue(ctx);
+      if (flags.json) {
+        json({ escalations: rows });
+        return 0;
+      }
+      if (rows.length === 0) {
+        out("no Human Needed items");
+        return 0;
+      }
+      for (const r of rows) {
+        const who =
+          r.route === "human" ? "→human"
+          : r.disposition === "pending" ? `→lead ${r.lead ?? "(unnamed)"} (pending${r.at ? ` since ${r.at}` : ""})`
+          : r.disposition === "promoted" ? `→human (promoted by lead)`
+          : `→human (auto-promoted: lead ${r.lead ?? "(unnamed)"} TTL elapsed)`;
+        out(`#${r.number} ${who} ${r.title}`);
       }
       return 0;
     }

@@ -58,6 +58,11 @@ import {
   PR_ORPHAN_DEFAULT_IGNORE,
   PR_ORPHAN_IGNORE_ENV,
   ESCALATION_EVIDENCE,
+  ESCALATION_PROMOTED_MARKER,
+  ESCALATION_ROUTE_MARKER,
+  classifyEscalation,
+  escalationsQueue,
+  promote,
   encodeClaim,
   fetchIssue,
   formatLocalHm,
@@ -8687,6 +8692,271 @@ describe("deps-unwired (GH-2136) — tend category + doctor advisory line", () =
       expect(c.level).toBe("info");
       expect(c.detail).toContain("not evaluated");
       expect(r.ok).toBe(baseline); // a failed advisory read never changes the exit code
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lead arbitration (GH-2179) — board-resident escalations + TTL auto-promotion
+// ---------------------------------------------------------------------------
+
+describe("lead arbitration (GH-2179)", () => {
+  const iso = (minAgo: number) => new Date(NOW.getTime() - minAgo * 60_000).toISOString();
+  /** An escalation comment as transition() writes it — routed when a lead is named. */
+  const esc = (why: string, lead?: string, at?: string): string =>
+    `**Decision needed** (\`board\` by \`me@test\`):\n\n${why}` +
+    (lead
+      ? `\n\n${ESCALATION_ROUTE_MARKER}\n\`\`\`json\n${JSON.stringify({ to: "lead", lead, at })}\n\`\`\``
+      : "");
+  const promotedComment = (at: string): string =>
+    `**Promoted to human** (\`board\` by \`me@test\`)\n\n${ESCALATION_PROMOTED_MARKER}\n\`\`\`json\n${JSON.stringify({ at, by: "me@test" })}\n\`\`\``;
+  const TTL = 120;
+
+  describe("classifyEscalation", () => {
+    it("no escalation, or one without a route marker, is human-addressed — the status quo", () => {
+      expect(classifyEscalation([], NOW, TTL)).toEqual({ route: "human" });
+      expect(classifyEscalation([esc("which db?")], NOW, TTL).route).toBe("human");
+    });
+
+    it("a fresh routed escalation is the lead's: pending, with lead and at", () => {
+      const r = classifyEscalation([esc("which db?", "w2179-lead", iso(30))], NOW, TTL);
+      expect(r).toEqual({ route: "lead", lead: "w2179-lead", at: iso(30), disposition: "pending" });
+    });
+
+    it("TTL elapsed auto-promotes at READ time — a dead lead costs latency, never a stranded worker", () => {
+      const r = classifyEscalation([esc("which db?", "w2179-lead", iso(TTL))], NOW, TTL);
+      expect(r.disposition).toBe("auto-promoted");
+    });
+
+    it("one minute under the TTL is still pending — the bound is >=", () => {
+      const r = classifyEscalation([esc("which db?", "w2179-lead", iso(TTL - 1))], NOW, TTL);
+      expect(r.disposition).toBe("pending");
+    });
+
+    it("an unparseable `at` fails toward the human seeing it (auto-promoted)", () => {
+      const body =
+        `**Decision needed** (\`board\` by \`me@test\`):\n\nwhich db?\n\n` +
+        `${ESCALATION_ROUTE_MARKER}\n\`\`\`json\n{"to":"lead","lead":"w2179-lead","at":"garbled"}\n\`\`\``;
+      expect(classifyEscalation([body], NOW, TTL).disposition).toBe("auto-promoted");
+    });
+
+    it("a promotion marker after the escalation reads promoted", () => {
+      const r = classifyEscalation(
+        [esc("which db?", "w2179-lead", iso(30)), promotedComment(iso(10))],
+        NOW,
+        TTL,
+      );
+      expect(r.disposition).toBe("promoted");
+    });
+
+    it("a NEW routed escalation after an old promotion re-arms pending — re-escalation supersedes", () => {
+      const r = classifyEscalation(
+        [esc("q1", "w2179-lead", iso(300)), promotedComment(iso(200)), esc("q2", "w2179-lead", iso(10))],
+        NOW,
+        TTL,
+      );
+      expect(r.disposition).toBe("pending");
+    });
+
+    it("a new UNROUTED escalation after a routed one supersedes to human", () => {
+      const r = classifyEscalation([esc("q1", "w2179-lead", iso(300)), esc("q2")], NOW, TTL);
+      expect(r).toEqual({ route: "human" });
+    });
+
+    it("a route marker quoted in a code span is prose discussing the protocol, not speaking it", () => {
+      const body = `**Decision needed** (\`board\` by \`me@test\`):\n\nsee \`${ESCALATION_ROUTE_MARKER}\``;
+      expect(classifyEscalation([body], NOW, TTL).route).toBe("human");
+    });
+  });
+
+  describe("transition writes the route on the escalation comment itself", () => {
+    let gh: FakeGh;
+    let ctx: Ctx;
+    beforeEach(() => {
+      gh = new FakeGh();
+      ctx = makeCtx(gh);
+    });
+
+    it("routeToLead appends the marker + payload; the header stays byte-anchored", () => {
+      gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+      transition(ctx, fetchIssue(ctx, 1), "Human Needed", { why: "which db?", routeToLead: "w2179-lead" });
+      const body = gh.comments.find((c) => c.body.includes("Decision needed"))!.body;
+      expect(ESCALATION_EVIDENCE.test(body)).toBe(true);
+      expect(body).toContain(ESCALATION_ROUTE_MARKER);
+      expect(body).toContain('"lead":"w2179-lead"');
+      expect(classifyEscalation([body], NOW, ctx.cfg.lockTtlMin).disposition).toBe("pending");
+    });
+
+    it("without routeToLead the comment is byte-identical to the pre-GH-2179 form", () => {
+      gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+      transition(ctx, fetchIssue(ctx, 1), "Human Needed", { why: "which db?" });
+      const body = gh.comments.find((c) => c.body.includes("Decision needed"))!.body;
+      expect(body).toBe("**Decision needed** (`board` by `me@test`):\n\nwhich db?");
+    });
+  });
+
+  describe("promote — the lead's disposition verb, comment-only", () => {
+    let gh: FakeGh;
+    let ctx: Ctx;
+    beforeEach(() => {
+      gh = new FakeGh();
+      ctx = makeCtx(gh);
+    });
+
+    it("refuses outside Human Needed — promotion is about a live escalation", () => {
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+      expect(() => promote(ctx, 1)).toThrow(RefusalError);
+      expect(gh.comments).toEqual([]);
+    });
+
+    it("refuses a human-addressed escalation — it is already in front of the human", () => {
+      gh.issues.set(1, { number: 1, state: "Human Needed", comments: [esc("which db?")] });
+      expect(() => promote(ctx, 1)).toThrow(/already addressed to the human/);
+      expect(gh.comments).toEqual([]);
+    });
+
+    it("promotes a pending routed escalation: durable marker comment, NO state write", () => {
+      gh.issues.set(1, {
+        number: 1, state: "Human Needed",
+        comments: [esc("which db?", "w2179-lead", iso(30))],
+      });
+      const res = promote(ctx, 1, { note: "authorization, not knowledge" });
+      expect(res.promoted).toBe(true);
+      const body = gh.comments[0].body;
+      expect(body).toContain(ESCALATION_PROMOTED_MARKER);
+      expect(body).toContain("authorization, not knowledge");
+      expect(gh.mutations).toEqual(["addComment"]); // comment only — never a state or field write
+    });
+
+    it("promoting an auto-promoted escalation is allowed — the TTL's verdict made explicit", () => {
+      gh.issues.set(1, {
+        number: 1, state: "Human Needed",
+        comments: [esc("which db?", "w2179-lead", iso(500))],
+      });
+      expect(promote(ctx, 1).promoted).toBe(true);
+    });
+
+    it("already promoted is a noop, not an error — a retry never double-posts", () => {
+      gh.issues.set(1, {
+        number: 1, state: "Human Needed",
+        comments: [esc("which db?", "w2179-lead", iso(30)), promotedComment(iso(10))],
+      });
+      const res = promote(ctx, 1);
+      expect(res).toMatchObject({ promoted: false, reason: "already-promoted" });
+      expect(gh.comments).toEqual([]);
+    });
+
+    it("refuses on a truncated fieldValues page — the state read may be fiction", () => {
+      gh.issues.set(1, { number: 1, state: "Human Needed", fieldValuesTruncated: true });
+      expect(() => promote(ctx, 1)).toThrow(RefusalError);
+    });
+  });
+
+  describe("escalations — the arbitration queue", () => {
+    it("classifies every Human Needed item; everything else is invisible to it", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "Human Needed", comments: [esc("q1")] });
+      gh.issues.set(2, {
+        number: 2, state: "Human Needed",
+        comments: [esc("q2", "w2179-lead", iso(30))],
+      });
+      gh.issues.set(3, {
+        number: 3, state: "Human Needed",
+        comments: [esc("q3", "w2179-lead", iso(500))],
+      });
+      gh.issues.set(4, { number: 4, state: "Backlog" });
+      const rows = escalationsQueue(ctx);
+      expect(rows.map((r) => [r.number, r.route, r.disposition ?? null])).toEqual([
+        [1, "human", null],
+        [2, "lead", "pending"],
+        [3, "lead", "auto-promoted"],
+      ]);
+    });
+
+    it("an empty Human Needed set fetches no trails and returns []", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(4, { number: 4, state: "Backlog" });
+      expect(escalationsQueue(ctx)).toEqual([]);
+    });
+  });
+
+  describe("CLI addressing — RALPH_HERDR_LEAD default, --to-human, --to-lead", () => {
+    const drive = (argv: string[], ctx: Ctx) => {
+      const spy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      try {
+        return run(argv, ctx);
+      } finally {
+        spy.mockRestore();
+      }
+    };
+    let saved: string | undefined;
+    beforeEach(() => {
+      saved = process.env.RALPH_HERDR_LEAD;
+      delete process.env.RALPH_HERDR_LEAD;
+    });
+    afterEach(() => {
+      if (saved === undefined) delete process.env.RALPH_HERDR_LEAD;
+      else process.env.RALPH_HERDR_LEAD = saved;
+    });
+
+    it("a team worker's escalation routes to its lead with no prose change (env default)", () => {
+      process.env.RALPH_HERDR_LEAD = "w2176-epic-lead";
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+      expect(drive(["move", "1", "human-needed", "--why", "which db?"], ctx)).toBe(0);
+      const body = gh.comments.find((c) => c.body.includes("Decision needed"))!.body;
+      expect(body).toContain('"lead":"w2176-epic-lead"');
+    });
+
+    it("--to-human forces the reserved-set direction even inside a team", () => {
+      process.env.RALPH_HERDR_LEAD = "w2176-epic-lead";
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+      expect(drive(["move", "1", "human-needed", "--why", "spend ceiling?", "--to-human"], ctx)).toBe(0);
+      const body = gh.comments.find((c) => c.body.includes("Decision needed"))!.body;
+      expect(body).not.toContain(ESCALATION_ROUTE_MARKER);
+    });
+
+    it("--to-lead <name> routes explicitly without any env", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+      expect(drive(["move", "1", "human-needed", "--why", "which db?", "--to-lead", "w9-lead"], ctx)).toBe(0);
+      const body = gh.comments.find((c) => c.body.includes("Decision needed"))!.body;
+      expect(body).toContain('"lead":"w9-lead"');
+    });
+
+    it("solo sessions (no env, no flag) keep the status quo — human-addressed", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+      expect(drive(["move", "1", "human-needed", "--why", "which db?"], ctx)).toBe(0);
+      const body = gh.comments.find((c) => c.body.includes("Decision needed"))!.body;
+      expect(body).not.toContain(ESCALATION_ROUTE_MARKER);
+    });
+
+    it("--to-lead with --to-human is refused; so is either flag off the Human Needed edge", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+      expect(() =>
+        drive(["move", "1", "human-needed", "--why", "q", "--to-lead", "x", "--to-human"], ctx),
+      ).toThrow(UsageError);
+      expect(() => drive(["move", "1", "done", "--to-human"], ctx)).toThrow(UsageError);
+      expect(gh.comments).toEqual([]);
+    });
+
+    it("bare --to-lead with no env names the gap", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+      expect(() => drive(["move", "1", "human-needed", "--why", "q", "--to-lead", ""], ctx)).toThrow(
+        /RALPH_HERDR_LEAD unset/,
+      );
     });
   });
 });

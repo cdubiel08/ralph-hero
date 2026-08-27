@@ -122,6 +122,26 @@ meanwhile. Deliberately untouched: doctor's stale-claim demotion (a direct
 field write, In Progress only, already commented) and reconcile (reality lane,
 never MACHINE-guarded).
 
+**Escalations carry an audience (GH-2179, the GH-2176 arbitration unit).** In
+a team, a worker's `move NNN human-needed --why` routes to the epic's **lead**
+— the route rides the Decision-needed comment as a `ralph-escalation:v1`
+marker (no marker = human-addressed: every pre-existing escalation and every
+reconcile correction, by construction). Default keys on `$RALPH_HERDR_LEAD`
+(the team spawn path sets it; solo sessions keep the status quo untouched);
+`--to-human` forces the reserved-set direction, `--to-lead <name>` is
+explicit. The lead dispositions via `answer` (answer/re-steer — the resume
+edge disposes) or **`board promote NNN [-m]`** (durable marker, no state
+change — Human Needed is already the right state; promotion changes the
+audience, not the machine). **The TTL bound is computed at read time, never by
+a cron**: `board escalations` classifies every Human Needed item, and a
+lead-routed escalation unadjudicated for `RALPH_LOCK_TTL_MIN` renders
+auto-promoted — same shape as claim staleness, no tracking state to drift; a
+dead lead costs latency, never a stranded worker (an unparseable route
+timestamp fails the same direction). Promotion deliberately validates no C9
+shape: the TTL path cannot validate by construction, so a stricter manual path
+would train leads to wait out the clock; `board contract validate
+ralph.escalation` stays the deliberate check.
+
 v0.2.0 (the 2026-08-19 ways-of-working audit; full rationale in CHANGELOG.md):
 **In Progress → Done is legal** — gates key on the destination (the GH-1777
 argument extended), so apply units close on their evidence comment and
