@@ -242,12 +242,17 @@ The durable half is a GitHub comment, and it lands first:
 board answer NNN -m "Option B — ship it behind the flag"
 ```
 
-`board answer` posts the **Answer** issue comment BEFORE the Human Needed →
-In Progress move, so a pane that dies mid-answer still leaves the decision on
+`board answer` posts the **Answer** issue comment and the item STAYS Human
+Needed — the resume edge belongs to the resuming session, whose `board claim
+NNN` takes it back to In Progress so the claim guards bind on the actual
+driver (GH-2204). A pane that dies mid-answer still leaves the decision on
 the record. The `answer` action (and the TUI's `a`) drive the same verb, then
-nudge any live session owning NNN — delivery reported honestly ("sent but not
-confirmed" when `--wait` expires), never assumed. `--comment-only` posts
-without the move; `--any-state` comments on an item outside Human Needed.
+nudge any live session owning NNN to claim-and-resume — delivery reported
+honestly ("sent but not confirmed" when `--wait` expires), never assumed.
+`--resume` answers AND resumes in one invocation (self-answer: the driver
+answering its own item); `--any-state` comments on an item outside Human
+Needed. Answered-but-unresumed items surface in `board escalations` and
+doctor's `answer-unresumed` line.
 
 ## 6. Fleets and shared claims
 

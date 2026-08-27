@@ -17,6 +17,25 @@ to a version heading when that artifact next releases. Full tag history:
 
 ## [Unreleased]
 
+### Changed
+
+- **`board answer` no longer claims the unit to the answerer — the resume
+  edge belongs to the resuming agent (GH-2204)**. The verb's default is now
+  comment-only: the **Answer** comment lands (timestamped by a
+  `ralph-answer:v1` marker) and the item stays Human Needed; the driving
+  session takes `Human Needed → In Progress` itself via `board claim NNN`, so
+  the session→unit binding (GH-1948), worktree lock (GH-1956) and size
+  ceiling (GH-2134) bind on the actual driver instead of the answering proxy.
+  `--resume` keeps the one-invocation answer-and-resume for self-answer
+  (answerer == driver); `--comment-only` now names the default and is inert.
+  The answered-but-unresumed window is surfaced rather than silent: `board
+  escalations` marks answered rows (`ANSWERED … resume pending`), and doctor
+  gains an advisory `answer-unresumed` line (`RALPH_SMELL_ANSWER_MIN`, 30
+  min; undated answers age as overdue — toward visibility). ralph-herdr's
+  answer surfaces (popup + cockpit `a`) report "answered; resume pending" and
+  nudge the paused agent to claim, never asserting a transition that did not
+  happen (ralph-herdr 0.15.0).
+
 ### Added
 
 - **Cockpit Inbox view — `I` swaps the third column to `board inbox` Tier 1

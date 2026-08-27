@@ -393,8 +393,8 @@ is "answer: the durable half went through board answer -m" "1" \
 ordered "answer: COMMENT-FIRST — board answer lands BEFORE the agent nudge" \
   "$COMBINED" "answer 55 -m ship variant B" "agent prompt w55-agent"
 line_has "answer: the nudge names the issue to re-read" "$out" "✓ answered and nudged w55-agent"
-is "answer: the nudge waits for confirmation (--wait, ralph-answer.sh parity)" "1" \
-  "$(log_count "$COMBINED" 'resume --wait --timeout 15000')"
+is "answer: the nudge waits for confirmation (--wait, ralph-answer.sh parity) and names the claim" "1" \
+  "$(log_count "$COMBINED" 'board claim 55 (resumes it under your claim) --wait --timeout 15000')"
 
 # A failed board answer must NEVER nudge — the agent would resume against an
 # answer that is not on the record.
@@ -402,7 +402,7 @@ printf '1\n' >"$FAKE_BOARD_FIXTURES/answer.rc"
 : >"$COMBINED"
 out=$(printf 'lost answer\n' | run_verb answer 55 w55-agent 2>&1)
 line_has "answer: a failed board answer is said" "$out" "board answer failed"
-line_has "answer: the recovery names the MOVE, not a re-answer" "$out" "retry the MOVE"
+line_has "answer: the recovery warns against a blind re-answer" "$out" "re-answering would duplicate it"
 is "answer: no nudge after a failed answer" "0" "$(log_count "$COMBINED" 'agent prompt')"
 line_lacks "answer: no checkmark either" "$out" "✓"
 rm -f "$FAKE_BOARD_FIXTURES/answer.rc"
@@ -421,7 +421,7 @@ rm -f "$FAKE_HERDR_FIXTURES/agent-prompt.rc"
 out=$(printf 'no session here\n' | run_verb answer 56 "" 2>&1)
 is "answer: no live agent → comment-only, zero herdr traffic" "1 0" \
   "$(log_count "$COMBINED" 'answer 56 -m no session here') $(log_count "$COMBINED" 'agent prompt')"
-line_has "answer: the comment-only path says what to do next" "$out" "spawn a session"
+line_has "answer: the no-session path says the item stays Human Needed pending a claim" "$out" "stays Human Needed"
 out=$(printf ' \n' | run_verb answer 56 "" 2>&1)
 line_has "answer: whitespace-only input aborts before any board write" "$out" "empty — nothing posted"
 export FAKE_BOARD_LOG="$TMP/board.log" FAKE_HERDR_LOG="$TMP/herdr.log"

@@ -57,6 +57,7 @@ import {
   prOrphans,
   PR_ORPHAN_DEFAULT_IGNORE,
   PR_ORPHAN_IGNORE_ENV,
+  ANSWER_MARKER,
   ESCALATION_EVIDENCE,
   ESCALATION_PROMOTED_MARKER,
   ESCALATION_ROUTE_MARKER,
@@ -3525,6 +3526,35 @@ describe("doctor — state smells (GH-1715)", () => {
     );
   });
 
+  it("answer-unresumed: an answered Human Needed item past the window surfaces; fresh, unanswered, and undated cases behave (GH-2204)", () => {
+    const gh = new FakeGh();
+    const escalated = "**Decision needed** (`board` by `me@test`):\n\nwhich db?";
+    const answered = (minAgo: number) =>
+      `**Answer** (\`board\` by \`me@test\`):\n\nship B\n\n<!-- ralph-answer:v1 -->\n\`\`\`json\n{"at":"${new Date(NOW.getTime() - minAgo * 60_000).toISOString()}","by":"me@test"}\n\`\`\``;
+    gh.issues.set(1, { number: 1, state: "Human Needed", comments: [escalated, answered(45)] }); // past 30min
+    gh.issues.set(2, { number: 2, state: "Human Needed", comments: [escalated, answered(5)] }); // fresh
+    gh.issues.set(3, { number: 3, state: "Human Needed", comments: [escalated] }); // unanswered
+    // Undated answer (pre-marker legacy) ages as overdue — toward visibility.
+    gh.issues.set(4, {
+      number: 4, state: "Human Needed",
+      comments: [escalated, "**Answer** (`board` by `me@test`):\n\nship B"],
+    });
+    // Answered but no longer Human Needed — resumed; nothing to say.
+    gh.issues.set(5, { number: 5, state: "In Progress", comments: [escalated, answered(500)] });
+    const c = smell(doctor(makeCtx(gh)), "answer-unresumed");
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("#1(45min)");
+    expect(c.detail).toContain("#4(undated answer)");
+    expect(c.detail).toContain("board claim N");
+    expect(c.detail).not.toContain("#2(");
+    expect(c.detail).not.toContain("#3");
+    expect(c.detail).not.toContain("#5");
+    // Advisory by construction: --strict never escalates it.
+    expect(doctor(makeCtx(gh), { strict: true }).checks.find((x) => x.name === "answer-unresumed")!.level).toBe(
+      "info",
+    );
+  });
+
   it("counts repeated claim expiry, and holds fire below the threshold", () => {
     const gh = new FakeGh();
     gh.issues.set(1, { number: 1, state: "Backlog", comments: [evicted(), released()] }); // 2
@@ -3670,6 +3700,7 @@ describe("state-smell thresholds", () => {
       reviewDays: 7,
       proposalDays: 7,
       intakeDays: 14,
+      answerMin: 30,
     });
     expect(
       parseSmellThresholds({
@@ -3678,8 +3709,9 @@ describe("state-smell thresholds", () => {
         RALPH_SMELL_REVIEW_DAYS: "14",
         RALPH_SMELL_PROPOSAL_DAYS: "3",
         RALPH_SMELL_INTAKE_DAYS: "30",
+        RALPH_SMELL_ANSWER_MIN: "60",
       }),
-    ).toEqual({ claimExpiries: 4, escalations: 5, reviewDays: 14, proposalDays: 3, intakeDays: 30 });
+    ).toEqual({ claimExpiries: 4, escalations: 5, reviewDays: 14, proposalDays: 3, intakeDays: 30, answerMin: 60 });
   });
 
   it("a bad value warns and falls back — an advisory threshold never fails the sweep", () => {
@@ -6367,41 +6399,49 @@ describe("answer verb (ralph-herdr v2) — comment-first", () => {
     expect(gh.mutations).toEqual([]);
   });
 
-  it("Human Needed: the **Answer** comment lands BEFORE the state write (durable half first)", () => {
+  it("default is comment-only: the item STAYS Human Needed — the resume edge belongs to the resuming agent (GH-2204)", () => {
     gh.issues.set(1, { number: 1, state: "Human Needed" });
     const res = answer(ctx, 1, { message: "use option B" });
-    expect(res).toEqual({ commented: true, transitioned: true, state: "In Progress" });
+    expect(res).toEqual({ commented: true, transitioned: false, state: "Human Needed", resumePending: true });
     const comment = gh.comments.find((c) => c.body.startsWith("**Answer**"));
     expect(comment?.body).toContain("use option B");
     expect(comment?.body).toContain("`me@test`");
-    // The ordering guarantee, on the recorded mutation stream: comment first.
-    expect(gh.mutations.indexOf("addComment")).toBeLessThan(gh.mutations.indexOf("setState(#1, In Progress)"));
-    // The move rode the transition engine: claim acquired by the answerer.
-    expect(gh.issues.get(1)!.claim).toContain("me@test");
+    // The marker timestamps the answer so the unresumed window is readable at
+    // read time (escalations / doctor) — no tracking state.
+    expect(comment?.body).toContain(ANSWER_MARKER);
+    expect(comment?.body).toContain(`"at":"${NOW.toISOString()}"`);
+    // No state write, no claim write: the guards (session binding, worktree
+    // lock, size ceiling) must land on the DRIVER's claim, not the answerer's.
+    expect(gh.mutations).toEqual(["addComment"]);
+    expect(gh.issues.get(1)!.claim).toBeUndefined();
   });
 
-  it("--comment-only posts the durable half and skips the transition", () => {
+  it("--resume (self-answer) takes the edge: comment BEFORE the state write, claim to the answerer==driver", () => {
     gh.issues.set(1, { number: 1, state: "Human Needed" });
-    const res = answer(ctx, 1, { message: "use option B", commentOnly: true });
-    expect(res).toEqual({ commented: true, transitioned: false, state: "Human Needed" });
-    expect(gh.mutations).toEqual(["addComment"]); // no state, no claim writes
+    const res = answer(ctx, 1, { message: "use option B", resume: true });
+    expect(res).toEqual({ commented: true, transitioned: true, state: "In Progress", resumePending: false });
+    // The ordering guarantee, on the recorded mutation stream: comment first.
+    expect(gh.mutations.indexOf("addComment")).toBeLessThan(gh.mutations.indexOf("setState(#1, In Progress)"));
+    // The move rode the transition engine: claim acquired by the answerer,
+    // which under --resume IS the driver.
+    expect(gh.issues.get(1)!.claim).toContain("me@test");
   });
 
   it("--any-state answers an item outside Human Needed: comment only, never a move", () => {
     gh.issues.set(1, { number: 1, state: "Backlog" });
     const res = answer(ctx, 1, { message: "context for later", anyState: true });
-    expect(res).toEqual({ commented: true, transitioned: false, state: "Backlog" });
+    expect(res).toEqual({ commented: true, transitioned: false, state: "Backlog", resumePending: false });
     expect(gh.mutations).toEqual(["addComment"]);
   });
 
-  it("transition guards stay intact AFTER the comment: a live fleet co-holder refuses the move, not the answer", () => {
+  it("transition guards stay intact AFTER the comment: a live fleet co-holder refuses the --resume move, not the answer", () => {
     // Leaving In Progress for Human Needed removes only the mover — a fleet
     // sibling can remain on the claim. The answer's comment must land anyway.
     gh.issues.set(1, {
       number: 1, state: "Human Needed",
       claim: encodeClaim("w1-other", new Date(NOW.getTime() - 10 * 60_000)),
     });
-    const msg = refusalMessage(() => answer(ctx, 1, { message: "use option B" }));
+    const msg = refusalMessage(() => answer(ctx, 1, { message: "use option B", resume: true }));
     expect(msg).toContain("w1-other");
     expect(msg).toContain("The answer comment IS on the record");
     expect(gh.comments.some((c) => c.body.startsWith("**Answer**"))).toBe(true);
@@ -6415,7 +6455,7 @@ describe("answer verb (ralph-herdr v2) — comment-first", () => {
     expect(gh.comments[0]!.body).toContain("use option B");
   });
 
-  it("run(): --json reports exactly {commented, transitioned, state}", () => {
+  it("run(): --json reports exactly {commented, transitioned, state, resumePending}; --resume transitions", () => {
     gh.issues.set(1, { number: 1, state: "Human Needed" });
     const said: string[] = [];
     const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
@@ -6423,7 +6463,7 @@ describe("answer verb (ralph-herdr v2) — comment-first", () => {
       return true;
     });
     try {
-      run(["answer", "1", "-m", "use option B", "--json"], ctx);
+      run(["answer", "1", "-m", "use option B", "--resume", "--json"], ctx);
     } finally {
       spy.mockRestore();
     }
@@ -6431,11 +6471,13 @@ describe("answer verb (ralph-herdr v2) — comment-first", () => {
       commented: true,
       transitioned: true,
       state: "In Progress",
+      resumePending: false,
     });
   });
 
-  it("run(): --comment-only followed by -m parses as booleans, not a flag value", () => {
-    // parseArgs must not eat "-m" as --comment-only's value.
+  it("run(): the default reports resume pending, and --comment-only stays a parseable inert boolean", () => {
+    // parseArgs must not eat "-m" as --comment-only's value; the flag names
+    // what is now the default (GH-2204) and changes nothing.
     gh.issues.set(1, { number: 1, state: "Human Needed" });
     const said: string[] = [];
     const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
@@ -6451,7 +6493,9 @@ describe("answer verb (ralph-herdr v2) — comment-first", () => {
       commented: true,
       transitioned: false,
       state: "Human Needed",
+      resumePending: true,
     });
+    expect(gh.mutations).toEqual(["addComment"]);
   });
 
   it("run(): answer is scope-gated like every mutation", () => {
@@ -8890,6 +8934,44 @@ describe("lead arbitration (GH-2179)", () => {
     it("a route marker quoted in a code span is prose discussing the protocol, not speaking it", () => {
       const body = `**Decision needed** (\`board\` by \`me@test\`):\n\nsee \`${ESCALATION_ROUTE_MARKER}\``;
       expect(classifyEscalation([body], NOW, TTL).route).toBe("human");
+    });
+
+    describe("answered — resume pending (GH-2204)", () => {
+      const ans = (at?: string): string =>
+        `**Answer** (\`board\` by \`me@test\`):\n\nship option B` +
+        `\n\n${ANSWER_MARKER}\n\`\`\`json\n${JSON.stringify({ at, by: "me@test" })}\n\`\`\``;
+
+      it("an Answer AFTER the live escalation classifies answered, with the payload's at", () => {
+        const r = classifyEscalation([esc("which db?"), ans(iso(5))], NOW, TTL);
+        expect(r).toEqual({ route: "human", answered: { at: iso(5) } });
+      });
+
+      it("a routed escalation keeps its lead classification beside answered", () => {
+        const r = classifyEscalation([esc("which db?", "w2179-lead", iso(30)), ans(iso(5))], NOW, TTL);
+        expect(r.disposition).toBe("pending");
+        expect(r.answered).toEqual({ at: iso(5) });
+      });
+
+      it("a re-escalation AFTER the answer supersedes it — not answered any more", () => {
+        const r = classifyEscalation([esc("q1"), ans(iso(50)), esc("q2")], NOW, TTL);
+        expect(r.answered).toBeUndefined();
+      });
+
+      it("an Answer with no escalation to dispose is NOT answered — a reconcile-reopened apply unit's remedy is evidence or a cancel, not a stale Answer", () => {
+        const r = classifyEscalation([ans(iso(500))], NOW, TTL);
+        expect(r.answered).toBeUndefined();
+      });
+
+      it("a pre-marker Answer (no payload) reads answered with at:null — aged as overdue, toward visibility", () => {
+        const legacy = `**Answer** (\`board\` by \`me@test\`):\n\nship option B`;
+        const r = classifyEscalation([esc("which db?"), legacy], NOW, TTL);
+        expect(r.answered).toEqual({ at: null });
+      });
+
+      it("an Answer quoted in a code fence is prose, not an answer", () => {
+        const quoted = "```\n**Answer** (`board` by `me@test`):\n\nno\n```";
+        expect(classifyEscalation([esc("which db?"), quoted], NOW, TTL).answered).toBeUndefined();
+      });
     });
   });
 

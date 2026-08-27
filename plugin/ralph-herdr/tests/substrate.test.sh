@@ -473,8 +473,8 @@ ordered "answer live: COMMENT-FIRST — board answer precedes the agent nudge" \
   "$CLOG" "answer 123 -m" "agent prompt w123-fix"
 ordered "answer live: the durable half even precedes the herd read" \
   "$CLOG" "answer 123 -m" "api snapshot"
-is "answer live: the nudge waits for delivery (--wait, bounded)" "1" \
-  "$(fcount "$CLOG" "agent prompt w123-fix answered on issue — re-read #123 and resume --wait --timeout 15000")"
+is "answer live: the nudge waits for delivery (--wait, bounded) and names the claim as the first act" "1" \
+  "$(fcount "$CLOG" "agent prompt w123-fix answered on issue — re-read #123; your first act is: board claim 123 (resumes it under your claim) --wait --timeout 15000")"
 line_has "answer live: delivery reported honestly" "$OUT" "nudged w123-fix"
 
 # Absent session: the answer is complete comment-only — no prompt anywhere.
@@ -527,8 +527,9 @@ line_has "answer nudge-timeout: honesty about non-confirmation" "$OUT" "sent but
 line_lacks "answer nudge-timeout: a wait expiry is not reported as a refusal" "$OUT" "refused"
 rm -f "$FAKE_HERDR_FIXTURES/agent-prompt.rc" "$FAKE_HERDR_FIXTURES/agent-prompt.json"
 
-# board answer refused: rc 1, and the retry guidance names the MOVE (never
-# re-answering — the comment may already be on the record).
+# board answer refused: rc 1, and the retry guidance warns about duplication
+# (the comment may already be on the record — GH-2204: there is no move to
+# retry, the resume edge belongs to the resuming session).
 printf '1\n' >"$FAKE_BOARD_FIXTURES/answer.rc"
 : >"$CLOG"
 run_answer '1
@@ -537,7 +538,7 @@ Refused answer.
 
 '
 is "answer verb-refused: rc 1" "1" "$RC"
-line_has "answer verb-refused: retry the move, not the answer" "$OUT" "retry the MOVE"
+line_has "answer verb-refused: never re-answer blind" "$OUT" "re-answering would duplicate it"
 rm -f "$FAKE_BOARD_FIXTURES/answer.rc"
 
 # A board CLI predating the answer verb: gh comment (durable) FIRST, board

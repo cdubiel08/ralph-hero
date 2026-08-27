@@ -113,14 +113,30 @@ moves are exceptional, and the reason is auditable instead of implicit
 (`release` already carried it as `-m`; `board claim` gained `--why` because
 claiming an In Review item IS the demotion lane GH-1816 showed being
 over-used). `Human Needed → Backlog` is REMOVED from the machine: an answered
-item resumes (`→ In Progress`, the edge `answer` owns) or dies (`→ Canceled`)
-— a parking edge out of an escalation loses the question, since the item
-re-enters the eligible pool and the next claimant re-derives the context the
-escalation existed to hand over. "Answered: not now, park it" is recorded but
-undecided (possibly `Human Needed → Intake`); it does not resurrect the edge
-meanwhile. Deliberately untouched: doctor's stale-claim demotion (a direct
-field write, In Progress only, already commented) and reconcile (reality lane,
-never MACHINE-guarded).
+item resumes (`→ In Progress`) or dies (`→ Canceled`) — a parking edge out of
+an escalation loses the question, since the item re-enters the eligible pool
+and the next claimant re-derives the context the escalation existed to hand
+over. "Answered: not now, park it" is recorded but undecided (possibly
+`Human Needed → Intake`); it does not resurrect the edge meanwhile.
+Deliberately untouched: doctor's stale-claim demotion (a direct field write,
+In Progress only, already commented) and reconcile (reality lane, never
+MACHINE-guarded).
+
+**The resume edge belongs to the RESUMING agent (GH-2204).** `board answer
+NNN -m` is comment-only: the **Answer** comment lands (timestamped by a
+`ralph-answer:v1` marker) and the item STAYS Human Needed — the driving
+session takes `Human Needed → In Progress` itself via `board claim NNN`, so
+the session→unit binding (GH-1948), the worktree lock (GH-1956) and the size
+ceiling (GH-2134) bind on the actual driver, never on the answering proxy
+(the old transition claimed to the ANSWERER: a hero pane broke on rule 9 at
+its second answer, deliver-queue read a phantom `local-session-active`, and a
+dead driver left the item In Progress + claimed + nobody, invisible to
+work-fleet for a full TTL). `--resume` keeps the one-invocation form for
+self-answer (answerer == driver). The answered-but-unresumed window is
+surfaced, never silent: `board escalations` marks those rows `ANSWERED …
+resume pending`, and doctor's `answer-unresumed` `i` line ages them past
+`RALPH_SMELL_ANSWER_MIN` (30 min; an unreadable answer clock ages as overdue
+— toward visibility).
 
 **Escalations carry an audience (GH-2179, the GH-2176 arbitration unit).** In
 a team, a worker's `move NNN human-needed --why` routes to the epic's **lead**
@@ -129,8 +145,9 @@ marker (no marker = human-addressed: every pre-existing escalation and every
 reconcile correction, by construction). Default keys on `$RALPH_HERDR_LEAD`
 (the team spawn path sets it; solo sessions keep the status quo untouched);
 `--to-human` forces the reserved-set direction, `--to-lead <name>` is
-explicit. The lead dispositions via `answer` (answer/re-steer — the resume
-edge disposes) or **`board promote NNN [-m]`** (durable marker, no state
+explicit. The lead dispositions via `answer` (answer/re-steer — the resuming
+session's claim then disposes it by state, GH-2204) or **`board promote NNN
+[-m]`** (durable marker, no state
 change — Human Needed is already the right state; promotion changes the
 audience, not the machine). **The TTL bound is computed at read time, never by
 a cron**: `board escalations` classifies every Human Needed item, and a
@@ -266,7 +283,7 @@ The job now fetches and advances onto main's tip before reading anything, floors
 
 ## Configuration
 
-Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` (+ optional `RALPH_GH_HOST` for GHE). A repo-root `.ralph.json` (`{owner, repo, projectNumber, host?}`) takes precedence when present. Auth is gh-keychain (`gh auth login -s repo,project`). Machine-local: `RALPH_LOCK_TTL_MIN`, `RALPH_CLAIM_HOLDER`, `RALPH_TICK_RUNNER`, `RALPH_TICK_TIMEOUT_MIN`, `RALPH_ALLOW_API_BILLING`, `RALPH_SMELL_CLAIM_EXPIRIES` / `RALPH_SMELL_ESCALATIONS` / `RALPH_SMELL_REVIEW_DAYS` / `RALPH_SMELL_PROPOSAL_DAYS` / `RALPH_SMELL_INTAKE_DAYS` (doctor's state-smell thresholds, 2/3/7/7/14), `RALPH_GQL_COST=1` (log GitHub's own `rateLimit{cost}` per query to stderr — measurement mode, cost-neutral; observed table: `thoughts/shared/research/2026-08-11-graphql-cost-measurement.md`), `RALPH_VOLUME_MAX_ITEMS` / `RALPH_PRUNE_AFTER_DAYS` (board-volume advisory + prune age window, 800/180), `RALPH_ALLOW_FOREIGN_REPO_ITEMS` (GH-1815 — multi-repo opt-in; unset = deny, and unset is distinguishable from an explicit `false` so doctor can say which), `RALPH_ITEM_CACHE_TTL_SEC` (item-cache Δ, default 90, 0 disables, max 600 — see below), `RALPH_ITEM_ORACLE_MAX_SEC` (GH-1804 — T_max, the hard staleness ceiling the change oracle may extend a cached walk to, default 600, 0 disables, max 3600), `RALPH_REVIEW_ROUND_CAP` (GH-1849 — review round cap, default 5; unattended lanes set 2), `RALPH_DELIVER_CONVERGENCE_MAX` (GH-1977 — convergence checks `deliver-queue` spends per pass, default 3), `RALPH_CREATE_DEDUPE_SEC` (GH-1973 — how far back `board create`'s duplicate guard looks, default 300, 0 disables), `RALPH_DEP_CANDIDATES_MAX` (GH-2135 — candidate cap on `board dep-candidates`, default 10), `RALPH_DEP_OVERLAP_MIN` (GH-2136 — the `deps-unwired` qualification threshold on the scale-free overlap coefficient, default 0.2; a fact about a board's vocabulary density, out-of-range warns and uses the default), `RALPH_PR_ORPHAN_IGNORE_AUTHORS` (GH-2048 — authors whose unlinked open PRs `board pr-orphans` skips, default `dependabot,renovate,github-actions`; a trailing `[bot]` is stripped on both sides because GraphQL's `author.login` omits it while REST and the UI write it, and the suffixed spelling matched nothing; set it EMPTY to surface everyone), `RALPH_SESSION_ID` (GH-1948 — overrides `CLAUDE_CODE_SESSION_ID` as the session→unit binding key, for non-Claude runners; unset and no Claude id = the guard is not evaluated), `RALPH_CLAIM_MAX_ESTIMATE` (GH-2134 — claim-size ceiling: a fresh claim refuses at/above it and warns one notch under; unset = `XL`, empty = disabled, a value outside XS..XL is a loud config error; no Estimate on the item = not evaluated; the remedy the refusal names is `board estimate NNN <size>`), `RALPH_GH_BUDGET_FLOOR` (GH-1817 — GraphQL points below which a polling loop backs off instead of spending, default 500), `~/.ralph/config` (`autopilot=true`).
+Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` (+ optional `RALPH_GH_HOST` for GHE). A repo-root `.ralph.json` (`{owner, repo, projectNumber, host?}`) takes precedence when present. Auth is gh-keychain (`gh auth login -s repo,project`). Machine-local: `RALPH_LOCK_TTL_MIN`, `RALPH_CLAIM_HOLDER`, `RALPH_TICK_RUNNER`, `RALPH_TICK_TIMEOUT_MIN`, `RALPH_ALLOW_API_BILLING`, `RALPH_SMELL_CLAIM_EXPIRIES` / `RALPH_SMELL_ESCALATIONS` / `RALPH_SMELL_REVIEW_DAYS` / `RALPH_SMELL_PROPOSAL_DAYS` / `RALPH_SMELL_INTAKE_DAYS` / `RALPH_SMELL_ANSWER_MIN` (doctor's state-smell thresholds, 2/3/7d/7d/14d/30min), `RALPH_GQL_COST=1` (log GitHub's own `rateLimit{cost}` per query to stderr — measurement mode, cost-neutral; observed table: `thoughts/shared/research/2026-08-11-graphql-cost-measurement.md`), `RALPH_VOLUME_MAX_ITEMS` / `RALPH_PRUNE_AFTER_DAYS` (board-volume advisory + prune age window, 800/180), `RALPH_ALLOW_FOREIGN_REPO_ITEMS` (GH-1815 — multi-repo opt-in; unset = deny, and unset is distinguishable from an explicit `false` so doctor can say which), `RALPH_ITEM_CACHE_TTL_SEC` (item-cache Δ, default 90, 0 disables, max 600 — see below), `RALPH_ITEM_ORACLE_MAX_SEC` (GH-1804 — T_max, the hard staleness ceiling the change oracle may extend a cached walk to, default 600, 0 disables, max 3600), `RALPH_REVIEW_ROUND_CAP` (GH-1849 — review round cap, default 5; unattended lanes set 2), `RALPH_DELIVER_CONVERGENCE_MAX` (GH-1977 — convergence checks `deliver-queue` spends per pass, default 3), `RALPH_CREATE_DEDUPE_SEC` (GH-1973 — how far back `board create`'s duplicate guard looks, default 300, 0 disables), `RALPH_DEP_CANDIDATES_MAX` (GH-2135 — candidate cap on `board dep-candidates`, default 10), `RALPH_DEP_OVERLAP_MIN` (GH-2136 — the `deps-unwired` qualification threshold on the scale-free overlap coefficient, default 0.2; a fact about a board's vocabulary density, out-of-range warns and uses the default), `RALPH_PR_ORPHAN_IGNORE_AUTHORS` (GH-2048 — authors whose unlinked open PRs `board pr-orphans` skips, default `dependabot,renovate,github-actions`; a trailing `[bot]` is stripped on both sides because GraphQL's `author.login` omits it while REST and the UI write it, and the suffixed spelling matched nothing; set it EMPTY to surface everyone), `RALPH_SESSION_ID` (GH-1948 — overrides `CLAUDE_CODE_SESSION_ID` as the session→unit binding key, for non-Claude runners; unset and no Claude id = the guard is not evaluated), `RALPH_CLAIM_MAX_ESTIMATE` (GH-2134 — claim-size ceiling: a fresh claim refuses at/above it and warns one notch under; unset = `XL`, empty = disabled, a value outside XS..XL is a loud config error; no Estimate on the item = not evaluated; the remedy the refusal names is `board estimate NNN <size>`), `RALPH_GH_BUDGET_FLOOR` (GH-1817 — GraphQL points below which a polling loop backs off instead of spending, default 500), `~/.ralph/config` (`autopilot=true`).
 
 ### Item cache — reads may be stale, writes see truth (GH-1806)
 
