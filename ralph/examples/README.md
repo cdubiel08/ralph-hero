@@ -18,6 +18,7 @@ transport — attended or not — stops (or sleeps long) when the goal holds:
 | work | `board next` | one Backlog item end-to-end (`/ralph:work`) | empty `next` — everything left is blocked, foreign, or Human Needed |
 | deliver | `board deliver-queue` | one In Review item's follow-through (`/ralph:deliver`) | empty `next` **and** no time-bounded blocked row (`settling`, `retry-window`, `deferred`). Time-bounded rows don't stop the lane — they set the next wake to the earliest `windowExpiresAt`. Rows only a human can clear (`no-pr`, Human Needed) never keep it awake |
 | tend | `board tend-queue` | a bounded hygiene batch (`/ralph:tend`) | one clean sweep — a pass with `checked>0, acted=0` and no new observations; re-entry is by accumulation, not polling |
+| dispatch | `board brief` + fleet/lead state | exercise the standing authorities (`/ralph:dispatch`, or the deterministic rota below) | every authority reads quiet — nothing eligible to feed, all leads standing, the day's digest window closed |
 
 **Pacing derivation**: each skill ends its pass reporting `checked`/`acted`, the
 blocked-reason set, and the earliest window expiry. That report is the entire pacing
@@ -121,6 +122,53 @@ per-issue logs, the billing guard, and idle-exit before spawning anything. A del
 tend equivalent is the same skeleton with the selector swapped (`deliver-queue` /
 `tend-queue`) and the runner invoking the lane skill. ralph deliberately does not ship
 those scripts — the moment it does, they stop being yours.
+
+### Unattended: dispatch rota (GH-2184)
+
+`dispatch-rota.sh` (this directory) is the worked example for the **dispatch lane**
+— the scheduled half of decision 6 in the 2026-08-26 teams/dispatch/inbox design,
+beside `/ralph:hero` as the attended half. Each pass is the DETERMINISTIC form of one
+standing authority from `ralph/skills/dispatch/SKILL.md`, possible because every
+standing authority carries a structural bound (a cap, a gate, idempotence); the
+judgment form of the lane stays `/ralph:dispatch`, which the rota never replaces.
+Three passes, named on the argv:
+
+- **fleet** — feed the worker fleet: frontier non-empty + live workers under
+  `RALPH_HERDR_FLEET` → fire the `work-fleet` plugin action (the action's own pane
+  carries the watcher; the rota's lock is never held for a fleet's lifetime).
+- **leads** — lead health: enumerate this repo's `team GH-N` workspaces (the durable
+  evidence a team was stood up — a dead lead has no agent to enumerate) and re-run
+  `work-team.sh N --lead-only` per epic; respawn is idempotent re-run by that
+  script's own contract, and per-epic failures never starve the rest of the pass.
+- **digest** — inbox curation: `board inbox --digest` → push a Tier 2 notification
+  when `pushWorthy`, then ALWAYS mark (an empty-inbox run still closes the day's
+  window; the verdict is computed before the stamp write, so marking can never talk
+  the rota out of a push it owed).
+
+**Passes are named, never defaulted**, and that carries the "at most one push a day"
+invariant: `pushWorthy` keys on `markedToday`, so a frequent rota that marked on
+every fire would close the day's window on its first quiet run and suppress the one
+push the day was owed. The digest rides its own daily line:
+
+```text
+*/30 8-18 * * *  cd /path/to/repo && bash ralph/examples/dispatch-rota.sh fleet leads
+30 7 * * *       cd /path/to/repo && bash ralph/examples/dispatch-rota.sh digest
+```
+
+Arming is the same two-key fail-closed shape as deliver/tend: `autopilot=true` AND
+`autopilot.dispatch=true` in `$RALPH_HOME/config`; the billing guard is verbatim
+tick.sh (the fleet pass spawns sessions). A BRIDGE-env routine driving
+`/ralph:dispatch` instead is the deliver-routine skeleton with the key swapped —
+steps 1–2 verbatim with `autopilot.dispatch=true`, then one bare `/ralph:dispatch`
+invocation, no loop.
+
+Honest caveats: fleet/leads need herdr + the ralph-herdr plugin and refuse loudly
+without them (digest needs only the board); the digest stamp is machine-local, so
+two machines running rotas produce two pushes a day (the board stays the only shared
+store); and the rota is **never load-bearing** — fleets, leads, and lanes all
+function with it dead, so a missed fire costs latency, nothing else. Outcome lines
+land in `$RALPH_HOME/dispatch.outcomes.log` under the proof-of-input convention
+below.
 
 ## Proof-of-input outcome lines
 
