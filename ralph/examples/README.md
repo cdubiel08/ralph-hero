@@ -140,6 +140,10 @@ Three passes, named on the argv:
   evidence a team was stood up — a dead lead has no agent to enumerate) and re-run
   `work-team.sh N --lead-only` per epic; respawn is idempotent re-run by that
   script's own contract, and per-epic failures never starve the rest of the pass.
+  **Opt-in (GH-2197)**: only a human running `work-team.sh` by hand ever creates a
+  `team GH-N` workspace — no scheduled path does — so the pass is a permanent no-op
+  until then. It is deliberately absent from the suggested cron lines below; add it
+  to the frequent line only on a machine that actually runs teams.
 - **digest** — inbox curation: `board inbox --digest` → push a Tier 2 notification
   when `pushWorthy`, then ALWAYS mark (an empty-inbox run still closes the day's
   window; the verdict is computed before the stamp write, so marking can never talk
@@ -151,7 +155,7 @@ every fire would close the day's window on its first quiet run and suppress the 
 push the day was owed. The digest rides its own daily line:
 
 ```text
-*/30 8-18 * * *  cd /path/to/repo && bash ralph/examples/dispatch-rota.sh fleet leads
+*/30 8-18 * * *  cd /path/to/repo && bash ralph/examples/dispatch-rota.sh fleet
 30 7 * * *       cd /path/to/repo && bash ralph/examples/dispatch-rota.sh digest
 ```
 
