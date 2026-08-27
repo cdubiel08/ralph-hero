@@ -355,6 +355,21 @@ wait on its is the documented deadlock:
 bash plugin/ralph-herdr/scripts/fleet-send.sh w1743-fix-claim-race status -m "rebased; attesting next"
 ```
 
+**Message a peer session over SendMessage** (GH-2183) — fleet-send's sibling
+for the harness transport: it composes, it never sends. `brief` resolves the
+target from your enumerated live peers (`ListAgents` → `--candidates`,
+delegated to `board peer` — an address is enumerated, never constructed);
+`reply` takes a received message's `from` address verbatim and refuses a
+herdr agent name (a different namespace that does not resolve there);
+`live` is the liveness check alone. Pass the printed TO/BODY to SendMessage
+verbatim, then report "sent; unknown whether read" — never "delivered":
+
+```bash
+bash plugin/ralph-herdr/scripts/peer-msg.sh brief 2183 question --candidates "<ListAgents names>" -m "…"
+bash plugin/ralph-herdr/scripts/peer-msg.sh reply feat-1888-retire-lineage-02 correction -m "…"
+bash plugin/ralph-herdr/scripts/peer-msg.sh live 2183 --candidates "<ListAgents names>"
+```
+
 ## 8. Drive an agent by hand
 
 ```bash

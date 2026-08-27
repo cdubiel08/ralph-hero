@@ -58,9 +58,11 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-case "$VERB" in
-  '' | *[!a-z-]*) die "VERB must be one lowercase word (got '$VERB') — it names what this message IS" ;;
-esac
+# LC_ALL=C, because a bare [a-z] range collates case-insensitively under
+# en_US locales — measured by peer-msg.test.sh: 'STATUS' passed the
+# glob-pattern version of this check (GH-2183).
+printf '%s\n' "$VERB" | LC_ALL=C grep -q '^[a-z-]\{1,\}$' ||
+  die "VERB must be one lowercase word (got '$VERB') — it names what this message IS"
 
 # The lead check: an o-lane target, or whatever $RALPH_HERDR_LEAD names.
 # Stripping (not refusing) is deliberate — the MESSAGE is the point, and a
