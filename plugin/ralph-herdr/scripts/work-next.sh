@@ -25,6 +25,25 @@ if [ -z "$N" ]; then
   exit 0
 fi
 
+# The ranked pick gets the same unwired-body-reference guard as work-fleet's
+# ranked path (GH-2109/GH-2120): nobody chose this issue, so a body naming
+# OPEN own-repo work with no `board dep` edge is reason enough not to spend a
+# claim, a branch, a worktree and a session on it. Refuse without advancing —
+# an operator is at the keyboard here, and the remedies are theirs: wire the
+# edge, or name the issue explicitly (work-fleet N), which is the override.
+# Fails OPEN, loudly: an unreadable verdict is a rate limit, not a clean
+# board, and "NOT CHECKED" is printed rather than passed off as clean.
+verdict=$(ralph_dep_refs_verdict "$N" "$QUEUE_JSON")
+if [ "$(jq -r '.ok // false' <<<"$verdict" 2>/dev/null)" != "true" ]; then
+  echo "body refs: NOT CHECKED — $(jq -r '.detail // empty' <<<"$verdict" 2>/dev/null) (spawning over the failed read)"
+elif [ "$(jq -r '.count' <<<"$verdict")" -gt 0 ]; then
+  printf 'SKIP GH-%s: body names OPEN %s with no dependency edge — wire it (board dep %s --on N) or spawn it explicitly (work-fleet %s)\n' \
+    "$N" "$(jq -r '.summary' <<<"$verdict")" "$N" "$N"
+  exit 0
+else
+  echo "body refs: no unwired OPEN reference"
+fi
+
 # rc=2 is the sanctioned skip (a session already owns GH-N) — that session
 # already has its own attention surface, so don't stack a second watcher on it.
 rc=0

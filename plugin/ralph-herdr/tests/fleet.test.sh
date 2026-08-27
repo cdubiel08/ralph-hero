@@ -631,6 +631,91 @@ is "refill I2: a stale in-flight leftover is ignored — the spawn proceeds" "1"
   "$(log_count "$FAKE_HERDR_LOG" '^worktree create ')"
 is "refill I2: budget consumed by the unblocked refill" "6" "$(jqf "$RFF" '.budget_left')"
 
+# ── row J: unwired body reference → refuse, ADVANCE to the next (GH-2120) ────
+# GH-301's body names OPEN #777 with no `board dep` edge; GH-302 is clean.
+# Refill's failure semantics deliberately differ from work-fleet's
+# SKIP-and-leave-the-slot-empty (journaled on GH-2120): the seat is filled
+# from the next candidate, the refusal spends NO budget unit, and the refused
+# pick is never written to the spawned set — re-derived per event, so wiring
+# the edge self-heals with no state to expire.
+mk_row j
+refill_fixtures
+printf '{"frontier":[{"number":301,"title":"Add refill support"},{"number":302,"title":"Second choice"}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+jq -nc '{data:{repository:{issue:{body:"Needs the parser from #777 before this can start."}}}}' \
+  >"$FAKE_GH_FIXTURES/gh-body.301.json"
+printf '{"data":{"repository":{"r777":{"number":777,"state":"OPEN"}}}}\n' \
+  >"$FAKE_GH_FIXTURES/gh-state.json"
+: >"$FAKE_HERDR_LOG"
+run_event pane.exited '{"pane_id":"p1"}' "$ROW"
+is "refill J: hook exits 0" "0" "$RC"
+is "refill J: the refused candidate is not spawned" "0" \
+  "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w301-"))')"
+is "refill J: the seat is filled from the NEXT candidate" "1" \
+  "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w302-"))')"
+line_has "refill J: the refusal is logged with the reference and the remedy" \
+  "$OUT" "GH-301 refused — body names OPEN #777 with no dependency edge (wire it: board dep 301 --on N; no budget spent)"
+is "refill J: one budget unit spent — the spawn, never the refusal" "6" "$(jqf "$RFF" '.budget_left')"
+is "refill J: the refusal is not durable — spawned records only the real pick" "[100,302]" \
+  "$(jq -c '.spawned' "$RFF")"
+is "refill J: still armed" "true" "$(jqf "$RFF" '.armed')"
+
+# The same run again with only the refused candidate left: refusals explaining
+# an empty pick may NOT disarm — "frontier empty" would kill the run
+# permanently on a prose heuristic, while a wired edge re-qualifies GH-301 at
+# the very next trigger.
+: >"$FAKE_HERDR_LOG"
+run_event pane.exited '{"pane_id":"p2"}' "$ROW"
+is "refill J2: every remaining candidate refused — nothing new spawned" "0" \
+  "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w301-"))')"
+line_has "refill J2: the hold is logged, not silent" \
+  "$OUT" "every remaining candidate refused on unwired body refs — staying armed"
+is "refill J2: stays ARMED — a refused frontier is not an empty one" "true" \
+  "$(jqf "$RFF" '.armed')"
+is "refill J2: no completion toast" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" "^notification show fleet run $RRID complete ")"
+is "refill J2: budget untouched by refusals" "6" "$(jqf "$RFF" '.budget_left')"
+rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc
+
+# ── row K: an unreadable body fails OPEN, loudly — never grounds the fleet ───
+mk_row k
+refill_fixtures
+echo 1 >"$FAKE_GH_FIXTURES/gh-body.rc"
+: >"$FAKE_HERDR_LOG"
+run_event pane.exited '{"pane_id":"p1"}' "$ROW"
+is "refill K: an unreadable body never grounds the refill — the spawn proceeds" "1" \
+  "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w301-"))')"
+line_has "refill K: and the failed read is said out loud" "$OUT" "body refs NOT CHECKED"
+line_lacks "refill K: a failed read never renders as a refusal" "$OUT" "refused — body names"
+rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc
+
+# ── row L: past the refusal cap the next candidate spawns UNVETTED ───────────
+# The guard over-reports by construction and has no operator to override it
+# here; a fleet that stops refilling because the frontier's top carries prose
+# refs is the grounded-fleet failure dep-refs.sh's own header warns about.
+# Unvetted is the pre-guard norm — strictly no worse, and loudly logged.
+mk_row l
+refill_fixtures
+printf '{"frontier":[{"number":301,"title":"One"},{"number":303,"title":"Three"},{"number":302,"title":"Two"}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+jq -nc '{data:{repository:{issue:{body:"Needs #777 first."}}}}' \
+  >"$FAKE_GH_FIXTURES/gh-body.301.json"
+jq -nc '{data:{repository:{issue:{body:"Also needs #777 first."}}}}' \
+  >"$FAKE_GH_FIXTURES/gh-body.303.json"
+printf '{"data":{"repository":{"r777":{"number":777,"state":"OPEN"}}}}\n' \
+  >"$FAKE_GH_FIXTURES/gh-state.json"
+export RALPH_HERDR_REFILL_DEP_MAX=1
+: >"$FAKE_HERDR_LOG"
+run_event pane.exited '{"pane_id":"p1"}' "$ROW"
+unset RALPH_HERDR_REFILL_DEP_MAX
+is "refill L: the refused candidate is skipped" "0" \
+  "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w301-"))')"
+is "refill L: past the cap the NEXT candidate spawns unvetted — never a stall" "1" \
+  "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w303-"))')"
+line_has "refill L: the cap is logged, so the unvetted spawn is honest" \
+  "$OUT" "unwired-ref refusal cap (1) reached — the next candidate spawns unvetted"
+rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc
+
 # ═══ 7. spawn_issue_fleet — REMOVED (GH-1774) ════════════════════════════════
 # Shared-CHECKOUT fleets put K agents in one git worktree, racing on the index,
 # the branch, and each other's uncommitted files. The function is kept as a
@@ -1011,6 +1096,46 @@ DR 501x
 is "dep-refs: a non-numeric issue is a usage error" "2" "$RC"
 
 rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
+clear_gh
+
+# ═══ 11. work-next.sh — the ranked pick gets the same guard (GH-2120) ════════
+# The third caller with the same blind spot: a single ranked spawn off
+# `board next --json`. Nobody chose the issue, so a body naming OPEN own-repo
+# work with no edge refuses the spawn — without advancing (an operator is at
+# the keyboard, and the remedies are theirs).
+run_wn() {
+  RC=0
+  OUT=$(RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+    RALPH_HERDR_LEDGER="$WFL" RALPH_HERDR_DRY_RUN=true ANTHROPIC_API_KEY= \
+    bash "$SCRIPTS/work-next.sh" </dev/null 2>&1) || RC=$?
+}
+printf '{"next":{"number":501,"title":"One"},"queue":[{"number":501,"title":"One"}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/next.json"
+gh_body 501 'Needs the parser from #777 before this can start.'
+gh_state '{"r777":{"number":777,"state":"OPEN"}}'
+run_wn
+is "work-next: a refused head is a skip, not a failure" "0" "$RC"
+line_has "work-next: the refusal names the reference and both remedies" \
+  "$OUT" "SKIP GH-501: body names OPEN #777 with no dependency edge — wire it (board dep 501 --on N) or spawn it explicitly (work-fleet 501)"
+line_lacks "work-next: the refused head is not spawned" "$OUT" "would spawn GH-501"
+
+# A CLOSED reference is not work anything is waiting on — clean, and printed.
+gh_state '{"r777":{"number":777,"state":"CLOSED"}}'
+run_wn
+line_has "work-next: a closed reference is not a dependency — the spawn proceeds" \
+  "$OUT" "would spawn GH-501"
+line_has "work-next: and the clean verdict is printed, not implied" \
+  "$OUT" "body refs: no unwired OPEN reference"
+
+# Fail OPEN, loudly — an unreadable body is a rate limit, not a clean board.
+echo 1 >"$FAKE_GH_FIXTURES/gh-body.rc"
+run_wn
+line_has "work-next: an unreadable body spawns over the failed read, loudly" \
+  "$OUT" "body refs: NOT CHECKED"
+line_has "work-next: fail-open means the spawn still happens" "$OUT" "would spawn GH-501"
+line_lacks "work-next: a failed read never renders as a clean one" \
+  "$OUT" "no unwired OPEN reference"
+rm -f "$FAKE_BOARD_FIXTURES/next.json"
 clear_gh
 
 # ═══ 7. restart re-arm — reconcile phase F (GH-1862) ═════════════════════════

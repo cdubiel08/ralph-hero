@@ -228,21 +228,15 @@ dep_evidence() {
 # precisely the evidence this line exists to produce.
 #
 # Wired edges are handed to the scanner out of the frontier read already in
-# hand, so the graph half of the comparison costs no second board call.
+# hand, so the graph half of the comparison costs no second board call. The
+# verdict itself comes from the shared producer (ralph_dep_refs_verdict,
+# lib.sh — GH-2120): refill and work-next read the same one, so the three
+# surfaces cannot drift; only the rendering and the refusal bias live here.
 unwired_refs() {
-  local n="$1" q="$2" wired out detail
-  [ -x "$SCRIPT_DIR/dep-refs.sh" ] || {
-    echo "  body refs: NOT CHECKED — dep-refs.sh is absent from this install"
-    return 0
-  }
-  wired=$(jq -r --argjson n "$n" '
-    [.queue[]? | select(.number == $n)] | .[0] // {} |
-    ((.blockers // []) | map(.number)) + (.openBlockers // []) + (.closedBlockers // [])
-    | map(tostring) | join(",")' <<<"$q" 2>/dev/null) || wired=""
-  out=$(bash "$SCRIPT_DIR/dep-refs.sh" "$n" "$wired" 2>/dev/null) || out=""
-  detail=""
-  [ -n "$out" ] && detail=$(jq -r '.detail // ""' <<<"$out" 2>/dev/null) || detail=""
-  if [ -z "$out" ] || [ "$(jq -r '.ok // false' <<<"$out" 2>/dev/null)" != "true" ]; then
+  local n="$1" q="$2" out detail
+  out=$(ralph_dep_refs_verdict "$n" "$q")
+  detail=$(jq -r '.detail // ""' <<<"$out" 2>/dev/null) || detail=""
+  if [ "$(jq -r '.ok // false' <<<"$out" 2>/dev/null)" != "true" ]; then
     echo "  body refs: NOT CHECKED — ${detail:-dep-refs.sh produced no verdict}"
     return 0
   fi
