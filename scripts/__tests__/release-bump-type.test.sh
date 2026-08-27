@@ -154,6 +154,32 @@ merge "$d" feat/h "Merge pull request #8 from feat/h
 fix: unrelated"
 expect 0 patch "a #major the branch merged FROM main does not leak" "$d"
 
+# The regression this script's own first version shipped: scanning full branch
+# commit BODIES matched prose *about* the annotation. Its own merge reported
+# `major` off a body line reading "#major outranks #minor across the whole
+# set" — strictly worse than the defect it fixed, since the old reader only
+# ever saw the short PR title. Branch commits are read by SUBJECT only.
+d=$(repo branch-body-prose)
+git -C "$d" checkout -q -b feat/i main
+echo i > "$d/i"
+git -C "$d" add i
+git -C "$d" commit -qm "fix(release): read the annotation where authors write it
+
+#major outranks #minor across the whole set, never first-commit-wins."
+merge "$d" feat/i "Merge pull request #9 from feat/i
+
+fix(release): read the annotation where authors write it"
+expect 0 patch "prose in a branch commit BODY is not an annotation" "$d"
+
+# The other half of that bound: the merge commit keeps its FULL-message scan,
+# because that is where `gh pr merge --merge` puts the PR title.
+d=$(repo merge-body-still-counts)
+branch "$d" feat/j "feat: a thing"
+merge "$d" feat/j "Merge pull request #10 from feat/j
+
+feat: a thing #minor"
+expect 0 minor "the merge commit body still counts (the PR title lives there)" "$d"
+
 # Not a merge: expected on an admin push, degrades to the commit's own message.
 d=$(repo not-a-merge)
 git -C "$d" checkout -q main

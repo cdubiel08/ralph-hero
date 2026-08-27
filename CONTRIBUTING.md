@@ -41,10 +41,12 @@ Releases are **fully automated** on merge to `main`; two artifacts version indep
 
 - **`ralph` plugin:** `release-ralph.yml` fires when a merge touches `ralph/**`. It bumps `ralph/.claude-plugin/plugin.json` and tags `ralph-vX.Y.Z`.
 
-Include `#minor` or `#major` for a larger-than-patch bump. It counts in the
-PR title (which becomes the merge commit body) **or** in any commit on the
-branch — `release-ralph.yml` reads both surfaces, so wherever you naturally
-write it is the right place. `#major` outranks `#minor`.
+Include `#minor` or `#major` for a larger-than-patch bump. It counts in the PR
+title (which becomes the merge commit body) **or** at the end of a commit
+*subject* line on the branch — `release-ralph.yml` reads both surfaces, so
+wherever you naturally write it is the right place. `#major` outranks `#minor`.
+Commit *bodies* are deliberately not scanned: prose about this rule contains
+the tokens it describes.
 
 **Do NOT** run `npm publish` or push `v*` tags manually — the release workflows own both.
 
