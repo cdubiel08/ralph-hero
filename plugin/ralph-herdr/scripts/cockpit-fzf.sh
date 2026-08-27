@@ -234,9 +234,10 @@ run_verb() {
 
     answer)
       # COMMENT-FIRST (ralph-answer.sh, condensed): `board answer N -m`
-      # posts the **Answer** issue comment BEFORE the Human Needed →
-      # In Progress move — board.ts owns that ordering, this verb only
-      # drives it. A non-Human-Needed card is the board CLI's to refuse.
+      # posts the **Answer** issue comment; the item STAYS Human Needed and
+      # the resuming session takes the edge itself with `board claim N`
+      # (GH-2204) — board.ts owns those semantics, this verb only drives
+      # them. A non-Human-Needed card is the board CLI's to refuse.
       printf 'answer for #%s — one line, posts as the **Answer** comment (empty aborts): ' "$n"
       IFS= read -r ans || ans=""
       if [ -z "$(printf '%s' "$ans" | tr -d '[:space:]')" ]; then
@@ -245,8 +246,8 @@ run_verb() {
         return 0
       fi
       if ! "$BOARD" answer "$n" -m "$ans"; then
-        echo "board answer failed — if the **Answer** comment posted (the durable half),"
-        echo "retry the MOVE (board claim $n), not the answer; re-answering would duplicate it."
+        echo "board answer failed — check the issue before retrying: if the **Answer**"
+        echo "comment posted (the durable half), re-answering would duplicate it."
         hold
         return 0
       fi
@@ -254,16 +255,16 @@ run_verb() {
       # means CONFIRMED delivered (bare prompt only submits) — ralph-answer.sh
       # parity, same knob; expiry reports "not confirmed", never "delivered".
       if [ -n "$agent" ]; then
-        if "$HERDR" agent prompt "$agent" "answered on issue — re-read #$n and resume" \
+        if "$HERDR" agent prompt "$agent" "answered on issue — re-read #$n; your first act is: board claim $n (resumes it under your claim)" \
           --wait --timeout "${RALPH_HERDR_ANSWER_NUDGE_MS:-15000}"; then
-          echo "✓ answered and nudged $agent"
+          echo "✓ answered and nudged $agent (resume pending its board claim $n)"
         else
           echo "answered — but the nudge was NOT confirmed delivered; by hand:"
-          echo "  $HERDR agent prompt $agent 'answered on issue — re-read #$n and resume'"
+          echo "  $HERDR agent prompt $agent 'answered on issue — re-read #$n; your first act is: board claim $n'"
         fi
       else
-        echo "answered — no live session for #$n: it is now In Progress under your claim;"
-        echo "spawn a session for it (the spawn verb) or requeue it with: board move $n Backlog"
+        echo "answered — no live session for #$n: it stays Human Needed until a session"
+        echo "resumes it (board claim $n); spawn one for it (the spawn verb)"
       fi
       hold
       ;;
@@ -424,7 +425,7 @@ while :; do
     "observe   focus the live session's pane (herdr agent focus)" \
     "peek      read the session's pane tail — no focus steal" \
     "reply     type a line into the session (herdr agent prompt)" \
-    "answer    Human Needed exit, comment-first (board answer, then nudge)" \
+    "answer    answer a Human Needed item, comment-first (stays HN; nudge to claim)" \
     "spawn     spawn a /ralph:work session for this card" \
     "fork      fork this card's live session into a new pane (same worktree)" \
     "diff      the card's PR diff (gh pr diff)" \

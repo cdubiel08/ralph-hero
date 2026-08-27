@@ -76,10 +76,12 @@ export type State = (typeof STATES)[number];
  *  gate at all.
  *
  *  `Backlog → Human Needed` is deliberately NOT legal. Human Needed is a pause
- *  on in-flight work: `answer` moves it back to In Progress and owns that edge
- *  alone. A proposal about an unstarted item is terminal-answered, not
- *  resumed — it files as a `<!-- ralph-tend:v1 proposed -->` marker comment
- *  (surfaced by `tend-queue`), not as a state. */
+ *  on in-flight work: an answered item resumes back to In Progress via the
+ *  RESUMING session's `board claim` (GH-2204 — `answer` posts the decision,
+ *  the driver takes the edge). A proposal about an unstarted item is
+ *  terminal-answered, not resumed — it files as a
+ *  `<!-- ralph-tend:v1 proposed -->` marker comment (surfaced by
+ *  `tend-queue`), not as a state. */
 export const MACHINE: Record<State, readonly State[]> = {
   // Intake (GH-2077) is strictly one-way. Approval IS the `Intake → Backlog`
   // transition, gated on Priority + Estimate below: Backlog means
@@ -107,7 +109,8 @@ export const MACHINE: Record<State, readonly State[]> = {
   "In Progress": ["In Review", "Done", "Human Needed", "Backlog", "Canceled"],
   "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
   // `Human Needed → Backlog` removed (GH-2078): an answered item RESUMES
-  // (`→ In Progress`, the edge `answer` owns) or DIES (`→ Canceled`). A
+  // (`→ In Progress`, the resuming session's `board claim` — GH-2204) or
+  // DIES (`→ Canceled`). A
   // parking edge out of an escalation is a way to lose the question — the
   // item re-enters the eligible pool and the next claimant re-derives the
   // very context the escalation existed to hand over. "Answered: not now"
@@ -1016,6 +1019,7 @@ export interface SmellThresholds {
   reviewDays: number; // days In Review with a quiet PR
   proposalDays: number; // GH-1777: days a tend closure proposal has gone unanswered
   intakeDays: number; // GH-2077: days an Intake item has waited for an approval decision
+  answerMin: number; // GH-2204: minutes an answered Human Needed item has sat unresumed
 }
 
 export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
@@ -1028,6 +1032,12 @@ export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
   // point at which "nobody has looked" becomes the likelier reading than
   // "nobody has needed to".
   intakeDays: 14,
+  // Minutes, not days: a live agent resumes within seconds of the nudge, so
+  // an answered item still Human Needed half an hour later means the driver
+  // is dead and someone has to claim it. Doctor's cron ceiling is tens of
+  // minutes (GH-1703), so a tighter default would fire on items the sweep
+  // simply hadn't seen yet.
+  answerMin: 30,
 });
 
 export function parseSmellThresholds(
@@ -1047,6 +1057,7 @@ export function parseSmellThresholds(
     reviewDays: positive("RALPH_SMELL_REVIEW_DAYS", SMELL_DEFAULTS.reviewDays),
     proposalDays: positive("RALPH_SMELL_PROPOSAL_DAYS", SMELL_DEFAULTS.proposalDays),
     intakeDays: positive("RALPH_SMELL_INTAKE_DAYS", SMELL_DEFAULTS.intakeDays),
+    answerMin: positive("RALPH_SMELL_ANSWER_MIN", SMELL_DEFAULTS.answerMin),
   };
 }
 
@@ -3786,29 +3797,60 @@ export function claimShow(ctx: Ctx, number: number): ClaimShow {
 }
 
 // ---------------------------------------------------------------------------
-// Answer — the Human Needed exit verb (ralph-herdr v2), COMMENT-FIRST.
+// Answer — the Human Needed answer verb (ralph-herdr v2), COMMENT-FIRST.
 //
-// The durable half (a GitHub **Answer** comment) lands BEFORE the state write,
-// extending transition()'s comments-before-state rule across the whole verb:
-// if the process — or the multiplexer driving it — vanishes mid-answer, the
-// decision is on the record and the item is still in Human Needed for a clean
-// retry. The herdr prompt half (nudging the paused agent to resume) is
-// deliberately NOT here: the board is authoritative and herdr decorative, so
-// the prompt belongs to plugin/ralph-herdr. Escalation payload shape stays
-// `board contract validate ralph.escalation`'s job — this verb validates
-// nothing about the question, it only answers it.
+// The durable half (a GitHub **Answer** comment) lands first, extending
+// transition()'s comments-before-state rule across the whole verb: if the
+// process — or the multiplexer driving it — vanishes mid-answer, the decision
+// is on the record and the item is still in Human Needed for a clean retry.
+// The herdr prompt half (nudging the paused agent to resume) is deliberately
+// NOT here: the board is authoritative and herdr decorative, so the prompt
+// belongs to plugin/ralph-herdr. Escalation payload shape stays `board
+// contract validate ralph.escalation`'s job — this verb validates nothing
+// about the question, it only answers it.
+//
+// The resume edge belongs to the RESUMING agent (GH-2204). The verb's default
+// is comment-only: the item STAYS Human Needed and the driving session takes
+// Human Needed → In Progress itself (`board claim NNN` — the machine edge
+// already exists). Every claim-adjacent guard — the session→unit binding
+// (GH-1948), the worktree lock (GH-1956), the size ceiling (GH-2134) — keys
+// on "whoever runs the command is whoever will drive the unit", and `answer`
+// is the one verb where those differ by construction: the answerer is a
+// proxy. Transitioning here bound the ANSWERER — a hero pane walking the
+// queue broke at item two on rule 9, the worktree lock made deliver-queue
+// report a driver that wasn't, and when the paused agent was dead the item
+// landed In Progress + claimed + no driver, invisible to work-fleet for a
+// full TTL. `--resume` keeps the one-invocation form for the session that IS
+// the driver answering its own item (answerer == driver, so the guards bind
+// correctly). The answered-but-unresumed window is surfaced, not hidden:
+// the marker below timestamps the answer, `board escalations` classifies it,
+// and doctor's `answer-unresumed` line ages it.
 // ---------------------------------------------------------------------------
+
+/** Appended (with a fenced JSON payload `{at, by}`) to every **Answer**
+ *  comment, so the answered-but-unresumed classification is computed at READ
+ *  time from the trail — the same no-tracking-state shape as the escalation
+ *  route's TTL (GH-2179). */
+export const ANSWER_MARKER = "<!-- ralph-answer:v1 -->";
+
+/** An **Answer** comment, matched the way ESCALATION_EVIDENCE matches its
+ *  half — on the masked body, so a quoted answer inside a code fence is not
+ *  one. */
+export const ANSWER_EVIDENCE = /^\*\*Answer\*\*/m;
 
 export interface AnswerResult {
   commented: boolean;
   transitioned: boolean;
   state: string | null;
+  /** True when the item is still Human Needed with this answer on record —
+   *  someone still has to drive it (`board claim NNN` resumes). */
+  resumePending: boolean;
 }
 
 export function answer(
   ctx: Ctx,
   number: number,
-  opts: { message: string; anyState?: boolean; commentOnly?: boolean },
+  opts: { message: string; anyState?: boolean; resume?: boolean },
 ): AnswerResult {
   const issue = fetchIssue(ctx, number);
   // Fail closed BEFORE the comment: a truncated field-value page means the
@@ -3828,16 +3870,29 @@ export function answer(
     );
   }
   // Durable half FIRST. Whatever happens after this line, the decision exists.
-  addComment(ctx, issue.nodeId, `**Answer** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${opts.message}`);
-  // The Human Needed → In Progress edge is the ONLY move this verb owns:
-  // --comment-only skips it, and an --any-state answer outside Human Needed
-  // has no edge to take — relaxing the refusal never relaxes the MACHINE.
-  if (opts.commentOnly || issue.state !== "Human Needed") {
-    return { commented: true, transitioned: false, state: issue.state };
+  const payload = JSON.stringify({ at: ctx.now().toISOString(), by: ctx.cfg.holder });
+  addComment(
+    ctx,
+    issue.nodeId,
+    `**Answer** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${opts.message}` +
+      `\n\n${ANSWER_MARKER}\n\`\`\`json\n${payload}\n\`\`\``,
+  );
+  // The Human Needed → In Progress edge is taken only on --resume (self-
+  // answer: answerer == driver), and an --any-state answer outside Human
+  // Needed has no edge to take — relaxing the refusal never relaxes the
+  // MACHINE. The default leaves the item Human Needed for the resuming
+  // session's own `board claim`.
+  if (!opts.resume || issue.state !== "Human Needed") {
+    return {
+      commented: true,
+      transitioned: false,
+      state: issue.state,
+      resumePending: issue.state === "Human Needed",
+    };
   }
   try {
     const after = transition(ctx, issue, "In Progress");
-    return { commented: true, transitioned: true, state: after.state };
+    return { commented: true, transitioned: true, state: after.state, resumePending: false };
   } catch (e) {
     // The durable half already happened — a refusal here (fleet co-holders
     // still on the claim, a lost claim race) must say so, or the operator
@@ -6724,8 +6779,9 @@ export function resolveProposal(
 // is human-addressed by construction.
 //
 // The lead dispositions a routed escalation three ways: answer or re-steer
-// (the existing `answer` verb — the Human Needed → In Progress edge disposes
-// the escalation by state), or PROMOTE (`board promote NNN`) — a durable
+// (the existing `answer` verb — the answer is on record and the resuming
+// session's `board claim` then disposes it by state, GH-2204), or PROMOTE
+// (`board promote NNN`) — a durable
 // marker comment saying "this genuinely needs the human", no state change,
 // because Human Needed is already the right state; promotion changes the
 // audience, not the machine.
@@ -6762,6 +6818,12 @@ export interface EscalationRoute {
   /** Only for route "lead": pending (the lead's queue), promoted (the lead
    *  said so), or auto-promoted (the TTL said so). */
   disposition?: "pending" | "promoted" | "auto-promoted";
+  /** GH-2204: the live escalation has an **Answer** comment AFTER it and the
+   *  item is still Human Needed — the answer is on record, resume pending
+   *  (`board claim NNN` is the resume edge). `at` is the answer payload's
+   *  timestamp, null when unreadable (pre-marker answers) — doctor ages an
+   *  unreadable clock as overdue, failing toward visibility. */
+  answered?: { at: string | null };
 }
 
 /** Classify the LAST escalation in a comment trail. Trail order is
@@ -6778,6 +6840,8 @@ export function classifyEscalation(
   let lastEsc = -1;
   let routed: { lead: string | null; at: string | null } | null = null;
   let lastProm = -1;
+  let lastAns = -1;
+  let ansAt: string | null = null;
   for (let i = 0; i < comments.length; i++) {
     const body = comments[i];
     if (ESCALATION_EVIDENCE.test(maskCode(body))) {
@@ -6791,14 +6855,30 @@ export function classifyEscalation(
         routed = null;
       }
     }
+    if (ANSWER_EVIDENCE.test(maskCode(body))) {
+      lastAns = i;
+      const at = /"at"\s*:\s*"([^"]+)"/.exec(body);
+      const t = at ? new Date(at[1]).getTime() : NaN;
+      ansAt = Number.isFinite(t) ? at![1] : null;
+    }
     if (lastMarkerIndex(body, ESCALATION_PROMOTED_MARKER) >= 0) lastProm = i;
   }
-  if (lastEsc < 0 || !routed) return { route: "human" };
-  if (lastProm > lastEsc) return { route: "lead", ...routed, disposition: "promoted" };
+  // Answered = an Answer AFTER the live escalation (GH-2204). Anchored on the
+  // escalation deliberately: a reconcile-reopened apply unit (no Decision
+  // needed comment) is not disposed by an Answer — its remedies are evidence
+  // or a cancel — so a stale Answer from a prior cycle may not read as one.
+  const answered = lastEsc >= 0 && lastAns > lastEsc ? { answered: { at: ansAt } } : {};
+  if (lastEsc < 0 || !routed) return { route: "human", ...answered };
+  if (lastProm > lastEsc) return { route: "lead", ...routed, disposition: "promoted", ...answered };
   // Unreadable `at` → auto-promoted: fail toward the human seeing it.
   const since = routed.at ? new Date(routed.at).getTime() : NaN;
   const expired = !Number.isFinite(since) || now.getTime() - since >= ttlMin * 60_000;
-  return { route: "lead", ...routed, disposition: expired ? "auto-promoted" : "pending" };
+  return {
+    route: "lead",
+    ...routed,
+    disposition: expired ? "auto-promoted" : "pending",
+    ...answered,
+  };
 }
 
 export interface EscalationRow extends EscalationRoute {
@@ -8328,6 +8408,7 @@ export const SMELL_CHECKS = [
   "escalation-ping-pong",
   "review-stalled",
   "tend-proposal-stale",
+  "answer-unresumed",
 ] as const;
 
 /** "info" is advisory-only by construction (GH-1715): it is not an invariant
@@ -9638,9 +9719,23 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         const pingPong: string[] = [];
         const stalled: string[] = [];
         const proposals: string[] = [];
+        const unresumed: string[] = [];
         for (const i of items) {
           const h = histories.get(i.number);
           if (!h) continue; // no history read = nothing observed = nothing to say
+          if (i.state === "Human Needed") {
+            // GH-2204: answered but never resumed. `answer` no longer takes
+            // the resume edge, so this window is real by design — and it may
+            // not rot silently. Unreadable answer clock ages as overdue (the
+            // fail-toward-visibility direction, same as auto-promote).
+            const esc = classifyEscalation(h.comments, ctx.now(), ctx.cfg.lockTtlMin);
+            if (esc.answered) {
+              const t = esc.answered.at ? new Date(esc.answered.at).getTime() : NaN;
+              const min = Number.isFinite(t) ? (ctx.now().getTime() - t) / 60_000 : null;
+              if (min === null) unresumed.push(`#${i.number}(undated answer)`);
+              else if (min >= ctx.cfg.smells.answerMin) unresumed.push(`#${i.number}(${Math.floor(min)}min)`);
+            }
+          }
           const lost = countEvidence(h.comments, CLAIM_EXPIRY_EVIDENCE);
           if (lost >= ctx.cfg.smells.claimExpiries) expiries.push(`#${i.number}(${lost} expired claims)`);
           const escalations = countEvidence(h.comments, ESCALATION_EVIDENCE);
@@ -9695,6 +9790,15 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
             : `tend closure proposals unanswered ≥${ctx.cfg.smells.proposalDays}d — dispose of them ` +
               `(\`board cancel N -m\`, \`board move N done --why\`, \`board reopen N\`, or ` +
               `\`board resolve N --reject -m "why not"\`): ${proposals.join(" ")}`,
+        );
+        add(
+          "answer-unresumed",
+          unresumed.length === 0 ? "ok" : "info",
+          unresumed.length === 0
+            ? "none"
+            : `answered ≥${ctx.cfg.smells.answerMin}min ago and still Human Needed — the answer is ` +
+              `on record but nobody is driving; a session resumes it with \`board claim N\` ` +
+              `(or \`board cancel N -m\` if the answer was "don't"): ${unresumed.join(" ")}`,
         );
       } catch (e) {
         for (const n of SMELL_CHECKS) add(n, "info", `not evaluated: ${(e as Error).message}`);
@@ -11016,17 +11120,24 @@ mutations
                               explicit, --to-human forces the reserved-set
                               direction (spend, scope, irreversibles are
                               never a lead's to grant)
-  answer NNN -m "decision"    Human Needed → In Progress, COMMENT-FIRST: the
+  answer NNN -m "decision"    answer a Human Needed item, COMMENT-FIRST: the
                               answer lands as an issue comment (**Answer** —
-                              the durable half) BEFORE any state write, so a
-                              session that vanishes mid-answer leaves the
-                              decision on the record, not a bare move.
-                              --message is an alias for -m. --comment-only
-                              posts without the move; --any-state answers an
-                              item outside Human Needed (comment only — the
-                              Human Needed → In Progress edge is the only
-                              move this verb owns). [--json] reports
-                              {commented, transitioned, state}. The herdr
+                              the durable half, timestamped by a
+                              ralph-answer:v1 marker) and the item STAYS
+                              Human Needed — the resume edge belongs to the
+                              RESUMING agent (GH-2204), whose \`board claim
+                              NNN\` takes Human Needed → In Progress so the
+                              session binding, worktree lock and size guard
+                              land on the actual driver. --resume takes the
+                              edge in this invocation (self-answer: the
+                              driver answering its own item). --message is
+                              an alias for -m; --comment-only names the
+                              default and is inert; --any-state answers an
+                              item outside Human Needed (comment only).
+                              [--json] reports {commented, transitioned,
+                              state, resumePending}. Answered-but-unresumed
+                              items surface in \`board escalations\` and
+                              doctor's answer-unresumed line. The herdr
                               prompt half (nudging the paused agent to
                               resume) is deliberately NOT here — the
                               ralph-herdr plugin owns it. Escalation payload
@@ -11039,8 +11150,8 @@ mutations
                               audience, not the machine). Refuses outside
                               Human Needed and on human-addressed escalations;
                               noop when already promoted. The other two
-                              dispositions are \`answer\` (answer or re-steer —
-                              the resume edge disposes the escalation).
+                              dispositions are \`answer\` (whose comment the
+                              resuming session's claim then disposes).
                               Deliberately validates NO C9 shape: the TTL
                               path cannot validate by construction, and a
                               stricter manual path would train leads to wait
@@ -11208,7 +11319,7 @@ export const VERB_HELP: Record<string, string> = {
   claim: "board claim <n> [--steal] [--why <w>] | board claim show <n>\n  Take a unit (Backlog→In Progress). --steal only after TTL expiry.\n  Claiming from In Review demotes and requires --why \"<the rework>\".\n  example: board claim 1234",
   release: "board release <n> -m \"<where you stopped>\"\n  Give a unit back (→Backlog) with the handoff note.\n  example: board release 1234 -m \"tests red on X; next: fix parser\"",
   move: "board move <n> <state> [--why <w>] [--decision <artifact>] [--to-lead <name> | --to-human]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact,\n  an epic root with ALL children closed (GH-2198), or --why.\n  Demotions (In Progress→Backlog, In Review→In Progress) require --why (GH-2078).\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  Human Needed only: --to-lead/--to-human address the escalation (GH-2179);\n  default is the lead when RALPH_HERDR_LEAD is set, else the human.\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
-  answer: "board answer <n> -m \"<the decision>\" [--comment-only] [--any-state]\n  Answer a Human Needed item and resume it.\n  example: board answer 1234 -m \"ship option B\"",
+  answer: "board answer <n> -m \"<the decision>\" [--resume] [--any-state]\n  Answer a Human Needed item; it stays Human Needed until the driving\n  session resumes it (board claim <n>). --resume answers AND resumes in one\n  invocation — for the driver answering its own item.\n  example: board answer 1234 -m \"ship option B\"",
   promote: "board promote <n> [-m \"<note>\"] [--json]\n  Promote a lead-routed escalation to the human (GH-2179): durable marker\n  comment, no state change. Refuses outside Human Needed and on\n  human-addressed escalations; noop when already promoted.\n  example: board promote 1234 -m \"authorization, not knowledge — yours\"",
   escalations: "board escalations [--json]\n  The arbitration queue (GH-2179): Human Needed items classified by audience.\n  pending = the lead's work; →human / promoted / auto-promoted (TTL\n  RALPH_LOCK_TTL_MIN elapsed, computed at read time) = the human tier.\n  example: board escalations --json",
   cancel: "board cancel <n> -m \"<reason>\"\n  Cancel (→Canceled, closes NOT_PLANNED). Reopen is the only exit.\n  example: board cancel 1234 -m \"superseded by #1300\"",
@@ -11248,7 +11359,7 @@ interface ParsedArgs {
  *  on it rather than leaving the next one to be found at a call site. */
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
-  "any-state", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
+  "any-state", "resume", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
   "intake", "backlog", "dismiss", "to-human", "digest", "mark",
 ]);
 
@@ -12417,17 +12528,22 @@ export function run(argv: string[], ctx: Ctx): number {
         : typeof flags.message === "string" && flags.message ? flags.message
         : null;
       if (!message) throw new UsageError(`answer requires -m "<the decision>" (--message also accepted)`);
+      // --comment-only is accepted and inert: it names what is now the
+      // default (GH-2204 moved the resume edge to the resuming agent).
       const res = answer(ctx, number, {
         message,
         anyState: !!flags["any-state"],
-        commentOnly: !!flags["comment-only"],
+        resume: !!flags.resume,
       });
       if (flags.json) json(res);
       else {
         out(
           res.transitioned
-            ? `#${number}: answer commented; Human Needed → ${res.state}`
-            : `#${number}: answer commented; no transition (state: ${res.state ?? "(none)"})`,
+            ? `#${number}: answer commented; Human Needed → ${res.state} (resumed under this session's claim)`
+            : res.resumePending
+              ? `#${number}: answer commented; stays Human Needed — resume pending ` +
+                `(the driving session runs \`board claim ${number}\`)`
+              : `#${number}: answer commented; no transition (state: ${res.state ?? "(none)"})`,
         );
       }
       return 0;
@@ -12462,7 +12578,10 @@ export function run(argv: string[], ctx: Ctx): number {
           : r.disposition === "pending" ? `→lead ${r.lead ?? "(unnamed)"} (pending${r.at ? ` since ${r.at}` : ""})`
           : r.disposition === "promoted" ? `→human (promoted by lead)`
           : `→human (auto-promoted: lead ${r.lead ?? "(unnamed)"} TTL elapsed)`;
-        out(`#${r.number} ${who} ${r.title}`);
+        const ans = r.answered
+          ? ` [ANSWERED${r.answered.at ? ` ${r.answered.at}` : ""} — resume pending: board claim ${r.number}]`
+          : "";
+        out(`#${r.number} ${who}${ans} ${r.title}`);
       }
       return 0;
     }

@@ -3,11 +3,14 @@
 # COMMENT-FIRST.
 #
 # The durable half is GitHub: `board answer N -m` posts the **Answer** issue
-# comment BEFORE any state write (board.ts owns that ordering) — if this pane,
-# or herdr itself, vanishes mid-answer, the decision is on the record and the
-# item retries cleanly. Only AFTER the durable half does the decorative half
-# run: when a live session owns N, a `herdr agent prompt` nudges it to re-read
-# the issue — and its delivery is reported honestly, never assumed.
+# comment and the item STAYS Human Needed — the resume edge belongs to the
+# RESUMING agent (GH-2204), whose own `board claim N` takes it back to
+# In Progress so the claim guards bind on the actual driver, not this popup.
+# If this pane, or herdr itself, vanishes mid-answer, the decision is on the
+# record and the item retries cleanly. Only AFTER the durable half does the
+# decorative half run: when a live session owns N, a `herdr agent prompt`
+# nudges it to claim-and-resume — and its delivery is reported honestly,
+# never assumed.
 #
 # Flow: list Human Needed → pick a number → see the issue's latest comments
 # (bounded gh read — the question being answered) → type the answer, mail(1)
@@ -102,15 +105,15 @@ if [ -z "$(printf '%s' "$ans" | tr -d '[:space:]')" ]; then
 fi
 
 # ── Durable half: the comment-first verb ─────────────────────────────────────
-# `board answer` posts the **Answer** comment before the Human Needed →
-# In Progress move (board.ts owns the ordering). On a board CLI too old for
-# the verb, the SAME ordering is preserved by hand: gh comment (durable)
-# first, board move second — never the reverse.
+# `board answer` posts the **Answer** comment; the item stays Human Needed
+# and the resuming session claims it (GH-2204). On a board CLI too old for
+# the verb, the old comment-then-move ordering is preserved by hand: gh
+# comment (durable) first, board move second — never the reverse.
 if "$BOARD" help 2>/dev/null | grep -q '^  answer NNN'; then
   if ! "$BOARD" answer "$n" -m "$ans"; then
     echo
-    echo "board answer failed — if the **Answer** comment posted (the durable half),"
-    echo "retry the MOVE (board claim $n), not the answer; re-answering would duplicate it."
+    echo "board answer failed — check the issue before retrying: if the **Answer**"
+    echo "comment posted (the durable half), re-answering would duplicate it."
     hold
     exit 1
   fi
@@ -129,19 +132,21 @@ live=$(ralph_agents_json 2>/dev/null | jq -rs --arg legacy "gh-$n" --arg pfx "w$
   [.[] | select(.name == $legacy or (.name | startswith($pfx))) | .name]
   | first // empty') || live=""
 if [ -z "$live" ]; then
-  # Honest about where the item landed: the answer verb moved it Human
-  # Needed → In Progress under THIS CLI's claim — it is not in `board next`,
-  # so no spawner will find it on its own.
-  echo "no live session for #$n — the answer is on the issue and #$n is now In Progress under your claim;"
-  echo "spawn a session for it (click the issue link) or requeue it with: board move $n Backlog"
+  # Honest about where the item stands: answered, still Human Needed —
+  # nobody is driving it (GH-2204). It is not in `board next`, so no spawner
+  # will find it on its own; `board escalations` and doctor's
+  # answer-unresumed line keep it visible meanwhile.
+  echo "no live session for #$n — the answer is on the issue; #$n stays Human Needed until"
+  echo "a session resumes it (board claim $n). Spawn one for it (click the issue link),"
+  echo "or board cancel $n -m if the answer was \"don't\"."
   hold
   exit 0
 fi
 
-out=$(ralph_herdr_agent_prompt "$live" "answered on issue — re-read #$n and resume" \
+out=$(ralph_herdr_agent_prompt "$live" "answered on issue — re-read #$n; your first act is: board claim $n (resumes it under your claim)" \
   "${RALPH_HERDR_ANSWER_NUDGE_MS:-15000}" 2>/dev/null) && rc=0 || rc=$?
 if [ "$rc" -eq 0 ]; then
-  echo "nudged $live — prompt delivered and the session moved on"
+  echo "nudged $live — prompt delivered and the session moved on (resume pending its board claim $n)"
 else
   # rc 4 is herdr's wait expiry: submitted, unconfirmed. Every other nonzero
   # means the prompt did not land — a refusal or a transport fault.
@@ -151,7 +156,7 @@ else
     code=$(ralph_herdr_err_code "$out")
     echo "nudge to $live refused (${code:-transport failure}) — the answer IS on the issue; by hand:"
   fi
-  echo "  herdr agent prompt $live 'answered on issue — re-read #$n and resume'"
+  echo "  herdr agent prompt $live 'answered on issue — re-read #$n; your first act is: board claim $n'"
 fi
 
 hold

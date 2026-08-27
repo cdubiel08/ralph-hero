@@ -33,7 +33,8 @@
 #                        (board.ts's list --json shape); rc via
 #                        list.<state-slug>.rc then list.rc
 #   answer N …           answer.<N>.json, then answer.json, else board.ts's
-#                        "answer commented; Human Needed → In Progress" line
+#                        "answer commented; stays Human Needed — resume
+#                        pending" line (GH-2204)
 #   name N [--json]      name.<N>.json, then name.json, else a canned
 #                        GH-1807 name envelope (feat/N-fake-issue + its
 #                        legacyBranch) — the spawn path's branch source
@@ -136,7 +137,7 @@ case "${1-} ${2-}" in
     ;;
   "answer "*)
     emit_fixture "answer.${2-}" answer ||
-      printf '#%s: answer commented; Human Needed → In Progress\n' "${2-}"
+      printf '#%s: answer commented; stays Human Needed — resume pending (the driving session runs `board claim %s`)\n' "${2-}" "${2-}"
     key="answer"
     ;;
   "name "*)
@@ -191,7 +192,7 @@ case "${1-} ${2-}" in
       cat "$FIX/help.txt"
     else
       # The one line ralph-answer.sh's capability probe greps for.
-      printf 'mutations:\n  answer NNN -m "decision"    Human Needed → In Progress, COMMENT-FIRST\n'
+      printf 'mutations:\n  answer NNN -m "decision"    answer a Human Needed item, COMMENT-FIRST\n'
     fi
     key="help"
     ;;
