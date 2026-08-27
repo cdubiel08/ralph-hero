@@ -2,13 +2,14 @@
 
 ## What this is
 
-ralph v2 (GH-1662): five skills, one agent, one board CLI, courtesy hooks, and lane selectors. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`; lanes spec (GH-1712): `../thoughts/shared/specs/2026-08-07-loop-agent-lanes-spec.md`.
+ralph v2 (GH-1662): six skills, one agent, one board CLI, courtesy hooks, and lane selectors. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`; lanes spec (GH-1712): `../thoughts/shared/specs/2026-08-07-loop-agent-lanes-spec.md`.
 
 ```text
 ralph/
 ├── skills/work/        # the execution verb — outcome, boundaries, contract
 ├── skills/deliver/     # follow-through lane: In Review PRs → merged (GH-1712)
 ├── skills/tend/        # hygiene lane: Backlog shape + Done audit (GH-1712)
+├── skills/dispatch/    # standing ops lane: authorities + reserved set (GH-2177)
 ├── skills/board/       # human surface — orientation, intake, answers, doctor
 ├── skills/help/        # topic-routed setup help (herdr cockpit wiring, GH-1759)
 ├── skills/using-html/  # vendored utility (byte-identical upstream; do not edit)
@@ -52,7 +53,7 @@ ralph/
 
 ## Lanes (GH-1712)
 
-A lane is a **typed selector + a judgment skill + a goal** — cadence is derived per pass from what the queue is blocked on, never configured. Three exist: **work** (`board next` → `/ralph:work`), **deliver** (`board deliver-queue` → `/ralph:deliver` — quiescent In Review items, marker-gated per PR, gate truth from `merge-pr.sh --dry-run`), **tend** (`board tend-queue` → `/ralph:tend` — Backlog hygiene + Done audit, metadata-only, closures only ever proposed via a marker comment the selector reads back). Skills are single-pass operators; pacing vocabulary lives only in `examples/README.md`.
+A lane is a **typed selector + a judgment skill + a goal** — cadence is derived per pass from what the queue is blocked on, never configured. Four exist: **work** (`board next` → `/ralph:work`), **deliver** (`board deliver-queue` → `/ralph:deliver` — quiescent In Review items, marker-gated per PR, gate truth from `merge-pr.sh --dry-run`), **tend** (`board tend-queue` → `/ralph:tend` — Backlog hygiene + Done audit, metadata-only, closures only ever proposed via a marker comment the selector reads back), **dispatch** (`board brief` + fleet state → `/ralph:dispatch` — standing ops under written authority; the reserved set and standing authorities live in that skill's text, GH-2177). Skills are single-pass operators; pacing vocabulary lives only in `examples/README.md`.
 
 ### Work/deliver exclusion is typed at the branch write (GH-1917)
 
@@ -68,7 +69,7 @@ Honest bound: this excludes at the **push instant**, and only against work that 
 
 Rejected: a new `refs/ralph/lease/<branch>` ref (GH-1929's first option) — a second lock needing its own expiry and heartbeat semantics, for a hazard that never leaves the machine. Reusing the record settles expiry by inheritance: the **same `RALPH_LOCK_TTL_MIN` clock** as the board claim, so the row is self-clearing (`windowExpiresAt` is the lock's expiry, unlike `convergence-stalled`, which only a human clears) and a dead session blocks deliver for one TTL, not forever. **The lease deliberately outlives the claim, and that costs latency.** Clearing the lock wherever `transition()` clears the claim would give the two one coherent lifecycle — and would make this dead code, since `deliver-queue` only ever considers *In Review* items, so a lease released on entering In Review is one the probe can never observe. The lease must outlive In Progress or it does nothing. The price is that deliver's pickup latency for a unit becomes up to `RALPH_LOCK_TTL_MIN` (120 min) after the driving session's last claim touch, rather than the ~5-min `RALPH_SETTLE_MIN` window. No "I am finished" verb was added to reclaim it: that would be precisely the opt-in convention residue §8.3 warns about, whose *omission* — the default — silently restores the hazard. TTL-only fails in the safe direction (it over-blocks deliver; it never loses a commit), the operator has the knob, and `--steal` is the immediate override. **One edge is the exception (GH-2107): In Progress → Backlog clears the session's own lock.** That edge — `board release` and the `move backlog --why` demotion — returns the unit to the eligible pool, where the lock guards nothing deliver reads (deliver-queue considers In Review only) and blocks exactly the spawn the release exists to permit: measured as answer → release → `work-fleet` SKIP for a full TTL. Own lock only (a fresh lock naming another session is a live driver a non-owning demoter may not disarm), deleted after the state write and claim-clear verify, best-effort — a failed unlink restores the TTL status quo, never blocks the release. Three stated bounds: an unreadable sessions dir returns **null, never an empty probe** — "we could not read the lease" must not render as "no lease is held" — and this covers a **same-machine** deliver only. Residue §8.2 survives for a deliver loop on another host, correctly: unpushed commits are a machine-local fact, so there was never anything for a remote reader to see.
 
-**The four-dimension lane test** (gates every future lane proposal; stated once, here): a new lane is justified only when **signal source, write lane, pacing signal, and permission set all four differ simultaneously** from every existing lane. The pacing signal is the observable a lane derives its next wake from (work: queue depth; deliver: check conclusions, review deltas, retry/settle windows; tend: accumulation age) — a proposal that differs only in derived cadence numbers fails the test.
+**The four-dimension lane test** (gates every future lane proposal; stated once, here): a new lane is justified only when **signal source, write lane, pacing signal, and permission set all four differ simultaneously** from every existing lane. The pacing signal is the observable a lane derives its next wake from (work: queue depth; deliver: check conclusions, review deltas, retry/settle windows; tend: accumulation age; dispatch: capacity and fleet/lead state) — a proposal that differs only in derived cadence numbers fails the test.
 
 ## Conventions
 
