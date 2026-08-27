@@ -19,6 +19,15 @@ git_repos:
   - /Users/dubiel/projects/ralph-engine
   - /Users/dubiel/projects/gemma-lab
 
+# Run-state records (GH-2112 nightly, GH-2159 weekly). Each cadence writes its
+# terminal outcome here on every path; only the `failed` outcome files a
+# standing board alarm. The two paths are deliberately distinct so one open
+# alarm per pipeline can stand at once. Values shown are the built-in
+# defaults — uncomment to change; env (RALPH_DREAM_STATE_PATH /
+# RALPH_DREAM_META_STATE_PATH) wins over both.
+# state_path: ~/.ralph-hero/dream-state.json
+# meta_state_path: ~/.ralph-hero/dream-meta-state.json
+
 # Command invoked at the end of ingest to re-embed the new raw memories.
 # Override this (or pass --no-reindex) if you want to run ingest without
 # rebuilding the knowledge index.

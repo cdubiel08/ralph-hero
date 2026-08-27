@@ -24,9 +24,12 @@ import os
 import re
 import sqlite3
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+import dream_health
 
 try:
     import yaml  # type: ignore[import-untyped]
@@ -53,6 +56,102 @@ DEFAULT_DEDUP_MAX_EXISTING = int(os.environ.get("RALPH_META_DEDUP_MAX_EXISTING",
 
 # Per-reflection content slice for the prompt (reflections are already compact).
 REFLECTION_CLIP = 700
+
+# ---------------------------------------------------------------------------
+# Run-state record + defect-zero alarm (GH-2159, porting GH-2112)
+# ---------------------------------------------------------------------------
+#
+# This job fires weekly under launchd and nobody reads its exit code, so a run
+# that synthesized nothing rendered exactly like a quiet week. GH-2110 named
+# it: the weekly job "will fail identically" to the nightly one. The five
+# outcomes below make the zeroes distinguishable, and only one of them is a
+# defect.
+#
+# The state path and the alarm title are deliberately DISTINCT from the
+# nightly's, so one standing alarm per pipeline can be open at once and a
+# weekly failure is never read as a nightly one.
+
+# Env > config.yaml ``meta_state_path`` > default.
+DEFAULT_META_STATE_PATH = "~/.ralph-hero/dream-meta-state.json"
+
+META_FAILURE_ISSUE_TITLE = (
+    "dream-loop: weekly meta-reflection run failed "
+    "(0 candidates synthesized with reflections in window)"
+)
+META_FAILURE_MARKER = "<!-- ralph-dream-meta-health:v1 -->"
+
+# Terminal outcomes of a weekly run. ``empty`` / ``deferred`` / ``suppressed``
+# are healthy zeroes; ``failed`` is the defect — reflections cleared the gate
+# and the model produced no parseable candidate, which is what an unreachable
+# endpoint, an unloaded model and a garbage completion all look like.
+OUTCOME_WROTE = "wrote"
+OUTCOME_EMPTY = "empty"
+OUTCOME_DEFERRED = "deferred"
+OUTCOME_SUPPRESSED = "suppressed"
+OUTCOME_FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class MetaRunResult:
+    """A weekly run's terminal outcome, not merely its count.
+
+    ``run_meta_reflect`` returns this rather than a bare ``int`` because four
+    of its five terminal paths stage zero candidates and only one of them is a
+    defect — a caller handed ``0`` cannot tell them apart, and re-deriving the
+    distinction in ``main()`` would be a second copy of the rule.
+
+    Stays PURE: nothing here writes a file or calls ``gh``. ``main()`` owns
+    both side effects, so every existing caller and test keeps running against
+    a function with no side effects beyond the staging file it always had.
+    """
+
+    outcome: str
+    staged: int = 0
+    reflections: int = 0
+    candidates: int = 0
+    reason: str = ""
+
+    @property
+    def failed(self) -> bool:
+        return self.outcome == OUTCOME_FAILED
+
+
+def emit_meta_failure_issue(
+    *,
+    reflections: int,
+    state_path: Path | str,
+    repo: str | None = None,
+) -> str | None:
+    """File ONE standing alarm for a defect-zero weekly run.
+
+    Same dedup-by-title contract as the nightly's alarm; the title and marker
+    differ so the two pipelines never share one issue.
+    """
+    body = (
+        f"{META_FAILURE_MARKER}\n"
+        f"The weekly dream-loop meta-reflection run had **{reflections} "
+        f"reflection(s)** in its window — above the `min_reflections` gate — "
+        f"and synthesized **zero wiki candidates**. That is the defect zero: "
+        f"a healthy quiet week is `outcome: empty`, `deferred` or "
+        f"`suppressed` in the run state, never `failed`.\n"
+        f"\n"
+        f"Likely causes: unreachable LLM endpoint, an unloaded or wrongly-"
+        f"named model (the weekly job passes the gate-resolved `--model`), or "
+        f"a completion the candidate parser could not read. See GH-2110 for "
+        f"the class.\n"
+        f"\n"
+        f"- Run state: `{state_path}`\n"
+        f"- Log: `~/Library/Logs/ralph-dream-weekly.err`\n"
+        f"- Verify: `/ralph-knowledge:dream-loop --mode verify`\n"
+        f"\n"
+        f"Auto-filed by `scripts/dream/meta_reflect.py` (GH-2159). This is a "
+        f"standing alarm: it is filed once and not re-filed while open. Close "
+        f"it when the weekly run stages again.\n"
+    )
+    return dream_health.emit_failure_issue(
+        title=META_FAILURE_ISSUE_TITLE, body=body, repo=repo, log=log
+    )
+
 
 
 # ---------------------------------------------------------------------------
@@ -651,11 +750,13 @@ def run_meta_reflect(
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
     now: datetime | None = None,
     http_post: Any | None = None,
-) -> int:
+) -> MetaRunResult:
     """Fetch recent reflections, synthesize wiki candidates, stage them.
 
-    Returns the number of newly-staged candidates. Defers (returns 0) when
-    fewer than ``min_reflections`` are in the window. Fail-open on LLM errors.
+    Returns a :class:`MetaRunResult` — the terminal outcome, not merely the
+    staged count. Four of the five outcomes stage zero, and only ``failed``
+    (reflections cleared the gate, the model produced nothing parseable) is a
+    defect; ``main()`` records the outcome and alarms on that one.
 
     Consumed candidates are pruned first, before the defer gate — the staging
     file's hygiene does not depend on there being enough reflections to run.
@@ -671,15 +772,46 @@ def run_meta_reflect(
         window_days,
         min_reflections,
     )
+    if not reflections:
+        log.info("No reflections in window; nothing to meta-reflect.")
+        return MetaRunResult(
+            outcome=OUTCOME_EMPTY,
+            reason=f"no reflections in the last {window_days}d",
+        )
     if len(reflections) < min_reflections:
         log.info("Below min_reflections; deferring meta-reflection.")
-        return 0
+        return MetaRunResult(
+            outcome=OUTCOME_DEFERRED,
+            reflections=len(reflections),
+            reason=(
+                f"deferring: {len(reflections)} reflection(s) in window, "
+                f"min_reflections={min_reflections}"
+            ),
+        )
     candidates = synthesize_candidates(
         reflections, llm_url, model, max_candidates=max_candidates, http_post=http_post
     )
     if not candidates:
-        log.info("No wiki candidates synthesized.")
-        return 0
+        # The defect zero. ``synthesize_candidates`` fails open on an
+        # unreachable endpoint, a non-200, an unexpected payload shape and an
+        # unparseable completion alike, so this branch cannot name the cause —
+        # only that a run above the gate produced nothing, which is exactly
+        # what a quiet week must not be allowed to look like.
+        log.warning(
+            "Meta-reflect synthesized ZERO candidates from %d reflection(s) "
+            "above the gate. That is the defect zero, not a quiet week — see "
+            "WARNING logs above for the LLM failure.",
+            len(reflections),
+        )
+        return MetaRunResult(
+            outcome=OUTCOME_FAILED,
+            reflections=len(reflections),
+            reason=(
+                "reflections cleared the gate but zero candidates were "
+                "synthesized; see WARNING logs"
+            ),
+        )
+    synthesized = len(candidates)
     candidates = filter_paraphrases(
         candidates,
         _existing_axioms(wiki_dir),
@@ -691,10 +823,27 @@ def run_meta_reflect(
     )
     if not candidates:
         log.info("All candidates restated known axioms; staging nothing.")
-        return 0
+        return MetaRunResult(
+            outcome=OUTCOME_SUPPRESSED,
+            reflections=len(reflections),
+            candidates=synthesized,
+            reason="every candidate restated a known axiom (paraphrase gate)",
+        )
     staged = stage_candidates(candidates, wiki_dir, now=now)
     log.info("Staged %d new wiki candidate(s) for curate.", staged)
-    return staged
+    if not staged:
+        return MetaRunResult(
+            outcome=OUTCOME_SUPPRESSED,
+            reflections=len(reflections),
+            candidates=synthesized,
+            reason="every candidate was already staged, promoted or rejected",
+        )
+    return MetaRunResult(
+        outcome=OUTCOME_WROTE,
+        staged=staged,
+        reflections=len(reflections),
+        candidates=synthesized,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -757,6 +906,11 @@ def main(argv: list[str] | None = None) -> int:
         "--config",
         default=str(Path(__file__).resolve().parent / "config.yaml"),
     )
+    parser.add_argument(
+        "--gh-repo",
+        default=None,
+        help="owner/repo for the standing failure alarm (default: gh's own resolution)",
+    )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
 
@@ -774,8 +928,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     llm_url = _resolve_llm_url(args.llm_url, cfg)
     model = args.model or cfg.get("llm_model") or DEFAULT_LLM_MODEL
+    state_path = _expand(
+        os.environ.get("RALPH_DREAM_META_STATE_PATH")
+        or cfg.get("meta_state_path")
+        or DEFAULT_META_STATE_PATH
+    )
 
-    staged = run_meta_reflect(
+    result = run_meta_reflect(
         db_path,
         wiki_dir,
         llm_url,
@@ -784,8 +943,33 @@ def main(argv: list[str] | None = None) -> int:
         min_reflections=args.min_reflections,
         max_candidates=args.max_candidates,
     )
-    print(f"Staged {staged} wiki candidate(s) at {wiki_dir}/_candidates.jsonl")
-    return 0
+    print(
+        f"Staged {result.staged} wiki candidate(s) at "
+        f"{wiki_dir}/_candidates.jsonl [{result.outcome}]"
+    )
+
+    # GH-2159: record every terminal outcome, then alarm on the one defect.
+    # Both are best-effort by construction — neither may fail the run it
+    # describes — so the exit code is the outcome's, never the record's.
+    exit_code = 1 if result.failed else 0
+    dream_health.write_run_state(
+        state_path,
+        outcome=result.outcome,
+        exit_code=exit_code,
+        mode="weekly",
+        reason=result.reason,
+        log=log,
+        reflections=result.reflections,
+        candidates=result.candidates,
+        staged=result.staged,
+    )
+    if result.failed:
+        emit_meta_failure_issue(
+            reflections=result.reflections,
+            state_path=state_path,
+            repo=args.gh_repo,
+        )
+    return exit_code
 
 
 if __name__ == "__main__":
