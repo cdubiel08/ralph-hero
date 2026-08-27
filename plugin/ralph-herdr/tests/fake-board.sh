@@ -38,6 +38,11 @@
 #                        GH-1807 name envelope (feat/N-fake-issue + its
 #                        legacyBranch) — the spawn path's branch source
 #   move N STATE         move.json, else a bare success line
+#   peer N …             peer.<N>.json, then peer.json, else a canned
+#                        resolved envelope (feat-N-fake-issue-01) — the
+#                        GH-1918 resolver peer-msg.sh delegates to; the
+#                        none/ambiguous shapes are per-issue fixtures with
+#                        peer.<N>.rc=1
 #   help …               help.txt (RAW text) — ABSENT prints a default that
 #                        INCLUDES the `  answer NNN` verb line; a help.txt
 #                        without it models a board CLI predating the verb
@@ -152,6 +157,22 @@ case "${1-} ${2-}" in
   "move "*)
     emit_fixture move || printf '#%s moved to %s (fake)\n' "${2-}" "${3-}"
     key="move"
+    ;;
+  "peer "*)
+    # The GH-1918 resolver peer-msg.sh delegates to. Default is a CANNED
+    # resolved envelope consistent with the name fixture's grammar — same
+    # reasoning as `name`: the subject is that callers READ board.ts's
+    # answer, never re-derive the prefix rule. none/ambiguous shapes come
+    # from per-issue fixtures (peer.<N>.json + peer.<N>.rc=1, matching
+    # board.ts's exit-1-on-unresolved).
+    emit_fixture "peer.${2-}" peer ||
+      printf '{"number":%s,"peerPrefix":"feat-%s-fake-issue","kind":"resolved","address":"feat-%s-fake-issue-01"}\n' \
+        "${2-0}" "${2-0}" "${2-0}"
+    if [ -n "$FIX" ] && [ -f "$FIX/peer.${2-}.rc" ]; then
+      key="peer.${2-}"
+    else
+      key="peer"
+    fi
     ;;
   "release "*)
     # Per-issue first, so one fixtures dir can model a release that lands for
