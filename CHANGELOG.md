@@ -19,6 +19,29 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Added
 
+- **`board inbox` — the human's single surface, two tiers (GH-2180, unit D of
+  #2176)** — one walk over the four human queues: Human Needed decisions (each
+  carrying the first line of its latest `**Decision needed**` comment), tend
+  proposals, Intake approvals (verbs honest about the readiness bar — a row
+  missing Priority/Estimate renders the field step before `board move N
+  backlog`), and the deliver-blocked rows only a human clears
+  (`convergence-stalled`, `no-pr`). Admission is by disposition, in one
+  declaration: a reason enters only if a human verb disposes it — the windowed
+  self-clearing reasons, `deferred` (probe-budget backoff), and
+  `reviewer-rate-limited` (no verb, no computable expiry) are **counted as
+  withheld and named**, never silently dropped (the GH-2108 rule). The
+  disposability invariant is structural: every row carries a literal verb,
+  pinned by a test over every category. `--digest` is Tier 2 (GH-1553/1555
+  restored on v2 primitives): completions since the last mark
+  (machine-local stamp under `~/.ralph/inbox/`, atomically written) plus a
+  `pushWorthy` verdict computed **before** any stamp write and keyed on the
+  local calendar date — "at most one push a day" is the invariant, zero is
+  legal; `--mark` closes the window, and the mark **is** Tier 2's expiry.
+  One row per issue, precedence decisions > proposals > approvals >
+  deliver-blocked. Rides the shared item cache like `brief`; probes OFF (an
+  inbox is a glance, not a gate run); a failed decision-trail read degrades
+  the row's text, never the row.
+
 - **`board setup` adds a missing Workflow State option itself — the manual UI
   step is gone (GH-2127)** — the premise it rested on ("the API cannot edit an
   existing field's option set") was disproven in GH-2117 and verified live.

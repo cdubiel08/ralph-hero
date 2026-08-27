@@ -7156,6 +7156,285 @@ export function depsUnwiredMap(
 }
 
 // ---------------------------------------------------------------------------
+// Inbox (GH-2180, unit D of #2176) — the single place for a human's attention.
+//
+// One walk over the four human queues: Human Needed (decisions), tend
+// proposals, Intake approvals, and the deliver-queue blocked rows only a
+// human clears. Board as the only store — the inbox holds nothing of its own;
+// every row is derived from state another surface already writes, so there is
+// no inbox state to drift. Two tiers per the 2026-08-26 design (decision 7):
+// Tier 1 is the interrupt-worthy decision queue below; Tier 2 is the digest
+// (`--digest`), completions batched behind a machine-local stamp.
+//
+// THE invariant (design §2.7): nothing enters either tier without a
+// disposition verb or an expiry. Tier 1 enforces it by construction — every
+// row carries `verb`, a literal command, and the test suite iterates every
+// category asserting it non-empty. Tier 2's expiry is the mark itself: each
+// completion enters exactly one digest window and then ages out of it.
+// ---------------------------------------------------------------------------
+
+export type InboxQueueKind = "decision" | "proposal" | "approval" | "deliver-blocked";
+
+export interface InboxRow {
+  number: number;
+  title: string;
+  queue: InboxQueueKind;
+  /** Ordering input, oldest first (nulls last) — the queue's own timestamp:
+   *  updatedAt for decisions, the proposal's `at`, createdAt for approvals,
+   *  the delta's own time for deliver rows. */
+  at: string | null;
+  priority: string | null;
+  /** Approvals only — the readiness bar's other half. */
+  estimate?: string | null;
+  /** deliver-blocked only; honestly null on no-pr rows. */
+  pr?: number | null;
+  /** deliver-blocked only. */
+  reason?: DeliverReason;
+  /** Decision rows: first line of the why in the latest `**Decision needed**`
+   *  comment — null when the trail could not be read or held none, which the
+   *  renderer says out loud rather than leaving blank. A missing detail never
+   *  drops the row: rows derive from STATE, detail is decoration. */
+  detail: string | null;
+  /** The literal disposition command. NEVER empty — the invariant. */
+  verb: string;
+}
+
+export interface InboxTier1 {
+  decisions: InboxRow[];
+  proposals: InboxRow[];
+  approvals: InboxRow[];
+  deliverBlocked: InboxRow[];
+  /** Deliver-blocked rows NOT admitted, counted by reason — the GH-2108 rule:
+   *  an operator must be able to tell "nothing held back" from "the reader
+   *  dropped it". A new DeliverReason lands here visibly, never invisibly. */
+  withheld: Array<{ reason: DeliverReason; count: number }>;
+  count: number;
+}
+
+/** Tier 1 admission for deliver-blocked rows, in one declaration: a reason
+ *  enters the inbox only if a human VERB disposes it. Excluded, by the
+ *  invariant rather than by taste: the windowed self-clearing reasons
+ *  (local-session-active, settling, retry-window, marker-current — their
+ *  `windowExpiresAt` IS their disposition), `deferred` (probe-budget backoff;
+ *  the next deliver pass re-probes with no human in the loop), and
+ *  `reviewer-rate-limited`, which CANNOT enter: it has no disposing verb and
+ *  no computable expiry (the quota reset instant is the reviewer's secret),
+ *  so admitting it would put a row in the decision queue nothing can dispose.
+ *  `no-pr`'s population is rollup-advanced epic parents and human-placed
+ *  items (see classifyDeliver) — nothing but a human ever clears one. */
+export const INBOX_DELIVER_VERBS: Partial<Record<DeliverReason, (n: number) => string>> = {
+  "convergence-stalled": (n) => `board move ${n} in-progress --why "<rework direction>"`,
+  "no-pr": (n) => `board move ${n} done --why "<review verdict>"`,
+};
+
+/** First line of the why in the LATEST escalation comment — the
+ *  phone-answerable line the C9 shape asks the escalator to lead with.
+ *  transition() writes `**Decision needed** (\`board\` by \`holder\`):\n\n<why>`,
+ *  so the text after the header's first newline, trimmed, first line, is the
+ *  why's lead. Null when no comment matches — the caller renders that as
+ *  unavailable, never as an empty string pretending to be a decision. */
+export function latestEscalationWhy(comments: string[]): string | null {
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const c = comments[i] ?? "";
+    if (!ESCALATION_EVIDENCE.test(c)) continue;
+    const nl = c.indexOf("\n");
+    const rest = nl >= 0 ? c.slice(nl + 1).trim() : "";
+    const first = rest.split("\n")[0]?.trim() ?? "";
+    return first || null;
+  }
+  return null;
+}
+
+/** Pure Tier 1 classification. One row per issue via a seen-set with
+ *  precedence decisions > proposals > approvals > deliver-blocked — a closure
+ *  proposal outranks approving the same Intake item ("should this exist"
+ *  precedes "approve it"), and an escalation outranks everything (it is the
+ *  one row a human already asked for by name). */
+export function classifyInbox(
+  open: QueueItemCore[],
+  tend: Pick<TendQueueResult, "queue">,
+  deliver: Pick<DeliverQueueResult, "blocked">,
+  /** number → why-line for Human Needed items whose trails were read; a
+   *  missing or null entry degrades `detail`, never the row. */
+  decisionWhys: Map<number, string | null> = new Map(),
+): InboxTier1 {
+  const byNumber = new Map(open.map((i) => [i.number, i]));
+  const seen = new Set<number>();
+  const oldestFirst = (a: InboxRow, b: InboxRow): number => {
+    if (a.at === null && b.at === null) return a.number - b.number;
+    if (a.at === null) return 1;
+    if (b.at === null) return -1;
+    return a.at < b.at ? -1 : a.at > b.at ? 1 : a.number - b.number;
+  };
+
+  const decisions: InboxRow[] = [];
+  for (const i of open) {
+    if (i.state !== "Human Needed" || seen.has(i.number)) continue;
+    seen.add(i.number);
+    decisions.push({
+      number: i.number,
+      title: i.title,
+      queue: "decision",
+      at: i.updatedAt ?? null,
+      priority: i.priority ?? null,
+      detail: decisionWhys.get(i.number) ?? null,
+      verb: `board answer ${i.number} -m "<the decision>"`,
+    });
+  }
+
+  const proposals: InboxRow[] = [];
+  for (const r of tend.queue) {
+    if (r.category !== "proposed" || seen.has(r.number)) continue;
+    seen.add(r.number);
+    proposals.push({
+      number: r.number,
+      title: r.title,
+      queue: "proposal",
+      at: r.at,
+      priority: byNumber.get(r.number)?.priority ?? null,
+      detail: null,
+      verb: `board resolve ${r.number} --accept | --reject -m "<why not>"`,
+    });
+  }
+
+  const approvals: InboxRow[] = [];
+  for (const i of open) {
+    if (i.state !== "Intake" || seen.has(i.number)) continue;
+    seen.add(i.number);
+    // The verb is honest about the readiness bar (GH-2077): approval REFUSES
+    // without Priority and Estimate, so a row missing one renders the field
+    // step first — the same facts backlogReadinessGaps enforces at the edge.
+    const steps: string[] = [];
+    if (!i.priority) steps.push(`board priority ${i.number} <P0..P3>`);
+    if (!i.estimate) steps.push(`board estimate ${i.number} <XS..XL>`);
+    steps.push(`board move ${i.number} backlog`);
+    approvals.push({
+      number: i.number,
+      title: i.title,
+      queue: "approval",
+      at: i.createdAt ?? null,
+      priority: i.priority ?? null,
+      estimate: i.estimate ?? null,
+      detail: `reject: board cancel ${i.number} -m "<why>"`,
+      verb: steps.join(" && "),
+    });
+  }
+
+  const deliverBlocked: InboxRow[] = [];
+  const withheldCounts = new Map<DeliverReason, number>();
+  for (const r of deliver.blocked) {
+    const verb = INBOX_DELIVER_VERBS[r.reason];
+    if (!verb) {
+      withheldCounts.set(r.reason, (withheldCounts.get(r.reason) ?? 0) + 1);
+      continue;
+    }
+    if (seen.has(r.number)) continue;
+    seen.add(r.number);
+    deliverBlocked.push({
+      number: r.number,
+      title: r.title,
+      queue: "deliver-blocked",
+      at: r.deltaAt ?? null,
+      priority: byNumber.get(r.number)?.priority ?? null,
+      pr: r.pr ?? null,
+      reason: r.reason,
+      detail:
+        r.reason === "no-pr"
+          ? `no open PR at this item — a rollup-advanced epic awaiting close-out, or demote: board move ${r.number} in-progress --why "<why>"`
+          : (r.detail ?? r.convergence ?? null),
+      verb: verb(r.number),
+    });
+  }
+
+  decisions.sort(oldestFirst);
+  proposals.sort(oldestFirst);
+  approvals.sort(oldestFirst);
+  deliverBlocked.sort(oldestFirst);
+  const withheld = [...withheldCounts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => (a.reason < b.reason ? -1 : 1));
+  return {
+    decisions,
+    proposals,
+    approvals,
+    deliverBlocked,
+    withheld,
+    count: decisions.length + proposals.length + approvals.length + deliverBlocked.length,
+  };
+}
+
+export interface InboxDigestFacts {
+  /** EFFECTIVE window start — max(stamp, the audit window's own floor). A
+   *  20-day-old stamp silently capped to the 14-day read would otherwise
+   *  report a window it did not search. */
+  since: string;
+  /** The stamp as read (echoed so a reader can audit the window derivation);
+   *  null = absent or unreadable, which fall back to a 24h window — the
+   *  over-notify direction, correct for a digest. */
+  stamp: string | null;
+  /** Keyed on the LOCAL calendar date — the human's morning, not UTC's. */
+  markedToday: boolean;
+  /** Computed BEFORE any stamp write: worth a push only when unmarked today
+   *  and something happened. Zero pushes on a quiet day is legal — "at most
+   *  one push a day" is the invariant, not a quota to fill. */
+  pushWorthy: boolean;
+  completions: Array<{ number: number; title: string; closedAt: string | null }>;
+  counts: {
+    tier1: number;
+    decisions: number;
+    proposals: number;
+    approvals: number;
+    deliverBlocked: number;
+    completions: number;
+  };
+}
+
+/** Pure digest derivation (Tier 2). The stamp is machine-local, so two hosts
+ *  running rotas produce two pushes a day — an honest limit of a local stamp,
+ *  stated rather than solved (the board stays the only shared store). */
+export function digestFacts(
+  stampAt: string | null,
+  now: Date,
+  audit: { since: string; items: Array<{ number: number; title: string; closedAt: string | null }> },
+  tier1: Pick<InboxTier1, "count" | "decisions" | "proposals" | "approvals" | "deliverBlocked">,
+): InboxDigestFacts {
+  const stampMs = stampAt ? new Date(stampAt).getTime() : NaN;
+  const auditMs = new Date(audit.since).getTime();
+  const sinceMs = Number.isFinite(stampMs)
+    ? Math.max(stampMs, Number.isFinite(auditMs) ? auditMs : stampMs)
+    : now.getTime() - 86_400_000;
+  const sameLocalDay = (a: Date, b: Date): boolean =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const completions = audit.items.filter((i) => {
+    const t = i.closedAt ? new Date(i.closedAt).getTime() : NaN;
+    return Number.isFinite(t) && t >= sinceMs;
+  });
+  const markedToday = Number.isFinite(stampMs) && sameLocalDay(new Date(stampMs), now);
+  return {
+    since: new Date(sinceMs).toISOString(),
+    stamp: Number.isFinite(stampMs) ? stampAt : null,
+    markedToday,
+    pushWorthy: !markedToday && (tier1.count > 0 || completions.length > 0),
+    completions,
+    counts: {
+      tier1: tier1.count,
+      decisions: tier1.decisions.length,
+      proposals: tier1.proposals.length,
+      approvals: tier1.approvals.length,
+      deliverBlocked: tier1.deliverBlocked.length,
+      completions: completions.length,
+    },
+  };
+}
+
+/** The digest stamp's home — machine-local under RALPH_HOME, one file per
+ *  board, written atomically (last-write-wins is the right level: a stamp is
+ *  a cursor, not a lock). */
+export function inboxStampPath(cfg: { owner: string; repo: string }): string {
+  return join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "inbox", `digest-${cfg.owner}-${cfg.repo}.json`);
+}
+
+// ---------------------------------------------------------------------------
 // Create / link / dep
 // ---------------------------------------------------------------------------
 
@@ -10420,6 +10699,24 @@ const HELP = `board — the ralph v2 board CLI (sole sanctioned mutation path)
 reads
   brief [--json]              ONE orientation read: next head, queue counts,
                               deliver/tend counts, local session leases
+  inbox [--json] [--digest [--mark]]
+                              the human's single surface (GH-2180): one walk
+                              over the four human queues — Human Needed
+                              decisions (with the escalation's own why-line),
+                              tend proposals, Intake approvals, and the
+                              deliver-blocked rows only a human clears
+                              (convergence-stalled, no-pr; self-clearing and
+                              wait-state rows are counted as withheld, never
+                              silently dropped). Every row names its literal
+                              disposition verb — the invariant. --digest adds
+                              Tier 2: completions since the last mark (stamp
+                              under ~/.ralph/inbox/, machine-local) plus a
+                              pushWorthy verdict; --mark closes the window —
+                              the mark IS Tier 2's expiry, and "at most one
+                              push a day" keys on the local calendar date.
+                              A lane/orientation read, NOT a viewer-poll
+                              surface: a cockpit view owns its cadence or
+                              reuses the item cache
   who [--json]                who is driving what on this machine — the
                               per-(worktree, unit) leases, zero API. A lock
                               whose checkout was deleted reads DEAD, never
@@ -10801,6 +11098,8 @@ export const VERB_HELP: Record<string, string> = {
   next: "board next [--json] [--fresh]\n  The ranked work queue's head. Empty is typed (--json: diagnosis).\n  example: board next",
   frontier: "board frontier [--json]\n  next's eligible queue re-projected with per-item explanations (fleet feed).\n  example: board frontier --json",
   brief: "board brief [--json]\n  One orientation read: next head, queue counts, deliver/tend counts, local leases.\n  example: board brief",
+  inbox:
+    "board inbox [--json] [--digest [--mark]]\n  The human's single surface: Human Needed decisions, tend proposals, Intake approvals,\n  and human-clearable deliver-blocked rows, each with its literal disposition verb.\n  --digest adds completions since the last mark + a pushWorthy verdict; --mark stamps the window.\n  example: board inbox --digest",
   who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  A lease whose worktree was deleted prints DEAD, not STALE: nothing can refresh it, so it is\n  not aging toward anything. `board reap-leases` clears those.\n  example: board who",
   "reap-leases": "board reap-leases [--apply] [--json]\n  Remove local lock files whose worktree no longer exists. Dry run unless --apply. Zero API.\n  The predicate is the missing CHECKOUT, never the lock's age: a lease is what deliver-queue\n  reads for local-session-active, so a clock may not be allowed to delete a live one. Any read\n  failure that is not ENOENT leaves the lock alone.\n  example: board reap-leases --apply",
   list: "board list [--state <s>] [--json]\n  Items by state. Full-board scan — prefer next/brief for orientation.\n  example: board list --state human",
@@ -10850,7 +11149,7 @@ interface ParsedArgs {
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
-  "intake", "backlog", "dismiss", "to-human",
+  "intake", "backlog", "dismiss", "to-human", "digest", "mark",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
@@ -11005,7 +11304,7 @@ export function run(argv: string[], ctx: Ctx): number {
   // read; REST /rate_limit is free and its budget is measurably independent
   // of the GraphQL one (GH-1804's measurement). Fails OPEN on an unreadable
   // budget — a transient outage must never read as starvation (GH-1817).
-  if (["next", "frontier", "deliver-queue", "tend-queue", "dep-candidates", "brief"].includes(cmd)) {
+  if (["next", "frontier", "deliver-queue", "tend-queue", "dep-candidates", "brief", "inbox"].includes(cmd)) {
     const floor = Number(process.env.RALPH_GH_BUDGET_FLOOR ?? 500);
     if (Number.isFinite(floor) && floor > 0) {
       const r = ctx.exec(["gh", "api", "--hostname", ctx.cfg.host, "rate_limit"]);
@@ -11103,6 +11402,113 @@ export function run(argv: string[], ctx: Ctx): number {
         if (foreign) withheld.push(`${foreign} on another repo's checkout`);
         if (dead) withheld.push(`${dead} dead (worktree deleted — \`board reap-leases\` clears them)`);
         if (withheld.length) out(`  leases withheld: ${withheld.join(", ")} — \`board who\` lists every lease on this machine`);
+      }
+      if (cacheNote(full)) out(`  ${cacheNote(full)}`);
+      return 0;
+    }
+
+    case "inbox": {
+      // The human's single surface (GH-2180): one walk over the four human
+      // queues. A lane/orientation read on the shared item cache — NOT a
+      // viewer-poll surface; a cockpit view owns its own cadence (GH-2062's
+      // lesson) or reuses the cache. Probes are OFF like brief's: an inbox is
+      // a glance, not a gate run.
+      if (flags.mark && !flags.digest)
+        throw new UsageError(`inbox --mark requires --digest — the mark closes a digest window it must first compute`);
+      const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+      const own = full.open;
+      const tq = tendQueue(ctx);
+      const dq = deliverQueue(ctx, parseDeliverOpts(), null, null);
+      // Decision text: comments-only batch over the Human Needed items alone
+      // (bounded — escalations are few by construction). A trail that came
+      // back empty degrades the row's detail to null, never drops the row;
+      // a THROWN read propagates as the typed transport failure it is —
+      // an inbox rendering every decision with no text would look healthy
+      // while hiding that nothing was read.
+      const hn = own.filter((i) => i.state === "Human Needed").map((i) => i.number);
+      const whys = new Map<number, string | null>();
+      if (hn.length > 0) {
+        const trails = fetchCommentTrails(ctx, hn);
+        for (const n of hn) whys.set(n, latestEscalationWhy(trails.get(n) ?? []));
+      }
+      const tier1 = classifyInbox(own, tq, dq, whys);
+      let digest: InboxDigestFacts | null = null;
+      let marked: string | null = null;
+      if (flags.digest) {
+        const stampPath = inboxStampPath(ctx.cfg);
+        let stampAt: string | null = null;
+        try {
+          const parsed = JSON.parse(readFileSync(stampPath, "utf8"));
+          if (typeof parsed?.at === "string") stampAt = parsed.at;
+        } catch {
+          // Absent or unreadable stamp → the 24h fallback window inside
+          // digestFacts — the over-notify direction, correct for a digest.
+        }
+        // recentDone re-reads the closed window tendQueue already fetched in
+        // this invocation — a bounded double read, accepted (brief's
+        // pay-full-price precedent) over threading tend's internals out here.
+        digest = digestFacts(stampAt, ctx.now(), recentDone(ctx), tier1);
+        if (flags.mark) {
+          // Always stamp, pushWorthy or not: an empty-inbox rota run still
+          // closes the day's window. pushWorthy was computed above, BEFORE
+          // this write, so the stamp can never talk itself out of a push.
+          marked = ctx.now().toISOString();
+          mkdirSync(join(stampPath, ".."), { recursive: true });
+          atomicWrite(stampPath, JSON.stringify({ at: marked }) + "\n");
+        }
+      }
+      if (flags.json) {
+        json({ tier1, digest, marked, cache: cacheFacts(full) });
+        return 0;
+      }
+      const ago = (at: string | null): string => {
+        if (!at) return "";
+        const ms = ctx.now().getTime() - new Date(at).getTime();
+        if (!Number.isFinite(ms) || ms < 0) return "";
+        const d = Math.floor(ms / 86_400_000);
+        if (d > 0) return ` [${d}d]`;
+        const h = Math.floor(ms / 3_600_000);
+        return h > 0 ? ` [${h}h]` : ` [<1h]`;
+      };
+      out(
+        tier1.count === 0
+          ? `inbox: empty — no decisions waiting`
+          : `inbox: ${tier1.count} waiting — ${tier1.decisions.length} decisions, ${tier1.proposals.length} proposals, ` +
+              `${tier1.approvals.length} approvals, ${tier1.deliverBlocked.length} deliver-blocked`,
+      );
+      const section = (name: string, rows: InboxRow[]) => {
+        if (rows.length === 0) return;
+        out(`${name}:`);
+        for (const r of rows) {
+          const pri = r.priority ? ` ${r.priority}` : "";
+          const pr = r.pr ? ` PR #${r.pr}` : "";
+          const reason = r.reason ? ` (${r.reason})` : "";
+          out(`  #${r.number}${pri}${ago(r.at)}${pr}${reason} ${r.title}`);
+          if (r.queue === "decision")
+            out(`      ${r.detail ?? "(decision text unavailable — see the issue's Decision needed comment)"}`);
+          else if (r.detail) out(`      ${r.detail}`);
+          out(`      → ${r.verb}`);
+        }
+      };
+      section("decisions", tier1.decisions);
+      section("proposals", tier1.proposals);
+      section("approvals", tier1.approvals);
+      section("deliver-blocked", tier1.deliverBlocked);
+      if (tier1.withheld.length > 0)
+        out(
+          `withheld: ${tier1.withheld.map((w) => `${w.count} ${w.reason}`).join(", ")} — ` +
+            `self-clearing or waiting, no human verb disposes them (\`board deliver-queue\` lists them)`,
+        );
+      if (digest) {
+        out(
+          `digest since ${digest.since}: ${digest.completions.length} completions` +
+            (digest.stamp ? "" : " (no stamp — 24h window)"),
+        );
+        for (const c of digest.completions) out(`  #${c.number} ${c.closedAt ?? ""} ${c.title}`);
+        out(
+          `push: ${digest.pushWorthy ? "worthy" : "not worthy"} (${digest.markedToday ? "already marked today" : "unmarked today"}` +
+            `${digest.pushWorthy || digest.markedToday ? "" : ", nothing new"})` + (marked ? `; marked ${marked}` : ""),
+        );
       }
       if (cacheNote(full)) out(`  ${cacheNote(full)}`);
       return 0;
