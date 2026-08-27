@@ -78,6 +78,12 @@
                     "fieldValuesTruncated": {
                       "type": "boolean"
                     },
+                    "itemId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "claim": {
                       "anyOf": [
                         {
@@ -277,6 +283,12 @@
                   "fieldValuesTruncated": {
                     "type": "boolean"
                   },
+                  "itemId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "claim": {
                     "anyOf": [
                       {
@@ -471,6 +483,12 @@
                   },
                   "fieldValuesTruncated": {
                     "type": "boolean"
+                  },
+                  "itemId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "claim": {
                     "anyOf": [

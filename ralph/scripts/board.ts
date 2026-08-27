@@ -272,6 +272,11 @@ export interface QueueItemCore {
    *  blockage to clear instead of implementing the root wholesale. */
   childrenBlocked?: number[];
   fieldValuesTruncated: boolean; // fail closed: state/claim reads unreliable = not eligible
+  /** Project-item id in OUR project — what a field write addresses (GH-2130).
+   *  A plain field on the walk document, so it costs nothing (cost is per
+   *  CONNECTION, GH-1803). Optional so pure-ranking fixtures stay terse; the
+   *  bulk field write fails closed on its absence rather than guessing. */
+  itemId?: string | null;
   claim: Claim | null;
   claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited)
   /** Defer mark ("the precondition is not met") — a deferred item never
@@ -4538,6 +4543,7 @@ function toQueueItem(
   fvTruncated: boolean,
   self: string,
   select: QueueSelect,
+  itemId: string | null = null,
 ): QueueItemAny {
   // Only read the connection the query actually asked for: `c.blockedBy` is
   // undefined on a lean read, and treating that as "no blockers" is the exact
@@ -4567,6 +4573,7 @@ function toQueueItem(
     parentNumber:
       c.parent && c.parent.repository?.nameWithOwner?.toLowerCase() === self ? c.parent.number : null,
     fieldValuesTruncated: fvTruncated,
+    itemId,
     claim: parseClaim(fv[CLAIM_FIELD]),
     claimRaw: fv[CLAIM_FIELD] ?? null,
     defer: parseDefer(fv[DEFER_FIELD]),
@@ -4662,7 +4669,7 @@ function walkOwnOpen(ctx: Ctx, select: QueueSelect): ItemCacheEntry {
                 ${queueContentFragment(select)}
                 projectItems(first: ${PROJECT_ITEMS_PAGE}) {
                   pageInfo { hasNextPage }
-                  nodes { isArchived project { id } ${FIELD_VALUES_FRAGMENT} }
+                  nodes { id isArchived project { id } ${FIELD_VALUES_FRAGMENT} }
                 }
               }
             }
@@ -4694,7 +4701,7 @@ function walkOwnOpen(ctx: Ctx, select: QueueSelect): ItemCacheEntry {
           continue;
         }
         items.push(
-          toQueueItem(c, fieldValueMap(item.fieldValues), fieldValuesTruncated(item.fieldValues), self, select),
+          toQueueItem(c, fieldValueMap(item.fieldValues), fieldValuesTruncated(item.fieldValues), self, select, item.id ?? null),
         );
       }
       if (!page.pageInfo.hasNextPage) break;
@@ -5034,7 +5041,7 @@ function walkFullOnce(
           scan.archivedOpen++;
           continue;
         }
-        items.push(toQueueItem(c, fv, fieldValuesTruncated(n.fieldValues), self, select));
+        items.push(toQueueItem(c, fv, fieldValuesTruncated(n.fieldValues), self, select, n.id ?? null));
       }
       if (!page.pageInfo.hasNextPage) break;
       after = page.pageInfo.endCursor;
@@ -7245,6 +7252,21 @@ function setAdvisoryField(ctx: Ctx, number: number, fieldName: string, value: st
   // against it until some unrelated op happened to refresh. `--clear`
   // validating nothing was the wrong reason to skip the read.
   const cache = mutationCache(ctx, [[fieldName]], [], [fieldName]);
+  writeAdvisoryValue(ctx, cache, itemId, fieldName, value);
+  return fetchIssue(ctx, number);
+}
+
+/** The one advisory-field write: assert against the live schema, then set or
+ *  clear. Extracted so the list-arity path (GH-2130) is the SAME writer called
+ *  N times behind one resolution and one `mutationCache` — never a second
+ *  implementation of the guard (the GH-1843 drift shape Decision 2 forecloses). */
+function writeAdvisoryValue(
+  ctx: Ctx,
+  cache: BoardCache,
+  itemId: string,
+  fieldName: string,
+  value: string | null,
+): void {
   if (value === null) {
     // Refuse BEFORE clearing: this is the destructive direction.
     assertAdvisorySingleSelect(cache, fieldName);
@@ -7253,7 +7275,6 @@ function setAdvisoryField(ctx: Ctx, number: number, fieldName: string, value: st
     assertAdvisoryOption(cache, fieldName, value);
     setSingleSelect(ctx, cache, itemId, fieldName, value);
   }
-  return fetchIssue(ctx, number);
 }
 
 export function setPriority(ctx: Ctx, number: number, value: string | null): Issue {
@@ -7262,6 +7283,115 @@ export function setPriority(ctx: Ctx, number: number, value: string | null): Iss
 
 export function setEstimate(ctx: Ctx, number: number, value: string | null): Issue {
   return setAdvisoryField(ctx, number, ESTIMATE_FIELD, value);
+}
+
+/** The run a list-arity field write actually performed (GH-2130). Shape
+ *  follows PruneApplyResult; `applied` names the numbers written, because a
+ *  breaker-aborted run must be reportable item by item, never inferred. */
+export interface BulkFieldResult {
+  field: string;
+  value: string | null;
+  attempted: number;
+  updated: number;
+  applied: number[];
+  failed: string[];
+  aborted: boolean;
+}
+
+/** A resolved bulk target: the number as typed, and what the walk knows. */
+interface BulkTarget {
+  number: number;
+  itemId: string;
+  title: string;
+}
+
+/** List arity on the advisory field verbs (GH-2130, record Decisions 2-5).
+ *
+ *  Resolution is the OPEN WALK, not N fetchIssue point reads: the measured
+ *  waste in a shell loop is 12 of 14 points spent re-reading the board per
+ *  item, and the walk returns every open item's project-item id in one
+ *  connection at a cost flat in N (the id is a field, not a connection —
+ *  GH-1803's cost model; probed, not assumed). The price of that primitive is
+ *  stated by GH-1814: it sees open, on-board, unarchived items only — so any
+ *  target outside that set is a TYPED REFUSAL naming the number, never a
+ *  silent skip, and it lands BEFORE the first write. Partial application from
+ *  a typo is the failure mode here; the single-number form (which resolves
+ *  via fetchIssue and still works on a closed item) is the named remedy.
+ *
+ *  The bulk path owns resolution, iteration and reporting — NOTHING else.
+ *  Option validation, the schema read and the write itself are the same
+ *  `mutationCache` + `writeAdvisoryValue` the single verb uses: N values
+ *  judged against ONE live read of the same truth (the guard's best case).
+ *  An explicit list is applied whole or not at all, so a list longer than
+ *  --limit refuses rather than truncating — prune SLICES to --limit because
+ *  its computed set legitimately spans runs; a hand-approved list has no
+ *  "rest for the next run", only silent partial application. */
+export function bulkSetAdvisoryField(
+  ctx: Ctx,
+  numbers: number[],
+  fieldName: string,
+  value: string | null,
+  limit: number = PRUNE_DEFAULT_LIMIT,
+): { result: BulkFieldResult; targets: BulkTarget[] } {
+  const dupes = [...new Set(numbers.filter((n, i) => numbers.indexOf(n) !== i))];
+  if (dupes.length > 0) {
+    // A duplicate in a hand-typed list is a typo signal ("2105,2105" for
+    // "2105,2106") — the write would be harmlessly idempotent, but the list
+    // is not the one the operator meant to approve.
+    throw new UsageError(`duplicate issue number(s) in list: ${dupes.map((n) => `#${n}`).join(", ")}`);
+  }
+  if (numbers.length > limit) {
+    throw new UsageError(
+      `${numbers.length} targets exceed --limit ${limit} — an explicit list is applied ` +
+        `whole or not at all (raise --limit or split the list)`,
+    );
+  }
+  const open = listOwnOpenItems(ctx, QUEUE_SELECT_MINIMAL);
+  const byNumber = new Map(open.map((i) => [i.number, i]));
+  const resolved: BulkTarget[] = [];
+  const unresolved: number[] = [];
+  for (const n of numbers) {
+    const item = byNumber.get(n);
+    // A row without an item id fails closed with the rest: "the walk did not
+    // say" must never resolve to a write target.
+    if (!item || !item.itemId) unresolved.push(n);
+    else resolved.push({ number: n, itemId: item.itemId, title: item.title });
+  }
+  if (unresolved.length > 0) {
+    throw new RefusalError(
+      `cannot resolve ${unresolved.map((n) => `#${n}`).join(", ")} — list targets must be ` +
+        `open, on this board, and not archived (a closed or archived target is invisible to ` +
+        `the open walk). Nothing was written. For a closed board item use the single form: ` +
+        `board ${fieldName === PRIORITY_FIELD ? "priority" : "estimate"} NNN ${value ?? "--clear"}`,
+    );
+  }
+  // One live schema read validates every value in the run (the single verb
+  // pays this per write). Asserted BEFORE the first write so a bad option is
+  // a clean refusal, not a partial application.
+  const cache = mutationCache(ctx, [[fieldName]], [], [fieldName]);
+  if (value === null) assertAdvisorySingleSelect(cache, fieldName);
+  else assertAdvisoryOption(cache, fieldName, value);
+  const applied: number[] = [];
+  const r = applyWithBreaker(
+    resolved,
+    (t) => `#${t.number}`,
+    (t) => {
+      writeAdvisoryValue(ctx, cache, t.itemId, fieldName, value);
+      applied.push(t.number);
+    },
+  );
+  return {
+    result: {
+      field: fieldName,
+      value,
+      attempted: r.attempted,
+      updated: r.succeeded,
+      applied,
+      failed: r.failed,
+      aborted: r.aborted,
+    },
+    targets: resolved,
+  };
 }
 
 /** Park / unpark an item (audit B8): "the precondition is not met" as a typed
@@ -8170,44 +8300,65 @@ export interface RemovableItem {
   label: string;
 }
 
-/** The removal loop, bounded twice: by the caller's slice (--limit) and by a
- *  consecutive-failure circuit breaker. Extracted from the CLI case so it can
- *  be tested directly — the two bugs this replaces were both reachable only
- *  through the dispatch, which had no test.
- *
- *  Shared by `prune` and `sweep-non-issues` (GH-2050) deliberately: the two
- *  sweeps disagree about WHAT is safe to remove and must keep disagreeing —
- *  that is why GH-2050 refused to overload prune's predicate — but "how do we
- *  remove a project item, and when do we stop trying" is one answer, and a
- *  second copy of it is a second place for the circuit breaker to rot. */
-export function removeProjectItems(ctx: Ctx, items: RemovableItem[]): PruneApplyResult {
+/** The outcome of a breaker-bounded bulk loop — the run actually performed. */
+export interface BulkApplyOutcome {
+  attempted: number;
+  succeeded: number;
+  failed: string[];
+  aborted: boolean; // stopped early on consecutive failures
+}
+
+/** The one bulk-mutation loop: per-item fault isolation (one failing item must
+ *  not abort a run that is otherwise working) bounded by the consecutive-
+ *  failure circuit breaker, so a rate limit or a revoked scope mid-run cannot
+ *  burn the budget. Shared by `prune`, `sweep-non-issues` and the list-arity
+ *  field writes (GH-2130) deliberately: the callers disagree about WHAT to act
+ *  on and must keep disagreeing, but "when do we stop trying" is one answer,
+ *  and a second copy of it is a second place for the circuit breaker to rot. */
+export function applyWithBreaker<T>(
+  items: T[],
+  label: (item: T) => string,
+  op: (item: T) => void,
+): BulkApplyOutcome {
   const failed: string[] = [];
-  let removed = 0;
+  let succeeded = 0;
   let attempted = 0;
   let consecutive = 0;
-  const projectId = refreshCache(ctx).projectId;
   for (const c of items) {
     attempted++;
     try {
+      op(c);
+      succeeded++;
+      consecutive = 0; // progress resets the breaker
+    } catch (e) {
+      failed.push(`${label(c)} (${(e as Error).message})`);
+      if (++consecutive >= PRUNE_MAX_CONSECUTIVE_FAILURES) {
+        return { attempted, succeeded, failed, aborted: true };
+      }
+    }
+  }
+  return { attempted, succeeded, failed, aborted: false };
+}
+
+/** The removal loop, bounded twice: by the caller's slice (--limit) and by the
+ *  shared breaker above. Extracted from the CLI case so it can be tested
+ *  directly — the two bugs this replaces were both reachable only through the
+ *  dispatch, which had no test. */
+export function removeProjectItems(ctx: Ctx, items: RemovableItem[]): PruneApplyResult {
+  const projectId = refreshCache(ctx).projectId;
+  const r = applyWithBreaker(
+    items,
+    (c) => c.label,
+    (c) =>
       ghGraphQL(
         ctx,
         `mutation($projectId: ID!, $itemId: ID!) {
           deleteProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) { deletedItemId }
         }`,
         { projectId, itemId: c.itemId },
-      );
-      removed++;
-      consecutive = 0; // progress resets the breaker
-    } catch (e) {
-      // Per-item fault isolation, like doctor's fix loops: one unremovable
-      // item must not abort a sweep that is otherwise working.
-      failed.push(`${c.label} (${(e as Error).message})`);
-      if (++consecutive >= PRUNE_MAX_CONSECUTIVE_FAILURES) {
-        return { attempted, removed, failed, aborted: true };
-      }
-    }
-  }
-  return { attempted, removed, failed, aborted: false };
+      ),
+  );
+  return { attempted: r.attempted, removed: r.succeeded, failed: r.failed, aborted: r.aborted };
 }
 
 // ---------------------------------------------------------------------------
@@ -10227,16 +10378,28 @@ mutations
                               --priority is validated against the board's live
                               Priority options; omitting it ranks the item LAST
                               in \`next\` (null sorts after P3)
-  priority NNN <option>       set Priority on an existing item (--clear removes
+  priority NNN[,NNN...] <option>
+                              set Priority on existing item(s) (--clear removes
                               it). Options come from the live field, not a
                               hardcoded P0..P3 — a host repo owns its scheme,
                               and \`next\` orders a custom one by the field's
-                              option ORDER (a trailing digit is the fallback)
-  estimate NNN <option>       set Estimate on an existing item (--clear removes
+                              option ORDER (a trailing digit is the fallback).
+                              A comma list (GH-2130) resolves every target up
+                              front via the open walk and refuses BEFORE any
+                              write if one is unresolvable, closed, archived or
+                              off-board — never a silent skip or a partial
+                              apply. Bounded like prune: --limit (200, an
+                              over-long list REFUSES rather than truncates),
+                              5-consecutive-failure breaker; --json reports the
+                              run performed. No comments posted, same as the
+                              single form.
+  estimate NNN[,NNN...] <option>
+                              set Estimate on existing item(s) (--clear removes
                               it). Same live-option rule as priority — never a
-                              hardcoded XS..XL. Approval (Intake → Backlog)
-                              gates on Priority AND Estimate, so this is how an
-                              intake filing becomes approvable from the CLI
+                              hardcoded XS..XL — and the same list arity.
+                              Approval (Intake → Backlog) gates on Priority AND
+                              Estimate, so this is how an intake filing becomes
+                              approvable from the CLI
   claim NNN [--steal] [--why W]  Backlog/Human Needed/In Review → In Progress; sets
                               Claim. Claiming from In Review is a DEMOTION and
                               requires --why "<the rework>" (GH-2078).
@@ -11371,12 +11534,40 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "priority":
     case "estimate": {
-      const number = requireNumber(positional[0]);
       const value = positional[1];
       if (!flags.clear && !value)
         throw new UsageError(`${cmd} NNN <option> (or --clear) required`);
       if (flags.clear && value)
         throw new UsageError(`--clear takes no ${cmd} value`);
+      // List arity (GH-2130): a comma selects the bulk path; a bare number
+      // keeps the single-item path byte-identical to before.
+      if (String(positional[0] ?? "").includes(",")) {
+        const numbers = String(positional[0])
+          .split(",")
+          .map((s) => requireNumber(s.trim() || undefined, `issue number in list ("${positional[0]}")`));
+        const { result } = bulkSetAdvisoryField(
+          ctx,
+          numbers,
+          cmd === "priority" ? PRIORITY_FIELD : ESTIMATE_FIELD,
+          flags.clear ? null : value!,
+          pruneLimit(flags.limit as string | boolean | undefined),
+        );
+        if (flags.json) {
+          json(result);
+          return result.aborted ? 1 : 0;
+        }
+        for (const n of result.applied) out(`#${n} ${cmd}=${result.value ?? "(none)"}`);
+        for (const f of result.failed) out(`FAILED ${f}`);
+        if (result.aborted) {
+          out(
+            `ABORTED after ${PRUNE_MAX_CONSECUTIVE_FAILURES} consecutive failures — ` +
+              `${numbers.length - result.attempted} item(s) not attempted`,
+          );
+          return 1;
+        }
+        return result.failed.length > 0 ? 1 : 0;
+      }
+      const number = requireNumber(positional[0]);
       const issue =
         cmd === "priority"
           ? setPriority(ctx, number, flags.clear ? null : value!)

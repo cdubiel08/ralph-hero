@@ -131,6 +131,8 @@ export class FakeGh {
   comments: Array<{ body: string }> = [];
   issues = new Map<number, FakeIssue>();
   failNextStateWrite = false; // transport-failure injection
+  /** Item numbers whose field writes fail — breaker tests (GH-2130). */
+  failFieldWrites = new Set<number>();
   failBranchLinkage = false; // GH-1732: the branch-linkage read is unreadable
   /** The `query:` VARIABLE of the last linkage search (GH-1996). The `head:`
    *  qualifiers live there, not in the document, so a test asserting the
@@ -800,6 +802,7 @@ export class FakeGh {
                     ? []
                     : [
                         {
+                          id: `ITEM_${fi.number}`,
                           isArchived: fi.archived ?? false,
                           project: { id: PROJECT_ID },
                           fieldValues: this.queueFieldValues(fi),
@@ -977,6 +980,9 @@ export class FakeGh {
     if (query.includes("updateProjectV2ItemFieldValue")) {
       const itemNum = Number(String(variables.itemId).replace("ITEM_", ""));
       const fi = this.issues.get(itemNum);
+      if (this.failFieldWrites.has(itemNum)) {
+        return { code: 1, stdout: "", stderr: `field write refused for #${itemNum}` };
+      }
       if (variables.optionId && variables.fieldId === "F_state" && fi) {
         if (this.failNextStateWrite) {
           this.failNextStateWrite = false;

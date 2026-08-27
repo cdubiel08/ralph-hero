@@ -791,6 +791,10 @@ function zQueueItem(mode: Mode) {
     openBlockers: z.array(z.number().int()),
     blockersTruncated: z.boolean(),
     fieldValuesTruncated: z.boolean(),
+    // GH-2130: the project-item id a field write addresses, carried by the
+    // walk (a plain field, zero cost). Optional — pre-2130 payloads and
+    // pure-ranking fixtures lack it; null when GitHub returned no id.
+    itemId: z.string().nullable().optional(),
     claim: zClaimJson(mode).nullable(),
     claimRaw: z.string().nullable(),
     // Defer mark (v0.2.0): parked out of ranking until cleared or claimed.
