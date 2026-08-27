@@ -22,7 +22,8 @@
 # Exit codes (check): 0 fully wired · 1 gaps found · 2 herdr not installed.
 # --oneline prints exactly one machine-readable line ("herdr: …") for doctor,
 # carrying each gap's full detail — versions and remedy included, not just its
-# name (GH-1911: a count plus a check identifier is not triageable).
+# name (GH-1911: a count plus a check identifier is not triageable) — plus the
+# worktree-pile fragment in every state (GH-2105; never part of the gap count).
 #
 # Knobs (same names the cockpit scripts use):
 #   HERDR_BIN_PATH      herdr binary (default: `herdr` on PATH)
@@ -852,6 +853,41 @@ else
   esac
 fi
 
+# ── worktree pile size (GH-2105) ─────────────────────────────────────────────
+# The sweep verb (GH-2103) prints the pile's size on every dry run — but only
+# when someone runs it, and the 2026-08-20 pile reached ~60 dead worktrees
+# before anyone asked. This surfaces the NUMBER where it is seen unasked: a
+# note here, and a fragment appended to --oneline so `board doctor`'s
+# herdr-cockpit relay carries it on every pass. NOTE level always — a pile is
+# one human sweep run away, never a wiring gap, so it moves neither the exit
+# code nor the oneline gap count. Machine-local and cheap by constraint: one
+# dir listing, no per-tree git reads, no snapshot, no network — so the number
+# is the PILE (live sessions included), not the finished subset; judging
+# "finished" costs per-tree status reads, which is the sweep's job and the
+# note says so. A pile that cannot be measured reads not-evaluated, never
+# zero: an unreadable listing rendering as an empty pile is the same silent
+# accretion this line exists to end.
+PILE_LINE=""
+pile_root="${RALPH_HERDR_WORKTREES_ROOT:-$HOME/.herdr/worktrees}"
+if ! pile_common=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+  PILE_LINE="worktree-pile: not evaluated ($REPO is not a git repository)"
+else
+  pile_dir="$pile_root/$(basename "$(dirname "$pile_common")")"
+  if [ ! -d "$pile_dir" ]; then
+    PILE_LINE="worktree-pile: 0 (no pile at $pile_dir)"
+  elif pile_list=$(find "$pile_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null); then
+    pile_count=$(grep -c . <<<"$pile_list" || true)
+    if [ "$pile_count" -eq 0 ]; then
+      PILE_LINE="worktree-pile: 0 ($pile_dir is empty)"
+    else
+      PILE_LINE="worktree-pile: $pile_count dir(s) under $pile_dir — \`bash $SCRIPT_DIR/herdr-setup.sh sweep\` removes the finished ones (dry run by default)"
+    fi
+  else
+    PILE_LINE="worktree-pile: not evaluated (could not list $pile_dir)"
+  fi
+fi
+note "worktree-pile" "${PILE_LINE#worktree-pile: }"
+
 # ── report / oneline ─────────────────────────────────────────────────────────
 # Note the length guards before every "${GAPS[@]}" expansion: macOS ships
 # bash 3.2, where an empty array trips `set -u` even quoted.
@@ -879,9 +915,12 @@ gapdetails() {
   echo "$out"
 }
 
+# The pile fragment rides the oneline in every state — measured, zero, or
+# not-evaluated — because omission is silence, and silence is how the pile
+# accreted (GH-2105). It never joins the gap count.
 if [ -n "$ONELINE" ]; then
-  if [ "${#GAPS[@]}" -eq 0 ]; then echo "herdr: wired"
-  else echo "herdr: ${#GAPS[@]} gap(s) — $(gapdetails)"; fi
+  if [ "${#GAPS[@]}" -eq 0 ]; then echo "herdr: wired${PILE_LINE:+; $PILE_LINE}"
+  else echo "herdr: ${#GAPS[@]} gap(s) — $(gapdetails)${PILE_LINE:+; $PILE_LINE}"; fi
 fi
 
 if [ "$MODE" = "check" ]; then
