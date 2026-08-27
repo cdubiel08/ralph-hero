@@ -13,11 +13,18 @@ name: Release Ralph
 # `chore: bump version` commit before consumers could pull the update. This
 # workflow makes the bump automatic on every meaningful merge.
 #
-# Bump policy:
+# Bump policy (scripts/release-bump-type.sh is the reader):
 #   - default: patch (e.g., 0.1.1 → 0.1.2)
-#   - merge commit message includes "#minor" (case-insensitive, word-bounded): minor
-#   - merge commit message includes "#major" (case-insensitive, word-bounded): major
+#   - "#minor" (case-insensitive, word-bounded) in the merge commit message OR
+#     in any commit the merged PR brought in: minor
+#   - "#major", same surfaces: major. Major outranks minor across the whole set
 #   - workflow_dispatch: explicit choice
+#
+# GH-2122: reading only the merge commit was reading a surface nobody writes
+# to. `gh pr merge --merge` composes that message from the PR *title*, so an
+# annotation in the branch commit — where authors naturally put it — was
+# invisible and the release silently took a patch bump (ralph-v0.3.1 shipped a
+# new CLI verb that way). The reader now takes both surfaces.
 #
 # Loop prevention: the bump commit message ends with "[skip ci]" so it
 # doesn't re-trigger this workflow.
@@ -64,21 +71,18 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           MANUAL_BUMP: ${{ inputs.bump }}
         run: |
+          set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "type=$MANUAL_BUMP" >> "$GITHUB_OUTPUT"
             echo "Bump type: $MANUAL_BUMP (workflow_dispatch)"
           else
-            COMMIT_MSG=$(git log -1 --pretty=%B)
-            if echo "$COMMIT_MSG" | grep -qiE '(^|[[:space:]])#major([[:space:]]|$)'; then
-              echo "type=major" >> "$GITHUB_OUTPUT"
-              echo "Bump type: major (commit annotation)"
-            elif echo "$COMMIT_MSG" | grep -qiE '(^|[[:space:]])#minor([[:space:]]|$)'; then
-              echo "type=minor" >> "$GITHUB_OUTPUT"
-              echo "Bump type: minor (commit annotation)"
-            else
-              echo "type=patch" >> "$GITHUB_OUTPUT"
-              echo "Bump type: patch (default)"
-            fi
+            # The script narrates its verdict and the surface it read on
+            # stderr, which lands in this log. It exits 2 rather than
+            # answering `patch` when a source it expected to read is
+            # unreadable — a wrong patch bump is silent forever, while a
+            # failed release job files its own issue (GH-1952).
+            BUMP=$(bash scripts/release-bump-type.sh HEAD)
+            echo "type=$BUMP" >> "$GITHUB_OUTPUT"
           fi
 
       # GH-1952: the concurrency group serializes execution, but `checkout`
