@@ -8960,3 +8960,288 @@ describe("lead arbitration (GH-2179)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Inbox (GH-2180, unit D of #2176) — the human's single surface.
+// ---------------------------------------------------------------------------
+
+import {
+  classifyInbox,
+  digestFacts,
+  INBOX_DELIVER_VERBS,
+  latestEscalationWhy,
+  type DeliverRow,
+  type InboxRow,
+  type QueueItemCore,
+} from "./board.js";
+
+describe("inbox (GH-2180) — Tier 1 classification", () => {
+  const T = new Date("2026-08-26T12:00:00Z");
+  const days = (n: number) => new Date(T.getTime() - n * 86_400_000).toISOString();
+  const core = (n: number, over: Partial<QueueItemCore> = {}): QueueItemCore => ({
+    number: n,
+    repo: "cdubiel08/ralph-hero",
+    title: `t${n}`,
+    state: "Backlog",
+    priority: "P2",
+    hasParent: false,
+    parentNumber: null,
+    fieldValuesTruncated: false,
+    claim: null,
+    claimRaw: null,
+    updatedAt: days(1),
+    createdAt: days(2),
+    estimate: "S",
+    ...over,
+  });
+  const emptyTend = { queue: [] as any[] };
+  const emptyDeliver = { blocked: [] as DeliverRow[] };
+
+  it("Human Needed items are decision rows carrying the escalation's why-line and the answer verb", () => {
+    const res = classifyInbox(
+      [core(1, { state: "Human Needed", priority: "P1" }), core(2)],
+      emptyTend,
+      emptyDeliver,
+      new Map([[1, "merge or split the epic?"]]),
+    );
+    expect(res.decisions).toHaveLength(1);
+    expect(res.decisions[0]).toMatchObject({
+      number: 1,
+      queue: "decision",
+      priority: "P1",
+      detail: "merge or split the epic?",
+    });
+    expect(res.decisions[0].verb).toContain("board answer 1");
+    expect(res.count).toBe(1);
+  });
+
+  it("an unreadable why degrades detail to null, never the row", () => {
+    const res = classifyInbox([core(1, { state: "Human Needed" })], emptyTend, emptyDeliver, new Map());
+    expect(res.decisions).toHaveLength(1);
+    expect(res.decisions[0].detail).toBeNull();
+  });
+
+  it("Intake items are approval rows whose verb is honest about the readiness bar", () => {
+    const res = classifyInbox(
+      [
+        core(1, { state: "Intake", priority: null, estimate: null }),
+        core(2, { state: "Intake" }), // formed — straight approval
+      ],
+      emptyTend,
+      emptyDeliver,
+    );
+    expect(res.approvals).toHaveLength(2);
+    const gapped = res.approvals.find((r) => r.number === 1)!;
+    expect(gapped.verb).toContain("board priority 1");
+    expect(gapped.verb).toContain("board estimate 1");
+    expect(gapped.verb).toContain("board move 1 backlog");
+    const formed = res.approvals.find((r) => r.number === 2)!;
+    expect(formed.verb).toBe("board move 2 backlog");
+    expect(formed.detail).toContain("board cancel 2");
+  });
+
+  it("tend `proposed` rows become proposal rows with the resolve verb and the open item's priority", () => {
+    const res = classifyInbox(
+      [core(3, { priority: "P0" })],
+      { queue: [{ number: 3, title: "t3", category: "proposed", at: days(4) }] },
+      emptyDeliver,
+    );
+    expect(res.proposals).toHaveLength(1);
+    expect(res.proposals[0]).toMatchObject({ number: 3, priority: "P0", at: days(4) });
+    expect(res.proposals[0].verb).toContain("board resolve 3");
+  });
+
+  it("non-proposed tend categories never enter the inbox", () => {
+    const res = classifyInbox(
+      [core(4)],
+      { queue: [{ number: 4, title: "t4", category: "stale-body", at: days(31) }] },
+      emptyDeliver,
+    );
+    expect(res.count).toBe(0);
+  });
+
+  it("deliver-blocked admission: only reasons with a human verb enter; the rest are counted as withheld, never dropped", () => {
+    const row = (n: number, reason: DeliverRow["reason"], over: Partial<DeliverRow> = {}): DeliverRow => ({
+      number: n,
+      title: `t${n}`,
+      pr: 100 + n,
+      reason,
+      ...over,
+    });
+    const res = classifyInbox(
+      [core(10, { state: "In Review" }), core(11, { state: "In Review" })],
+      emptyTend,
+      {
+        blocked: [
+          row(10, "convergence-stalled", { deltaAt: days(3), convergence: "cap-reached", detail: "5 rounds" }),
+          row(11, "no-pr", { pr: null }),
+          row(12, "local-session-active"),
+          row(13, "settling"),
+          row(14, "retry-window"),
+          row(15, "marker-current"),
+          row(16, "deferred"),
+          row(17, "reviewer-rate-limited"),
+        ],
+      },
+    );
+    expect(res.deliverBlocked.map((r) => r.number)).toEqual([10, 11]);
+    expect(res.deliverBlocked.find((r) => r.number === 10)!.detail).toBe("5 rounds");
+    expect(res.deliverBlocked.find((r) => r.number === 11)!.pr).toBeNull();
+    expect(res.deliverBlocked.find((r) => r.number === 11)!.detail).toContain("board move 11 in-progress");
+    const withheldReasons = res.withheld.map((w) => w.reason).sort();
+    expect(withheldReasons).toEqual(
+      ["deferred", "local-session-active", "marker-current", "retry-window", "reviewer-rate-limited", "settling"].sort(),
+    );
+    expect(res.withheld.reduce((s, w) => s + w.count, 0)).toBe(6);
+  });
+
+  it("one row per issue: a proposal outranks approving the same Intake item; a decision outranks everything", () => {
+    const res = classifyInbox(
+      [core(1, { state: "Intake" }), core(2, { state: "Human Needed" })],
+      {
+        queue: [
+          { number: 1, title: "t1", category: "proposed", at: days(1) },
+          { number: 2, title: "t2", category: "proposed", at: days(1) },
+        ],
+      },
+      emptyDeliver,
+    );
+    expect(res.decisions.map((r) => r.number)).toEqual([2]);
+    expect(res.proposals.map((r) => r.number)).toEqual([1]);
+    expect(res.approvals).toHaveLength(0);
+    expect(res.count).toBe(2);
+  });
+
+  it("rows sort oldest-first within each queue, nulls last", () => {
+    const res = classifyInbox(
+      [
+        core(1, { state: "Human Needed", updatedAt: days(1) }),
+        core(2, { state: "Human Needed", updatedAt: days(9) }),
+        core(3, { state: "Human Needed", updatedAt: null }),
+      ],
+      emptyTend,
+      emptyDeliver,
+    );
+    expect(res.decisions.map((r) => r.number)).toEqual([2, 1, 3]);
+  });
+
+  it("THE invariant: every admitted row, in every category, names a non-empty disposition verb", () => {
+    const res = classifyInbox(
+      [
+        core(1, { state: "Human Needed" }),
+        core(2, { state: "Intake", priority: null, estimate: null }),
+        core(3),
+        core(4, { state: "In Review" }),
+      ],
+      { queue: [{ number: 3, title: "t3", category: "proposed", at: days(2) }] },
+      {
+        blocked: [
+          { number: 4, title: "t4", pr: 44, reason: "convergence-stalled" },
+          { number: 5, title: "t5", pr: null, reason: "no-pr" },
+        ],
+      },
+    );
+    const all: InboxRow[] = [...res.decisions, ...res.proposals, ...res.approvals, ...res.deliverBlocked];
+    expect(all).toHaveLength(res.count);
+    expect(res.count).toBe(5);
+    for (const r of all) {
+      expect(r.verb).toBeTruthy();
+      expect(r.verb).toContain(`${r.number}`);
+    }
+    // Admission map completeness: every admitted reason's verb factory yields
+    // a non-empty command — the invariant holds by construction, not by luck.
+    for (const [reason, verb] of Object.entries(INBOX_DELIVER_VERBS)) {
+      expect(verb!(99), `verb for ${reason}`).toBeTruthy();
+    }
+  });
+});
+
+describe("inbox (GH-2180) — latestEscalationWhy", () => {
+  it("extracts the first line of the why from the LATEST Decision needed comment", () => {
+    const trail = [
+      "**Decision needed** (`board` by `a@h`):\n\nold question?\nmore",
+      "**Answer** (`board` by `a@h`):\n\nanswered",
+      "**Decision needed** (`board` by `a@h`):\n\nnew question — spend or defer?\nsecond line",
+    ];
+    expect(latestEscalationWhy(trail)).toBe("new question — spend or defer?");
+  });
+  it("returns null on no matching comment or an empty why", () => {
+    expect(latestEscalationWhy([])).toBeNull();
+    expect(latestEscalationWhy(["just a comment"])).toBeNull();
+    expect(latestEscalationWhy(["**Decision needed** (`board` by `a@h`):\n\n"])).toBeNull();
+  });
+});
+
+describe("inbox (GH-2180) — digestFacts (Tier 2)", () => {
+  const T = new Date("2026-08-26T12:00:00Z"); // local TZ irrelevant: comparisons are relative
+  const iso = (msAgo: number) => new Date(T.getTime() - msAgo).toISOString();
+  const day = 86_400_000;
+  const audit = (items: Array<{ number: number; title: string; closedAt: string | null }>) => ({
+    since: iso(14 * day),
+    items,
+  });
+  const tier1 = (count: number) => ({
+    count,
+    decisions: [] as InboxRow[],
+    proposals: [] as InboxRow[],
+    approvals: [] as InboxRow[],
+    deliverBlocked: [] as InboxRow[],
+  });
+
+  it("no stamp → 24h window, stamp echoed null", () => {
+    const d = digestFacts(null, T, audit([{ number: 1, title: "a", closedAt: iso(2 * day) }]), tier1(0));
+    expect(d.stamp).toBeNull();
+    expect(d.since).toBe(iso(day));
+    expect(d.completions).toHaveLength(0);
+    expect(d.markedToday).toBe(false);
+  });
+
+  it("stamp from yesterday: completions since it count, markedToday false, pushWorthy true", () => {
+    const stamp = iso(1.5 * day);
+    const d = digestFacts(
+      stamp,
+      T,
+      audit([
+        { number: 1, title: "in", closedAt: iso(day) },
+        { number: 2, title: "out", closedAt: iso(2 * day) },
+      ]),
+      tier1(0),
+    );
+    expect(d.completions.map((c) => c.number)).toEqual([1]);
+    expect(d.markedToday).toBe(false);
+    expect(d.pushWorthy).toBe(true);
+  });
+
+  it("stamp from today (same local calendar date) → markedToday, never pushWorthy", () => {
+    // Built from LOCAL components — markedToday keys on the local calendar
+    // date, so a Z-anchored fixture would fail on machines where local
+    // midnight falls between the two instants (UTC+12 at 11:00Z–12:00Z).
+    const noonLocal = new Date(2026, 7, 26, 12, 0, 0);
+    const stamp = new Date(2026, 7, 26, 11, 0, 0).toISOString();
+    const d = digestFacts(
+      stamp,
+      noonLocal,
+      { since: new Date(noonLocal.getTime() - 14 * day).toISOString(), items: [{ number: 1, title: "a", closedAt: new Date(noonLocal.getTime() - 1_800_000).toISOString() }] },
+      tier1(5),
+    );
+    expect(d.markedToday).toBe(true);
+    expect(d.pushWorthy).toBe(false);
+  });
+
+  it("an ancient stamp is capped to the audit window's own floor — the EFFECTIVE window is reported", () => {
+    const d = digestFacts(iso(30 * day), T, audit([]), tier1(0));
+    expect(d.since).toBe(iso(14 * day));
+    expect(d.stamp).toBe(iso(30 * day));
+  });
+
+  it("quiet day: unmarked but nothing new → not pushWorthy; tier1 alone makes it worthy", () => {
+    expect(digestFacts(iso(1.5 * day), T, audit([]), tier1(0)).pushWorthy).toBe(false);
+    expect(digestFacts(iso(1.5 * day), T, audit([]), tier1(1)).pushWorthy).toBe(true);
+  });
+
+  it("an unparseable stamp reads as absent — the over-notify direction", () => {
+    const d = digestFacts("not-a-date", T, audit([]), tier1(0));
+    expect(d.stamp).toBeNull();
+    expect(d.since).toBe(iso(day));
+  });
+});
