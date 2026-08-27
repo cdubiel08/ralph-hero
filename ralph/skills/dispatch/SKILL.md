@@ -17,8 +17,10 @@ approving one "yes go ahead" at a time, granted once, here, with their bounds
 named. This file is the normative record — the design that decided it
 (`thoughts/shared/plans/2026-08-26-teams-dispatch-inbox-design.md`, decisions
 1–2) records rationale only. Two transports carry the lane and neither is
-load-bearing: a rota of scheduled ephemeral passes unattended (GH-2184) and
-`/ralph:hero` attended (GH-2182); fleets and lanes function with both down.
+load-bearing: a rota of scheduled ephemeral passes unattended (GH-2184 — the
+worked example is `ralph/examples/dispatch-rota.sh`, a copy-and-own recipe
+per the scripts-are-examples doctrine) and `/ralph:hero` attended (GH-2182);
+fleets and lanes function with both down.
 
 The board CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/board` — that placeholder
 resolves to wherever this plugin is installed; never substitute a
