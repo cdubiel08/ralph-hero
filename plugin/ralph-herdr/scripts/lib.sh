@@ -891,6 +891,9 @@ spawn_work_session() {
     echo "  git -C $REPO fetch -q origin main"
     echo "  $HERDR worktree create --cwd $src --branch $branch --base origin/main --no-focus${label:+ --label \"$label\"}"
     echo "    (fallback: $HERDR worktree open --cwd $src --branch $branch --no-focus${label:+ --label \"$label\"})"
+    if [ -n "${RALPH_HERDR_TEAM_LEAD:-}" ] && ralph_agent_parse "$RALPH_HERDR_TEAM_LEAD" >/dev/null 2>&1; then
+      echo "  $HERDR pane run <captured> export RALPH_HERDR_LEAD=$RALPH_HERDR_TEAM_LEAD RALPH_HERDR_TEAM_LEAD=$RALPH_HERDR_TEAM_LEAD"
+    fi
     echo "  $HERDR agent start $agent --kind claude --pane <captured>"
     echo "  $HERDR agent prompt $agent \"/ralph:work $n\""
     echo "  $HERDR agent wait $agent --until working --until blocked --timeout <${RALPH_HERDR_TURN_WAIT_SEC:-20}s>  (unconfirmed turn = failed spawn)"
@@ -1038,6 +1041,26 @@ spawn_work_session() {
   # while an install can run for a minute, and a spawner killed mid-install
   # should still have left the sweepable row.
   provision_worktree "$RALPH_HERDR_SPAWNED_WORKTREE"
+
+  # Team linkage (GH-2178): a team spawner (work-team.sh, or a lead whose own
+  # workspace env carries it) names the lead in RALPH_HERDR_TEAM_LEAD, and the
+  # address is exported into the pane's interactive shell BEFORE `agent start`
+  # so the harness inherits it — herdr panes inherit the SERVER's environment,
+  # never the spawner's shell (see the BOARD resolution note above), and
+  # `worktree create` has no --env, so the pane shell is the one channel that
+  # survives into the session. Best-effort, tokens.sh-style direct call with
+  # nothing parsed: fleet-send's o-lane name check is the primary lead
+  # detector, so a lost injection costs the by-name env fallback, never the
+  # spawn. The name is parse-validated first — it is about to land on a shell
+  # command line, and grammar B is exactly the safe charset.
+  if [ -n "${RALPH_HERDR_TEAM_LEAD:-}" ]; then
+    if ! ralph_agent_parse "$RALPH_HERDR_TEAM_LEAD" >/dev/null 2>&1; then
+      echo "RALPH_HERDR_TEAM_LEAD='$RALPH_HERDR_TEAM_LEAD' is not a grammar-B agent name — not injecting the lead address" >&2
+    elif ! "$HERDR" pane run "$pane" \
+      "export RALPH_HERDR_LEAD=$RALPH_HERDR_TEAM_LEAD RALPH_HERDR_TEAM_LEAD=$RALPH_HERDR_TEAM_LEAD" >/dev/null 2>&1; then
+      echo "could not inject RALPH_HERDR_LEAD into pane $pane — the session can still find its lead by the o-lane name" >&2
+    fi
+  fi
 
   # A confirmed-live name collision at start means a session already owns
   # issue N: the name is always w<N>-<slug>, so any live agent holding it

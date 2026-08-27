@@ -9,6 +9,7 @@ been run for real or read straight out of the source it invokes.
 | You want | Run | § |
 |---|---|---|
 | Launch a fleet on workable items | `bash plugin/ralph-herdr/scripts/work-fleet.sh` (add issue numbers for exactly those) | 6 |
+| Launch a TEAM for an epic (standing lead + fleet) | `bash plugin/ralph-herdr/scripts/work-team.sh EPIC` (`--lead-only` respawns a dead lead) | 6 |
 | Open the cockpit | `herdr plugin action invoke cockpit --plugin ralph-herdr` | 3 |
 | Board state / who's working | `board list` · `board next` · `herdr agent list` | 7 |
 | Fleet health at a glance (incl. dead-before-start) | `bash plugin/ralph-herdr/scripts/fleet-status.sh` | 7 |
@@ -268,6 +269,22 @@ herdr plugin action invoke work-these --plugin ralph-herdr  # the same, prompted
 
 `--refill` is frontier policy and is refused with an explicit list — a named
 list is a closed set, so there is nothing to top it back up from.
+
+**The team form (GH-2178)** — one epic, a standing read-only `o`-lane LEAD
+plus the fleet of its ready children:
+
+```bash
+bash plugin/ralph-herdr/scripts/work-team.sh 2176        # lead + ready children of #2176
+bash plugin/ralph-herdr/scripts/work-team.sh 2176 2179   # lead + exactly this child
+bash plugin/ralph-herdr/scripts/work-team.sh 2176 --lead-only  # (re)spawn the lead alone
+herdr plugin action invoke work-team --plugin ralph-herdr      # the same, prompted, in a pane
+```
+
+The lead (`o<EPIC>-<slug>`, role `orchestrator`) rehydrates from board state
+alone, so a dead one is respawned by re-running the command — a live one is
+never doubled. Worker panes learn the lead's address (`RALPH_HERDR_LEAD`);
+`fleet-send.sh` already strips `--wait` when the target is the lead. Workers
+go through work-fleet.sh's explicit-list path — same guards, same ledger.
 
 Every candidate prints the dependency state the frontier asserted about it
 (`deps: #2060 CLOSED`, `deps: none`) — the guard is observable, not just

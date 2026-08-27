@@ -373,6 +373,18 @@ case "$key" in
       '{"workspace":{"workspace_id":"w1","number":1,"label":"fake","focused":false,"pane_count":1,"tab_count":1,"active_tab_id":"w1:t1","agent_status":"unknown"},"tab":{"tab_id":"w1:t1"},"root_pane":{"pane_id":"pW1"},"worktree":{"path":"/tmp/fake-herdr-wt"}}' \
       worktree-create
     ;;
+  workspace-create)
+    # The team spawn path (work-team.sh) reads root_pane.pane_id off it;
+    # workspace and tab ride along because workspace_created requires them.
+    respond "cli:workspace:create" "workspace_created" \
+      '{"workspace":{"workspace_id":"wT","number":2,"label":"fake-team","focused":false,"pane_count":1,"tab_count":1,"active_tab_id":"wT:t1","agent_status":"unknown"},"tab":{"tab_id":"wT:t1"},"root_pane":{"pane_id":"pT1","tab_id":"wT:t1","workspace_id":"wT","terminal_id":"term_fake","focused":false,"agent_status":"unknown","revision":0}}' \
+      workspace-create
+    ;;
+  pane-run)
+    # Best-effort env injection (GH-2178) — the caller never parses this, so
+    # a minimal success envelope is all the fake owes.
+    respond "cli:pane:run" "pane_run" '{"pane":{"pane_id":"p1"}}' pane-run
+    ;;
   worktree-list)
     # The spawn path reads .source.source_checkout_path to find the checkout
     # herdr will start a worktree action from (GH-1860). The default answers a
