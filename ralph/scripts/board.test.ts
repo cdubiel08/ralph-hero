@@ -73,6 +73,7 @@ import {
   instrumentQuery,
   COST_ALIAS,
   legalTransition,
+  linkParent,
   loadConfig,
   LEGACY_STATES,
   listItems,
@@ -1452,6 +1453,124 @@ describe("fetchNodeIds (link/dep/comment id lookups)", () => {
     expect(() => setDependency(ctx, 12, 999)).toThrow(UsageError);
     expect(() => setDependency(ctx, 12, 999)).toThrow(/cdubiel08\/ralph-hero/);
     expect(gh.mutations).toEqual([]); // refused before the mutation
+  });
+});
+
+// ---------------------------------------------------------------------------
+// link — inverse and re-parent (GH-2206)
+// ---------------------------------------------------------------------------
+
+describe("link — inverse and re-parent (GH-2206)", () => {
+  const board = () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(10, { number: 10, state: "Backlog" });
+    gh.issues.set(11, { number: 11, state: "Backlog" });
+    gh.issues.set(20, { number: 20, state: "Backlog" });
+    return { gh, ctx };
+  };
+
+  it("bare link parents an unparented child and read-back verifies it", () => {
+    const { gh, ctx } = board();
+    expect(linkParent(ctx, 10, 20)).toMatch(/#20 is now a sub-issue of #10/);
+    expect(gh.mutations).toEqual(["addSubIssue"]);
+    expect(gh.issues.get(20)!.parent).toBe(10);
+  });
+
+  it("bare link on an already-parented child refuses NAMING the current parent and both remedies", () => {
+    const { gh, ctx } = board();
+    gh.issues.get(20)!.parent = 11;
+    const msg = refusalMessage(() => linkParent(ctx, 10, 20));
+    expect(msg).toMatch(/#20 already has a parent \(#11\)/);
+    expect(msg).toMatch(/board link 10 20 --replace/); // move remedy
+    expect(msg).toMatch(/board link 11 20 --rm/); // detach remedy, named with the ACTUAL parent
+    expect(gh.mutations).toEqual([]); // refused before the mutation
+  });
+
+  it("bare link of the existing pair is a retry, not a violation: noop success, no mutation", () => {
+    const { gh, ctx } = board();
+    gh.issues.get(20)!.parent = 10;
+    expect(linkParent(ctx, 10, 20)).toMatch(/already a sub-issue of #10/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("a cross-repo current parent is NAMED with its repo and only --replace is offered", () => {
+    const { gh, ctx } = board();
+    gh.issues.get(20)!.parent = 7;
+    gh.issues.get(20)!.parentRepo = "other/repo";
+    const msg = refusalMessage(() => linkParent(ctx, 10, 20));
+    expect(msg).toMatch(/other\/repo#7/);
+    expect(msg).toMatch(/--replace/);
+    expect(msg).not.toMatch(/--rm/); // a foreign parent has no bare-number spelling here
+  });
+
+  it("--rm removes the edge when PARENT is current, and the child becomes a root", () => {
+    const { gh, ctx } = board();
+    gh.issues.get(20)!.parent = 10;
+    expect(linkParent(ctx, 10, 20, "rm")).toMatch(/#20 is no longer a sub-issue of #10 \(now a root\)/);
+    expect(gh.mutations).toEqual(["removeSubIssue"]);
+    expect(gh.issues.get(20)!.parent).toBeUndefined();
+  });
+
+  it("--rm on a mismatched pair refuses naming the ACTUAL parent — a silent no-op hides a wrong mental model", () => {
+    const { gh, ctx } = board();
+    gh.issues.get(20)!.parent = 11;
+    const msg = refusalMessage(() => linkParent(ctx, 10, 20, "rm"));
+    expect(msg).toMatch(/#10 is not #20's parent/);
+    expect(msg).toMatch(/current parent is #11/);
+    expect(msg).toMatch(/board link 11 20 --rm/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("--rm on a parentless child refuses: nothing to unlink", () => {
+    const { gh, ctx } = board();
+    const msg = refusalMessage(() => linkParent(ctx, 10, 20, "rm"));
+    expect(msg).toMatch(/#20 has no parent/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("--replace re-parents in ONE atomic mutation (replaceParent: true, never remove+add)", () => {
+    const { gh, ctx } = board();
+    gh.issues.get(20)!.parent = 11;
+    expect(linkParent(ctx, 10, 20, "replace")).toMatch(/#20 moved: parent #11 → #10/);
+    expect(gh.mutations).toEqual(["addSubIssue(replace)"]); // exactly one — no removeSubIssue window
+    expect(gh.issues.get(20)!.parent).toBe(10);
+  });
+
+  it("--replace on a parentless child simply parents it", () => {
+    const { gh, ctx } = board();
+    expect(linkParent(ctx, 10, 20, "replace")).toMatch(/#20 is now a sub-issue of #10/);
+    expect(gh.mutations).toEqual(["addSubIssue(replace)"]);
+  });
+
+  it("--replace of the existing pair is a noop, no mutation", () => {
+    const { gh, ctx } = board();
+    gh.issues.get(20)!.parent = 10;
+    expect(linkParent(ctx, 10, 20, "replace")).toMatch(/already a sub-issue/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("read-back mismatch refuses to report success (add, rm, replace)", () => {
+    const { gh, ctx } = board();
+    gh.stickyParent = true;
+    expect(() => linkParent(ctx, 10, 20)).toThrow(/did NOT land/);
+    gh.issues.get(20)!.parent = 10;
+    expect(() => linkParent(ctx, 10, 20, "rm")).toThrow(/did NOT land/);
+    gh.issues.get(20)!.parent = 11;
+    expect(() => linkParent(ctx, 10, 20, "replace")).toThrow(/did NOT land/);
+  });
+
+  it("self-link refuses", () => {
+    const { gh, ctx } = board();
+    expect(() => linkParent(ctx, 10, 10)).toThrow(/cannot be its own parent/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("CLI: --rm and --replace together refuse; a missing issue still names the repo", () => {
+    const { gh, ctx } = board();
+    expect(() => run(["link", "10", "20", "--rm", "--replace"], ctx)).toThrow(/mutually exclusive/);
+    expect(gh.mutations).toEqual([]);
+    expect(() => linkParent(ctx, 10, 999)).toThrow(/cdubiel08\/ralph-hero/);
   });
 });
 

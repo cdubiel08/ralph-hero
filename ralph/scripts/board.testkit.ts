@@ -141,6 +141,7 @@ export class FakeGh {
   raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
   vanishClaim = false; // simulate a concurrent clear landing after our write
   stickyClaim = false; // simulate a claim clear silently not sticking
+  stickyParent = false; // simulate a sub-issue write silently not sticking (read-back must catch)
   dropCreates = false; // simulate a field create acking but not sticking
   refreshClaimOnFetch = new Set<number>(); // holder renews its claim mid-sweep
   /** Deliver A→B race: these PRs read OPEN in phase A and MERGED in phase B,
@@ -930,6 +931,31 @@ export class FakeGh {
       }
       return data({ repository: out });
     }
+    // fetchLinkPair (GH-2206): both link ends' ids plus the child's current
+    // parent, one round trip. Must precede the generic single-issue branch —
+    // its aliases also contain "issue(number".
+    if (query.includes("lp: issue(number")) {
+      const p = this.issues.get(variables.parent);
+      const c = this.issues.get(variables.child);
+      const errors: Array<{ type: string; message: string }> = [];
+      for (const [fi, num] of [[p, variables.parent], [c, variables.child]] as const) {
+        if (!fi)
+          errors.push({ type: "NOT_FOUND", message: `Could not resolve to an Issue with the number of ${num}.` });
+      }
+      const repo = {
+        lp: p ? { id: `I_${p.number}` } : null,
+        lc: c
+          ? {
+              id: `I_${c.number}`,
+              parent: c.parent
+                ? { number: c.parent, repository: { nameWithOwner: c.parentRepo ?? "cdubiel08/ralph-hero" } }
+                : null,
+            }
+          : null,
+      };
+      if (errors.length) return ok(JSON.stringify({ data: { repository: repo }, errors }));
+      return data({ repository: repo });
+    }
     if (query.includes("issue(number")) {
       const fi = this.issues.get(variables.number);
       if (!fi) return data({ repository: { issue: null } });
@@ -1046,8 +1072,23 @@ export class FakeGh {
       return data({ reopenIssue: { issue: { id: variables.issueId } } });
     }
     if (query.includes("addSubIssue")) {
-      this.mutations.push("addSubIssue");
+      const replace = query.includes("replaceParent: true");
+      this.mutations.push(replace ? "addSubIssue(replace)" : "addSubIssue");
+      const child = this.issues.get(Number(String(variables.childId).replace("I_", "")));
+      if (child && !this.stickyParent) {
+        child.parent = Number(String(variables.parentId).replace("I_", ""));
+        child.parentRepo = undefined; // own repo — the only repo link writes reach
+      }
       return data({ addSubIssue: { issue: { id: "x" } } });
+    }
+    if (query.includes("removeSubIssue")) {
+      this.mutations.push("removeSubIssue");
+      const child = this.issues.get(Number(String(variables.childId).replace("I_", "")));
+      if (child && !this.stickyParent) {
+        child.parent = undefined;
+        child.parentRepo = undefined;
+      }
+      return data({ removeSubIssue: { issue: { id: "x" } } });
     }
     if (query.includes("addBlockedBy") || query.includes("removeBlockedBy")) {
       this.mutations.push("dep");

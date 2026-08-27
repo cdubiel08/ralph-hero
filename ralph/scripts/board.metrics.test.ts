@@ -143,7 +143,7 @@ describe("metrics: read round trips", () => {
     expect(m.graphql).toBe(2);
   });
 
-  it("dep/link = 2 round trips (was 3, two of them full-issue payloads); id query stays skeletal", () => {
+  it("dep = 2 round trips (was 3, two of them full-issue payloads); id query stays skeletal", () => {
     const gh = new FakeGh();
     flatBoard(gh, 3);
     const { ctx, m, reset } = warmCtx(gh);
@@ -157,9 +157,12 @@ describe("metrics: read round trips", () => {
     expect(m.graphql).toBe(2);
     expect(idQueryBytes).toBeGreaterThan(0);
     expect(idQueryBytes).toBeLessThan(300); // ids only — not fetchIssue's kitchen sink
+    // link = 3 (GH-2206): pre-read (ids + child's current parent, the digested
+    // refusal's evidence), mutation, read-back verify. Still skeletal, never
+    // fetchIssue's kitchen sink.
     reset();
     runQuiet(["link", "1", "3"], ctx);
-    expect(m.graphql).toBe(2);
+    expect(m.graphql).toBe(3);
   });
 });
 
