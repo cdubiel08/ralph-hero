@@ -24,6 +24,7 @@
       }
     ],
     "blocked": [],
+    "snoozed": 0,
     "observationSlot": true
   }
 }

@@ -893,6 +893,9 @@ function zTendResult(mode: Mode) {
     next: zTendRow(mode).nullable(),
     queue: z.array(zTendRow(mode)),
     blocked: z.array(zTendRow(mode)), // shape parity — tend blocks nothing
+    // GH-2202: Intake items a snooze (Defer with a future recheck) currently
+    // withholds from `unformed` — counted, never silent.
+    snoozed: z.number().int().nonnegative(),
     observationSlot: z.literal(true),
   });
 }
