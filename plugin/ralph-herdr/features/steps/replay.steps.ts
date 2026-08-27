@@ -622,7 +622,8 @@ Then('the board answer even preceded the herd read', function (this: RalphWorld)
 });
 
 Then('the nudge waited for delivery with a bounded timeout', function (this: RalphWorld) {
-  const want = `agent prompt ${s(this).liveAgent} answered on issue — re-read #${s(this).issue} and resume --wait --timeout 15000`;
+  // GH-2204: the nudge names the claim as the resuming session's first act.
+  const want = `agent prompt ${s(this).liveAgent} answered on issue — re-read #${s(this).issue}; your first act is: board claim ${s(this).issue} (resumes it under your claim) --wait --timeout 15000`;
   assert.strictEqual(countLines(this.combinedLog(), (l) => l === want), 1);
 });
 
