@@ -1,0 +1,59 @@
+name: dream-tests
+
+# GH-2167. scripts/dream/tests/ (211 pytest tests: ingest, reflect,
+# meta_reflect, the GH-2112 nightly alarm, the GH-2159 weekly alarm) ran in
+# no workflow — the guarantees they encode were only as good as whoever last
+# remembered `uv run --extra test pytest tests/` by hand. Same shape as the
+# defect GH-2112/GH-2159 fixed one layer down: a check that exists and that
+# nothing reads.
+#
+# A separate workflow rather than a ci.yml job because `paths:` filters are
+# workflow-level — gating ci.yml on scripts/dream/** would gate every other
+# job with it. The filter includes this file itself so the introducing PR
+# (and any later edit to the leg) proves the leg green.
+#
+# The context `dream-tests / pytest` appears only on PRs that touch these
+# paths, so it must never be enumerated as a required check in the main
+# ruleset (GH-2057: required-but-not-produced is unmergeable). Advisory by
+# construction.
+#
+# Install cost: the suite's hard deps (hdbscan, umap-learn, scikit-learn,
+# numpy) all ship manylinux wheels, measured ~25 packages resolving from
+# uv.lock — accepted rather than split behind a marker, since the path gate
+# keeps the leg off every unrelated PR.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/dream/**"
+      - ".github/workflows/dream-tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/dream/**"
+      - ".github/workflows/dream-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scripts/dream
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: scripts/dream/uv.lock
+
+      - name: Run dream test suite
+        # --locked: a stale uv.lock is a red leg, not a silent re-resolve —
+        # CI must test the tree the lockfile pins, or the leg proves nothing
+        # about what a `uv run` on an operator's machine executes.
+        run: uv run --locked --extra test pytest tests/
