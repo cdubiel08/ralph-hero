@@ -118,9 +118,10 @@ export const MACHINE: Record<State, readonly State[]> = {
   Canceled: [],
 };
 
-/** Legacy (v1) states. The 11→6 collapse ran in GH-1662; these linger only as
- *  Workflow State field options the API cannot delete, so `doctor` and `setup`
- *  still surface them. */
+/** Legacy (v1) states. The 11→6 collapse ran in GH-1662; these linger as
+ *  Workflow State field options that `setup` deliberately does not delete —
+ *  removing an option clears the Workflow State of every item still holding
+ *  it — so `doctor` and `setup` surface them for a human instead. */
 export const LEGACY_STATES = [
   "Research Needed",
   "Research in Progress",
@@ -8445,12 +8446,14 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       const names = Object.keys(stateField.options);
       const missing = STATES.filter((s) => !names.includes(s));
       const legacy = names.filter((n) => !isState(n));
-      if (missing.length) add("state-field", "fail", `missing options: ${missing.join(", ")}`);
+      if (missing.length)
+        add("state-field", "fail", `missing options: ${missing.join(", ")} (board setup adds them)`);
       else if (legacy.length)
         add(
           "state-field",
           opts.strict ? "fail" : "warn",
-          `legacy options present (delete by hand in the board UI; the API cannot): ${legacy.join(", ")}`,
+          `legacy options present (delete by hand in the board UI; removing an option clears ` +
+            `the state of every item holding it, so setup never does): ${legacy.join(", ")}`,
         );
       else add("state-field", "ok", "6-state option set");
     }
@@ -9650,6 +9653,81 @@ export interface SetupReport {
   notes: string[];
 }
 
+interface LiveOption {
+  id: string;
+  name: string;
+  color: string;
+  description: string;
+}
+
+/** The field's option set as GitHub currently holds it — ids, colors and
+ *  descriptions included, none of which the schema cache carries.
+ *
+ *  `updateProjectV2Field` REPLACES the whole option set, and an option
+ *  resubmitted without its id is recreated as a new one, clearing every item
+ *  value that referenced it. So a blind resubmit is precisely the destructive
+ *  write the id mechanism exists to prevent: an unreadable or empty option set
+ *  returns null and the caller refuses the mutation rather than guessing. */
+function readLiveOptions(ctx: Ctx, fieldId: string): LiveOption[] | null {
+  let raw: unknown;
+  try {
+    raw = ghGraphQL(
+      ctx,
+      `query($fieldId: ID!) {
+        node(id: $fieldId) {
+          ... on ProjectV2SingleSelectField { options { id name color description } }
+        }
+      }`,
+      { fieldId },
+    )?.node?.options;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const opts: LiveOption[] = [];
+  for (const o of raw as Array<Record<string, unknown>>) {
+    // Every field is load-bearing on the way back in: `name` and `color` are
+    // NON_NULL on the input type, and an id we cannot read is an option we
+    // cannot preserve.
+    if (typeof o?.id !== "string" || !o.id) return null;
+    if (typeof o?.name !== "string" || !o.name) return null;
+    if (typeof o?.color !== "string" || !o.color) return null;
+    opts.push({
+      id: o.id,
+      name: o.name,
+      color: o.color,
+      description: typeof o.description === "string" ? o.description : "",
+    });
+  }
+  return opts;
+}
+
+/** Existing options in their existing order, with each missing state inserted
+ *  at the position STATES implies. Nothing is reordered, renamed or removed —
+ *  adding is the only edit this file makes to an existing option set (removal
+ *  clears the item values of anything still holding the option, and stays a
+ *  deliberate act in the UI). */
+export function mergeStateOptions(
+  existing: readonly LiveOption[],
+  missing: readonly string[],
+): Array<{ id?: string; name: string; color: string; description: string }> {
+  const pending = new Set(missing);
+  const out: Array<{ id?: string; name: string; color: string; description: string }> = [];
+  const emitNew = (name: string) => {
+    pending.delete(name);
+    out.push({ name, color: "GRAY", description: "" });
+  };
+  for (const o of existing) {
+    const idx = STATES.indexOf(o.name as (typeof STATES)[number]);
+    if (idx >= 0) for (const s of STATES.slice(0, idx)) if (pending.has(s)) emitNew(s);
+    out.push({ id: o.id, name: o.name, color: o.color, description: o.description });
+  }
+  // Anything with no successor among the existing options (and any legacy
+  // option set that contains no v2 state at all) lands at the end.
+  for (const s of STATES) if (pending.has(s)) emitNew(s);
+  return out;
+}
+
 /** `emit` streams each note the moment it is produced, so a mid-run throw
  *  still surfaces everything done so far (the CLI passes stdout). */
 export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
@@ -9660,6 +9738,11 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
   };
   // Everything this run creates, so the final refresh can prove it stuck.
   const created: Array<{ name: string; options?: readonly string[] }> = [];
+  // Pre-existing state options an option-set edit had to resubmit. Their ids
+  // must come back unchanged: a dropped id means GitHub recreated the option
+  // and cleared every item value holding it — the one-way hazard, so it is
+  // verified against the refreshed schema rather than assumed from the ack.
+  let preservedOptions: Array<{ name: string; id: string }> = [];
   const cache = refreshCache(ctx);
 
   // Advisory wrong-project check: a typo'd RALPH_GH_PROJECT_NUMBER would
@@ -9711,24 +9794,43 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
     const names = Object.keys(stateField.options ?? {});
     const missing = STATES.filter((s) => !names.includes(s));
     if (missing.length) {
-      note(
-        `MANUAL: add option(s) ${missing.join(", ")} to "${STATE_FIELD}" in the board UI ` +
-          `(the API cannot edit an existing field's option set)` +
-          // Named rather than left to be inferred: until the option exists,
-          // `create --intake` and `move N intake` fail closed on mutationCache's
-          // missing-option refusal, which points back at `board setup` — this
-          // is the far end of that pointer, so it has to say what the option
-          // buys and not just that it is absent.
-          (missing.includes("Intake")
-            ? ` — until "Intake" exists, \`board create --intake\` and \`board move N intake\` refuse (fail closed); ` +
-              `Intake is the tracked-but-not-yet-approved tier, invisible to \`board next\`/\`frontier\``
-            : ""),
-      );
+      const live = readLiveOptions(ctx, stateField.id);
+      if (!live) {
+        note(
+          `MANUAL: add option(s) ${missing.join(", ")} to "${STATE_FIELD}" in the board UI — ` +
+            `could not read the field's current option set, and resubmitting one without its id ` +
+            `would clear every item value that references it` +
+            // Named rather than left to be inferred: until the option exists,
+            // `create --intake` and `move N intake` fail closed on mutationCache's
+            // missing-option refusal, which points back at `board setup` — this
+            // is the far end of that pointer, so it has to say what the option
+            // buys and not just that it is absent.
+            (missing.includes("Intake")
+              ? ` — until "Intake" exists, \`board create --intake\` and \`board move N intake\` refuse (fail closed); ` +
+                `Intake is the tracked-but-not-yet-approved tier, invisible to \`board next\`/\`frontier\``
+              : ""),
+        );
+      } else {
+        ghGraphQL(
+          ctx,
+          `mutation($fieldId: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]) {
+            updateProjectV2Field(input: { fieldId: $fieldId, singleSelectOptions: $options }) {
+              projectV2Field { ... on ProjectV2SingleSelectField { id } }
+            }
+          }`,
+          { fieldId: stateField.id, options: mergeStateOptions(live, missing) },
+        );
+        preservedOptions = live.map((o) => ({ name: o.name, id: o.id }));
+        created.push({ name: STATE_FIELD, options: missing });
+        note(`added option(s) ${missing.join(", ")} to "${STATE_FIELD}" (${live.length} existing option(s) preserved by id)`);
+      }
     }
     const legacy = names.filter((n) => !isState(n));
     if (legacy.length) {
       note(
-        `MANUAL: delete legacy option(s) ${legacy.join(", ")} from "${STATE_FIELD}" in the board UI`,
+        `MANUAL: delete legacy option(s) ${legacy.join(", ")} from "${STATE_FIELD}" in the board UI ` +
+          `(removal stays a human act: deleting an option clears the Workflow State of every item ` +
+          `still holding it, so it is never done unattended)`,
       );
     }
   }
@@ -9790,6 +9892,18 @@ export function setup(ctx: Ctx, emit?: (note: string) => void): SetupReport {
     if (missingOpts.length) {
       ok = false;
       note(`VERIFY FAILED: "${c.name}" is missing option(s) ${missingOpts.join(", ")} after refresh`);
+    }
+  }
+  if (preservedOptions.length) {
+    const now = fresh.fields[STATE_FIELD]?.options;
+    const lost = preservedOptions.filter((o) => now?.[o.name] !== o.id);
+    if (lost.length) {
+      ok = false;
+      note(
+        `VERIFY FAILED: "${STATE_FIELD}" option(s) ${lost.map((o) => o.name).join(", ")} lost their ` +
+          `original id in the option-set edit — every item value referencing them is cleared; ` +
+          `restore them in the board UI`,
+      );
     }
   }
   if (notes.length === 0) note("nothing to do — board already set up");

@@ -19,6 +19,41 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Added
 
+- **`board setup` adds a missing Workflow State option itself — the manual UI
+  step is gone (GH-2127)** — the premise it rested on ("the API cannot edit an
+  existing field's option set") was disproven in GH-2117 and verified live.
+  `updateProjectV2Field` accepts `singleSelectOptions`, and
+  `ProjectV2SingleSelectFieldOptionInput.id` exists for exactly this case:
+  resubmit an option **with its id** and its identity — and every item value
+  referencing it — survives.
+
+  The gap this closes is doctor *enforcing* a field state the CLI had no verb
+  to write: `state-field` is a hard ✗ on a missing option, and `mutationCache`
+  fails every Intake filing and move closed on it, while the only remedy was a
+  human in the board UI, one board at a time.
+
+  The hazard is real and is handled as one, not asserted away. The mutation
+  **replaces** the whole set, so an option resubmitted without its id is
+  recreated fresh and every item holding it is cleared. Three bounds:
+
+  - **Adding only.** Existing options are resubmitted verbatim — id, name,
+    colour, description — and missing states are inserted at the position
+    `STATES` implies. Nothing is reordered, renamed or removed.
+  - **An unreadable current option set refuses the mutation**, falling back to
+    the manual line with the reason named. A blind resubmit is precisely the
+    destructive write the id mechanism exists to prevent, so a failed read may
+    not become one.
+  - **Verified by id survival, never by the ack.** The refreshed schema must
+    return every pre-existing option under its original id; a mismatch is a
+    named `VERIFY FAILED` and `ok: false`.
+
+  Unchanged and deliberately so: **removal is not offered.** Deleting an
+  option clears the state of every item still holding it, which is
+  unrecoverable, so the 5 legacy v1 states stay a human act in the UI. The
+  CLAUDE.md gotcha and doctor's legacy line now say *this file will not*
+  rather than *the API cannot*. Idempotent as before — a complete option set
+  produces no mutation.
+
 - **Dead leases are no longer stale ones, and `board reap-leases` clears them
   (GH-2108)** — `board brief` printed every per-(worktree, unit) lock on the
   machine, forever. Measured on the reporting machine: 126 locks, **83 of them
