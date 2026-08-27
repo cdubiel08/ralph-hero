@@ -11,6 +11,7 @@ been run for real or read straight out of the source it invokes.
 | Launch a fleet on workable items | `bash plugin/ralph-herdr/scripts/work-fleet.sh` (add issue numbers for exactly those) | 6 |
 | Launch a TEAM for an epic (standing lead + fleet) | `bash plugin/ralph-herdr/scripts/work-team.sh EPIC` (`--lead-only` respawns a dead lead) | 6 |
 | Open the cockpit | `herdr plugin action invoke cockpit --plugin ralph-herdr` | 3 |
+| Sit with the board (attended dispatch) | `herdr plugin action invoke hero --plugin ralph-herdr` | 2 |
 | Board state / who's working | `board list` · `board next` · `herdr agent list` | 7 |
 | Fleet health at a glance (incl. dead-before-start) | `bash plugin/ralph-herdr/scripts/fleet-status.sh` | 7 |
 | Spawn one worker on issue NNN | `bash plugin/ralph-herdr/scripts/work-fleet.sh NNN` | 6 |
@@ -88,6 +89,7 @@ herdr plugin action invoke dashboard    --plugin ralph-herdr   # read-only watch
 herdr plugin action invoke work-next    --plugin ralph-herdr   # 1 work session, board-next
 herdr plugin action invoke work-fleet   --plugin ralph-herdr   # up to N frontier issues in parallel
 herdr plugin action invoke work-these   --plugin ralph-herdr   # same fleet, on issues you name (prompts)
+herdr plugin action invoke hero         --plugin ralph-herdr   # attended dispatch: an interactive /ralph:hero session (brief + leases + inbox)
 herdr plugin action invoke answer       --plugin ralph-herdr   # answer a Human Needed item, comment-first
 herdr plugin action invoke attend       --plugin ralph-herdr   # focus whatever is blocked (carries the question)
 herdr plugin action invoke deliver-pass --plugin ralph-herdr   # shepherd In Review PRs
