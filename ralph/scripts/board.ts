@@ -8325,15 +8325,137 @@ export function fetchNodeIds(ctx: Ctx, numbers: number[]): Map<number, string> {
   return out;
 }
 
-export function linkParent(ctx: Ctx, parentNumber: number, childNumber: number): void {
-  const ids = fetchNodeIds(ctx, [parentNumber, childNumber]);
+/** The child's current parent as GitHub reports it — or null for a root.
+ *  Repo is carried so cross-repo parents are NAMED in refusals rather than
+ *  silently treated as absent (the partitioning rule elsewhere nulls them,
+ *  which is right for ranking and wrong for a message about why a link
+ *  refused). */
+type CurrentParent = { number: number; repo: string } | null;
+
+/** Node ids for both ends of a link write plus the child's current parent, in
+ *  one round trip — the pre-read every link mode needs (GH-2206): the bare
+ *  form refuses an already-parented child by NAME, `--rm` refuses a
+ *  mismatched pair, and the same read re-run after the mutation is the
+ *  read-back verify. Repository-scoped like fetchNodeIds, so a bare number
+ *  still cannot resolve outside the configured repo. */
+function fetchLinkPair(
+  ctx: Ctx,
+  parentNumber: number,
+  childNumber: number,
+): { parentId: string; childId: string; childParent: CurrentParent } {
+  let data: any;
+  try {
+    data = ghGraphQL(
+      ctx,
+      `query($owner: String!, $repo: String!, $parent: Int!, $child: Int!) {
+        repository(owner: $owner, name: $repo) {
+          lp: issue(number: $parent) { id }
+          lc: issue(number: $child) { id parent { number repository { nameWithOwner } } }
+        }
+      }`,
+      { owner: ctx.cfg.owner, repo: ctx.cfg.repo, parent: parentNumber, child: childNumber },
+    );
+  } catch (e) {
+    if (e instanceof GraphQLError && e.types.includes("NOT_FOUND")) {
+      throw new UsageError(
+        `issue not found in ${ctx.cfg.owner}/${ctx.cfg.repo} (of #${parentNumber}, #${childNumber}): ${e.message}`,
+      );
+    }
+    throw e;
+  }
+  const lp = data.repository?.lp;
+  const lc = data.repository?.lc;
+  if (!lp) throw new UsageError(`issue #${parentNumber} not found in ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+  if (!lc) throw new UsageError(`issue #${childNumber} not found in ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+  return {
+    parentId: lp.id,
+    childId: lc.id,
+    childParent: lc.parent
+      ? { number: lc.parent.number, repo: lc.parent.repository?.nameWithOwner ?? "" }
+      : null,
+  };
+}
+
+export type LinkMode = "add" | "rm" | "replace";
+
+/** Sub-issue edge writes (GH-2206). Three modes over ONE mutation surface:
+ *  bare add, `--rm` (removeSubIssue — the inverse `dep` always had), and
+ *  `--replace` (addSubIssue with replaceParent — deliberately ONE atomic
+ *  mutation, never remove+add: between two writes the child is parentless,
+ *  and the epic-aware ranker would read it as a root for that window).
+ *  Every mode re-reads the child's parent after the write and refuses to
+ *  report success on a mismatch. Returns the human line for the CLI. */
+export function linkParent(ctx: Ctx, parentNumber: number, childNumber: number, mode: LinkMode = "add"): string {
+  if (parentNumber === childNumber) throw new UsageError("an issue cannot be its own parent");
+  const ownRepo = (p: NonNullable<CurrentParent>): boolean =>
+    p.repo.toLowerCase() === `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase();
+  const label = (p: NonNullable<CurrentParent>): string => (ownRepo(p) ? `#${p.number}` : `${p.repo}#${p.number}`);
+
+  const { parentId, childId, childParent } = fetchLinkPair(ctx, parentNumber, childNumber);
+  const isCurrent = childParent !== null && ownRepo(childParent) && childParent.number === parentNumber;
+
+  if (mode === "rm") {
+    if (childParent === null) {
+      throw new RefusalError(`#${childNumber} has no parent — nothing to unlink`);
+    }
+    if (!isCurrent) {
+      // A remove that silently no-ops on a mismatched pair hides a wrong
+      // mental model — refuse with the actual parent's name.
+      throw new RefusalError(
+        `#${parentNumber} is not #${childNumber}'s parent — current parent is ${label(childParent)}` +
+          (ownRepo(childParent)
+            ? ` (\`board link ${childParent.number} ${childNumber} --rm\` detaches it)`
+            : ` (cross-repo — detach it in the GitHub UI)`),
+      );
+    }
+    ghGraphQL(
+      ctx,
+      `mutation($parentId: ID!, $childId: ID!) {
+        removeSubIssue(input: { issueId: $parentId, subIssueId: $childId }) { issue { id } }
+      }`,
+      { parentId, childId },
+    );
+    const after = fetchLinkPair(ctx, parentNumber, childNumber).childParent;
+    if (after !== null && ownRepo(after) && after.number === parentNumber) {
+      throw new Error(
+        `unlink did NOT land — GitHub still reports #${parentNumber} as #${childNumber}'s parent; retry \`board link ${parentNumber} ${childNumber} --rm\``,
+      );
+    }
+    return `#${childNumber} is no longer a sub-issue of #${parentNumber} (now a root)`;
+  }
+
+  // add / replace. Same-parent re-link is a retry, not a violation — noop
+  // success, no mutation (the same-state-move rule, v0.2.0).
+  if (isCurrent) return `#${childNumber} is already a sub-issue of #${parentNumber} (no change)`;
+
+  if (mode === "add" && childParent !== null) {
+    // Digested refusal, not GitHub's raw "already has a parent": name the
+    // current parent and both remedies. A cross-repo parent cannot be
+    // addressed by bare number, so only --replace is offered there.
+    throw new RefusalError(
+      `#${childNumber} already has a parent (${label(childParent)}) — ` +
+        `\`board link ${parentNumber} ${childNumber} --replace\` moves it atomically` +
+        (ownRepo(childParent) ? `; \`board link ${childParent.number} ${childNumber} --rm\` detaches it` : ``),
+    );
+  }
+
   ghGraphQL(
     ctx,
     `mutation($parentId: ID!, $childId: ID!) {
-      addSubIssue(input: { issueId: $parentId, subIssueId: $childId }) { issue { id } }
+      addSubIssue(input: { issueId: $parentId, subIssueId: $childId${mode === "replace" ? ", replaceParent: true" : ""} }) { issue { id } }
     }`,
-    { parentId: ids.get(parentNumber), childId: ids.get(childNumber) },
+    { parentId, childId },
   );
+  const after = fetchLinkPair(ctx, parentNumber, childNumber).childParent;
+  if (!(after !== null && ownRepo(after) && after.number === parentNumber)) {
+    throw new Error(
+      `link did NOT land — GitHub reports ${after ? label(after) : "no parent"} as #${childNumber}'s parent; ` +
+        `retry \`board link ${parentNumber} ${childNumber}${mode === "replace" ? " --replace" : ""}\``,
+    );
+  }
+  return mode === "replace" && childParent !== null
+    ? `#${childNumber} moved: parent ${label(childParent)} → #${parentNumber}`
+    : `#${childNumber} is now a sub-issue of #${parentNumber}`;
 }
 
 export function setDependency(ctx: Ctx, blockedNumber: number, blockingNumber: number, remove = false): void {
@@ -11169,7 +11291,15 @@ mutations
                               itself); this verb exists for the one that is not
                               observable — REJECTION, "leave it open". Exits 1
                               when nothing is pending; -m required to reject
-  link PARENT CHILD           add sub-issue edge
+  link PARENT CHILD           add sub-issue edge; refuses an already-parented
+                              child, naming the current parent and both remedies
+       PARENT CHILD --rm      remove the edge (refuses unless PARENT is the
+                              current parent — a silent no-op would hide a
+                              wrong mental model)
+       NEWPARENT CHILD --replace
+                              re-parent atomically (one mutation, never
+                              remove+add — the child is never transiently a
+                              root the ranker could misread)
   dep NNN --on MMM [--rm]     NNN is blocked by MMM (--rm removes);
                               --dismiss [-m why] records "judged, NO edge"
                               instead — the durable answer to a deps-unwired
@@ -11326,7 +11456,7 @@ export const VERB_HELP: Record<string, string> = {
   reopen: "board reopen <n>\n  The one exit from Done/Canceled (→Backlog); accepts a pending reopen proposal.\n  example: board reopen 1234",
   defer: "board defer <n> --until \"<condition>\" [--recheck <ISO>] | board defer <n> --clear\n  Park a Backlog item out of ranking until its stated precondition holds.\n  Claiming the unit also lifts it. doctor surfaces elapsed rechecks.\n  On an Intake item this is a timed snooze and --recheck is REQUIRED:\n  withheld from tend-queue unformed and doctor intake-stale until the\n  recheck, then resurfaces with its full age. Approval clears it.\n  example: board defer 1234 --until \"GH-2088 lands\" --recheck 2026-09-01T00:00:00Z",
   dep: "board dep <blocked> --on <blocking> [--rm|--dismiss [-m why]]   (--blocked-by = --on)\n  Dependency edge; blocked items never rank. --dismiss records the judgment that the pair is NOT dependent (clears it from tend's deps-unwired).\n  example: board dep 1234 --blocked-by 1200",
-  link: "board link <parent> <child>\n  Sub-issue edge (the tree parent-check rolls up).\n  example: board link 1200 1234",
+  link: "board link <parent> <child> [--rm|--replace]\n  Sub-issue edge (the tree parent-check rolls up). Bare form refuses an already-parented child, naming the current parent and both remedies. --rm removes the edge (the named parent must be the current one). --replace re-parents in ONE atomic mutation — never remove+add, so the child is never transiently a root.\n  example: board link 1200 1234\n  move example: board link 1300 1234 --replace   (#1234 moves under #1300)",
   priority: "board priority <n> <P0..P3|--clear>\n  Set/clear Priority. Null priority sinks below stale backlog in next.\n  example: board priority 1234 P1",
   comment: "board comment <n> -m \"<body>\"\n  Plain comment through the sanctioned path.\n  example: board comment 1234 -m \"blocked on infra\"",
   resolve: "board resolve <n> --accept | --reject -m \"<why not>\"\n  Dispose of a tend closure proposal. --accept prints the gated follow-up.\n  example: board resolve 1234 --reject -m \"still needed for the demo\"",
@@ -11360,7 +11490,7 @@ interface ParsedArgs {
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "resume", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
-  "intake", "backlog", "dismiss", "to-human", "digest", "mark",
+  "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
@@ -12689,8 +12819,9 @@ export function run(argv: string[], ctx: Ctx): number {
     case "link": {
       const parent = requireNumber(positional[0], "parent number");
       const child = requireNumber(positional[1], "child number");
-      linkParent(ctx, parent, child);
-      out(`#${child} is now a sub-issue of #${parent}`);
+      if (flags.rm && flags.replace) throw new UsageError("--rm and --replace are mutually exclusive");
+      const mode: LinkMode = flags.rm ? "rm" : flags.replace ? "replace" : "add";
+      out(linkParent(ctx, parent, child, mode));
       return 0;
     }
 
