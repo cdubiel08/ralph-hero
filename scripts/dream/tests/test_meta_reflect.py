@@ -122,14 +122,15 @@ class TestRunMetaReflect:
             {"axiom": "Prefer agglomerative for sparse streams", "rationale": "x",
              "source_reflection_ids": ["r0", "r1"]},
         ])
-        n = meta_reflect.run_meta_reflect(
+        r = meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=post
         )
-        assert n == 1
-        n2 = meta_reflect.run_meta_reflect(
+        assert (r.staged, r.outcome) == (1, "wrote")
+        r2 = meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=post
         )
-        assert n2 == 0  # same axiom hash already staged
+        # Same axiom hash already staged: a zero, but a HEALTHY one.
+        assert (r2.staged, r2.outcome) == (0, "suppressed")
 
     def test_caps_an_over_producing_model(self, tmp_path: Path) -> None:
         """The cap is enforced, not merely requested in the prompt (GH-1519).
@@ -151,7 +152,7 @@ class TestRunMetaReflect:
         n = meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3,
             max_candidates=2, now=NOW, http_post=post,
-        )
+        ).staged
         assert n == 2
         staged = (wiki / "_candidates.jsonl").read_text(encoding="utf-8").splitlines()
         assert [json.loads(line)["axiom"] for line in staged if line.strip()] == [
@@ -170,10 +171,10 @@ class TestRunMetaReflect:
         def boom(*a, **k):  # noqa: ANN001, ARG001
             raise AssertionError("must not call the LLM below min_reflections")
 
-        n = meta_reflect.run_meta_reflect(
+        r = meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=boom
         )
-        assert n == 0
+        assert (r.staged, r.outcome) == (0, "deferred")
         assert not (wiki / "_candidates.jsonl").exists()
 
     def test_offline_llm_stages_nothing(self, tmp_path: Path) -> None:
@@ -188,10 +189,11 @@ class TestRunMetaReflect:
         def offline(url, body, timeout):  # noqa: ANN001, ARG001
             raise RuntimeError("connection refused")
 
-        n = meta_reflect.run_meta_reflect(
+        r = meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=offline
         )
-        assert n == 0
+        # An offline model stages nothing AND says so: this is the defect zero.
+        assert (r.staged, r.outcome) == (0, "failed")
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +280,7 @@ class TestConsumedCandidates:
 
         assert meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=boom
-        ) == 0
+        ).staged == 0
         assert (wiki / "_candidates.jsonl").read_text().strip() == ""
 
 
@@ -389,12 +391,12 @@ class TestParaphraseAcrossRuns:
         first = _scripted_post([{"axiom": "Empty output is never evidence of absence"}], [])
         assert meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=first
-        ) == 1
+        ).staged == 1
         # A fresh hash — and the gate names it a restatement of the pending one.
         second = _scripted_post([{"axiom": "Absence of output proves nothing"}], [0])
         assert meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=second
-        ) == 0
+        ).staged == 0
         assert len(meta_reflect._read_candidate_records(wiki / "_candidates.jsonl")) == 1
 
     def test_a_genuinely_new_axiom_still_stages(self, tmp_path: Path) -> None:
@@ -411,7 +413,7 @@ class TestParaphraseAcrossRuns:
         second = _scripted_post([{"axiom": "Gates are run, not predicted"}], [])
         assert meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=second
-        ) == 1
+        ).staged == 1
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +487,7 @@ class TestSuppressionLog:
         second = _scripted_post([{"axiom": "Silence proves nothing about an empty result"}], [0])
         assert meta_reflect.run_meta_reflect(
             db, wiki, "u", "m", window_days=30, min_reflections=3, now=NOW, http_post=second
-        ) == 0
+        ).staged == 0
         recs = _suppressed(wiki)
         assert [r["matched"] for r in recs] == ["paraphrase"]
         assert recs[0]["axiom"] == "Silence proves nothing about an empty result"
@@ -495,3 +497,319 @@ class TestSuppressionLog:
         wiki = tmp_path / "wiki"
         assert meta_reflect.log_suppressions(wiki, [], now=NOW) == 0
         assert not wiki.exists()
+
+
+# ---------------------------------------------------------------------------
+# GH-2159: run-state record + defect-zero alarm for the WEEKLY cadence
+# ---------------------------------------------------------------------------
+#
+# The weekly job has the shape GH-2112 fixed for the nightly: launchd fires it,
+# nobody reads the exit code, and a run that synthesized nothing rendered like
+# a quiet week. What is new here is a third healthy zero — ``suppressed`` — so
+# the dedup gates doing their job are not mistaken for the model failing.
+
+
+def _read_meta_state(tmp_path: Path) -> dict:
+    return json.loads(
+        (tmp_path / "dream-meta-state.json").read_text(encoding="utf-8")
+    )
+
+
+def _reflection_rows(n: int) -> list[dict]:
+    # main() has no ``now`` seam, so these must be dated against the real
+    # clock or the window drops them and every outcome reads ``empty``.
+    recent = datetime.now(tz=timezone.utc).isoformat()
+    return [
+        {"id": f"r{i}", "date": recent,
+         "content": f"reflection {i}", "memory_tier": "reflection"}
+        for i in range(n)
+    ]
+
+
+def _run_main(tmp_path: Path, db: Path, *, min_reflections: int = 3) -> int:
+    return meta_reflect.main([
+        "--db-path", str(db),
+        "--wiki-dir", str(tmp_path / "wiki"),
+        "--config", str(tmp_path / "no-such-config.yaml"),
+        "--window-days", "30",
+        "--min-reflections", str(min_reflections),
+    ])
+
+
+class TestWeeklyRunState:
+    def test_defect_zero_records_failed_and_files_alarm(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        meta_state_isolation: list[dict],
+    ) -> None:
+        db = tmp_path / "k.db"
+        _seed(db, _reflection_rows(5))
+        # Every fail-open branch of synthesize_candidates looks like this.
+        monkeypatch.setattr(meta_reflect, "synthesize_candidates", lambda *a, **k: [])
+
+        rc = _run_main(tmp_path, db)
+
+        assert rc == 1
+        state = _read_meta_state(tmp_path)
+        assert state["outcome"] == "failed"
+        assert state["mode"] == "weekly"
+        assert state["exit_code"] == 1
+        assert state["reflections"] == 5
+        assert state["staged"] == 0
+        assert len(meta_state_isolation) == 1
+        assert meta_state_isolation[0]["reflections"] == 5
+
+    def test_empty_window_records_empty_no_alarm(
+        self, tmp_path: Path, meta_state_isolation: list[dict]
+    ) -> None:
+        db = tmp_path / "k.db"
+        _seed(db, [])
+
+        rc = _run_main(tmp_path, db)
+
+        assert rc == 0
+        assert _read_meta_state(tmp_path)["outcome"] == "empty"
+        assert meta_state_isolation == []
+
+    def test_below_gate_records_deferred_no_alarm(
+        self, tmp_path: Path, meta_state_isolation: list[dict]
+    ) -> None:
+        db = tmp_path / "k.db"
+        _seed(db, _reflection_rows(1))
+
+        rc = _run_main(tmp_path, db, min_reflections=5)
+
+        assert rc == 0
+        state = _read_meta_state(tmp_path)
+        assert state["outcome"] == "deferred"
+        assert state["reflections"] == 1
+        assert "min_reflections=5" in state["reason"]
+        assert meta_state_isolation == []
+
+    def test_every_candidate_suppressed_is_a_HEALTHY_zero(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        meta_state_isolation: list[dict],
+    ) -> None:
+        """The zero the nightly has no analogue for.
+
+        The model answered and the dedup gates dropped everything it said.
+        Alarming here would fire on a working pipeline whose backlog is
+        simply already known — the false positive that gets an alarm ignored.
+        """
+        db = tmp_path / "k.db"
+        _seed(db, _reflection_rows(5))
+        monkeypatch.setattr(
+            meta_reflect, "synthesize_candidates",
+            lambda *a, **k: [{"axiom": "a known one", "rationale": "x"}],
+        )
+        monkeypatch.setattr(meta_reflect, "filter_paraphrases", lambda *a, **k: [])
+
+        rc = _run_main(tmp_path, db)
+
+        assert rc == 0
+        state = _read_meta_state(tmp_path)
+        assert state["outcome"] == "suppressed"
+        assert state["candidates"] == 1
+        assert state["staged"] == 0
+        assert meta_state_isolation == []
+
+    def test_already_staged_hash_is_also_suppressed_not_failed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        meta_state_isolation: list[dict],
+    ) -> None:
+        db = tmp_path / "k.db"
+        _seed(db, _reflection_rows(5))
+        monkeypatch.setattr(
+            meta_reflect, "synthesize_candidates",
+            lambda *a, **k: [{"axiom": "Gates are run, not predicted"}],
+        )
+        monkeypatch.setattr(meta_reflect, "filter_paraphrases", lambda c, *a, **k: c)
+
+        assert _run_main(tmp_path, db) == 0
+        assert _read_meta_state(tmp_path)["outcome"] == "wrote"
+        # Second run: same hash, nothing new staged — still not a defect.
+        assert _run_main(tmp_path, db) == 0
+        assert _read_meta_state(tmp_path)["outcome"] == "suppressed"
+        assert meta_state_isolation == []
+
+    def test_success_records_wrote(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        meta_state_isolation: list[dict],
+    ) -> None:
+        db = tmp_path / "k.db"
+        _seed(db, _reflection_rows(5))
+        monkeypatch.setattr(
+            meta_reflect, "synthesize_candidates",
+            lambda *a, **k: [{"axiom": "Empty output is never evidence"}],
+        )
+        monkeypatch.setattr(meta_reflect, "filter_paraphrases", lambda c, *a, **k: c)
+
+        rc = _run_main(tmp_path, db)
+
+        assert rc == 0
+        state = _read_meta_state(tmp_path)
+        assert state["outcome"] == "wrote"
+        assert state["staged"] == 1
+        assert state["exit_code"] == 0
+        assert meta_state_isolation == []
+
+    def test_state_write_failure_never_fails_the_run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level("WARNING", logger="ralph.dream.meta_reflect")
+        blocker = tmp_path / "blocker"
+        blocker.write_text("", encoding="utf-8")
+        monkeypatch.setenv(
+            "RALPH_DREAM_META_STATE_PATH", str(blocker / "state.json")
+        )
+        db = tmp_path / "k.db"
+        _seed(db, [])
+
+        assert _run_main(tmp_path, db) == 0
+        assert any(
+            "Could not write dream run state" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_env_overrides_config_state_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import yaml as _yaml
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            _yaml.safe_dump({"meta_state_path": str(tmp_path / "from-config.json")}),
+            encoding="utf-8",
+        )
+        chosen = tmp_path / "from-env.json"
+        monkeypatch.setenv("RALPH_DREAM_META_STATE_PATH", str(chosen))
+        db = tmp_path / "k.db"
+        _seed(db, [])
+
+        meta_reflect.main([
+            "--db-path", str(db), "--wiki-dir", str(tmp_path / "wiki"),
+            "--config", str(cfg), "--window-days", "30",
+        ])
+
+        assert chosen.exists()
+        assert not (tmp_path / "from-config.json").exists()
+
+
+class TestWeeklyAlarmIsDistinctFromTheNightly:
+    """One standing alarm per PIPELINE, not one per machine (GH-2159).
+
+    Both cadences dedup by exact title, so a shared title would let the
+    nightly's open alarm silence every weekly failure — the exact silence
+    this line of work exists to remove.
+    """
+
+    def test_title_and_marker_differ(self) -> None:
+        import reflect
+
+        assert meta_reflect.META_FAILURE_ISSUE_TITLE != reflect.DREAM_FAILURE_ISSUE_TITLE
+        assert meta_reflect.META_FAILURE_MARKER != reflect.DREAM_FAILURE_MARKER
+
+    def test_default_state_paths_differ(self) -> None:
+        import reflect
+
+        assert meta_reflect.DEFAULT_META_STATE_PATH != reflect.DEFAULT_STATE_PATH
+
+
+class TestEmitMetaFailureIssue:
+    """Unit tests for the weekly standing alarm (real function, stubbed gh)."""
+
+    def _result(self, rc: int, stdout: str = "", stderr: str = ""):
+        import subprocess as _sp
+
+        return _sp.CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr=stderr)
+
+    def test_open_alarm_dedupes(
+        self, monkeypatch: pytest.MonkeyPatch, real_emit_meta_failure_issue
+    ) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):  # noqa: ANN001, ARG001
+            calls.append(cmd)
+            payload = [{
+                "title": meta_reflect.META_FAILURE_ISSUE_TITLE,
+                "url": "https://github.com/x/y/issues/1",
+            }]
+            return self._result(0, stdout=json.dumps(payload))
+
+        monkeypatch.setattr(meta_reflect.dream_health.subprocess, "run", fake_run)
+        got = real_emit_meta_failure_issue(reflections=12, state_path="/tmp/s.json")
+        assert got == "<existing>"
+        assert len(calls) == 1  # list only; no create
+
+    def test_no_open_alarm_files_one(
+        self, monkeypatch: pytest.MonkeyPatch, real_emit_meta_failure_issue
+    ) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):  # noqa: ANN001, ARG001
+            calls.append(cmd)
+            if "list" in cmd:
+                return self._result(0, stdout="[]")
+            return self._result(0, stdout="https://github.com/x/y/issues/2\n")
+
+        monkeypatch.setattr(meta_reflect.dream_health.subprocess, "run", fake_run)
+        got = real_emit_meta_failure_issue(reflections=12, state_path="/tmp/s.json")
+        assert got == "https://github.com/x/y/issues/2"
+        create_cmd = calls[1]
+        assert "create" in create_cmd
+        body = create_cmd[create_cmd.index("--body") + 1]
+        assert meta_reflect.META_FAILURE_MARKER in body
+        assert "12 reflection(s)" in body
+        assert create_cmd[create_cmd.index("--title") + 1] == (
+            meta_reflect.META_FAILURE_ISSUE_TITLE
+        )
+
+    def test_failed_dedup_read_warns_and_files(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        real_emit_meta_failure_issue,
+    ) -> None:
+        caplog.set_level("WARNING", logger="ralph.dream.meta_reflect")
+
+        def fake_run(cmd, **kw):  # noqa: ANN001, ARG001
+            if "list" in cmd:
+                return self._result(1, stderr="rate limited")
+            return self._result(0, stdout="https://github.com/x/y/issues/3\n")
+
+        monkeypatch.setattr(meta_reflect.dream_health.subprocess, "run", fake_run)
+        got = real_emit_meta_failure_issue(reflections=12, state_path="/tmp/s.json")
+        assert got == "https://github.com/x/y/issues/3"
+        assert any("filing anyway" in rec.message for rec in caplog.records)
+
+    def test_create_failure_returns_none(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        real_emit_meta_failure_issue,
+    ) -> None:
+        caplog.set_level("WARNING", logger="ralph.dream.meta_reflect")
+
+        def fake_run(cmd, **kw):  # noqa: ANN001, ARG001
+            if "list" in cmd:
+                return self._result(0, stdout="[]")
+            return self._result(1, stderr="no auth")
+
+        monkeypatch.setattr(meta_reflect.dream_health.subprocess, "run", fake_run)
+        assert real_emit_meta_failure_issue(
+            reflections=12, state_path="/tmp/s.json"
+        ) is None
+        assert any(
+            "Could not file dream failure alarm" in rec.message
+            for rec in caplog.records
+        )

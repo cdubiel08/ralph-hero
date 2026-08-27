@@ -41,6 +41,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+import dream_health
+
 try:  # pyyaml is a hard dep (see pyproject.toml), but we don't want to
     # crash if someone runs the file without `uv sync` first.
     import yaml  # type: ignore[import-untyped]
@@ -1167,6 +1169,11 @@ def emit_process_improvement_issue(
 #    single standing GitHub issue (the GH-1952 release-failure pattern), which
 #    state-guard adopts onto the board — the surface a driver actually reads.
 #
+# Both mechanisms live in ``dream_health`` (GH-2159) because the weekly
+# ``meta_reflect.py`` needs the same two, differing only in their copy — the
+# state path, the alarm title and marker, and the body. What stays here is
+# this cadence's copy and nothing else.
+#
 # Honest limit (same one GH-1952 states): a run that never fires at all —
 # launchd silent non-fire, an ``ingest &&`` short-circuit, a crash before
 # ``main()`` — writes no state and files nothing. The state file's timestamp
@@ -1199,28 +1206,18 @@ def write_run_state(
     Never raises: a state-write failure logs a warning and returns ``None`` —
     the record must not be able to fail the run it records.
     """
-    import json
-
-    payload = {
-        "run_at": (now or datetime.now(tz=timezone.utc)).isoformat(),
-        "mode": mode,
-        "outcome": outcome,
-        "exit_code": exit_code,
-        "candidates": candidates,
-        "clusters": clusters,
-        "written": written,
-        "reason": reason,
-    }
-    try:
-        path = Path(state_path).expanduser()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(path)
-        return path
-    except OSError as exc:
-        log.warning("Could not write dream run state to %s: %s", state_path, exc)
-        return None
+    return dream_health.write_run_state(
+        state_path,
+        outcome=outcome,
+        exit_code=exit_code,
+        mode=mode,
+        reason=reason,
+        now=now,
+        log=log,
+        candidates=candidates,
+        clusters=clusters,
+        written=written,
+    )
 
 
 def emit_dream_failure_issue(
@@ -1230,49 +1227,13 @@ def emit_dream_failure_issue(
     state_path: Path | str,
     repo: str | None = None,
 ) -> str | None:
-    """File ONE standing alarm issue for a defect-zero run.
+    """File ONE standing alarm issue for a defect-zero nightly run.
 
     Deduplicated by exact-title search over open issues, so a failure that
     repeats nightly keeps one alarm rather than filing one issue per night.
-    A failed dedup read WARNS AND FILES (the GH-1973 direction: the outage
-    that breaks the read is the one that needs the alarm; worst case is a
-    duplicate, not silence). Returns the issue URL, ``"<existing>"`` when an
-    open alarm already stands, or ``None`` when filing itself failed.
+    Returns the issue URL, ``"<existing>"`` when an open alarm already stands,
+    or ``None`` when filing itself failed.
     """
-    import json
-
-    list_cmd = [
-        "gh", "issue", "list",
-        "--state", "open",
-        "--search", f'"{DREAM_FAILURE_ISSUE_TITLE}" in:title',
-        "--json", "title,url",
-    ]
-    if repo:
-        list_cmd += ["--repo", repo]
-    try:
-        result = subprocess.run(
-            list_cmd, capture_output=True, text=True, timeout=60
-        )
-        if result.returncode == 0:
-            for row in json.loads(result.stdout or "[]"):
-                if row.get("title") == DREAM_FAILURE_ISSUE_TITLE:
-                    log.info(
-                        "Dream failure alarm already open: %s", row.get("url")
-                    )
-                    return "<existing>"
-        else:
-            log.warning(
-                "Dedup read for dream failure alarm failed (rc=%d): %s "
-                "-- filing anyway",
-                result.returncode,
-                (result.stderr or "").strip(),
-            )
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "Dedup read for dream failure alarm failed: %s -- filing anyway",
-            exc,
-        )
-
     body = (
         f"{DREAM_FAILURE_MARKER}\n"
         f"The nightly dream-loop reflection run attempted **{clusters} "
@@ -1292,30 +1253,9 @@ def emit_dream_failure_issue(
         f"standing alarm: it is filed once and not re-filed while open. "
         f"Close it when the pipeline writes again.\n"
     )
-    create_cmd = [
-        "gh", "issue", "create",
-        "--title", DREAM_FAILURE_ISSUE_TITLE,
-        "--body", body,
-    ]
-    if repo:
-        create_cmd += ["--repo", repo]
-    try:
-        result = subprocess.run(
-            create_cmd, capture_output=True, text=True, timeout=60
-        )
-        if result.returncode != 0:
-            log.warning(
-                "Could not file dream failure alarm (rc=%d): %s",
-                result.returncode,
-                (result.stderr or "").strip(),
-            )
-            return None
-        url = result.stdout.strip()
-        log.info("Filed dream failure alarm: %s", url)
-        return url
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Could not file dream failure alarm: %s", exc)
-        return None
+    return dream_health.emit_failure_issue(
+        title=DREAM_FAILURE_ISSUE_TITLE, body=body, repo=repo, log=log
+    )
 
 
 # ---------------------------------------------------------------------------

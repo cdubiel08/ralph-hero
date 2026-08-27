@@ -147,33 +147,65 @@ Expected output (column ordering: PID, last-exit-status, label):
 A `-` in the PID column means the agent is registered but not currently
 running. The last-exit-status is `0` after a successful run.
 
-## Run state (GH-2112)
+## Run state (GH-2112 nightly, GH-2159 weekly)
 
 Nobody reads a launchd exit code, and a pipeline that produced nothing
 looked identical to one that had nothing to produce (GH-2110 ran for a
-day that way). Two mechanisms make a bad night loud:
+day that way). Two mechanisms make a bad run loud, and **both cadences
+now carry them** — the weekly job fires under launchd with nobody
+reading its exit code either, so GH-2110 predicted it "will fail
+identically".
 
-- **`~/.ralph-hero/dream-state.json`** — written by `reflect.py` on
-  every terminal path (env `RALPH_DREAM_STATE_PATH` > config
-  `state_path` > default). Fields: `run_at`, `mode`, `outcome`,
-  `exit_code`, `candidates`, `clusters`, `written`, `reason`. The two
-  zeroes are distinct outcomes: `empty` / `deferred` are healthy,
-  `failed` (clusters attempted, 0 written) is the defect. `--dry-run`
-  writes nothing.
-- **A standing board alarm** — the `failed` path also files one GitHub
-  issue via `gh` (title-deduplicated: one open alarm, never one per
-  night), which state-guard adopts onto the board. Close it when the
+- **A run-state file** — written on every terminal path, with the
+  healthy zeroes and the defect zero as distinct `outcome` values.
+- **A standing board alarm** — only the `failed` outcome files one
+  GitHub issue via `gh` (title-deduplicated: one open alarm, never one
+  per run), which state-guard adopts onto the board. Close it when the
   pipeline writes again.
+
+|  | nightly `reflect.py` | weekly `meta_reflect.py` |
+|---|---|---|
+| state file | `~/.ralph-hero/dream-state.json` | `~/.ralph-hero/dream-meta-state.json` |
+| override | `RALPH_DREAM_STATE_PATH` > config `state_path` | `RALPH_DREAM_META_STATE_PATH` > config `meta_state_path` |
+| `mode` | `nightly` / `backfill` | `weekly` |
+| counters | `candidates`, `clusters`, `written` | `reflections`, `candidates`, `staged` |
+| healthy zeroes | `empty`, `deferred` | `empty`, `deferred`, `suppressed` |
+| defect zero | `failed` — clusters attempted, 0 written | `failed` — reflections cleared the gate, 0 candidates synthesized |
+
+Every file carries `run_at`, `mode`, `outcome`, `exit_code`, its
+counters, and `reason`. `reflect.py --dry-run` writes nothing.
+
+The state paths and alarm titles are **deliberately distinct**, because
+both alarms dedup by exact title: one shared title would let an open
+nightly alarm silence every weekly failure, which is the silence this
+whole line of work exists to remove. One standing alarm per pipeline.
+
+The weekly cadence has a third healthy zero the nightly does not.
+`suppressed` means the model answered and the dedup gates dropped
+everything it said — every candidate restated a known axiom, or was
+already staged, promoted or rejected. That is a working pipeline over a
+backlog that is already known; alarming on it would fire on health and
+teach a reader to ignore the alarm. Only a run that cleared the
+`min_reflections` gate and got nothing parseable back is `failed`. That
+branch cannot name a cause: `synthesize_candidates` fails open on an
+unreachable endpoint, a non-200, an unexpected payload shape and an
+unparseable completion alike, so the alarm says what was observed and
+lists the causes rather than claiming one.
 
 Honest limit: a run that never fires at all — launchd silent non-fire,
 an `ingest &&` short-circuit, a crash before `main()` — writes no state
-and files nothing. A stale `run_at` (> ~2 days) is how that class is
-detected, by whoever runs a verify pass.
+and files nothing. A stale `run_at` is how that class is detected, by
+whoever runs a verify pass.
+
+Both mechanisms live in `dream_health.py`, imported by both scripts.
+The rule is one rule; only the copy — path, title, marker, body —
+belongs to each cadence.
 
 ## Logs
 
 - `~/Library/Logs/ralph-dream-loop.out` — `ingest.py` + `reflect.py` stdout.
 - `~/Library/Logs/ralph-dream-loop.err` — stderr (errors, warnings, Gemma fallbacks).
+- `~/Library/Logs/ralph-dream-weekly.out` / `.err` — the weekly `meta_reflect.py` pass.
 
 Logs live under `~/Library/Logs/` (persistent across reboots, more
 discoverable than `/tmp/`). `logrotate.sh` runs at the end of every
@@ -228,7 +260,9 @@ this script with the gate-resolved `served_id` as `--model`, and
 the nightly `dream-now`, so the week's last reflections are already in the DB.
 Passing `--model` explicitly matters: `DEFAULT_LLM_MODEL` here is a hardcoded
 name that a differently-loaded gate would 404 on, and fail-open means such a run
-stages nothing while still exiting 0.
+stages nothing. Since GH-2159 that run is no longer silent: it records
+`outcome: failed` and files the standing weekly alarm (see
+[Run state](#run-state-gh-2112-nightly-gh-2159-weekly)), and `main()` exits 1.
 
 It **never writes the wiki tier**. Candidates are staged for the human-gated
 `/ralph-knowledge:curate` skill (a sibling of curate's `_rejected.jsonl`),
