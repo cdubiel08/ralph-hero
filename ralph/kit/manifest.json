@@ -23,7 +23,7 @@
     ".github/workflows/doctor.yml": "e851de240963f070345f6476054302210ff328040d8d739e1b25bc0fd4c26163",
     ".claude/hooks/ralph-kit-orient.sh": "7fc4bbb2908942462c915c52b42174c09a953db66b9ba5a269b270405ea53c52",
     ".claude/hooks/funnel-gate-watch.sh": "b029e7925218f55e636df4400177f1d4432e9447eadee1ac02c3202ed1786168",
-    ".claude/hooks/lib/cmdscan.sh": "7b4ac76275f0357c1779877798538f030e557206d6bbb633883e81378fc3a563"
+    ".claude/hooks/lib/cmdscan.sh": "8ab680433129fffbda336ccf728b1392d49371285fe3b1476f792e02d1115df4"
   },
   "sources": {
     ".claude/hooks/ralph-kit-orient.sh": "ralph/scripts/kit-src/ralph-kit-orient.sh",

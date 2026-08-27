@@ -80,6 +80,92 @@ eq "backticks outside quotes are NOT stripped" \
   'echo `gh pr merge 5`' \
   "$(cs_strip_quotes 'echo `gh pr merge 5`')"
 
+echo "== heredocs: a quoted-delimiter body is inert text (GH-2163) =="
+
+# The founding case: a commit message delivered by heredoc that merely NAMES a
+# blocked verb. The body is inert by the same argument as a single-quoted span.
+eq "a <<'EOF' body is stripped" \
+  "git commit -q -F - <<'EOF'
+EOF" \
+  "$(cs_strip_quotes "git commit -q -F - <<'EOF'
+... whose message gh pr merge --merge composes from the PR title ...
+EOF")"
+
+eq "a <<\"EOF\" body is stripped too" \
+  'git commit -F - <<"EOF"
+EOF' \
+  "$(cs_strip_quotes 'git commit -F - <<"EOF"
+prose naming gh pr merge
+EOF')"
+
+eq "a <<\\EOF delimiter is quoted (no expansion)" \
+  "$(printf 'cat <<\\EOF\nEOF')" \
+  "$(cs_strip_quotes "$(printf 'cat <<\\EOF\nnaming gh pr merge 5\nEOF')")"
+
+eq "<<- strips leading tabs when matching the terminator" \
+  "$(printf "cat <<-'EOF'\n\tEOF")" \
+  "$(cs_strip_quotes "$(printf "cat <<-'EOF'\n\tnaming gh pr merge 5\n\tEOF")")"
+
+# Load-bearing, same argument as backticks: an unquoted delimiter expands
+# substitutions, so what is inside $( ) really does run.
+eq "an unquoted <<EOF body carrying \$( ) is NOT stripped" \
+  'git commit -F - <<EOF
+x $(gh pr merge 5) y
+EOF' \
+  "$(cs_strip_quotes 'git commit -F - <<EOF
+x $(gh pr merge 5) y
+EOF')"
+
+eq "an unquoted <<EOF body carrying a backtick is NOT stripped" \
+  'cat <<EOF
+x `gh pr merge 5` y
+EOF' \
+  "$(cs_strip_quotes 'cat <<EOF
+x `gh pr merge 5` y
+EOF')"
+
+# Parameter expansion alone runs nothing, so a substitution-free unquoted body
+# is as inert as a quoted one.
+eq "an unquoted <<EOF body with no substitution is stripped" \
+  'git commit -F - <<EOF
+EOF' \
+  "$(cs_strip_quotes 'git commit -F - <<EOF
+plain prose naming gh pr merge
+EOF')"
+
+eq "the terminator is a whole line — EOF2 does not close EOF" \
+  'cat <<EOF
+EOF
+echo after' \
+  "$(cs_strip_quotes 'cat <<EOF
+EOF2 with gh pr merge
+EOF
+echo after')"
+
+# Same failure direction as an unterminated quote: the rest is swallowed,
+# which under-redirects, and the command was a syntax error anyway.
+eq "a never-terminated body swallows the rest" \
+  "cat <<'EOF'" \
+  "$(cs_strip_quotes "cat <<'EOF'
+gh pr merge 5
+never closed")"
+
+eq "stacked heredocs fill in opener order" \
+  "cat <<'A' <<'B'
+A
+B
+echo done" \
+  "$(cs_strip_quotes "cat <<'A' <<'B'
+first body gh pr merge
+A
+second body
+B
+echo done")"
+
+eq "a here-string's word is an ordinary quoted span" \
+  'grep x <<< done' \
+  "$(cs_strip_quotes 'grep x <<<"gh pr merge 5" done')"
+
 echo "== cs_strip_quotes keep_subst: substitution is execution, not an argument =="
 
 eq "a double-quoted span carrying \$( ) is preserved" \
@@ -141,6 +227,32 @@ eq "a hash mid-word is not a comment" \
 eq "the last segment is delimited too" \
   'git push --force origin feat/x||' \
   "$(segs 'git push --force origin feat/x')"
+
+# A heredoc body is payload, not commands: separators inside it do not split,
+# and the body stays attached to its command's segment — which is what keeps
+# funnel-board's match-the-segment-whole exception able to see a mutation
+# delivered by heredoc. The command AFTER the terminator is its own segment.
+eq "a heredoc body does not split; the command after it does" \
+  "git commit -F - <<'EOF'
+a; b | c
+EOF|board get 1||" \
+  "$(segs "git commit -F - <<'EOF'
+a; b | c
+EOF
+board get 1")"
+
+eq "stacked heredoc bodies stay in the opener's segment" \
+  "cat <<'A' <<'B'
+b1; x
+A
+b2
+B|echo done||" \
+  "$(segs "cat <<'A' <<'B'
+b1; x
+A
+b2
+B
+echo done")"
 
 echo "== cs_command_word: where a pattern sits decides what it means =="
 
