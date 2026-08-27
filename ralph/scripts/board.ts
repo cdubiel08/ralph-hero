@@ -9269,7 +9269,12 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       if (!line.startsWith("herdr:")) {
         add("herdr-cockpit", "info", `not evaluated: ${(r.stderr || line || "no output").trim().slice(0, 200)}`);
       } else if (r.code === 0) {
-        add("herdr-cockpit", "ok", "wired (optional cockpit)");
+        // GH-2105: a wired verdict may carry the worktree-pile fragment — the
+        // one number that accretes on a HEALTHY cockpit. Flattening it to the
+        // bare "wired" is how ~60 finished worktrees stayed invisible to every
+        // doctor pass; pass whatever follows "wired" through whole instead.
+        const extra = line.replace(/^herdr:\s*wired[;\s]*/, "").trim();
+        add("herdr-cockpit", "ok", extra ? `wired (optional cockpit) — ${extra}` : "wired (optional cockpit)");
       } else if (r.code === 2) {
         add("herdr-cockpit", "info", "herdr not installed — optional cockpit; `/ralph:help herdr` to set it up");
       } else {

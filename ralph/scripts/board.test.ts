@@ -2201,6 +2201,19 @@ describe("doctor: herdr-cockpit (GH-1759) — advisory by construction", () => {
     withSetupSh(gh, { code: 0, stdout: "herdr: wired\n" });
     const c = cockpit(doctor(makeCtx(gh)));
     expect(c.level).toBe("ok");
+    expect(c.detail).toBe("wired (optional cockpit)");
+  });
+
+  it("wired passes the worktree-pile fragment through instead of flattening it (GH-2105)", () => {
+    const gh = new FakeGh();
+    withSetupSh(gh, {
+      code: 0,
+      stdout: "herdr: wired; worktree-pile: 47 dir(s) under /u/.herdr/worktrees/r — `bash …/herdr-setup.sh sweep` removes the finished ones (dry run by default)\n",
+    });
+    const c = cockpit(doctor(makeCtx(gh)));
+    expect(c.level).toBe("ok"); // a pile is never a finding
+    expect(c.detail).toContain("worktree-pile: 47");
+    expect(c.detail).toContain("sweep");
   });
 
   it("herdr not installed is info and points at /ralph:help herdr — never a finding (weekly CI has no herdr)", () => {

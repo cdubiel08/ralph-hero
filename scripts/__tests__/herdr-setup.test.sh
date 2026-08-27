@@ -217,6 +217,49 @@ out=$(run "" HOME="$TMP_ROOT/empty-home" RALPH_INSTALLED_PLUGINS_FILE="$TMP_ROOT
 expect "no board CLI anywhere gaps, naming the registry" "$out" \
   'GAP  board-cli — no board CLI found .*no ralph install recorded in'
 
+# --- worktree pile size (GH-2105) --------------------------------------------
+# The pile count must be SEEN unasked: a check note, plus a fragment on the
+# --oneline doctor relays. Never a gap (a pile is a sweep run away, not a
+# wiring problem), and an unmeasurable pile reads not-evaluated, never zero.
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+GITREPO="$TMP_ROOT/gitrepo"
+git init -q "$GITREPO"
+PILE_ROOT="$TMP_ROOT/wtroot"
+mkdir -p "$PILE_ROOT/gitrepo/wt-a" "$PILE_ROOT/gitrepo/wt-b" "$PILE_ROOT/gitrepo/wt-c"
+touch "$PILE_ROOT/gitrepo/a-file-not-a-dir"
+
+out=$(run "" RALPH_HERDR_REPO="$GITREPO" RALPH_HERDR_WORKTREES_ROOT="$PILE_ROOT")
+expect "pile count surfaces as a note naming the sweep" "$out" \
+  'note worktree-pile — 3 dir\(s\) under .*herdr-setup\.sh sweep'
+refute "pile is never a gap" "$out" 'GAP  worktree-pile'
+
+out=$(env -u RALPH_HERDR_LINEAGE_SH -u RALPH_HERDR_VERSION_STAMP -u RALPH_HERDR_BOARD \
+  PATH="$BIN:$PATH" HERDR_BIN_PATH="$BIN/herdr" \
+  RALPH_HERDR_REPO="$GITREPO" RALPH_HERDR_WORKTREES_ROOT="$PILE_ROOT" \
+  RALPH_HERDR_PLUGINS_JSON="$TMP_ROOT/nonexistent.json" \
+  bash "$SCRIPT" check --oneline 2>&1 || true)
+expect "oneline carries the pile fragment" "$out" '; worktree-pile: 3 dir\(s\)'
+if [ "$(grep -c . <<<"$out")" = 1 ]; then pass "oneline stays one line with the fragment"
+else fail "oneline stays one line with the fragment" "$out"; fi
+
+# empty pile dir and absent pile dir are both a MEASURED zero
+mkdir -p "$PILE_ROOT/empty-pile"
+EMPTYREPO="$TMP_ROOT/empty-pile"
+git init -q "$EMPTYREPO"
+mkdir -p "$PILE_ROOT/empty-pile"
+out=$(run "" RALPH_HERDR_REPO="$EMPTYREPO" RALPH_HERDR_WORKTREES_ROOT="$PILE_ROOT")
+expect "empty pile dir reads zero" "$out" 'note worktree-pile — 0 \(.*is empty\)'
+
+NOPILEREPO="$TMP_ROOT/no-pile"
+git init -q "$NOPILEREPO"
+out=$(run "" RALPH_HERDR_REPO="$NOPILEREPO" RALPH_HERDR_WORKTREES_ROOT="$PILE_ROOT")
+expect "absent pile dir reads zero" "$out" 'note worktree-pile — 0 \(no pile at'
+
+# a repo the count cannot be derived from reads not-evaluated, never zero
+out=$(run "" RALPH_HERDR_REPO="$TMP_ROOT/not-a-repo" RALPH_HERDR_WORKTREES_ROOT="$PILE_ROOT")
+expect "non-git repo reads not-evaluated" "$out" 'note worktree-pile — not evaluated'
+refute "non-git repo never reads as zero" "$out" 'worktree-pile — 0'
+
 echo
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
