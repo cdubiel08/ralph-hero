@@ -27,6 +27,12 @@
 #            re-run `work-team.sh N --lead-only` per epic. Respawn is
 #            idempotent re-run by that script's own contract: a standing
 #            lead is skipped, a dead one is respawned and loses nothing.
+#            OPT-IN (GH-2197): the only writer of that label is a human
+#            running work-team.sh by hand — no scheduled path ever creates
+#            a team — so on a machine that has never stood up a team this
+#            pass is a permanent no-op. It is deliberately absent from the
+#            suggested cron lines below; add it to the frequent line only
+#            on a machine that actually runs teams.
 #   digest   inbox curation: `board inbox --digest` — push a Tier 2
 #            notification when the verdict says worthy, then ALWAYS mark
 #            (an empty-inbox rota run still closes the day's window;
@@ -37,10 +43,11 @@
 # push a day" on the local calendar date. A frequent rota that marked on
 # every run would close the day's window on its first quiet fire and
 # suppress the one push the day was owed — so `digest` rides its own daily
-# schedule line, and the frequent line runs `fleet leads` only:
+# schedule line, and the frequent line runs `fleet` (add `leads` only on a
+# machine that runs teams — see its opt-in note above):
 #
-#   # crontab — the frequent pair, then the daily digest fire
-#   */30 8-18 * * *  cd /path/to/repo && bash ralph/examples/dispatch-rota.sh fleet leads
+#   # crontab — the frequent fleet line, then the daily digest fire
+#   */30 8-18 * * *  cd /path/to/repo && bash ralph/examples/dispatch-rota.sh fleet
 #   30 7 * * *       cd /path/to/repo && bash ralph/examples/dispatch-rota.sh digest
 #
 # Unattended arming is the deliver/tend two-key convention: the shared
