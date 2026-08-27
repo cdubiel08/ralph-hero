@@ -43,6 +43,40 @@ Needed` is illegal precisely because Human Needed is a *pause on in-flight
 work*. Steps 1-4 below still apply to a proposal's prose; only the envelope
 differs.
 
+## Addressing — who the question goes to (GH-2179)
+
+An escalation has an **audience** as well as a shape. In a team (an epic's
+standing space, GH-2176), workers escalate to their **lead** first; solo
+sessions escalate to the human, as ever. Nothing about *when* you escalate
+changes — the trigger rules (one re-dispatch, then Human Needed) are untouched;
+only the address is new.
+
+- **Default: the lead, when you have one.** `board move NNN human-needed
+  --why "…"` routes to the lead named by `$RALPH_HERDR_LEAD` (the team spawn
+  path sets it; solo sessions don't have it, so their escalations stay
+  human-addressed with no flag). The route rides the Decision-needed comment
+  as a marker — board-resident, never a private message that dies with a pane.
+- **`--to-human` when the answer is an authorization.** Spend beyond a named
+  ceiling, Intake approval, scope collapse, anything irreversible outside the
+  repo — the reserved set is the human's, and a lead may not grant it (a peer
+  cannot grant permission; neither can a lead). Address those past the lead
+  deliberately.
+- **The lead dispositions three ways**: answer a knowable question or re-steer
+  mis-aimed work (`board answer NNN -m` — the resume edge disposes the
+  escalation), or **promote** what genuinely needs the human (`board promote
+  NNN [-m]` — a durable marker, no state change).
+- **The TTL is the worker's guarantee.** A lead-routed escalation nobody
+  dispositions auto-promotes to the human tier at `RALPH_LOCK_TTL_MIN`
+  (120 min), computed wherever the queue is read (`board escalations`) — a
+  stalled or dead lead costs latency, never a stranded worker. You never need
+  to re-escalate past a silent lead.
+
+Promotion validates nothing about C9 shape — the auto-promotion path *cannot*
+(a dead lead plus strict validation is a stranded worker), so the manual path
+doesn't either, or waiting out the clock would become the permissive lane. The
+bar stays where it always was: with you, at composition time, checked
+deliberately via `board contract validate ralph.escalation`.
+
 ## Compose the question before you format it
 
 Four steps, in order. The formatting is the last one and the least important —
