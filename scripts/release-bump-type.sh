@@ -124,5 +124,9 @@ for kind in major minor; do
   fi
 done
 
-echo "Bump type: patch (default — no #minor/#major in the merge commit message or in the subject of the $(( ${#shas[@]} - 1 )) commit(s) it brought in)" >&2
+if [ "${#shas[@]}" -gt 1 ]; then
+  echo "Bump type: patch (default — no #minor/#major in the merge commit message or in the subject of the $(( ${#shas[@]} - 1 )) commit(s) it brought in)" >&2
+else
+  echo "Bump type: patch (default — no #minor/#major in this commit's message)" >&2
+fi
 echo patch
