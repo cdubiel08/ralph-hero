@@ -66,6 +66,18 @@ uv run reflect.py --dry-run  # preview clusters without LLM calls or writes
 `--since 180d` for a wider single pass. A narrow value (a nightly caller's
 `24h`) auto-widens to `window_days`.
 
+## Tests
+
+```bash
+uv run --locked --extra test pytest tests/
+```
+
+CI runs the same command on every PR (and push to main) touching
+`scripts/dream/**`, via the path-gated `dream-tests` workflow
+(`.github/workflows/dream-tests.yml`, GH-2167). The context is advisory by
+construction — path-filtered contexts must never be required checks
+(GH-2057).
+
 ### Backfill the existing backlog
 
 To seed reflections from the accumulated raw backlog (e.g. after first
