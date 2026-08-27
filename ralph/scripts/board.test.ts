@@ -101,6 +101,7 @@ import {
   scopeMatches,
   setDependency,
   setEstimate,
+  bulkSetAdvisoryField,
   setPriority,
   setup,
   SMELL_DEFAULTS,
@@ -4392,6 +4393,178 @@ describe("estimate is writable through the CLI (GH-2126)", () => {
     expect(setEstimate(ctx, filed.number, "S").estimate).toBe("S");
     expect(run(["move", String(filed.number), "backlog"], ctx)).toBe(0);
     expect(gh.issues.get(filed.number)!.state).toBe("Backlog");
+  });
+});
+
+describe("list arity on the field verbs (GH-2130)", () => {
+  const seed = (gh: FakeGh, numbers: number[]) => {
+    for (const n of numbers) gh.issues.set(n, { number: n, state: "Backlog" });
+  };
+
+  it("a comma list writes every target through the per-item writer — one single-target mutation each, never a batched document", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1, 2, 3]);
+    expect(run(["priority", "1,2,3", "P1"], ctx)).toBe(0);
+    expect(gh.mutations).toContain("setPriority(#1, P1)");
+    expect(gh.mutations).toContain("setPriority(#2, P1)");
+    expect(gh.mutations).toContain("setPriority(#3, P1)");
+    // The bulk path owns resolution/iteration/reporting and NOTHING else: no
+    // alias-batched mutation exists in board.ts, and this pins that the list
+    // form did not introduce one — N writes are N single-target documents.
+    const writes = gh.queries.filter((q) => q.includes("updateProjectV2ItemFieldValue"));
+    expect(writes.length).toBe(3);
+    for (const q of writes) expect(q.match(/updateProjectV2ItemFieldValue/g)!.length).toBe(1);
+    // Zero comments — neither more nor less audited than the single verb.
+    expect(gh.comments).toEqual([]);
+  });
+
+  it("estimate takes the same list arity", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1, 2]);
+    expect(run(["estimate", "1,2", "M"], ctx)).toBe(0);
+    expect(gh.mutations).toContain("setEstimate(#1, M)");
+    expect(gh.mutations).toContain("setEstimate(#2, M)");
+  });
+
+  it("--clear works in list form through the same writer", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1, 2]);
+    gh.issues.get(1)!.priority = "P2";
+    gh.issues.get(2)!.priority = "P3";
+    expect(run(["priority", "1,2", "--clear"], ctx)).toBe(0);
+    expect(gh.mutations).toContain("clearField(#1, F_priority)");
+    expect(gh.mutations).toContain("clearField(#2, F_priority)");
+  });
+
+  it("a closed target aborts the whole run BEFORE any write, naming the number and the single-form remedy", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1]);
+    gh.issues.set(2, { number: 2, state: "Done", issueState: "CLOSED" });
+    expect(() => run(["priority", "1,2", "P1"], ctx)).toThrow(RefusalError);
+    expect(() => bulkSetAdvisoryField(ctx, [1, 2], "Priority", "P1")).toThrow(/#2/);
+    expect(() => bulkSetAdvisoryField(ctx, [1, 2], "Priority", "P1")).toThrow(/board priority NNN P1/);
+    expect(gh.mutations.filter((m) => m.startsWith("setPriority"))).toEqual([]);
+  });
+
+  it("an off-board and an archived target fail closed the same way — never a silent skip", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1]);
+    gh.issues.set(2, { number: 2, state: "Backlog", onBoard: false });
+    gh.issues.set(3, { number: 3, state: "Backlog", archived: true });
+    expect(() => bulkSetAdvisoryField(ctx, [1, 2, 3], "Priority", "P1")).toThrow(/#2, #3/);
+    expect(gh.mutations.filter((m) => m.startsWith("setPriority"))).toEqual([]);
+  });
+
+  it("a duplicate number in the list is refused as a probable typo", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1]);
+    expect(() => run(["priority", "1,1", "P1"], ctx)).toThrow(/duplicate.*#1/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("a list longer than --limit REFUSES rather than truncating — an explicit list is applied whole or not at all", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1, 2, 3]);
+    expect(() => run(["priority", "1,2,3", "P1", "--limit", "2"], ctx)).toThrow(/3 targets exceed --limit 2/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("a bad option is refused before the first write — one live schema read judges every value", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1, 2]);
+    expect(() => run(["priority", "1,2", "P9"], ctx)).toThrow(UsageError);
+    expect(gh.mutations.filter((m) => m.startsWith("setPriority"))).toEqual([]);
+  });
+
+  it("a garbled list segment is a usage error naming the list", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1]);
+    expect(() => run(["priority", "1,,2", "P1"], ctx)).toThrow(UsageError);
+    expect(() => run(["priority", "1,x", "P1"], ctx)).toThrow(UsageError);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("the shared breaker aborts after 5 consecutive failures and reports the run performed", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1, 2, 3, 4, 5, 6, 7]);
+    gh.failFieldWrites = new Set([1, 2, 3, 4, 5]);
+    const { result } = bulkSetAdvisoryField(ctx, [1, 2, 3, 4, 5, 6, 7], "Priority", "P1");
+    expect(result.aborted).toBe(true);
+    expect(result.attempted).toBe(5);
+    expect(result.updated).toBe(0);
+    expect(result.failed.length).toBe(5);
+    expect(result.applied).toEqual([]);
+    // #6 and #7 were never attempted — the breaker's whole point.
+    expect(gh.mutations.filter((m) => m.startsWith("setPriority"))).toEqual([]);
+  });
+
+  it("a non-consecutive failure is isolated: the run continues and the report names it", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1, 2, 3]);
+    gh.failFieldWrites = new Set([2]);
+    const { result } = bulkSetAdvisoryField(ctx, [1, 2, 3], "Priority", "P1");
+    expect(result.aborted).toBe(false);
+    expect(result.attempted).toBe(3);
+    expect(result.updated).toBe(2);
+    expect(result.applied).toEqual([1, 3]);
+    expect(result.failed).toEqual([expect.stringContaining("#2")]);
+  });
+
+  it("--json reports the run actually performed", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1, 2]);
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      said.push(String(s));
+      return true;
+    });
+    try {
+      expect(run(["priority", "1,2", "P2", "--json"], ctx)).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    const parsed = JSON.parse(said.join(""));
+    expect(parsed).toEqual({
+      field: "Priority",
+      value: "P2",
+      attempted: 2,
+      updated: 2,
+      applied: [1, 2],
+      failed: [],
+      aborted: false,
+    });
+  });
+
+  it("a single number keeps the single-item path — fetchIssue resolution, read-back, same output", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1]);
+    expect(run(["priority", "1", "P1"], ctx)).toBe(0);
+    // The single path resolves via the point read, not the open walk.
+    expect(gh.queries.some((q) => q.includes("issues(states: OPEN"))).toBe(false);
+  });
+
+  it("the list path resolves via ONE open walk, not N point reads", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    seed(gh, [1, 2, 3]);
+    expect(run(["priority", "1,2,3", "P1"], ctx)).toBe(0);
+    // The measured waste was 12-of-14 points spent on two fetchIssue point
+    // reads per item; the list form must not pay it per target.
+    expect(gh.queries.filter((q) => q.includes("issues(states: OPEN")).length).toBe(1);
+    expect(gh.queries.filter((q) => q.includes("issue(number:")).length).toBe(0);
   });
 });
 
