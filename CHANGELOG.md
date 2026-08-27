@@ -152,11 +152,21 @@ to a version heading when that artifact next releases. Full tag history:
   that way, with a green run reporting "Bump type: patch (default)". The rule
   was read from a surface nobody writes to, the same class as GH-1940.
 
-  The reader now takes the merge commit **and** the commits the PR brought in
-  (`<merge>^1..<merge>^2` — exactly the branch's own set, so a `#major` already
-  on main, or one the branch merged *from* main, cannot leak in and re-major a
-  later release). `#major` outranks `#minor` across the whole set, never
-  first-commit-wins. Fixed at the reader rather than by having `merge-pr.sh`
+  The reader now takes the merge commit's full message **and** the *subject
+  line* of each commit the PR brought in (`<merge>^1..<merge>^2` — exactly the
+  branch's own set, so a `#major` already on main, or one the branch merged
+  *from* main, cannot leak in and re-major a later release). `#major` outranks
+  `#minor` across the whole set, never first-commit-wins.
+
+  Branch commits are read by **subject only**, and that bound is load-bearing.
+  The first version of this fix scanned full bodies, and reported `major` for
+  its own merge off a body line reading "`#major` outranks `#minor` across the
+  whole set" — prose about the rule matching as the rule. That is strictly
+  worse than the defect it closed, since the old reader only ever saw the short
+  PR title. An annotation is a subject-line suffix (PR #2119, the founding
+  case, wrote `... (GH-2108) #minor` at the end of its subject); a body is
+  prose. The merge commit keeps its full-message scan, because that is where
+  `gh pr merge --merge` puts the PR title. Fixed at the reader rather than by having `merge-pr.sh`
   propagate the annotation into the merge commit: that would be correct only
   for merges going through it, leaving the GitHub UI and auto-merge on the
   original silent failure, and would put the release rule in a second file to

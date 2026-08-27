@@ -21,6 +21,11 @@
 # Precedence is major over minor across the WHOLE set, never first-commit-wins:
 # a branch whose first commit says `#minor` and whose last says `#major` is a
 # major release.
+#
+# What is read: the merge commit's full message, plus the SUBJECT LINE of each
+# commit the merge brought in. See find_annotation for why the branch half is
+# subject-only — full bodies match prose ABOUT the annotation, which is worse
+# than the defect this fixes.
 set -euo pipefail
 
 REV="${1:-HEAD}"
@@ -59,15 +64,30 @@ fi
 # Word-bounded and case-insensitive (GH-2102): `#minor` in `refactoring` or
 # `#minorly` is not an annotation.
 #
+# A branch commit is scanned by its SUBJECT LINE ONLY, and that bound is
+# load-bearing rather than tidy. An annotation is a subject-line suffix — the
+# founding case, PR #2119, wrote `... (GH-2108) #minor` at the end of the
+# subject — while a commit *body* is prose, and prose about this rule contains
+# the very tokens it describes. Scanning full bodies made the first version of
+# this script report `major` for its own merge, off a body line reading
+# "`#major` outranks `#minor` across the whole set": strictly worse than the
+# defect it fixed, since the old reader only ever saw the short PR title.
+#
+# The merge commit keeps its full-message scan, unchanged: `gh pr merge
+# --merge` puts the PR title in the BODY, so a subject-only rule there would
+# discard the one surface the documented rule has always named.
+#
 # Returns 0 (found, sha on stdout), 1 (absent) or 2 (a message could not be
 # read). It may NOT `exit` on that last case: the caller runs it inside a
 # command substitution, where `exit` leaves only the subshell and the failure
 # would fall through to the `patch` default — this issue's own defect,
 # reintroduced by its fix. The caller propagates rc 2 instead.
 find_annotation() {
-  local kind="$1" sha msg
-  for sha in "${shas[@]}"; do
-    if ! msg=$(git log -1 --pretty=%B "$sha" 2>&1); then
+  local kind="$1" i sha fmt msg
+  for i in "${!shas[@]}"; do
+    sha="${shas[$i]}"
+    if [ "$i" -eq 0 ]; then fmt='%B'; else fmt='%s'; fi
+    if ! msg=$(git log -1 --pretty="$fmt" "$sha" 2>&1); then
       echo "release-bump-type: could not read the message of ${sha}:" >&2
       printf '%s\n' "$msg" | sed 's/^/  /' >&2
       return 2
@@ -87,7 +107,7 @@ describe() {
   if [ "$sha" = "${shas[0]}" ]; then
     echo "merge commit ${sha:0:8}"
   else
-    echo "branch commit ${sha:0:8}"
+    echo "branch commit subject ${sha:0:8}"
   fi
 }
 
@@ -104,5 +124,5 @@ for kind in major minor; do
   fi
 done
 
-echo "Bump type: patch (default — no #minor/#major in the merge commit or the ${#shas[@]} commit(s) it brought in)" >&2
+echo "Bump type: patch (default — no #minor/#major in the merge commit message or in the subject of the $(( ${#shas[@]} - 1 )) commit(s) it brought in)" >&2
 echo patch

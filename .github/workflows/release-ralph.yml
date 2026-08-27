@@ -16,7 +16,7 @@ name: Release Ralph
 # Bump policy (scripts/release-bump-type.sh is the reader):
 #   - default: patch (e.g., 0.1.1 → 0.1.2)
 #   - "#minor" (case-insensitive, word-bounded) in the merge commit message OR
-#     in any commit the merged PR brought in: minor
+#     in the SUBJECT of any commit the merged PR brought in: minor
 #   - "#major", same surfaces: major. Major outranks minor across the whole set
 #   - workflow_dispatch: explicit choice
 #
@@ -24,7 +24,9 @@ name: Release Ralph
 # to. `gh pr merge --merge` composes that message from the PR *title*, so an
 # annotation in the branch commit — where authors naturally put it — was
 # invisible and the release silently took a patch bump (ralph-v0.3.1 shipped a
-# new CLI verb that way). The reader now takes both surfaces.
+# new CLI verb that way). The reader now takes both surfaces. Branch commits
+# are read by subject only: a body is prose, and prose about this rule contains
+# the tokens it describes.
 #
 # Loop prevention: the bump commit message ends with "[skip ci]" so it
 # doesn't re-trigger this workflow.
