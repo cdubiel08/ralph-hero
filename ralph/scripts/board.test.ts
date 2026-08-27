@@ -4745,6 +4745,26 @@ describe("the Intake tier (GH-2077)", () => {
       expect(line(doctor(ctx, { strict: true })).level).toBe("info");
     });
 
+    it("a snoozed Intake item is withheld from intake-stale until its recheck, counted, and resurfaces with FULL age (GH-2202)", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
+      // NOW is 2026-07-31: #1's recheck is future (snoozed), #2's has elapsed.
+      gh.issues.set(1, { number: 1, state: "Intake", createdAt: daysAgo(20), defer: "2027-01-01T00:00:00Z|revisit" });
+      gh.issues.set(2, { number: 2, state: "Intake", createdAt: daysAgo(20), defer: "2026-07-01T00:00:00Z|revisit" });
+      const line = doctor(ctx).checks.find((c) => c.name === "intake-stale")!;
+      expect(line.level).toBe("info");
+      expect(line.detail).toContain("#2(20d)"); // full age — the snooze suppressed the reminder, not the fact
+      expect(line.detail).not.toContain("#1");
+      expect(line.detail).toContain("1 snoozed");
+      // Everything snoozed → ok, but the count still prints: a suppressed
+      // reminder with no trace would read identical to a healthy queue.
+      gh.issues.delete(2);
+      const line2 = doctor(ctx).checks.find((c) => c.name === "intake-stale")!;
+      expect(line2.level).toBe("ok");
+      expect(line2.detail).toContain("1 snoozed");
+    });
+
     it("doctor says `ok` when nothing has aged — a healthy board gets no marker", () => {
       const gh = new FakeGh();
       const ctx = makeCtx(gh);
@@ -5929,6 +5949,45 @@ describe("tend-queue (spec §4.3)", () => {
       [1, "unformed"],
       [5, "unformed"],
     ]);
+  });
+
+  it("snoozed intake is withheld from unformed until its recheck, counted, and resurfaces with FULL age (GH-2202)", () => {
+    const dayMs = 86_400_000;
+    const res = classifyTend(
+      [
+        // future recheck → snoozed: withheld and counted
+        item(1, {
+          state: "Intake", estimate: null, createdAt: days(30),
+          defer: { recheck: new Date(NOW.getTime() + dayMs), condition: "revisit" },
+        }),
+        // elapsed recheck → resurfaces, `at` stays createdAt (age never reset)
+        item(2, {
+          state: "Intake", estimate: null, createdAt: days(30),
+          defer: { recheck: new Date(NOW.getTime() - dayMs), condition: "revisit" },
+        }),
+        // recheck-less defer never snoozes — the write path refuses one, and a
+        // pre-existing mark must fail toward visibility
+        item(3, {
+          state: "Intake", estimate: null, createdAt: days(30),
+          defer: { recheck: null, condition: "no date" },
+        }),
+        // Backlog defer parks RANKING only — never suppresses unformed
+        item(4, {
+          estimate: null, createdAt: days(30),
+          defer: { recheck: new Date(NOW.getTime() + dayMs), condition: "b" },
+        }),
+      ],
+      [],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+      [2, "unformed"],
+      [3, "unformed"],
+      [4, "unformed"],
+    ]);
+    expect(res.queue.find((r) => r.number === 2)!.at).toBe(days(30));
+    expect(res.snoozed).toBe(1);
   });
 
   it("done-audit marker cursor: recent closes without the marker queue; marked or old ones don't", () => {
@@ -7768,6 +7827,30 @@ describe("defer parks an item out of ranking", () => {
     gh.issues.set(1, { number: 1, state: "Backlog", defer: "-|waiting" });
     const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
     expect(after.state).toBe("In Progress");
+    expect(gh.mutations).toContain("clearField(#1, F_defer)");
+    expect(gh.issues.get(1)!.defer).toBeNull();
+  });
+
+  // GH-2202 — timed snooze on Intake: defer with a mandatory --recheck.
+  it("Intake defer without --recheck is refused — an untimed snooze is invisible-forever", () => {
+    gh.issues.set(1, { number: 1, state: "Intake" });
+    expect(() => run(["defer", "1", "--until", "quarterly planning"], ctx)).toThrow(/--recheck/);
+    expect(gh.mutations).not.toContain("setDefer(#1)");
+    expect(run(["defer", "1", "--until", "quarterly planning", "--recheck", "2026-09-01T00:00:00Z"], ctx)).toBe(0);
+    expect(gh.comments.some((c) => c.body.includes("snoozed — quarterly planning"))).toBe(true);
+    expect(gh.mutations).toContain("setDefer(#1)");
+  });
+
+  it("ordinary approval (Intake → Backlog) clears the snooze — it was a judgment about the approval decision", () => {
+    gh.issues.set(1, {
+      number: 1,
+      state: "Intake",
+      priority: "P2",
+      estimate: "S",
+      defer: "2026-09-01T00:00:00.000Z|revisit after planning",
+    });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Backlog");
+    expect(after.state).toBe("Backlog");
     expect(gh.mutations).toContain("clearField(#1, F_defer)");
     expect(gh.issues.get(1)!.defer).toBeNull();
   });

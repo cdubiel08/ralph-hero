@@ -2788,6 +2788,14 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       clearField(ctx, cache, itemId, DEFER_FIELD);
     }
 
+    // Approval clears a snooze (GH-2202): a Defer on an Intake item was a
+    // judgment about the approval decision, which this move just made. The
+    // ordinary approve clears it; carrying it into Backlog is a fresh,
+    // explicit `board defer` on the now-approved item.
+    if (from === "Intake" && to === "Backlog" && issue.defer && cache.fields[DEFER_FIELD]) {
+      clearField(ctx, cache, itemId, DEFER_FIELD);
+    }
+
     try {
       setSingleSelect(ctx, cache, itemId, STATE_FIELD, to);
     } catch (err) {
@@ -6404,6 +6412,11 @@ export interface TendQueueResult {
   next: TendRow | null;
   queue: TendRow[];
   blocked: TendRow[]; // shape parity with next/deliver-queue; tend blocks nothing
+  /** GH-2202: Intake items a snooze (Defer with a future recheck) is currently
+   *  withholding from `unformed`. Counted, never silent — a suppressed
+   *  reminder that leaves no trace reads identical to a healthy queue
+   *  (the GH-1945 rule). */
+  snoozed: number;
   /** §4.3.5 — the observation-intake slot. The selector never reads dream-loop
    *  reflections (no MCP dependency); the SKILL decides whether to pull
    *  surfaced observations during its session. */
@@ -6511,6 +6524,7 @@ export function classifyTend(
   //    invisible. The predicate is unchanged — an Intake item that already
   //    carries a Priority and an Estimate is formed, and its only remaining
   //    need is a human's approval, which is doctor's `intake-stale` line.
+  let snoozed = 0;
   for (const i of formation) {
     const t = ms(i.createdAt);
     const old = t !== null && now.getTime() - t > UNFORMED_DAYS * dayMs;
@@ -6522,8 +6536,20 @@ export function classifyTend(
       i.openBlockers.length === 0 &&
       i.closedBlockers.length === 0 &&
       !i.blockersTruncated
-    )
+    ) {
+      // GH-2202: a snoozed Intake item — Defer with a FUTURE recheck — is
+      // withheld until the recheck instant, then resurfaces with its full age
+      // (`at` stays createdAt: the snooze suppressed the reminder, never the
+      // fact). A recheck-less defer does not snooze — an untimed snooze is
+      // invisible-forever, which is why the write path refuses one — and
+      // Backlog items are untouched: their defer already parks ranking, and
+      // an unformed-but-deferred Backlog row is still tend's business.
+      if (i.state === "Intake" && i.defer?.recheck && i.defer.recheck.getTime() > now.getTime()) {
+        snoozed++;
+        continue;
+      }
       push("unformed", i, i.createdAt!);
+    }
   }
   // 4. Done audit: the marker is the cursor; no local state.
   for (const c of closed) {
@@ -6566,7 +6592,7 @@ export function classifyTend(
       "done-audit",
     ] as const
   ).flatMap((cat) => rows[cat].sort(oldestFirst));
-  return { next: queue[0] ?? null, queue, blocked: [], observationSlot: true };
+  return { next: queue[0] ?? null, queue, blocked: [], snoozed, observationSlot: true };
 }
 
 /** The tend lane's typed selector. Done-audit comment trails ride the same
@@ -7905,12 +7931,31 @@ export function setDefer(ctx: Ctx, number: number, mark: DeferMark | null): Issu
       clearField(ctx, cache, itemId, DEFER_FIELD);
     }
   } else {
+    // GH-2202: on Intake, defer is a timed SNOOZE and --recheck is REQUIRED.
+    // On Backlog an open-ended defer is safe — claiming lifts it and the
+    // deferred bucket stays visible in `next`'s diagnosis. Intake never ranks,
+    // so the recheck instant is the ONLY thing that resurfaces the item; an
+    // untimed snooze there is invisible-forever, the exact failure the Intake
+    // tier was built to end (GH-2077).
+    if (issue.state === "Intake" && !mark.recheck) {
+      throw new UsageError(
+        `#${number} is Intake — defer there is a timed snooze and requires --recheck <ISO> ` +
+          `(when to be reminded again). Intake never ranks, so only the recheck date ` +
+          `resurfaces the item; an untimed snooze would hide it forever.`,
+      );
+    }
+    const snooze = issue.state === "Intake";
     addComment(
       ctx,
       issue.nodeId,
-      `\`board defer\` (by \`${ctx.cfg.holder}\`): parked — ${mark.condition}` +
-        (mark.recheck ? `\nRecheck by ${mark.recheck.toISOString()}.` : "") +
-        `\n\nLifted by \`board defer ${number} --clear\` or by claiming the unit.`,
+      snooze ?
+        `\`board defer\` (by \`${ctx.cfg.holder}\`): snoozed — ${mark.condition}\n` +
+          `Withheld from tend-queue \`unformed\` and doctor \`intake-stale\` until ` +
+          `${mark.recheck!.toISOString()}, then resurfaces with its full age. Still visible in \`board list\`.\n\n` +
+          `Lifted by \`board defer ${number} --clear\` or by the approval decision itself.`
+      : `\`board defer\` (by \`${ctx.cfg.holder}\`): parked — ${mark.condition}` +
+          (mark.recheck ? `\nRecheck by ${mark.recheck.toISOString()}.` : "") +
+          `\n\nLifted by \`board defer ${number} --clear\` or by claiming the unit.`,
     );
     setText(ctx, cache, itemId, DEFER_FIELD, formatDefer(mark));
   }
@@ -9436,19 +9481,31 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       // An unreadable/absent createdAt does NOT count as aged: a date GitHub
       // never asserted is not evidence that anyone has been waiting.
       const intakeDayMs = 86_400_000;
-      const agedIntake = items
+      // GH-2202: a snoozed item (Defer with a future recheck) is withheld
+      // until the recheck instant, then resurfaces with its FULL age — the
+      // snooze suppressed the reminder, never the fact. Suppression is
+      // counted, never silent: a withheld reminder with no trace reads
+      // identical to a healthy queue (the GH-1945 rule).
+      const agedAll = items
         .filter((i) => i.state === "Intake")
         .map((i) => {
           const t = i.createdAt ? Date.parse(i.createdAt) : NaN;
-          return { number: i.number, days: Number.isFinite(t) ? (ctx.now().getTime() - t) / intakeDayMs : null };
+          return {
+            number: i.number,
+            days: Number.isFinite(t) ? (ctx.now().getTime() - t) / intakeDayMs : null,
+            snoozed: !!(i.defer?.recheck && i.defer.recheck.getTime() > ctx.now().getTime()),
+          };
         })
         .filter((r) => r.days !== null && r.days >= ctx.cfg.smells.intakeDays);
+      const agedIntake = agedAll.filter((r) => !r.snoozed);
+      const snoozedIntake = agedAll.length - agedIntake.length;
+      const snoozeNote = snoozedIntake > 0 ? ` (${snoozedIntake} snoozed until their recheck)` : "";
       add(
         "intake-stale",
         agedIntake.length === 0 ? "ok" : "info",
         agedIntake.length === 0
-          ? "none"
-          : `${agedIntake.length} Intake item(s) awaiting an approval decision ≥${ctx.cfg.smells.intakeDays}d — ` +
+          ? `none${snoozeNote}`
+          : `${agedIntake.length} Intake item(s) awaiting an approval decision ≥${ctx.cfg.smells.intakeDays}d${snoozeNote} — ` +
             `approve (\`board move N backlog\`, needs Priority + Estimate) or reject (\`board cancel N -m "why"\`): ` +
             agedIntake.slice(0, 10).map((r) => `#${r.number}(${Math.floor(r.days!)}d)`).join(" ") +
             (agedIntake.length > 10 ? ` +${agedIntake.length - 10} more` : ""),
@@ -11115,7 +11172,11 @@ change oracle (GH-1804)
 v0.2.0 additions
   defer NNN --until "<condition>" [--recheck ISO] | --clear
                               park a Backlog item out of ranking until its
-                              stated precondition holds; claiming lifts it
+                              stated precondition holds; claiming lifts it.
+                              On Intake it is a timed snooze (--recheck
+                              REQUIRED): withheld from tend unformed and
+                              doctor intake-stale until then, resurfaces
+                              with full age; ordinary approval clears it
   move NNN done --decision <artifact>
                               typed close for a unit with no PR: records
                               ralph-decision-evidence:v1 naming the artifact
@@ -11152,7 +11213,7 @@ export const VERB_HELP: Record<string, string> = {
   escalations: "board escalations [--json]\n  The arbitration queue (GH-2179): Human Needed items classified by audience.\n  pending = the lead's work; →human / promoted / auto-promoted (TTL\n  RALPH_LOCK_TTL_MIN elapsed, computed at read time) = the human tier.\n  example: board escalations --json",
   cancel: "board cancel <n> -m \"<reason>\"\n  Cancel (→Canceled, closes NOT_PLANNED). Reopen is the only exit.\n  example: board cancel 1234 -m \"superseded by #1300\"",
   reopen: "board reopen <n>\n  The one exit from Done/Canceled (→Backlog); accepts a pending reopen proposal.\n  example: board reopen 1234",
-  defer: "board defer <n> --until \"<condition>\" [--recheck <ISO>] | board defer <n> --clear\n  Park a Backlog item out of ranking until its stated precondition holds.\n  Claiming the unit also lifts it. doctor surfaces elapsed rechecks.\n  example: board defer 1234 --until \"GH-2088 lands\" --recheck 2026-09-01T00:00:00Z",
+  defer: "board defer <n> --until \"<condition>\" [--recheck <ISO>] | board defer <n> --clear\n  Park a Backlog item out of ranking until its stated precondition holds.\n  Claiming the unit also lifts it. doctor surfaces elapsed rechecks.\n  On an Intake item this is a timed snooze and --recheck is REQUIRED:\n  withheld from tend-queue unformed and doctor intake-stale until the\n  recheck, then resurfaces with its full age. Approval clears it.\n  example: board defer 1234 --until \"GH-2088 lands\" --recheck 2026-09-01T00:00:00Z",
   dep: "board dep <blocked> --on <blocking> [--rm|--dismiss [-m why]]   (--blocked-by = --on)\n  Dependency edge; blocked items never rank. --dismiss records the judgment that the pair is NOT dependent (clears it from tend's deps-unwired).\n  example: board dep 1234 --blocked-by 1200",
   link: "board link <parent> <child>\n  Sub-issue edge (the tree parent-check rolls up).\n  example: board link 1200 1234",
   priority: "board priority <n> <P0..P3|--clear>\n  Set/clear Priority. Null priority sinks below stale backlog in next.\n  example: board priority 1234 P1",
@@ -11240,8 +11301,11 @@ function issueLine(i: Issue): string {
   const parent = i.parent ? ` parent=#${i.parent.number}` : "";
   const blockers = i.blockedBy.filter((b) => b.issueState === "OPEN").map((b) => `#${b.number}`);
   const blocked = blockers.length ? ` blockedBy=${blockers.join(",")}` : "";
-  const defer = i.defer
-    ? ` deferred(${i.defer.condition}${i.defer.recheck ? `, recheck ${i.defer.recheck.toISOString().slice(0, 10)}` : ""})`
+  const defer =
+    i.defer ?
+      i.state === "Intake" && i.defer.recheck ?
+        ` snoozed(until ${i.defer.recheck.toISOString().slice(0, 10)}, ${i.defer.condition})`
+      : ` deferred(${i.defer.condition}${i.defer.recheck ? `, recheck ${i.defer.recheck.toISOString().slice(0, 10)}` : ""})`
     : "";
   return `#${i.number} [${i.state ?? "no-state"}]${claim}${defer}${parent}${blocked} ${i.title}`;
 }
@@ -12023,8 +12087,12 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "tend-queue": {
       const res = tendQueue(ctx);
+      // GH-2202: the snoozed count prints in BOTH branches — a suppressed
+      // reminder that leaves no trace reads identical to a healthy queue.
+      const snoozeNote =
+        res.snoozed > 0 ? ` (${res.snoozed} intake snoozed — withheld from unformed until recheck)` : "";
       if (flags.json) json(res);
-      else if (!res.next) out("tend queue empty — one clean sweep");
+      else if (!res.next) out(`tend queue empty — one clean sweep${snoozeNote}`);
       else {
         out(`tend next: #${res.next.number} [${res.next.category}]${res.next.title ? ` ${res.next.title}` : ""}`);
         for (const c of res.next.candidates ?? [])
@@ -12034,6 +12102,7 @@ export function run(argv: string[], ctx: Ctx): number {
             `  then #${r.number} [${r.category}]${r.title ? ` ${r.title}` : ""}` +
               (r.candidates?.length ? ` (${r.candidates.length} candidate${r.candidates.length === 1 ? "" : "s"})` : ""),
           );
+        if (snoozeNote) out(` ${snoozeNote.trim()}`);
       }
       return 0;
     }
@@ -12481,12 +12550,20 @@ export function run(argv: string[], ctx: Ctx): number {
         recheck = new Date(t);
       }
       const after = setDefer(ctx, number, { recheck, condition });
-      out(
-        `#${number}: deferred — ${condition}` +
-          (recheck ? ` (recheck by ${recheck.toISOString()})` : "") +
-          ` — parked out of next/frontier until cleared or claimed`,
-      );
-      if (after.state !== "Backlog") out(`  note: state is "${after.state}" — defer only parks Backlog ranking`);
+      if (after.state === "Intake") {
+        out(
+          `#${number}: snoozed — ${condition} (until ${recheck!.toISOString()}) — ` +
+            `withheld from tend-queue unformed and doctor intake-stale until then, ` +
+            `then resurfaces with its full age; still visible in board list`,
+        );
+      } else {
+        out(
+          `#${number}: deferred — ${condition}` +
+            (recheck ? ` (recheck by ${recheck.toISOString()})` : "") +
+            ` — parked out of next/frontier until cleared or claimed`,
+        );
+        if (after.state !== "Backlog") out(`  note: state is "${after.state}" — defer only parks Backlog ranking`);
+      }
       return 0;
     }
 
