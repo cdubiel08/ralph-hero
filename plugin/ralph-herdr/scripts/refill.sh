@@ -122,7 +122,8 @@ refill_all_to_capacity() {
 #
 # LOCK DISCIPLINE: everything server- or network-priced runs OUTSIDE the
 # scope's ledger mutex — the SPAWN (agent-start retries alone can outlast
-# the 15s stale-lock break), and equally the agent-list and FRONTIER reads
+# the 15s stale-lock break), and equally the agent-list, FRONTIER, and
+# unwired-body-reference reads
 # (`board next` paginates the whole project; a large board takes longer than
 # the break, after which a waiter would recreate the lock and this holder's
 # identity check would falsely pass — unserializing the very consume the
@@ -214,6 +215,58 @@ refill_one() (
     exit 0
   }
 
+  # Unwired body references (GH-2120, work-fleet's GH-2109 guard at this
+  # surface). OUTSIDE the mutex like every other network read — dep-refs.sh is
+  # two GraphQL calls. Refill's failure semantics deliberately differ from
+  # work-fleet's SKIP-and-leave-the-slot-empty: work-fleet may not substitute
+  # work into an operator-chosen top-k slice, but refill's mandate is "fill
+  # seats from the frontier" and it already skips live/spawned candidates, so
+  # advancing past a refused one is the same class of pick, not a
+  # substitution. The rest of the decision, journaled on GH-2120:
+  #
+  #   budget   a refusal spends NO unit — the budget bounds spawn attempts and
+  #            a refusal never reaches the spawn. API spend is bounded by the
+  #            refusal cap instead (RALPH_HERDR_REFILL_DEP_MAX, default 3;
+  #            0 disables the guard).
+  #   cap      past the cap the next candidate spawns UNVETTED, loudly — never
+  #            a stall. The guard over-reports by construction and has no
+  #            operator to override it; a fleet that stops refilling because
+  #            the frontier's top carries prose refs is the grounded-fleet
+  #            failure the guard's own header warns about. Unvetted is the
+  #            pre-guard norm for every spawn — strictly no worse.
+  #   durable  refusals are NOT written to fleet.json: re-derived per refill
+  #            event, so wiring the edge or closing the referenced issue
+  #            self-heals with no state to expire.
+  #   fail     OPEN, loudly — an unreadable verdict is a rate limit, not a
+  #            clean board, and it spawns with "NOT CHECKED" in the log.
+  dep_max="${RALPH_HERDR_REFILL_DEP_MAX:-3}"
+  case "$dep_max" in '' | *[!0-9]*) dep_max=3 ;; esac
+  refused='[]'
+  vetted=""
+  if [ "$dep_max" -gt 0 ] && command -v ralph_dep_refs_verdict >/dev/null 2>&1; then
+    while IFS= read -r c; do
+      [ -n "$c" ] || continue
+      verdict=$(ralph_dep_refs_verdict "$c" "$frontier")
+      if [ "$(jq -r '.ok // false' <<<"$verdict")" != "true" ]; then
+        log "refill $run_id: GH-$c body refs NOT CHECKED ($(jq -r '.detail // empty' <<<"$verdict")) — spawning over the failed read"
+        vetted="$c"
+        break
+      fi
+      if [ "$(jq -r '.count' <<<"$verdict")" -eq 0 ]; then
+        vetted="$c"
+        break
+      fi
+      refused=$(jq -c --argjson n "$c" '. + [$n]' <<<"$refused")
+      log "refill $run_id: GH-$c refused — body names OPEN $(jq -r '.summary' <<<"$verdict") with no dependency edge (wire it: board dep $c --on N; no budget spent)"
+      if [ "$(jq -r 'length' <<<"$refused")" -ge "$dep_max" ]; then
+        log "refill $run_id: unwired-ref refusal cap ($dep_max) reached — the next candidate spawns unvetted"
+        break
+      fi
+    done < <(jq -r --argjson live "$live_issues" \
+      --argjson done "$(jq -c '.spawned // []' <<<"$state")" '
+      ([.queue[]?.number] - $live - $done) | .[]' <<<"$frontier")
+  fi
+
   ralph_ledger_lock "$ledger"
   state=$(ralph_fleet_state "$ff" 2>/dev/null) || { ralph_ledger_unlock "$ledger"; exit 0; }
   if [ "$(jq -r '.armed' <<<"$state")" != "true" ]; then
@@ -239,14 +292,31 @@ refill_one() (
     ralph_ledger_unlock "$ledger"
     exit 0 # at capacity once in-flight spawns count — stays armed
   fi
-  cand=$(jq -r --argjson live "$live_issues" --argjson frontier "$frontier" '
+  cand=$(jq -r --argjson live "$live_issues" --argjson frontier "$frontier" \
+    --argjson refused "$refused" '
     (.spawned // []) as $done | $frontier
-    | ([.queue[]?.number] - $live - $done) | first // empty' <<<"$state")
+    | ([.queue[]?.number] - $live - $done - $refused) | first // empty' <<<"$state")
   if [ -z "$cand" ]; then
+    # Refusals explaining the emptiness may NOT disarm: the frontier is not
+    # empty, and "frontier empty" would kill the run permanently on a prose
+    # heuristic. Wiring the edge or closing the referenced issue re-qualifies
+    # the candidate at the next trigger; the TTL bounds the wait as always.
+    if [ "$(jq -r 'length' <<<"$refused")" -gt 0 ]; then
+      ralph_ledger_unlock "$ledger"
+      log "refill $run_id: every remaining candidate refused on unwired body refs — staying armed, nothing spawned"
+      exit 0
+    fi
     ralph_fleet_disarm "$ff" "frontier empty" || true
     ralph_ledger_unlock "$ledger"
     notify fleet "fleet run $run_id complete" "frontier empty — refill disarmed"
     exit 0
+  fi
+  # A racer between our pre-lock vetting and this pick can advance the pick
+  # past the candidate we vetted. Rare (bounded by k), and the safe direction
+  # is the pre-guard norm — spawn it — but say so rather than letting an
+  # unvetted spawn render as a vetted one.
+  if [ -n "$vetted" ] && [ "$cand" != "$vetted" ]; then
+    log "refill $run_id: picked GH-$cand under the mutex (raced past vetted GH-$vetted) — spawning unvetted"
   fi
   budget_left=$(ralph_fleet_consume_budget "$ff" "$cand") || {
     ralph_ledger_unlock "$ledger"

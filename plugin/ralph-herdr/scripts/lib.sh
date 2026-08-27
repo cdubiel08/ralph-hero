@@ -765,6 +765,38 @@ _ralph_spawn_close() {
   return 0
 }
 
+# ralph_dep_refs_verdict N QUEUE_JSON — one shared producer of the unwired
+# body-reference verdict (GH-2109/GH-2120), for every surface that spawns off
+# a ranked read: work-fleet's ranked path, refill, work-next. Wired edges are
+# taken from the frontier/next read already in hand (never a second board
+# call, and both envelope spellings are read); dep-refs.sh runs from $REPO so
+# `gh repo view` resolves the slug the candidate lives in; and the output is
+# ALWAYS one JSON line in dep-refs.sh's own envelope — synthesized ok=false
+# when the script is absent or answered nothing, because "not evaluated" must
+# never render as "checked and clean" at any caller. The refusal decision and
+# its rendering stay with each caller: the biases differ by surface (GH-2120
+# journal on the issue), and one producer is what keeps the three readers from
+# drifting (the GH-1843 shape).
+ralph_dep_refs_verdict() {
+  local n="$1" q="$2" wired out
+  [ -f "$SCRIPT_DIR/dep-refs.sh" ] || {
+    jq -nc '{ok: false, count: 0, unwired: [], summary: "",
+             detail: "dep-refs.sh is absent from this install"}'
+    return 0
+  }
+  wired=$(jq -r --argjson n "$n" '
+    [.queue[]? | select(.number == $n)] | .[0] // {} |
+    ((.blockers // []) | map(.number)) + (.openBlockers // []) + (.closedBlockers // [])
+    | map(tostring) | join(",")' <<<"$q" 2>/dev/null) || wired=""
+  out=$(cd "$REPO" 2>/dev/null && bash "$SCRIPT_DIR/dep-refs.sh" "$n" "$wired" 2>/dev/null) || out=""
+  if [ -z "$out" ] || ! jq -e '.ok | type == "boolean"' >/dev/null 2>&1 <<<"$out"; then
+    jq -nc '{ok: false, count: 0, unwired: [], summary: "",
+             detail: "dep-refs.sh produced no verdict"}'
+    return 0
+  fi
+  printf '%s\n' "$out"
+}
+
 spawn_work_session() {
   local n="$1" queue_json="${2:-}" branch label parent title agent live pane out
   local ref ts record ledger src
