@@ -2717,7 +2717,7 @@ describe("setup", () => {
     expect(notes.some((n) => n.includes("exists as NUMBER — left untouched"))).toBe(true);
   });
 
-  it("an existing state field missing v2 options gets a MANUAL note — the API cannot edit options", () => {
+  it("an existing state field missing v2 options gets them ADDED — every existing id resubmitted", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
     gh.omitFields = ["Workflow State"];
@@ -2725,9 +2725,56 @@ describe("setup", () => {
       name: "Workflow State", dataType: "SINGLE_SELECT",
       options: ["Backlog", "In Progress"], // pre-existing partial set, not ours
     });
-    const { notes } = setup(ctx);
+    const { ok, notes } = setup(ctx);
     expect(gh.mutations.filter((m) => m.startsWith("createField"))).toEqual([]);
-    expect(notes.some((n) => n.startsWith("MANUAL: add option(s)") && n.includes("In Review"))).toBe(true);
+    // Missing states land in STATES order around the options that were there.
+    expect(gh.mutations).toContain(
+      "updateFieldOptions(Intake,Backlog,In Progress,In Review,Human Needed,Done,Canceled)",
+    );
+    expect(notes.some((n) => n.startsWith("MANUAL: add option(s)"))).toBe(false);
+    expect(notes.some((n) => n.includes('added option(s) Intake, In Review, Human Needed, Done, Canceled to "Workflow State"'))).toBe(true);
+    expect(ok).toBe(true);
+  });
+
+  it("the add is verified by ID survival — an option recreated with a fresh id is a named refusal", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.omitFields = ["Workflow State"];
+    gh.createdFields.push({
+      name: "Workflow State", dataType: "SINGLE_SELECT", options: ["Backlog", "In Progress"],
+    });
+    gh.reissueOptionIdsOnUpdate = true; // GitHub cleared every item value
+
+    const { ok, notes } = setup(ctx);
+    expect(ok).toBe(false);
+    const failure = notes.find((n) => n.startsWith("VERIFY FAILED"));
+    expect(failure).toContain("lost their original id");
+    expect(failure).toContain("Backlog");
+    expect(failure).toContain("In Progress");
+  });
+
+  it("an unreadable option set refuses the mutation and falls back to the MANUAL line", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.omitFields = ["Workflow State"];
+    gh.createdFields.push({
+      name: "Workflow State", dataType: "SINGLE_SELECT", options: ["Backlog", "In Progress"],
+    });
+    gh.unreadableFieldOptions = true;
+
+    const { ok, notes } = setup(ctx);
+    expect(gh.mutations.filter((m) => m.startsWith("updateFieldOptions"))).toEqual([]);
+    const manual = notes.find((n) => n.startsWith("MANUAL: add option(s)"));
+    expect(manual).toContain("could not read the field's current option set");
+    expect(manual).toContain("Intake"); // the fail-closed consequence is still named
+    expect(ok).toBe(true); // nothing was attempted, so nothing failed to stick
+  });
+
+  it("a complete option set is left alone — idempotent, no option-set mutation", () => {
+    const gh = new FakeGh(); // default Workflow State carries every v2 state
+    const ctx = makeCtx(gh);
+    setup(ctx);
+    expect(gh.mutations.filter((m) => m.startsWith("updateFieldOptions"))).toEqual([]);
   });
 
   it("legacy v1 options present get a MANUAL delete note", () => {
@@ -2735,6 +2782,8 @@ describe("setup", () => {
     const ctx = makeCtx(gh);
     const { notes } = setup(ctx);
     expect(notes.some((n) => n.startsWith("MANUAL: delete legacy option(s)") && n.includes("Ready for Plan"))).toBe(true);
+    // Removal stays UI-only: adding is now API-capable, deleting is not attempted.
+    expect(gh.mutations.filter((m) => m.startsWith("updateFieldOptions"))).toEqual([]);
     expect(notes.some((n) => n.includes("migrate"))).toBe(false);
   });
 

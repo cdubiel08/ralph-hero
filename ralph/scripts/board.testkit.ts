@@ -129,7 +129,25 @@ export class FakeGh {
     unreadableLinkage?: boolean;
   }> = [];
   omitFields: string[] = []; // simulate a fresh board missing these fields
-  createdFields: Array<{ name: string; dataType: string; options?: string[] }> = [];
+  createdFields: Array<{
+    name: string; dataType: string; options?: string[];
+    /** option name → id, for fixtures that need ids the default derivation
+     *  cannot produce (an option-set edit is verified by id survival). */
+    optionIds?: Record<string, string>;
+  }> = [];
+  /** Simulate the destructive failure the option-set edit exists to prevent:
+   *  the resubmit acks, but every option comes back with a fresh id. */
+  reissueOptionIdsOnUpdate = false;
+  /** Simulate a field whose live option set cannot be read (rate limit, a
+   *  node id that resolves to nothing) — the mutation must then be refused. */
+  unreadableFieldOptions = false;
+
+  /** The mutable fixture behind a field node id. Only `createdFields` entries
+   *  are addressable: the built-in defaults carry the full option set, so no
+   *  option-set edit ever targets one. */
+  private fieldFixture(fieldId: string) {
+    return this.createdFields.find((f) => `F_${f.name}` === fieldId);
+  }
   linkedRepos = ["cdubiel08/ralph-hero"]; // projectV2 → repositories linkage
   runListJson = "[]"; // gh run list payload for doctor's state-guard check
   dropPageInfo = false; // corrupt-read injection: connection returns no pageInfo
@@ -685,7 +703,7 @@ export class FakeGh {
       ];
       const created = this.createdFields.map((f) => ({
         id: `F_${f.name}`, name: f.name, dataType: f.dataType,
-        options: f.options?.map((o) => ({ id: `${f.name}_${o}`, name: o })),
+        options: f.options?.map((o) => ({ id: f.optionIds?.[o] ?? `${f.name}_${o}`, name: o })),
       }));
       return data({
         repositoryOwner: {
@@ -696,6 +714,37 @@ export class FakeGh {
         },
         repository: { id: "R_test" },
       });
+    }
+    if (query.includes("ProjectV2SingleSelectField { options {")) {
+      if (this.unreadableFieldOptions) return data({ node: null });
+      const f = this.fieldFixture(variables.fieldId as string);
+      return data({
+        node: f
+          ? {
+              options: (f.options ?? []).map((o) => ({
+                id: f.optionIds?.[o] ?? `${f.name}_${o}`,
+                name: o,
+                color: "GRAY",
+                description: `desc:${o}`,
+              })),
+            }
+          : null,
+      });
+    }
+    if (query.includes("updateProjectV2Field")) {
+      const opts = (variables.options ?? []) as Array<{ id?: string; name: string }>;
+      this.mutations.push(`updateFieldOptions(${opts.map((o) => o.name).join(",")})`);
+      const f = this.fieldFixture(variables.fieldId as string);
+      if (f) {
+        f.options = opts.map((o) => o.name);
+        f.optionIds = Object.fromEntries(
+          opts.map((o) => [
+            o.name,
+            this.reissueOptionIdsOnUpdate ? `NEW_${o.name}` : (o.id ?? `${f.name}_${o.name}`),
+          ]),
+        );
+      }
+      return data({ updateProjectV2Field: { projectV2Field: { id: variables.fieldId } } });
     }
     if (query.includes("createProjectV2Field")) {
       const dataType = query.includes("dataType: TEXT") ? "TEXT" : "SINGLE_SELECT";
