@@ -108,6 +108,35 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Fixed
 
+- **The release bump annotation is read where authors write it (GH-2122)** —
+  `release-ralph.yml` took `#minor`/`#major` from `git log -1`: the **merge**
+  commit, whose message `gh pr merge --merge` composes from the PR *title*. An
+  annotation written in the branch commit — where an author naturally writes
+  it — never appeared there, so the release silently took a patch bump. PR
+  #2119 shipped a new public CLI verb (`board reap-leases`) as `ralph-v0.3.1`
+  that way, with a green run reporting "Bump type: patch (default)". The rule
+  was read from a surface nobody writes to, the same class as GH-1940.
+
+  The reader now takes the merge commit **and** the commits the PR brought in
+  (`<merge>^1..<merge>^2` — exactly the branch's own set, so a `#major` already
+  on main, or one the branch merged *from* main, cannot leak in and re-major a
+  later release). `#major` outranks `#minor` across the whole set, never
+  first-commit-wins. Fixed at the reader rather than by having `merge-pr.sh`
+  propagate the annotation into the merge commit: that would be correct only
+  for merges going through it, leaving the GitHub UI and auto-merge on the
+  original silent failure, and would put the release rule in a second file to
+  drift (GH-1843).
+
+  Extracted to `scripts/release-bump-type.sh` with a real suite
+  (`scripts/__tests__/release-bump-type.test.sh`, picked up by CI's existing
+  glob). This logic has now been wrong twice — GH-2102's unbounded grep, this
+  issue's surface — and neither defect was catchable while it lived as twelve
+  lines of shell inside a YAML step. It **exits 2** rather than answering
+  `patch` when a source it expected to read is unreadable: a wrong patch bump
+  is silent forever, while a failed release job files its own issue (GH-1952).
+  A commit with no second parent is the expected shape of a non-merge push, not
+  a failure, and degrades to reading its own message.
+
 - **Fleet spawns tell the host provisioner where the worktree is (GH-2106)** —
   `provision_worktree` ran `bash scripts/provision-worktree.sh` with no
   argument, so a host script opening with `${1:?Usage}` exited 1 on *every*
