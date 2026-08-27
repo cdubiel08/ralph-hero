@@ -7177,6 +7177,11 @@ export type InboxQueueKind = "decision" | "proposal" | "approval" | "deliver-blo
 
 export interface InboxRow {
   number: number;
+  /** nameWithOwner — every inbox row is an own-repo open issue by
+   *  construction, but a viewer (the cockpit's `g` browser verb) needs the
+   *  literal repo to build a URL rather than re-deriving config. Null only
+   *  when the row's number could not be joined back to the open walk. */
+  repo: string | null;
   title: string;
   queue: InboxQueueKind;
   /** Ordering input, oldest first (nulls last) — the queue's own timestamp:
@@ -7273,6 +7278,7 @@ export function classifyInbox(
     seen.add(i.number);
     decisions.push({
       number: i.number,
+      repo: i.repo ?? null,
       title: i.title,
       queue: "decision",
       at: i.updatedAt ?? null,
@@ -7288,6 +7294,7 @@ export function classifyInbox(
     seen.add(r.number);
     proposals.push({
       number: r.number,
+      repo: byNumber.get(r.number)?.repo ?? null,
       title: r.title,
       queue: "proposal",
       at: r.at,
@@ -7310,6 +7317,7 @@ export function classifyInbox(
     steps.push(`board move ${i.number} backlog`);
     approvals.push({
       number: i.number,
+      repo: i.repo ?? null,
       title: i.title,
       queue: "approval",
       at: i.createdAt ?? null,
@@ -7332,6 +7340,7 @@ export function classifyInbox(
     seen.add(r.number);
     deliverBlocked.push({
       number: r.number,
+      repo: byNumber.get(r.number)?.repo ?? null,
       title: r.title,
       queue: "deliver-blocked",
       at: r.deltaAt ?? null,

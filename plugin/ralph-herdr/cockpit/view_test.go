@@ -651,3 +651,89 @@ func TestAgeChipDashesRatherThanZero(t *testing.T) {
 		t.Error("a missing record must never render as 0m")
 	}
 }
+
+func TestInboxSwapClampsTheCursorAndKeepsItsThreeEmptyStatesApart(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.width, m.height = 180, 40
+	m.col, m.row = 2, 1
+
+	m, cmd := updateKey(m, keyMsg("I"))
+	if !m.showInbox {
+		t.Fatal("I must swap the third column")
+	}
+	if m.row != 0 {
+		t.Errorf("row = %d after the swap, want 0", m.row)
+	}
+	if cmd == nil || !m.inboxInFlight {
+		t.Fatal("I must dispatch the inbox read immediately")
+	}
+	out := viewModel(m)
+	if !strings.Contains(out, "Inbox") {
+		t.Errorf("the header must name the Inbox view; got:\n%s", out)
+	}
+	if strings.Contains(out, "Thirty") {
+		t.Error("the Inbox view must not still be rendering Human Needed cards")
+	}
+	// Unread first: it must not claim emptiness.
+	if strings.Contains(out, "(none)") || strings.Contains(out, "inbox empty") {
+		t.Errorf("an unread inbox must not claim to be empty; got:\n%s", out)
+	}
+
+	// A FAILED read must never render like an empty inbox.
+	failed, _ := updateModel(m, inboxMsg{err: "gh api graphql failed (exit 1)"})
+	fout := viewModel(failed)
+	if !strings.Contains(fout, "gh api graphql failed") {
+		t.Errorf("a failed inbox read must name its cause; got:\n%s", fout)
+	}
+	if strings.Contains(fout, "inbox empty") {
+		t.Error("a failed read must not render as an empty inbox")
+	}
+
+	// A read that succeeded and found nothing says exactly that — and still
+	// counts what the classifier held back (GH-2108).
+	okEmpty, _ := updateModel(m, inboxMsg{ok: true, withheld: "1 reviewer-rate-limited"})
+	eout := viewModel(okEmpty)
+	if !strings.Contains(eout, "inbox empty") {
+		t.Error("a successful, empty inbox must say so rather than looking unread")
+	}
+	if !strings.Contains(eout, "withheld: 1 reviewer-rate-limited") {
+		t.Errorf("held-back rows must be counted even over an empty inbox; got:\n%s", eout)
+	}
+
+	// A read with rows renders the decision's why-line and every other row's
+	// disposition verb — the two facts the queue admits rows on.
+	filled, _ := updateModel(m, inboxMsg{ok: true, cards: []Card{
+		{Number: 30, State: inboxState, Queue: "decision", Title: "Thirty",
+			Question: "merge or split the epic?", Verb: `board answer 30 -m "<the decision>"`},
+		{Number: 40, State: inboxState, Queue: "approval", Title: "Forty",
+			Verb: "board move 40 backlog"},
+	}})
+	iout := viewModel(filled)
+	if !strings.Contains(iout, "? merge or split the epic?") {
+		t.Errorf("a decision row must render its why-line; got:\n%s", iout)
+	}
+	if !strings.Contains(iout, "→ board move 40 backlog") {
+		t.Errorf("a non-decision row must render its disposition verb; got:\n%s", iout)
+	}
+	if !strings.Contains(iout, "approval") {
+		t.Errorf("the queue kind must ride the card; got:\n%s", iout)
+	}
+
+	m, _ = updateKey(m, keyMsg("I"))
+	if m.showInbox || !strings.Contains(viewModel(m), "Human Needed") {
+		t.Error("I must swap back")
+	}
+}
+
+func TestDoneAndInboxDisplaceEachOtherRatherThanStacking(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m, _ = updateKey(m, keyMsg("D"))
+	m, _ = updateKey(m, keyMsg("I"))
+	if m.showDone || !m.showInbox {
+		t.Error("I over Done must land on Inbox, not a stack")
+	}
+	m, _ = updateKey(m, keyMsg("D"))
+	if m.showInbox || !m.showDone {
+		t.Error("D over Inbox must land on Done, not a stack")
+	}
+}

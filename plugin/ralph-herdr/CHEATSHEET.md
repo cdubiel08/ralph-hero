@@ -160,6 +160,7 @@ verbatim; Human Needed cards show the blocking question).
 | `v` | DAG view — `board frontier` as a text tree |
 | `d` / `g` / `q` | PR diff popup / open in browser / quit |
 | `D` | swap the third column between Human Needed and Done · 14d (upper-case — `d` is the PR diff) |
+| `I` | swap the third column to the Inbox — `board inbox` Tier 1 (decisions, tend proposals, Intake approvals, deliver-blocked), each card carrying its disposition verb. `D` and `I` displace each other |
 | mouse | click selects, double-click observes |
 
 Card markings (GH-2061) — everything below is machine-local, no extra network
@@ -184,6 +185,7 @@ never as a value.**
 | `⇅ #2049` | the In Review PR chip, from `board card-signals --json`. **Green** open with checks green and no conflict, **amber** open otherwise, **purple** merged, **red** closed unmerged. Grey `⇅ ?` = the read failed or has not landed; *nothing at all* = we read it and this issue genuinely has no PR — a rollup-advanced epic parent, say |
 | `❯ #1994 Epic: … 2/4` | the epic rollup, same read: parent name in the comment ink, `done/total` in the merged-PR purple. `2/50+` = the child list was TRUNCATED, so the tally is a floor. No rollup read leaves the bare `❯ #1994` GH-2061 already drew |
 | Done · 14d | the `D` column, from `board closed --json` — own-repo items closed as COMPLETED inside `RALPH_AUDIT_DAYS`. Read lazily on the first `D` and refreshed only while it is on screen. Cancels (`NOT_PLANNED`) are excluded, matching `reconcile`. Four empty states stay apart: unread, read-failed, nothing-closed, and an ordinary empty column |
+| Inbox | the `I` column, from `board inbox --json` Tier 1 (GH-2181) — same lazy, shown-only cadence and the same empty-state honesty. A decision card renders its why-line (`a` answers it in place); every other card renders its literal disposition verb; held-back deliver rows are counted in a `withheld:` footer, never dropped silently |
 
 **Green is not a merge verdict.** It means checks green and no known conflict —
 nothing more. Contract rule 7 is that gates are RUN, not predicted, and the

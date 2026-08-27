@@ -10,6 +10,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -441,5 +442,83 @@ func TestSpawnRefusesAClosedCard(t *testing.T) {
 	}
 	if !strings.Contains(m.status, "closed") {
 		t.Errorf("status = %q, want a legible refusal", m.status)
+	}
+}
+
+// --- Inbox view (GH-2181) — the fourth view on the D-toggle precedent. ---
+
+func TestParseInboxRefusesAPayloadWithNoTier1Object(t *testing.T) {
+	for _, raw := range []string{`{}`, `null`, `{"digest":null}`, `{"tier1":null}`, `nope`} {
+		if _, _, err := parseInbox(raw); err == nil {
+			t.Errorf("parseInbox(%q) read a malformed payload as an empty inbox", raw)
+		}
+	}
+}
+
+func TestParseInboxKeepsTheCLISectionOrderAndTheRowFacts(t *testing.T) {
+	cards, withheld, err := parseInbox(`{"tier1":{
+	  "decisions":[{"number":1,"repo":"o/r","title":"d","queue":"decision","priority":"P1","detail":"merge or split?","verb":"board answer 1 -m \"<the decision>\""}],
+	  "proposals":[{"number":2,"repo":"o/r","title":"p","queue":"proposal","priority":null,"detail":null,"verb":"board resolve 2 --accept"}],
+	  "approvals":[{"number":3,"repo":null,"title":"a","queue":"approval","priority":"P2","estimate":"S","detail":"reject: board cancel 3","verb":"board move 3 backlog"}],
+	  "deliverBlocked":[{"number":4,"repo":"o/r","title":"b","queue":"deliver-blocked","priority":null,"pr":9,"reason":"no-pr","detail":null,"verb":"board move 4 done"}],
+	  "withheld":[{"reason":"reviewer-rate-limited","count":2},{"reason":"settling","count":1}],
+	  "count":4}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Section order IS the precedence classifyInbox decided; the column must
+	// not re-rank it.
+	var nums []int
+	for _, c := range cards {
+		nums = append(nums, c.Number)
+		if c.State != inboxState {
+			t.Errorf("#%d state = %q, want %q — the state is what routes rendering and refusals", c.Number, c.State, inboxState)
+		}
+		if c.Verb == "" {
+			t.Errorf("#%d lost its verb — the Tier 1 admission invariant", c.Number)
+		}
+	}
+	if fmt.Sprint(nums) != "[1 2 3 4]" {
+		t.Errorf("order = %v, want [1 2 3 4]", nums)
+	}
+	if cards[0].Question != "merge or split?" || cards[0].Queue != "decision" {
+		t.Errorf("decision row = %+v", cards[0])
+	}
+	if cards[2].Repo != "" {
+		t.Errorf("a null repo must deref to empty, got %q", cards[2].Repo)
+	}
+	// GH-2108: held-back rows are counted by reason, never dropped silently.
+	if withheld != "2 reviewer-rate-limited, 1 settling" {
+		t.Errorf("withheld = %q", withheld)
+	}
+}
+
+func TestInboxIsOnlyReadWhileItIsOnScreen(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	if m.inboxDue(time.Now()) {
+		t.Error("the inbox read must not run while its view is hidden")
+	}
+	m.showInbox = true
+	if !m.inboxDue(time.Now()) {
+		t.Error("a shown Inbox view must refresh on the second cadence")
+	}
+	m.inboxInFlight = true
+	if m.inboxDue(time.Now().Add(10 * time.Minute)) {
+		t.Error("a read already in flight must not be dispatched twice")
+	}
+}
+
+func TestSpawnRefusesAnInboxCardAndNamesItsVerb(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.showInbox = true
+	m.inboxOK = true
+	m.inboxCards = []Card{{Number: 5, State: inboxState, Queue: "approval", Verb: "board move 5 backlog", Title: "t"}}
+	m.col, m.row = 2, 0
+	m, cmd := updateKey(m, keyMsg("s"))
+	if cmd != nil {
+		t.Error("s on an inbox card must not reach the spawn path")
+	}
+	if !strings.Contains(m.status, "board move 5 backlog") {
+		t.Errorf("status = %q, want the row's disposition verb", m.status)
 	}
 }
