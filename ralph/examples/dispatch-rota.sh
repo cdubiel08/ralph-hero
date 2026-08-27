@@ -159,8 +159,27 @@ for pass in "$@"; do
         FLEET_OUT="no-herdr" RC=1
         continue
       fi
-      head=$("$BOARD" frontier --json 2>/dev/null | jq -r '.next.number // empty') || head=""
+      # Shape-checked frontier read (GH-2196). `frontier --json` is
+      # {frontier: [...], blocked, cache} — a LIST with no `.next` head (that
+      # shape is `board next --json`'s). "No candidate" is idle; a read whose
+      # shape does not match is a loud refusal, never idle — "no work" and
+      # "this pass is broken" must not look alike (GH-2048's rule, and the
+      # same one the leads pass follows for a missing herdr).
+      fj=$("$BOARD" frontier --json 2>/dev/null) || fj=""
+      if [ -z "$fj" ] || ! jq -e '.frontier | type == "array"' >/dev/null 2>&1 <<<"$fj"; then
+        echo "dispatch-rota: frontier read failed or shape mismatch (expected {frontier: [...]}) — skipping the fleet pass (refusal, not idle)" >&2
+        FLEET_OUT="bad-shape" RC=1
+        continue
+      fi
+      head=$(jq -r '.frontier[0].number // empty' <<<"$fj")
       if [ -z "$head" ]; then
+        # A non-empty frontier whose head carries no number is shape drift
+        # too — only a genuinely empty list may read as idle.
+        if [ "$(jq -r '.frontier | length' <<<"$fj")" -gt 0 ]; then
+          echo "dispatch-rota: frontier head has no .number — shape drift, skipping the fleet pass (refusal, not idle)" >&2
+          FLEET_OUT="bad-shape" RC=1
+          continue
+        fi
         FLEET_OUT="idle"
         continue
       fi
