@@ -3316,6 +3316,47 @@ describe("doctor — apply sweep", () => {
     expect(c.detail).not.toContain("#1(");
   });
 
+  it("merged-unapplied holds an item whose ralph-verify-after has not passed, and warns past it (GH-2124)", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, {
+      number: 1, state: "Backlog", labels: ["ralph:apply"],
+      blockedBy: [{ number: 5, state: "CLOSED" }],
+      body: "<!-- ralph-verify-after: 2026-08-08T00:00:00Z -->", // NOW is 2026-07-31
+    });
+    const holdCheck = detail(doctor(applyCtx(gh)), "merged-unapplied");
+    expect(holdCheck.level).toBe("ok");
+    // the hold is printed, not silent — the measurement survives, only the marker is withheld
+    expect(holdCheck.detail).toContain("#1(until 2026-08-08");
+
+    gh.issues.set(1, {
+      number: 1, state: "Backlog", labels: ["ralph:apply"],
+      blockedBy: [{ number: 5, state: "CLOSED" }],
+      body: "<!-- ralph-verify-after: 2026-07-01T00:00:00Z -->", // past
+    });
+    const c = detail(doctor(applyCtx(gh)), "merged-unapplied");
+    expect(c.level).toBe("warn");
+    expect(c.detail).toContain("#1←closed #5");
+  });
+
+  it("an unreadable body does NOT hold merged-unapplied — the warning stays loud", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, {
+      number: 1, state: "Backlog", labels: ["ralph:apply"],
+      blockedBy: [{ number: 5, state: "CLOSED" }],
+      body: "<!-- ralph-verify-after: 2026-08-08T00:00:00Z -->", // future, but unreadable below
+    });
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) => {
+      if (stdin?.includes("comments(last") && stdin.includes('"number":1')) {
+        return { code: 1, stdout: "", stderr: "boom" };
+      }
+      return inner(argv, stdin);
+    };
+    const c = detail(doctor(applyCtx(gh)), "merged-unapplied");
+    expect(c.level).toBe("warn");
+    expect(c.detail).toContain("#1←closed #5");
+  });
+
   it("apply-closed-unevidenced FAILS under --strict, excludes cancels, and --fix reopens", () => {
     const gh = new FakeGh();
     gh.issues.set(1, {

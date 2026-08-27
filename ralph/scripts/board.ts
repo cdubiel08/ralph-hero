@@ -8819,40 +8819,68 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         }
       } else {
         const openApply = items.filter((i) => isApplyIssue(ctx.cfg, i.labels, i.labelsTruncated));
+        // One body read per open apply unit, shared by merged-unapplied's hold
+        // and apply-verify-elapsed below. An entry is either the parsed
+        // verify-after instant (null = no marker) or the read failure.
+        const verifyAfter = new Map<number, { at: Date | null } | { error: string }>();
+        for (const i of openApply) {
+          try {
+            verifyAfter.set(i.number, { at: parseVerifyAfter(fetchApplyMeta(ctx, i.number).body) });
+          } catch (e) {
+            verifyAfter.set(i.number, { error: (e as Error).message });
+          }
+        }
         // The ship work this apply unit waited on has landed and the apply has
         // not happened. Requires blockers to have EXISTED: an apply unit with
         // no dependency edge was never gated on a merge, so "merged" is not a
         // claim anyone made about it.
         // blockersTruncated fails CLOSED here too: with an unseen tail of
         // blockers we cannot claim "the work this waited on has landed".
-        const mergedUnapplied = openApply.filter(
+        const mergedCandidates = openApply.filter(
           (i) => i.openBlockers.length === 0 && !i.blockersTruncated && i.closedBlockers.length > 0,
         );
+        // A future ralph-verify-after HOLDS the warning (GH-2124): a soak- or
+        // schedule-bound proof point cannot be applied yet, so warning daily is
+        // an advisory whose remedy is unreachable (the GH-2052 shape). Held
+        // items are still named — the measurement is printed, only the marker
+        // asking a reader to act is withheld. An unreadable body does NOT
+        // hold: this check exists to say the deploy has not happened, so a
+        // failed read stays loud.
+        const held: string[] = [];
+        const mergedUnapplied = mergedCandidates.filter((i) => {
+          const v = verifyAfter.get(i.number);
+          if (v && "at" in v && v.at && v.at.getTime() > ctx.now().getTime()) {
+            held.push(`#${i.number}(until ${v.at.toISOString()})`);
+            return false;
+          }
+          return true;
+        });
+        const heldDetail = held.length ? `held until their ralph-verify-after instant: ${held.join(" ")}` : "";
         add(
           "merged-unapplied",
           mergedUnapplied.length === 0 ? "ok" : "warn",
           mergedUnapplied.length === 0
-            ? "none"
-            : `apply units whose blocking work has landed but which have not been applied: ` +
-              mergedUnapplied.map((i) => `#${i.number}←closed ${i.closedBlockers.map((n) => `#${n}`).join(",")}`).join(" "),
+            ? heldDetail || "none"
+            : [
+                `apply units whose blocking work has landed but which have not been applied: ` +
+                  mergedUnapplied.map((i) => `#${i.number}←closed ${i.closedBlockers.map((n) => `#${n}`).join(",")}`).join(" "),
+                heldDetail,
+              ].filter(Boolean).join("; "),
         );
         // verify_after keeps a schedule-bound proof point (a weekly cron is up
         // to 7 days out) alive without rotting into daily noise: quiet until
-        // the instant passes, then loud. Body reads are one query per apply
-        // unit — a handful of issues, not the board.
+        // the instant passes, then loud.
         // Per-item fault isolation: one unreadable body must not hide every
         // OTHER elapsed apply unit — it is reported alongside them, not
         // instead of them.
         const elapsed: string[] = [];
         const unreadable: string[] = [];
         for (const i of openApply) {
-          try {
-            const at = parseVerifyAfter(fetchApplyMeta(ctx, i.number).body);
-            if (at && at.getTime() <= ctx.now().getTime()) {
-              elapsed.push(`#${i.number}(due ${at.toISOString()})`);
-            }
-          } catch (e) {
-            unreadable.push(`#${i.number}(${(e as Error).message})`);
+          const v = verifyAfter.get(i.number)!;
+          if ("error" in v) {
+            unreadable.push(`#${i.number}(${v.error})`);
+          } else if (v.at && v.at.getTime() <= ctx.now().getTime()) {
+            elapsed.push(`#${i.number}(due ${v.at.toISOString()})`);
           }
         }
         const elapsedDetail = [
