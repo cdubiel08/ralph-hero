@@ -1,6 +1,6 @@
 {
   "name": "ralph",
-  "version": "0.3.25",
+  "version": "0.3.26",
   "description": "ralph v2 — one work verb, one board CLI, a 6-state machine. The driving model sequences its own research/plan/build/verify; board.ts is the sole board mutation path (typed transitions, claims with TTL, scope gate); enforcement is code, not prose.",
   "author": {
     "name": "Chad Dubiel",
