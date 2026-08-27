@@ -2471,6 +2471,23 @@ function guardDoneEvidence(ctx: Ctx, issue: Issue, why: string | undefined): voi
     return;
   }
   if (why || issue.prs.some((p) => p.merged)) return;
+  // Epic-root rollup evidence (GH-2198): a root every one of whose children
+  // is closed. The fact is DERIVED — parentCheck already computed it to
+  // advance the root to In Review — so asking for --why here made the escape
+  // hatch the routine path for every completed epic (the GH-1732 argument,
+  // one population over). Checked before the branch read because the child
+  // list is already on the issue: a qualifying root costs zero extra reads.
+  // Bounds, all fail-closed: a childless issue is not an epic and keeps the
+  // linkage gates; a truncated child list is not-all-closed; only CLOSED
+  // counts (a Canceled child is CLOSED on GitHub and counts — the same key
+  // parentCheck gates on — but an unreadable state never reads as closed).
+  if (
+    issue.children.length > 0 &&
+    !issue.childrenTruncated &&
+    issue.children.every((c) => c.issueState === "CLOSED")
+  ) {
+    return;
+  }
   // Parity with deliver-queue's linkage (GH-1732): a merged PR reaches the
   // issue through the closing reference OR the branch convention. The
   // no-closing-keyword population is exactly the one the close-out lane
@@ -2485,9 +2502,18 @@ function guardDoneEvidence(ctx: Ctx, issue: Issue, why: string | undefined): voi
   } catch {
     /* unreadable trail is not evidence */
   }
+  // A root with children was one closed child away from the rollup evidence
+  // above — name what stands in the way, so the refusal is actionable.
+  const openChildren = issue.children.filter((c) => c.issueState === "OPEN").map((c) => `#${c.number}`);
+  const rootLine = issue.childrenTruncated
+    ? `This root has more than ${issue.children.length} children — refusing to count a truncated list as all-closed. `
+    : openChildren.length > 0
+      ? `Children still open: ${openChildren.join(", ")} — a root whose children are ALL closed passes bare. `
+      : "";
   throw new UsageError(
     `moving #${issue.number} to Done requires a merged linked PR — none found ` +
       `(neither a closing reference nor a merged PR on this issue's branch — see \`board name ${issue.number}\`). ` +
+      rootLine +
       `For a unit that ends without a PR, record the outcome: \`board move ${issue.number} done --decision "<artifact path>"\`. ` +
       `Pass --why "<how this was completed>" to complete without either.`,
   );
@@ -7229,7 +7255,7 @@ export interface InboxTier1 {
  *  items (see classifyDeliver) — nothing but a human ever clears one. */
 export const INBOX_DELIVER_VERBS: Partial<Record<DeliverReason, (n: number) => string>> = {
   "convergence-stalled": (n) => `board move ${n} in-progress --why "<rework direction>"`,
-  "no-pr": (n) => `board move ${n} done --why "<review verdict>"`,
+  "no-pr": (n) => `board move ${n} done (passes bare on an all-children-closed epic root; else --why "<review verdict>")`,
 };
 
 /** First line of the why in the LATEST escalation comment — the
@@ -7349,7 +7375,7 @@ export function classifyInbox(
       reason: r.reason,
       detail:
         r.reason === "no-pr"
-          ? `no open PR at this item — a rollup-advanced epic awaiting close-out, or demote: board move ${r.number} in-progress --why "<why>"`
+          ? `no open PR at this item — a rollup-advanced epic awaiting close-out (all children closed → board move ${r.number} done passes bare), or demote: board move ${r.number} in-progress --why "<why>"`
           : (r.detail ?? r.convergence ?? null),
       verb: verb(r.number),
     });
@@ -10919,6 +10945,10 @@ mutations
                               Backlog, In Review → In Progress) — backward
                               moves are exceptional and the reason is posted
                               as a comment (GH-2078).
+                              Done evidence: merged linked PR, a decision
+                              artifact (--decision), an epic root whose
+                              children are ALL closed (GH-2198 — derived,
+                              nothing to type), or --why.
                               Intake → Backlog is APPROVAL: it refuses without
                               a Priority and an Estimate.
                               Escalation addressing (GH-2179, Human Needed
@@ -11116,7 +11146,7 @@ export const VERB_HELP: Record<string, string> = {
   create: "board create (--intake | --backlog | --state <s>) --title <t> [--body <b>] [--parent <n>] [--estimate XS..XL] [--priority P0..P3] [--apply]\n  Files an issue onto the board. Retry-safe (twin dedupe, GH-1973).\n  The landing state is REQUIRED — there is no default, because filing is not approving:\n    --intake   tracked, not yet approved; invisible to next/frontier (Priority/Estimate optional)\n    --backlog  approved and ready to work (Priority and Estimate REQUIRED)\n  example: board create --backlog --title \"fix the gate\" --priority P1 --estimate S",
   claim: "board claim <n> [--steal] [--why <w>] | board claim show <n>\n  Take a unit (Backlog→In Progress). --steal only after TTL expiry.\n  Claiming from In Review demotes and requires --why \"<the rework>\".\n  example: board claim 1234",
   release: "board release <n> -m \"<where you stopped>\"\n  Give a unit back (→Backlog) with the handoff note.\n  example: board release 1234 -m \"tests red on X; next: fix parser\"",
-  move: "board move <n> <state> [--why <w>] [--decision <artifact>] [--to-lead <name> | --to-human]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact, or --why.\n  Demotions (In Progress→Backlog, In Review→In Progress) require --why (GH-2078).\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  Human Needed only: --to-lead/--to-human address the escalation (GH-2179);\n  default is the lead when RALPH_HERDR_LEAD is set, else the human.\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
+  move: "board move <n> <state> [--why <w>] [--decision <artifact>] [--to-lead <name> | --to-human]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact,\n  an epic root with ALL children closed (GH-2198), or --why.\n  Demotions (In Progress→Backlog, In Review→In Progress) require --why (GH-2078).\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  Human Needed only: --to-lead/--to-human address the escalation (GH-2179);\n  default is the lead when RALPH_HERDR_LEAD is set, else the human.\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
   answer: "board answer <n> -m \"<the decision>\" [--comment-only] [--any-state]\n  Answer a Human Needed item and resume it.\n  example: board answer 1234 -m \"ship option B\"",
   promote: "board promote <n> [-m \"<note>\"] [--json]\n  Promote a lead-routed escalation to the human (GH-2179): durable marker\n  comment, no state change. Refuses outside Human Needed and on\n  human-addressed escalations; noop when already promoted.\n  example: board promote 1234 -m \"authorization, not knowledge — yours\"",
   escalations: "board escalations [--json]\n  The arbitration queue (GH-2179): Human Needed items classified by audience.\n  pending = the lead's work; →human / promoted / auto-promoted (TTL\n  RALPH_LOCK_TTL_MIN elapsed, computed at read time) = the human tier.\n  example: board escalations --json",

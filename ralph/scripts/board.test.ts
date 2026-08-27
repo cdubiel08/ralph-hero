@@ -970,6 +970,47 @@ describe("transition engine", () => {
     expect(gh.mutations).toEqual([]);
   });
 
+  it("an epic root whose children are ALL closed is Done evidence (GH-2198) — bare move, no extra reads", () => {
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      children: [
+        { number: 11, issueState: "CLOSED", state: "Done" },
+        // Canceled is CLOSED on GitHub — the same key parentCheck gates on.
+        { number: 12, issueState: "CLOSED", state: "Canceled" },
+      ],
+    });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(after.state).toBe("Done");
+    expect(gh.comments).toEqual([]); // evidence, not an unevidenced completion
+    // The child list was already on the issue — no branch-linkage search paid.
+    expect(gh.queries.some((q) => q.includes("search(type: ISSUE"))).toBe(false);
+  });
+
+  it("an epic root with an open child is refused, and the refusal NAMES the open children", () => {
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      children: [
+        { number: 11, issueState: "CLOSED", state: "Done" },
+        { number: 12, issueState: "OPEN", state: "Backlog" },
+      ],
+    });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(/Children still open: #12/);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("a truncated child list is NOT all-closed — refused, fail closed (GH-2198)", () => {
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      children: [{ number: 11, issueState: "CLOSED", state: "Done" }],
+      childrenTruncated: true,
+    });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(/truncated list as all-closed/);
+    expect(gh.mutations).toEqual([]);
+  });
+
   it("Done accepts a merged PR reaching the issue through the branch convention (GH-1732)", () => {
     // No closing reference at all — exactly the population deliver's
     // no-open-pr close-out serves, and which used to need --why.
