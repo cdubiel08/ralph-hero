@@ -11692,7 +11692,12 @@ reads
                               resuming a legacy branch is not called dead —
                               enumerate first, then resolve here. Exit 1 (and
                               a named reason) on no match or on two sessions
-                              in one worktree; never guesses between them
+                              in one worktree; never guesses between them.
+                              \`peer lead\` / \`peer dispatch\` (GH-2216) filter
+                              by the SOURCE-CHECKOUT leaf instead — the lead
+                              and the hero hold no worktree, so that leaf is
+                              their peer root; every source-checkout session
+                              shares it, so ambiguity is refused, not judged
   tree NNN                    subtree with states
   claim show NNN [--json]     the claim as the board holds it: holders, shared
                               since, age vs TTL, raw text when garbled
@@ -12096,7 +12101,7 @@ export const VERB_HELP: Record<string, string> = {
   bootstrap: "board bootstrap --owner <o> --repo <r> --project <n> [--host <ghe>]\n  First-run bring-up: writes .ralph.json, links the repo, runs setup, prints next steps.\n  example: board bootstrap --owner me --repo my-app --project 7",
   prune: "board prune [--apply] [--limit N]\n  Remove long-closed terminal items from the PROJECT (issues untouched). Dry run until --apply.\n  example: board prune",
   name: "board name <n> [--json]\n  THE branch/agent name grammar for a unit (never rebuild slugify in shell).\n  example: board name 1234",
-  peer: "board peer <n>\n  Resolve the unit's live messaging address from the enumerated sessions.\n  example: board peer 1234",
+  peer: "board peer <n>|lead|dispatch\n  Resolve a live messaging address from the enumerated sessions.\n  example: board peer 1234",
 };
 
 interface ParsedArgs {
@@ -12850,6 +12855,53 @@ export function run(argv: string[], ctx: Ctx): number {
       // whatever the caller's transport enumerated — and this decides. Fails
       // closed on both zero and >1: an address is a session, and the wrong
       // session is worse than no session.
+      const readCandidates = (): string[] => {
+        const raw =
+          typeof flags.candidates === "string" ? flags.candidates.replace(/,/g, "\n") : readFileSync(0, "utf8");
+        return raw
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l !== "");
+      };
+      // GH-2216 (topology H): role targets. The lead and the dispatch hero
+      // run in the SOURCE checkout — no unit, no worktree (work-team.sh
+      // D3.2 / dispatch up D3.1) — so on the peer transport their addresses
+      // root at the checkout DIRECTORY leaf, a machine-local fact git holds.
+      // The filter still runs over enumerated candidates and the suffix rule
+      // stays resolvePeerAddress's: enumerate, filter, refuse on
+      // zero-or-many (D2.2). The stated limit is structural, not a bug:
+      // every source-checkout session shares the leaf, so the peer namespace
+      // cannot tell a lead from a hero — an ambiguous answer is the honest
+      // one, and the herd lane (token-stamped o-lane names, `board who`)
+      // is where roles resolve precisely.
+      if (positional[0] === "lead" || positional[0] === DISPATCH_SEGMENT) {
+        const role = positional[0];
+        const r = ctx.exec(["git", "-C", ctx.repoRoot, "rev-parse", "--git-common-dir"]);
+        if (r.code !== 0)
+          throw new RefusalError(
+            `cannot derive the source-checkout leaf (git rev-parse --git-common-dir: ${r.stderr.trim() || "failed"}) — ` +
+              `role addresses on the peer transport root at the source checkout directory, and without it there is nothing to filter by. ` +
+              `The durable lane is the board (\`board comment\` / \`board move NNN human-needed --why\`).`,
+          );
+        const common = r.stdout.trim();
+        const dir = common === ".git" ? ctx.repoRoot : common.replace(/\/\.git$/, "");
+        const leaf = dir.replace(/\/+$/, "").split("/").pop() ?? "";
+        if (leaf === "")
+          throw new RefusalError(`derived an empty source-checkout leaf from "${common}" — cannot filter the peer namespace`);
+        const candidates = readCandidates();
+        const res = resolvePeerAddress([leaf], candidates);
+        if (flags.json) json({ role, peerPrefix: leaf, peerPrefixes: [leaf], candidates, ...res });
+        else if (res.kind === "resolved") out(res.address);
+        else if (res.kind === "none")
+          out(
+            `no live source-checkout session matching ${leaf}-<suffix> among ${candidates.length} candidate(s) — no ${role} is reachable on the peer transport`,
+          );
+        else
+          out(
+            `ambiguous: ${res.candidates.join(", ")} share the source checkout, and the peer namespace cannot tell the ${role} from its neighbors — name one explicitly`,
+          );
+        return res.kind === "resolved" ? 0 : 1;
+      }
       const num = requireNumber(positional[0]);
       const issue = fetchIssue(ctx, num);
       const kind = branchKindFor(issue.labels, {
@@ -12865,12 +12917,7 @@ export function run(argv: string[], ctx: Ctx): number {
         peerPrefix(`feature/GH-${num}`),
       ];
       const prefix = prefixes[0];
-      const rawCandidates =
-        typeof flags.candidates === "string" ? flags.candidates.replace(/,/g, "\n") : readFileSync(0, "utf8");
-      const candidates = rawCandidates
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l !== "");
+      const candidates = readCandidates();
       const res = resolvePeerAddress(prefixes, candidates);
       if (flags.json) json({ number: num, peerPrefix: prefix, peerPrefixes: prefixes, candidates, ...res });
       else if (res.kind === "resolved") out(res.address);

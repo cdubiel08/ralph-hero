@@ -230,6 +230,9 @@ export class FakeGh {
   worktreeList = "";
   /** Worktree paths `git status --porcelain` reports dirty. */
   dirtyWorktrees = new Set<string>();
+  /** `git rev-parse --git-common-dir` for the role-target peer resolution
+   *  (GH-2216); null makes the read fail like a non-repo. */
+  gitCommonDir: string | null = "/repo/.git";
 
   exec: (argv: string[], stdin?: string) => ExecResult = (argv, stdin) => {
     const cmd = argv.join(" ");
@@ -243,6 +246,10 @@ export class FakeGh {
     if (cmd.startsWith("git") && cmd.includes("remote"))
       return ok("git@github.com:cdubiel08/ralph-hero.git\n");
     if (cmd.startsWith("git") && cmd.includes("worktree list")) return ok(this.worktreeList);
+    if (cmd.startsWith("git") && cmd.includes("rev-parse --git-common-dir"))
+      return this.gitCommonDir === null
+        ? { code: 128, stdout: "", stderr: "fatal: not a git repository" }
+        : ok(`${this.gitCommonDir}\n`);
     if (cmd.startsWith("git") && cmd.includes("status --porcelain")) {
       const dir = argv[2]; // git -C <dir> status --porcelain
       return ok(this.dirtyWorktrees.has(dir) ? " M file.ts\n" : "");
