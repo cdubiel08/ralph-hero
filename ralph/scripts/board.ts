@@ -10621,8 +10621,10 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
           (r) => r.category === "done-audit",
         );
         const dayMs = 86_400_000;
+        // floor, not ceil: a countdown that rounds UP renders "1d" on a close
+        // with 0.4d actually left — biasing urgent is the safe direction.
         const expiry = (at: string | null): number =>
-          Math.max(0, Math.ceil(tendOpts.auditDays - (ctx.now().getTime() - (at ? Date.parse(at) : ctx.now().getTime())) / dayMs));
+          Math.max(0, Math.floor(tendOpts.auditDays - (ctx.now().getTime() - (at ? Date.parse(at) : ctx.now().getTime())) / dayMs));
         const soonest = pending.length ? Math.min(...pending.map((r) => expiry(r.at))) : 0;
         add(
           "done-audit-pending",

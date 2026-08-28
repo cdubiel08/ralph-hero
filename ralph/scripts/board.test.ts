@@ -6483,6 +6483,24 @@ describe("tend-queue (spec §4.3)", () => {
     ]);
   });
 
+  it("recentDone never pays for the linkage read — the connection is opt-in per caller (GH-2151)", () => {
+    // The GH-1803 doctrine as an assertion, not a default parameter: `board
+    // closed` (the recentDone view) renders no evidence, so its query may not
+    // carry the connection.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, issueState: "CLOSED", state: "Done", closedAt: days(2), comments: [] });
+    const queries: string[] = [];
+    const inner = ctx.exec;
+    ctx.exec = (argv, stdin) => {
+      if (stdin) queries.push(JSON.parse(stdin).query ?? "");
+      return inner(argv, stdin);
+    };
+    run(["closed", "--json"], ctx);
+    expect(queries.some((q) => q.includes("issues(states: CLOSED"))).toBe(true);
+    expect(queries.every((q) => !q.includes("closedByPullRequestsReferences"))).toBe(true);
+  });
+
   it("tendQueue evidence wiring: merged closing PR or a gated evidence marker self-audits; the rest surface (GH-2151)", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
