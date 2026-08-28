@@ -27,6 +27,12 @@ import {
   emitJsonSchemas,
   formatBranchName,
   parseBranchName,
+  DISPATCH_SEGMENT,
+  formatAddress,
+  formatDispatchAddress,
+  formatTeamSegment,
+  parseAddress,
+  TOKENS,
   peerPrefix,
   resolvePeerAddress,
   worktreeLeaf,
@@ -434,6 +440,101 @@ describe("naming: branches (GH-1807)", () => {
     expect(() => formatBranchName("spike" as BranchKind, 1, "x")).toThrow(RangeError);
     expect(() => formatBranchName("fix", -1, "x")).toThrow(RangeError);
     expect(() => formatBranchName("fix", 1.5, "x")).toThrow(RangeError);
+  });
+});
+
+describe("naming: herd addresses (GH-2209, topology A)", () => {
+  const EPIC = { epic: 2176, title: "Teams, dispatch & the inbox" };
+
+  it("round-trips the three shapes: team-scoped, flat, dispatch", () => {
+    const scoped = formatAddress("ralph-hero", EPIC, "w", 2209, "topology A: derived address grammar");
+    expect(scoped).toBe("ralph-hero/t2176-teams-dispatch-the/w2209-topology-a-derived");
+    expect(parseAddress(scoped)).toEqual({
+      kind: "agent",
+      repo: "ralph-hero",
+      team: { epic: 2176, slug: "teams-dispatch-the" },
+      lane: "w",
+      issue: 2209,
+      slug: "topology-a-derived",
+      gen: null,
+    });
+
+    const flat = formatAddress("ralph-hero", null, "w", 1918, "One session, two identities");
+    expect(flat).toBe("ralph-hero/w1918-one-session-two");
+    expect(parseAddress(flat)).toMatchObject({ kind: "agent", team: null, issue: 1918 });
+
+    const dispatch = formatDispatchAddress("ralph-hero");
+    expect(dispatch).toBe(`ralph-hero/${DISPATCH_SEGMENT}`);
+    expect(parseAddress(dispatch)).toEqual({ kind: "dispatch", repo: "ralph-hero" });
+  });
+
+  it("the team slug is BYTE-IDENTICAL to the epic's own agent-name slug — one vocabulary (D0.3)", () => {
+    const seg = formatTeamSegment(EPIC.epic, EPIC.title);
+    const lead = formatAgentName("o", EPIC.epic, EPIC.title);
+    expect(seg.slice(String(EPIC.epic).length + 2)).toBe(lead.slice(String(EPIC.epic).length + 2));
+    // A lead lives INSIDE its own team: same epic in both segments.
+    const addr = formatAddress("ralph-hero", EPIC, "o", EPIC.epic, EPIC.title);
+    expect(parseAddress(addr)).toMatchObject({
+      team: { epic: 2176, slug: "teams-dispatch-the" },
+      lane: "o",
+      issue: 2176,
+      slug: "teams-dispatch-the",
+    });
+  });
+
+  it("position disambiguates the t-collision: repo/t123-foo is a FLAT tending agent, never a team", () => {
+    expect(parseAddress("ralph-hero/t123-foo")).toEqual({
+      kind: "agent",
+      repo: "ralph-hero",
+      team: null,
+      lane: "t",
+      issue: 123,
+      slug: "foo",
+      gen: null,
+    });
+  });
+
+  it("a collision-generation agent segment is still an address (respawns share the base, --N is a live sibling)", () => {
+    expect(parseAddress("ralph-hero/t2176-teams/w2209-topology--2")).toMatchObject({
+      issue: 2209,
+      gen: 2,
+    });
+  });
+
+  it("rejects what the grammar does not name — off-grammar reads must fail, not guess", () => {
+    const rejects = [
+      "", // nothing
+      "ralph-hero", // repo alone is not an address
+      "w2209-topology", // no repo segment
+      "ralph-hero/gh-2209", // legacy session names are identities, not addresses
+      "ralph-hero/GH-2209", // ditto
+      "ralph-hero/2209", // SEMANTIC SPELLING IS THE RULE: never a bare number
+      "ralph-hero/t2176-teams/2209", // bare number in the agent slot
+      "ralph-hero/q2209-thing", // lane outside the closed registry
+      "ralph-hero/dispatch/w2209-thing", // dispatch is a space, not a team
+      "ralph-hero/2176-teams/w2209-thing", // team segment must open with t
+      "ralph-hero/t2176-Teams/w2209-thing", // uppercase slug
+      "ralph-hero/t2176/w2209-thing", // team without a slug: number+slug always
+      "a/t1-x/w2-y/extra", // four segments
+      "own er/w1-x", // a space is not repo charset
+      "/w2209-thing", // empty repo segment
+      `ralph-hero/${DISPATCH_SEGMENT}/extra`, // dispatch takes no children
+    ];
+    for (const a of rejects) expect(parseAddress(a), JSON.stringify(a)).toBeNull();
+  });
+
+  it("format refuses an illegal repo segment rather than emitting an unparseable address", () => {
+    expect(() => formatDispatchAddress("own/er")).toThrow(RangeError);
+    expect(() => formatAddress("", null, "w", 1, "x")).toThrow(RangeError);
+    expect(() => formatTeamSegment(-1, "x")).toThrow(RangeError);
+  });
+
+  it("the address C8 token validates against the grammar — a bare number can never pose as one", () => {
+    const v = TOKENS.address.validate;
+    expect(v("ralph-hero/t2176-teams/w2209-topology")).toBe(true);
+    expect(v("ralph-hero/dispatch")).toBe(true);
+    expect(v("2209")).toBe(false);
+    expect(v("w2209-topology")).toBe(false);
   });
 });
 

@@ -20,6 +20,12 @@
 # durable key. The harness (claude|codex|pi) is a metadata token and never
 # appears in a name.
 #
+# HERD ADDRESSES (GH-2209) are deliberately NOT mirrored here: the team
+# segment needs the unit's epic root, a board read no bash mirror can repeat
+# without becoming a second grammar (the branch-kind argument, again). Shell
+# consumers read `board name NNN --json | jq -r .address`; the spawn path
+# stamps it as the `address` token via _ralph_resolve_names in lib.sh.
+#
 # Pure functions only — no top-level side effects, no set/shopt (callers own
 # their shell options), no dependency on lib.sh. bash 3.2 compatible.
 

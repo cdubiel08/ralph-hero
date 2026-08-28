@@ -357,6 +357,7 @@ notify() {
 }
 
 # _ralph_spawn_record REF N PARENT_ISSUE BRANCH LABEL PANE TS [SHELL_PID] [CHECKOUT]
+#                     [ROLE] [PARENT_REF] [DEPTH] [ROOT_REF] [ADDRESS]
 # — print the ledger spawn event as ONE compact JSON line:
 #   {ts, ev: "spawn", agent_ref, pane_id?, shell_pid?, checkout?,
 #    lineage: <C7>, tokens: <C8 map>}
@@ -391,6 +392,13 @@ notify() {
 _ralph_spawn_record() {
   local ref="$1" n="$2" parent_issue="$3" branch="$4" label="$5" pane="$6" ts="$7"
   local shell_pid="${8-}" checkout="${9-}" role="${10-}" parent_ref="${11-}" depth="${12-}" root_ref="${13-}"
+  # GH-2209 (D0.4): the herd address, stamped at spawn beside the C8 lineage
+  # tokens — spawn-time truth like role, because the team half needs a board
+  # read the pane cannot repeat. Empty omits the token (an older board copy,
+  # or a spawn that never read `board name`); a positional, never an env read,
+  # so a stale address from an earlier spawn in the same shell cannot leak
+  # onto a different unit's record.
+  local address="${14-}"
   local parsed lane slug epoch by
   parsed=$(ralph_agent_parse "${ref%%#*}") || return 1
   # shellcheck disable=SC2086  # intentional: parse output is space-separated
@@ -417,7 +425,7 @@ _ralph_spawn_record() {
     --arg lane "$lane" --arg slug "$slug" --arg epoch "$epoch" \
     --arg by "$by" --arg shell "$shell_pid" --arg checkout "$checkout" \
     --arg role "$role" --arg parent "$parent_ref" --arg depth "$depth" \
-    --arg root "$root_ref" '
+    --arg root "$root_ref" --arg address "$address" '
     {ts: $ts, ev: "spawn", agent_ref: $ref}
     + (if $pane == "" then {} else {pane_id: $pane} end)
     + (if $shell == "" then {} else {shell_pid: $shell} end)
@@ -435,6 +443,7 @@ _ralph_spawn_record() {
         ({role: $role, issue: ($n | tostring)}
          + (if $slug == "" then {} else {slug: $slug} end)
          + (if $parent == "" then {} else {parent: $parent} end)
+         + (if $address == "" then {} else {address: $address} end)
          + {root: $root, depth: $depth, state: "spawned", branch: $branch,
             harness: "claude", spawn_epoch: $epoch})}'
 }
@@ -588,13 +597,31 @@ _ralph_branch_exists() {
 #
 # rc 1 with a stderr message when `board name` fails or names no branch.
 ralph_branch_for_issue() {
+  _ralph_resolve_names "${1-}" || return 1
+  printf '%s\n' "$RALPH_HERDR_NAMED_BRANCH"
+}
+
+# _ralph_resolve_names N — the `board name` read behind ralph_branch_for_issue,
+# split out so a caller that needs MORE than the branch can run it in ITS OWN
+# shell: a `$(ralph_branch_for_issue …)` capture is a subshell, and a global
+# set inside one evaporates with it (the first draft of the GH-2209 stamping
+# lost the address exactly that way). Sets, never prints:
+#   RALPH_HERDR_NAMED_BRANCH   the branch to cut/resume (legacy-aware)
+#   RALPH_HERDR_NAMED_ADDRESS  the herd address (GH-2209/D0.4) — empty against
+#                              an older board copy, and the spawn record then
+#                              omits the token, which every consumer must
+#                              already survive (tokens are decorative)
+_ralph_resolve_names() {
   local n="${1-}" names branch legacy
+  RALPH_HERDR_NAMED_BRANCH=""
+  RALPH_HERDR_NAMED_ADDRESS=""
   names=$("$BOARD" name "$n" --json) || {
     echo "ralph_branch_for_issue: \`board name $n\` failed — cannot derive the branch" >&2
     return 1
   }
   branch=$(printf '%s' "$names" | jq -r '.branch // empty')
   legacy=$(printf '%s' "$names" | jq -r '.legacyBranch // empty')
+  RALPH_HERDR_NAMED_ADDRESS=$(printf '%s' "$names" | jq -r '.address // empty')
   if [ -z "$branch" ]; then
     echo "ralph_branch_for_issue: \`board name $n\` returned no branch" >&2
     return 1
@@ -602,7 +629,7 @@ ralph_branch_for_issue() {
   if [ -n "$legacy" ] && ! _ralph_branch_exists "$branch" && _ralph_branch_exists "$legacy"; then
     branch="$legacy"
   fi
-  printf '%s\n' "$branch"
+  RALPH_HERDR_NAMED_BRANCH="$branch"
 }
 
 # ── spawn-path additions (2026-08-19 ways-of-working audit, D1/D2/D3) ───────
@@ -818,7 +845,10 @@ spawn_work_session() {
   export RALPH_HERDR_SPAWNED_PANE RALPH_HERDR_SPAWNED_WORKTREE
   export RALPH_HERDR_SPAWNED_WORKSPACE RALPH_HERDR_SPAWNED_PROVISION_RC
   case "$n" in ''|*[!0-9]*) echo "spawn_work_session: bad issue number '$n'" >&2; return 1 ;; esac
-  branch=$(ralph_branch_for_issue "$n") || return 1
+  # Direct call, NOT a $() capture: the resolver sets the address global the
+  # spawn record stamps (GH-2209), and a subshell would drop it on the floor.
+  _ralph_resolve_names "$n" || return 1
+  branch="$RALPH_HERDR_NAMED_BRANCH"
 
   # Nesting label + title: children group under an epic on the board; carry
   # that into the worktree workspace label when the caller's queue JSON knows
@@ -905,7 +935,8 @@ spawn_work_session() {
       echo "could not derive a durable ref for $agent" >&2
       return 1
     }
-    record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "" "$(date -u +%FT%TZ)") || record=""
+    record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "" "$(date -u +%FT%TZ)" \
+      "" "" "" "" "" "" "${RALPH_HERDR_NAMED_ADDRESS-}") || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"
     echo "  tokens push (pane <captured>): $(jq -r '[.tokens | to_entries[] | "\(.key)=\(.value)"] | join(" ")' <<<"$record" 2>/dev/null || echo '<none>')"
     RALPH_HERDR_SPAWNED_AGENT="$agent"
@@ -1020,7 +1051,7 @@ spawn_work_session() {
   if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
     RALPH_HERDR_SPAWNED_REF="$ref"
     record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "$pane" "$ts" \
-      "$shell_pid" "$RALPH_HERDR_SPAWNED_WORKTREE") || record=""
+      "$shell_pid" "$RALPH_HERDR_SPAWNED_WORKTREE" "" "" "" "" "${RALPH_HERDR_NAMED_ADDRESS-}") || record=""
     ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
     if [ -n "$record" ] && [ -n "$ledger" ]; then
       RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" || {

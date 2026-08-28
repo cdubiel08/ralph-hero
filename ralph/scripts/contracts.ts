@@ -438,6 +438,106 @@ export function resolvePeerAddress(
   return { kind: "resolved", address: hits[0] };
 }
 
+// ---------------------------------------------------------------------------
+// Herd addresses — the ops-layer address space (GH-2209, topology A)
+//
+// `<repo>/t<epic>-<slug>/<lane><issue>-<slug>` — team-scoped agent
+// `<repo>/<lane><issue>-<slug>`                — flat agent (no team)
+// `<repo>/dispatch`                            — the dispatch space
+//
+// SEMANTIC SPELLING IS THE RULE (D0.3/D7.1): every derived segment is
+// number+slug, never a bare GH number — an address is almost never typed and
+// almost always read. Derived only, zero new state (the GH-1807 argument
+// extended): the team segment is the unit's EPIC ROOT run through the same
+// slugify/truncateSlug pipeline as the epic's own agent name, so
+// `t2176-teams-dispatch` and the lead `o2176-teams-dispatch` carry the same
+// bytes and the roster reads as one vocabulary. Machine-wide uniqueness is
+// NOT re-enforced here — the per-(worktree, unit) lock `board claim` takes
+// (GH-1956) already refuses a second live driver, and the address rides on
+// top of it (D0.2); respawns share the logical address and are told apart by
+// spawn_epoch (D7.1).
+//
+// Positional disambiguation, stated once: a team segment only ever appears in
+// the MIDDLE of a three-segment address. `repo/t123-foo` is a FLAT address
+// for a tending agent (lane `t`, issue 123) — the `t` prefix collides in
+// spelling but never in position, and parseAddress needs no lookahead.
+// ---------------------------------------------------------------------------
+
+export const DISPATCH_SEGMENT = "dispatch";
+/** GitHub's own repo-name charset (letters, digits, `.`, `_`, `-`) — the one
+ *  segment not derived by slugify, because it must round-trip to the repo the
+ *  config names, verbatim. `/` is impossible by construction (it is the
+ *  separator), and an empty segment fails the match. */
+export const REPO_SEGMENT_RE = /^[A-Za-z0-9_.-]+$/;
+/** `t<epic>-<slug>` — same slug grammar as agent names and branches. */
+export const TEAM_SEGMENT_RE = /^t([0-9]+)-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)$/;
+
+/** The team segment for an epic root: `t<epic>-<slug>`, slug byte-identical
+ *  to the epic's own agent-name slug (same pipeline, same budget — including
+ *  the 3 reserved chars teams never spend, the formatBranchName argument). */
+export function formatTeamSegment(epic: number, title: string): string {
+  if (!Number.isInteger(epic) || epic < 0)
+    throw new RangeError(`epic must be a non-negative integer (got ${epic})`);
+  return `t${epic}-${truncateSlug(slugify(title), epic)}`;
+}
+
+/** The dispatch space's address. Durable — it names the board, not a session
+ *  (D5.1): live binding exists only while a hero session is up under it. */
+export function formatDispatchAddress(repo: string): string {
+  if (!REPO_SEGMENT_RE.test(repo)) throw new RangeError(`not a legal repo segment: ${JSON.stringify(repo)}`);
+  return `${repo}/${DISPATCH_SEGMENT}`;
+}
+
+/** The full address for (repo, team?, lane, issue, title). `team` is the
+ *  unit's epic root or null — the CALLER derives it (board.ts walks the
+ *  parent chain); this function only spells it. */
+export function formatAddress(
+  repo: string,
+  team: { epic: number; title: string } | null,
+  lane: Lane,
+  issue: number,
+  title: string,
+): string {
+  if (!REPO_SEGMENT_RE.test(repo)) throw new RangeError(`not a legal repo segment: ${JSON.stringify(repo)}`);
+  const agent = formatAgentName(lane, issue, title);
+  return team === null
+    ? `${repo}/${agent}`
+    : `${repo}/${formatTeamSegment(team.epic, team.title)}/${agent}`;
+}
+
+export type ParsedAddress =
+  | { kind: "dispatch"; repo: string }
+  | {
+      kind: "agent";
+      repo: string;
+      team: { epic: number; slug: string } | null;
+      lane: Lane;
+      issue: number;
+      slug: string;
+      gen: number | null;
+    };
+
+/** Parse-back — the phone-book predicate (topology C consumes this). Only
+ *  grammar-B agent segments qualify: a legacy `gh-N` name is a session
+ *  identity, never an address. Anything off-grammar is null, because an
+ *  address this cannot name is one no roster read may claim. */
+export function parseAddress(address: string): ParsedAddress | null {
+  const parts = address.split("/");
+  if (parts.length < 2 || parts.length > 3) return null;
+  const repo = parts[0];
+  if (!REPO_SEGMENT_RE.test(repo)) return null;
+  if (parts.length === 2 && parts[1] === DISPATCH_SEGMENT) return { kind: "dispatch", repo };
+  const agent = parseAgentName(parts[parts.length - 1]);
+  if (agent?.kind !== "v2") return null;
+  let team: { epic: number; slug: string } | null = null;
+  if (parts.length === 3) {
+    const m = TEAM_SEGMENT_RE.exec(parts[1]);
+    if (!m) return null; // `repo/dispatch/w1-x` included: dispatch is not a team
+    team = { epic: Number(m[1]), slug: m[2] };
+  }
+  return { kind: "agent", repo, team, lane: agent.lane, issue: agent.issue, slug: agent.slug, gen: agent.gen };
+}
+
 // --- durable refs: name#spawn_epoch ---------------------------------------
 
 export interface AgentRef {
@@ -1092,6 +1192,17 @@ export const TOKENS = {
     validate: (v) => (AGENT_STATES as readonly string[]).includes(v),
   },
   branch: freeForm("git branch the agent works on"),
+  // GH-2209: the spawner stamps the herd address beside the C8 lineage tokens
+  // (D0.4) — spawn-time truth like `role`, since the team half needs a board
+  // read the pane cannot repeat. Validated against the grammar, so a bare GH
+  // number or a session name can never pose as an address. Honest bound: the
+  // 80-char token budget caps the repo segment near 14 chars in the worst
+  // case (two full 32-char segments); an over-budget address is dropped by
+  // the push site with a warning, never truncated into a different address.
+  address: {
+    doc: "herd address (<repo>[/t<epic>-<slug>]/<lane><issue>-<slug>, or <repo>/dispatch)",
+    validate: (v) => parseAddress(v) !== null,
+  },
   claim: freeForm("board claim summary for the cockpit"),
   pr: { doc: "pull request number", validate: (v) => /^[1-9][0-9]*$/.test(v) },
   spawn_epoch: { doc: "durable-ref epoch (4-8 lowercase hex)", validate: (v) => EPOCH_RE.test(v) },

@@ -118,6 +118,7 @@ is "record: token depth 0 (human root)"      "0"              "$(jqr '.tokens.de
 is "record: token state spawned"             "spawned"        "$(jqr '.tokens.state')"
 is "record: token harness claude"            "claude"         "$(jqr '.tokens.harness')"
 is "record: no parent token on a root spawn" "false"          "$(jqr '.tokens | has("parent")')"
+is "record: address token is the board's herd address (GH-2209)" "fake-repo/w123-fake-issue" "$(jqr '.tokens.address')"
 is "record: root token is the agent's own ref" "$(jqr '.agent_ref')" "$(jqr '.tokens.root')"
 is "record: spawn_epoch token matches the ref" "$(jqr '.agent_ref' | sed 's/^.*#//')" "$(jqr '.tokens.spawn_epoch')"
 
