@@ -34,12 +34,15 @@ raw output:
   yours to touch)
 - `board inbox` — Tier 1: everything waiting on a human, each row carrying
   its disposition verb or its expiry
+- `board roster` — the derived topology (dispatch → teams → leads →
+  workers): who is on the floor, their liveness, their leases
 - `herdr agent list` (when `HERDR_ENV=1`) — fleet and lead state; a live
   epic with workers and no `o<EPIC>-*` pane is a dead lead
 
-Open the sitting with three things, shortest first: what waits on the human
-(most consequential decision first, each with its verb), what is moving
-(fleets, leases, In Review), and what you would do next under standing
+Open the sitting **inbox-first, roster second** (D6.3): what waits on the
+human (most consequential decision first, each row naming its one-key
+disposition verb), then who is on the floor (the roster — teams, leads,
+workers, what is moving), then what you would do next under standing
 authority if told "go". Then let the human steer.
 
 ## Authorities — dispatch's, not a second copy

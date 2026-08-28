@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -154,6 +155,8 @@ func viewModel(m Model) string {
 		b.WriteString(renderOverlay(m, peekTitle+"  (tail, no focus steal)", m.peekText, bodyHeight))
 	case ModeDag:
 		b.WriteString(renderOverlay(m, "frontier DAG — eligible & blocked", m.dagText, bodyHeight))
+	case ModeTopology:
+		b.WriteString(renderTopology(m, bodyHeight))
 	default:
 		b.WriteString(renderColumns(m, bodyHeight))
 	}
@@ -172,10 +175,10 @@ func viewModel(m Model) string {
 }
 
 func legend(m Model) string {
-	if m.mode == ModePeek || m.mode == ModeDag {
+	if m.mode == ModePeek || m.mode == ModeDag || m.mode == ModeTopology {
 		return "esc close"
 	}
-	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · d diff · D done⇄human · I inbox⇄human · g browser · q quit"
+	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · T topology · d diff · D done⇄human · I inbox⇄human · g browser · q quit"
 }
 
 // bodyHeightOf mirrors viewModel's body sizing — shared with hitTest so the
@@ -338,7 +341,7 @@ func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
 // the selected card. No boxes and no per-card borders — a border is two more
 // rows of chrome per card in a column that is already three cards deep.
 func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
-	selected := m.mode != ModePeek && m.mode != ModeDag && colIdx == m.col && rowIdx == m.row
+	selected := m.mode != ModePeek && m.mode != ModeDag && m.mode != ModeTopology && colIdx == m.col && rowIdx == m.row
 	g := m.glyphSet()
 	inner := width - 2 // gutter char + one space
 	if inner < 1 {
@@ -475,6 +478,12 @@ func statusDot(m Model, card Card, g glyphSet) string {
 	if !ok {
 		return dotNone.Render(g.dotSmall)
 	}
+	return dotFor(state, g)
+}
+
+// dotFor renders one joined state as its dot — the card strip and the
+// topology tree draw from the same vocabulary, so the inks cannot drift.
+func dotFor(state string, g glyphSet) string {
 	switch state {
 	case stateWorking:
 		return dotWorking.Render(g.dotFull)
@@ -664,6 +673,201 @@ func renderOverlay(m Model, title, text string, bodyHeight int) string {
 	}
 	content := styleTitle.Render(truncate(title, innerW)) + "\n" + strings.Join(lines, "\n")
 	return styleOverlay.Width(innerW + 2).Render(content)
+}
+
+// renderTopology draws the roster tree (GH-2219, D6.1): dispatch → teams →
+// leads → workers, liveness dots from the same joined vocabulary the cards
+// use, escalation counts joined per rung. Its own renderer rather than
+// renderOverlay for two reasons: a tree reads top-down, so the clip keeps the
+// FIRST lines (renderOverlay keeps the last), and the dots need per-line ink.
+func renderTopology(m Model, bodyHeight int) string {
+	g := m.glyphSet()
+	innerW := m.width - 6
+	if innerW < 20 {
+		innerW = 20
+	}
+
+	// Escalation joins. A worker joins on its issue; a lead on its name; a
+	// null lead is attributed to NO row (the header totals still carry it).
+	escByIssue := map[int]TopoEsc{}
+	pendingByLead := map[string]int{}
+	var withLeads, withHuman, answered int
+	for _, e := range m.topoEscs {
+		escByIssue[e.Number] = e
+		if e.Answered {
+			answered++
+			continue
+		}
+		if e.Route == "lead" && e.Disposition == "pending" {
+			withLeads++
+			if e.Lead != "" {
+				pendingByLead[e.Lead]++
+			}
+			continue
+		}
+		// route "human", promoted, auto-promoted — the human tier.
+		withHuman++
+	}
+
+	var lines []string
+	// Escalation summary — "unreadable" and "none" must never render alike.
+	switch {
+	case m.topoEscErr != "":
+		lines = append(lines, styleErr.Render(truncate("escalations NOT COUNTED — "+m.topoEscErr, innerW)))
+	case len(m.topoEscs) == 0:
+		lines = append(lines, styleDim.Render("no live escalations"))
+	default:
+		parts := []string{}
+		if withLeads > 0 {
+			parts = append(parts, fmt.Sprintf("%d with leads", withLeads))
+		}
+		if withHuman > 0 {
+			parts = append(parts, fmt.Sprintf("%d with human", withHuman))
+		}
+		if answered > 0 {
+			parts = append(parts, fmt.Sprintf("%d answered · resume pending", answered))
+		}
+		lines = append(lines, styleQuestion.Render("escalations: "+strings.Join(parts, " · ")))
+	}
+	if m.topoAgentsNote != "" {
+		// An unreadable herd is NOT an empty fleet — the tree below may be
+		// lease-only, and this line says why.
+		lines = append(lines, styleErr.Render(truncate("herd agents not read: "+m.topoAgentsNote, innerW)))
+	}
+	lines = append(lines, "")
+
+	// Dispatch is the root rung. Its escalation count is the human tier —
+	// dispatch reads the inbox like the human does (D5.2).
+	inboxChip := ""
+	if m.topoEscErr == "" && withHuman > 0 {
+		inboxChip = "  " + styleQuestion.Render(fmt.Sprintf("%d in inbox", withHuman))
+	}
+	dispatchSeen := false
+	for _, r := range m.topoRows {
+		if !r.Dispatch {
+			continue
+		}
+		dispatchSeen = true
+		label := r.Address
+		if label == "" {
+			label = r.Name
+		}
+		lines = append(lines, truncate(dotFor(joinAgentState(r.Status, r.TokenState), g)+" "+
+			styleCardText.Render(label)+"  "+styleMeta.Render("dispatch")+inboxChip, innerW))
+	}
+	if !dispatchSeen {
+		lines = append(lines, truncate(styleDim.Render("dispatch — no live binding")+inboxChip, innerW))
+	}
+
+	// Teams, then the flat bucket — board.ts renderRepo's own ordering:
+	// leads (lane o) first inside a team, then workers by issue.
+	byTeam := map[string][]TopoRow{}
+	var teams []string
+	for _, r := range m.topoRows {
+		if r.Dispatch {
+			continue
+		}
+		if _, ok := byTeam[r.Team]; !ok && r.Team != "" {
+			teams = append(teams, r.Team)
+		}
+		byTeam[r.Team] = append(byTeam[r.Team], r)
+	}
+	sort.Strings(teams)
+	renderBucket := func(rows []TopoRow, indent string) {
+		sort.SliceStable(rows, func(i, j int) bool {
+			oi, oj := 0, 0
+			if rows[i].Lane != "o" {
+				oi = 1
+			}
+			if rows[j].Lane != "o" {
+				oj = 1
+			}
+			if oi != oj {
+				return oi < oj
+			}
+			if rows[i].Issue != rows[j].Issue {
+				return rows[i].Issue < rows[j].Issue
+			}
+			return rows[i].Name < rows[j].Name
+		})
+		for _, r := range rows {
+			name := r.Name
+			if name == "" {
+				name = "(unnamed)"
+			}
+			line := indent + dotFor(joinAgentState(r.Status, r.TokenState), g) + " " + styleCardText.Render(name)
+			if r.Lane == "o" {
+				line += "  " + styleMeta.Render("lead")
+			}
+			if r.Issue != 0 {
+				line += "  " + styleNum.Render(fmt.Sprintf("#%d", r.Issue))
+			}
+			if st := joinAgentState(r.Status, r.TokenState); st != "" {
+				line += "  " + styleMeta.Render(st)
+			}
+			if r.HasLease && r.LeaseStale {
+				line += "  " + styleErr.Render("lease STALE")
+			}
+			if m.topoEscErr == "" {
+				if n := pendingByLead[r.Name]; n > 0 && r.Name != "" {
+					line += "  " + styleQuestion.Render(fmt.Sprintf("%d decision(s) pending", n))
+				}
+				if e, ok := escByIssue[r.Issue]; ok && r.Issue != 0 {
+					line += "  " + styleQuestion.Render("⚠ "+escLabel(e))
+				}
+			}
+			if r.Note != "" {
+				line += "  " + styleDim.Render("["+r.Note+"]")
+			}
+			lines = append(lines, truncate(line, innerW))
+		}
+	}
+	for _, t := range teams {
+		lines = append(lines, truncate(styleEpic.Render(t+"/"), innerW))
+		renderBucket(byTeam[t], "  ")
+	}
+	if flat := byTeam[""]; len(flat) > 0 {
+		lines = append(lines, truncate(styleDim.Render("flat/"), innerW))
+		renderBucket(flat, "  ")
+	}
+	if len(m.topoRows) == 0 {
+		lines = append(lines, styleDim.Render("(no live agents on this machine)"))
+	}
+	if m.topoWithheld != "" {
+		// GH-2108: held-back rows are counted, never dropped silently.
+		lines = append(lines, truncate(styleDim.Render("withheld: "+m.topoWithheld+" — board roster --all shows everything"), innerW))
+	}
+
+	// Head-clip: a tree reads top-down, so the FIRST lines survive.
+	maxLines := bodyHeight - 4
+	if maxLines < 3 {
+		maxLines = 3
+	}
+	if len(lines) > maxLines {
+		clipped := len(lines) - maxLines
+		lines = append(lines[:maxLines], styleDim.Render(fmt.Sprintf("(+%d more — board roster shows all)", clipped)))
+	}
+
+	title := "topology — " + m.topoRepo + "  (machine-local; board claims not read)"
+	content := styleTitle.Render(truncate(title, innerW)) + "\n" + strings.Join(lines, "\n")
+	return styleOverlay.Width(innerW + 2).Render(content)
+}
+
+// escLabel names a live escalation's audience — where the decision sits now.
+func escLabel(e TopoEsc) string {
+	if e.Answered {
+		return "answered — resume pending"
+	}
+	switch {
+	case e.Route == "lead" && e.Disposition == "pending":
+		return "decision → lead"
+	case e.Disposition == "auto-promoted":
+		return "decision → inbox (TTL)"
+	case e.Disposition == "promoted":
+		return "decision → inbox"
+	default:
+		return "decision → human"
+	}
 }
 
 // renderInput draws the reply/answer input line + any preserved-text error.

@@ -796,3 +796,137 @@ func TestDoneAndInboxDisplaceEachOtherRatherThanStacking(t *testing.T) {
 		t.Error("D over Inbox must land on Done, not a stack")
 	}
 }
+
+// ── topology overlay (GH-2219, unit K) ──────────────────────────────────────
+
+func topoModel() Model {
+	m := testModel(&fakeRunner{})
+	m.mode = ModeTopology
+	m.topoRepo = "ralph-hero"
+	m.topoRows = []TopoRow{
+		{Name: "hero", Address: "ralph-hero/dispatch", Dispatch: true, Status: "working"},
+		{Name: "w2219-topology-k", Team: "t2208-herd", Lane: "w", Issue: 2219,
+			Status: "idle", TokenState: "blocked"},
+		{Name: "o2208-herd-topology", Team: "t2208-herd", Lane: "o", Issue: 2208,
+			Status: "working", TokenState: "working"},
+		{Name: "", Status: "idle", Note: "no derivable address"},
+	}
+	m.topoEscs = []TopoEsc{
+		{Number: 2219, Route: "lead", Lead: "o2208-herd-topology", Disposition: "pending"},
+		{Number: 40, Route: "human"},
+		{Number: 41, Route: "lead", Disposition: "auto-promoted"},
+		{Number: 42, Route: "lead", Lead: "o2208-herd-topology", Answered: true},
+	}
+	m.topoWithheld = "2 foreign"
+	m.width = 120
+	m.height = 40
+	return m
+}
+
+func TestRenderTopologyTree(t *testing.T) {
+	out := viewModel(topoModel())
+	// The rungs, top-down: dispatch → team → lead (first) → worker → flat.
+	for _, want := range []string{
+		"topology — ralph-hero", "board claims not read",
+		"ralph-hero/dispatch", "t2208-herd/",
+		"o2208-herd-topology", "w2219-topology-k", "(unnamed)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("topology must contain %q; got:\n%s", want, out)
+		}
+	}
+	// The lead renders BEFORE its worker inside the team (board.ts ordering).
+	if strings.Index(out, "o2208-herd-topology") > strings.Index(out, "w2219-topology-k") {
+		t.Error("the lead must render before its workers inside a team")
+	}
+	// Escalation counts per rung: the lead's pending queue, the worker's own
+	// escalation, the human tier on the dispatch line, and the header totals.
+	for _, want := range []string{
+		"1 decision(s) pending", // lead rung — #42 is answered, so ONE pending
+		"⚠ decision → lead",     // worker rung, its own issue
+		"2 in inbox",            // dispatch rung: human-routed #40 + auto-promoted #41
+		"escalations: 1 with leads · 2 with human · 1 answered · resume pending",
+		"withheld: 2 foreign",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("topology must contain %q; got:\n%s", want, out)
+		}
+	}
+	// The unnamed row keeps its reason, and absence stays absence.
+	if !strings.Contains(out, "[no derivable address]") {
+		t.Errorf("a null address must carry its note; got:\n%s", out)
+	}
+	// A worker whose token says blocked joins to the blocked state (the token
+	// wins over an idle agent_status — joinAgentState's own rule).
+	if !strings.Contains(out, "blocked") {
+		t.Errorf("the joined state word must render; got:\n%s", out)
+	}
+}
+
+func TestRenderTopologyEscalationsNotCountedIsNeverZero(t *testing.T) {
+	m := topoModel()
+	m.topoEscs = nil
+	m.topoEscErr = "rate limited"
+	out := viewModel(m)
+	if !strings.Contains(out, "NOT COUNTED") || !strings.Contains(out, "rate limited") {
+		t.Errorf("a failed count must say NOT COUNTED and why; got:\n%s", out)
+	}
+	// No per-rung count may render off a failed read.
+	for _, banned := range []string{"decision(s) pending", "in inbox", "⚠"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("a failed count must render NO per-rung counts (%q); got:\n%s", banned, out)
+		}
+	}
+}
+
+func TestRenderTopologyEmptyStatesStayApart(t *testing.T) {
+	// Genuinely empty: no agents, no escalations.
+	m := topoModel()
+	m.topoRows = nil
+	m.topoEscs = []TopoEsc{}
+	m.topoWithheld = ""
+	out := viewModel(m)
+	if !strings.Contains(out, "(no live agents on this machine)") {
+		t.Errorf("an empty herd must say so; got:\n%s", out)
+	}
+	if !strings.Contains(out, "no live escalations") {
+		t.Errorf("an empty queue must say so; got:\n%s", out)
+	}
+	if !strings.Contains(out, "dispatch — no live binding") {
+		t.Errorf("no dispatch row must render the no-binding line; got:\n%s", out)
+	}
+	// Unreadable herd ≠ empty herd: the reason renders.
+	m.topoAgentsNote = "herdr not on PATH"
+	out = viewModel(m)
+	if !strings.Contains(out, "herd agents not read: herdr not on PATH") {
+		t.Errorf("an unreadable herd must name its reason; got:\n%s", out)
+	}
+}
+
+func TestRenderTopologyHeadClips(t *testing.T) {
+	m := topoModel()
+	for i := 0; i < 60; i++ {
+		m.topoRows = append(m.topoRows, TopoRow{
+			Name: fmt.Sprintf("w%d-filler", 3000+i), Issue: 3000 + i, Status: "working"})
+	}
+	m.height = 20
+	out := viewModel(m)
+	if !strings.Contains(out, "more — board roster shows all") {
+		t.Errorf("an over-tall tree must clip and say so; got:\n%s", out)
+	}
+	// Top-down: the header and dispatch rung survive the clip, the tail goes.
+	if !strings.Contains(out, "ralph-hero/dispatch") {
+		t.Errorf("the clip must keep the FIRST lines; got:\n%s", out)
+	}
+}
+
+func TestLegendNamesTopology(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	if !strings.Contains(legend(m), "T topology") {
+		t.Errorf("browse legend must name the T toggle: %q", legend(m))
+	}
+	m.mode = ModeTopology
+	if legend(m) != "esc close" {
+		t.Errorf("topology overlay legend must be esc close: %q", legend(m))
+	}
+}

@@ -256,6 +256,23 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		m.dagText = msg.text
 		return m, nil
 
+	case topoMsg:
+		if m.mode != ModeBrowse {
+			return m, nil // stale result — same never-hijack rule as peekMsg
+		}
+		if msg.err != "" {
+			m.status = "roster read failed: " + msg.err
+			return m, nil
+		}
+		m.mode = ModeTopology
+		m.topoRows = msg.rows
+		m.topoRepo = msg.repo
+		m.topoWithheld = msg.withheld
+		m.topoAgentsNote = msg.agentsNote
+		m.topoEscs = msg.escs
+		m.topoEscErr = msg.escErr
+		return m, nil
+
 	case replyDoneMsg:
 		m.sending = false
 		if msg.ok {
@@ -394,6 +411,13 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.mode = ModeBrowse
 		}
 		return m, nil
+
+	case ModeTopology:
+		switch key {
+		case "esc", "q", "T":
+			m.mode = ModeBrowse
+		}
+		return m, nil
 	}
 
 	// ModeBrowse.
@@ -435,6 +459,13 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "v":
 		m.status = "reading frontier…"
 		return m, dagCmd(m.cfg, m.runner)
+
+	case "T":
+		// The topology tree (GH-2219, D6.1) — on its own letter, NOT on D
+		// (operator note): D swaps a column, T replaces the body. Upper-case
+		// because a slip from `t` should do nothing rather than change a view.
+		m.status = "reading roster…"
+		return m, topologyCmd(m.cfg, m.runner)
 
 	case "d":
 		card, ok := m.selectedCard()

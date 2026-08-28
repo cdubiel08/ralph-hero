@@ -162,6 +162,7 @@ verbatim; Human Needed cards show the blocking question).
 | `s` | spawn — a `/ralph:work` session for the card |
 | `f` | fork — `scripts/fork.sh` on the card's live session; refused (never guessed) when the issue has two |
 | `v` | DAG view — `board frontier` as a text tree |
+| `T` | topology view (GH-2219) — the roster tree from `board roster`: dispatch → teams → leads → workers, liveness dots, escalation counts per rung (NOT COUNTED when the escalations read fails) |
 | `d` / `g` / `q` | PR diff popup / open in browser / quit |
 | `D` | swap the third column between Human Needed and Done · 14d (upper-case — `d` is the PR diff) |
 | `I` | swap the third column to the Inbox — `board inbox` Tier 1 (decisions, tend proposals, Intake approvals, deliver-blocked), each card carrying its disposition verb. `D` and `I` displace each other |

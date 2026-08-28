@@ -291,6 +291,7 @@ from a phone-sized pane without opening anything.
 | `a` | **answer** — Human Needed exit, comment-first: `board answer N -m` posts the durable **Answer** comment FIRST, then any live session gets the nudge |
 | `s` | **spawn** — a `/ralph:work` session for the card, via the same `spawn_work_session` path as `work-next` |
 | `v` | **DAG view** — text tree from `board frontier --json`: eligible items with their closed edges, blocked items with their open blocker lists |
+| `T` | **topology view** (GH-2219, D6.1) — the roster tree from `board roster --json`: dispatch → teams → leads → workers, liveness dots joining `agent_status` with the C8 `state` token, escalation counts per rung from `board escalations` (best-effort: a failed count renders NOT COUNTED, never zero) |
 | `d` | **PR diff** — `gh pr diff` in a popup pane (`herdr plugin pane open`) |
 | `g` | open the issue in the browser |
 | `q` | quit |
