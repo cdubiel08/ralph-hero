@@ -17,9 +17,13 @@
       "claim": null,
       "claimRaw": null,
       "openBlockerLabels": [],
-      "labels": ["ralph:herdr"],
+      "labels": [
+        "ralph:herdr"
+      ],
       "labelsTruncated": false,
-      "closedBlockers": [1712],
+      "closedBlockers": [
+        1712
+      ],
       "updatedAt": "2026-08-10T12:00:00Z",
       "createdAt": "2026-08-01T09:30:00Z",
       "estimate": "M"
@@ -39,9 +43,13 @@
         "claim": null,
         "claimRaw": null,
         "openBlockerLabels": [],
-        "labels": ["ralph:herdr"],
+        "labels": [
+          "ralph:herdr"
+        ],
         "labelsTruncated": false,
-        "closedBlockers": [1712],
+        "closedBlockers": [
+          1712
+        ],
         "updatedAt": "2026-08-10T12:00:00Z",
         "createdAt": "2026-08-01T09:30:00Z",
         "estimate": "M"
@@ -56,15 +64,21 @@
         "priority": "P2",
         "hasParent": true,
         "parentNumber": 1700,
-        "openBlockers": [1743],
+        "openBlockers": [
+          1743
+        ],
         "blockersTruncated": false,
         "fieldValuesTruncated": false,
         "claim": {
-          "holders": ["w1743-claim-v2-multi-holder"],
+          "holders": [
+            "w1743-claim-v2-multi-holder"
+          ],
           "since": "2026-08-10T14:00:00Z"
         },
         "claimRaw": "w1743-claim-v2-multi-holder|2026-08-10T14:00:00Z",
-        "openBlockerLabels": ["#1743"],
+        "openBlockerLabels": [
+          "#1743"
+        ],
         "labels": [],
         "labelsTruncated": false,
         "closedBlockers": [],

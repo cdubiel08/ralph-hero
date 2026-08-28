@@ -25,6 +25,7 @@
     ],
     "blocked": [],
     "snoozed": 0,
+    "evidenced": 0,
     "observationSlot": true
   }
 }

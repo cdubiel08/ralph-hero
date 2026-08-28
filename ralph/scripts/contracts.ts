@@ -1010,6 +1010,10 @@ function zTendResult(mode: Mode) {
     // GH-2202: Intake items a snooze (Defer with a future recheck) currently
     // withholds from `unformed` — counted, never silent.
     snoozed: z.number().int().nonnegative(),
+    // GH-2151: closes withheld from `done-audit` because they carry the gated
+    // Done lane's own evidence (merged closing PR / evidence marker) — the
+    // self-audit count. Counted, never silent.
+    evidenced: z.number().int().nonnegative(),
     observationSlot: z.literal(true),
   });
 }

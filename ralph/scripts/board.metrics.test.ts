@@ -211,7 +211,7 @@ describe("metrics: mutation round trips (exact — a retry doubles a pin and fai
 });
 
 describe("metrics: doctor sweep", () => {
-  it("doctor on a 3-item board = 6 round trips warm (page walk + history chunk + refresh-as-check + PR-orphan sweep + deps-unwired inputs)", () => {
+  it("doctor on a 3-item board = 7 round trips warm (page walk + history chunk + refresh-as-check + PR-orphan sweep + deps-unwired inputs + audit window)", () => {
     const gh = new FakeGh();
     flatBoard(gh, 3);
     const { ctx, m } = warmCtx(gh);
@@ -223,8 +223,11 @@ describe("metrics: doctor sweep", () => {
     // one question about work that reached neither). GH-2136 adds the
     // deps-unwired inputs: one bodies batch (plain aliased fields, 1-pt
     // floor) + one comments-only trail chunk over the unclaimed Backlog —
-    // both bounded by live work, neither scales with closed history.
-    expect(m.graphql).toBe(6);
+    // both bounded by live work, neither scales with closed history. GH-2151
+    // adds the done-audit-pending coverage line: one closed-WINDOW page (the
+    // GH-1891 bounded read, still never a scan); with no recent closes its
+    // trail fetch is empty and costs no round trip.
+    expect(m.graphql).toBe(7);
     expect(m.mutations).toBe(0); // no --fix, no writes — pinned
   });
 });

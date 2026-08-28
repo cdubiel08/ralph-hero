@@ -4990,6 +4990,35 @@ describe("the Intake tier (GH-2077)", () => {
       gh.issues.set(1, { number: 1, state: "Backlog", priority: "P1" });
       expect(doctor(ctx).checks.find((c) => c.name === "intake-stale")!.level).toBe("ok");
     });
+
+    it("done-audit-pending counts the CURRENT window's curable exceptions with time-to-expiry (GH-2151)", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
+      // Unevidenced close, 3 days in a 14-day window → expires in 11d.
+      gh.issues.set(1, { number: 1, issueState: "CLOSED", state: "Done", closedAt: daysAgo(3), comments: [] });
+      // Evidenced close — self-audits; never a doctor row.
+      gh.issues.set(2, {
+        number: 2, issueState: "CLOSED", state: "Done", closedAt: daysAgo(3), comments: [],
+        prs: [{ number: 12, merged: true }],
+      });
+      // Already expired — unauditable by construction, deliberately NOT
+      // counted: a line whose named remedy cannot act on its rows is the
+      // GH-2052 trap (it would clear only by more time passing).
+      gh.issues.set(3, { number: 3, issueState: "CLOSED", state: "Done", closedAt: daysAgo(20), comments: [] });
+      const line = doctor(ctx).checks.find((c) => c.name === "done-audit-pending")!;
+      expect(line.level).toBe("info");
+      expect(line.detail).toContain("#1(11d)");
+      expect(line.detail).not.toContain("#2");
+      expect(line.detail).not.toContain("#3");
+      expect(line.detail).toMatch(/tend pass/); // the remedy is named and satisfiable
+      // Advisory in full: --strict never escalates it.
+      expect(doctor(ctx, { strict: true }).checks.find((c) => c.name === "done-audit-pending")!.level).toBe("info");
+      // Every window close evidenced → ok.
+      gh.issues.delete(1);
+      gh.issues.delete(3);
+      expect(doctor(ctx).checks.find((c) => c.name === "done-audit-pending")!.level).toBe("ok");
+    });
   });
 });
 
@@ -6324,6 +6353,91 @@ describe("tend-queue (spec §4.3)", () => {
     expect(res.queue.map((r) => [r.number, r.category])).toEqual([[1, "done-audit"]]);
   });
 
+  // GH-2151 — the audit demand was O(closes) against a batch-5 lane (185 rows
+  // deep, ~37 passes), so closes aged past the window unaudited and unrecorded.
+  // A close carrying the gated Done lane's own evidence now self-audits at
+  // read time: withheld from done-audit, counted, no marker written.
+  it("done-audit self-audit: an evidenced close is withheld and COUNTED; unevidenced surfaces (GH-2151)", () => {
+    const res = classifyTend(
+      [],
+      [
+        { number: 1, closedAt: days(3), comments: [], evidenced: true },
+        { number: 2, closedAt: days(3), comments: [], evidenced: false },
+        { number: 3, closedAt: days(3), comments: [] }, // absent = not evaluated = audit it
+      ],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+      [2, "done-audit"],
+      [3, "done-audit"],
+    ]);
+    expect(res.evidenced).toBe(1);
+  });
+
+  it("done-audit: NOT_PLANNED closes are excluded — a cancellation claims nothing to verify (GH-2151)", () => {
+    const res = classifyTend(
+      [],
+      [
+        { number: 1, closedAt: days(3), comments: [], stateReason: "NOT_PLANNED" },
+        { number: 2, closedAt: days(3), comments: [], stateReason: "COMPLETED" },
+      ],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([[2, "done-audit"]]);
+    // Excluded is not withheld-on-evidence: the counter stays honest.
+    expect(res.evidenced).toBe(0);
+    // But a pending post-close proposal on a canceled item still surfaces —
+    // filtering the INPUT rows would make it invisible everywhere (doctor's
+    // tend-proposal-stale backstop reads open items only).
+    const withProposal = classifyTend(
+      [],
+      [
+        {
+          number: 1,
+          closedAt: days(5),
+          stateReason: "NOT_PLANNED",
+          comments: [proposal(days(3), "reopen-as-unevidenced")],
+        },
+      ],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(withProposal.queue.map((r) => [r.number, r.category])).toEqual([[1, "proposed"]]);
+  });
+
+  it("done-audit: a pending post-close proposal outranks evidence; a tender's marker outranks the counter (GH-2151)", () => {
+    // Proposal first: an evidenced close under a live reopen-as-unevidenced
+    // question renders `proposed`, never silently withheld.
+    const proposed = classifyTend(
+      [],
+      [
+        {
+          number: 1,
+          closedAt: days(5),
+          evidenced: true,
+          comments: [proposal(days(3), "reopen-as-unevidenced")],
+        },
+      ],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(proposed.queue.map((r) => [r.number, r.category])).toEqual([[1, "proposed"]]);
+    expect(proposed.evidenced).toBe(0);
+    // Marker first: an evidenced row a tender already audited hits the marker
+    // skip and does NOT count — the counter means "withheld on evidence
+    // alone", or it would misreport coverage.
+    const marked = classifyTend(
+      [],
+      [{ number: 2, closedAt: days(3), evidenced: true, comments: [`${TEND_MARKER} audited`] }],
+      TEND_DEFAULTS,
+      NOW,
+    );
+    expect(marked.queue).toEqual([]);
+    expect(marked.evidenced).toBe(0);
+  });
+
   it("category order is spec order, oldest-first within; one row per issue (first category wins)", () => {
     const res = classifyTend(
       [
@@ -6367,6 +6481,42 @@ describe("tend-queue (spec §4.3)", () => {
       [1, "stale-body"],
       [3, "done-audit"],
     ]);
+  });
+
+  it("tendQueue evidence wiring: merged closing PR or a gated evidence marker self-audits; the rest surface (GH-2151)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    // Merged closing PR — GitHub's own linkage, the Done gate's bare evidence.
+    gh.issues.set(1, {
+      number: 1, issueState: "CLOSED", state: "Done", closedAt: days(2), comments: [],
+      prs: [{ number: 11, merged: true }],
+    });
+    // Closing PR exists but never merged — not evidence; surfaces for audit.
+    gh.issues.set(2, {
+      number: 2, issueState: "CLOSED", state: "Done", closedAt: days(2), comments: [],
+      prs: [{ number: 12, merged: false }],
+    });
+    // Decision unit: the gated verb's marker in the trail is the evidence.
+    gh.issues.set(3, {
+      number: 3, issueState: "CLOSED", state: "Done", closedAt: days(2),
+      comments: [`**Decision evidence**\n\n${DECISION_EVIDENCE_MARKER}\nartifact: thoughts/x.md`],
+    });
+    // A cancellation never enters the audit at all.
+    gh.issues.set(4, {
+      number: 4, issueState: "CLOSED", state: "Canceled", closedAt: days(2),
+      stateReason: "NOT_PLANNED", comments: [],
+    });
+    // A QUOTED marker is prose discussing the protocol, not evidence (GH-1826).
+    gh.issues.set(5, {
+      number: 5, issueState: "CLOSED", state: "Done", closedAt: days(2),
+      comments: ["evidence is `" + DECISION_EVIDENCE_MARKER + "` posted by the verb"],
+    });
+    const res = tendQueue(ctx, TEND_DEFAULTS);
+    expect(res.queue.map((r) => [r.number, r.category])).toEqual([
+      [2, "done-audit"],
+      [5, "done-audit"],
+    ]);
+    expect(res.evidenced).toBe(2); // #1 and #3 — withheld on evidence, counted
   });
 
   // GH-1777 — the proposal marker as a two-way cursor, and its resolution.
