@@ -19,13 +19,16 @@
 # whose disappearance is NORMAL, and give the one surface defined by its
 # disposability a record something could start to lean on.
 #
-# The work-these template: TOML action + this script, no build step. No
-# focus-or-open (the cockpit's GH-2074 machinery) — a stated deferral, not an
-# oversight: the cockpit needed idempotence because agents invoke it
-# programmatically and stacked duplicates; hero is invoked by a human who can
+# The work-these template: TOML action + this script, no build step. The
+# hero ACTION still has no focus-or-open — a human who clicks it twice can
 # see the pane they already have, and a second hero is two complete,
-# disposable sessions, not a conflict. If that pain is ever measured, it gets
-# its own unit.
+# disposable sessions, not a conflict. What GH-2213 (dispatch up) added is
+# the cockpit's GH-2074 record (hero.pane.json, cockpit-pane.sh) so that
+# `dispatch up`'s IDEMPOTENT re-run can tell a live sitting from a dead one
+# without stacking heroes. The record stays inside the never-load-bearing
+# bar: display-only, read by dispatch-up.sh alone, fail-open on every
+# unreadable path (the cost is a duplicate disposable pane), and invisible
+# to reconcile — it is not the ledger and carries no lifecycle.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,5 +62,11 @@ export HERDR_ENV=1
 if hb_ledger=$(ralph_ledger_path "$REPO" 2>/dev/null); then
   ralph_heartbeat_write "$hb_ledger" hero sitting || true
 fi
+
+# The GH-2074-style record (header: what it is and is not). $$ survives the
+# exec below, so the pid recorded here is the harness's own.
+# shellcheck source=cockpit-pane.sh
+. "$SCRIPT_DIR/cockpit-pane.sh"
+ralph_hero_pane_stamp "$REPO" "${HERDR_PANE_ID:-}" $$
 
 exec claude "/ralph:hero"

@@ -54,6 +54,8 @@
 _ralph_required_fields() {
   case "$1" in
     agent_list)        echo "agents" ;;
+    workspace_list)    echo "workspaces" ;;
+    pane_list)         echo "panes" ;;
     agent_info)        echo "agent" ;;
     agent_started)     echo "agent argv" ;;
     agent_prompted)    echo "agent" ;;
@@ -81,6 +83,8 @@ _ralph_required_fields() {
 _ralph_array_fields() {
   case "$1" in
     agent_list) echo "agents" ;;
+    workspace_list) echo "workspaces" ;;
+    pane_list) echo "panes" ;;
     *) echo "" ;;
   esac
 }

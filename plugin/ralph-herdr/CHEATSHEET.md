@@ -12,6 +12,7 @@ been run for real or read straight out of the source it invokes.
 | Launch a TEAM for an epic (lead-only; the lead staffs its workers) | `bash plugin/ralph-herdr/scripts/work-team.sh EPIC` (re-run respawns a dead lead) | 6 |
 | Open the cockpit | `herdr plugin action invoke cockpit --plugin ralph-herdr` | 3 |
 | Sit with the board (attended dispatch) | `herdr plugin action invoke hero --plugin ralph-herdr` | 2 |
+| Stand up the dispatch seat (named space + hero, idempotent) | `bash plugin/ralph-herdr/scripts/dispatch-up.sh` (re-run heals; doctor's `dispatch-heartbeat` remedy) | 2 |
 | Board state / who's working | `board list` · `board next` · `herdr agent list` | 7 |
 | Fleet health at a glance (incl. dead-before-start) | `bash plugin/ralph-herdr/scripts/fleet-status.sh` | 7 |
 | Spawn one worker on issue NNN | `bash plugin/ralph-herdr/scripts/work-fleet.sh NNN` | 6 |
@@ -90,6 +91,7 @@ herdr plugin action invoke work-next    --plugin ralph-herdr   # 1 work session,
 herdr plugin action invoke work-fleet   --plugin ralph-herdr   # up to N frontier issues in parallel
 herdr plugin action invoke work-these   --plugin ralph-herdr   # same fleet, on issues you name (prompts)
 herdr plugin action invoke hero         --plugin ralph-herdr   # attended dispatch: an interactive /ralph:hero session (brief + leases + inbox)
+herdr plugin action invoke dispatch-up  --plugin ralph-herdr   # dispatch up (GH-2213): named <repo>/dispatch space + hero pane + roster; idempotent, nothing scheduled
 herdr plugin action invoke answer       --plugin ralph-herdr   # answer a Human Needed item, comment-first
 herdr plugin action invoke attend       --plugin ralph-herdr   # focus whatever is blocked (carries the question)
 herdr plugin action invoke deliver-pass --plugin ralph-herdr   # shepherd In Review PRs

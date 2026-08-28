@@ -13,7 +13,7 @@ id = "ralph-herdr"
 name = "Ralph Herdr"
 version = "0.19.0"
 min_herdr_version = "0.8.0"
-description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets; v4 adds the card substrate: issue/PR link handlers (click → focus-or-offer), a comment-first Human Needed answer pane, and attend carrying the blocking question; v5 adds the cockpit pane: a three-column board TUI (Go) over a degradation ladder — fzf fallback, then the dashboard — that loses chrome, never verbs; v6 adds fork right/down/tab — open a pane already holding a running session's context, via `claude --resume <id> --fork-session`; v7 (2026-08-19 audit) adds worktree provisioning at spawn, provisional ledger rows + spawn-delivery verification with a modal probe, the lock-aware spawn pre-check, fleet-status/fleet-send, herdr-plugin-sync (content-hash freshness), and the cockpit's write-stamp watch + liveness heartbeat; v8 makes the cockpit action focus-or-open (GH-2074) so invoking it twice focuses the live cockpit instead of stacking a second; v9 adds the team form (GH-2178): work-team spawns a standing read-only o-lane lead per epic beside the fleet, respawnable from board state alone; v10 adds hero (GH-2182): the attended face of the dispatch lane — one pane holding an interactive /ralph:hero session that rehydrates from board brief + leases + inbox and stands as the human's single point of contact for the sitting, never load-bearing; v11 adds event-driven healing (GH-2212): a dead lead's pane.exited respawns it via work-team --lead-only (pane-proved, GH-1863), flags the orphaned team space for sweep, and stamps the per-repo dispatch heartbeat that doctor's advisory reads; v12 makes team launch lead-only (GH-2214, D3.2): work-team spawns the lead and stops, and the lead staffs its own workers via work-fleet --epic under the fleet's guards (spawn-edge included), with worker spawn records carrying the lead's ref as C8 parent/root lineage."
+description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; the v2 watcher keeps an append-only agent ledger and decorates panes with lifecycle tokens; v3 adds opt-in fleet refill from the board frontier and shared-claim sibling fleets; v4 adds the card substrate: issue/PR link handlers (click → focus-or-offer), a comment-first Human Needed answer pane, and attend carrying the blocking question; v5 adds the cockpit pane: a three-column board TUI (Go) over a degradation ladder — fzf fallback, then the dashboard — that loses chrome, never verbs; v6 adds fork right/down/tab — open a pane already holding a running session's context, via `claude --resume <id> --fork-session`; v7 (2026-08-19 audit) adds worktree provisioning at spawn, provisional ledger rows + spawn-delivery verification with a modal probe, the lock-aware spawn pre-check, fleet-status/fleet-send, herdr-plugin-sync (content-hash freshness), and the cockpit's write-stamp watch + liveness heartbeat; v8 makes the cockpit action focus-or-open (GH-2074) so invoking it twice focuses the live cockpit instead of stacking a second; v9 adds the team form (GH-2178): work-team spawns a standing read-only o-lane lead per epic beside the fleet, respawnable from board state alone; v10 adds hero (GH-2182): the attended face of the dispatch lane — one pane holding an interactive /ralph:hero session that rehydrates from board brief + leases + inbox and stands as the human's single point of contact for the sitting, never load-bearing; v11 adds event-driven healing (GH-2212): a dead lead's pane.exited respawns it via work-team --lead-only (pane-proved, GH-1863), flags the orphaned team space for sweep, and stamps the per-repo dispatch heartbeat that doctor's advisory reads; v12 makes team launch lead-only (GH-2214, D3.2): work-team spawns the lead and stops, and the lead staffs its own workers via work-fleet --epic under the fleet's guards (spawn-edge included), with worker spawn records carrying the lead's ref as C8 parent/root lineage; v13 adds dispatch up (GH-2213, D3.1): one idempotent command that stands up the named <repo>/dispatch workspace with the hero pane and prints the roster — re-run heals (reopen space/pane), and it arms nothing scheduled (the unattended half of dispatch stays the event lane)."
 platforms = ["macos", "linux"]
 
 # --- Build -------------------------------------------------------------------
@@ -149,6 +149,23 @@ command = [
   "bash",
   "-c",
   '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint work-team --placement split --direction down --cwd "$cwd" --focus'''
+]
+
+# dispatch-up: DISPATCH UP (GH-2213, unit E of #2208; D3.1 — no rota, ever).
+# One idempotent command: ensure the named `<repo>/dispatch` workspace
+# exists, ensure the hero pane is up in it, print the roster. Re-run HEALS
+# (reopen space/pane) rather than refusing; nothing scheduled is armed —
+# the unattended half of dispatch is the event lane (watch-event.sh). The
+# pane form (work-these template) is so the human sees the summary and the
+# roster; from a shell, `bash scripts/dispatch-up.sh` is the same command.
+[[actions]]
+id = "dispatch-up"
+title = "Ralph: dispatch up (space + hero)"
+contexts = ["workspace"]
+command = [
+  "bash",
+  "-c",
+  '''set -euo pipefail; cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd' <<<"$HERDR_PLUGIN_CONTEXT_JSON"); exec "$HERDR_BIN_PATH" plugin pane open --plugin "$HERDR_PLUGIN_ID" --entrypoint dispatch-up --placement split --direction down --cwd "$cwd" --focus'''
 ]
 
 # hero: the ATTENDED face of the dispatch lane (GH-2182, unit F of #2176).
@@ -320,6 +337,11 @@ command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/work-team.sh\""
 id = "hero"
 title = "Ralph: hero"
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/hero.sh\""]
+
+[[panes]]
+id = "dispatch-up"
+title = "Ralph: dispatch up"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/scripts/dispatch-up.sh\""]
 
 [[panes]]
 id = "cockpit"

@@ -44,6 +44,9 @@
 #                        GH-1918 resolver peer-msg.sh delegates to; the
 #                        none/ambiguous shapes are per-issue fixtures with
 #                        peer.<N>.rc=1
+#   roster …             roster.txt (RAW text), else a canned one-liner —
+#                        dispatch-up.sh's best-effort print; roster.rc
+#                        forces the exit code
 #   help …               help.txt (RAW text) — ABSENT prints a default that
 #                        INCLUDES the `  answer NNN` verb line; a help.txt
 #                        without it models a board CLI predating the verb
@@ -195,6 +198,16 @@ case "${1-} ${2-}" in
       printf 'mutations:\n  answer NNN -m "decision"    answer a Human Needed item, COMMENT-FIRST\n'
     fi
     key="help"
+    ;;
+  "roster"*)
+    # dispatch-up.sh prints this human-readable and treats a failure as
+    # best-effort; roster.txt overrides, roster.rc forces the exit code.
+    if [ -n "$FIX" ] && [ -f "$FIX/roster.txt" ]; then
+      cat "$FIX/roster.txt"
+    else
+      printf 'ROSTER (fake): no live agents\n'
+    fi
+    key="roster"
     ;;
   *)
     printf '{"error":{"code":"fake_board_unhandled","command":"%s %s"}}\n' "${1-}" "${2-}" >&2
