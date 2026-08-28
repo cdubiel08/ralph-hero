@@ -16,8 +16,9 @@
 # "[OPTIONS] --source <ID> <PANE_ID>", but the installed parser rejects
 # space-separated option values before the positional ("unknown option:
 # <value>") and rejects --opt=value entirely — positional first, then
-# space-separated options, is the one form that parses. Sibling flags that
-# exist but are unused here: --agent, --applies-to-source, --title,
+# space-separated options, is the one form that parses. `--title` is used for
+# the address-as-title rule (GH-2210/D6.2, below). Sibling flags that
+# exist but are unused here: --agent, --applies-to-source,
 # --state-label STATUS=TEXT, --clear-token NAME, --seq N, --ttl-ms N (TTL is
 # deliberately omitted — tokens should persist until overwritten; reconcile.sh
 # re-pushes them after a server restart anyway). Tokens merge per-name on the
@@ -51,6 +52,22 @@ _RALPH_TOKENS_WARNED=""
 # no arrays. Cross-checked against contracts.ts in CI — edit both or neither.
 RALPH_TOKEN_STATES="spawned briefed working blocked reporting interrupted indeterminate orphaned adopted"
 
+# _ralph_title_glyph STATE — the plain-text state glyph for a pane TITLE
+# (GH-2210/D6.2). Deliberately not lib.sh's state_glyph: titles cannot carry
+# ANSI color, so this is the ASCII-fallback vocabulary extended to the C8
+# lifecycle enum. Three attention states get distinct marks; the pre-work
+# states share one; the post-mortem states share the question mark, because a
+# title's job is "does this pane need me", not the full enum.
+_ralph_title_glyph() {
+  case "${1-}" in
+    working) printf '>' ;;
+    blocked) printf '!' ;;
+    reporting) printf '.' ;;
+    spawned | briefed | adopted) printf '*' ;;
+    *) printf '?' ;;
+  esac
+}
+
 _ralph_tokens_warn_once() {
   if [ -z "$_RALPH_TOKENS_WARNED" ]; then
     _RALPH_TOKENS_WARNED=1
@@ -62,13 +79,14 @@ _ralph_tokens_warn_once() {
 # Always returns 0: a bad argument, a missing CLI, or a server refusal costs
 # the chrome, never the caller.
 ralph_tokens_push() {
-  local pane="${1-}" kv name value n herdr src out
+  local pane="${1-}" kv name value n herdr src out addr state
   if [ -z "$pane" ]; then
     _ralph_tokens_warn_once "called with no pane id"
     return 0
   fi
   shift || true
   [ "$#" -ge 1 ] || return 0
+  addr="" state=""
   for kv in "$@"; do
     case "$kv" in
       *$'\n'* | *$'\r'*)
@@ -102,6 +120,12 @@ ralph_tokens_push() {
           ;;
       esac
     fi
+    # Address-as-title (GH-2210/D6.2): remember the pair the title composes
+    # from. Values are already validated above (no newlines, <=80 chars).
+    case "$name" in
+      address) addr="$value" ;;
+      state) state="$value" ;;
+    esac
   done
   # Rebuild the positional params as --token pairs: the for-loop list is
   # snapshotted before the first iteration, so appending via set -- is safe;
@@ -111,6 +135,14 @@ ralph_tokens_push() {
     set -- "$@" --token "$kv"
   done
   shift "$n"
+  # Pane title = address + state glyph (GH-2210/D6.2), composed only when this
+  # push carries the address — the one token whose writer (the spawner, or a
+  # watcher re-attaching it from the ledger) provably knows which agent the
+  # pane hosts. A state-only push never invents a title: half a title is a
+  # wrong pane identity, and the previous title survives token merges anyway.
+  if [ -n "$addr" ]; then
+    set -- "$@" --title "$addr $(_ralph_title_glyph "${state:-spawned}")"
+  fi
   herdr="${HERDR_BIN_PATH:-herdr}"
   src="${HERDR_PLUGIN_ID:-ralph-herdr}"
   if ! out=$("$herdr" pane report-metadata "$pane" --source "$src" "$@" 2>&1); then

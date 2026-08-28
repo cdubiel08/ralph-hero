@@ -393,8 +393,16 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		line1 = pad(line1, inner-lipgloss.Width(chip)) + chip
 	}
 
-	// ── line 2: title.
-	line2 := textStyle.Render(trimTo(card.Title, inner))
+	// ── line 2: title. The derived herd address IS the title where a session
+	// carried one (GH-2210/D6.2) — middle-truncated so the repo prefix and the
+	// agent tail both survive a narrow card; every other card keeps its issue
+	// title, since no address exists for it by construction.
+	var line2 string
+	if addr := m.cardAddress(card.Number); addr != "" {
+		line2 = textStyle.Render(trimMiddle(addr, inner))
+	} else {
+		line2 = textStyle.Render(trimTo(card.Title, inner))
+	}
 
 	// ── line 3: priority · estimate · epic · agent age (right-justified).
 	var line3 string
@@ -742,6 +750,32 @@ func trimTo(s string, n int) string {
 		r = r[:n-1]
 	}
 	return string(r) + "…"
+}
+
+// trimMiddle clips a herd address to n cells by eliding the MIDDLE
+// (GH-2210/D6.2): the repo prefix and the tail survive, because
+// `repo/…/w2210-slug` still names the unit while `repo/t2208-herd-topo…`
+// names only the team. The prefix is everything through the first `/`; when
+// even prefix + ellipsis + one tail rune cannot fit, it degrades to trimTo —
+// a tail alone would drop the repo, which is the half the rule says to keep.
+func trimMiddle(s string, n int) string {
+	if n <= 1 || lipgloss.Width(s) <= n {
+		return s
+	}
+	r := []rune(s)
+	slash := -1
+	for i, c := range r {
+		if c == '/' {
+			slash = i
+			break
+		}
+	}
+	// prefix = "repo/", budget for the tail after "…"
+	tail := n - (slash + 1) - 1
+	if slash < 0 || tail < 1 {
+		return trimTo(s, n)
+	}
+	return string(r[:slash+1]) + "…" + string(r[len(r)-tail:])
 }
 
 func max(a, b int) int {

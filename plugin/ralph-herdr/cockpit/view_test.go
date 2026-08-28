@@ -194,6 +194,49 @@ func TestTruncateStyledStaysWellFormed(t *testing.T) {
 	}
 }
 
+func TestTrimMiddleKeepsRepoAndTail(t *testing.T) {
+	addr := "ralph-hero/t2208-herd-topology/w2210-topology-b-canonical"
+	// Fits: unchanged.
+	if got := trimMiddle(addr, 100); got != addr {
+		t.Errorf("fitting address changed: %q", got)
+	}
+	// Middle-truncated: repo prefix and tail both survive, width exact.
+	got := trimMiddle(addr, 30)
+	if w := lipgloss.Width(got); w > 30 {
+		t.Errorf("width = %d, want <= 30", w)
+	}
+	if !strings.HasPrefix(got, "ralph-hero/…") {
+		t.Errorf("repo prefix lost: %q", got)
+	}
+	if !strings.HasSuffix(got, "-canonical") {
+		t.Errorf("tail lost: %q", got)
+	}
+	// No slash: degrades to trimTo.
+	if got := trimMiddle(strings.Repeat("x", 40), 10); got != trimTo(strings.Repeat("x", 40), 10) {
+		t.Errorf("slashless fallback = %q", got)
+	}
+	// Budget too small for prefix + tail: degrades to trimTo, never a bare tail.
+	if got := trimMiddle(addr, 8); got != trimTo(addr, 8) {
+		t.Errorf("tiny-budget fallback = %q", got)
+	}
+}
+
+func TestCardTitleIsAddressWhenKnown(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.agents = setAgents([]Agent{
+		{Name: "w10-ten", Status: "working", Pane: "p1", Issue: 10, Lane: "w",
+			Address: "repo/t9-epic/w10-ten"},
+	})
+	out := viewModel(m)
+	if !strings.Contains(out, "repo/t9-epic/w10-ten") {
+		t.Error("card with a known agent address must render the address as its title")
+	}
+	// A card with no agent keeps its issue title.
+	if !strings.Contains(out, "Eleven") {
+		t.Error("card without an address must keep its issue title")
+	}
+}
+
 func TestViewTinySizeDoesNotPanic(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	m.width, m.height = 10, 3

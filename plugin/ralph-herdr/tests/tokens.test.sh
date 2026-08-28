@@ -71,5 +71,34 @@ push "a value that is a state name under another token is fine" \
 push "bad token name is dropped" "" "bad name=x"
 push "missing = is dropped" "" "notakv"
 
+# ── address-as-title (GH-2210/D6.2) ─────────────────────────────────────────
+# A push carrying the address composes the pane title beside the tokens; a
+# state-only push never invents one (the enum loop above pins that argv).
+push "address alone titles the pane (default glyph spawned)" \
+  "$BASE --token address=repo/w1-x --title repo/w1-x *" "address=repo/w1-x"
+push "address + state=working titles with the working glyph" \
+  "$BASE --token address=repo/w1-x --token state=working --title repo/w1-x >" \
+  "address=repo/w1-x" "state=working"
+push "address + state=blocked titles with the blocked glyph" \
+  "$BASE --token address=repo/w1-x --token state=blocked --title repo/w1-x !" \
+  "address=repo/w1-x" "state=blocked"
+push "team-scoped address titles verbatim" \
+  "$BASE --token address=repo/t9-epic/w1-x --token state=reporting --title repo/t9-epic/w1-x ." \
+  "address=repo/t9-epic/w1-x" "state=reporting"
+
+glyph_is() {
+  local desc="$1" want="$2" state="$3" got
+  got=$(_ralph_title_glyph "$state")
+  if [ "$got" = "$want" ]; then ok "$desc"; else not_ok "$desc — expected '$want', got '$got'"; fi
+}
+glyph_is "glyph: working is >" ">" working
+glyph_is "glyph: blocked is !" "!" blocked
+glyph_is "glyph: reporting is ." "." reporting
+glyph_is "glyph: spawned is *" "*" spawned
+glyph_is "glyph: briefed is *" "*" briefed
+glyph_is "glyph: adopted is *" "*" adopted
+glyph_is "glyph: interrupted is ?" "?" interrupted
+glyph_is "glyph: unknown is ?" "?" nonsense
+
 echo "1..$n"
 [ "$fail" -eq 0 ] || exit 1

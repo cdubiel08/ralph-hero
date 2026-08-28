@@ -89,6 +89,7 @@ type LedgerSpawn struct {
 	SpawnedAt time.Time
 	Checkout  string
 	Branch    string
+	Address   string
 }
 
 // Ledger is the parsed spawn history for one board scope.
@@ -240,6 +241,7 @@ func readLedger(path string) Ledger {
 			SpawnedAt: at,
 			Checkout:  row.Checkout,
 			Branch:    row.Tokens["branch"],
+			Address:   row.Tokens["address"],
 		}
 		if row.Lineage != nil {
 			sp.Issue = row.Lineage.Issue

@@ -162,6 +162,9 @@ type Agent struct {
 	// checkpoints (spawned → working → blocked → reporting). It expresses what
 	// agent_status structurally cannot; cardState decides when it may speak.
 	TokenState string
+	// Address is tokens.address — the derived herd address the spawner
+	// stamped (GH-2209/D0.4). Empty for a pre-grammar spawn.
+	Address string
 }
 
 // Card marking states — the vocabulary the status dot renders, ranked so a
@@ -503,6 +506,23 @@ func (m Model) cardBranch(issue int) string {
 	}
 	if sp, ok := m.ledger.ByIssue[issue]; ok {
 		return sp.Branch
+	}
+	return ""
+}
+
+// cardAddress is the derived herd address for the card's unit (GH-2210/D6.2
+// — the address is the title where one exists). The live agent's own token is
+// preferred; the ledger's newest spawn answers for a session that has since
+// exited, the same split cardBranch uses. Empty means no session ever carried
+// one — the card keeps its issue title, since no address exists to show.
+func (m Model) cardAddress(issue int) string {
+	for _, a := range m.agents[issue] {
+		if a.Address != "" {
+			return a.Address
+		}
+	}
+	if sp, ok := m.ledger.ByIssue[issue]; ok {
+		return sp.Address
 	}
 	return ""
 }

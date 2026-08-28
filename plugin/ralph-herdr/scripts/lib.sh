@@ -850,15 +850,19 @@ spawn_work_session() {
   _ralph_resolve_names "$n" || return 1
   branch="$RALPH_HERDR_NAMED_BRANCH"
 
-  # Nesting label + title: children group under an epic on the board; carry
-  # that into the worktree workspace label when the caller's queue JSON knows
-  # the parent. The same queue item's title feeds the agent-name slug.
-  label="" title="" parent=""
+  # Workspace label: the herd address is canonical (GH-2210/D0.3) — the same
+  # derived string the C8 token carries, so the cockpit sidebar, the ledger
+  # and the board all read one vocabulary. A team-scoped address already
+  # carries the nesting (`repo/t<epic>-<slug>/w<n>-…`), which is what the old
+  # "GH-N via GH-parent" spelling existed to show; that spelling survives only
+  # as the fallback against a board copy that predates the grammar. The queue
+  # JSON still feeds parent (lineage record) and title (agent-name slug).
+  label="$RALPH_HERDR_NAMED_ADDRESS" title="" parent=""
   if [ -n "$queue_json" ]; then
     parent=$(jq -r --argjson n "$n" '
       [.next, .queue[]?] | map(select(. != null and .number == $n)) | .[0].parentNumber // empty
     ' <<<"$queue_json" 2>/dev/null || true)
-    [ -n "$parent" ] && label="GH-$n via GH-$parent"
+    [ -z "$label" ] && [ -n "$parent" ] && label="GH-$n via GH-$parent"
     title=$(jq -r --argjson n "$n" '
       [.next, .queue[]?] | map(select(. != null and .number == $n)) | .[0].title // empty
     ' <<<"$queue_json" 2>/dev/null || true)
