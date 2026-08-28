@@ -6529,10 +6529,23 @@ describe("tend-queue (spec §4.3)", () => {
       number: 5, issueState: "CLOSED", state: "Done", closedAt: days(2),
       comments: ["evidence is `" + DECISION_EVIDENCE_MARKER + "` posted by the verb"],
     });
+    // Marker PRESENCE is not evidence — the gate's own validators judge. A
+    // decision marker with no artifact line, and an apply marker whose
+    // payload the close gate would refuse, both surface for audit.
+    gh.issues.set(6, {
+      number: 6, issueState: "CLOSED", state: "Done", closedAt: days(2),
+      comments: [`${DECISION_EVIDENCE_MARKER}\nno artifact named here`],
+    });
+    gh.issues.set(7, {
+      number: 7, issueState: "CLOSED", state: "Done", closedAt: days(2),
+      comments: [`${APPLY_EVIDENCE_MARKER}\n\`\`\`json\n{"kind":"nonsense"}\n\`\`\``],
+    });
     const res = tendQueue(ctx, TEND_DEFAULTS);
     expect(res.queue.map((r) => [r.number, r.category])).toEqual([
       [2, "done-audit"],
       [5, "done-audit"],
+      [6, "done-audit"],
+      [7, "done-audit"],
     ]);
     expect(res.evidenced).toBe(2); // #1 and #3 — withheld on evidence, counted
   });

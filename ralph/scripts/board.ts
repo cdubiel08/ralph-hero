@@ -7210,10 +7210,14 @@ export function classifyTend(
  *  doctor's `done-audit-pending` line so the selector and the health surface
  *  cannot disagree about what evidenced means (the GH-1843 drift shape).
  *
- *  Evidence is the gated Done lane's own bar: a merged PR in GitHub's closing
- *  linkage, or a gated evidence marker in the trail (`ralph-decision-evidence:
- *  v1` / `ralph-apply-evidence:v1` — both written by shape-validating verbs,
- *  never hand-composed). The GH-1996 branch-linkage population — a merged PR
+ *  Evidence is the gated Done lane's own bar, judged by the gate's OWN
+ *  validators: a merged PR in GitHub's closing linkage, `decisionEvidence`
+ *  (marker + artifact line), or shape-valid apply evidence
+ *  (`validateApplyEvidence` — the same pure check the close gate and doctor
+ *  share). Marker PRESENCE is not evidence: a hand-composed marker with a
+ *  garbage payload would pass a presence test while the close gate refused
+ *  it, and the audit may not be weaker than the gate it audits for.
+ *  The GH-1996 branch-linkage population — a merged PR
  *  with no closing keyword — is deliberately NOT re-derived here: that search
  *  costs a query per close, and its closes are exactly the no-closing-keyword
  *  population the human audit exists for. Trails are fetched for EVERY row,
@@ -7246,11 +7250,8 @@ function tendClosedRows(
       stateReason: c.stateReason,
       evidenced:
         c.hasMergedClosingPR === true ||
-        comments.some(
-          (b) =>
-            lastMarkerIndex(b, DECISION_EVIDENCE_MARKER) >= 0 ||
-            lastMarkerIndex(b, APPLY_EVIDENCE_MARKER) >= 0,
-        ),
+        decisionEvidence(comments) !== null ||
+        validateApplyEvidence(parseApplyEvidence(comments), ctx.now()) === null,
       comments,
     };
   });
