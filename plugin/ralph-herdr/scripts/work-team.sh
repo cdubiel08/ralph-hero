@@ -271,6 +271,7 @@ out=$(ralph_herdr_call workspace_created workspace create "$@") ||
   die "workspace create failed for $team_label ($(ralph_herdr_err_code "$out" || true)) — see the diagnostic above"
 pane=$(jq -r '.root_pane.pane_id // empty' <<<"$out")
 [ -n "$pane" ] || die "no pane id in workspace response for the GH-$EPIC lead"
+lead_ws=$(jq -r '.workspace.workspace_id // .workspace.id // empty' <<<"$out" 2>/dev/null) || lead_ws=""
 
 # Provisional C7 record at pane creation (audit D2b parity with
 # spawn_work_session): a spawner killed before `agent start` leaves a
@@ -320,26 +321,12 @@ ralph_herdr_agent_prompt "$LEAD" "$brief" >/dev/null || {
   exit 1
 }
 
-confirm_total="${RALPH_HERDR_SPAWN_CONFIRM_SEC:-60}" confirm_waited=0 turn_ok=""
-case "$confirm_total" in '' | *[!0-9]* | 0) confirm_total=60 ;; esac
-chunk="${RALPH_HERDR_TURN_WAIT_SEC:-20}"
-case "$chunk" in '' | *[!0-9]* | 0) chunk=20 ;; esac
-turn_err=$(ralph_diag_file)
-while :; do
-  if spawn_turn_started "$LEAD" 2>"$turn_err"; then
-    turn_ok=1
-    break
-  fi
-  confirm_waited=$((confirm_waited + chunk))
-  [ "$confirm_waited" -lt "$confirm_total" ] || break
-done
-if [ -z "$turn_ok" ]; then
-  [ -s "$turn_err" ] && cat "$turn_err" >&2
-  [ "$turn_err" = /dev/null ] || rm -f "$turn_err" 2>/dev/null || true
-  spawn_modal_probe "$pane"
-  echo "SPAWN-UNCONFIRMED $pane — GH-$EPIC's lead $LEAD is LIVE holding an unsubmitted brief (no turn within ~${confirm_total}s); submit it with: herdr pane send-keys $pane Enter" >&2
+# spawn_confirm_turn (lib.sh) holds the wait loop, the modal probe, the
+# undelivered-vs-unsubmitted split and the one redelivery (GH-2223). The
+# lead's workspace carries no worktree, so the undelivered-mode remedy is
+# `workspace close`, not `worktree remove` — nothing on disk is touched.
+spawn_confirm_turn "$LEAD" "$pane" "$brief" "GH-$EPIC's lead $LEAD" \
+  "close the team space (herdr workspace close ${lead_ws:-<workspace-id>}) and re-run work-team.sh $EPIC" ||
   exit 1
-fi
-[ "$turn_err" = /dev/null ] || rm -f "$turn_err" 2>/dev/null || true
 echo "lead spawned for GH-$EPIC (pane $pane, agent $LEAD, workspace \"$team_label\")"
 finish "team GH-$EPIC: lead $LEAD standing — it staffs its own workers (work-fleet.sh --epic $EPIC from its pane)"

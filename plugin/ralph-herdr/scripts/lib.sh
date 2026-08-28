@@ -779,6 +779,107 @@ spawn_modal_probe() {
   return 0
 }
 
+# spawn_prompt_probe PANE FRAGMENT — is the delivered prompt actually sitting
+# in the pane's input box? (GH-2223: SPAWN-UNCONFIRMED shipped one remedy —
+# `pane send-keys Enter` — written for present-but-unsubmitted, while both
+# observed instances were never-delivered: an EMPTY input box, where Enter
+# submits a blank line and the session sits idle looking alive.) One
+# visible-pane read, fixed-string match on a short fragment of the prompt.
+# Three verdicts, because the two failure modes have OPPOSITE remedies and an
+# unreadable pane may pick neither:
+#   0  present — the text sits unsubmitted in the input box
+#   1  absent  — the pane rendered text and the fragment is nowhere in it
+#   2  unknown — the pane could not be read, or rendered nothing (a live
+#      session always renders its input-box chrome, so a blank read is a
+#      degraded read, not evidence of an empty box)
+spawn_prompt_probe() {
+  local pane="${1-}" frag="${2-}" out text
+  { [ -n "$pane" ] && [ -n "$frag" ]; } || return 2
+  out=$(ralph_herdr_call pane_read pane read "$pane" --lines 40 --source visible 2>/dev/null) || return 2
+  text=$(jq -r '.read
+    | if type == "object" then ((.lines // .text // .content // empty)
+        | if type == "array" then join("\n") else tostring end)
+      else tostring end' <<<"$out" 2>/dev/null) || return 2
+  [ -n "$text" ] || return 2
+  printf '%s\n' "$text" | grep -qF -- "$frag" && return 0
+  return 1
+}
+
+# spawn_confirm_turn AGENT PANE PROMPT SUBJECT RESPAWN — the one spawn-confirm
+# loop (GH-2223; previously duplicated verbatim in spawn_work_session and
+# work-team.sh — the GH-2058 shape). Waits for the delivered prompt to become
+# a STARTED turn, and on timeout separates the two failure modes that used to
+# share one message:
+#   - prompt present in the input box → the original remedy: submit it
+#     (`herdr pane send-keys PANE Enter`)
+#   - input box demonstrably empty → the prompt was NEVER DELIVERED; redeliver
+#     it ONCE to the live session (it is addressable at exactly this moment),
+#     and only if that too fails hand back RESPAWN — the caller-worded
+#     remove-and-respawn remedy, safe because an agent that never took a turn
+#     holds no claim and no commits
+#   - pane unreadable → say so and hand back BOTH remedies keyed on a human
+#     look; never redeliver blind, since a redelivery onto a present-but-
+#     unsubmitted prompt would double the text
+# rc 0 = turn started (possibly via the redelivery); rc 1 = unconfirmed, one
+# SPAWN-UNCONFIRMED line printed that names the pane and the applicable remedy.
+spawn_confirm_turn() {
+  local agent="$1" pane="$2" prompt="$3" subject="$4" respawn="$5"
+  local confirm_total="${RALPH_HERDR_SPAWN_CONFIRM_SEC:-60}" chunk frag
+  local waited turn_ok turn_err probe_rc redelivered=""
+  case "$confirm_total" in '' | *[!0-9]* | 0) confirm_total=60 ;; esac
+  chunk="${RALPH_HERDR_TURN_WAIT_SEC:-20}"
+  case "$chunk" in '' | *[!0-9]* | 0) chunk=20 ;; esac
+  # Short so terminal line-wrapping cannot split it across a pane read's
+  # lines; fixed-string so prompt text is never a pattern.
+  frag=$(printf '%s\n' "$prompt" | head -n 1 | cut -c1-24)
+  while :; do
+    waited=0 turn_ok=""
+    turn_err=$(ralph_diag_file)
+    while :; do
+      if spawn_turn_started "$agent" 2>"$turn_err"; then
+        turn_ok=1
+        break
+      fi
+      waited=$((waited + chunk))
+      [ "$waited" -lt "$confirm_total" ] || break
+    done
+    if [ -n "$turn_ok" ]; then
+      [ "$turn_err" = /dev/null ] || rm -f "$turn_err" 2>/dev/null || true
+      [ -n "$redelivered" ] &&
+        echo "spawn: the first delivery never reached pane $pane — the redelivered prompt started the turn"
+      return 0
+    fi
+    [ -s "$turn_err" ] && cat "$turn_err" >&2
+    [ "$turn_err" = /dev/null ] || rm -f "$turn_err" 2>/dev/null || true
+    spawn_modal_probe "$pane"
+    probe_rc=0
+    spawn_prompt_probe "$pane" "$frag" || probe_rc=$?
+    case "$probe_rc" in
+      0)
+        echo "SPAWN-UNCONFIRMED $pane — $subject is LIVE holding an unsubmitted prompt (no turn within ~${confirm_total}s${redelivered:+; redelivered once}); submit it with: herdr pane send-keys $pane Enter" >&2
+        return 1
+        ;;
+      1)
+        if [ -z "$redelivered" ]; then
+          echo "spawn: pane $pane's input box is empty — the prompt was never delivered; redelivering once to the live session" >&2
+          if ralph_herdr_agent_prompt "$agent" "$prompt" >/dev/null; then
+            redelivered=1
+            continue
+          fi
+          echo "SPAWN-UNCONFIRMED $pane — $subject is LIVE but the prompt was NEVER DELIVERED and redelivery failed; no turn was taken (no claim, no commits) — $respawn" >&2
+          return 1
+        fi
+        echo "SPAWN-UNCONFIRMED $pane — $subject is LIVE but the prompt was NEVER DELIVERED (input box still empty after one redelivery); no turn was taken (no claim, no commits) — $respawn" >&2
+        return 1
+        ;;
+      *)
+        echo "SPAWN-UNCONFIRMED $pane — $subject is LIVE and no turn started within ~${confirm_total}s${redelivered:+ (one redelivery attempted)}; the pane could not be read to tell undelivered from unsubmitted — look at it: prompt present → herdr pane send-keys $pane Enter; input box empty → $respawn" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
 # _ralph_spawn_close REF LEDGER REASON — close a provisional spawn record for
 # a worker that never started (audit D2b). Best-effort: a failed append warns
 # and leaves the row open, which reconcile's pane-proved phase E then closes.
@@ -1226,35 +1327,18 @@ spawn_work_session() {
   # when a turn has STARTED. An unconfirmed start is reported as a failure so
   # the fleet's `failed:` line carries it and the slot is not counted as
   # occupied and working (GH-1926). The agent is left live and the pane intact:
-  # the manual submit below recovers it, and reconcile already knows the
-  # ledgered worker.
-  #
-  # The wait is re-asked in chunks up to RALPH_HERDR_SPAWN_CONFIRM_SEC (~60s,
-  # audit D2a): herdr's own agent_status is the oracle — never the pane token,
-  # which is decoration nothing may gate on (tokens.sh's header). On timeout
-  # the failure carries a machine-greppable SPAWN-UNCONFIRMED token, the exact
-  # resubmit command, and one pane-content probe for the known blocking modals.
-  local confirm_total="${RALPH_HERDR_SPAWN_CONFIRM_SEC:-60}" confirm_waited=0 chunk turn_ok="" turn_err
-  case "$confirm_total" in '' | *[!0-9]* | 0) confirm_total=60 ;; esac
-  chunk="${RALPH_HERDR_TURN_WAIT_SEC:-20}"
-  case "$chunk" in '' | *[!0-9]* | 0) chunk=20 ;; esac
-  turn_err=$(ralph_diag_file)
-  while :; do
-    if spawn_turn_started "$agent" 2>"$turn_err"; then
-      turn_ok=1
-      break
-    fi
-    confirm_waited=$((confirm_waited + chunk))
-    [ "$confirm_waited" -lt "$confirm_total" ] || break
-  done
-  if [ -z "$turn_ok" ]; then
-    [ -s "$turn_err" ] && cat "$turn_err" >&2
-    [ "$turn_err" = /dev/null ] || rm -f "$turn_err" 2>/dev/null || true
-    spawn_modal_probe "$pane"
-    echo "SPAWN-UNCONFIRMED $pane — GH-$n's agent $agent is LIVE holding an unsubmitted prompt (no turn within ~${confirm_total}s); submit it with: herdr pane send-keys $pane Enter" >&2
-    return 1
+  # the remedy in the failure line recovers it, and reconcile already knows
+  # the ledgered worker. spawn_confirm_turn holds the wait loop, the modal
+  # probe, the undelivered-vs-unsubmitted split and the one redelivery
+  # (GH-2223); audit D2a's machine-greppable SPAWN-UNCONFIRMED token and
+  # RALPH_HERDR_SPAWN_CONFIRM_SEC live there.
+  local respawn
+  if [ -n "${RALPH_HERDR_SPAWNED_WORKSPACE:-}" ]; then
+    respawn="remove the worktree and respawn: herdr worktree remove --workspace $RALPH_HERDR_SPAWNED_WORKSPACE, then re-spawn GH-$n"
+  else
+    respawn="remove the worktree (herdr worktree remove --workspace <id>) and re-spawn GH-$n"
   fi
-  [ "$turn_err" = /dev/null ] || rm -f "$turn_err" 2>/dev/null || true
+  spawn_confirm_turn "$agent" "$pane" "/ralph:work $n" "GH-$n's agent $agent" "$respawn" || return 1
 
   RALPH_HERDR_SPAWNED_AGENT="$agent"
   echo "spawned GH-$n on $branch (pane $pane, agent $agent)"
