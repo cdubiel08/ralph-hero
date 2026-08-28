@@ -127,6 +127,27 @@ fi
 
 run live 7 --candidates "feat-42-fake-issue-01"
 assert_rc "live on a dead session is exit 2" 2
+assert_err_has "non-empty zero-matches keeps the not-running wording" "not running"
+
+# ── empty candidate set: a question never asked, not a negative answer ──────
+# (GH-2245) live with no --candidates and no stdin must refuse distinctly,
+# never render as "that session is not running".
+OUT=$(RALPH_HERDR_REPO="$TMP" RALPH_HERDR_BOARD="$BIN/board" FAKE_BOARD_FIXTURES="$FIX" \
+  bash "$PEER_MSG" live 42 </dev/null 2>"$TMP/err")
+RC=$?
+ERR=$(cat "$TMP/err")
+assert_rc "empty candidate set is exit 64, never the zero-matches exit" 64
+assert_err_has "refusal says no candidates were supplied" "no candidates supplied"
+assert_err_has "refusal names the remedy (enumerate, then pass)" "ListAgents"
+if printf '%s' "$ERR" | grep -qF "not running"; then
+  not_ok "empty set never borrows the zero-matches wording"
+else
+  ok "empty set never borrows the zero-matches wording"
+fi
+
+run brief 42 question --candidates " , ," -m x
+assert_rc "whitespace-only candidates are an empty set on the brief path too" 64
+assert_err_has "brief-path refusal uses the distinct wording" "no candidates supplied"
 
 # ── role targets (GH-2216): lead/dispatch ride the same protocol ────────────
 run brief lead question --candidates "fake-src-01,feat-42-fake-issue-01" --re 2208 -m "epic frontier is empty but two children are open"
