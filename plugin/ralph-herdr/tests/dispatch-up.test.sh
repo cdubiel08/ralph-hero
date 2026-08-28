@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # dispatch-up.test.sh — executable tests for DISPATCH UP (GH-2213, unit E of
-# #2208, D3.1): the named-space + hero-pane bring-up, its idempotence (a
+# #2208, D3.1; placement amended by GH-2246): the seat lives in the repo's
+# MAIN workspace (cwd match on the source checkout), its idempotence (a
 # standing space and a live sitting are never doubled), the heal paths (dead
-# hero reopened, deleted space recreated, hero-in-the-wrong-space corrected),
+# hero reopened, missing main workspace created — labeled by the checkout,
+# never by the dispatch address), the legacy `<repo>/dispatch` migration
+# (live sitting left alone + noted; dead legacy space noted, never closed),
 # the fail-closed reads (address, workspace list) vs the fail-open ones
 # (hero liveness, roster), and the heartbeat stamp.
 #
@@ -41,8 +44,19 @@ mkdir -p "$REPO_DIR"
 printf '{"owner":"fake","repo":"fake","projectNumber":1}\n' >"$REPO_DIR/.ralph.json"
 export RALPH_HERDR_REPO="$REPO_DIR"
 
-# The dispatch address the board mints for every case below.
+# The dispatch address the board mints for every case below. The SOURCE
+# checkout the fake's `worktree list` reports is /tmp/fake-herdr-parent, so
+# the main workspace's cwd key is that path and its label fallback is
+# `fake-herdr-parent`.
 printf '{"repo":"fake","address":"fake/dispatch"}\n' >"$FAKE_BOARD_FIXTURES/name.dispatch.json"
+SRC=/tmp/fake-herdr-parent
+
+# A standing main workspace for the repo — worktree-bound to the source
+# checkout, the way herdr reports a workspace it opened on the checkout.
+MAIN_WS='{"workspace_id":"wM","label":"fake-herdr-parent","number":2,"pane_count":1,"tab_count":1,"active_tab_id":"wM:t1","agent_status":"idle","focused":false,"worktree":{"checkout_path":"/tmp/fake-herdr-parent","is_linked_worktree":false,"repo_key":"/tmp/fake-herdr-parent/.git","repo_name":"fake","repo_root":"/tmp/fake-herdr-parent"}}'
+# A legacy `<repo>/dispatch` sibling (pre-GH-2246): address-labeled, no
+# worktree binding — exactly what `workspace create --cwd --label` produced.
+LEGACY_WS='{"workspace_id":"wL","label":"fake/dispatch","number":9,"pane_count":2,"tab_count":2,"active_tab_id":"wL:t1","agent_status":"idle","focused":false}'
 
 n=0 pass=0 fail=0
 ok()     { n=$((n + 1)); pass=$((pass + 1)); echo "ok $n - $1"; }
@@ -66,86 +80,111 @@ reset() {
     "$RALPH_HERDR_LEDGER_ROOT/fake/fake/dispatch-heartbeat" 2>/dev/null || true
 }
 
-# ── 1. fresh bring-up: no space, no hero — create both, print roster ────────
+# live_hero PANE — a live hero record for PANE: this test's own pid is
+# alive, and the snapshot carries the pane.
+live_hero() {
+  mkdir -p "$RALPH_HERDR_LEDGER_ROOT/fake/fake"
+  printf '{"pane":"%s","pid":%s,"at":"2026-08-28T00:00:00Z","repo":"%s"}\n' "$1" $$ "$REPO_DIR" \
+    >"$RALPH_HERDR_LEDGER_ROOT/fake/fake/hero.pane.json"
+  printf '{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],"panes":[{"pane_id":"%s"}],"layouts":[],"agents":[]}}\n' "$1" \
+    >"$FAKE_HERDR_FIXTURES/api-snapshot.json"
+}
+
+# ── 1. fresh bring-up: no space, no hero — create main workspace, print ─────
 reset
 out=$(run_up)
 rc=$?
 [ "$rc" = 0 ] && ok "fresh bring-up exits 0" || not_ok "fresh bring-up exits 0 — rc $rc: $out"
-has "creates the workspace with the canonical label" "$(cat "$FAKE_HERDR_LOG")" "workspace create --cwd .* --label fake/dispatch --no-focus"
+has "creates the main workspace on the source checkout, labeled by it" "$(cat "$FAKE_HERDR_LOG")" "workspace create --cwd $SRC --label fake-herdr-parent --no-focus"
+hasnt "never creates an address-labeled sibling (GH-2246)" "$(cat "$FAKE_HERDR_LOG")" "workspace create .*--label fake/dispatch"
 has "opens the hero pane into the created space" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open --plugin ralph-herdr --entrypoint hero --workspace wT --placement tab"
 has "summary names created + opened" "$out" "workspace wT (created), hero pane pP1 (opened)"
+has "summary still carries the dispatch address" "$out" "dispatch up: fake/dispatch"
 has "prints the roster" "$out" "ROSTER (fake)"
 has "roster was asked of the board" "$(cat "$FAKE_BOARD_LOG")" "^roster"
 hb="$RALPH_HERDR_LEDGER_ROOT/fake/fake/dispatch-heartbeat"
 if [ -f "$hb" ]; then ok "heartbeat stamped"; else not_ok "heartbeat stamped — $hb missing"; fi
 has "heartbeat names this writer" "$(cat "$hb" 2>/dev/null)" '"writer":"dispatch-up"'
 
-# ── 2. heal: space stands, hero dead (no record) — reopen the pane only ─────
+# ── 2. heal: main workspace stands, hero dead — reopen the pane only ────────
 reset
-printf '{"workspaces":[{"workspace_id":"wD","label":"fake/dispatch","number":9,"pane_count":1,"tab_count":1,"active_tab_id":"wD:t1","agent_status":"idle","focused":false}]}\n' \
-  >"$FAKE_HERDR_FIXTURES/workspace-list.json"
+printf '{"workspaces":[%s]}\n' "$MAIN_WS" >"$FAKE_HERDR_FIXTURES/workspace-list.json"
 out=$(run_up)
 rc=$?
 [ "$rc" = 0 ] && ok "heal-pane run exits 0" || not_ok "heal-pane run exits 0 — rc $rc: $out"
-hasnt "standing space is not recreated" "$(cat "$FAKE_HERDR_LOG")" "workspace create"
-has "hero pane opened into the standing space" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --workspace wD"
-has "summary names standing + opened" "$out" "workspace wD (standing), hero pane pP1 (opened)"
+hasnt "standing main workspace is not recreated" "$(cat "$FAKE_HERDR_LOG")" "workspace create"
+has "hero pane opened into the standing main workspace" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --workspace wM"
+has "summary names standing + opened" "$out" "workspace wM (standing), hero pane pP1 (opened)"
 
-# ── 3. idempotent: space stands, hero LIVE in it — touch nothing ────────────
+# ── 3. idempotent: main stands, hero LIVE in it — touch nothing ─────────────
 reset
-printf '{"workspaces":[{"workspace_id":"wD","label":"fake/dispatch","number":9,"pane_count":2,"tab_count":2,"active_tab_id":"wD:t1","agent_status":"idle","focused":false}]}\n' \
-  >"$FAKE_HERDR_FIXTURES/workspace-list.json"
-# A live hero record: this test's own pid is alive, and the snapshot + the
-# dispatch workspace's pane list both carry its pane.
-mkdir -p "$RALPH_HERDR_LEDGER_ROOT/fake/fake"
-printf '{"pane":"pH","pid":%s,"at":"2026-08-28T00:00:00Z","repo":"%s"}\n' $$ "$REPO_DIR" \
-  >"$RALPH_HERDR_LEDGER_ROOT/fake/fake/hero.pane.json"
-printf '{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],"panes":[{"pane_id":"pH"}],"layouts":[],"agents":[]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/api-snapshot.json"
-printf '{"panes":[{"pane_id":"pH","workspace_id":"wD","tab_id":"wD:t2","terminal_id":"t","focused":false,"agent_status":"working","revision":1}]}\n' \
+printf '{"workspaces":[%s]}\n' "$MAIN_WS" >"$FAKE_HERDR_FIXTURES/workspace-list.json"
+live_hero pH
+printf '{"panes":[{"pane_id":"pH","workspace_id":"wM","tab_id":"wM:t2","terminal_id":"t","focused":false,"agent_status":"working","revision":1}]}\n' \
   >"$FAKE_HERDR_FIXTURES/pane-list.json"
 out=$(run_up)
 rc=$?
 [ "$rc" = 0 ] && ok "idempotent run exits 0" || not_ok "idempotent run exits 0 — rc $rc: $out"
 hasnt "no workspace created" "$(cat "$FAKE_HERDR_LOG")" "workspace create"
 hasnt "no hero pane opened" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open"
-has "summary names standing + live" "$out" "workspace wD (standing), hero pane pH (live)"
+has "summary names standing + live" "$out" "workspace wM (standing), hero pane pH (live)"
 has "roster still prints" "$out" "ROSTER (fake)"
 
-# ── 4. hero live but in ANOTHER space — open one where it belongs ───────────
+# ── 4. hero live but in ANOTHER space (not legacy) — open where it belongs ──
 reset
-printf '{"workspaces":[{"workspace_id":"wD","label":"fake/dispatch","number":9,"pane_count":1,"tab_count":1,"active_tab_id":"wD:t1","agent_status":"idle","focused":false}]}\n' \
-  >"$FAKE_HERDR_FIXTURES/workspace-list.json"
-mkdir -p "$RALPH_HERDR_LEDGER_ROOT/fake/fake"
-printf '{"pane":"pElsewhere","pid":%s,"at":"2026-08-28T00:00:00Z","repo":"%s"}\n' $$ "$REPO_DIR" \
-  >"$RALPH_HERDR_LEDGER_ROOT/fake/fake/hero.pane.json"
-printf '{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],"panes":[{"pane_id":"pElsewhere"}],"layouts":[],"agents":[]}}\n' \
-  >"$FAKE_HERDR_FIXTURES/api-snapshot.json"
-printf '{"panes":[{"pane_id":"pShell","workspace_id":"wD","tab_id":"wD:t1","terminal_id":"t","focused":false,"agent_status":"idle","revision":1}]}\n' \
+printf '{"workspaces":[%s]}\n' "$MAIN_WS" >"$FAKE_HERDR_FIXTURES/workspace-list.json"
+live_hero pElsewhere
+printf '{"panes":[{"pane_id":"pShell","workspace_id":"wM","tab_id":"wM:t1","terminal_id":"t","focused":false,"agent_status":"idle","revision":1}]}\n' \
   >"$FAKE_HERDR_FIXTURES/pane-list.json"
 out=$(run_up)
-has "hero elsewhere does not satisfy the dispatch space" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --workspace wD"
+has "hero elsewhere does not satisfy the main workspace" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --workspace wM"
 has "summary says opened" "$out" "hero pane pP1 (opened)"
 
-# ── 5. fail-closed: the address read ────────────────────────────────────────
+# ── 5. legacy migration: live hero still in the <repo>/dispatch sibling ─────
+reset
+printf '{"workspaces":[%s,%s]}\n' "$MAIN_WS" "$LEGACY_WS" >"$FAKE_HERDR_FIXTURES/workspace-list.json"
+live_hero pH
+# The single pane-list fixture answers every scope; the script's client-side
+# workspace check does the filtering — pH sits in wL, not wM.
+printf '{"panes":[{"pane_id":"pH","workspace_id":"wL","tab_id":"wL:t2","terminal_id":"t","focused":false,"agent_status":"working","revision":1}]}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-list.json"
+out=$(run_up)
+rc=$?
+[ "$rc" = 0 ] && ok "legacy live sitting exits 0" || not_ok "legacy live sitting exits 0 — rc $rc: $out"
+hasnt "a live legacy sitting is left alone (no new pane)" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open"
+has "summary names the legacy placement" "$out" "hero pane pH (live-legacy)"
+has "note names the legacy space and the manual close" "$out" "legacy dispatch workspace wL .*herdr workspace close wL"
+
+# ── 6. legacy migration: dead sitting — seat opens in main, legacy noted ────
+reset
+printf '{"workspaces":[%s,%s]}\n' "$MAIN_WS" "$LEGACY_WS" >"$FAKE_HERDR_FIXTURES/workspace-list.json"
+out=$(run_up)
+rc=$?
+[ "$rc" = 0 ] && ok "legacy-dead run exits 0" || not_ok "legacy-dead run exits 0 — rc $rc: $out"
+has "hero opens into the MAIN workspace" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --workspace wM"
+hasnt "never opens into the legacy space" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --workspace wL"
+hasnt "legacy space never closed by the script" "$(cat "$FAKE_HERDR_LOG")" "workspace close"
+has "note names the standing legacy space" "$out" "legacy dispatch workspace(s) wL"
+
+# ── 7. fail-closed: the address read ────────────────────────────────────────
 reset
 printf '1\n' >"$FAKE_BOARD_FIXTURES/name.dispatch.rc"
 out=$(run_up)
 rc=$?
 [ "$rc" != 0 ] && ok "unmintable address refuses" || not_ok "unmintable address refuses — rc 0: $out"
-has "refusal names the board as the minter" "$out" "the space's name is the board's to mint"
+has "refusal names the board as the minter" "$out" "the seat's name is the board's to mint"
 hasnt "nothing was created" "$(cat "$FAKE_HERDR_LOG")" "workspace create"
 
-# ── 6. fail-closed: the workspace list ──────────────────────────────────────
+# ── 8. fail-closed: the workspace list ──────────────────────────────────────
 reset
 printf '1\n' >"$FAKE_HERDR_FIXTURES/workspace-list.rc"
 out=$(run_up)
 rc=$?
 [ "$rc" != 0 ] && ok "unreadable workspace list refuses" || not_ok "unreadable workspace list refuses — rc 0: $out"
-has "refusal says why" "$out" "refusing to guess whether fake/dispatch already exists"
+has "refusal says why" "$out" "refusing to guess whether the repo's main workspace exists"
 hasnt "no blind create" "$(cat "$FAKE_HERDR_LOG")" "workspace create"
 
-# ── 7. fail-open: the roster ────────────────────────────────────────────────
+# ── 9. fail-open: the roster ────────────────────────────────────────────────
 reset
 printf '1\n' >"$FAKE_BOARD_FIXTURES/roster.rc"
 out=$(run_up)
@@ -154,7 +193,7 @@ rc=$?
 has "degradation is named" "$out" "roster read failed"
 has "the space still came up" "$out" "workspace wT (created)"
 
-# ── 8. arguments: none taken ────────────────────────────────────────────────
+# ── 10. arguments: none taken ───────────────────────────────────────────────
 reset
 out=$(run_up --rota)
 rc=$?
@@ -164,6 +203,7 @@ rc=$?
 [ "$rc" = 0 ] && ok "--help exits 0" || not_ok "--help exits 0 — rc $rc"
 has "--help states idempotence" "$out" "re-run heals"
 has "--help states no scheduling" "$out" "Arms nothing scheduled"
+has "--help states the main-workspace placement" "$out" "MAIN workspace"
 
 echo
 echo "$pass passed, $fail failed (of $n)"
