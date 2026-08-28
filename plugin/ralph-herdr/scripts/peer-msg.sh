@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # peer-msg.sh — compose one templated message for the cross-session
-# SendMessage transport (GH-2183, unit G of #2176). fleet-send.sh's sibling:
+# SendMessage transport (GH-2183, unit G of #2176; role-agnostic v2 in
+# GH-2216, unit H of #2208). fleet-send.sh's sibling:
 # that script owns the herdr-prompt grammar, this one owns the SendMessage
 # side. herdr keeps spawn/lifecycle; SendMessage carries the brief→reply
 # loops on hub edges (lead↔worker, hero↔lead) and the GH-1890 knowledge
@@ -12,18 +13,26 @@
 # stdout is the exact TO/BODY pair the caller passes to SendMessage
 # verbatim. NOTHING IS SENT BY THIS SCRIPT.
 #
-#   peer-msg.sh brief ISSUE VERB [--candidates LIST] [-m MSG]
+#   peer-msg.sh brief TO VERB [--candidates LIST] [-m MSG] [--re N]
 #               [--file PATH] [--found TEXT] [--changed TEXT]
 #   peer-msg.sh reply FROM VERB [-m MSG] [--re N]
 #               [--file PATH] [--found TEXT] [--changed TEXT]
-#   peer-msg.sh live ISSUE [--candidates LIST]
+#   peer-msg.sh live TO [--candidates LIST]
 #
-#   brief   initiate to the live session driving ISSUE. The peer namespace
+#   TO      role-agnostic (GH-2216, topology H): an ISSUE number (the live
+#           session driving that unit), `lead`, or `dispatch`. The lead and
+#           the hero hold no worktree (D3.2/D3.1), so their peer addresses
+#           root at the SOURCE-CHECKOUT leaf — `board peer lead|dispatch`
+#           owns that rule; every source-checkout session shares the leaf,
+#           so a hero beside a lead is a refusal, never a guess (the herd
+#           lane, fleet-send --lead/--dispatch, resolves roles precisely).
+#
+#   brief   initiate to the live session TO names. The peer namespace
 #           is harness-owned (GH-1918): an address is ENUMERATED, NEVER
 #           CONSTRUCTED, so the live peer names the caller's transport
 #           listed (ListAgents) arrive via --candidates (comma- or
 #           newline-separated) or stdin, and resolution is delegated to
-#           `board peer ISSUE`, which holds the prefix rule and both branch
+#           `board peer`, which holds the prefix rules and both branch
 #           grammars. Zero matches → exit 2 (that session is not running;
 #           the board is the lane). Two → exit 3 (name one explicitly —
 #           the wrong session is worse than no session).
@@ -35,20 +44,24 @@
 #           message's from line, or use fleet-send.sh for the herdr lane.
 #           No liveness probe: a dead address fails loudly at send, which
 #           is the sanctioned discovery (§9.2).
-#   live    the liveness check alone — resolve ISSUE against the enumerated
+#   live    the liveness check alone — resolve TO against the enumerated
 #           candidates and print the one address. Same exits as brief.
 #
 #   VERB    one lowercase word naming what this message IS:
 #           question | finding | correction | objection | brief | answer …
+#           The template's KIND field is VERSIONED (D2.1) — this script
+#           stamps `:v1` on it; callers never type the version, so a richer
+#           dispatch protocol later bumps the stamp without a second family.
 #   -m      free-form body (optional)
 #   --file / --found / --changed
 #           the three structured sections; omitted sections print `-` so a
 #           reader can grep the template without wondering whether a blank
 #           means "nothing" or "not filled in"
-#   --re N  (reply) the issue this reply is about, when known
+#   --re N  the issue this message is about, when TO does not name it
+#           (reply, and role-target briefs)
 #
 # Exit: 0 composed (live: the address is stdout, alone)
-#       2 no live peer for ISSUE — file it on the board instead
+#       2 no live peer for TO — the board is the durable lane (C9 for a lead)
 #       3 ambiguous — two live sessions match; name one explicitly
 #      64 bad invocation (incl. a herdr name where a peer address belongs)
 #       1 the board CLI itself failed — the resolver's error is printed
@@ -67,7 +80,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
-usage() { sed -n '2,63p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,75p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 udie() {
   echo "peer-msg: $*" >&2
   exit 64
@@ -128,19 +141,30 @@ if [ "$SUB" != "live" ]; then
     udie "VERB must be one lowercase word (got '$VERB') — it names what this message IS"
 fi
 
-# resolve_addr ISSUE — the enumerate-never-construct step, delegated to
-# `board peer` (GH-1918 holds the prefix rule there; a second copy here is
-# the drift shape GH-1843 names). Candidates come from --candidates or
-# stdin — whatever the caller's transport enumerated; this script never
-# invents one. Prints the address; the exit code carries the refusal.
+# The role-agnostic TO grammar (GH-2216): an issue number, or a role.
+if [ "$SUB" != "reply" ]; then
+  case "$TARGET" in
+    lead | dispatch) ;;
+    '' | *[!0-9]*) udie "TO must be an issue number, 'lead', or 'dispatch' (got '$TARGET')" ;;
+  esac
+fi
+
+# resolve_addr TO — the enumerate-never-construct step, delegated to
+# `board peer` (GH-1918 holds the worker prefix rule there; GH-2216 the
+# role targets' source-checkout leaf; a second copy here is the drift shape
+# GH-1843 names). Candidates come from --candidates or stdin — whatever the
+# caller's transport enumerated; this script never invents one. Prints the
+# address; the exit code carries the refusal. On failed liveness the refusal
+# names the DURABLE lane (D2.3): the C9 board comment, whose escalation TTL
+# already bounds the wait on a lead.
 resolve_addr() {
-  local issue="$1" raw out kind
+  local target="$1" raw out kind
   if [ -n "$CANDS" ]; then
     raw="$CANDS"
   else
     raw=$(cat)
   fi
-  out=$("$BOARD" peer "$issue" --candidates "$raw" --json 2>&1) || true
+  out=$("$BOARD" peer "$target" --candidates "$raw" --json 2>&1) || true
   kind=$(printf '%s' "$out" | jq -r '.kind // empty' 2>/dev/null || true)
   case "$kind" in
     resolved)
@@ -148,12 +172,31 @@ resolve_addr() {
       return 0
       ;;
     none)
-      echo "peer-msg: no live peer is driving #$issue among the enumerated candidates — that session is not running." >&2
-      echo "peer-msg: file the message on the board instead (\`board comment $issue -m …\` / \`board answer $issue -m …\`) — a message no live peer can read is lost; the board is not." >&2
+      case "$target" in
+        lead)
+          echo "peer-msg: no live source-checkout session to carry this to the lead." >&2
+          echo "peer-msg: the durable lane is C9 (GH-2179): \`board move <your-unit> human-needed --why \"…\"\` routes to the lead and the escalation TTL bounds the wait; \`board comment <epic> -m …\` for non-escalation knowledge." >&2
+          ;;
+        dispatch)
+          echo "peer-msg: no live source-checkout session to carry this to dispatch." >&2
+          echo "peer-msg: dispatch's durable address IS the board (D5.1) — \`board comment NNN -m …\`; the inbox reads the board." >&2
+          ;;
+        *)
+          echo "peer-msg: no live peer is driving #$target among the enumerated candidates — that session is not running." >&2
+          echo "peer-msg: file the message on the board instead (\`board comment $target -m …\` / \`board answer $target -m …\`) — a message no live peer can read is lost; the board is not." >&2
+          ;;
+      esac
       return 2
       ;;
     ambiguous)
-      echo "peer-msg: ambiguous — $(printf '%s' "$out" | jq -r '.candidates | join(", ")') are distinct live sessions for #$issue. Name one explicitly (pass its exact address as --candidates); never guess." >&2
+      case "$target" in
+        lead | dispatch)
+          echo "peer-msg: ambiguous — $(printf '%s' "$out" | jq -r '.candidates | join(", ")') share the source checkout, and the peer namespace cannot tell the $target from its neighbors. Name one explicitly (pass its exact address as --candidates), or take the herd lane: fleet-send.sh --$target resolves roles precisely (token-stamped names)." >&2
+          ;;
+        *)
+          echo "peer-msg: ambiguous — $(printf '%s' "$out" | jq -r '.candidates | join(", ")') are distinct live sessions for #$target. Name one explicitly (pass its exact address as --candidates); never guess." >&2
+          ;;
+      esac
       return 3
       ;;
     *)
@@ -172,7 +215,10 @@ fi
 RE_LINE="-"
 if [ "$SUB" = "brief" ]; then
   addr=$(resolve_addr "$TARGET") || exit "$?"
-  RE_LINE="#$TARGET"
+  case "$TARGET" in
+    lead | dispatch) [ -n "$RE_SEC" ] && RE_LINE="#$RE_SEC" ;;
+    *) RE_LINE="#$TARGET" ;;
+  esac
 else
   addr="$TARGET"
   case "$addr" in
@@ -191,7 +237,9 @@ sender="${RALPH_HERDR_SENDER:-$(whoami)@$(hostname -s 2>/dev/null || hostname)}"
 [ -n "${HERDR_PANE_ID:-}" ] && sender="$sender (pane $HERDR_PANE_ID)"
 ts=$(date -u +%FT%TZ)
 
-body="[peer-msg] KIND: $SUB VERB: $VERB RE: $RE_LINE
+# KIND is stamped :v1 by this script (D2.1) — the caller never types the
+# version, so a richer dispatch protocol bumps the stamp, not the family.
+body="[peer-msg] KIND: $SUB:v1 VERB: $VERB RE: $RE_LINE
 FROM: $sender AT: $ts
 REPLY: to this message's transport 'from' address, verbatim — a peer address is enumerated, never constructed, and a herdr agent name does not resolve here
 FILE: ${FILE_SEC:--}

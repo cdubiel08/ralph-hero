@@ -45,7 +45,7 @@ assert_err_has()  { if printf '%s' "$ERR" | grep -qF "$2"; then ok "$1"; else no
 run brief 42 question --candidates "feat-42-fake-issue-01,feat-7-other-02" -m "does the walk page closed items?"
 assert_rc "brief resolves and composes" 0
 assert_out_has "TO is the resolver's answer, never constructed here" "TO: feat-42-fake-issue-01"
-assert_out_has "grammar names the kind and verb" "[peer-msg] KIND: brief VERB: question RE: #42"
+assert_out_has "grammar names the versioned kind and verb (GH-2216)" "[peer-msg] KIND: brief:v1 VERB: question RE: #42"
 assert_out_has "free-form body carried" "does the walk page closed items?"
 assert_out_has "omitted section prints '-' (nothing vs not-filled-in)" "FILE: -"
 assert_out_has "reply instruction rides the body" "transport 'from' address, verbatim"
@@ -127,6 +127,49 @@ fi
 
 run live 7 --candidates "feat-42-fake-issue-01"
 assert_rc "live on a dead session is exit 2" 2
+
+# ── role targets (GH-2216): lead/dispatch ride the same protocol ────────────
+run brief lead question --candidates "fake-src-01,feat-42-fake-issue-01" --re 2208 -m "epic frontier is empty but two children are open"
+assert_rc "brief lead resolves and composes" 0
+assert_out_has "TO is the resolved source-checkout session" "TO: fake-src-01"
+assert_out_has "role brief carries --re context" "KIND: brief:v1 VERB: question RE: #2208"
+if grep -q "peer lead --candidates" "$LOG"; then
+  ok "lead resolution delegated to board peer (one grammar owner)"
+else
+  not_ok "lead resolution delegated to board peer — log: $(cat "$LOG")"
+fi
+
+printf '{"role":"lead","peerPrefix":"fake-src","kind":"none"}\n' >"$FIX/peer.lead.json"
+echo 1 >"$FIX/peer.lead.rc"
+run brief lead question --candidates "feat-42-fake-issue-01" -m x
+assert_rc "no live lead is exit 2" 2
+assert_err_has "failed liveness names the C9 lane (D2.3)" "human-needed"
+assert_err_has "and the TTL bound on the wait" "TTL"
+
+printf '{"role":"lead","peerPrefix":"fake-src","kind":"ambiguous","candidates":["fake-src-01","fake-src-02"]}\n' >"$FIX/peer.lead.json"
+run brief lead question --candidates "fake-src-01,fake-src-02" -m x
+assert_rc "ambiguous role target is exit 3" 3
+assert_err_has "the structural limit is named" "cannot tell the lead"
+assert_err_has "the herd lane is offered" "fleet-send.sh --lead"
+rm -f "$FIX/peer.lead.json" "$FIX/peer.lead.rc"
+
+printf '{"role":"dispatch","peerPrefix":"fake-src","kind":"none"}\n' >"$FIX/peer.dispatch.json"
+echo 1 >"$FIX/peer.dispatch.rc"
+run brief dispatch finding --candidates "feat-42-fake-issue-01" -m x
+assert_rc "no live dispatch is exit 2" 2
+assert_err_has "dispatch's durable address is the board (D5.1)" "durable address IS the board"
+rm -f "$FIX/peer.dispatch.json" "$FIX/peer.dispatch.rc"
+
+run live dispatch --candidates "fake-src-01"
+assert_rc "live resolves a role target" 0
+if [ "$OUT" = "fake-src-01" ]; then
+  ok "live prints the role address alone"
+else
+  not_ok "live prints the role address alone — got: $OUT"
+fi
+
+run brief leader question --candidates "x-01" -m x
+assert_rc "an unknown role word is a usage error, not an issue number" 64
 
 # ── usage ───────────────────────────────────────────────────────────────────
 run frobnicate 42

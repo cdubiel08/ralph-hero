@@ -357,30 +357,43 @@ overwritten — the session died before its first self-report):
 bash plugin/ralph-herdr/scripts/fleet-status.sh [--json]
 ```
 
-**Message an agent** with the team template (status verb, FROM/AT,
+**Message an agent** with the team template (versioned KIND, FROM/AT,
 FILE/FOUND/CHANGED sections) instead of a hand-built heredoc; refusals come
 back as distinct exit codes (0 delivered · 4 unconfirmed · 2 refused ·
-3 unreachable). `--wait` is stripped, loudly, when the target is the lead
-(`o`-lane, or `$RALPH_HERDR_LEAD`) — a lead blocked on your reply while you
-wait on its is the documented deadlock:
+3 unreachable · 5 no live role match · 6 ambiguous role). The to-address is
+role-agnostic (GH-2216): a literal agent name, `--lead [EPIC]` (resolved via
+`board who lead EPIC`, or `$RALPH_HERDR_LEAD` verbatim when the spawn
+stamped it), or `--dispatch` (via `board who dispatch`; a token-less hero is
+invisible there, and the refusal names the board — D5.1). Zero-or-many live
+matches refuse, never guess. `--wait` is stripped, loudly, on any standing
+seat (`o`-lane, `$RALPH_HERDR_LEAD`, or a role target) — a seat blocked on
+your reply while you wait on its is the documented deadlock:
 
 ```bash
 bash plugin/ralph-herdr/scripts/fleet-send.sh w1743-fix-claim-race status -m "rebased; attesting next"
+bash plugin/ralph-herdr/scripts/fleet-send.sh --lead 2208 brief -m "frontier check please"
+bash plugin/ralph-herdr/scripts/fleet-send.sh --dispatch question -m "cap raise?"
 ```
 
-**Message a peer session over SendMessage** (GH-2183) — fleet-send's sibling
-for the harness transport: it composes, it never sends. `brief` resolves the
-target from your enumerated live peers (`ListAgents` → `--candidates`,
-delegated to `board peer` — an address is enumerated, never constructed);
-`reply` takes a received message's `from` address verbatim and refuses a
-herdr agent name (a different namespace that does not resolve there);
-`live` is the liveness check alone. Pass the printed TO/BODY to SendMessage
+**Message a peer session over SendMessage** (GH-2183; role-agnostic v2 in
+GH-2216) — fleet-send's sibling for the harness transport: it composes, it
+never sends. `brief` resolves the target from your enumerated live peers
+(`ListAgents` → `--candidates`, delegated to `board peer` — an address is
+enumerated, never constructed); TO is an issue number, `lead`, or
+`dispatch` (roles filter by the source-checkout leaf — the lead and the
+hero hold no worktree — so a hero beside a lead is a refusal, and the herd
+lane above is the precise one); `reply` takes a received message's `from`
+address verbatim and refuses a herdr agent name (a different namespace that
+does not resolve there); `live` is the liveness check alone. Failed
+liveness names the durable lane: the C9 board comment, whose escalation TTL
+bounds the wait on a lead (D2.3). Pass the printed TO/BODY to SendMessage
 verbatim, then report "sent; unknown whether read" — never "delivered":
 
 ```bash
 bash plugin/ralph-herdr/scripts/peer-msg.sh brief 2183 question --candidates "<ListAgents names>" -m "…"
+bash plugin/ralph-herdr/scripts/peer-msg.sh brief lead question --candidates "<ListAgents names>" --re 2208 -m "…"
 bash plugin/ralph-herdr/scripts/peer-msg.sh reply feat-1888-retire-lineage-02 correction -m "…"
-bash plugin/ralph-herdr/scripts/peer-msg.sh live 2183 --candidates "<ListAgents names>"
+bash plugin/ralph-herdr/scripts/peer-msg.sh live dispatch --candidates "<ListAgents names>"
 ```
 
 ## 8. Drive an agent by hand

@@ -5899,6 +5899,52 @@ describe("board name: the one place a transport reads the convention (GH-1807)",
     expect(legacy.peerPrefixes).toEqual([prefix, "GH-1918"]);
   });
 
+  it("peer lead/dispatch filter by the source-checkout leaf, and refuse the structural ambiguity (GH-2216)", () => {
+    // The lead and the hero hold no worktree (D3.2/D3.1): their peer root is
+    // the source checkout's directory leaf, read from git's common dir. The
+    // fake reports /srv/ralph-hero/.git regardless of repoRoot, which is the
+    // worktree case — the leaf must come from the COMMON dir, not the cwd.
+    const gh = new FakeGh();
+    gh.gitCommonDir = "/srv/ralph-hero/.git";
+    const ctx = makeCtx(gh);
+
+    const hit = JSON.parse(
+      say(["peer", "lead", "--candidates", "feat-42-elsewhere-01,ralph-hero-a2", "--json"], ctx),
+    );
+    expect(hit).toMatchObject({ role: "lead", kind: "resolved", address: "ralph-hero-a2", peerPrefix: "ralph-hero" });
+
+    // Two source-checkout sessions: the namespace cannot tell a lead from a
+    // hero, so the answer is a refusal, never a judgment. Measured live
+    // 2026-08-28: ralph-hero-a2 + ralph-hero-8f both standing.
+    const two = JSON.parse(
+      say(["peer", "dispatch", "--candidates", "ralph-hero-a2,ralph-hero-8f", "--json"], ctx),
+    );
+    expect(two.kind).toBe("ambiguous");
+    expect(run(["peer", "dispatch", "--candidates", "ralph-hero-a2,ralph-hero-8f"], ctx)).toBe(1);
+    expect(run(["peer", "lead", "--candidates", "feat-42-elsewhere-01"], ctx)).toBe(1); // none
+
+    // The suffix rule is resolvePeerAddress's own: a hyphenated tail is a
+    // DIFFERENT worktree's leaf, not a source-checkout session.
+    const near = JSON.parse(say(["peer", "lead", "--candidates", "ralph-hero-extra-thing", "--json"], ctx));
+    expect(near.kind).toBe("none");
+
+    // From the source checkout itself git answers ".git" — the leaf is then
+    // the repo root's own basename.
+    gh.gitCommonDir = ".git";
+    const local = makeCtx(gh, "me@test", "/checkouts/ralph-hero");
+    expect(JSON.parse(say(["peer", "lead", "--candidates", "ralph-hero-8f", "--json"], local))).toMatchObject({
+      kind: "resolved",
+      address: "ralph-hero-8f",
+    });
+
+    // A non-repo cannot name a leaf: refuse toward the durable lane, never
+    // filter by a guessed prefix.
+    gh.gitCommonDir = null;
+    expect(() => run(["peer", "lead", "--candidates", "ralph-hero-a2"], makeCtx(gh))).toThrow(
+      /source-checkout leaf/,
+    );
+  });
+
   it("--lane picks the agent lane and refuses one outside the closed registry", () => {
     const gh = new FakeGh();
     gh.issues.set(1807, { number: 1807, state: "Backlog", title: "Review sweep" });

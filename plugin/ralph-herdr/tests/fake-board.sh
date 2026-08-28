@@ -47,6 +47,13 @@
 #   roster …             roster.txt (RAW text), else a canned one-liner —
 #                        dispatch-up.sh's best-effort print; roster.rc
 #                        forces the exit code
+#   peer lead|dispatch   peer.lead.json / peer.dispatch.json (+ .rc), else a
+#                        canned resolved envelope (fake-src-01) — the GH-2216
+#                        role targets
+#   who lead N …         who.lead.<N>.json, then who.lead.json, else one live
+#                        grammar-matched lead (o<N>-fake) — fleet-send's
+#                        --lead resolver
+#   who dispatch …       who.dispatch.json, else one live token-stamped seat
 #   help …               help.txt (RAW text) — ABSENT prints a default that
 #                        INCLUDES the `  answer NNN` verb line; a help.txt
 #                        without it models a board CLI predating the verb
@@ -161,6 +168,36 @@ case "${1-} ${2-}" in
   "move "*)
     emit_fixture move || printf '#%s moved to %s (fake)\n' "${2-}" "${3-}"
     key="move"
+    ;;
+  "who lead"*)
+    # The phone book fleet-send's --lead resolves through (GH-2216). Default:
+    # one live grammar-matched lead for the asked epic. Fixtures:
+    # who.lead.<EPIC>.json / .rc, then who.lead.json.
+    emit_fixture "who.lead.${3-}" who.lead ||
+      printf '{"repo":"fake-repo","issue":%s,"epic":%s,"address":"fake-repo/t%s-fake/o%s-fake","live":[{"name":"o%s-fake","pane":"p1","status":"idle","source":"token","repoVerified":true}],"agentsEvaluated":true}\n' \
+        "${3-0}" "${3-0}" "${3-0}" "${3-0}" "${3-0}"
+    if [ -n "$FIX" ] && [ -f "$FIX/who.lead.${3-}.rc" ]; then
+      key="who.lead.${3-}"
+    else
+      key="who.lead"
+    fi
+    ;;
+  "who dispatch"*)
+    emit_fixture who.dispatch ||
+      printf '{"repo":"fake-repo","address":"fake-repo/dispatch","live":[{"name":"hero-fake","pane":"p2","status":"idle","source":"token","repoVerified":true}],"agentsEvaluated":true}\n'
+    key="who.dispatch"
+    ;;
+  "peer lead"* | "peer dispatch"*)
+    # The GH-2216 role targets: resolution filters by the source-checkout
+    # leaf. Same fixture mechanics as the issue form (peer.lead.json /
+    # peer.dispatch.json + .rc), with a resolved default.
+    emit_fixture "peer.${2-}" peer ||
+      printf '{"role":"%s","peerPrefix":"fake-src","kind":"resolved","address":"fake-src-01"}\n' "${2-}"
+    if [ -n "$FIX" ] && [ -f "$FIX/peer.${2-}.rc" ]; then
+      key="peer.${2-}"
+    else
+      key="peer"
+    fi
     ;;
   "peer "*)
     # The GH-1918 resolver peer-msg.sh delegates to. Default is a CANNED
