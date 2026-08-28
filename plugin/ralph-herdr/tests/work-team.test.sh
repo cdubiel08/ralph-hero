@@ -115,6 +115,8 @@ line_has "team dry: the editing tools are cut from the lead's harness" \
   "$OUT" "-- --tools Bash,Read,Grep,Glob"
 line_has "team dry: the prompt names the lead's own staffing path" \
   "$OUT" "work-fleet.sh --epic 900"
+line_has "team dry: the prompt names the self-dissolve final act (D3.3, GH-2215)" \
+  "$OUT" "on epic Done, self-dissolve via workspace close"
 
 record=$(printf '%s\n' "$OUT" | sed -n 's/^  ledger append (spawn): //p' | head -1)
 if [ -n "$record" ] && jq -e . >/dev/null 2>&1 <<<"$record"; then

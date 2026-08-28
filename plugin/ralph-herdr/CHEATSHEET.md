@@ -477,7 +477,13 @@ bash ralph/scripts/herdr-setup.sh sweep     # the INVERSE pile reap cannot touch
                                             # if it's stale (staleness only
                                             # under-collects). Branch deletion and
                                             # `git worktree prune` stay out of
-                                            # scope: only the checkout on disk
+                                            # scope: only the checkout on disk.
+                                            # Also closes orphaned TEAM spaces the
+                                            # event healer flagged (a lead that
+                                            # died mid-self-dissolve, GH-2215):
+                                            # idle + label-proved only; live,
+                                            # recycled-id and unreadable-flag
+                                            # rows are LISTED, never closed
 ```
 
 One finished workspace by hand — the command the sweep also uses:
