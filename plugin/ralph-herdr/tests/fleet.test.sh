@@ -871,6 +871,70 @@ is "work-fleet: --help exits 0" "0" "$RC"
 line_has "work-fleet: the capability is discoverable from --help" \
   "$OUT" "work-fleet.sh [--refill] [ISSUE...]"
 
+# ═══ 9b. work-fleet.sh --epic — the team lead's staffing path (GH-2214) ══════
+# D3.2 moved staffing from work-team.sh into the LEAD's own hands: --epic is
+# the ranked frontier filtered to the epic's DIRECT children, capped at
+# FLEET. A ranked path — nobody named the issues — so the unwired-reference
+# guard applies; refused beside an explicit list and beside --refill.
+cat >"$FAKE_BOARD_FIXTURES/frontier.json" <<'EOF'
+{"frontier":[{"number":501,"title":"Unit A","parentNumber":700},
+             {"number":502,"title":"Stranger","parentNumber":null},
+             {"number":503,"title":"Unit B","parentNumber":700}],
+ "blocked":[]}
+EOF
+run_wf --epic 700
+is "work-fleet --epic: exits 0" "0" "$RC"
+line_has "work-fleet --epic: names the team scope" "$OUT" "team GH-700 staffing"
+line_has "work-fleet --epic: first ready child planned, ranked order" "$OUT" "would spawn GH-501"
+line_has "work-fleet --epic: second ready child planned" "$OUT" "would spawn GH-503"
+line_lacks "work-fleet --epic: a ready non-child is never team work" "$OUT" "GH-502"
+
+RC=0
+OUT=$(RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+  RALPH_HERDR_LEDGER="$WFL" RALPH_HERDR_DRY_RUN=true ANTHROPIC_API_KEY= \
+  RALPH_HERDR_FLEET=1 bash "$SCRIPTS/work-fleet.sh" --epic 700 </dev/null 2>&1) || RC=$?
+line_has "work-fleet --epic: RALPH_HERDR_FLEET caps the pick" "$OUT" "would spawn GH-501"
+line_lacks "work-fleet --epic: past the cap is not picked" "$OUT" "would spawn GH-503"
+
+run_wf --epic 750
+is "work-fleet --epic: no ready children exits 0" "0" "$RC"
+line_has "work-fleet --epic: empty slice NAMES the epic (≠ frontier empty)" \
+  "$OUT" "no ready children of GH-750 on the frontier"
+
+run_wf --epic 700 501
+is "work-fleet --epic + list: dies" "1" "$RC"
+line_has "work-fleet --epic + list: the override lane is named" "$OUT" "explicit override"
+
+run_wf --epic 700 --refill
+is "work-fleet --epic + refill: dies" "1" "$RC"
+line_has "work-fleet --epic + refill: the lead is the standing refiller" \
+  "$OUT" "standing refiller"
+
+run_wf --epic
+is "work-fleet --epic with no value: dies" "1" "$RC"
+line_has "work-fleet --epic with no value: says what it takes" "$OUT" "--epic takes an issue number"
+
+run_wf --epic abc
+is "work-fleet --epic non-numeric: dies" "1" "$RC"
+
+# ═══ 9c. the spawn-edge guard at the fleet path (GH-2214) ════════════════════
+# Every session this script opens is a DRIVER; the spawner's stated role must
+# be allowed to create one. orchestrator→driver is the lead's staffing edge
+# (the whole point of D3.2); a leaf role is refused before any read.
+RC=0
+OUT=$(RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+  RALPH_HERDR_LEDGER="$WFL" RALPH_HERDR_DRY_RUN=true ANTHROPIC_API_KEY= \
+  RALPH_HERDR_SPAWNER_ROLE=orchestrator bash "$SCRIPTS/work-fleet.sh" --epic 700 </dev/null 2>&1) || RC=$?
+is "spawn edge: orchestrator→driver passes (the lead's staffing edge)" "0" "$RC"
+line_has "spawn edge: the lead's pick still plans" "$OUT" "would spawn GH-501"
+
+RC=0
+OUT=$(RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+  RALPH_HERDR_LEDGER="$WFL" RALPH_HERDR_DRY_RUN=true ANTHROPIC_API_KEY= \
+  RALPH_HERDR_SPAWNER_ROLE=investigator bash "$SCRIPTS/work-fleet.sh" </dev/null 2>&1) || RC=$?
+is "spawn edge: a leaf role is refused" "1" "$RC"
+line_has "spawn edge: the refusal names the edge" "$OUT" "may not spawn"
+
 rm -f "$FAKE_BOARD_FIXTURES/frontier.json"
 rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc
 
