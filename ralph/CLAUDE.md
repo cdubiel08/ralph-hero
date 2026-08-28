@@ -2,7 +2,7 @@
 
 ## What this is
 
-ralph v2 (GH-1662): six skills, one agent, one board CLI, courtesy hooks, and lane selectors. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`; lanes spec (GH-1712): `../thoughts/shared/specs/2026-08-07-loop-agent-lanes-spec.md`.
+ralph v2 (GH-1662): ten skills, one agent, one board CLI, courtesy hooks, and lane selectors. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`; lanes spec (GH-1712): `../thoughts/shared/specs/2026-08-07-loop-agent-lanes-spec.md`.
 
 ```text
 ralph/
@@ -11,7 +11,10 @@ ralph/
 ├── skills/tend/        # hygiene lane: Backlog shape + Done audit (GH-1712)
 ├── skills/dispatch/    # standing ops lane: authorities + reserved set (GH-2177)
 ├── skills/board/       # human surface — orientation, intake, answers, doctor
+├── skills/hero/        # attended face of dispatch — standing sitting (GH-2182)
 ├── skills/help/        # topic-routed setup help (herdr cockpit wiring, GH-1759)
+├── skills/w/           # whisper shortcut — one message via the GH-2216 wrappers (GH-2220)
+├── skills/d/           # dispatch-up shortcut — stand up the dispatch seat (GH-2220)
 ├── skills/using-html/  # vendored utility (byte-identical upstream; do not edit)
 ├── agents/investigator.md  # read-only fan-out worker (hard tools: allowlist) —
 │                       #   also the herdr-plane investigator's binding: its
