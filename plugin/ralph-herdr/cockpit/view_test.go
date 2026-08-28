@@ -153,6 +153,22 @@ func TestViewOverlaysAndInput(t *testing.T) {
 		t.Error("peek must advertise that it does not steal focus")
 	}
 
+	// GH-2217: a live agent's C8 lineage rides the peek header — and a
+	// session with no recorded lineage shows none (absence is not depth 0).
+	m.agents = setAgents([]Agent{
+		{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w",
+			Parent: "o2208-herd-topology#ab12", Depth: "1"},
+	})
+	out = viewModel(m)
+	if !strings.Contains(out, "depth 1 · parent o2208-herd-topology#ab12") {
+		t.Errorf("peek header must carry the lineage tokens; got:\n%s", out)
+	}
+	m.agents = setAgents([]Agent{{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w"}})
+	out = viewModel(m)
+	if strings.Contains(out, "depth ") || strings.Contains(out, "parent ") {
+		t.Errorf("no lineage recorded must render no lineage; got:\n%s", out)
+	}
+
 	m.mode = ModeDag
 	m.dagText = "FRONTIER — 1 eligible, 0 blocked\n  ▸ #12 Leaf"
 	out = viewModel(m)

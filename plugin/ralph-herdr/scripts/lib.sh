@@ -827,6 +827,7 @@ ralph_dep_refs_verdict() {
 spawn_work_session() {
   local n="$1" queue_json="${2:-}" branch label parent title agent live pane out
   local ref ts record ledger src lead_ref="" lead_depth=""
+  local team_lead="" who_lead="" who_dispatch=""
   # Lineage (GH-2214/D4.1): a team lead's workspace env carries its own
   # durable ref (work-team.sh mints it at workspace creation), and the
   # workers the lead spawns record it as their C8 parent and root, depth 1 —
@@ -869,6 +870,48 @@ spawn_work_session() {
   # spawn record stamps (GH-2209), and a subshell would drop it on the floor.
   _ralph_resolve_names "$n" || return 1
   branch="$RALPH_HERDR_NAMED_BRANCH"
+
+  # Chain of command (GH-2217, D4.2) — derived LOCALLY from the one address
+  # read the resolver already paid for, never a second board call per spawn:
+  # dispatch is the address's repo segment + /dispatch (the same spelling
+  # `board who dispatch` derives), and the lead's address is the worker's own
+  # team segment + the lead's grammar-B name — knowledge the spawner already
+  # holds (the lead spawned us; D3.2). The lead half is derived only when the
+  # team segment's epic and the lead name's number AGREE: a lead staffing an
+  # out-of-team unit (explicit work-fleet.sh NNN) would otherwise mint an
+  # address naming a team the lead is not in. Empty on any doubt — addresses
+  # are chrome, and a wrong address is worse than none.
+  team_lead="${RALPH_HERDR_TEAM_LEAD:-}"
+  if [ -n "$team_lead" ] && ! ralph_agent_parse "$team_lead" >/dev/null 2>&1; then
+    team_lead=""
+  fi
+  if [ -n "$RALPH_HERDR_NAMED_ADDRESS" ]; then
+    case "$RALPH_HERDR_NAMED_ADDRESS" in
+      *[!A-Za-z0-9._/-]*) : ;; # off-charset address: inject nothing derived from it
+      */*)
+        who_dispatch="${RALPH_HERDR_NAMED_ADDRESS%%/*}/dispatch"
+        case "$RALPH_HERDR_NAMED_ADDRESS" in
+          */t*-*/*)
+            if [ -n "$team_lead" ]; then
+              local _team_seg _team_epic _lead_num
+              _team_seg="${RALPH_HERDR_NAMED_ADDRESS#*/}" _team_seg="${_team_seg%%/*}"
+              _team_epic="${_team_seg#t}" _team_epic="${_team_epic%%-*}"
+              _lead_num="${team_lead#?}" _lead_num="${_lead_num%%-*}"
+              [ -n "$_team_epic" ] && [ "$_team_epic" = "$_lead_num" ] &&
+                who_lead="${RALPH_HERDR_NAMED_ADDRESS%/*}/$team_lead"
+            fi
+            ;;
+        esac
+        ;;
+    esac
+  fi
+  # Out-vars for the C3 brief writer (ralph_brief_write reads them): the who
+  # block and the pane env below come from ONE derivation, so they cannot
+  # disagree about who the lead is.
+  RALPH_HERDR_SPAWNED_ADDRESS="$RALPH_HERDR_NAMED_ADDRESS"
+  RALPH_HERDR_SPAWNED_WHO_LEAD="$who_lead"
+  RALPH_HERDR_SPAWNED_WHO_DISPATCH="$who_dispatch"
+  export RALPH_HERDR_SPAWNED_ADDRESS RALPH_HERDR_SPAWNED_WHO_LEAD RALPH_HERDR_SPAWNED_WHO_DISPATCH
 
   # Workspace label: the herd address is canonical (GH-2210/D0.3) — the same
   # derived string the C8 token carries, so the cockpit sidebar, the ledger
@@ -945,9 +988,15 @@ spawn_work_session() {
     echo "  git -C $REPO fetch -q origin main"
     echo "  $HERDR worktree create --cwd $src --branch $branch --base origin/main --no-focus${label:+ --label \"$label\"}"
     echo "    (fallback: $HERDR worktree open --cwd $src --branch $branch --no-focus${label:+ --label \"$label\"})"
-    if [ -n "${RALPH_HERDR_TEAM_LEAD:-}" ] && ralph_agent_parse "$RALPH_HERDR_TEAM_LEAD" >/dev/null 2>&1; then
-      echo "  $HERDR pane run <captured> export RALPH_HERDR_LEAD=$RALPH_HERDR_TEAM_LEAD RALPH_HERDR_TEAM_LEAD=$RALPH_HERDR_TEAM_LEAD"
-    fi
+    local _plan_env=""
+    [ -n "$team_lead" ] && _plan_env="RALPH_HERDR_LEAD=$team_lead RALPH_HERDR_TEAM_LEAD=$team_lead"
+    case "$RALPH_HERDR_NAMED_ADDRESS" in
+      '' | *[!A-Za-z0-9._/-]*) : ;;
+      *) _plan_env="$_plan_env${_plan_env:+ }RALPH_HERDR_ADDRESS=$RALPH_HERDR_NAMED_ADDRESS" ;;
+    esac
+    [ -n "$who_lead" ] && _plan_env="$_plan_env${_plan_env:+ }WHO_LEAD=$who_lead"
+    [ -n "$who_dispatch" ] && _plan_env="$_plan_env${_plan_env:+ }WHO_DISPATCH=$who_dispatch"
+    [ -n "$_plan_env" ] && echo "  $HERDR pane run <captured> export $_plan_env"
     echo "  $HERDR agent start $agent --kind claude --pane <captured>"
     echo "  $HERDR agent prompt $agent \"/ralph:work $n\""
     echo "  $HERDR agent wait $agent --until working --until blocked --timeout <${RALPH_HERDR_TURN_WAIT_SEC:-20}s>  (unconfirmed turn = failed spawn)"
@@ -1097,24 +1146,33 @@ spawn_work_session() {
   # should still have left the sweepable row.
   provision_worktree "$RALPH_HERDR_SPAWNED_WORKTREE"
 
-  # Team linkage (GH-2178): a team spawner (work-team.sh, or a lead whose own
-  # workspace env carries it) names the lead in RALPH_HERDR_TEAM_LEAD, and the
-  # address is exported into the pane's interactive shell BEFORE `agent start`
-  # so the harness inherits it — herdr panes inherit the SERVER's environment,
-  # never the spawner's shell (see the BOARD resolution note above), and
-  # `worktree create` has no --env, so the pane shell is the one channel that
-  # survives into the session. Best-effort, tokens.sh-style direct call with
-  # nothing parsed: fleet-send's o-lane name check is the primary lead
-  # detector, so a lost injection costs the by-name env fallback, never the
-  # spawn. The name is parse-validated first — it is about to land on a shell
-  # command line, and grammar B is exactly the safe charset.
-  if [ -n "${RALPH_HERDR_TEAM_LEAD:-}" ]; then
-    if ! ralph_agent_parse "$RALPH_HERDR_TEAM_LEAD" >/dev/null 2>&1; then
-      echo "RALPH_HERDR_TEAM_LEAD='$RALPH_HERDR_TEAM_LEAD' is not a grammar-B agent name — not injecting the lead address" >&2
-    elif ! "$HERDR" pane run "$pane" \
-      "export RALPH_HERDR_LEAD=$RALPH_HERDR_TEAM_LEAD RALPH_HERDR_TEAM_LEAD=$RALPH_HERDR_TEAM_LEAD" >/dev/null 2>&1; then
-      echo "could not inject RALPH_HERDR_LEAD into pane $pane — the session can still find its lead by the o-lane name" >&2
-    fi
+  # Team linkage (GH-2178) + chain of command (GH-2217): a team spawner
+  # (work-team.sh, or a lead whose own workspace env carries it) names the
+  # lead in RALPH_HERDR_TEAM_LEAD, and the addresses are exported into the
+  # pane's interactive shell BEFORE `agent start` so the harness inherits
+  # them — herdr panes inherit the SERVER's environment, never the spawner's
+  # shell (see the BOARD resolution note above), and `worktree create` has no
+  # --env, so the pane shell is the one channel that survives into the
+  # session. Best-effort, tokens.sh-style direct call with nothing parsed:
+  # fleet-send's o-lane name check is the primary lead detector, so a lost
+  # injection costs the by-name env fallback (and the SessionStart who-is-who
+  # line), never the spawn. Every value was validated above — the lead name
+  # against grammar B, the addresses against the address charset — because
+  # they are about to land on a shell command line.
+  local _pane_env=""
+  if [ -n "${RALPH_HERDR_TEAM_LEAD:-}" ] && [ -z "$team_lead" ]; then
+    echo "RALPH_HERDR_TEAM_LEAD='$RALPH_HERDR_TEAM_LEAD' is not a grammar-B agent name — not injecting the lead address" >&2
+  fi
+  [ -n "$team_lead" ] && _pane_env="RALPH_HERDR_LEAD=$team_lead RALPH_HERDR_TEAM_LEAD=$team_lead"
+  case "$RALPH_HERDR_NAMED_ADDRESS" in
+    '' | *[!A-Za-z0-9._/-]*) : ;;
+    *) _pane_env="$_pane_env${_pane_env:+ }RALPH_HERDR_ADDRESS=$RALPH_HERDR_NAMED_ADDRESS" ;;
+  esac
+  [ -n "$who_lead" ] && _pane_env="$_pane_env${_pane_env:+ }WHO_LEAD=$who_lead"
+  [ -n "$who_dispatch" ] && _pane_env="$_pane_env${_pane_env:+ }WHO_DISPATCH=$who_dispatch"
+  if [ -n "$_pane_env" ]; then
+    "$HERDR" pane run "$pane" "export $_pane_env" >/dev/null 2>&1 ||
+      echo "could not inject the chain-of-command env into pane $pane — the session can still find its lead by the o-lane name" >&2
   fi
 
   # A confirmed-live name collision at start means a session already owns

@@ -760,6 +760,30 @@ describe("C3 FleetBrief refinement", () => {
     b.skill_invocation = "review PR #1760 against the C6 shape";
     expect(validateContract("ralph.fleet_brief", b).success).toBe(true);
   });
+
+  // GH-2217 (D4.2): the who-is-who block is chain of command only, and every
+  // part of it is optional — addresses are chrome, and a brief written against
+  // a board copy that predates the grammar derives none of them.
+  it("who block carries the chain of command; absent who stays valid (back-compat)", () => {
+    const b = loadExample("good", "ralph.fleet_brief") as Record<string, unknown>;
+    delete b.who;
+    expect(validateContract("ralph.fleet_brief", b).success).toBe(true);
+    b.who = {
+      address: "ralph-hero/t2208-herd-topology/w2217-topology-i-briefs",
+      lead: "ralph-hero/t2208-herd-topology/o2208-herd-topology",
+      dispatch: "ralph-hero/dispatch",
+    };
+    expect(validateContract("ralph.fleet_brief", b).success).toBe(true);
+    // The leadless shape: dispatch present, lead absent.
+    b.who = { dispatch: "ralph-hero/dispatch" };
+    expect(validateContract("ralph.fleet_brief", b).success).toBe(true);
+  });
+
+  it("strict who refuses a peers field — peers are enumerated, never stamped", () => {
+    const b = loadExample("good", "ralph.fleet_brief") as Record<string, unknown>;
+    b.who = { dispatch: "ralph-hero/dispatch", peers: ["w1-a"] };
+    expect(validateContract("ralph.fleet_brief", b).success).toBe(false);
+  });
 });
 
 describe("C4 FleetReply refinements", () => {

@@ -53,6 +53,24 @@
       "type": "string",
       "minLength": 1
     },
+    "who": {
+      "type": "object",
+      "properties": {
+        "address": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lead": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dispatch": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "constraints": {
       "type": "object",
       "properties": {

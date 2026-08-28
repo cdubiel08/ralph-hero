@@ -107,6 +107,8 @@ line_has "team dry: the lead propagates itself as TEAM_LEAD" \
   "$OUT" "--env RALPH_HERDR_TEAM_LEAD=o900-teams-dispatch-and-inbox"
 line_has "team dry: the lead's durable ref rides the env (worker lineage, GH-2214)" \
   "$OUT" "--env RALPH_HERDR_TEAM_LEAD_REF=o900-teams-dispatch-and-inbox#"
+line_has "team dry: the dispatch seat rides the env (chain of command, GH-2217)" \
+  "$OUT" "--env WHO_DISPATCH=fake-repo/dispatch"
 line_has "team dry: the lead states its role for the fleet's spawn-edge guard" \
   "$OUT" "--env RALPH_HERDR_SPAWNER_ROLE=orchestrator"
 line_has "team dry: the lead's own spawns will record invoked_by=agent" \
@@ -222,9 +224,37 @@ set +e
 set +o pipefail
 QUEUE='{"next":{"number":901,"title":"Unit A","parentNumber":900},"queue":[]}'
 out=$(RALPH_HERDR_DRY_RUN=true RALPH_HERDR_TEAM_LEAD='$(rm -rf /)' spawn_work_session 901 "$QUEUE" 2>&1)
-line_lacks "malformed TEAM_LEAD: never printed into the pane-run plan" "$out" "pane run"
+line_lacks "malformed TEAM_LEAD: never printed into the pane-run plan" "$out" "RALPH_HERDR_LEAD="
+line_lacks "malformed TEAM_LEAD: no WHO_LEAD invented from it" "$out" "WHO_LEAD="
 out=$(RALPH_HERDR_DRY_RUN=true RALPH_HERDR_TEAM_LEAD='o900-lead' spawn_work_session 901 "$QUEUE" 2>&1)
 line_has "grammar-B TEAM_LEAD: injected into the plan" "$out" "export RALPH_HERDR_LEAD=o900-lead RALPH_HERDR_TEAM_LEAD=o900-lead"
+# Chain of command (GH-2217): the pane env carries the worker's own address
+# and the dispatch seat, derived from the one `board name` read. The canned
+# fixture's address is FLAT (no team segment), so no WHO_LEAD is derivable —
+# a lead address minted for a team the address does not name would be wrong.
+line_has "chain of command: own address rides the pane env" "$out" "RALPH_HERDR_ADDRESS=fake-repo/w901-fake-issue"
+line_has "chain of command: dispatch derived from the repo segment" "$out" "WHO_DISPATCH=fake-repo/dispatch"
+line_lacks "flat address: no WHO_LEAD minted without a matching team segment" "$out" "WHO_LEAD="
+# A team-segment address whose epic MATCHES the lead's number derives WHO_LEAD.
+cat >"$FAKE_BOARD_FIXTURES/name.901.json" <<'EOF'
+{"number":901,"kind":"feat","lane":"w","branch":"feat/901-unit-a","worktree":"feat-901-unit-a",
+ "agent":"w901-unit-a","legacyBranch":"feature/GH-901","team":"t900-teams","teamEpic":900,
+ "address":"fake-repo/t900-teams/w901-unit-a"}
+EOF
+out=$(RALPH_HERDR_DRY_RUN=true RALPH_HERDR_TEAM_LEAD='o900-lead' spawn_work_session 901 "$QUEUE" 2>&1)
+line_has "team address + matching lead: WHO_LEAD derived from the team segment" \
+  "$out" "WHO_LEAD=fake-repo/t900-teams/o900-lead"
+# Out-vars need the CURRENT shell (a $() capture is a subshell): the brief
+# writer reads these, so the pane env and the brief share one derivation.
+RALPH_HERDR_DRY_RUN=true RALPH_HERDR_TEAM_LEAD='o900-lead' spawn_work_session 901 "$QUEUE" >/dev/null 2>&1
+is "who out-var: brief writer sees the same lead derivation" \
+  "fake-repo/t900-teams/o900-lead" "$RALPH_HERDR_SPAWNED_WHO_LEAD"
+is "who out-var: brief writer sees the same dispatch derivation" \
+  "fake-repo/dispatch" "$RALPH_HERDR_SPAWNED_WHO_DISPATCH"
+# An epic/lead mismatch (a lead staffing an out-of-team unit) mints nothing.
+out=$(RALPH_HERDR_DRY_RUN=true RALPH_HERDR_TEAM_LEAD='o777-other' spawn_work_session 901 "$QUEUE" 2>&1)
+line_lacks "epic/lead mismatch: no WHO_LEAD minted" "$out" "WHO_LEAD="
+rm -f "$FAKE_BOARD_FIXTURES/name.901.json"
 
 # A lead-spawned worker records the lead's ref as parent AND root, depth 1 —
 # the C8 lineage unit I's readers read (D4.1).
