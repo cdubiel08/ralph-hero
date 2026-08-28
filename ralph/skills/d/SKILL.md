@@ -1,5 +1,5 @@
 ---
-description: Shortcut — bring up the dispatch seat. Runs `dispatch up` (GH-2213, D3.1) — ensure the named `<repo>/dispatch` workspace exists with the hero pane up in it, then relay the roster. Triggers on "/ralph:d", "dispatch up", "bring up dispatch", "open the dispatch seat", "stand up dispatch". Requires the herdr cockpit; a dispatch PASS (authorities + inbox) is /ralph:dispatch, and the attended sitting the seat hosts is /ralph:hero.
+description: Shortcut — bring up the dispatch seat. Runs `dispatch up` (GH-2213, D3.1; placement per GH-2246) — ensure the hero pane is up in the repo's main workspace (the one the fleet's worktrees nest under; the seat's address stays `<repo>/dispatch`), then relay the roster. Triggers on "/ralph:d", "dispatch up", "bring up dispatch", "open the dispatch seat", "stand up dispatch". Requires the herdr cockpit; a dispatch PASS (authorities + inbox) is /ralph:dispatch, and the attended sitting the seat hosts is /ralph:hero.
 argument-hint: ""
 context: inline
 model: sonnet
@@ -29,7 +29,8 @@ scheduled; the unattended half of dispatch is the event lane, not a rota.
    `bash ${CLAUDE_PLUGIN_ROOT}/scripts/herdr-setup.sh check`, which names the
    reinstall command on drift.
 3. **Relay** the verdict in one line — workspace created|standing, hero pane
-   opened|live — then the roster. A billing refusal (`ANTHROPIC_API_KEY` set
+   opened|live (`live-legacy` means a sitting still in a pre-GH-2246
+   `<repo>/dispatch` space — relay its migration note too) — then the roster. A billing refusal (`ANTHROPIC_API_KEY` set
    without `RALPH_ALLOW_API_BILLING=true`) is the guard working: relay it
    verbatim and stop; the hero session this stands up bills like any spawn.
 
