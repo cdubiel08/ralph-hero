@@ -92,7 +92,7 @@ billing_guard
 
 usage() {
   cat <<'EOF'
-usage: work-fleet.sh [--refill] [ISSUE...]
+usage: work-fleet.sh [--refill] [--no-watch] [ISSUE...]
        work-fleet.sh --epic EPIC
 
   (no ISSUE)  spawn the top RALPH_HERDR_FLEET (default 2, hard cap 4) issues of
@@ -107,6 +107,12 @@ usage: work-fleet.sh [--refill] [ISSUE...]
               beside an explicit list or --refill.
   --refill    arm watcher refill for the run from the frontier. Frontier policy
               only — refused with an explicit list, which is a closed set.
+  --no-watch  print the spawn summary and EXIT instead of watching — for an
+              orchestrating session that backgrounds this command and reads
+              the board anyway. Honest limit: nobody narrates completions or
+              blocks; the caller owns its own board reads. Env spelling:
+              RALPH_HERDR_NO_WATCH=1. Refill is unaffected — its edge trigger
+              is the server-side watch-event hook, not this pane's watcher.
   -h, --help  this.
 
 Every candidate prints the dependency state the frontier asserted about it
@@ -120,7 +126,7 @@ currently-open fleet PR holds, one `surface:` line per PR labelled by unit, or
 `surface: none in flight`. Fact, never prediction: advisory like the deps:
 line, and an unreadable list prints NOT CHECKED rather than rendering empty.
 
-Knobs: RALPH_HERDR_FLEET, RALPH_HERDR_REFILL / _TTL_MIN / _BUDGET,
+Knobs: RALPH_HERDR_FLEET, RALPH_HERDR_NO_WATCH, RALPH_HERDR_REFILL / _TTL_MIN / _BUDGET,
        RALPH_HERDR_DEP_REF_CAP (body references resolved per candidate, 10),
        RALPH_HERDR_SURFACE_CAP (open fleet PR file lists read, 10),
        RALPH_HERDR_DRY_RUN=true (plans everything, spawns and arms nothing).
@@ -128,6 +134,7 @@ EOF
 }
 
 REFILL="${RALPH_HERDR_REFILL:-}"
+NO_WATCH="${RALPH_HERDR_NO_WATCH:-}"
 ISSUES=""
 EPIC=""
 expect_epic=""
@@ -142,6 +149,7 @@ for arg in "$@"; do
   fi
   case "$arg" in
     --refill) REFILL=1 ;;
+    --no-watch) NO_WATCH=1 ;;
     --epic)
       [ -z "$EPIC" ] || die "--epic named twice — one team per fleet run"
       expect_epic=1
@@ -151,12 +159,17 @@ for arg in "$@"; do
       usage
       exit 0
       ;;
-    *[!0-9]* | "") die "unknown argument '$arg' (--refill, --epic, --help, or issue numbers)" ;;
+    *[!0-9]* | "") die "unknown argument '$arg' (--refill, --no-watch, --epic, --help, or issue numbers)" ;;
     *) ISSUES="$ISSUES $arg" ;;
   esac
 done
 [ -z "$expect_epic" ] || die "--epic takes an issue number (none given)"
 [ "$REFILL" = "1" ] || REFILL=""
+[ "$NO_WATCH" = "1" ] || NO_WATCH=""
+# --no-watch is the orchestrated form: the caller backgrounds this command and
+# captures its output, so there is no pane to hold and no Enter to press —
+# hold_pane's read would be the very hang the flag exists to remove.
+[ -z "$NO_WATCH" ] || trap - EXIT
 
 FLEET="${RALPH_HERDR_FLEET:-2}"
 validate_pos_int RALPH_HERDR_FLEET "$FLEET"
@@ -494,6 +507,11 @@ if [ -n "$REFILL" ]; then
 fi
 
 [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ] && exit 0
+
+if [ -n "$NO_WATCH" ]; then
+  echo "  watch: OFF (--no-watch) — nobody narrates completions; the caller owns its own board reads"
+  exit 0
+fi
 
 if [ -n "$spawned" ]; then
   # shellcheck disable=SC2086  # intentional word-splitting: one argv per agent
