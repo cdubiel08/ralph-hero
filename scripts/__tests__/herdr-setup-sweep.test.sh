@@ -74,6 +74,11 @@ case "${1:-} ${2:-}" in
     echo "worktree remove $*" >>"${FAKE_HERDR_LOG:-/dev/null}"
     printf '{"id":"t","result":{"type":"worktree_removed"}}\n'
     exit 0 ;;
+  "workspace close")
+    shift 2
+    echo "workspace close $*" >>"${FAKE_HERDR_LOG:-/dev/null}"
+    printf '{"id":"t","result":{"type":"workspace_closed"}}\n'
+    exit 0 ;;
   *) exit 1 ;;
 esac
 STUB
@@ -99,7 +104,14 @@ jq -n --arg idle "$PILE/ws-idle" --arg live "$PILE/ws-live" \
             worktree: { checkout_path: $blockedtok, is_linked_worktree: true } },
           # no known agent status anywhere — the token keeps its authority
           { workspace_id: "wNoStatus",
-            worktree: { checkout_path: $nostatus, is_linked_worktree: true } } ],
+            worktree: { checkout_path: $nostatus, is_linked_worktree: true } },
+          # GH-2215: TEAM spaces — no worktree, label is the canonical team
+          # address. These are the orphan-space pass subjects.
+          { workspace_id: "wTeamIdle", label: "repo/t31-shipped-epic" },
+          { workspace_id: "wTeamLive", label: "repo/t32-live-epic", agent_status: "working" },
+          # an id a server restart recycled: flagged, but the label belongs to
+          # another workspace — the identity proof must refuse it
+          { workspace_id: "wRecycled", label: "unrelated-project" } ],
         panes: [
           { pane_id: "p1", workspace_id: "wStaleTok", tokens: { state: "reporting" } },
           { pane_id: "p2", workspace_id: "wBlockedTok", tokens: { state: "blocked" } },
@@ -108,6 +120,20 @@ jq -n --arg idle "$PILE/ws-idle" --arg live "$PILE/ws-live" \
 
 HLOG="$TMP_ROOT/herdr.log"
 : >"$HLOG"
+
+# --- ledger fixture: orphan_space flags from the event healer (GH-2215) ------
+# wTeamIdle: flagged, present, idle, label matches → the one closable subject.
+# wTeamLive: flagged, present, but live → LISTED. wGone: flagged, absent from
+# the snapshot → settled, skipped. wRecycled: flagged for GH-40 but the id now
+# wears an unrelated label → the identity proof refuses it.
+LEDGER="$TMP_ROOT/ledger.jsonl"
+cat >"$LEDGER" <<'EOF_LEDGER'
+{"ts":"2026-08-28T00:00:00Z","ev":"spawn","agent_ref":"w1-not-an-orphan#1","workspace_id":"wIdle"}
+{"ts":"2026-08-28T00:01:00Z","ev":"orphan_space","agent_ref":"o31-shipped-epic#1700000000","workspace_id":"wTeamIdle","reason":"pane_exited","via":"event"}
+{"ts":"2026-08-28T00:02:00Z","ev":"orphan_space","agent_ref":"o32-live-epic#1700000001","workspace_id":"wTeamLive","reason":"pane_exited","via":"event"}
+{"ts":"2026-08-28T00:03:00Z","ev":"orphan_space","agent_ref":"o99-vanished#1700000002","workspace_id":"wGone","reason":"pane_exited","via":"event"}
+{"ts":"2026-08-28T00:04:00Z","ev":"orphan_space","agent_ref":"o40-old-team#1700000003","workspace_id":"wRecycled","reason":"pane_exited","via":"event"}
+EOF_LEDGER
 
 # run_sweep [args...] — from a neutral cwd. Capture as:
 #   out=$(run_sweep ...) && RC=0 || RC=$?
@@ -119,6 +145,7 @@ run_sweep() {
     RALPH_HERDR_WORKTREES_ROOT="$WT_ROOT" \
     FAKE_SNAP_FILE="$SNAP" \
     FAKE_HERDR_LOG="$HLOG" \
+    RALPH_HERDR_LEDGER="$LEDGER" \
     bash "$SRC" sweep "$@" 2>&1)
 }
 
@@ -146,6 +173,16 @@ refute "blocked-token worktree never a WOULD row" "$out" "WOULD remove workspace
 expect "token with no known agent status stays authoritative — LISTED live" "$out" \
   "LIST  worktree $PILE/ws-no-status (workspace wNoStatus) — session is live (working)"
 refute "no-status worktree never a WOULD row" "$out" "WOULD remove workspace wNoStatus"
+# GH-2215: flagged orphan team spaces — the D3.3 backstop
+expect "flagged idle team space with matching label → WOULD close" "$out" \
+  "WOULD close orphaned team space wTeamIdle (repo/t31-shipped-epic; lead o31-shipped-epic#1700000000 died — the D3.3 backstop)"
+expect "flagged but live team space LISTED, never closed" "$out" \
+  "LIST  team space wTeamLive (repo/t32-live-epic) — flagged orphaned but session is live (working) — never touched"
+refute "live team space never a WOULD row" "$out" "WOULD close orphaned team space wTeamLive"
+expect "recycled id refused by the label proof — LISTED" "$out" \
+  "LIST  team space wRecycled — flagged for GH-40 (lead o40-old-team#1700000003) but its label 'unrelated-project' is not that team's — id likely recycled; inspect by hand"
+refute "recycled id never a WOULD row" "$out" "WOULD close orphaned team space wRecycled"
+refute "a flag whose workspace is gone is settled — no row at all" "$out" "wGone"
 [ "$RC" -eq 1 ] && pass "dry run with findings exits 1" || fail "dry run with findings exits 1" "rc=$RC"
 for d in merged-clean dirty unmerged ws-idle ws-live stray-dir; do
   [ -d "$PILE/$d" ] || { fail "dry run touched nothing" "$d is gone"; break; }
@@ -191,6 +228,12 @@ grep -q "worktree remove --workspace wStaleTok" "$HLOG" &&
 grep -Eq "worktree remove --workspace (wBlockedTok|wNoStatus)" "$HLOG" &&
   fail "blocked-token and no-status workspaces never removed" "$(cat "$HLOG")" ||
   pass "blocked-token and no-status workspaces never removed"
+grep -q "workspace close wTeamIdle" "$HLOG" &&
+  pass "flagged idle team space closed through herdr (GH-2215)" ||
+  fail "flagged idle team space closed through herdr (GH-2215)" "$(cat "$HLOG")"
+grep -Eq "workspace close (wTeamLive|wRecycled|wGone)" "$HLOG" &&
+  fail "live/recycled/absent team spaces never closed" "$(cat "$HLOG")" ||
+  pass "live/recycled/absent team spaces never closed"
 for d in dirty unmerged ws-live ws-blocked-token ws-no-status stray-dir; do
   [ -d "$PILE/$d" ] || { fail "listed trees survive --apply" "$d is gone"; break; }
 done
@@ -214,6 +257,25 @@ out=$(cd "$TMP_ROOT" && env \
   bash "$SRC" sweep 2>&1) && rc=0 || rc=$?
 expect "empty pile reports nothing to sweep" "$out" "nothing to sweep"
 [ "$rc" -eq 0 ] && pass "empty pile exits 0" || fail "empty pile exits 0" "rc=$rc"
+# no RALPH_HERDR_LEDGER and no board scope in the repo: the orphan-space pass
+# forfeits with a note — never exit 2, never a finding
+expect "no board scope: orphan pass notes and forfeits" "$out" \
+  "note orphan team spaces not evaluable — no board scope discoverable"
+
+# --- 6b. unreadable ledger: a note, never 'no flags', never a close ------------
+BADLEDGER="$TMP_ROOT/bad-ledger.jsonl"
+echo "this is not json" >"$BADLEDGER"
+: >"$HLOG"
+out=$(cd "$TMP_ROOT" && env \
+  HERDR_BIN_PATH="$BIN/herdr" RALPH_HERDR_SCRIPTS_DIR="$TRANSPORT_DIR" \
+  RALPH_HERDR_REPO="$TMP_ROOT/repo" RALPH_HERDR_WORKTREES_ROOT="$EMPTY_ROOT" \
+  FAKE_SNAP_FILE="$SNAP" FAKE_HERDR_LOG="$HLOG" RALPH_HERDR_LEDGER="$BADLEDGER" \
+  bash "$SRC" sweep --apply 2>&1) && rc=0 || rc=$?
+expect "unreadable ledger says so" "$out" \
+  "note orphan team spaces not evaluable — ledger unreadable"
+grep -q "workspace close" "$HLOG" &&
+  fail "unreadable ledger closes nothing" "$(cat "$HLOG")" ||
+  pass "unreadable ledger closes nothing"
 
 # --- 7. --apply/--limit stay refused outside reap/sweep ------------------------
 out=$(bash "$SRC" check --apply 2>&1) && rc=0 || rc=$?

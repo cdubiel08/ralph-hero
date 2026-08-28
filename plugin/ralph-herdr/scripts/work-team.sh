@@ -30,6 +30,16 @@
 # this on the lead's pane.exited; `--lead-only` is retained so its call sites
 # keep working — it names what is now the only behavior.
 #
+# THE TEAM SELF-DISSOLVES (D3.3, GH-2215, an operator deviation: "very
+# guaranteed but also fast and efficient"). The brief's close-out makes the
+# lead remove its own team space as its FINAL act — `herdr workspace close
+# $HERDR_WORKSPACE_ID` (the space is a plain workspace with no worktree, so
+# `workspace close` is the verb; nothing on disk is touched) — the pane dies
+# with the space, by intent. The GUARANTEE is the backstop, not the primary:
+# a lead that dies mid-dissolve is flagged by heal.sh (ev "orphan_space")
+# and removed by `herdr-setup.sh sweep` under its liveness proofs — an
+# orphan costs one sweep, never forever.
+#
 # THE TEAM SPACE is a herdr WORKSPACE (`workspace create`), because that is
 # the one pane-creating call that carries `--env` (probed on the installed
 # 0.8.x CLI; `worktree create` does not) — and herdr panes inherit the
@@ -231,14 +241,16 @@ Your bounds (the roles.sh registry):
 - Assignment is never pushed: workers claim from the board. Do not nudge working sessions for status — read the board instead.
 - Workers escalate on board items, never in private channels. Answer what is knowable on the item's own thread; leave to the human what needs the human.
 
-Standing loop: orient from the board; keep the epic's ready children staffed up to capacity as blockers clear and workers finish; when every child is closed, post a close-out comment on GH-$EPIC and stop. Anything durable you learn goes to the board — your pane dies with you; the board does not."
+Standing loop: orient from the board; keep the epic's ready children staffed up to capacity as blockers clear and workers finish. Anything durable you learn goes to the board — your pane dies with you; the board does not.
+
+When every child is closed, the team is done (D3.3): post the close-out comment on GH-$EPIC FIRST — it must be on the board before your pane dies — then DISSOLVE the team as your final act: herdr workspace close \$HERDR_WORKSPACE_ID. Your pane dies with the space; that is the intent, not an error. A dissolve you never reach is healed without you: the event healer flags your space and the sweep removes it — dying mid-dissolve costs one sweep, never an orphan forever."
 
 if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "DRY RUN — would spawn the lead for GH-$EPIC:"
   echo "  agent: $LEAD   workspace label: $team_label   cwd: $src"
   echo "  $HERDR workspace create --cwd $src --label \"$team_label\" --env RALPH_HERDR_LEAD=$LEAD --env RALPH_HERDR_TEAM_LEAD=$LEAD${ref:+ --env RALPH_HERDR_TEAM_LEAD_REF=$ref} --env RALPH_HERDR_SPAWNER_ROLE=orchestrator --env RALPH_HERDR_INVOKED_BY=agent --no-focus"
   echo "  $HERDR agent start $LEAD --kind claude --pane <captured> -- --tools $lead_tools"
-  echo "  $HERDR agent prompt $LEAD \"<lead brief: rehydrate GH-$EPIC from board state; staff via work-fleet.sh --epic $EPIC>\""
+  echo "  $HERDR agent prompt $LEAD \"<lead brief: rehydrate GH-$EPIC from board state; staff via work-fleet.sh --epic $EPIC; on epic Done, self-dissolve via workspace close (D3.3)>\""
   if [ -n "$ref" ]; then
     record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "" "$(date -u +%FT%TZ)" "" "" orchestrator "" "" "" "$lead_addr") || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"

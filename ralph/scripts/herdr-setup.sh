@@ -17,7 +17,9 @@
 #   herdr-setup.sh sweep [--apply] [--limit N]
 #                                        remove FINISHED fleet worktrees — merged,
 #                                        clean, session idle (dry run by default —
-#                                        see the sweep block; GH-2103)
+#                                        see the sweep block; GH-2103) — and close
+#                                        orphaned TEAM spaces flagged by the event
+#                                        healer (the D3.3 backstop; GH-2215)
 #
 # Exit codes (check): 0 fully wired · 1 gaps found · 2 herdr not installed.
 # --oneline prints exactly one machine-readable line ("herdr: …") for doctor,
@@ -350,11 +352,15 @@ if [ "$MODE" = "sweep" ]; then
   # regardless: that session is waiting on a human, the one tree that must
   # survive. Dead-before-start markers (spawned/briefed) never count — the
   # git readings below still gate those trees on their own facts.
+  # Every workspace rides this read, not only worktree-backed ones: a TEAM
+  # space (GH-2214) fronts the source checkout with no worktree, and the
+  # orphan-space pass below needs the same liveness answer for it. Rows with
+  # an empty checkout path never join the worktree candidates (the join key
+  # is the path); the label rides along as the orphan pass's identity proof.
   ws_tsv=$(printf '%s' "$snap" | jq -r '
     (.panes // []) as $panes
     | (.agents // []) as $agents
     | (.workspaces // [])[]
-    | select((.worktree.checkout_path // "") != "")
     | . as $w
     | ($agents | map(select((.workspace_id // "") == $w.workspace_id) | (.agent_status // "unknown"))) as $as
     | ($panes | map(select((.workspace_id // "") == $w.workspace_id) | ((.tokens // {}).state // "")) | map(select(. != ""))) as $ts
@@ -365,10 +371,11 @@ if [ "$MODE" = "sweep" ]; then
        + ($ts | map(select(. == "blocked")))
        + (if $finished then [] else ($ts | map(select(. == "working" or . == "reporting"))) end)) as $live
     | (if $finished then ($ts | map(select(. == "working" or . == "reporting")) | unique) else [] end) as $stale
-    | [$w.worktree.checkout_path, $w.workspace_id,
+    | [($w.worktree.checkout_path // ""), $w.workspace_id,
        (if ($live | length) > 0 then "live" else "idle" end),
        ($live | unique | join(",")),
-       ($stale | join(","))]
+       ($stale | join(",")),
+       ($w.label // "")]
     | @tsv' 2>/dev/null) || ws_tsv=""
 
   wt_list=$(git -C "$REPO" worktree list --porcelain 2>/dev/null) ||
@@ -475,6 +482,77 @@ EOF_CANDS
       fi
     done
   fi
+
+  # ── flagged orphan TEAM spaces (GH-2215, the D3.3 backstop) ────────────────
+  # Self-dissolve is the lead's own final act (`herdr workspace close` from
+  # its brief); a lead that dies mid-dissolve leaves its team space standing,
+  # and heal.sh flags it in the repo's ledger (ev "orphan_space", GH-2212).
+  # This pass is the guaranteed half: an orphan costs one sweep, never
+  # forever. A team space fronts the SOURCE checkout with no worktree (unit
+  # F), so the worktree pass above cannot see it — and closing it removes
+  # nothing from disk, so the only hazard is killing a live session, guarded
+  # by the same liveness reading as the worktree pass.
+  #
+  # A flag alone is NOT enough to act on (GH-1863's ownership discipline):
+  # herdr workspace ids are short session counters that a server restart can
+  # recycle, so an idle unrelated workspace could wear a flagged id. The
+  # snapshot workspace's LABEL must corroborate the team the flagged lead ref
+  # names — `…/t<epic>-…` (D0.3) or the legacy `team GH-<epic>` — or the row
+  # is LISTED, never closed. Flags are append-only: one whose workspace is
+  # absent from the snapshot is settled (dissolved, swept, or another
+  # server's) and skipped. An underivable or unreadable ledger prints a note
+  # and forfeits only this pass — the flags survive for the next sweep, and
+  # the worktree half above has already done its work.
+  # shellcheck source=/dev/null
+  . "$_rp_scripts/ledger.sh"
+  ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
+  if [ -z "$ledger" ]; then
+    echo "  note orphan team spaces not evaluable — no board scope discoverable from $REPO (flags, if any, keep)"
+  elif [ -f "$ledger" ]; then
+    flag_rc=0
+    flagged=$(jq -r 'select(.ev == "orphan_space")
+      | [.workspace_id // "", .agent_ref // ""] | @tsv' "$ledger" 2>/dev/null |
+      awk -F'\t' '$1 != "" && !seen[$1]++') || flag_rc=$?
+    if [ "$flag_rc" -ne 0 ]; then
+      echo "  note orphan team spaces not evaluable — ledger unreadable ($ledger); an unreadable flag must never read as no flag"
+    else
+      while IFS=$'\t' read -r fwsid fref; do
+        [ -n "$fwsid" ] || continue
+        ws_line=$(awk -F'\t' -v id="$fwsid" '$2 == id { print; exit }' <<<"$ws_tsv")
+        [ -n "$ws_line" ] || continue # gone from the snapshot: already settled
+        if [ "$fwsid" = "${HERDR_WORKSPACE_ID:-}" ]; then
+          listed "team space $fwsid (lead $fref)" "this sweep is running inside it — never touched"
+          continue
+        fi
+        # The identity proof: the flagged lead ref is o<epic>-<slug>#<epoch>,
+        # so the epic is a spawn-time fact read off the grammar, not a guess.
+        epic=${fref#o}
+        epic=${epic%%-*}
+        label=$(cut -f6 <<<"$ws_line")
+        case "$epic" in
+          '' | *[!0-9]*)
+            listed "team space $fwsid" "flag's lead ref '$fref' is not o-lane grammar — cannot prove which team this is; inspect by hand"
+            continue
+            ;;
+        esac
+        case "$label" in
+          *"/t$epic-"* | "t$epic-"* | "team GH-$epic") ;;
+          *)
+            listed "team space $fwsid" "flagged for GH-$epic (lead $fref) but its label '$label' is not that team's — id likely recycled; inspect by hand"
+            continue
+            ;;
+        esac
+        if [ "$(cut -f3 <<<"$ws_line")" = "live" ]; then
+          listed "team space $fwsid ($label)" "flagged orphaned but session is live ($(cut -f4 <<<"$ws_line")) — never touched"
+          continue
+        fi
+        act "close orphaned team space $fwsid ($label; lead $fref died — the D3.3 backstop)" \
+          "$HERDR" workspace close "$fwsid"
+      done <<EOF_FLAGS
+$flagged
+EOF_FLAGS
+    fi
+  fi
 fi
 
 if [ "$MODE" = "reap" ] || [ "$MODE" = "sweep" ]; then
@@ -483,7 +561,7 @@ if [ "$MODE" = "reap" ] || [ "$MODE" = "sweep" ]; then
     if [ "$MODE" = "reap" ]; then
       echo "reap: nothing to reap — every agent's checkout exists, no orphaned processes, no stale unknown panes"
     else
-      echo "sweep: nothing to sweep — no finished fleet worktrees for $repo_name under $WT_ROOT"
+      echo "sweep: nothing to sweep — no finished fleet worktrees for $repo_name under $WT_ROOT, no flagged orphan team spaces"
     fi
     exit 0
   fi
