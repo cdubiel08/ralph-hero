@@ -1014,14 +1014,18 @@ spawn_work_session() {
   RALPH_HERDR_SPAWNED_WHO_DISPATCH="$who_dispatch"
   export RALPH_HERDR_SPAWNED_ADDRESS RALPH_HERDR_SPAWNED_WHO_LEAD RALPH_HERDR_SPAWNED_WHO_DISPATCH
 
-  # Workspace label: the herd address is canonical (GH-2210/D0.3) — the same
-  # derived string the C8 token carries, so the cockpit sidebar, the ledger
-  # and the board all read one vocabulary. A team-scoped address already
-  # carries the nesting (`repo/t<epic>-<slug>/w<n>-…`), which is what the old
-  # "GH-N via GH-parent" spelling existed to show; that spelling survives only
-  # as the fallback against a board copy that predates the grammar. The queue
+  # Workspace label: the DISPLAY form of the herd address (GH-2235) — the
+  # leaf segment, because the sidebar already groups the worktree workspace
+  # under its repo (and team) container, so a label carrying the absolute
+  # address rendered as `repo/t2208-herd-topo…` twice over: the prefix
+  # duplicated the container and the truncation cut the one segment that
+  # distinguished the rows. The ADDRESS itself stays absolute where it is
+  # authoritative — the C8 `address` token stamped below, the ledger, the
+  # roster. Against an older board with no address, the legacy
+  # "GH-N via GH-parent" nesting spelling survives as the fallback. The queue
   # JSON still feeds parent (lineage record) and title (agent-name slug).
-  label="$RALPH_HERDR_NAMED_ADDRESS" title="" parent=""
+  label=$(ralph_address_display "$RALPH_HERDR_NAMED_ADDRESS" 2>/dev/null) || label=""
+  title="" parent=""
   if [ -n "$queue_json" ]; then
     parent=$(jq -r --argjson n "$n" '
       [.next, .queue[]?] | map(select(. != null and .number == $n)) | .[0].parentNumber // empty

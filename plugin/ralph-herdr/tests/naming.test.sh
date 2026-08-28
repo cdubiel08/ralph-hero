@@ -124,6 +124,17 @@ fails "collide: generation 10 out of range" ralph_agent_name_collide w1-foo 10
 fails "collide: generation 1 out of range" ralph_agent_name_collide w1-foo 1
 fails "collide: legacy name has no slug" ralph_agent_name_collide gh-5 2
 
+# ── address display (GH-2235): the label is the address's leaf suffix ────────
+is "display: worker in a team drops repo and team segments" \
+  "w2235-address-as-label" "$(ralph_address_display 'ralph-hero/t2208-herd-topology/w2235-address-as-label')"
+is "display: flat worker address drops the repo segment" \
+  "w123-fix" "$(ralph_address_display 'demo/w123-fix')"
+is "display: team address drops the repo segment" \
+  "t2208-herd-topology" "$(ralph_address_display 'ralph-hero/t2208-herd-topology')"
+is "display: a segment-free string passes through" \
+  "dispatch" "$(ralph_address_display 'dispatch')"
+fails "display: empty address is refused" ralph_address_display ''
+
 # ── golden table — the executable TS/bash mirror ─────────────────────────────
 # contracts.test.ts runs the SAME rows through formatAgentName; a row that
 # passes here and fails there (or vice versa) is the naming drift this table

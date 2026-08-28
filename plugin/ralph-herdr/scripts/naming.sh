@@ -91,6 +91,23 @@ _ralph_truncate_slug() {
   printf '%s\n' "$out"
 }
 
+# ralph_address_display ADDRESS — the label/title spelling of a herd address:
+# the shortest unambiguous suffix given its container (GH-2235). The sidebar
+# already renders a worktree workspace inside its repo (and team) grouping,
+# so a label carrying the absolute address duplicates the container's
+# segments and the width truncation cuts exactly the segment that
+# distinguishes one row from another. The ADDRESS stays absolute everywhere
+# it is authoritative — the C8 `address` token, `board roster`, ledger
+# lines, message addressing; this derives display chrome from an
+# already-minted address (a pure suffix — no board read, no second grammar,
+# so the header's no-mirroring rule is not violated). rc 1 on empty input so
+# callers' `|| label=""` fallbacks keep working.
+ralph_address_display() {
+  local addr="${1-}"
+  [ -n "$addr" ] || return 1
+  printf '%s\n' "${addr##*/}"
+}
+
 # ralph_agent_name LANE ISSUE TITLE_OR_SLUG — print the grammar-B name
 # <lane><issue>-<slug>. TITLE_OR_SLUG is slugified (an already-valid slug
 # passes through unchanged) and truncated to the reserved-suffix budget, so

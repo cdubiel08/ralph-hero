@@ -403,12 +403,15 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 	}
 
 	// ── line 2: title. The derived herd address IS the title where a session
-	// carried one (GH-2210/D6.2) — middle-truncated so the repo prefix and the
-	// agent tail both survive a narrow card; every other card keeps its issue
-	// title, since no address exists for it by construction.
+	// carried one (GH-2210/D6.2, display rule GH-2235): the cockpit is
+	// repo-scoped, so the repo segment duplicates what the surface already
+	// establishes and its width cost came straight out of the distinguishing
+	// tail — the display drops it, then middle-truncates only what remains.
+	// Every other card keeps its issue title, since no address exists for it
+	// by construction.
 	var line2 string
 	if addr := m.cardAddress(card.Number); addr != "" {
-		line2 = textStyle.Render(trimMiddle(addr, inner))
+		line2 = textStyle.Render(trimMiddle(addressDisplay(addr), inner))
 	} else {
 		line2 = textStyle.Render(trimTo(card.Title, inner))
 	}
@@ -962,12 +965,26 @@ func trimTo(s string, n int) string {
 	return string(r) + "…"
 }
 
+// addressDisplay is the display spelling of a herd address on a repo-scoped
+// surface (GH-2235): the leading repo segment is dropped — the surface
+// already establishes it, and its width cost came out of the distinguishing
+// tail. A segment-free string (no `/`) passes through: there is nothing
+// redundant to drop. Mirrors ralph_address_display in scripts/naming.sh for
+// the segments this surface renders.
+func addressDisplay(s string) string {
+	if i := strings.IndexByte(s, '/'); i >= 0 && i+1 < len(s) {
+		return s[i+1:]
+	}
+	return s
+}
+
 // trimMiddle clips a herd address to n cells by eliding the MIDDLE
-// (GH-2210/D6.2): the repo prefix and the tail survive, because
-// `repo/…/w2210-slug` still names the unit while `repo/t2208-herd-topo…`
-// names only the team. The prefix is everything through the first `/`; when
-// even prefix + ellipsis + one tail rune cannot fit, it degrades to trimTo —
-// a tail alone would drop the repo, which is the half the rule says to keep.
+// (GH-2210/D6.2, amended GH-2235): the first-segment prefix and the tail
+// survive, because `t2208-…/w2210-slug`'s tail still names the unit while a
+// plain right-truncation cuts exactly the distinguishing end. Callers on a
+// repo-scoped surface strip the repo segment first (addressDisplay), so the
+// prefix kept here is the first segment of what REMAINS. When even prefix +
+// ellipsis + one tail rune cannot fit, it degrades to trimTo.
 func trimMiddle(s string, n int) string {
 	if n <= 1 || lipgloss.Width(s) <= n {
 		return s

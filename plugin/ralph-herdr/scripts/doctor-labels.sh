@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # doctor-labels.sh — canonical-workspace-label check (GH-2210, topology B).
 #
-# The workspace label is CANONICAL when it matches the herd address the
-# spawner derived (GH-2209): a worker's worktree workspace is labelled the
-# full address (`<repo>[/t<epic>-<slug>]/<lane><issue>-<slug>`), and a team
-# space is labelled the address's team prefix (`<repo>/t<epic>-<slug>`) — the
-# space hosts the lead, it is not the lead. READ-ONLY, like its siblings:
+# The workspace label is CANONICAL when it matches the DISPLAY form of the
+# herd address the spawner derived (GH-2209, display rule GH-2235): the
+# address is absolute, the label is its shortest unambiguous suffix given
+# the container the sidebar renders it in — a worker's worktree workspace is
+# labelled the address's leaf (`<lane><issue>-<slug>`), and a team space the
+# leaf of the address's team prefix (`t<epic>-<slug>`) — the space hosts the
+# lead, it is not the lead. A label carrying the pre-2235 ABSOLUTE spelling
+# still passes (it matched its derivation when spawned; a respawn shortens
+# it). READ-ONLY, like its siblings:
 # herdr has NO rename verb (labels are creation-time only), so nothing here
 # heals — the remedy is always a respawn under the current plugin, which
 # re-derives the label from the same grammar.
@@ -112,15 +116,22 @@ while IFS= read -r f; do
     fi
     checked=$((checked + 1))
     label=$(label_of "$ws")
-    # Canonical: the full address (a worker's worktree workspace), or the
-    # address's team prefix (the team space hosting a lead — the space is the
-    # team, not the agent). The prefix arm only exists for a three-segment
-    # address; `${addr%/*}` of a flat one would be the bare repo segment,
-    # which names nothing.
+    # Canonical: the DISPLAY form (GH-2235) — the address's leaf (a worker's
+    # worktree workspace), or the leaf of the address's team prefix (the team
+    # space hosting a lead — the space is the team, not the agent). The
+    # prefix arm only exists for a three-segment address; `${addr%/*}` of a
+    # flat one would be the bare repo segment, which names nothing. The
+    # pre-2235 ABSOLUTE spellings pass too: they matched their derivation
+    # when spawned, and labels are creation-time only.
     team_prefix=""
     case "$addr" in */*/*) team_prefix="${addr%/*}" ;; esac
-    if [ "$label" = "$addr" ] || { [ -n "$team_prefix" ] && [ "$label" = "$team_prefix" ]; }; then
+    display=$(ralph_address_display "$addr") || display=""
+    team_display=""
+    [ -n "$team_prefix" ] && { team_display=$(ralph_address_display "$team_prefix") || team_display=""; }
+    if [ "$label" = "$display" ] || { [ -n "$team_display" ] && [ "$label" = "$team_display" ]; }; then
       pass "label-$name" "workspace label matches its derivation ($label)"
+    elif [ "$label" = "$addr" ] || { [ -n "$team_prefix" ] && [ "$label" = "$team_prefix" ]; }; then
+      pass "label-$name" "workspace label carries the pre-GH-2235 absolute spelling ($label) — a respawn shortens it to the display suffix"
     else
       gap "label-$name" "workspace label '${label:-<none>}' diverges from the derived address '$addr' — labels are creation-time only (no herdr rename verb); a respawn under the current plugin re-derives it"
     fi
