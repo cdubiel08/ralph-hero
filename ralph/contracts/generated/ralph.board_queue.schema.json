@@ -1332,6 +1332,10 @@
               "type": "integer",
               "minimum": 0
             },
+            "evidenced": {
+              "type": "integer",
+              "minimum": 0
+            },
             "observationSlot": {
               "type": "boolean",
               "const": true
@@ -1342,6 +1346,7 @@
             "queue",
             "blocked",
             "snoozed",
+            "evidenced",
             "observationSlot"
           ],
           "additionalProperties": false

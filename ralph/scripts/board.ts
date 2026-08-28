@@ -5371,10 +5371,33 @@ const CLOSED_EDGE_BATCH = 50;
 export function listOwnRecentClosed(
   ctx: Ctx,
   since: Date,
-): Array<{ number: number; title: string; closedAt: string; stateReason: string | null }> {
+  /** GH-2151: opt-in per caller (the GH-1803 shape — ask only for what you
+   *  read). `closedByPullRequestsReferences(10)` under `issues(100)` is +10
+   *  pts/page by the product rule; `tendQueue` and doctor's audit line read
+   *  it, `recentDone` never renders it and does not pay for it. */
+  withClosingPRs = false,
+): Array<{
+  number: number;
+  title: string;
+  closedAt: string;
+  stateReason: string | null;
+  /** Present only when `withClosingPRs` — any merged PR in the first page of
+   *  GitHub's own closing linkage. A truncated page with no merged node reads
+   *  FALSE: the row surfaces for audit rather than being silently skipped. */
+  hasMergedClosingPR?: boolean;
+}> {
   const cutoff = since.getTime();
+  const closingPRs = withClosingPRs
+    ? `closedByPullRequestsReferences(first: 10) { nodes { merged } }`
+    : "";
   return withCache(ctx, (cache) => {
-    const out: Array<{ number: number; title: string; closedAt: string; stateReason: string | null }> = [];
+    const out: Array<{
+      number: number;
+      title: string;
+      closedAt: string;
+      stateReason: string | null;
+      hasMergedClosingPR?: boolean;
+    }> = [];
     let after: string | null = null;
     for (;;) {
       const data: any = ghGraphQL(
@@ -5390,6 +5413,7 @@ export function listOwnRecentClosed(
                 closedAt
                 stateReason
                 updatedAt
+                ${closingPRs}
                 projectItems(first: ${PROJECT_ITEMS_PAGE}) {
                   pageInfo { hasNextPage }
                   nodes { isArchived project { id } }
@@ -5427,6 +5451,13 @@ export function listOwnRecentClosed(
           title: c.title ?? "",
           closedAt: c.closedAt,
           stateReason: c.stateReason ?? null,
+          ...(withClosingPRs
+            ? {
+                hasMergedClosingPR: (c.closedByPullRequestsReferences?.nodes ?? []).some(
+                  (p: any) => p?.merged === true,
+                ),
+              }
+            : {}),
         });
       }
       if (!page.pageInfo.hasNextPage) return out;
@@ -6983,6 +7014,11 @@ export interface TendQueueResult {
    *  reminder that leaves no trace reads identical to a healthy queue
    *  (the GH-1945 rule). */
   snoozed: number;
+  /** GH-2151: closes withheld from `done-audit` because the close carries the
+   *  same evidence the gated Done lane accepts — a merged closing PR or a
+   *  gated evidence marker. Derived at read time, no marker written (the
+   *  GH-2179 no-tracking-state shape). Counted, never silent (GH-1945). */
+  evidenced: number;
   /** §4.3.5 — the observation-intake slot. The selector never reads dream-loop
    *  reflections (no MCP dependency); the SKILL decides whether to pull
    *  surfaced observations during its session. */
@@ -6995,7 +7031,21 @@ const UNFORMED_DAYS = 7;
  *  closed items with their comment trails already fetched (batched upstream). */
 export function classifyTend(
   open: QueueItemWithBlockers[],
-  closed: Array<{ number: number; title?: string; closedAt: string | null; comments: string[] }>,
+  closed: Array<{
+    number: number;
+    title?: string;
+    closedAt: string | null;
+    comments: string[];
+    /** GH-2151: COMPLETED vs NOT_PLANNED. A cancellation claims nothing to
+     *  verify, so it is excluded from `done-audit` (reconcile's own rule, the
+     *  same filter `recentDone` applies) — but its rows still enter here so a
+     *  pending post-close proposal on it surfaces as `proposed`. */
+    stateReason?: string | null;
+    /** GH-2151: the close carries the gated Done lane's own evidence (merged
+     *  closing PR / evidence marker) — computed by the caller, where the
+     *  linkage read and the trails live. Absent = not evaluated = audit it. */
+    evidenced?: boolean;
+  }>,
   opts: TendOpts,
   now: Date,
   /** number → the proposal's `at` (null when the payload was unreadable), for
@@ -7118,6 +7168,7 @@ export function classifyTend(
     }
   }
   // 4. Done audit: the marker is the cursor; no local state.
+  let evidenced = 0;
   for (const c of closed) {
     const t = ms(c.closedAt);
     if (t === null || now.getTime() - t > opts.auditDays * dayMs) continue;
@@ -7138,7 +7189,22 @@ export function classifyTend(
       push("proposed", c, p.at);
       continue;
     }
+    // A cancellation is not a claim of success (only COMPLETED is —
+    // reconcile's own vocabulary), so there is nothing for the audit to
+    // verify. Excluded AFTER the proposal check: a pending reopen proposal on
+    // a canceled item must still surface, or it goes invisible everywhere
+    // (doctor's tend-proposal-stale backstop reads open items only).
+    if (c.stateReason === "NOT_PLANNED") continue;
     if (c.comments.some((b) => lastMarkerIndex(b, TEND_MARKER) >= 0)) continue;
+    // GH-2151: a close carrying the gated Done lane's own evidence is audited
+    // by construction — withheld from the queue, but COUNTED (GH-1945), so a
+    // healthy self-auditing board and a board nobody audits never render
+    // alike. Checked after the marker so the counter means "withheld on
+    // evidence alone": a markered row was audited by a tender, not by this.
+    if (c.evidenced) {
+      evidenced++;
+      continue;
+    }
     push("done-audit", c, c.closedAt);
   }
 
@@ -7158,7 +7224,59 @@ export function classifyTend(
       "done-audit",
     ] as const
   ).flatMap((cat) => rows[cat].sort(oldestFirst));
-  return { next: queue[0] ?? null, queue, blocked: [], snoozed, observationSlot: true };
+  return { next: queue[0] ?? null, queue, blocked: [], snoozed, evidenced, observationSlot: true };
+}
+
+/** The audit window's closed rows with their evidence verdicts — the ONE
+ *  definition of "this close self-audits" (GH-2151), shared by `tendQueue` and
+ *  doctor's `done-audit-pending` line so the selector and the health surface
+ *  cannot disagree about what evidenced means (the GH-1843 drift shape).
+ *
+ *  Evidence is the gated Done lane's own bar, judged by the gate's OWN
+ *  validators: a merged PR in GitHub's closing linkage, `decisionEvidence`
+ *  (marker + artifact line), or shape-valid apply evidence
+ *  (`validateApplyEvidence` — the same pure check the close gate and doctor
+ *  share). Marker PRESENCE is not evidence: a hand-composed marker with a
+ *  garbage payload would pass a presence test while the close gate refused
+ *  it, and the audit may not be weaker than the gate it audits for.
+ *  The GH-1996 branch-linkage population — a merged PR
+ *  with no closing keyword — is deliberately NOT re-derived here: that search
+ *  costs a query per close, and its closes are exactly the no-closing-keyword
+ *  population the human audit exists for. Trails are fetched for EVERY row,
+ *  evidenced included: a pending reopen proposal on an evidenced close must
+ *  still surface as `proposed`, and skipping its trail would hide it. */
+function tendClosedRows(
+  ctx: Ctx,
+  opts: TendOpts,
+): Array<{
+  number: number;
+  title: string;
+  closedAt: string;
+  stateReason: string | null;
+  evidenced: boolean;
+  comments: string[];
+}> {
+  const dayMs = 86_400_000;
+  const recent = listOwnRecentClosed(
+    ctx,
+    new Date(ctx.now().getTime() - opts.auditDays * dayMs),
+    true,
+  );
+  const trails = fetchCommentTrails(ctx, recent.map((c) => c.number));
+  return recent.map((c) => {
+    const comments = trails.get(c.number) ?? [];
+    return {
+      number: c.number,
+      title: c.title,
+      closedAt: c.closedAt,
+      stateReason: c.stateReason,
+      evidenced:
+        c.hasMergedClosingPR === true ||
+        decisionEvidence(comments) !== null ||
+        validateApplyEvidence(parseApplyEvidence(comments), ctx.now()) === null,
+      comments,
+    };
+  });
 }
 
 /** The tend lane's typed selector. Done-audit comment trails ride the same
@@ -7170,18 +7288,7 @@ export function tendQueue(ctx: Ctx, opts: TendOpts = parseTendOpts()): TendQueue
   // GH-1814's read, and the Done audit's window is cut server-side rather than
   // filtered out of a scan over every item the board has ever held.
   const open = listOwnOpenItems(ctx, QUEUE_SELECT_NO_LABELS);
-  const dayMs = 86_400_000;
-  const recent = listOwnRecentClosed(
-    ctx,
-    new Date(ctx.now().getTime() - opts.auditDays * dayMs),
-  );
-  const trails = fetchCommentTrails(ctx, recent.map((c) => c.number));
-  const closed = recent.map((c) => ({
-    number: c.number,
-    title: c.title,
-    closedAt: c.closedAt,
-    comments: trails.get(c.number) ?? [],
-  }));
+  const closed = tendClosedRows(ctx, opts);
   // Proposal markers live in the comment trails of OPEN items, which this
   // selector does not fetch. Bound that cost by classifying first and reading
   // only the trails of items already in the queue — the only items a tend pass
@@ -10520,6 +10627,43 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         add("deps-unwired", "info", `not evaluated: ${(e as Error).message}`);
       }
 
+      // Audit-window coverage (GH-2151). Advisory in full, same shape as
+      // deps-unwired. Counts the CURRENT window's exception closes — the rows
+      // tend's done-audit surfaces — with their time-to-expiry, because a
+      // close that ages past RALPH_AUDIT_DAYS unaudited drops out of every
+      // queue unrecorded ("audited" and "aged out unaudited" render alike).
+      // Deliberately NOT a count of already-expired closes: no verb can audit
+      // an expired close, so that line's named remedy could never act on its
+      // rows and it would clear only by more time passing — the silent expiry
+      // wearing an info line (the GH-2052 unsatisfiable-remedy trap). A tend
+      // pass genuinely cures what this counts.
+      try {
+        const tendOpts = parseTendOpts();
+        const closedRows = tendClosedRows(ctx, tendOpts);
+        const pending = classifyTend([], closedRows, tendOpts, ctx.now()).queue.filter(
+          (r) => r.category === "done-audit",
+        );
+        const dayMs = 86_400_000;
+        // floor, not ceil: a countdown that rounds UP renders "1d" on a close
+        // with 0.4d actually left — biasing urgent is the safe direction.
+        const expiry = (at: string | null): number =>
+          Math.max(0, Math.floor(tendOpts.auditDays - (ctx.now().getTime() - (at ? Date.parse(at) : ctx.now().getTime())) / dayMs));
+        const soonest = pending.length ? Math.min(...pending.map((r) => expiry(r.at))) : 0;
+        add(
+          "done-audit-pending",
+          pending.length === 0 ? "ok" : "info",
+          pending.length === 0
+            ? "none"
+            : `${pending.length} close(s) in the ${tendOpts.auditDays}d audit window unaudited and ` +
+              `unevidenced — soonest expires in ${soonest}d, and an expired close is unauditable ` +
+              `(silent by construction); a tend pass audits them: ` +
+              pending.slice(0, 10).map((r) => `#${r.number}(${expiry(r.at)}d)`).join(" ") +
+              (pending.length > 10 ? ` +${pending.length - 10} more` : ""),
+        );
+      } catch (e) {
+        add("done-audit-pending", "info", `not evaluated: ${(e as Error).message}`);
+      }
+
       // Fix loops are per-item fault-isolated: one unwritable item logs its
       // own fail line and the sweep keeps going.
       if (opts.fix) {
@@ -11759,11 +11903,15 @@ reads
                               cleared/truncated deps, unjudged high-overlap
                               dep candidates (deps-unwired, GH-2136 — the
                               candidate list rides the row), unformed intake,
-                              unaudited closes. Classification only;
-                              judgment (and every closure, as a marker-comment
-                              proposal) belongs to /ralph:tend. Knobs:
-                              RALPH_STALE_DAYS (30), RALPH_AUDIT_DAYS (14),
-                              RALPH_DEP_OVERLAP_MIN (0.2)
+                              unaudited closes. A close carrying the Done
+                              gate's own evidence (merged closing PR /
+                              evidence marker) self-audits — withheld as the
+                              counted evidenced line (GH-2151); NOT_PLANNED
+                              closes are outside the audit. Classification
+                              only; judgment (and every closure, as a
+                              marker-comment proposal) belongs to /ralph:tend.
+                              Knobs: RALPH_STALE_DAYS (30), RALPH_AUDIT_DAYS
+                              (14), RALPH_DEP_OVERLAP_MIN (0.2)
   escalations [--json]        the arbitration queue (GH-2179): every Human
                               Needed item, classified by who its escalation is
                               addressed to. A lead's work is the pending rows;
@@ -13206,8 +13354,14 @@ export function run(argv: string[], ctx: Ctx): number {
       // reminder that leaves no trace reads identical to a healthy queue.
       const snoozeNote =
         res.snoozed > 0 ? ` (${res.snoozed} intake snoozed — withheld from unformed until recheck)` : "";
+      // GH-2151: same rule — closes withheld on evidence print in BOTH
+      // branches, or a self-auditing board reads like one nobody audits.
+      const evidencedNote =
+        res.evidenced > 0
+          ? ` (${res.evidenced} close(s) self-audited on close evidence — withheld from done-audit)`
+          : "";
       if (flags.json) json(res);
-      else if (!res.next) out(`tend queue empty — one clean sweep${snoozeNote}`);
+      else if (!res.next) out(`tend queue empty — one clean sweep${snoozeNote}${evidencedNote}`);
       else {
         out(`tend next: #${res.next.number} [${res.next.category}]${res.next.title ? ` ${res.next.title}` : ""}`);
         for (const c of res.next.candidates ?? [])
@@ -13218,6 +13372,7 @@ export function run(argv: string[], ctx: Ctx): number {
               (r.candidates?.length ? ` (${r.candidates.length} candidate${r.candidates.length === 1 ? "" : "s"})` : ""),
           );
         if (snoozeNote) out(` ${snoozeNote.trim()}`);
+        if (evidencedNote) out(` ${evidencedNote.trim()}`);
       }
       return 0;
     }

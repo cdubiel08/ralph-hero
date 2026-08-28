@@ -849,6 +849,15 @@ export class FakeGh {
               // An issue's close IS an update, so absent updatedAt falls back
               // to closedAt rather than to "unknown" — see listOwnRecentClosed.
               updatedAt: fi.updatedAt ?? fi.closedAt ?? null,
+              // GH-2151: served only when asked for (the read is opt-in per
+              // caller), like GitHub — an unasked connection is absent.
+              ...(query.includes("closedByPullRequestsReferences")
+                ? {
+                    closedByPullRequestsReferences: {
+                      nodes: (fi.prs ?? []).map((p) => ({ merged: p.merged })),
+                    },
+                  }
+                : {}),
               projectItems: {
                 pageInfo: { hasNextPage: fi.projectItemsTruncated ?? false },
                 nodes:
