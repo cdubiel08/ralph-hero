@@ -428,6 +428,33 @@ honestly.
                        write reports in Phase 6, and nothing reads this yet
 ```
 
+## Event-driven healing (GH-2212)
+
+There is no scheduled dispatch pass — the operator rejected batch cadence
+outright (design record D1.2/D3.1: `thoughts/shared/plans/2026-08-28-herd-topology-design.md`).
+The unattended half of the dispatch lane is `watch-event.sh` + `heal.sh`, on
+the same pane-death events the orphan pass already handles:
+
+- **A dead o-lane LEAD is respawned** by re-running `work-team.sh EPIC
+  --lead-only` from the checkout its own spawn record names — the same
+  idempotent re-run a human performs, so every guard (billing, spawn edge,
+  fail-closed liveness, complete-epic refusal) runs unchanged. The #2178
+  respawn authority lives here now, not in a dispatch pass. Pane-proved
+  (GH-1863) by construction: the only refs healed are the ones whose open
+  ledger record names the event's own pane, read under the ledger mutex — so
+  the exited/closed race resolves to exactly one healing per death.
+  `work-team.sh` exiting 4 (epic closed or complete) is the self-dissolve
+  backstop working: logged, never notified. Any other failure notifies — a
+  dead lead the healer could not replace is attention.
+- **The dead lead's team workspace is flagged** in the ledger
+  (`ev: "orphan_space"`, carrying the event's `workspace_id`) — never removed
+  here; sweep is the guaranteed backstop.
+- **The dispatch heartbeat is stamped**: `<ledger dir>/dispatch-heartbeat`,
+  written by both event handlers for the scope they acted on and by `hero.sh`
+  at each sitting. `board doctor`'s `dispatch-heartbeat` advisory reads its
+  age (`RALPH_SMELL_DISPATCH_MIN`, 1440 min) and names `dispatch up` as the
+  remedy — info-level always, never strict-escalated.
+
 ## The one-writer invariant
 
 > Only one worker may write into a worktree at a time, through a claim.

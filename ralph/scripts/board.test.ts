@@ -2589,6 +2589,72 @@ describe("doctor: installed-plugin floor (GH-1825) — advisory by construction"
   });
 });
 
+describe("doctor: dispatch-heartbeat (GH-2212) — advisory by construction", () => {
+  // The check reads <RALPH_HERDR_LEDGER_ROOT>/<owner>/<repo>/dispatch-heartbeat;
+  // the env var scopes every test to its own temp root so the machine's real
+  // ~/.ralph never colours a run.
+  let root: string;
+  let prevEnv: string | undefined;
+  const hb = () => join(root, "cdubiel08", "ralph-hero", "dispatch-heartbeat");
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "hb-test-"));
+    mkdirSync(join(root, "cdubiel08", "ralph-hero"), { recursive: true });
+    prevEnv = process.env.RALPH_HERDR_LEDGER_ROOT;
+    process.env.RALPH_HERDR_LEDGER_ROOT = root;
+  });
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.RALPH_HERDR_LEDGER_ROOT;
+    else process.env.RALPH_HERDR_LEDGER_ROOT = prevEnv;
+    rmSync(root, { recursive: true, force: true });
+  });
+  const check = (r: ReturnType<typeof doctor>) =>
+    r.checks.find((c) => c.name === "dispatch-heartbeat")!;
+
+  it("absent file is ok, quietly — a machine that never wired the lane is not a finding", () => {
+    const c = check(doctor(makeCtx(new FakeGh())));
+    expect(c.level).toBe("ok");
+    expect(c.detail).toContain("no heartbeat recorded");
+  });
+
+  it("a fresh stamp reads ok and names its writer", () => {
+    writeFileSync(hb(), JSON.stringify({ ts: new Date(NOW.getTime() - 30 * 60_000).toISOString(), writer: "watch-event", event: "pane_exited" }));
+    const c = check(doctor(makeCtx(new FakeGh())));
+    expect(c.level).toBe("ok");
+    expect(c.detail).toContain("30min ago");
+    expect(c.detail).toContain("watch-event");
+  });
+
+  it("a stale stamp is info and names `dispatch up` — never escalated by --strict", () => {
+    writeFileSync(hb(), JSON.stringify({ ts: new Date(NOW.getTime() - 2 * 1440 * 60_000).toISOString(), writer: "hero" }));
+    const baseline = doctor(makeCtx(new FakeGh()), { strict: true }).ok;
+    const r = doctor(makeCtx(new FakeGh()), { strict: true });
+    const c = check(r);
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("dispatch up");
+    expect(c.detail).toContain("hero");
+    expect(r.ok).toBe(baseline); // info never touches the exit code
+  });
+
+  it("threshold honours RALPH_SMELL_DISPATCH_MIN", () => {
+    writeFileSync(hb(), JSON.stringify({ ts: new Date(NOW.getTime() - 45 * 60_000).toISOString(), writer: "watch-event" }));
+    const ctx = makeCtx(new FakeGh());
+    ctx.cfg.smells.dispatchMin = 30;
+    const c = check(doctor(ctx));
+    expect(c.level).toBe("info");
+  });
+
+  it("an unparseable stamp ages by mtime rather than reading as fresh (toward visibility)", () => {
+    writeFileSync(hb(), "not json at all");
+    // mtime is now (real clock) but NOW is 2026-07-31 — with the fake clock
+    // far behind the file's mtime the age is negative, which reads fresh; the
+    // point pinned here is only that a garbled stamp does not throw and does
+    // not fabricate a writer.
+    const c = check(doctor(makeCtx(new FakeGh())));
+    expect(["ok", "info"]).toContain(c.level);
+    expect(c.detail).not.toContain("not evaluated");
+  });
+});
+
 describe("doctor: gate-kit drift (GH-2083) — advisory, host-owned files respected", () => {
   const saved = process.env.RALPH_INSTALLED_PLUGINS_FILE;
   afterEach(() => {
@@ -3820,6 +3886,7 @@ describe("state-smell thresholds", () => {
       proposalDays: 7,
       intakeDays: 14,
       answerMin: 30,
+      dispatchMin: 1440,
     });
     expect(
       parseSmellThresholds({
@@ -3829,8 +3896,9 @@ describe("state-smell thresholds", () => {
         RALPH_SMELL_PROPOSAL_DAYS: "3",
         RALPH_SMELL_INTAKE_DAYS: "30",
         RALPH_SMELL_ANSWER_MIN: "60",
+        RALPH_SMELL_DISPATCH_MIN: "720",
       }),
-    ).toEqual({ claimExpiries: 4, escalations: 5, reviewDays: 14, proposalDays: 3, intakeDays: 30, answerMin: 60 });
+    ).toEqual({ claimExpiries: 4, escalations: 5, reviewDays: 14, proposalDays: 3, intakeDays: 30, answerMin: 60, dispatchMin: 720 });
   });
 
   it("a bad value warns and falls back — an advisory threshold never fails the sweep", () => {

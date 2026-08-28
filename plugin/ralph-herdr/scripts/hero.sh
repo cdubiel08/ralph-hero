@@ -51,4 +51,13 @@ command -v claude >/dev/null 2>&1 ||
 # (herdr agent list, pane tokens) are available.
 export HERDR_ENV=1
 
+# Dispatch heartbeat (GH-2212, D7.2): a hero sitting IS the attended half of
+# the dispatch lane, so opening one stamps the heartbeat doctor's advisory
+# reads. Best-effort by contract — a failed stamp never blocks the sitting.
+# shellcheck source=heal.sh
+. "$SCRIPT_DIR/heal.sh"
+if hb_ledger=$(ralph_ledger_path "$REPO" 2>/dev/null); then
+  ralph_heartbeat_write "$hb_ledger" hero sitting || true
+fi
+
 exec claude "/ralph:hero"
