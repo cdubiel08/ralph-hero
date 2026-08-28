@@ -67,25 +67,44 @@ run() {
 
 NOW=$(date -u +%FT%TZ)
 
-# ── canonical: worker label equals the stamped address ───────────────────────
+# ── canonical: worker label is the address's display suffix (GH-2235) ────────
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p0","tokens":{"issue":"123","address":"demo/tm5-epic/w123-fix"}}
+EOF
+snapshot '[{"name":"w123-fix","agent_status":"working","workspace_id":"w1"}]' \
+  '[{"id":"w1","label":"w123-fix"}]'
+run
+is "display worker label exits 0" "0" "$RC"
+has_line "display worker label is ok" '^  ok   label-w123-fix — workspace label matches'
+
+# ── canonical: lead in the team space (label = team prefix display suffix) ───
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"o9-epic#bbbb","pane_id":"p0","tokens":{"issue":"9","address":"demo/t9-epic/o9-epic"}}
+EOF
+snapshot '[{"name":"o9-epic","agent_status":"working","workspace_id":"w2"}]' \
+  '[{"id":"w2","label":"t9-epic"}]'
+run
+is "team-space display label exits 0" "0" "$RC"
+has_line "team display suffix matches the lead's derivation" '^  ok   label-o9-epic — workspace label matches'
+
+# ── pre-2235 absolute spellings still pass (labels are creation-time only) ───
 cat >"$RALPH_HERDR_LEDGER" <<EOF
 {"ts":"$NOW","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p0","tokens":{"issue":"123","address":"demo/w123-fix"}}
 EOF
 snapshot '[{"name":"w123-fix","agent_status":"working","workspace_id":"w1"}]' \
   '[{"id":"w1","label":"demo/w123-fix"}]'
 run
-is "canonical worker label exits 0" "0" "$RC"
-has_line "canonical worker label is ok" '^  ok   label-w123-fix '
+is "absolute worker label exits 0" "0" "$RC"
+has_line "absolute worker label passes as pre-GH-2235" '^  ok   label-w123-fix — workspace label carries the pre-GH-2235'
 
-# ── canonical: lead in the team space (label = the address team prefix) ──────
 cat >"$RALPH_HERDR_LEDGER" <<EOF
 {"ts":"$NOW","ev":"spawn","agent_ref":"o9-epic#bbbb","pane_id":"p0","tokens":{"issue":"9","address":"demo/t9-epic/o9-epic"}}
 EOF
 snapshot '[{"name":"o9-epic","agent_status":"working","workspace_id":"w2"}]' \
   '[{"id":"w2","label":"demo/t9-epic"}]'
 run
-is "team-space lead label exits 0" "0" "$RC"
-has_line "team prefix matches the lead's derivation" '^  ok   label-o9-epic '
+is "absolute team-prefix label exits 0" "0" "$RC"
+has_line "absolute team prefix passes as pre-GH-2235" '^  ok   label-o9-epic — workspace label carries the pre-GH-2235'
 
 # ── divergence: a legacy label against a stamped address → GAP, exit 1 ───────
 cat >"$RALPH_HERDR_LEDGER" <<EOF
