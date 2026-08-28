@@ -826,7 +826,27 @@ ralph_dep_refs_verdict() {
 
 spawn_work_session() {
   local n="$1" queue_json="${2:-}" branch label parent title agent live pane out
-  local ref ts record ledger src
+  local ref ts record ledger src lead_ref="" lead_depth=""
+  # Lineage (GH-2214/D4.1): a team lead's workspace env carries its own
+  # durable ref (work-team.sh mints it at workspace creation), and the
+  # workers the lead spawns record it as their C8 parent and root, depth 1 —
+  # "the lead intrinsically knows the workers it created", written down where
+  # unit I's readers can read it. Gated on the NAME half parsing and an epoch
+  # half existing, because the value lands in a ledger record; absent or
+  # malformed, the spawn is a depth-0 root exactly as before (tokens are
+  # chrome — a lost lineage never costs the spawn).
+  if [ -n "${RALPH_HERDR_TEAM_LEAD_REF:-}" ]; then
+    case "$RALPH_HERDR_TEAM_LEAD_REF" in
+      *#?*)
+        if ralph_agent_parse "${RALPH_HERDR_TEAM_LEAD_REF%%#*}" >/dev/null 2>&1; then
+          lead_ref="$RALPH_HERDR_TEAM_LEAD_REF"
+          lead_depth=1
+        fi
+        ;;
+    esac
+    [ -n "$lead_ref" ] ||
+      echo "RALPH_HERDR_TEAM_LEAD_REF='$RALPH_HERDR_TEAM_LEAD_REF' is not a durable ref (name#epoch) — spawning as a depth-0 root" >&2
+  fi
   RALPH_HERDR_SPAWNED_AGENT=""
   RALPH_HERDR_SPAWNED_REF=""
   # Pane id + worktree checkout path, read back from the live responses
@@ -940,7 +960,7 @@ spawn_work_session() {
       return 1
     }
     record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "" "$(date -u +%FT%TZ)" \
-      "" "" "" "" "" "" "${RALPH_HERDR_NAMED_ADDRESS-}") || record=""
+      "" "" "" "$lead_ref" "$lead_depth" "$lead_ref" "${RALPH_HERDR_NAMED_ADDRESS-}") || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"
     echo "  tokens push (pane <captured>): $(jq -r '[.tokens | to_entries[] | "\(.key)=\(.value)"] | join(" ")' <<<"$record" 2>/dev/null || echo '<none>')"
     RALPH_HERDR_SPAWNED_AGENT="$agent"
@@ -1055,7 +1075,7 @@ spawn_work_session() {
   if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
     RALPH_HERDR_SPAWNED_REF="$ref"
     record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "$pane" "$ts" \
-      "$shell_pid" "$RALPH_HERDR_SPAWNED_WORKTREE" "" "" "" "" "${RALPH_HERDR_NAMED_ADDRESS-}") || record=""
+      "$shell_pid" "$RALPH_HERDR_SPAWNED_WORKTREE" "" "$lead_ref" "$lead_depth" "$lead_ref" "${RALPH_HERDR_NAMED_ADDRESS-}") || record=""
     ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
     if [ -n "$record" ] && [ -n "$ledger" ]; then
       RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" || {

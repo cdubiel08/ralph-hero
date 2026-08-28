@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # work-fleet.sh — cockpit action: spawn up to FLEET parallel /ralph:work
-# sessions from the dependency-aware frontier, or from an EXPLICIT issue list.
+# sessions from the dependency-aware frontier, from an EXPLICIT issue list,
+# or from ONE EPIC's slice of the frontier.
 #
 #   work-fleet.sh [--refill] [ISSUE...]
+#   work-fleet.sh --epic EPIC
 #
 # The frontier ranking is good default POLICY; it is not the only policy
 # (GH-1780). Naming issues on the command line spawns exactly those, in the
@@ -11,6 +13,20 @@
 # validated against the frontier read, and one that is blocked or not eligible
 # is SKIPPED with a named reason rather than killing the run: fleet callers
 # must keep going. Bare invocation is unchanged.
+#
+# --epic EPIC (GH-2214, unit F of #2208) is the TEAM LEAD's staffing path:
+# the ranked frontier filtered to EPIC's DIRECT children (parentNumber),
+# capped at FLEET — the pick that used to run inside work-team.sh, moved here
+# because D3.2 makes staffing the LEAD's act, not the spawner's. It is a
+# RANKED path (nobody named the issues), so the unwired-reference guard
+# applies. Refused beside an explicit list (the list is already the override
+# lane) and beside --refill (the lead IS its team's standing refiller).
+#
+# Every spawn passes the roles registry's spawn-edge guard: the spawner's
+# stated role (RALPH_HERDR_SPAWNER_ROLE; default human — a cockpit click)
+# must be allowed to spawn a driver. human→driver and orchestrator→driver
+# pass; a leaf role is refused. The lead's team workspace states
+# orchestrator, so the guard reads the true parent (GH-2214).
 #
 # ATTENDED-ONLY, honestly labelled: this is a human clicking "give me a few
 # sessions to shepherd", not a farm. The per-issue claim protocol inside each
@@ -77,6 +93,7 @@ billing_guard
 usage() {
   cat <<'EOF'
 usage: work-fleet.sh [--refill] [ISSUE...]
+       work-fleet.sh --epic EPIC
 
   (no ISSUE)  spawn the top RALPH_HERDR_FLEET (default 2, hard cap 4) issues of
               the ranked frontier — the default policy, unchanged.
@@ -84,6 +101,10 @@ usage: work-fleet.sh [--refill] [ISSUE...]
               Each is validated against the same frontier read; one that is
               blocked or not eligible is SKIPPED with a reason and the rest
               still spawn. An issue a session already owns is skipped too.
+  --epic EPIC the team lead's staffing path (GH-2214): the ranked frontier
+              filtered to EPIC's direct children, capped at RALPH_HERDR_FLEET.
+              A ranked path — the unwired-reference guard applies. Refused
+              beside an explicit list or --refill.
   --refill    arm watcher refill for the run from the frontier. Frontier policy
               only — refused with an explicit list, which is a closed set.
   -h, --help  this.
@@ -108,23 +129,53 @@ EOF
 
 REFILL="${RALPH_HERDR_REFILL:-}"
 ISSUES=""
+EPIC=""
+expect_epic=""
 for arg in "$@"; do
+  if [ -n "$expect_epic" ]; then
+    case "$arg" in
+      '' | *[!0-9]*) die "--epic takes an issue number (got '$arg')" ;;
+    esac
+    EPIC="$arg"
+    expect_epic=""
+    continue
+  fi
   case "$arg" in
     --refill) REFILL=1 ;;
+    --epic)
+      [ -z "$EPIC" ] || die "--epic named twice — one team per fleet run"
+      expect_epic=1
+      ;;
     -h | --help)
       trap - EXIT # --help is a read, not a pane session: don't hold for Enter
       usage
       exit 0
       ;;
-    *[!0-9]* | "") die "unknown argument '$arg' (--refill, --help, or issue numbers)" ;;
+    *[!0-9]* | "") die "unknown argument '$arg' (--refill, --epic, --help, or issue numbers)" ;;
     *) ISSUES="$ISSUES $arg" ;;
   esac
 done
+[ -z "$expect_epic" ] || die "--epic takes an issue number (none given)"
 [ "$REFILL" = "1" ] || REFILL=""
 
 FLEET="${RALPH_HERDR_FLEET:-2}"
 validate_pos_int RALPH_HERDR_FLEET "$FLEET"
 [ "$FLEET" -le 4 ] || die "RALPH_HERDR_FLEET=$FLEET exceeds the hard cap of 4 — this is an attended tool, not a farm"
+
+# The spawn edge, checked against the roles registry rather than assumed
+# (GH-2214): every session this script opens is a DRIVER, and the spawner's
+# stated role must be allowed to create one. A cockpit click states nothing
+# and defaults to human; a team lead's workspace env states orchestrator.
+ralph_spawn_edge_guard "${RALPH_HERDR_SPAWNER_ROLE:-human}" driver || die "spawn edge refused (see above)"
+
+if [ -n "$EPIC" ]; then
+  # Staffing is scoped to ONE epic's ranked slice. An explicit list beside it
+  # would be two policies in one run (the list is already the override lane),
+  # and refill tops up from the WHOLE frontier — a scope the lead just
+  # narrowed; the lead is its team's standing refiller (work-team.sh, D3.2).
+  [ -z "$ISSUES" ] || die "--epic picks from the ranked frontier; naming issues is the explicit override — use one or the other"
+  [ -z "$REFILL" ] || die "--refill refills from the whole ranked frontier; the lead is its team's standing refiller — re-run work-fleet --epic $EPIC as blockers clear"
+fi
 
 if [ -n "$ISSUES" ]; then
   # Refill tops the fleet back up FROM THE FRONTIER — a policy the caller just
@@ -144,6 +195,23 @@ QUEUE_JSON=$(ralph_fleet_frontier_json)
 if [ -n "$ISSUES" ]; then
   NUMBERS="$ISSUES"
   echo "explicit list:${ISSUES} (frontier read used to validate, not to choose)"
+elif [ -n "$EPIC" ]; then
+  # Ranked frontier ∩ EPIC's direct children, order preserved from the
+  # ranking (the pick that used to live in work-team.sh, GH-2214). An empty
+  # slice names the epic: "the whole frontier is empty" and "nothing under
+  # THIS epic is ready" are different answers, and a lead reading the wrong
+  # one would stop staffing a team that has work.
+  NUMBERS=$(jq -r --argjson e "$EPIC" --argjson k "$FLEET" '
+    [.queue[]? | select(.parentNumber == $e)][0:$k][].number' <<<"$QUEUE_JSON" 2>/dev/null) || NUMBERS=""
+  if [ -z "$NUMBERS" ]; then
+    if jq -e '.queue | length > 0' <<<"$QUEUE_JSON" >/dev/null 2>&1; then
+      echo "no ready children of GH-$EPIC on the frontier — nothing to staff (blockers may still be open; re-run as they clear)"
+    else
+      echo "frontier empty — nothing to spawn"
+    fi
+    exit 0
+  fi
+  echo "team GH-$EPIC staffing: ranked frontier ∩ direct children, capped at $FLEET"
 else
   NUMBERS=$(jq -r --argjson k "$FLEET" '.queue[0:$k][]?.number' <<<"$QUEUE_JSON")
   if [ -z "$NUMBERS" ]; then
