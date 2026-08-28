@@ -149,7 +149,15 @@ explicit. The lead dispositions via `answer` (answer/re-steer — the resuming
 session's claim then disposes it by state, GH-2204) or **`board promote NNN
 [-m]`** (durable marker, no state
 change — Human Needed is already the right state; promotion changes the
-audience, not the machine). **The TTL bound is computed at read time, never by
+audience, not the machine). **Promotion writes the inbox directly (GH-2218,
+the topology-J amendment)**: `board inbox` Tier 1 withholds a lead-routed
+escalation still inside its window as a counted `with leads` line — never a
+decision row, never dropped (the GH-2108 rule) — and a promotion, the lead's
+or the TTL's, is the admission. One arbitration hop total: worker → lead →
+inbox. Dispatch reads the inbox like the human does and is messageable, but
+adjudicates nothing by default — reachable, never a rung. An unreadable
+trail admits the row: failing toward visibility, the same direction as
+auto-promotion. **The TTL bound is computed at read time, never by
 a cron**: `board escalations` classifies every Human Needed item, and a
 lead-routed escalation unadjudicated for `RALPH_LOCK_TTL_MIN` renders
 auto-promoted — same shape as claim staleness, no tracking state to drift; a

@@ -9296,6 +9296,7 @@ import {
   INBOX_DELIVER_VERBS,
   latestEscalationWhy,
   type DeliverRow,
+  type EscalationRoute,
   type InboxRow,
   type QueueItemCore,
 } from "./board.js";
@@ -9344,6 +9345,73 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
     const res = classifyInbox([core(1, { state: "Human Needed" })], emptyTend, emptyDeliver, new Map());
     expect(res.decisions).toHaveLength(1);
     expect(res.decisions[0].detail).toBeNull();
+  });
+
+  // GH-2218 (unit J of #2208): leads promote directly to the inbox — a
+  // lead-routed pending escalation is the lead's row, withheld from Tier 1
+  // until a promotion (the lead's marker or the TTL) admits it.
+  describe("lead-routed escalations (GH-2218)", () => {
+    const route = (over: Partial<EscalationRoute> = {}): EscalationRoute => ({
+      route: "lead",
+      lead: "w2218-lead",
+      at: days(1),
+      disposition: "pending",
+      ...over,
+    });
+
+    it("a lead-routed pending row is withheld to leadPending — counted, never a decision, outside count", () => {
+      const res = classifyInbox(
+        [core(1, { state: "Human Needed" })],
+        emptyTend,
+        emptyDeliver,
+        new Map(),
+        new Map([[1, route()]]),
+      );
+      expect(res.decisions).toHaveLength(0);
+      expect(res.leadPending).toEqual([{ number: 1, lead: "w2218-lead", at: days(1) }]);
+      expect(res.count).toBe(0);
+    });
+
+    it("promoted and auto-promoted rows are admitted — promotion IS the inbox admission", () => {
+      const res = classifyInbox(
+        [core(1, { state: "Human Needed" }), core(2, { state: "Human Needed" })],
+        emptyTend,
+        emptyDeliver,
+        new Map(),
+        new Map([
+          [1, route({ disposition: "promoted" })],
+          [2, route({ disposition: "auto-promoted" })],
+        ]),
+      );
+      expect(res.decisions.map((r) => r.number).sort()).toEqual([1, 2]);
+      expect(res.leadPending).toHaveLength(0);
+      expect(res.count).toBe(2);
+    });
+
+    it("a human-addressed escalation and a MISSING route entry both admit — an unreadable trail may not hide a decision", () => {
+      const res = classifyInbox(
+        [core(1, { state: "Human Needed" }), core(2, { state: "Human Needed" })],
+        emptyTend,
+        emptyDeliver,
+        new Map(),
+        new Map([[1, { route: "human" } as EscalationRoute]]),
+      );
+      expect(res.decisions.map((r) => r.number).sort()).toEqual([1, 2]);
+      expect(res.leadPending).toHaveLength(0);
+    });
+
+    it("a withheld row is still SEEN: it does not resurface in another tier", () => {
+      const res = classifyInbox(
+        [core(1, { state: "Human Needed" })],
+        { queue: [{ number: 1, title: "t1", category: "proposed", at: days(2) }] },
+        emptyDeliver,
+        new Map(),
+        new Map([[1, route()]]),
+      );
+      expect(res.proposals).toHaveLength(0);
+      expect(res.leadPending.map((l) => l.number)).toEqual([1]);
+      expect(res.count).toBe(0);
+    });
   });
 
   it("Intake items are approval rows whose verb is honest about the readiness bar", () => {
