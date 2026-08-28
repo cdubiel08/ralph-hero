@@ -491,12 +491,91 @@ if git -C "$SPAWNREPO" rev-parse --verify -q origin/main >/dev/null 2>&1; then
   # provisional spawn record stays OPEN — an open row means a live worker.
   is "turn: the provisional record stays open for the live worker" "1" \
     "$(ralph_ledger_open_agents 2>/dev/null | grep -c . | tr -d ' ')"
+  # GH-2223: the fake's default pane read renders NO text, and a live session
+  # always renders its input-box chrome — so this is the UNREADABLE verdict,
+  # whose message keys both remedies on a human look instead of asserting
+  # either mode.
+  case "$turn_out" in
+    *"could not be read to tell undelivered from unsubmitted"*) ok "turn: an unreadable pane names neither mode" ;;
+    *) not_ok "turn: an unreadable pane names neither mode — got '$turn_out'" ;;
+  esac
   rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.json"
   REPO="$_saved_repo"
   RALPH_HERDR_LEDGER="$_saved_ledger"
   unset RALPH_HERDR_AGENT_LIVE
 else
   not_ok "turn: origin/main fixture could not be built"
+fi
+
+# ── GH-2223: undelivered vs unsubmitted stop sharing one message ────────────
+# Twice observed (GH-2159, GH-2209): SPAWN-UNCONFIRMED printed the send-keys
+# remedy while the pane's input box was EMPTY — the prompt was never delivered,
+# Enter would submit a blank line, and the true recovery was remove-and-
+# respawn. The confirm path now reads the pane: a present prompt keeps the
+# submit remedy; an empty input box gets ONE redelivery to the live session,
+# then the respawn remedy.
+if git -C "$SPAWNREPO" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+  _saved_repo="$REPO"
+  REPO="$SPAWNREPO"
+  RALPH_HERDR_LEDGER="$TMP/modes/ledger.jsonl"
+  mkdir -p "$TMP/modes"
+  printf '{"agent":{"name":"w","agent_status":"idle","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":9}}\n' \
+    >"$FAKE_HERDR_FIXTURES/agent-wait-until.json"
+
+  # Mode 1 — the prompt IS in the input box: the submit remedy, and no
+  # redelivery (a redelivery here would double the text).
+  herd_fixture '[]' "$SPAWNREPO"
+  printf '{"read":{"pane_id":"pW1","lines":["╭──────╮","│ > /ralph:work 905","╰──────╯"]}}\n' \
+    >"$FAKE_HERDR_FIXTURES/pane-read.pW1.json"
+  export FAKE_HERDR_LOG="$TMP/modes/present.log"
+  turn_out=$(RALPH_HERDR_AGENT_LIVE= spawn_work_session 905 \
+    '{"next":{"number":905,"title":"Prompt present unsubmitted"},"queue":[]}' 2>&1)
+  is "modes: a present prompt still fails the spawn" "1" "$?"
+  case "$turn_out" in
+    *"unsubmitted prompt"*"send-keys pW1"*) ok "modes: a present prompt keeps the submit remedy" ;;
+    *) not_ok "modes: a present prompt keeps the submit remedy — got '$turn_out'" ;;
+  esac
+  case "$turn_out" in
+    *"NEVER DELIVERED"*) not_ok "modes: a present prompt must not read as undelivered — got '$turn_out'" ;;
+    *) ok "modes: a present prompt does not read as undelivered" ;;
+  esac
+  is "modes: a present prompt is never redelivered" "1" \
+    "$(grep -c '^agent prompt ' "$FAKE_HERDR_LOG" 2>/dev/null | tr -d ' ')"
+  rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.json"
+
+  # Mode 2 — the pane renders chrome and the prompt is NOWHERE in it: the
+  # delivery never landed. One redelivery to the live session, and when the
+  # turn still never starts, the remedy is remove-and-respawn — safe because
+  # an agent that never took a turn holds no claim and no commits.
+  herd_fixture '[]' "$SPAWNREPO"
+  printf '{"read":{"pane_id":"pW1","lines":["╭──────╮","│ > ","╰──────╯","? for shortcuts"]}}\n' \
+    >"$FAKE_HERDR_FIXTURES/pane-read.pW1.json"
+  export FAKE_HERDR_LOG="$TMP/modes/absent.log"
+  turn_out=$(RALPH_HERDR_AGENT_LIVE= spawn_work_session 906 \
+    '{"next":{"number":906,"title":"Prompt never delivered"},"queue":[]}' 2>&1)
+  is "modes: an undelivered prompt fails the spawn" "1" "$?"
+  case "$turn_out" in
+    *"SPAWN-UNCONFIRMED pW1"*) ok "modes: the undelivered verdict keeps the greppable token and pane" ;;
+    *) not_ok "modes: the undelivered verdict keeps the greppable token and pane — got '$turn_out'" ;;
+  esac
+  case "$turn_out" in
+    *"NEVER DELIVERED"*"worktree remove --workspace w1"*) ok "modes: an empty input box gets the respawn remedy" ;;
+    *) not_ok "modes: an empty input box gets the respawn remedy — got '$turn_out'" ;;
+  esac
+  case "$turn_out" in
+    *"send-keys pW1 Enter"*) not_ok "modes: an empty input box must not be told to submit — got '$turn_out'" ;;
+    *) ok "modes: an empty input box is not told to submit a blank line" ;;
+  esac
+  # Exactly TWO deliveries: the original and the one retry — never a loop.
+  is "modes: an undelivered prompt is redelivered exactly once" "2" \
+    "$(grep -c '^agent prompt ' "$FAKE_HERDR_LOG" 2>/dev/null | tr -d ' ')"
+  rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.json" "$FAKE_HERDR_FIXTURES/pane-read.pW1.json"
+  unset FAKE_HERDR_LOG
+  REPO="$_saved_repo"
+  RALPH_HERDR_LEDGER="$_saved_ledger"
+  unset RALPH_HERDR_AGENT_LIVE
+else
+  not_ok "modes: origin/main fixture could not be built"
 fi
 
 # ── the D3 lock pre-check: a live per-(worktree, unit) lock skips the spawn ──
