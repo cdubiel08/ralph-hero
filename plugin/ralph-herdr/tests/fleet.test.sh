@@ -899,7 +899,43 @@ line_has "work-fleet list: the refusal explains why refill and a list conflict" 
 run_wf --help
 is "work-fleet: --help exits 0" "0" "$RC"
 line_has "work-fleet: the capability is discoverable from --help" \
-  "$OUT" "work-fleet.sh [--refill] [ISSUE...]"
+  "$OUT" "work-fleet.sh [--refill] [--no-watch] [ISSUE...]"
+
+# ═══ 9a. work-fleet.sh --no-watch — spawn, confirm, exit (GH-2228) ═══════════
+# For an orchestrating session that backgrounds the run and reads the board
+# anyway, the watcher is decorative and its only fate is to be killed at the
+# terminal. --no-watch prints the spawn summary and EXITS: no notify-watch,
+# and no hold_pane Enter-hold either — there is no pane, and the hold would be
+# the very hang the flag removes. Non-dry runs, because the watch/hold delta
+# is invisible under DRY_RUN (which exits before either).
+run_wf_live() {
+  RC=0
+  OUT=$(RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+    RALPH_HERDR_LEDGER="$WFL" ANTHROPIC_API_KEY= \
+    bash "$SCRIPTS/work-fleet.sh" "$@" </dev/null 2>&1) || RC=$?
+}
+run_wf_live --no-watch 601
+is "no-watch: a live run with nothing spawned exits 0" "0" "$RC"
+line_has "no-watch: the honest limit prints with the summary" \
+  "$OUT" "watch: OFF (--no-watch) — nobody narrates completions"
+line_lacks "no-watch: no pane hold — an orchestrator is never asked to press Enter" \
+  "$OUT" "press Enter"
+
+run_wf_live 601
+line_has "no-watch default unchanged: the attended pane still holds for Enter" \
+  "$OUT" "press Enter"
+line_lacks "no-watch default unchanged: no watch-OFF line without the flag" \
+  "$OUT" "watch: OFF"
+
+RC=0
+OUT=$(RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+  RALPH_HERDR_LEDGER="$WFL" ANTHROPIC_API_KEY= RALPH_HERDR_NO_WATCH=1 \
+  bash "$SCRIPTS/work-fleet.sh" 601 </dev/null 2>&1) || RC=$?
+is "no-watch: RALPH_HERDR_NO_WATCH=1 is the env spelling" "0" "$RC"
+line_has "no-watch: the env form prints the same line" "$OUT" "watch: OFF (--no-watch)"
+
+run_wf --no-watch
+is "no-watch: composes with a dry run (rc 0)" "0" "$RC"
 
 # ═══ 9b. work-fleet.sh --epic — the team lead's staffing path (GH-2214) ══════
 # D3.2 moved staffing from work-team.sh into the LEAD's own hands: --epic is

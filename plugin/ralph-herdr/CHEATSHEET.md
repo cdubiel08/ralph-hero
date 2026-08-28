@@ -281,6 +281,11 @@ herdr plugin action invoke work-these --plugin ralph-herdr  # the same, prompted
 `--refill` is frontier policy and is refused with an explicit list — a named
 list is a closed set, so there is nothing to top it back up from.
 
+`--no-watch` (or `RALPH_HERDR_NO_WATCH=1`) prints the spawn summary and EXITS
+instead of watching — for an orchestrating session that backgrounds the run
+and reads the board anyway. Nobody narrates completions; the caller owns its
+own board reads. The attended default is unchanged.
+
 **Team launch (GH-2214, superseding the GH-2178 lead+fleet form)** — one
 epic, a standing read-only `o`-lane LEAD, and NOTHING else: the lead staffs
 and owns its workers itself (D3.2 — dispatch does not spawn what the lead
