@@ -1920,6 +1920,28 @@ describe("bounded queue read (GH-1785) — listOwnOpenItems", () => {
       expect(text).toContain("other/repo#3 [Backlog] (foreign repo — read-only here)");
       expect(text).not.toContain("foreign board items not read");
     });
+
+    // GH-2240: a parked item must not be byte-identical to a pending one on
+    // the human truth-telling surface. Same spelling as `board get` (deferNote
+    // is shared), truncated for the dense row format.
+    it("renders a snoozed Intake row and a deferred Backlog row with their markers", () => {
+      gh.issues.set(4, { number: 4, state: "Intake", defer: "2026-09-01T00:00:00Z|awaiting sandbox decision" });
+      gh.issues.set(5, { number: 5, state: "Backlog", defer: "-|GH-2088 lands" });
+      const text = capture(["list"]);
+      expect(text).toContain("#4 [Intake] snoozed(until 2026-09-01, awaiting sandbox decision)");
+      expect(text).toContain("#5 [Backlog] deferred(GH-2088 lands)");
+      // an unparked row carries no marker
+      expect(text).toMatch(/#1 \[Backlog\] [^\n]*$/m);
+      expect(text).not.toMatch(/#1 \[Backlog\][^\n]*(snoozed|deferred)/);
+    });
+
+    it("truncates a long defer condition on the row; get prints it whole", () => {
+      const cond = "a".repeat(60);
+      gh.issues.set(6, { number: 6, state: "Backlog", defer: `-|${cond}` });
+      const text = capture(["list"]);
+      expect(text).toContain(`deferred(${"a".repeat(48)}…)`);
+      expect(text).not.toContain(cond);
+    });
   });
 });
 
