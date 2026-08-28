@@ -48,6 +48,8 @@ import {
   type Lane,
   LANE_CHARS,
   type LiveLintDeps,
+  parseAddress,
+  parseAgentName,
   parseClaim,
   peerPrefix,
   removeHolder,
@@ -3685,6 +3687,478 @@ export function reapDeadLeases(
     }
   }
   return { removed, failed };
+}
+
+// ---------------------------------------------------------------------------
+// Herd roster — the derived topology view (GH-2211, topology C)
+//
+// A JOIN computed at read time, never a store: live sessions from `herdr
+// agent list`, their C8 tokens (parent/root/depth get their first readers
+// here), workspace labels, and the local lease records `board claim` already
+// publishes (GH-1956). Nothing is written, so there is nothing to heal
+// (D1.1). Machine-local like the leases (D7.3): the board's own Claim field
+// is deliberately NOT read — a cockpit polls this verb, and an item walk
+// under it is the ~15k-pts/hr incident class (GH-1817) — so cross-machine
+// claims stay `board list`'s to arbitrate, and the output says so.
+//
+// Every unreadable input degrades to "not evaluated" WITH its reason, never
+// to an empty section (the GH-1929 null-probe direction): herdr missing,
+// herdr refusing, and herdr answering garbage are three different facts and
+// none of them is "nobody is live".
+// ---------------------------------------------------------------------------
+
+export interface HerdAgent {
+  name: string | null;
+  agentStatus: string | null;
+  cwd: string | null;
+  paneId: string | null;
+  workspaceId: string | null;
+  tokens: Record<string, string>;
+}
+
+/** `agents: null` = could not enumerate (reason says why) — distinct from an
+ *  empty fleet, which is a real answer. */
+export function readHerdAgents(ctx: Ctx): { agents: HerdAgent[] | null; reason: string | null } {
+  let r: ExecResult;
+  try {
+    r = ctx.exec(["herdr", "agent", "list"]);
+  } catch (e) {
+    return { agents: null, reason: (e as Error).message };
+  }
+  if (r.code !== 0)
+    return { agents: null, reason: (r.stderr || r.stdout).trim().slice(0, 160) || `herdr exited ${r.code}` };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(r.stdout);
+  } catch {
+    return { agents: null, reason: "herdr agent list returned unparseable output" };
+  }
+  const list = (parsed as { result?: { agents?: unknown } })?.result?.agents;
+  if (!Array.isArray(list)) return { agents: null, reason: "herdr agent list: no result.agents array" };
+  const agents: HerdAgent[] = [];
+  for (const a of list) {
+    if (typeof a !== "object" || a === null) continue;
+    const o = a as Record<string, unknown>;
+    const tokens: Record<string, string> = {};
+    if (typeof o.tokens === "object" && o.tokens !== null)
+      for (const [k, v] of Object.entries(o.tokens as Record<string, unknown>))
+        if (typeof v === "string") tokens[k] = v;
+    agents.push({
+      name: typeof o.name === "string" ? o.name : null,
+      agentStatus: typeof o.agent_status === "string" ? o.agent_status : null,
+      cwd: typeof o.cwd === "string" ? o.cwd : null,
+      paneId: typeof o.pane_id === "string" ? o.pane_id : null,
+      workspaceId: typeof o.workspace_id === "string" ? o.workspace_id : null,
+      tokens,
+    });
+  }
+  return { agents, reason: null };
+}
+
+/** workspace_id → repo/label, for attributing token-less agents. `null` map =
+ *  the read failed; rows then stay unattributable-with-reason rather than
+ *  being assumed into the configured repo. */
+export function readHerdWorkspaces(
+  ctx: Ctx,
+): { workspaces: Map<string, { label: string | null; repoName: string | null }> | null; reason: string | null } {
+  let r: ExecResult;
+  try {
+    r = ctx.exec(["herdr", "workspace", "list"]);
+  } catch (e) {
+    return { workspaces: null, reason: (e as Error).message };
+  }
+  if (r.code !== 0)
+    return { workspaces: null, reason: (r.stderr || r.stdout).trim().slice(0, 160) || `herdr exited ${r.code}` };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(r.stdout);
+  } catch {
+    return { workspaces: null, reason: "herdr workspace list returned unparseable output" };
+  }
+  const list = (parsed as { result?: { workspaces?: unknown } })?.result?.workspaces;
+  if (!Array.isArray(list)) return { workspaces: null, reason: "herdr workspace list: no result.workspaces array" };
+  const map = new Map<string, { label: string | null; repoName: string | null }>();
+  for (const w of list) {
+    if (typeof w !== "object" || w === null) continue;
+    const o = w as Record<string, unknown>;
+    if (typeof o.workspace_id !== "string") continue;
+    const wt = (typeof o.worktree === "object" && o.worktree !== null ? o.worktree : {}) as Record<string, unknown>;
+    map.set(o.workspace_id, {
+      label: typeof o.label === "string" ? o.label : null,
+      repoName: typeof wt.repo_name === "string" ? wt.repo_name : null,
+    });
+  }
+  return { workspaces: map, reason: null };
+}
+
+/** The unit's team — the epic root walk `board name` uses (GH-2209), shared
+ *  so the roster's derived-address fallback and the phone book cannot drift
+ *  from the grammar's own derivation. Cycle-guarded; a severed chain (foreign
+ *  or off-board parent reads `parentNumber: null`) reads FLAT. */
+export function epicTeamOf(ctx: Ctx, issue: Issue): { epic: number; title: string } | null {
+  let root = issue;
+  const seen = new Set<number>([issue.number]);
+  while (root.parentNumber !== null && !seen.has(root.parentNumber)) {
+    seen.add(root.parentNumber);
+    root = fetchIssue(ctx, root.parentNumber);
+  }
+  const teamRoot = root.number !== issue.number ? root : issue.children.length > 0 ? issue : null;
+  return teamRoot === null ? null : { epic: teamRoot.number, title: teamRoot.title };
+}
+
+export interface RosterRow {
+  name: string | null;
+  /** The herd address — from the validated C8 token when stamped, else
+   *  derived at read time for own-repo grammar-B names (addressSource says
+   *  which). null = neither applies; `note` carries the reason. */
+  address: string | null;
+  addressSource: "token" | "derived" | null;
+  /** Repo attribution: address token's repo segment, else the workspace's
+   *  checkout repo. null = unattributable (and `note` says why). */
+  repo: string | null;
+  team: string | null;
+  teamEpic: number | null;
+  lane: Lane | null;
+  issue: number | null;
+  role: string | null;
+  /** C8 lineage/lifecycle tokens, verbatim; absent tokens are null and render
+   *  as "—", never fabricated. */
+  state: string | null;
+  depth: string | null;
+  parent: string | null;
+  root: string | null;
+  spawnEpoch: string | null;
+  agentStatus: string | null;
+  pane: string | null;
+  workspace: string | null;
+  workspaceLabel: string | null;
+  dispatch: boolean;
+  note: string | null;
+  lease: { since: string; expiresAt: string; stale: boolean } | null;
+}
+
+export interface RosterView {
+  repo: string;
+  all: boolean;
+  /** The D7.3 statement, machine-checkable: this view never read the board's
+   *  Claim field; `board list` arbitrates cross-machine. */
+  boardClaims: "not-read";
+  agentsEvaluated: boolean;
+  agentsReason: string | null;
+  workspacesEvaluated: boolean;
+  workspacesReason: string | null;
+  leasesEvaluated: boolean;
+  rows: RosterRow[];
+  /** Leases no live pane matched — dead/stale semantics per GH-2108. */
+  orphanLeases: LeaseRow[] | null;
+  withheld: { foreignAgents: number; unattributedAgents: number; foreignLeases: number; deadLeases: number };
+}
+
+function realpathOr(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/** One spelling of an already-parsed team segment (the title-based spelling
+ *  is contracts' formatTeamSegment; this is its parse-side round-trip). */
+const teamString = (t: { epic: number; slug: string }): string => `t${t.epic}-${t.slug}`;
+
+/** Assemble the join. Pure over its inputs apart from the bounded derived-
+ *  address fallback, which pays own-repo `fetchIssue` walks for token-less
+ *  agents (installed cockpits lag the release that stamps `address`, so a
+ *  token-only roster would render every live agent unattributed for weeks).
+ *  `deriveMax` bounds that spend per invocation — a cockpit polls this verb —
+ *  and a row past the budget says "not derived (budget)", which is a
+ *  different fact from unattributable. Derivation failures degrade the ROW,
+ *  never the roster: one rate-limited walk may not take down the view. */
+export function rosterView(ctx: Ctx, opts: { all: boolean; deriveMax: number }): RosterView {
+  const { agents, reason: agentsReason } = readHerdAgents(ctx);
+  const { workspaces, reason: workspacesReason } = readHerdWorkspaces(ctx);
+  const leases = readLocalLeases(ctx);
+  const rows: RosterRow[] = [];
+  let deriveSpent = 0;
+  // Budget note: deriveMax counts DERIVATIONS (unique issues), not fetches —
+  // one deep parent chain pays several fetchIssue calls under one tick.
+  const derived = new Map<number, { team: { epic: number; title: string } | null; title: string } | null>();
+  const rowLease = new Map<RosterRow, LeaseRow>();
+  const usedLeases = new Set<string>();
+
+  for (const a of agents ?? []) {
+    const ws = a.workspaceId !== null ? (workspaces?.get(a.workspaceId) ?? null) : null;
+    const row: RosterRow = {
+      name: a.name,
+      address: null,
+      addressSource: null,
+      repo: null,
+      team: null,
+      teamEpic: null,
+      lane: null,
+      issue: null,
+      role: a.tokens.role ?? null,
+      state: a.tokens.state ?? null,
+      depth: a.tokens.depth ?? null,
+      parent: a.tokens.parent ?? null,
+      root: a.tokens.root ?? null,
+      spawnEpoch: a.tokens.spawn_epoch ?? null,
+      agentStatus: a.agentStatus,
+      pane: a.paneId,
+      workspace: a.workspaceId,
+      workspaceLabel: ws?.label ?? null,
+      dispatch: false,
+      note: null,
+      lease: null,
+    };
+    const tokenAddr = a.tokens.address !== undefined ? parseAddress(a.tokens.address) : null;
+    if (tokenAddr !== null) {
+      row.address = a.tokens.address;
+      row.addressSource = "token";
+      row.repo = tokenAddr.repo;
+      if (tokenAddr.kind === "dispatch") row.dispatch = true;
+      else {
+        row.team = tokenAddr.team === null ? null : teamString(tokenAddr.team);
+        row.teamEpic = tokenAddr.team?.epic ?? null;
+        row.lane = tokenAddr.lane;
+        row.issue = tokenAddr.issue;
+      }
+    } else {
+      const named = a.name !== null ? parseAgentName(a.name) : null;
+      if (named !== null && named.issue !== null) row.issue = named.issue;
+      if (named?.kind === "v2") row.lane = named.lane;
+      row.repo = ws?.repoName ?? null;
+      if (row.repo === null)
+        row.note =
+          workspaces === null
+            ? `repo unknown (workspace list not evaluated${workspacesReason ? `: ${workspacesReason}` : ""})`
+            : "repo unknown (no checkout recorded for this workspace)";
+      // An own-repo row that no grammar can address still says WHY its
+      // address is null — every other null in this view carries its reason.
+      else if (row.repo === ctx.cfg.repo && named?.kind !== "v2")
+        row.note = named?.kind === "legacy" ? "no derivable address (legacy session name)" : "no derivable address (name not grammar B)";
+      // Derived-address fallback: own-repo, grammar-B named, budgeted.
+      else if (row.repo === ctx.cfg.repo && named?.kind === "v2") {
+        if (derived.has(named.issue) || deriveSpent < opts.deriveMax) {
+          if (!derived.has(named.issue)) {
+            deriveSpent++;
+            try {
+              const issue = fetchIssue(ctx, named.issue);
+              derived.set(named.issue, { team: epicTeamOf(ctx, issue), title: issue.title });
+            } catch (e) {
+              derived.set(named.issue, null);
+              row.note = `address not derived (${(e as Error).message.slice(0, 120)})`;
+            }
+          }
+          const d = derived.get(named.issue);
+          if (d !== null && d !== undefined) {
+            row.address = formatAddress(ctx.cfg.repo, d.team, named.lane, named.issue, d.title);
+            row.addressSource = "derived";
+            row.team = d.team === null ? null : formatTeamSegment(d.team.epic, d.team.title);
+            row.teamEpic = d.team?.epic ?? null;
+          } else if (row.note === null) row.note = "address not derived (board read failed)";
+        } else row.note = `address not derived (budget: RALPH_ROSTER_DERIVE_MAX=${opts.deriveMax})`;
+      }
+    }
+    // Lease join: same unit AND same checkout. Realpath both sides — the lock
+    // stores the claim-time spelling while herdr may report the symlinked one
+    // (/tmp vs /private/tmp), and a raw compare would false-orphan a live
+    // driver's lease.
+    if (row.issue !== null && a.cwd !== null && leases !== null) {
+      const cwdReal = realpathOr(a.cwd);
+      for (const l of leases) {
+        if (l.issue !== row.issue || usedLeases.has(l.file)) continue;
+        if (realpathOr(l.worktree) !== cwdReal) continue;
+        usedLeases.add(l.file);
+        rowLease.set(row, l);
+        row.lease = { since: l.since, expiresAt: l.expiresAt, stale: l.stale };
+        break;
+      }
+    }
+    rows.push(row);
+  }
+
+  const withheld = { foreignAgents: 0, unattributedAgents: 0, foreignLeases: 0, deadLeases: 0 };
+  let kept = rows;
+  if (!opts.all) {
+    kept = [];
+    for (const r of rows) {
+      if (r.repo === ctx.cfg.repo) kept.push(r);
+      else if (r.repo === null) withheld.unattributedAgents++;
+      else withheld.foreignAgents++;
+    }
+    // A lease that joined a WITHHELD row would otherwise appear nowhere —
+    // not on a row, not as an orphan, in no count — for exactly the
+    // workspace-outage case that makes rows unattributable. Return it to the
+    // orphan pool so the repo view never loses "who holds #N here".
+    for (const r of rows) if (!kept.includes(r) && rowLease.has(r)) usedLeases.delete(rowLease.get(r)!.file);
+  }
+  const orphans = leases === null ? null : leases.filter((l) => !usedLeases.has(l.file));
+  let keptOrphans = orphans;
+  if (!opts.all && orphans !== null) {
+    keptOrphans = orphans.filter((l) => l.worktreeState !== "missing" && l.sameRepo !== false);
+    withheld.deadLeases = orphans.filter((l) => l.worktreeState === "missing").length;
+    withheld.foreignLeases = orphans.length - keptOrphans.length - withheld.deadLeases;
+  }
+  return {
+    repo: ctx.cfg.repo,
+    all: opts.all,
+    boardClaims: "not-read",
+    agentsEvaluated: agents !== null,
+    agentsReason,
+    workspacesEvaluated: workspaces !== null,
+    workspacesReason,
+    leasesEvaluated: leases !== null,
+    rows: kept,
+    orphanLeases: keptOrphans,
+    withheld,
+  };
+}
+
+/** A live-pane match for the phone book: how we found it, and enough to act
+ *  on (pane id for the transport, status for the human). `source: "name"`
+ *  with `repoVerified: false` is a grammar-B name in a workspace whose
+ *  checkout could not be read — reported, never silently dropped, and never
+ *  silently trusted either. */
+export interface PhoneBookLive {
+  name: string | null;
+  pane: string | null;
+  status: string | null;
+  address: string | null;
+  source: "token" | "name";
+  repoVerified: boolean;
+}
+
+function phoneBookLine(l: PhoneBookLive): string {
+  const via = l.source === "token" ? "" : l.repoVerified ? " (by name)" : " (by name; repo unverified)";
+  return `${l.name ?? "?"}  pane ${l.pane ?? "?"}  ${l.status ?? "?"}${via}`;
+}
+
+/** `who lead [NNN]` / `who dispatch` — the phone book that falls out of the
+ *  GH-2209 grammar (D0.1). Repo-scoped, unlike bare `who`: an address begins
+ *  with the repo, so the question only makes sense against the configured
+ *  one. The DURABLE address always prints (for dispatch it names the board,
+ *  not a session — D5.1); liveness is best-effort over `herdr agent list`,
+ *  and its honest bound is stated in the output: only a token-stamped pane
+ *  proves its address, a grammar-B name is corroborating, and a token-less
+ *  hero is invisible entirely. */
+function whoPhoneBook(
+  ctx: Ctx,
+  positional: string[],
+  flags: Record<string, string | boolean>,
+  out: (s: string) => void,
+  json: (v: unknown) => void,
+): number {
+  const read = readHerdAgents(ctx);
+  const wsRead = readHerdWorkspaces(ctx);
+  const repoOf = (a: HerdAgent): string | null =>
+    a.workspaceId !== null ? (wsRead.workspaces?.get(a.workspaceId)?.repoName ?? null) : null;
+
+  /** Live agents matching (lane, issue) in the configured repo — token first,
+   *  grammar-B name as fallback. A name-matched agent whose workspace resolved
+   *  to a DIFFERENT repo is excluded (same number, different repo's issue). */
+  const liveFor = (lane: Lane, issue: number): PhoneBookLive[] => {
+    const hits: PhoneBookLive[] = [];
+    for (const a of read.agents ?? []) {
+      const p = a.tokens.address !== undefined ? parseAddress(a.tokens.address) : null;
+      if (p !== null) {
+        if (p.kind === "agent" && p.repo === ctx.cfg.repo && p.lane === lane && p.issue === issue)
+          hits.push({ name: a.name, pane: a.paneId, status: a.agentStatus, address: a.tokens.address, source: "token", repoVerified: true });
+        continue;
+      }
+      const named = a.name !== null ? parseAgentName(a.name) : null;
+      if (named?.kind !== "v2" || named.lane !== lane || named.issue !== issue) continue;
+      const repo = repoOf(a);
+      if (repo !== null && repo !== ctx.cfg.repo) continue;
+      hits.push({ name: a.name, pane: a.paneId, status: a.agentStatus, address: null, source: "name", repoVerified: repo === ctx.cfg.repo });
+    }
+    return hits;
+  };
+
+  if (positional[0] === "dispatch") {
+    const address = formatDispatchAddress(ctx.cfg.repo);
+    const live = (read.agents ?? [])
+      .filter((a) => {
+        const p = a.tokens.address !== undefined ? parseAddress(a.tokens.address) : null;
+        return p?.kind === "dispatch" && p.repo === ctx.cfg.repo;
+      })
+      .map((a): PhoneBookLive => ({ name: a.name, pane: a.paneId, status: a.agentStatus, address: a.tokens.address ?? null, source: "token", repoVerified: true }));
+    if (flags.json) {
+      json({ repo: ctx.cfg.repo, address, live, agentsEvaluated: read.agents !== null, agentsReason: read.reason });
+      return 0;
+    }
+    out(`address  ${address}`);
+    if (read.agents === null) out(`live     not evaluated — ${read.reason}`);
+    else if (live.length === 0)
+      out(`live     — (token-stamped panes only; a token-less hero is invisible here. The durable address is the board — D5.1)`);
+    else for (const l of live) out(`live     ${phoneBookLine(l)}`);
+    return 0;
+  }
+
+  // who lead [NNN]
+  if (positional[1] !== undefined) {
+    const num = requireNumber(positional[1]);
+    const issue = fetchIssue(ctx, num);
+    // A child resolves to its epic root's lead — the walk is the grammar's.
+    const team = epicTeamOf(ctx, issue);
+    if (team === null)
+      throw new RefusalError(
+        `#${num} has no team — no own-repo parent chain and no children, so there is no lead to name. ` +
+          `A flat unit answers to dispatch (\`board who dispatch\`); \`board name ${num}\` shows its flat address.`,
+      );
+    const address = formatAddress(ctx.cfg.repo, team, "o", team.epic, team.title);
+    const live = liveFor("o", team.epic);
+    if (flags.json) {
+      json({
+        repo: ctx.cfg.repo,
+        issue: num,
+        epic: team.epic,
+        team: formatTeamSegment(team.epic, team.title),
+        address,
+        live,
+        agentsEvaluated: read.agents !== null,
+        agentsReason: read.reason,
+      });
+      return 0;
+    }
+    out(`team     ${formatTeamSegment(team.epic, team.title)}`);
+    out(`address  ${address}`);
+    if (read.agents === null) out(`live     not evaluated — ${read.reason}`);
+    else if (live.length === 0) out(`live     — (no live pane matches lane o + #${team.epic}; \`team launch ${team.epic}\` spawns the lead)`);
+    else for (const l of live) out(`live     ${phoneBookLine(l)}`);
+    return 0;
+  }
+
+  // who lead, no argument: every live lead attributable to this repo.
+  const leads: Array<PhoneBookLive & { epic: number | null; team: string | null }> = [];
+  for (const a of read.agents ?? []) {
+    const p = a.tokens.address !== undefined ? parseAddress(a.tokens.address) : null;
+    if (p !== null) {
+      if (p.kind === "agent" && p.repo === ctx.cfg.repo && p.lane === "o")
+        leads.push({
+          name: a.name, pane: a.paneId, status: a.agentStatus, address: a.tokens.address ?? null,
+          source: "token", repoVerified: true,
+          epic: p.issue, team: p.team === null ? null : teamString(p.team),
+        });
+      continue;
+    }
+    const named = a.name !== null ? parseAgentName(a.name) : null;
+    if (named?.kind !== "v2" || named.lane !== "o") continue;
+    const repo = repoOf(a);
+    if (repo !== null && repo !== ctx.cfg.repo) continue;
+    leads.push({
+      name: a.name, pane: a.paneId, status: a.agentStatus, address: null,
+      source: "name", repoVerified: repo === ctx.cfg.repo, epic: named.issue, team: null,
+    });
+  }
+  if (flags.json) {
+    json({ repo: ctx.cfg.repo, leads, agentsEvaluated: read.agents !== null, agentsReason: read.reason });
+    return 0;
+  }
+  if (read.agents === null) out(`leads: not evaluated — ${read.reason}`);
+  else if (leads.length === 0) out(`no live leads for ${ctx.cfg.repo} (token- or grammar-B-named lane-o panes; \`board who lead NNN\` prints an epic's lead address)`);
+  else for (const l of leads) out(`${l.epic !== null ? `#${l.epic}  ` : ""}${phoneBookLine(l)}${l.team !== null ? `  team ${l.team}` : ""}`);
+  return 0;
 }
 
 /** Refuse a SECOND, distinct unit driven from one session. Re-claiming the
@@ -11153,6 +11627,28 @@ reads
                               per-(worktree, unit) leases, zero API. A lock
                               whose checkout was deleted reads DEAD, never
                               STALE: nothing can refresh it
+  who lead [NNN] [--json]     the phone book (GH-2211): an epic's lead address
+                              (a child resolves to its epic root; a flat unit
+                              refuses) plus any live pane matching it; with no
+                              NNN, every live lead attributable to this repo.
+                              Repo-scoped, unlike bare \`who\`
+  who dispatch [--json]       the dispatch space's durable address (always —
+                              it names the board, D5.1) and the live hero
+                              binding when a token-stamped pane carries it
+  roster [--all] [--json]     the derived topology view (GH-2211): live
+                              sessions (\`herdr agent list\`), their C8 lineage
+                              tokens (address/parent/root/depth), workspace
+                              labels, and the local lease records, JOINED at
+                              read time — nothing written, nothing to heal.
+                              Machine-local like the leases (D7.3): board
+                              claims are NOT read; \`board list\` arbitrates
+                              cross-machine. Default scope is this repo,
+                              counting what it withholds; --all shows every
+                              repo and every unattributable row. Token-less
+                              agents get a derived address via a bounded
+                              own-repo walk (RALPH_ROSTER_DERIVE_MAX, 10;
+                              0 disables). herdr unreachable renders "not
+                              evaluated", never an empty roster
   reap-leases [--apply]       remove local lock files whose worktree is gone
               [--json]        (dry run by default). Keyed on the checkout being
                               absent, never on age — a live lease may not be
@@ -11616,7 +12112,7 @@ interface ParsedArgs {
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "resume", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
-  "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace",
+  "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace", "all",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
@@ -11998,6 +12494,20 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "who": {
+      // Three scopes under one verb, deliberately (GH-2211): bare `who` is
+      // the machine-wide lease dump (unchanged); `who lead [NNN]` and `who
+      // dispatch` are the REPO-SCOPED phone book that falls out of the
+      // GH-2209 address grammar. An unknown subword REFUSES rather than
+      // falling through to the lease dump — an older installed plugin does
+      // exactly that fall-through, so a silent wrong-answer-shaped success is
+      // the failure mode this guard exists for (the GH-1825 install-lag
+      // point).
+      if (positional[0] === "lead" || positional[0] === "dispatch") return whoPhoneBook(ctx, positional, flags, out, json);
+      if (positional[0] !== undefined)
+        throw new UsageError(
+          `unknown \`who\` subword ${JSON.stringify(positional[0])} — \`who\` (machine-wide leases), ` +
+            `\`who lead [NNN]\`, \`who dispatch\``,
+        );
       // Machine-local, zero API: the per-(worktree, unit) leases `board claim`
       // already publishes (GH-1929/1956), printed instead of grepped for.
       const rows = readLocalLeases(ctx);
@@ -12025,6 +12535,120 @@ export function run(argv: string[], ctx: Ctx): number {
         const dead = rows.filter((l) => l.worktreeState === "missing").length;
         if (dead) out(`${dead} dead lease(s) — \`board reap-leases --apply\` removes locks whose checkout is gone`);
       }
+      return 0;
+    }
+
+    case "roster": {
+      // GH-2211 (topology C): the derived topology view. See rosterView for
+      // the join and its failure directions; this case only renders.
+      const deriveMax = (() => {
+        const raw = process.env.RALPH_ROSTER_DERIVE_MAX;
+        if (raw === undefined || raw === "") return 10;
+        const n = Number(raw);
+        if (Number.isInteger(n) && n >= 0) return n;
+        process.stderr.write(`warn: RALPH_ROSTER_DERIVE_MAX="${raw}" is not a non-negative integer — using 10\n`);
+        return 10;
+      })();
+      const view = rosterView(ctx, { all: flags.all === true, deriveMax });
+      if (flags.json) {
+        json(view);
+        return 0;
+      }
+      out(
+        view.all
+          ? `roster — machine-wide (board claims not read; \`board list\` arbitrates cross-machine)`
+          : `roster — ${view.repo} (machine-local; board claims not read — \`board list\` arbitrates cross-machine)`,
+      );
+      if (!view.agentsEvaluated) out(`live agents: not evaluated — ${view.agentsReason ?? "unknown"}`);
+      // Group by repo (default view holds only ours), then team / flat /
+      // dispatch inside each. A row's C8 tokens render verbatim or as "—":
+      // an absent depth is not depth 0, and a roster may not invent lineage.
+      const repos = new Map<string | null, RosterRow[]>();
+      for (const r of view.rows) {
+        const k = r.repo;
+        const arr = repos.get(k) ?? [];
+        arr.push(r);
+        repos.set(k, arr);
+      }
+      const rowLine = (r: RosterRow): string => {
+        const bits = [r.name ?? "(unnamed)", r.agentStatus ?? "?"];
+        if (r.issue !== null) bits.push(`#${r.issue}`);
+        if (r.pane !== null) bits.push(`pane ${r.pane}`);
+        bits.push(`depth ${r.depth ?? "—"}`);
+        if (r.parent !== null) bits.push(`parent ${r.parent}`);
+        if (r.lease !== null) bits.push(`lease until ${r.lease.expiresAt}${r.lease.stale ? " STALE" : ""}`);
+        if (r.addressSource === "derived") bits.push("(address derived)");
+        if (r.note !== null) bits.push(`[${r.note}]`);
+        return bits.join("  ");
+      };
+      const renderRepo = (repo: string | null, rows: RosterRow[]) => {
+        out(repo === null ? "(unattributed)" : repo);
+        const dispatchRows = rows.filter((r) => r.dispatch);
+        if (repo === view.repo) {
+          const durable = formatDispatchAddress(view.repo);
+          if (dispatchRows.length === 0)
+            out(
+              view.agentsEvaluated
+                ? `  dispatch  ${durable} — no live binding visible (token-stamped panes only; a token-less hero is invisible here)`
+                : `  dispatch  ${durable} — liveness not evaluated`,
+            );
+          else for (const d of dispatchRows) out(`  dispatch  ${durable}  ${rowLine(d)}`);
+        } else for (const d of dispatchRows) out(`  dispatch  ${rowLine(d)}`);
+        const teams = new Map<string, RosterRow[]>();
+        const flat: RosterRow[] = [];
+        for (const r of rows) {
+          if (r.dispatch) continue;
+          if (r.team === null) flat.push(r);
+          else {
+            const arr = teams.get(r.team) ?? [];
+            arr.push(r);
+            teams.set(r.team, arr);
+          }
+        }
+        for (const [team, members] of [...teams.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+          out(`  ${team}/`);
+          members.sort(
+            (a, b) => (a.lane === "o" ? 0 : 1) - (b.lane === "o" ? 0 : 1) || (a.issue ?? 0) - (b.issue ?? 0),
+          );
+          for (const m of members) out(`    ${rowLine(m)}`);
+        }
+        if (flat.length > 0) {
+          out(`  flat/`);
+          for (const f of flat.sort((a, b) => (a.issue ?? 0) - (b.issue ?? 0))) out(`    ${rowLine(f)}`);
+        }
+      };
+      // Our repo first (and in the default view, alone); null (unattributed)
+      // last — it exists only under --all.
+      const order = [...repos.keys()].sort((a, b) =>
+        a === view.repo ? -1 : b === view.repo ? 1 : a === null ? 1 : b === null ? -1 : a.localeCompare(b),
+      );
+      // The default view always renders this repo's section — the dispatch
+      // space's DURABLE address is board-derived (D5.1) and prints whether or
+      // not liveness could be read. Under --all an unevaluated fleet has no
+      // sections to invent.
+      if (!order.includes(view.repo) && (view.agentsEvaluated || !view.all)) order.unshift(view.repo);
+      for (const k of order) renderRepo(k, repos.get(k) ?? []);
+      if (view.orphanLeases === null)
+        out(`leases: not evaluated — sessions dir unreadable (distinct from nobody driving)`);
+      else if (view.orphanLeases.length > 0) {
+        out(view.agentsEvaluated ? `leases without a live pane:` : `local leases (pane match not evaluated):`);
+        for (const l of view.orphanLeases) {
+          const status =
+            l.worktreeState === "missing"
+              ? " DEAD (worktree deleted)"
+              : l.stale
+                ? " STALE (past TTL)"
+                : ` — lease until ${l.expiresAt}`;
+          out(`  #${l.issue} ${l.session} in ${l.worktree} since ${l.since}${status}`);
+        }
+      }
+      const w = view.withheld;
+      const held: string[] = [];
+      if (w.foreignAgents) held.push(`${w.foreignAgents} agent(s) in other repos`);
+      if (w.unattributedAgents) held.push(`${w.unattributedAgents} unattributable agent(s)`);
+      if (w.foreignLeases) held.push(`${w.foreignLeases} foreign lease(s)`);
+      if (w.deadLeases) held.push(`${w.deadLeases} dead lease(s)`);
+      if (held.length > 0) out(`withheld: ${held.join(", ")} — \`--all\` shows everything`);
       return 0;
     }
 
@@ -12189,16 +12813,9 @@ export function run(argv: string[], ctx: Ctx): number {
       // foreign or off-board parent, so a severed chain reads FLAT — the same
       // severed-tree stance the ranker takes (GH-1814) — rather than
       // inventing a team from an issue number that resolves in another repo.
-      // The seen-set is a cycle guard: GitHub's sub-issue graph should be a
-      // DAG, but an address read must terminate even when it is not.
-      let root = issue;
-      const seen = new Set<number>([num]);
-      while (root.parentNumber !== null && !seen.has(root.parentNumber)) {
-        seen.add(root.parentNumber);
-        root = fetchIssue(ctx, root.parentNumber);
-      }
-      const teamRoot = root.number !== num ? root : issue.children.length > 0 ? issue : null;
-      const team = teamRoot === null ? null : { epic: teamRoot.number, title: teamRoot.title };
+      // The walk lives in epicTeamOf (the roster and phone book share it —
+      // GH-2211): cycle-guarded, terminates even on a non-DAG.
+      const team = epicTeamOf(ctx, issue);
       const names = {
         number: num,
         title: issue.title,
