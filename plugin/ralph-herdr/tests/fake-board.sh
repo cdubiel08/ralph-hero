@@ -147,8 +147,8 @@ case "${1-} ${2-}" in
     # slugify here would be the very thing GH-1807 exists to prevent. Tests
     # that care about the grammar itself use naming-golden.tsv.
     emit_fixture "name.${2-}" name ||
-      printf '{"number":%s,"kind":"feat","lane":"w","branch":"feat/%s-fake-issue","worktree":"feat-%s-fake-issue","agent":"w%s-fake-issue","legacyBranch":"feature/GH-%s"}\n' \
-        "${2-0}" "${2-0}" "${2-0}" "${2-0}" "${2-0}"
+      printf '{"number":%s,"kind":"feat","lane":"w","branch":"feat/%s-fake-issue","worktree":"feat-%s-fake-issue","agent":"w%s-fake-issue","legacyBranch":"feature/GH-%s","team":null,"teamEpic":null,"address":"fake-repo/w%s-fake-issue"}\n' \
+        "${2-0}" "${2-0}" "${2-0}" "${2-0}" "${2-0}" "${2-0}"
     if [ -n "$FIX" ] && [ -f "$FIX/name.${2-}.rc" ]; then
       key="name.${2-}"
     else

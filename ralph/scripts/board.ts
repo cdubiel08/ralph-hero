@@ -32,8 +32,12 @@ import {
   CONTRACT_IDS,
   type ContractId,
   DELIVER_REASONS,
+  formatAddress,
   formatAgentName,
   formatBranchName,
+  formatDispatchAddress,
+  formatTeamSegment,
+  DISPATCH_SEGMENT,
   parseBranchName,
   worktreeLeaf,
   emitJsonSchemas,
@@ -3385,6 +3389,9 @@ function peerRefusal(ctx: Ctx, number: number, worktree: string, since: string):
     `another live session in this worktree (${worktree}) is already driving #${number} (since ${since}). ` +
       `Two harnesses in one checkout race on the index, the branch and each other's uncommitted files, ` +
       `and the board claim cannot see it: the holder is \`${ctx.cfg.holder}\` for both. ` +
+      `One (repo, unit) is ONE herd address (\`board name ${number}\`), machine-wide — this worktree lock ` +
+      `is what keeps that address naming a single live driver (GH-2209/D0.2); a respawn inherits the ` +
+      `address, it never mints a second one. ` +
       `If this pane is a fork, use it to read and think from that session's context, not to drive its unit. ` +
       `If that session is gone — killed, crashed — say so with \`board claim ${number} --steal\`; ` +
       `otherwise its record ages out after ${ctx.cfg.lockTtlMin} min on the same clock as the board claim, ` +
@@ -11171,10 +11178,14 @@ reads
                               second eligibility computation
   name NNN [--json]           the derived names for a unit (GH-1807): branch
                               <kind>/NNN-<slug>, agent w NNN-<slug> (grammar B,
-                              same slug), worktree leaf. Kind comes from labels
-                              (apply label wins); --lane picks the agent lane.
-                              The ONLY place a transport may read the
-                              convention from — no second copy of the grammar
+                              same slug), worktree leaf, and the herd ADDRESS
+                              (GH-2209) <repo>[/t<epic>-<slug>]/<lane>NNN-<slug>
+                              — team = the unit's epic root, derived per read.
+                              Kind comes from labels (apply label wins); --lane
+                              picks the agent lane. The ONLY place a transport
+                              may read the convention from — no second copy of
+                              the grammar. \`board name dispatch\` prints the
+                              dispatch space's address (<repo>/dispatch)
   peer NNN [--candidates a,b] the unit's live PEER ADDRESS (GH-1918), resolved
                               against candidate names on stdin (one per line)
                               or --candidates. The peer namespace is harness-
@@ -12149,6 +12160,16 @@ export function run(argv: string[], ctx: Ctx): number {
       // The convention is DECLARED in contracts.ts and READ here. Shell
       // transports call this instead of rebuilding slugify in awk — a second
       // copy of the grammar is a second grammar (GH-1807).
+      //
+      // GH-2209: the dispatch space has no issue, so it is the one positional
+      // that is not a number — `board name dispatch` prints the durable
+      // address of the board's own ops seat (D5.1).
+      if (positional[0] === DISPATCH_SEGMENT) {
+        const address = formatDispatchAddress(ctx.cfg.repo);
+        if (flags.json) json({ repo: ctx.cfg.repo, address });
+        else out(`address  ${address}`);
+        return 0;
+      }
       const num = requireNumber(positional[0]);
       const issue = fetchIssue(ctx, num);
       const lane = (typeof flags.lane === "string" ? flags.lane : "w") as Lane;
@@ -12161,6 +12182,23 @@ export function run(argv: string[], ctx: Ctx): number {
         labelsTruncated: issue.labelsTruncated,
       });
       const branch = formatBranchName(kind, num, issue.title);
+      // The team is the unit's EPIC ROOT — the topmost own-repo ancestor, or
+      // the issue itself when it has children (a lead's address puts the lead
+      // inside its own team). Derived per read, never stored (D1.1); a flat
+      // unit pays zero extra reads. `parentNumber` is already null for a
+      // foreign or off-board parent, so a severed chain reads FLAT — the same
+      // severed-tree stance the ranker takes (GH-1814) — rather than
+      // inventing a team from an issue number that resolves in another repo.
+      // The seen-set is a cycle guard: GitHub's sub-issue graph should be a
+      // DAG, but an address read must terminate even when it is not.
+      let root = issue;
+      const seen = new Set<number>([num]);
+      while (root.parentNumber !== null && !seen.has(root.parentNumber)) {
+        seen.add(root.parentNumber);
+        root = fetchIssue(ctx, root.parentNumber);
+      }
+      const teamRoot = root.number !== num ? root : issue.children.length > 0 ? issue : null;
+      const team = teamRoot === null ? null : { epic: teamRoot.number, title: teamRoot.title };
       const names = {
         number: num,
         title: issue.title,
@@ -12171,12 +12209,19 @@ export function run(argv: string[], ctx: Ctx): number {
         agent: formatAgentName(lane, num, issue.title),
         peerPrefix: peerPrefix(branch),
         legacyBranch: `feature/GH-${num}`,
+        // GH-2209 (topology A): the full herd address. Spawners stamp it as
+        // the `address` token beside the C8 lineage tokens (D0.4); topology
+        // C's phone-book reads parse it back with parseAddress.
+        team: team === null ? null : formatTeamSegment(team.epic, team.title),
+        teamEpic: team === null ? null : team.epic,
+        address: formatAddress(ctx.cfg.repo, team, lane, num, issue.title),
       };
       if (flags.json) json(names);
       else {
         out(`branch   ${names.branch}`);
         out(`agent    ${names.agent}`);
         out(`worktree ${names.worktree}`);
+        out(`address  ${names.address}`);
         out(`peer     ${names.peerPrefix}-<suffix> (harness-assigned; resolve with \`board peer ${num}\`)`);
       }
       return 0;

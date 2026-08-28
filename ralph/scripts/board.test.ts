@@ -5798,7 +5798,61 @@ describe("board name: the one place a transport reads the convention (GH-1807)",
       agent: "w1807-semantic-branch-agent",
       worktree: "feat-1807-semantic-branch-agent",
       legacyBranch: "feature/GH-1807",
+      // GH-2209: no parent, no children — a flat unit, addressed without a
+      // team segment and costing zero extra reads.
+      team: null,
+      teamEpic: null,
+      address: "ralph-hero/w1807-semantic-branch-agent",
     });
+  });
+
+  it("the address carries the unit's epic root as the team segment — walked to the TOP, per read (GH-2209)", () => {
+    const gh = new FakeGh();
+    gh.issues.set(100, {
+      number: 100,
+      state: "In Progress",
+      title: "Herd topology epic",
+      children: [{ number: 101, state: "Backlog", issueState: "OPEN" }],
+    });
+    gh.issues.set(101, { number: 101, state: "Backlog", title: "Mid-tier phase", parent: 100 });
+    gh.issues.set(102, { number: 102, state: "Backlog", title: "Leaf unit", parent: 101 });
+    const ctx = makeCtx(gh);
+    // A grandchild walks past the mid-tier phase to the ROOT.
+    expect(JSON.parse(say(["name", "102", "--json"], ctx))).toMatchObject({
+      team: "t100-herd-topology-epic",
+      teamEpic: 100,
+      address: "ralph-hero/t100-herd-topology-epic/w102-leaf-unit",
+    });
+    // The epic root itself lives INSIDE its own team — a lead's address.
+    expect(JSON.parse(say(["name", "100", "--lane", "o", "--json"], ctx))).toMatchObject({
+      team: "t100-herd-topology-epic",
+      address: "ralph-hero/t100-herd-topology-epic/o100-herd-topology-epic",
+    });
+  });
+
+  it("a foreign parent severs the chain and the address reads FLAT — never a team from another repo's issue number", () => {
+    const gh = new FakeGh();
+    gh.issues.set(7, {
+      number: 7,
+      state: "Backlog",
+      title: "Cross-repo child",
+      parent: 999,
+      parentRepo: "other/elsewhere",
+    });
+    const ctx = makeCtx(gh);
+    expect(JSON.parse(say(["name", "7", "--json"], ctx))).toMatchObject({
+      team: null,
+      address: "ralph-hero/w7-cross-repo-child",
+    });
+  });
+
+  it("board name dispatch prints the dispatch space's durable address (D5.1)", () => {
+    const ctx = makeCtx(new FakeGh());
+    expect(JSON.parse(say(["name", "dispatch", "--json"], ctx))).toEqual({
+      repo: "ralph-hero",
+      address: "ralph-hero/dispatch",
+    });
+    expect(say(["name", "dispatch"], ctx)).toContain("address  ralph-hero/dispatch");
   });
 
   it("kind comes from labels; the apply label outranks them, but only once armed", () => {
