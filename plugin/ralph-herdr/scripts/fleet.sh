@@ -64,10 +64,11 @@
 #   RALPH_HERDR_RUN_ID          the current run (minted via ralph_run_id)
 #   RALPH_HERDR_REFILL_TTL_MIN  arming TTL, minutes (default 120)
 #   RALPH_HERDR_REFILL_BUDGET   max total spawns per run (default 8)
-#   RALPH_HERDR_REPLY_TO        FleetBrief reply_to agent name (default
-#                               s0-watch — the watcher is the one durable
-#                               herdr-agent surface; cockpit panes are not
-#                               agents, so briefs point replies at it)
+#   RALPH_HERDR_REPLY_TO        FleetBrief reply_to agent name (default: the
+#                               spawning lead when RALPH_HERDR_TEAM_LEAD names
+#                               one — chain of command, GH-2217 — else
+#                               s0-watch, the one durable herdr-agent surface;
+#                               cockpit panes are not agents)
 
 # ralph_run_id — mint a fresh run id: UTC compact timestamp + 4 hex chars
 # (cheap cksum hash of time+pid+RANDOM, same recipe as ralph_agent_ref).
@@ -308,11 +309,19 @@ ralph_fleet_spawn_done() {
 # path. Fields per FleetBriefSchema (contracts.ts): role is the ref's lane
 # (only w has a skill mapping today — anything else is refused), the skill
 # invocation is exactly what the pane was prompted with, reply_to points at
-# a durable herdr agent (default s0-watch — see the header), report_path is
-# where Phase-6 skills will drop the C2 CompletionReport, and constraints
-# pin the branch (default: the board CLI's grammar for the issue, legacy
-# feature/GH-N when it cannot be reached; shared-claim siblings pass the
-# SHARED branch), base origin/main, no_force always.
+# a durable herdr agent (default: the spawning lead when RALPH_HERDR_TEAM_LEAD
+# names one — chain of command, GH-2217 — else s0-watch; RALPH_HERDR_REPLY_TO
+# overrides both), report_path is where Phase-6 skills will drop the C2
+# CompletionReport, and constraints pin the branch (default: the board CLI's
+# grammar for the issue, legacy feature/GH-N when it cannot be reached;
+# shared-claim siblings pass the SHARED branch), base origin/main, no_force
+# always.
+#
+# The who-is-who block (GH-2217, D4.2) rides the spawn out-vars
+# RALPH_HERDR_SPAWNED_ADDRESS / _WHO_LEAD / _WHO_DISPATCH — one derivation in
+# spawn_work_session feeds the pane env AND the brief, so they cannot
+# disagree. Empty values omit their field; all empty omits the block (a spawn
+# against a board copy that predates the grammar — addresses are chrome).
 #
 # When a board CLI is resolvable ($BOARD from lib.sh) the brief is validated
 # via `board contract validate ralph.fleet_brief` — warn-not-die: a missing
@@ -342,18 +351,34 @@ ralph_brief_write() {
   # everywhere, and a brief is an observation that must not cost the spawn.
   [ -n "$branch" ] || branch=$(ralph_branch_for_issue "$issue" 2>/dev/null) ||
     branch="feature/GH-$issue"
-  [ -n "$reply" ] || reply="${RALPH_HERDR_REPLY_TO:-s0-watch}"
+  # reply-to is the chain of command: the lead that spawned this worker when
+  # one did (a parse-valid RALPH_HERDR_TEAM_LEAD), the watcher otherwise.
+  if [ -z "$reply" ]; then
+    reply="${RALPH_HERDR_REPLY_TO:-}"
+    if [ -z "$reply" ] && [ -n "${RALPH_HERDR_TEAM_LEAD:-}" ] &&
+      ralph_agent_parse "$RALPH_HERDR_TEAM_LEAD" >/dev/null 2>&1; then
+      reply="$RALPH_HERDR_TEAM_LEAD"
+    fi
+    [ -n "$reply" ] || reply="s0-watch"
+  fi
   dir=$(ralph_run_dir "$id") || return 1
   file="$dir/briefs/$ref.json"
   jq -nc \
     --argjson issue "$issue" --arg skill "/ralph:work $issue" \
     --arg reply "$reply" --arg report "$dir/reports/$ref.json" \
-    --arg branch "$branch" '
+    --arg branch "$branch" \
+    --arg self "${RALPH_HERDR_SPAWNED_ADDRESS:-}" \
+    --arg lead "${RALPH_HERDR_SPAWNED_WHO_LEAD:-}" \
+    --arg dispatch "${RALPH_HERDR_SPAWNED_WHO_DISPATCH:-}" '
     {contract: "ralph.fleet_brief", contract_version: 1,
      issue: $issue, role: "w", skill_invocation: $skill,
      reply_to: {kind: "herdr_agent", name: $reply},
-     report_path: $report,
-     constraints: {branch: $branch, base: "origin/main", no_force: true}}' \
+     report_path: $report}
+    + (({} + (if $self == "" then {} else {address: $self} end)
+           + (if $lead == "" then {} else {lead: $lead} end)
+           + (if $dispatch == "" then {} else {dispatch: $dispatch} end))
+       | if . == {} then {} else {who: .} end)
+    + {constraints: {branch: $branch, base: "origin/main", no_force: true}}' \
     >"$file" || return 1
   if [ -n "${BOARD:-}" ] && [ -x "$BOARD" ]; then
     out=$("$BOARD" contract validate ralph.fleet_brief "$file" 2>&1) ||

@@ -145,7 +145,13 @@ func viewModel(m Model) string {
 	bodyHeight := bodyHeightOf(m)
 	switch m.mode {
 	case ModePeek:
-		b.WriteString(renderOverlay(m, "peek — "+m.peekWho+"  (tail, no focus steal)", m.peekText, bodyHeight))
+		// The C8 lineage rides the header (GH-2217): who spawned this session
+		// and how deep it sits — the detail view is where detail belongs.
+		peekTitle := "peek — " + m.peekWho
+		if lin := m.agentLineage(m.peekWho); lin != "" {
+			peekTitle += "  (" + lin + ")"
+		}
+		b.WriteString(renderOverlay(m, peekTitle+"  (tail, no focus steal)", m.peekText, bodyHeight))
 	case ModeDag:
 		b.WriteString(renderOverlay(m, "frontier DAG — eligible & blocked", m.dagText, bodyHeight))
 	default:

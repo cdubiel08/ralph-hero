@@ -653,6 +653,8 @@ func parseAgents(out, repoRoot string) ([]Agent, error) {
 			Issue:      issue,
 			Lane:       lane,
 			Root:       tokenString(a.Tokens, "root"),
+			Parent:     tokenString(a.Tokens, "parent"),
+			Depth:      tokenString(a.Tokens, "depth"),
 			Branch:     tokenString(a.Tokens, "branch"),
 			TokenState: tokenString(a.Tokens, "state"),
 			Address:    tokenString(a.Tokens, "address"),

@@ -155,6 +155,16 @@ type Agent struct {
 	// ledger's own agent_ref. Empty for an agent nobody spawned through the
 	// sanctioned path.
 	Root string
+	// Parent is tokens.parent — the spawner's own agent_ref for a child
+	// spawn (a lead's worker, a driver's investigator). Empty for a depth-0
+	// root, which is what every human-launched session is. GH-2217: C8
+	// lineage finally read rather than pushed into the void; the peek header
+	// renders it, and unit K's tree view joins on it.
+	Parent string
+	// Depth is tokens.depth, verbatim. "" is NOT "0" — an absent token is a
+	// session whose spawner recorded no lineage, and no reader may invent
+	// one (the roster's own rule, GH-2211).
+	Depth string
 	// Branch is tokens.branch — the checkout this session took. Free: it
 	// arrives in the same snapshot the status does.
 	Branch string
@@ -478,6 +488,30 @@ func (m Model) cardState(issue int) (string, bool) {
 		}
 	}
 	return best, true
+}
+
+// agentLineage renders a live agent's C8 lineage tokens for the peek header
+// (GH-2217 — parent/root/depth read, never pushed into the void): "depth 1 ·
+// parent o2208-…#ab12" for a lead-spawned worker, "depth 0" for a recorded
+// root, "" when the spawner recorded nothing — absence stays absence, the
+// roster's own rule.
+func (m Model) agentLineage(name string) string {
+	for _, as := range m.agents {
+		for _, a := range as {
+			if a.Name != name {
+				continue
+			}
+			var parts []string
+			if a.Depth != "" {
+				parts = append(parts, "depth "+a.Depth)
+			}
+			if a.Parent != "" {
+				parts = append(parts, "parent "+a.Parent)
+			}
+			return strings.Join(parts, " · ")
+		}
+	}
+	return ""
 }
 
 // cardAge is the LIVE agent's age since spawn. It resolves through the

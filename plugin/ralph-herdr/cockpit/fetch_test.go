@@ -320,7 +320,7 @@ func TestFetchBoardFailureMarksEveryColumnUnknown(t *testing.T) {
 func TestParseAgents(t *testing.T) {
 	root := "/repo"
 	out := snap(root, `
-	  {"name":"w123-fix-the-flaky-test","agent_status":"working","pane_id":"p1","workspace_id":"wR"},
+	  {"name":"w123-fix-the-flaky-test","agent_status":"working","pane_id":"p1","workspace_id":"wR","tokens":{"root":"w123-fix-the-flaky-test#cd34","parent":"o2208-herd-topology#ab12","depth":"1"}},
 	  {"name":"gh-45","agent_status":"blocked","pane_id":"p2","workspace_id":"wR"},
 	  {"name":"random-agent","agent_status":"working","pane_id":"p3","workspace_id":"wR"},
 	  {"name":"r45-review-pass--2","agent_status":"idle","pane_id":"p4","workspace_id":"wR"},
@@ -338,6 +338,14 @@ func TestParseAgents(t *testing.T) {
 	}
 	if a := byName["w123-fix-the-flaky-test"]; a.Issue != 123 || a.Lane != "w" || a.Status != "working" {
 		t.Errorf("grammar-B parse wrong: %+v", a)
+	}
+	// GH-2217: the C8 lineage tokens are read, never dropped on the floor —
+	// and an agent with none keeps "" (absence, not "0").
+	if a := byName["w123-fix-the-flaky-test"]; a.Parent != "o2208-herd-topology#ab12" || a.Depth != "1" {
+		t.Errorf("lineage tokens not read: %+v", a)
+	}
+	if a := byName["gh-45"]; a.Parent != "" || a.Depth != "" {
+		t.Errorf("absent lineage must stay empty, got %+v", a)
 	}
 	if a := byName["gh-45"]; a.Issue != 45 || a.Lane != "w" {
 		t.Errorf("legacy gh-N parse wrong: %+v", a)

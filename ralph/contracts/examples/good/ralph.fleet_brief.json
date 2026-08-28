@@ -9,6 +9,11 @@
     "name": "o1700-herdr-v2-rollout"
   },
   "report_path": "~/.ralph/runs/a3f2/reports/w1743-claim-v2-multi-holder.json",
+  "who": {
+    "address": "ralph-hero/t1700-herdr-v2-rollout/w1743-claim-v2-multi-holder",
+    "lead": "ralph-hero/t1700-herdr-v2-rollout/o1700-herdr-v2-rollout",
+    "dispatch": "ralph-hero/dispatch"
+  },
   "constraints": {
     "branch": "feat/1743-claim-v2-multi-holder",
     "base": "main",

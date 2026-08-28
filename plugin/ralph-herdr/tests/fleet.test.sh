@@ -329,6 +329,36 @@ B=$(RALPH_HERDR_REPLY_TO=s0-custom ralph_brief_write "w9-fix#ff02" 9 2>/dev/null
 is "brief: RALPH_HERDR_REPLY_TO overrides the reply target" "s0-custom" \
   "$(jqf "$B" '.reply_to.name')"
 
+# Chain of command (GH-2217): a lead-spawned brief replies to the LEAD; the
+# explicit override still wins; an unparseable lead falls back to the watcher.
+B=$(RALPH_HERDR_TEAM_LEAD=o900-lead ralph_brief_write "w9-fix#ab05" 9 2>/dev/null)
+is "brief: reply-to defaults to the spawning lead (chain of command)" "o900-lead" \
+  "$(jqf "$B" '.reply_to.name')"
+B=$(RALPH_HERDR_TEAM_LEAD=o900-lead RALPH_HERDR_REPLY_TO=s0-custom ralph_brief_write "w9-fix#ac06" 9 2>/dev/null)
+is "brief: explicit reply-to outranks the lead" "s0-custom" "$(jqf "$B" '.reply_to.name')"
+B=$(RALPH_HERDR_TEAM_LEAD='not a name' ralph_brief_write "w9-fix#ad07" 9 2>/dev/null)
+is "brief: an unparseable lead falls back to the watcher" "s0-watch" \
+  "$(jqf "$B" '.reply_to.name')"
+
+# The who-is-who block (GH-2217, D4.2): rides the spawn out-vars; empty vars
+# omit their field, all empty omits the block entirely (addresses are chrome).
+B=$(RALPH_HERDR_SPAWNED_ADDRESS=fake-repo/t900-teams/w9-fix \
+  RALPH_HERDR_SPAWNED_WHO_LEAD=fake-repo/t900-teams/o900-lead \
+  RALPH_HERDR_SPAWNED_WHO_DISPATCH=fake-repo/dispatch \
+  ralph_brief_write "w9-fix#ae08" 9 2>/dev/null)
+is "brief: who block carries own address, lead, dispatch" \
+  "fake-repo/t900-teams/w9-fix fake-repo/t900-teams/o900-lead fake-repo/dispatch" \
+  "$(jq -r '"\(.who.address) \(.who.lead) \(.who.dispatch)"' "$B")"
+B=$(RALPH_HERDR_SPAWNED_ADDRESS= RALPH_HERDR_SPAWNED_WHO_LEAD= \
+  RALPH_HERDR_SPAWNED_WHO_DISPATCH=fake-repo/dispatch \
+  ralph_brief_write "w9-fix#af09" 9 2>/dev/null)
+is "brief: leadless who keeps dispatch, omits the empty fields" "fake-repo/dispatch" \
+  "$(jq -r 'if (.who|has("address")) or (.who|has("lead")) then "POLLUTED" else .who.dispatch end' "$B")"
+B=$(RALPH_HERDR_SPAWNED_ADDRESS= RALPH_HERDR_SPAWNED_WHO_LEAD= \
+  RALPH_HERDR_SPAWNED_WHO_DISPATCH= ralph_brief_write "w9-fix#ba10" 9 2>/dev/null)
+is "brief: no derivable addresses omit the who block entirely" "absent" \
+  "$(jq -r 'if has("who") then "present" else "absent" end' "$B")"
+
 # warn-not-die: a failed validation (or no CLI at all) costs a warning, never
 # the brief — briefs are observations, the board stays authoritative.
 printf '1\n' >"$FAKE_BOARD_FIXTURES/contract-validate.rc"

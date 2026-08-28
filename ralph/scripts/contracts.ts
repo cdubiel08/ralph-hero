@@ -808,6 +808,20 @@ function buildFleetBrief(mode: Mode) {
       name: zAgentName,
     }),
     report_path: zNonEmpty,
+    /** Who-is-who (GH-2217, D4.2): the CHAIN OF COMMAND only — the spawned
+     *  session's own herd address, its lead's, and the dispatch seat's.
+     *  Deliberately no peers field: peers are found by enumeration at the
+     *  moment of need (GH-1890), and a peer list stamped at spawn is stale
+     *  the moment a sibling exits. Every field (and the block itself) is
+     *  optional because addresses are chrome — a spawn against a board copy
+     *  that predates the grammar derives nothing, and a lost address may not
+     *  cost the brief. `lead` absent + `dispatch` present is the leadless
+     *  shape: a flat unit answers to dispatch. */
+    who: obj(mode, {
+      address: zNonEmpty.optional(),
+      lead: zNonEmpty.optional(),
+      dispatch: zNonEmpty.optional(),
+    }).optional(),
     constraints: obj(mode, {
       branch: zNonEmpty,
       base: zNonEmpty,

@@ -16,6 +16,25 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && p
 
 echo "cockpit-hosted session (herdr): self-report lifecycle at the natural checkpoints via the pane state token — herdr pane report-metadata \"\$HERDR_PANE_ID\" --source ralph-herdr --token state=<working|blocked|reporting>; herdr reference: $PLUGIN_ROOT/skills/work/references/herdr-api.md; escalations must be phone-answerable (first line <=240 chars stating the decision, enumerated options with one recommended default)."
 
+# Who-is-who (GH-2217, D4.2): the chain of command the spawner derived and
+# exported into this pane's env — own address, lead (or dispatch when
+# leadless), nothing else. Peers are deliberately NOT listed: they are found
+# by enumeration at the moment of need (board peer NNN), because a peer list
+# stamped at spawn is stale the moment a sibling exits. Absent env (a
+# hand-started pane, an older spawner) emits nothing — the skills carry the
+# protocol either way; this line only saves the session the derivation.
+if [ -n "${RALPH_HERDR_ADDRESS:-}${WHO_LEAD:-}${WHO_DISPATCH:-}" ]; then
+  who="chain of command:"
+  [ -n "${RALPH_HERDR_ADDRESS:-}" ] && who="$who you are $RALPH_HERDR_ADDRESS;"
+  if [ -n "${WHO_LEAD:-}" ]; then
+    who="$who your lead is $WHO_LEAD — escalations route to it (board move NNN human-needed --why), answers come back on the item;"
+  elif [ -n "${WHO_DISPATCH:-}" ]; then
+    who="$who leadless — you answer to dispatch;"
+  fi
+  [ -n "${WHO_DISPATCH:-}" ] && who="$who dispatch is $WHO_DISPATCH (reachable, never a rung);"
+  echo "$who peers by enumeration only — board peer NNN, never a constructed name."
+fi
+
 # Operator-ask routing (GH-2074/GH-2075). Host repos install ralph as a plugin
 # and have no ralph-hero CLAUDE.md, so this line is the ONLY place a fresh
 # session learns the sanctioned entry points; measured without it, every
