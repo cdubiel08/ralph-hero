@@ -95,6 +95,38 @@ describe("item cache (GH-1806) — cross-process bounded staleness", () => {
       expect(listItemsFull(proc({ at: later(5) })).cached).toBe(false);
     });
 
+    it("revives Date fields on a cache hit — claim.since and defer.recheck are Dates, not JSON strings (GH-2240)", () => {
+      // The serve cast asserts the SELECTION, not runtime types: a cached
+      // entry's Dates round-trip through JSON as strings, and .getTime() on
+      // one crashed tend-queue's snooze check live. Garbling degrades like the
+      // wire parsers: bad since nulls the claim, bad recheck goes condition-only.
+      gh.issues.set(3, {
+        number: 3,
+        state: "Intake",
+        claim: `me@test|${NOW.toISOString()}`,
+        defer: "2027-01-01T00:00:00Z|revisit",
+      });
+      listItemsFull(proc());
+      const hit = listItemsFull(proc({ at: later(30) }));
+      expect(hit.cached).toBe(true);
+      const i = hit.open.find((x) => x.number === 3)!;
+      expect(i.claim!.since).toBeInstanceOf(Date);
+      expect(i.defer!.recheck).toBeInstanceOf(Date);
+      expect(i.defer!.recheck!.getTime()).toBe(Date.parse("2027-01-01T00:00:00Z"));
+
+      const path = entryPath("full");
+      const entry = JSON.parse(readFileSync(path, "utf8"));
+      const cached3 = entry.open.find((x: any) => x.number === 3);
+      cached3.claim.since = "not-a-date";
+      cached3.defer.recheck = "not-a-date";
+      writeFileSync(path, JSON.stringify(entry));
+      const garbled = listItemsFull(proc({ at: later(60) }));
+      expect(garbled.cached).toBe(true);
+      const g = garbled.open.find((x) => x.number === 3)!;
+      expect(g.claim).toBeNull();
+      expect(g.defer).toEqual({ recheck: null, condition: "revisit" });
+    });
+
     it("walks again once Δ has passed", () => {
       listItemsFull(proc());
       const cost = gh.graphqlCalls;

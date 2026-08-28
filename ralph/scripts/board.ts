@@ -5067,6 +5067,28 @@ function writeItemCache(ctx: Ctx, kind: ItemCacheKind, entry: ItemCacheEntry): v
   }
 }
 
+/** A cache-served item's Date fields are JSON strings — the cast in serveWalk
+ *  asserts the SELECTION, not the runtime types, and `claim.since.getTime()` /
+ *  `defer.recheck.getTime()` on a string is a crash that only fires on a cache
+ *  hit (GH-2240 found it live in tend-queue's snooze check). Revived here, at
+ *  the one seam every cached serve passes through, with the same fail-closed
+ *  degradation as the wire parsers: an unparseable since garbles the whole
+ *  claim to null (parseClaim's rule), an unparseable recheck degrades to
+ *  condition-only (parseDefer's rule). */
+function reviveItemDates(items: QueueItemAny[]): QueueItemAny[] {
+  for (const i of items) {
+    if (i.claim && typeof (i.claim.since as unknown) === "string") {
+      const t = Date.parse(i.claim.since as unknown as string);
+      i.claim = Number.isFinite(t) ? { ...i.claim, since: new Date(t) } : null;
+    }
+    if (i.defer?.recheck && typeof (i.defer.recheck as unknown) === "string") {
+      const t = Date.parse(i.defer.recheck as unknown as string);
+      i.defer = { ...i.defer, recheck: Number.isFinite(t) ? new Date(t) : null };
+    }
+  }
+  return items;
+}
+
 /** Every serve — cached OR fresh — advances the high-water mark. Skipping it
  *  for fresh walks would let the very next command serve an OLDER cached entry
  *  written by a concurrent process, which is the monotonic-reads violation. */
@@ -5084,7 +5106,7 @@ function serveWalk<S extends QueueSelect>(
     // The one seam where the runtime selection and the static one are asserted
     // equal — the mirror of walkFull's cast, and sound for the same reason:
     // readItemCache has already proved selectCovers(entry.select, want).
-    open: entry.open as SelectedQueueItem<S>[],
+    open: reviveItemDates(entry.open) as SelectedQueueItem<S>[],
     closed: entry.closed as SelectedClosedItem<S>[],
     scan: entry.scan,
     fetchedAt: entry.fetchedAt,
@@ -12164,18 +12186,33 @@ function childStateLabel(c: Issue["children"][number]): string {
   return c.fieldValuesTruncated ? "state unreadable — field values truncated" : c.issueState;
 }
 
+/** The one spelling of a parked row's marker — `board get` and `board list`
+ *  share it so the two surfaces cannot drift (GH-2240: list rendered nothing,
+ *  so a snoozed/deferred item was byte-identical to a pending one). Intake +
+ *  recheck is a SNOOZE (the recheck instant is what resurfaces it); everything
+ *  else is a defer with its stated precondition. `maxCond` truncates the
+ *  condition for dense row surfaces; get passes none and prints it whole. */
+export function deferNote(
+  state: string | null,
+  defer: DeferMark | null | undefined,
+  maxCond?: number,
+): string {
+  if (!defer) return "";
+  const cond =
+    maxCond !== undefined && defer.condition.length > maxCond
+      ? `${defer.condition.slice(0, maxCond)}…`
+      : defer.condition;
+  return state === "Intake" && defer.recheck
+    ? ` snoozed(until ${defer.recheck.toISOString().slice(0, 10)}, ${cond})`
+    : ` deferred(${cond}${defer.recheck ? `, recheck ${defer.recheck.toISOString().slice(0, 10)}` : ""})`;
+}
+
 function issueLine(i: Issue): string {
   const claim = i.claim ? ` claim=${i.claim.holders.join("+")}@${i.claim.since.toISOString()}` : "";
   const parent = i.parent ? ` parent=#${i.parent.number}` : "";
   const blockers = i.blockedBy.filter((b) => b.issueState === "OPEN").map((b) => `#${b.number}`);
   const blocked = blockers.length ? ` blockedBy=${blockers.join(",")}` : "";
-  const defer =
-    i.defer ?
-      i.state === "Intake" && i.defer.recheck ?
-        ` snoozed(until ${i.defer.recheck.toISOString().slice(0, 10)}, ${i.defer.condition})`
-      : ` deferred(${i.defer.condition}${i.defer.recheck ? `, recheck ${i.defer.recheck.toISOString().slice(0, 10)}` : ""})`
-    : "";
-  return `#${i.number} [${i.state ?? "no-state"}]${claim}${defer}${parent}${blocked} ${i.title}`;
+  return `#${i.number} [${i.state ?? "no-state"}]${claim}${deferNote(i.state, i.defer)}${parent}${blocked} ${i.title}`;
 }
 
 /** Exactly one line, whatever the tier. With no diagnosis it is byte-identical
@@ -12944,7 +12981,7 @@ export function run(argv: string[], ctx: Ctx): number {
       }
       if (flags.json) json({ items, foreign, foreignEvaluated: allRepos, cache: cacheFacts(walk) });
       else {
-        for (const i of items) out(`#${i.number} [${i.state}]${i.claim ? ` claim=${i.claim.holders.join("+")}` : ""}${i.openBlockers.length ? ` blockedBy=${i.openBlockers.map((n) => `#${n}`).join(",")}` : ""} ${i.title}`);
+        for (const i of items) out(`#${i.number} [${i.state}]${i.claim ? ` claim=${i.claim.holders.join("+")}` : ""}${deferNote(i.state, i.defer, 48)}${i.openBlockers.length ? ` blockedBy=${i.openBlockers.map((n) => `#${n}`).join(",")}` : ""} ${i.title}`);
         for (const f of foreign) out(`${f.repo}#${f.number} [${f.state}] (foreign repo — read-only here) ${f.title}`);
         if (!allRepos) out(`(own-repo open items; foreign board items not read — \`--all-repos\` scans the whole project)`);
         if (cacheNote(walk)) out(cacheNote(walk)!);
