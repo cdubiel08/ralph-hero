@@ -173,7 +173,19 @@ if [ -n "$live" ]; then
 else
   # ── Spawn the lead ─────────────────────────────────────────────────────────
   src=$(ralph_worktree_source_dir)
-  team_label="team GH-$EPIC"
+  # Canonical team-space label (GH-2210/D0.3): `<repo>/t<epic>-<slug>`. The
+  # team slug is byte-identical to the lead's own by construction (D0.3 —
+  # both ride the same slugify/truncate pipeline), so the segment derives from
+  # $LEAD locally; the repo segment comes off the board's derived address.
+  # The lead's own herd address extends it (`…/o<epic>-<slug>`) — board name's
+  # .address names the unit's DRIVER lane, so the o-lane form is spelled here.
+  # An older board copy that prints no address keeps the legacy spelling and
+  # stamps no token, which every consumer already survives.
+  team_label="team GH-$EPIC" lead_addr=""
+  if _ralph_resolve_names "$EPIC" 2>/dev/null && [ -n "$RALPH_HERDR_NAMED_ADDRESS" ]; then
+    team_label="${RALPH_HERDR_NAMED_ADDRESS%%/*}/t${LEAD#o}"
+    lead_addr="$team_label/$LEAD"
+  fi
   # The tool cut removes the editing surface (Edit/Write) from the lead's
   # harness. Honestly labelled: Bash remains — it is the board CLI, the herdr
   # CLI and the spawn scripts — so this is not hard read-only enforcement;
@@ -188,7 +200,8 @@ else
     echo "  $HERDR agent start $LEAD --kind claude --pane <captured> -- --tools $lead_tools"
     echo "  $HERDR agent prompt $LEAD \"<lead brief: rehydrate GH-$EPIC from board state>\""
     ref=$(ralph_agent_ref "$LEAD") || die "could not derive a durable ref for $LEAD"
-    record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "" "$(date -u +%FT%TZ)" "" "" orchestrator) || record=""
+    record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "" "$(date -u +%FT%TZ)" "" "" orchestrator \
+      "" "" "" "$lead_addr") || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"
   else
     out=$(ralph_herdr_call workspace_created workspace create \
@@ -210,7 +223,7 @@ else
     record="" ledger=""
     if ref=$(ralph_agent_ref "$LEAD" 2>/dev/null); then
       record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "$pane" "$ts" \
-        "$shell_pid" "$src" orchestrator) || record=""
+        "$shell_pid" "$src" orchestrator "" "" "" "$lead_addr") || record=""
       ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
       if [ -n "$record" ] && [ -n "$ledger" ]; then
         RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" || {

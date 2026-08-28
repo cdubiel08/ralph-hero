@@ -142,7 +142,7 @@ live_names() {
 handle_status() {
   local agent status pane parsed legacy entry file ref ts cwd repo_root
   local lane issue slug gen title labels body snapshot confirmed
-  local prior checkout verdict
+  local prior checkout verdict addr
   agent=$(pfield '.agent // .data.agent // empty')
   status=$(pfield '.agent_status // .data.agent_status // empty')
   pane=$(pfield '.pane_id // .data.pane_id // empty')
@@ -309,10 +309,23 @@ handle_status() {
   # not cause a durable claim about a session's fate. Unconfirmed leaves the
   # token untouched — the pre-GH-1907 behaviour, which is the safe direction
   # here because it is the one that never asserts completion.
+  # Re-attach the herd address beside the state (GH-2210/D6.2): the title is
+  # composed only by a push that carries the address, so a state-only push
+  # would update the glyph token but never the title. The ledger already holds
+  # the spawn-stamped address; re-pushing the same value is a no-op merge.
+  # Empty (pre-grammar record, unreadable ledger) degrades to the state alone.
+  addr=""
+  if [ -n "$file" ] && [ -n "$ref" ]; then
+    addr=$(RALPH_HERDR_LEDGER="$file" _ralph_ledger_latest_address "$ref" 2>/dev/null) || addr=""
+  fi
   case "$status" in
     working | blocked)
       if [ -n "$pane" ]; then
-        ralph_tokens_push "$pane" "state=$status"
+        if [ -n "$addr" ]; then
+          ralph_tokens_push "$pane" "state=$status" "address=$addr"
+        else
+          ralph_tokens_push "$pane" "state=$status"
+        fi
       fi
       ;;
     done)
@@ -321,7 +334,13 @@ handle_status() {
         # own word, and the token it is read from. Overwriting it would replace
         # a first-hand claim with a restatement of it, which is also why the
         # ledger record above omits it.
-        [ "$verdict" = finished ] || ralph_tokens_push "$pane" "state=$verdict"
+        if [ "$verdict" != finished ]; then
+          if [ -n "$addr" ]; then
+            ralph_tokens_push "$pane" "state=$verdict" "address=$addr"
+          else
+            ralph_tokens_push "$pane" "state=$verdict"
+          fi
+        fi
         log "$(ralph_outcome_note "$verdict" "$agent")"
       fi
       ;;

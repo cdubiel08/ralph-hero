@@ -655,6 +655,7 @@ func parseAgents(out, repoRoot string) ([]Agent, error) {
 			Root:       tokenString(a.Tokens, "root"),
 			Branch:     tokenString(a.Tokens, "branch"),
 			TokenState: tokenString(a.Tokens, "state"),
+			Address:    tokenString(a.Tokens, "address"),
 		})
 	}
 	return agents, nil

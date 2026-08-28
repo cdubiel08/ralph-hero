@@ -506,6 +506,13 @@ _ralph_ledger_latest_state() {
 _ralph_ledger_latest_tokens() {
   _ralph_ledger_latest '((try .tokens catch null) | if . == null then "" else tojson end)' "$@"
 }
+# The herd address (GH-2210): stamped by the spawner as tokens.address on the
+# spawn record (GH-2209/D0.4). Last-non-empty like its siblings, so state
+# events that carry no tokens never blank it; empty means the record predates
+# the grammar (or an over-budget address was dropped at the push site).
+_ralph_ledger_latest_address() {
+  _ralph_ledger_latest '((try .tokens.address catch null) // "")' "$@"
+}
 # GH-1809's three: the pane's shell pid at spawn (a rebuilt pane's differs),
 # the worktree path (board scope without needing the pane back), and the issue
 # whose claim this worker holds. All optional — records written before GH-1809,

@@ -108,7 +108,7 @@ is "record: parent_issue from the queue"     "45"             "$(jqr '.lineage.p
 is "record: plane is herdr"                  "herdr"          "$(jqr '.lineage.plane')"
 is "record: invoked_by is human"             "human"          "$(jqr '.lineage.spawner.invoked_by')"
 is "record: worktree branch is the board's grammar" "feat/123-fake-issue" "$(jqr '.lineage.herdr.worktree_branch')"
-is "record: workspace label carries nesting" "GH-123 via GH-45" "$(jqr '.lineage.herdr.workspace_label')"
+is "record: workspace label is the herd address (GH-2210)" "fake-repo/w123-fake-issue" "$(jqr '.lineage.herdr.workspace_label')"
 is "record: ts equals spawned_at"            "$(jqr '.ts')"   "$(jqr '.lineage.spawned_at')"
 is "record: token role is the FLEET role, not the lane (GH-1808)" "driver" "$(jqr '.tokens.role')"
 is "record: lineage carries the role too"    "driver"         "$(jqr '.lineage.role')"
@@ -135,6 +135,21 @@ is "dry-run: ledger untouched (line count)" "4" "$(wc -l <"$RALPH_HERDR_LEDGER" 
 is "dry-run: ledger untouched (content)" \
   '{"ts":"2026-08-11T00:00:00Z","ev":"spawn","agent_ref":"o10-orch#aaaa","tokens":{"role":"o","issue":"10","slug":"orch","depth":"0","state":"spawned"}}' \
   "$first_ledger_line"
+
+# ── label fallback: a board copy with no address keeps the legacy spelling ──
+# (GH-2210): the canonical label is the herd address; against an older board
+# whose `name` envelope has no .address, the nesting spelling survives and no
+# address token is stamped.
+printf '{"number":77,"kind":"feat","lane":"w","branch":"feat/77-old","worktree":"feat-77-old","agent":"w77-old","legacyBranch":"feature/GH-77"}\n' \
+  >"$FAKE_BOARD_FIXTURES/name.77.json"
+OLD_QUEUE='{"next":{"number":77,"title":"Old board","parentNumber":9},"queue":[]}'
+old_out=$(RALPH_HERDR_DRY_RUN=true spawn_work_session 77 "$OLD_QUEUE" 2>&1)
+old_record=$(printf '%s\n' "$old_out" | sed -n 's/^  ledger append (spawn): //p')
+is "label fallback: pre-grammar board keeps the nesting label" "GH-77 via GH-9" \
+  "$(jq -r '.lineage.herdr.workspace_label' <<<"$old_record" 2>/dev/null)"
+is "label fallback: no address token stamped" "false" \
+  "$(jq -r '.tokens | has("address")' <<<"$old_record" 2>/dev/null)"
+rm -f "$FAKE_BOARD_FIXTURES/name.77.json"
 
 # The exported read-backs (run in THIS shell, not a subshell, to see them).
 RALPH_HERDR_DRY_RUN=true spawn_work_session 123 "$QUEUE" >/dev/null 2>&1

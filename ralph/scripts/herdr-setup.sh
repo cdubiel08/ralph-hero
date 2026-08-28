@@ -853,6 +853,38 @@ else
   esac
 fi
 
+# ── canonical workspace labels (advisory — GH-2210, doctor-labels.sh) ────────
+# Same NOTE-level contract as the lineage and orphans relays: a label that
+# diverged from its derived herd address is cockpit chrome telemetry — herdr
+# has no rename verb, so the only remedy is a respawn — and it must move
+# neither the exit code nor the --oneline gap count.
+labels_sh="${RALPH_HERDR_LABELS_SH:-}"
+if [ -z "$labels_sh" ]; then
+  labels_sh="$SCRIPT_DIR/../../plugin/ralph-herdr/scripts/doctor-labels.sh"
+  [ -n "$PLUGIN_ROOT" ] && [ -f "$PLUGIN_ROOT/scripts/doctor-labels.sh" ] &&
+    labels_sh="$PLUGIN_ROOT/scripts/doctor-labels.sh"
+fi
+if [ ! -f "$labels_sh" ]; then
+  note "workspace-labels" "not evaluated (doctor-labels.sh not found — it ships inside the ralph-herdr herdr plugin)"
+elif [ -z "$SERVER_UP" ]; then
+  note "workspace-labels" "not checked (server down)"
+else
+  labels_rc=0
+  labels_out=$(bash "$labels_sh" 2>/dev/null) || labels_rc=$?
+  case "$labels_rc" in
+    0) note "workspace-labels" "canonical — every live labelled agent's workspace label matches its derived address" ;;
+    1)
+      labels_gaps=$(grep -c '^  GAP ' <<<"$labels_out" || true)
+      note "workspace-labels" "${labels_gaps:-some} label divergence(s) — bash $labels_sh for detail (labels are creation-time only; a respawn re-derives)"
+      if [ -z "$ONELINE" ]; then
+        grep '^  GAP ' <<<"$labels_out" | sed 's/^  GAP  /       · /' || true
+      fi
+      ;;
+    2) note "workspace-labels" "not evaluable (herdr unreachable mid-check)" ;;
+    *) note "workspace-labels" "not evaluated (doctor-labels.sh exited $labels_rc)" ;;
+  esac
+fi
+
 # ── worktree pile size (GH-2105) ─────────────────────────────────────────────
 # The sweep verb (GH-2103) prints the pile's size on every dry run — but only
 # when someone runs it, and the 2026-08-20 pile reached ~60 dead worktrees
