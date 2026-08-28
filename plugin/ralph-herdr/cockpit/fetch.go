@@ -104,6 +104,12 @@ func argsBoardFrontier() []string { return []string{"frontier", "--json"} }
 func argsCardSignals() []string { return []string{"card-signals", "--json"} }
 func argsBoardClosed() []string { return []string{"closed", "--json"} }
 func argsBoardInbox() []string  { return []string{"inbox", "--json"} }
+
+// The topology snapshot (GH-2219) is two verbs on one keypress: the roster is
+// the tree (required), the escalations are its counts (best-effort — a failed
+// count renders NOT COUNTED beside a live tree, never an empty one).
+func argsBoardRoster() []string      { return []string{"roster", "--json"} }
+func argsBoardEscalations() []string { return []string{"escalations", "--json"} }
 func argsBoardAnswer(n int, msg string) []string {
 	return []string{"answer", strconv.Itoa(n), "-m", msg}
 }
@@ -261,6 +267,19 @@ type answerDoneMsg struct {
 type dagMsg struct {
 	text string
 	err  string
+}
+
+// topoMsg carries the topology snapshot (GH-2219). err ≠ "" means the ROSTER
+// read failed and there is no tree; escErr ≠ "" means only the escalation
+// counts are unreadable and the tree stands with NOT COUNTED beside it.
+type topoMsg struct {
+	rows       []TopoRow
+	repo       string
+	withheld   string
+	agentsNote string
+	escs       []TopoEsc
+	escErr     string
+	err        string
 }
 
 type spawnDoneMsg struct {
@@ -1253,6 +1272,171 @@ func dagCmd(cfg Config, r Runner) tea.Cmd {
 			return dagMsg{err: perr.Error()}
 		}
 		return dagMsg{text: text}
+	}
+}
+
+// parseRoster reads `board roster --json` (the bare RosterView object). The
+// boardClaims literal is the shape check: it is pinned to "not-read" by the
+// schema (D7.3), so its absence means this is not a roster payload — a
+// malformed read must not render as an empty herd.
+func parseRoster(out string) (rows []TopoRow, repo, withheld, agentsNote string, err error) {
+	type lease struct {
+		Stale bool `json:"stale"`
+	}
+	type row struct {
+		Name        *string `json:"name"`
+		Address     *string `json:"address"`
+		Repo        *string `json:"repo"`
+		Team        *string `json:"team"`
+		Lane        *string `json:"lane"`
+		Issue       *int    `json:"issue"`
+		Role        *string `json:"role"`
+		State       *string `json:"state"`
+		Depth       *string `json:"depth"`
+		Parent      *string `json:"parent"`
+		AgentStatus *string `json:"agentStatus"`
+		Pane        *string `json:"pane"`
+		Dispatch    bool    `json:"dispatch"`
+		Note        *string `json:"note"`
+		Lease       *lease  `json:"lease"`
+	}
+	var payload struct {
+		Repo            string  `json:"repo"`
+		BoardClaims     string  `json:"boardClaims"`
+		AgentsEvaluated bool    `json:"agentsEvaluated"`
+		AgentsReason    *string `json:"agentsReason"`
+		Rows            []row   `json:"rows"`
+		Withheld        struct {
+			ForeignAgents      int `json:"foreignAgents"`
+			UnattributedAgents int `json:"unattributedAgents"`
+			ForeignLeases      int `json:"foreignLeases"`
+			DeadLeases         int `json:"deadLeases"`
+		} `json:"withheld"`
+	}
+	if uerr := json.Unmarshal([]byte(out), &payload); uerr != nil {
+		return nil, "", "", "", fmt.Errorf("roster --json: %w", uerr)
+	}
+	if payload.BoardClaims != "not-read" {
+		return nil, "", "", "", fmt.Errorf("roster --json: payload is not a roster (boardClaims != \"not-read\") — a malformed read is not an empty herd")
+	}
+	deref := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	for _, r := range payload.Rows {
+		issue := 0
+		if r.Issue != nil {
+			issue = *r.Issue
+		}
+		t := TopoRow{
+			Name: deref(r.Name), Address: deref(r.Address), Repo: deref(r.Repo),
+			Team: deref(r.Team), Lane: deref(r.Lane), Issue: issue,
+			Role: deref(r.Role), TokenState: deref(r.State), Status: deref(r.AgentStatus),
+			Depth: deref(r.Depth), Parent: deref(r.Parent), Pane: deref(r.Pane),
+			Dispatch: r.Dispatch, Note: deref(r.Note),
+		}
+		if r.Lease != nil {
+			t.HasLease = true
+			t.LeaseStale = r.Lease.Stale
+		}
+		rows = append(rows, t)
+	}
+	var held []string
+	for _, w := range []struct {
+		n    int
+		what string
+	}{
+		{payload.Withheld.ForeignAgents, "foreign"},
+		{payload.Withheld.UnattributedAgents, "unattributed"},
+		{payload.Withheld.ForeignLeases, "foreign lease"},
+		{payload.Withheld.DeadLeases, "dead lease"},
+	} {
+		if w.n > 0 {
+			held = append(held, fmt.Sprintf("%d %s", w.n, w.what))
+		}
+	}
+	if !payload.AgentsEvaluated {
+		agentsNote = deref(payload.AgentsReason)
+		if agentsNote == "" {
+			agentsNote = "herd agents not evaluated"
+		}
+	}
+	return rows, payload.Repo, strings.Join(held, ", "), agentsNote, nil
+}
+
+// parseEscalations reads `board escalations --json` ({escalations: [...]}) .
+// A nil array is a malformed payload, not an empty queue — same guard as
+// parseInbox; `[]` unmarshals non-nil, so genuinely-empty still passes.
+func parseEscalations(out string) ([]TopoEsc, error) {
+	var payload struct {
+		Escalations []struct {
+			Number      int     `json:"number"`
+			Route       string  `json:"route"`
+			Lead        *string `json:"lead"`
+			Disposition *string `json:"disposition"`
+			Answered    *struct {
+				At *string `json:"at"`
+			} `json:"answered"`
+		} `json:"escalations"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return nil, fmt.Errorf("escalations --json: %w", err)
+	}
+	if payload.Escalations == nil {
+		return nil, fmt.Errorf("escalations --json: payload carries no escalations array — a malformed read is not an empty queue")
+	}
+	escs := make([]TopoEsc, 0, len(payload.Escalations))
+	for _, e := range payload.Escalations {
+		t := TopoEsc{Number: e.Number, Route: e.Route, Answered: e.Answered != nil}
+		if e.Lead != nil {
+			t.Lead = *e.Lead
+		}
+		if e.Disposition != nil {
+			t.Disposition = *e.Disposition
+		}
+		escs = append(escs, t)
+	}
+	return escs, nil
+}
+
+// topologyCmd takes the GH-2219 snapshot: roster first (required — no roster,
+// no tree), then escalations (best-effort — that half is a GitHub walk over
+// the Human Needed subset, and a rate limit there may not take down a view
+// whose tree is a local read). Both on one keypress, refreshed only by the
+// next press — the DAG's snapshot contract.
+func topologyCmd(cfg Config, r Runner) tea.Cmd {
+	return func() tea.Msg {
+		deadline := boardDeadline(cfg)
+		probe := &rateProbe{cfg: cfg, r: r}
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
+		out, stderr, err := r.Run(ctx, cfg.Board, argsBoardRoster()...)
+		timedOut := ctx.Err() == context.DeadlineExceeded
+		cancel()
+		if err != nil {
+			return topoMsg{err: explainReadFailure(probe, deadline, timedOut, stderr+out, err)}
+		}
+		rows, repo, withheld, agentsNote, perr := parseRoster(out)
+		if perr != nil {
+			return topoMsg{err: perr.Error()}
+		}
+		msg := topoMsg{rows: rows, repo: repo, withheld: withheld, agentsNote: agentsNote}
+		ctx2, cancel2 := context.WithTimeout(context.Background(), deadline)
+		eout, estderr, eerr := r.Run(ctx2, cfg.Board, argsBoardEscalations()...)
+		etimedOut := ctx2.Err() == context.DeadlineExceeded
+		cancel2()
+		if eerr != nil {
+			msg.escErr = explainReadFailure(probe, deadline, etimedOut, estderr+eout, eerr)
+			return msg
+		}
+		escs, eperr := parseEscalations(eout)
+		if eperr != nil {
+			msg.escErr = eperr.Error()
+			return msg
+		}
+		msg.escs = escs
+		return msg
 	}
 }
 

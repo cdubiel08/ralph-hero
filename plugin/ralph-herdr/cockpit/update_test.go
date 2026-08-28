@@ -139,6 +139,34 @@ func TestModeTransitions(t *testing.T) {
 		}, dagMsg{text: "FRONTIER"}, ModePeek, nil},
 		{"v closes the DAG overlay", func(m Model) Model { m.mode = ModeDag; return m },
 			keyMsg("v"), ModeBrowse, nil},
+		{"topoMsg opens the topology overlay", nil,
+			topoMsg{rows: []TopoRow{{Name: "w10-ten"}}, repo: "r"}, ModeTopology,
+			func(t *testing.T, m Model) {
+				if len(m.topoRows) != 1 || m.topoRepo != "r" {
+					t.Errorf("topology snapshot not stored: %+v repo=%q", m.topoRows, m.topoRepo)
+				}
+			}},
+		{"a failed roster read stays browse and names it", nil,
+			topoMsg{err: "boom"}, ModeBrowse,
+			func(t *testing.T, m Model) {
+				if !strings.Contains(m.status, "roster read failed: boom") {
+					t.Errorf("status = %q", m.status)
+				}
+			}},
+		{"a stale topoMsg never hijacks answer typing", func(m Model) Model {
+			m.mode = ModeAnswer
+			m.input = "the decision so far"
+			return m
+		}, topoMsg{rows: []TopoRow{{Name: "w10-ten"}}}, ModeAnswer,
+			func(t *testing.T, m Model) {
+				if m.input != "the decision so far" {
+					t.Errorf("input = %q", m.input)
+				}
+			}},
+		{"T closes the topology overlay", func(m Model) Model { m.mode = ModeTopology; return m },
+			keyMsg("T"), ModeBrowse, nil},
+		{"esc closes the topology overlay", func(m Model) Model { m.mode = ModeTopology; return m },
+			keyMsg("esc"), ModeBrowse, nil},
 		{"r on a card with a live agent enters reply", nil,
 			keyMsg("r"), ModeReply,
 			func(t *testing.T, m Model) {

@@ -21,11 +21,12 @@ import (
 type Mode int
 
 const (
-	ModeBrowse Mode = iota
-	ModePeek        // agent read tail overlay — no focus steal
-	ModeReply       // input line → herdr agent prompt (delivered on rc 0 only)
-	ModeAnswer      // input line → board answer FIRST, then best-effort nudge
-	ModeDag         // text tree from board frontier --json
+	ModeBrowse   Mode = iota
+	ModePeek          // agent read tail overlay — no focus steal
+	ModeReply         // input line → herdr agent prompt (delivered on rc 0 only)
+	ModeAnswer        // input line → board answer FIRST, then best-effort nudge
+	ModeDag           // text tree from board frontier --json
+	ModeTopology      // roster tree from board roster --json (GH-2219, unit K)
 )
 
 // columnStates — the three cockpit columns, board Workflow State names
@@ -175,6 +176,41 @@ type Agent struct {
 	// Address is tokens.address — the derived herd address the spawner
 	// stamped (GH-2209/D0.4). Empty for a pre-grammar spawn.
 	Address string
+}
+
+// TopoRow is one `board roster --json` row — the derived topology view
+// (GH-2219, unit K). Null JSON fields land as zero values here, and the
+// renderer keeps absence as absence: an empty Depth is NOT depth 0, an empty
+// Team is the flat bucket, and Note carries the reason a null is null.
+type TopoRow struct {
+	Name       string
+	Address    string
+	Repo       string
+	Team       string // t<epic>-<slug>; "" = no team (the flat bucket)
+	Lane       string
+	Issue      int
+	Role       string
+	TokenState string // C8 `state` token, verbatim
+	Status     string // herdr agent_status
+	Depth      string
+	Parent     string
+	Pane       string
+	Dispatch   bool // the <repo>/dispatch root row
+	Note       string
+	HasLease   bool
+	LeaseStale bool
+}
+
+// TopoEsc is one live escalation (`board escalations --json`), the join the
+// tree's escalation counts ride: workers join on Number == TopoRow.Issue,
+// leads on Lead == TopoRow.Name. A null lead stays "" and is attributed to NO
+// row — the count still lands in the header totals.
+type TopoEsc struct {
+	Number      int
+	Route       string // "lead" | "human"
+	Lead        string // "" = unreadable route payload — never attributed
+	Disposition string // pending | promoted | auto-promoted; "" for route "human"
+	Answered    bool   // GH-2204: answered, resume pending
 }
 
 // Card marking states — the vocabulary the status dot renders, ranked so a
@@ -365,6 +401,17 @@ type Model struct {
 
 	// DAG overlay.
 	dagText string
+
+	// Topology overlay (GH-2219, unit K) — a snapshot taken on the `T` press,
+	// like the DAG. topoEscErr keeps "escalation counts unreadable" apart from
+	// "no escalations": the roster half is required, the escalations half is
+	// best-effort, and a failed count must render as NOT COUNTED, never as 0.
+	topoRows       []TopoRow
+	topoRepo       string
+	topoWithheld   string // counted holdbacks (GH-2108), "" = nothing withheld
+	topoAgentsNote string // agentsEvaluated=false reason — an unreadable herd is NOT an empty fleet
+	topoEscs       []TopoEsc
+	topoEscErr     string
 
 	// Chrome.
 	status       string

@@ -49,6 +49,10 @@ func TestArgvConstruction(t *testing.T) {
 			[]string{"get", "1234", "--json"}},
 		{"board frontier", argsBoardFrontier(),
 			[]string{"frontier", "--json"}},
+		{"board roster", argsBoardRoster(),
+			[]string{"roster", "--json"}},
+		{"board escalations", argsBoardEscalations(),
+			[]string{"escalations", "--json"}},
 		{"board answer carries hostile text as ONE element", argsBoardAnswer(7, hostile),
 			[]string{"answer", "7", "-m", hostile}},
 		{"api snapshot", argsApiSnapshot(),
@@ -927,5 +931,138 @@ func TestLooksRateLimited(t *testing.T) {
 	}
 	if looksRateLimited("board: item is archived") {
 		t.Error("unrelated failure must not be read as a rate limit")
+	}
+}
+
+// ── topology snapshot (GH-2219) ─────────────────────────────────────────────
+
+const rosterFixture = `{
+  "repo": "ralph-hero", "all": false, "boardClaims": "not-read",
+  "agentsEvaluated": true, "agentsReason": null,
+  "workspacesEvaluated": true, "workspacesReason": null, "leasesEvaluated": true,
+  "rows": [
+    {"name": "hero", "address": "ralph-hero/dispatch", "repo": "ralph-hero",
+     "team": null, "lane": null, "issue": null, "role": null, "state": "working",
+     "depth": null, "parent": null, "agentStatus": "working", "pane": "w1:p1",
+     "dispatch": true, "note": null, "lease": null},
+    {"name": "o2208-herd-topology", "address": "ralph-hero/t2208-herd/o2208-herd-topology",
+     "repo": "ralph-hero", "team": "t2208-herd", "lane": "o", "issue": 2208,
+     "role": "orchestrator", "state": "working", "depth": "0", "parent": null,
+     "agentStatus": "working", "pane": "w2:p1", "dispatch": false, "note": null, "lease": null},
+    {"name": "w2219-topology-k", "address": "ralph-hero/t2208-herd/w2219-topology-k",
+     "repo": "ralph-hero", "team": "t2208-herd", "lane": "w", "issue": 2219,
+     "role": "driver", "state": "blocked", "depth": "1", "parent": "o2208-herd-topology#aa11",
+     "agentStatus": "idle", "pane": "w3:p1", "dispatch": false, "note": null,
+     "lease": {"since": "s", "expiresAt": "e", "stale": true}},
+    {"name": null, "address": null, "repo": "ralph-hero", "team": null, "lane": null,
+     "issue": null, "role": null, "state": null, "depth": null, "parent": null,
+     "agentStatus": "idle", "pane": "w1:p9", "dispatch": false,
+     "note": "no derivable address", "lease": null}
+  ],
+  "orphanLeases": null,
+  "withheld": {"foreignAgents": 2, "unattributedAgents": 0, "foreignLeases": 0, "deadLeases": 1}
+}`
+
+const escalationsFixture = `{"escalations": [
+  {"number": 2219, "title": "t", "route": "lead", "lead": "o2208-herd-topology",
+   "at": "x", "disposition": "pending"},
+  {"number": 40, "title": "t", "route": "lead", "lead": null, "disposition": "auto-promoted"},
+  {"number": 41, "title": "t", "route": "human"},
+  {"number": 42, "title": "t", "route": "lead", "lead": "o2208-herd-topology",
+   "disposition": "pending", "answered": {"at": "y"}}
+]}`
+
+func topoRespond(rosterOut, rosterErr string, rerr error, escOut, escErr string, eerr error,
+) func(string, []string) (string, string, error) {
+	return func(prog string, args []string) (string, string, error) {
+		if len(args) > 0 && args[0] == "roster" {
+			return rosterOut, rosterErr, rerr
+		}
+		if len(args) > 0 && args[0] == "escalations" {
+			return escOut, escErr, eerr
+		}
+		return "", "", nil
+	}
+}
+
+func TestTopologyCmdJoinsRosterAndEscalations(t *testing.T) {
+	r := &fakeRunner{respond: topoRespond(rosterFixture, "", nil, escalationsFixture, "", nil)}
+	msg, ok := topologyCmd(Config{Board: "board"}, r)().(topoMsg)
+	if !ok {
+		t.Fatal("topologyCmd must return a topoMsg")
+	}
+	if msg.err != "" || msg.escErr != "" {
+		t.Fatalf("clean reads must carry no error: err=%q escErr=%q", msg.err, msg.escErr)
+	}
+	if msg.repo != "ralph-hero" || len(msg.rows) != 4 {
+		t.Fatalf("roster mis-parsed: repo=%q rows=%d", msg.repo, len(msg.rows))
+	}
+	if !msg.rows[0].Dispatch || msg.rows[0].Address != "ralph-hero/dispatch" {
+		t.Errorf("dispatch row mis-parsed: %+v", msg.rows[0])
+	}
+	if msg.rows[1].Lane != "o" || msg.rows[1].Team != "t2208-herd" {
+		t.Errorf("lead row mis-parsed: %+v", msg.rows[1])
+	}
+	w := msg.rows[2]
+	if w.Issue != 2219 || w.TokenState != "blocked" || w.Status != "idle" || !w.HasLease || !w.LeaseStale {
+		t.Errorf("worker row mis-parsed: %+v", w)
+	}
+	if msg.rows[3].Name != "" || msg.rows[3].Note == "" {
+		t.Errorf("unnamed row must keep absence as absence: %+v", msg.rows[3])
+	}
+	if msg.withheld != "2 foreign, 1 dead lease" {
+		t.Errorf("withheld = %q", msg.withheld)
+	}
+	if len(msg.escs) != 4 {
+		t.Fatalf("escalations mis-parsed: %+v", msg.escs)
+	}
+	if e := msg.escs[0]; e.Number != 2219 || e.Lead != "o2208-herd-topology" || e.Disposition != "pending" || e.Answered {
+		t.Errorf("lead-routed escalation mis-parsed: %+v", e)
+	}
+	if e := msg.escs[1]; e.Lead != "" || e.Disposition != "auto-promoted" {
+		t.Errorf("null lead must stay empty, never attributed: %+v", e)
+	}
+	if !msg.escs[3].Answered {
+		t.Errorf("answered escalation mis-parsed: %+v", msg.escs[3])
+	}
+}
+
+func TestTopologyCmdRosterFailureIsNoTree(t *testing.T) {
+	r := &fakeRunner{respond: topoRespond("", "board: no roster verb\n", errors.New("exit status 1"),
+		escalationsFixture, "", nil)}
+	msg := topologyCmd(Config{Board: "board"}, r)().(topoMsg)
+	if msg.err == "" || msg.rows != nil {
+		t.Fatalf("a failed roster read must be an error, not an empty herd: %+v", msg)
+	}
+}
+
+func TestTopologyCmdEscalationFailureKeepsTheTree(t *testing.T) {
+	r := &fakeRunner{respond: topoRespond(rosterFixture, "", nil,
+		"", "board: rate limited\n", errors.New("exit status 1"))}
+	msg := topologyCmd(Config{Board: "board"}, r)().(topoMsg)
+	if msg.err != "" || len(msg.rows) != 4 {
+		t.Fatalf("the tree must survive a failed escalations read: %+v", msg)
+	}
+	if msg.escErr == "" || msg.escs != nil {
+		t.Fatalf("a failed count must be NOT COUNTED, never zero: escErr=%q escs=%+v", msg.escErr, msg.escs)
+	}
+}
+
+func TestParseRosterRejectsNonRosterPayload(t *testing.T) {
+	if _, _, _, _, err := parseRoster(`{}`); err == nil || !strings.Contains(err.Error(), "not a roster") {
+		t.Fatalf("a payload without the boardClaims literal must be refused, got %v", err)
+	}
+	if _, _, _, _, err := parseRoster("npm WARN not json"); err == nil {
+		t.Fatal("garbage stdout must be a parse error")
+	}
+}
+
+func TestParseEscalationsKeepsMalformedApartFromEmpty(t *testing.T) {
+	if _, err := parseEscalations(`{}`); err == nil {
+		t.Fatal("a payload with no escalations array must be refused — malformed is not empty")
+	}
+	escs, err := parseEscalations(`{"escalations": []}`)
+	if err != nil || len(escs) != 0 {
+		t.Fatalf("a genuinely empty queue must parse clean: %v %+v", err, escs)
 	}
 }
