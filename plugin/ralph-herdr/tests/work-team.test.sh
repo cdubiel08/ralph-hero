@@ -185,8 +185,17 @@ cat >"$FAKE_BOARD_FIXTURES/get.920.json" <<'EOF'
 {"number":920,"title":"Shipped epic","issueState":"CLOSED","children":[]}
 EOF
 run_wt 920
-is "closed epic: dies" "1" "$RC"
+is "closed epic: clean refusal (rc 4 — the healer reads it as complete, GH-2212)" "4" "$RC"
 line_has "closed epic: the refusal says why" "$OUT" "closed — a team stands for a live epic"
+
+# An epic root In Review means every child is closed (parent-check's rollup):
+# a lead respawned into it would only confirm completion. Same clean rc 4.
+cat >"$FAKE_BOARD_FIXTURES/get.921.json" <<'EOF'
+{"number":921,"title":"Complete epic","issueState":"OPEN","state":"In Review","children":[{"number":922,"title":"done child"}]}
+EOF
+run_wt 921
+is "complete epic (In Review): clean refusal (rc 4)" "4" "$RC"
+line_has "complete epic: the refusal says why" "$OUT" "no team to stand up"
 
 run_wt
 is "no epic, non-TTY: refuses (64)" "64" "$RC"

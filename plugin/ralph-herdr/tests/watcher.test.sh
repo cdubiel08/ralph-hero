@@ -368,7 +368,12 @@ is "adopt: child re-parented to the live grandparent" "1" \
   "$(lcount "$ALEDGER" '.ev=="adopt" and .agent_ref=="w11-child#0003" and .parent=="s0-root#0001" and .prev_parent=="o10-orch#0002"')"
 is "adopt: parent token updated on the child pane" "1" \
   "$(log_count '^pane report-metadata p11 --source ralph-herdr --token parent=s0-root#0001$')"
-is "adopt: no orphan notification" "0" "$(log_count '^notification show')"
+is "adopt: no orphan notification" "0" "$(log_fcount 'orphaned --body')"
+# o10-orch is an o-lane LEAD with no recorded checkout, so the healing pass
+# (GH-2212) reports it unrespawnable — that notification is the healer's, not
+# the orphan pass's.
+is "adopt: the dead lead's unrespawnable notification stands alone" "1" \
+  "$(log_fcount 'died — not respawned')"
 RALPH_HERDR_LEDGER="$ALEDGER"
 is "adopt: dead parent closed, gp+child stay open" "s0-root#0001 w11-child#0003" \
   "$(ralph_ledger_open_agents | sort | tr '\n' ' ' | sed 's/ *$//')"
@@ -393,7 +398,9 @@ is "orphan: child marked orphaned in the ledger" "1" \
 is "orphan: state token pushed" "1" \
   "$(log_count '^pane report-metadata p21 --source ralph-herdr --token state=orphaned$')"
 is "orphan: notified exactly once" "1" "$(log_count '^notification show w21-kid orphaned')"
-is "orphan: no other notifications" "1" "$(log_count '^notification show')"
+# Two notifications total: the orphaned child's, and the healer's for the
+# dead checkout-less lead (GH-2212) — nothing else.
+is "orphan: no other notifications" "2" "$(log_count '^notification show')"
 
 # A later reconcile sees the same orphan edge and must NOT re-notify or
 # re-append (the already-orphaned skip in ralph_ledger_orphan_pass).
@@ -456,9 +463,99 @@ is "race: exactly ONE exit event for the dead parent" "1" \
   "$(lcount "$CLEDGER" '.ev=="exit" and .agent_ref=="o30-dual#0006"')"
 is "race: exactly ONE orphaned state event for the child" "1" \
   "$(lcount "$CLEDGER" '.ev=="state" and .agent_ref=="w31-baby#0007" and .state=="orphaned"')"
-is "race: exactly ONE orphan notification" "1" "$(log_count '^notification show')"
+is "race: exactly ONE orphan notification" "1" "$(log_fcount 'orphaned --body')"
+# The dead parent is an o-lane LEAD with no recorded checkout, so the winner's
+# healing pass (GH-2212) reports it unrespawnable — exactly once: the mutex
+# loser found no open refs and healed nothing.
+is "race: exactly ONE lead-death notification" "1" "$(log_fcount 'died — not respawned')"
 is "race: the mutex is released afterwards" "0" \
   "$([ -d "$CROOT/acme/demo/.ledger.lock" ] && echo 1 || echo 0)"
+
+# ═══ 5c. GH-2212: event-driven healing — dead lead respawn + heartbeat ═══════
+# A dead o-lane LEAD is respawned by re-running work-team.sh EPIC --lead-only
+# from the checkout its own spawn record names; the team workspace is flagged
+# (ev orphan_space) for the sweep backstop; the dispatch heartbeat is stamped
+# for the scope the event acted on. The respawn is stubbed: work-team.sh has
+# its own test file, and what THIS hook owes is the correct delegation.
+HEAL_STUB="$TMP/fake-work-team.sh"
+cat >"$HEAL_STUB" <<'EOF'
+#!/bin/bash
+printf 'argv=%s cwd=%s repo=%s by=%s\n' "$*" "$PWD" "${RALPH_HERDR_REPO:-}" "${RALPH_HERDR_INVOKED_BY:-}" >>"${HEAL_STUB_LOG:?}"
+exit "${HEAL_STUB_RC:-0}"
+EOF
+chmod +x "$HEAL_STUB"
+export RALPH_HERDR_WORK_TEAM="$HEAL_STUB"
+export HEAL_STUB_LOG="$TMP/heal-stub.log"
+
+HROOT="$TMP/hroot"
+HLEDGER="$HROOT/acme/demo/ledger.jsonl"
+mkdir -p "$HROOT/acme/demo"
+cat >"$HLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"o40-heal#0001","pane_id":"p40","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"40","slug":"heal","depth":"0","state":"spawned","root":"o40-heal#0001"}}
+EOF
+herd_fixture '[]'
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+run_event pane.exited '{"pane_id":"p40","workspace_id":"ws40"}' "$HROOT"
+is "heal: hook exits 0" "0" "$RC"
+is "heal: exit appended for the lead" "1" \
+  "$(lcount "$HLEDGER" '.ev=="exit" and .agent_ref=="o40-heal#0001"')"
+is "heal: team space flagged orphan_space with the event's workspace id" "1" \
+  "$(lcount "$HLEDGER" '.ev=="orphan_space" and .agent_ref=="o40-heal#0001" and .workspace_id=="ws40" and .via=="event"')"
+stub_line=$(cat "$HEAL_STUB_LOG")
+is "heal: exactly one respawn delegation" "1" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
+line_has "heal: respawn is work-team EPIC --lead-only" "$stub_line" "argv=40 --lead-only"
+line_has "heal: respawn runs from the lead's recorded checkout" "$stub_line" "cwd=$(cd "$REPO_DIR" && pwd)"
+line_has "heal: respawn scopes lib.sh at the same checkout" "$stub_line" "repo=$REPO_DIR"
+line_has "heal: the spawn is machine-initiated (invoked_by)" "$stub_line" "by=scheduler"
+is "heal: a successful respawn raises no notification" "0" "$(log_count '^notification show')"
+is "heal: dispatch heartbeat stamped for the scope" "1" \
+  "$([ -f "$HROOT/acme/demo/dispatch-heartbeat" ] && echo 1 || echo 0)"
+is "heal: heartbeat names its writer" "watch-event" \
+  "$(jq -r '.writer' <"$HROOT/acme/demo/dispatch-heartbeat" 2>/dev/null)"
+
+# Exit 4 from work-team.sh is the CLEAN refusal — the epic is complete, the
+# self-dissolve backstop is working: log only, never a notification.
+cat >"$HLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"o41-done#0001","pane_id":"p41","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"41","slug":"done","depth":"0","state":"spawned","root":"o41-done#0001"}}
+EOF
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+HEAL_STUB_RC=4 run_event pane.exited '{"pane_id":"p41","workspace_id":"ws41"}' "$HROOT"
+is "heal complete-epic: hook exits 0" "0" "$RC"
+is "heal complete-epic: respawn was attempted (and cleanly refused)" "1" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
+is "heal complete-epic: no notification — the backstop working is not attention" "0" "$(log_count '^notification show')"
+case "$OUT" in
+  *"self-dissolve backstop"*) ok "heal complete-epic: the log names the backstop" ;;
+  *) not_ok "heal complete-epic: the log names the backstop — no mention in '$OUT'" ;;
+esac
+
+# Any other nonzero rc is a FAILED respawn: the lead is dead and the healer
+# could not stand a new one up — that is attention, so it notifies.
+cat >"$HLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"o42-sick#0001","pane_id":"p42","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"42","slug":"sick","depth":"0","state":"spawned","root":"o42-sick#0001"}}
+EOF
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+HEAL_STUB_RC=1 run_event pane.exited '{"pane_id":"p42","workspace_id":"ws42"}' "$HROOT"
+is "heal failed-respawn: hook exits 0" "0" "$RC"
+is "heal failed-respawn: notification raised" "1" "$(log_fcount 'died — respawn failed')"
+
+# A record with no usable checkout cannot ground a respawn — inventing a cwd
+# is the cross-scope write the pane proof forbids. No delegation; attention.
+cat >"$HLEDGER" <<'EOF'
+{"ts":"t0","ev":"spawn","agent_ref":"o43-bare#0001","pane_id":"p43","tokens":{"role":"orchestrator","issue":"43","slug":"bare","depth":"0","state":"spawned","root":"o43-bare#0001"}}
+EOF
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+run_event pane.exited '{"pane_id":"p43","workspace_id":"ws43"}' "$HROOT"
+is "heal no-checkout: hook exits 0" "0" "$RC"
+is "heal no-checkout: respawn never delegated" "0" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
+is "heal no-checkout: notification raised" "1" "$(log_fcount 'died — not respawned')"
+is "heal no-checkout: team space still flagged" "1" \
+  "$(lcount "$HLEDGER" '.ev=="orphan_space" and .agent_ref=="o43-bare#0001" and .workspace_id=="ws43"')"
+
+unset RALPH_HERDR_WORK_TEAM HEAL_STUB_LOG
 
 # ═══ 6. reconcile: discover / lost / token re-push ═══════════════════════════
 RROOT="$TMP/rroot"

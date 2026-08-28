@@ -14,7 +14,15 @@
 #                              name: the ledger itself is the correlation
 #                              (open agents whose latest record binds that
 #                              pane). Append exit + run the orphan pass for
-#                              the dead agent's children.
+#                              the dead agent's children; a dead o-lane LEAD
+#                              additionally gets the event-driven healing
+#                              (heal.sh, GH-2212): team-space flag + respawn
+#                              via work-team.sh --lead-only.
+#
+# Both handlers stamp <ledger dir>/dispatch-heartbeat for the scope they
+# acted on (GH-2212, D7.2): with no scheduled rota, this hook and hero
+# sittings are the proof the dispatch lane's unattended half is alive, and
+# doctor's advisory reads the heartbeat's age.
 #
 # Duplicate events are tolerated: the ledger is append-only (a second exit
 # for an already-closed ref finds no open agent) and token updates are
@@ -64,6 +72,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # order at source time does not matter, but the dependency is real.
 # shellcheck source=refill.sh
 . "$SCRIPT_DIR/refill.sh"
+# heal.sh after ledger.sh (it appends flags and reads records) — the
+# event-driven healing half (GH-2212): dead-lead respawn, team-space flag,
+# dispatch heartbeat. Like refill.sh it only ever calls log() from inside a
+# function body.
+# shellcheck source=heal.sh
+. "$SCRIPT_DIR/heal.sh"
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
 EVENT="${HERDR_PLUGIN_EVENT:-}"
@@ -340,12 +354,22 @@ handle_status() {
       w) maybe_refill "$file" ;;
     esac
   fi
+
+  # Dispatch heartbeat (GH-2212, D7.2): the event lane just ran for this
+  # repo's scope — say so where doctor's advisory can read it. Only when a
+  # ledger scope was actually resolved: an event about another tool's agent
+  # exited above, and one with no resolvable scope proves nothing about this
+  # repo's dispatch lane.
+  if [ -n "$file" ]; then
+    ralph_heartbeat_write "$file" watch-event "status:$status" || true
+  fi
 }
 
 # ── pane.exited / pane.closed ────────────────────────────────────────────────
 handle_gone() {
-  local reason="$1" pane live live_json snapshot f refs ref ts w_exited
+  local reason="$1" pane ws live live_json snapshot f refs ref ts w_exited o_exited
   pane=$(pfield '.pane_id // .data.pane_id // empty')
+  ws=$(pfield '.workspace_id // .data.workspace_id // empty')
   [ -n "$pane" ] || exit 0
   # ONE snapshot for the whole sweep, scoped per ledger below. A pane death is
   # a single moment; asking the server again for every ledger would let the
@@ -375,23 +399,37 @@ handle_gone() {
     # the children already adopted/orphaned) and appends/notifies nothing.
     ralph_ledger_lock "$f"
     refs=$(ralph_ledger_open_for_pane "$pane") || refs=""
-    w_exited=""
+    w_exited="" o_exited=""
     for ref in $refs; do
       ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg r "$reason" --arg p "$pane" \
         '{ts: $ts, ev: "exit", agent_ref: $ref, reason: $r, pane_id: $p}')" ||
         log "exit append failed for $ref"
       log "exit $ref (reason $reason, pane $pane)"
       ralph_ledger_orphan_pass "$ref" "$live"
-      # w-lane (grammar-B w<N>-* or legacy gh-N) exits free fleet capacity.
+      # w-lane (grammar-B w<N>-* or legacy gh-N) exits free fleet capacity;
+      # o-lane exits are dead LEADS, the event-healing case (GH-2212).
       case "$ref" in
         w[0-9]* | gh-[0-9]*) w_exited=1 ;;
+        o[0-9]*) o_exited="$o_exited $ref" ;;
       esac
     done
     ralph_ledger_unlock "$f"
-    # Refill AFTER the mutex is released — maybe_refill takes it itself for
-    # its decide-and-consume section.
+    # Everything server- or network-priced runs AFTER the mutex is released —
+    # maybe_refill takes it itself for its decide-and-consume section, and a
+    # lead respawn is a whole spawn path. The mutex loser of the
+    # exited/closed race found no open refs above, so exactly one hook run
+    # reaches the healing per death (heal.sh's pane-proved contract).
     if [ -n "$w_exited" ]; then
       maybe_refill "$f"
+    fi
+    for ref in $o_exited; do
+      ralph_heal_lead_death "$f" "$ref" "$ws" "$reason" || true
+    done
+    # Dispatch heartbeat (GH-2212, D7.2): written only for the scope the
+    # event actually acted on — a ledger this pane was never in learns
+    # nothing about its dispatch lane from this event.
+    if [ -n "$refs" ]; then
+      ralph_heartbeat_write "$f" watch-event "$reason" || true
     fi
   done
 }

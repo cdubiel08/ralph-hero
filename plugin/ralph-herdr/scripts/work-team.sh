@@ -131,9 +131,26 @@ validate_pos_int RALPH_HERDR_FLEET "$FLEET"
 # closed epic has no team to stand up.
 EPIC_JSON=$("$BOARD" get "$EPIC" --json 2>/dev/null) || die "board get $EPIC failed — is it on this board?"
 jq -e '.number' <<<"$EPIC_JSON" >/dev/null 2>&1 || die "board get $EPIC --json returned no issue envelope"
+# A complete or terminal epic has no team to stand up. Exit 4 is the CLEAN
+# refusal, distinct from every error: the event-driven healer (heal.sh,
+# GH-2212) reads it as "the self-dissolve backstop is working — do not
+# notify", where any other nonzero rc is a failed respawn that demands
+# attention. In Review on an epic ROOT means every child is closed
+# (parent-check's rollup), so a lead respawned into it would rehydrate,
+# find nothing to staff, and stop — a session spent confirming completion.
+die_complete() {
+  echo "${0##*/}: $*" >&2
+  trap - EXIT
+  exit 4
+}
 if [ "$(jq -r '.issueState // empty' <<<"$EPIC_JSON")" = "CLOSED" ]; then
-  die "GH-$EPIC is closed — a team stands for a live epic; reopen it or name a different one"
+  die_complete "GH-$EPIC is closed — a team stands for a live epic; reopen it or name a different one"
 fi
+case "$(jq -r '.state // empty' <<<"$EPIC_JSON")" in
+  "In Review" | Done | Canceled)
+    die_complete "GH-$EPIC is $(jq -r '.state' <<<"$EPIC_JSON") — every child is closed or the epic is terminal; no team to stand up"
+    ;;
+esac
 TITLE=$(jq -r '.title // empty' <<<"$EPIC_JSON")
 
 LEAD=$(ralph_agent_name o "$EPIC" "${TITLE:-team}") || die "could not derive a lead name for GH-$EPIC"

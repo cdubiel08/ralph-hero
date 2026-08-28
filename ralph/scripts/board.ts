@@ -1020,6 +1020,7 @@ export interface SmellThresholds {
   proposalDays: number; // GH-1777: days a tend closure proposal has gone unanswered
   intakeDays: number; // GH-2077: days an Intake item has waited for an approval decision
   answerMin: number; // GH-2204: minutes an answered Human Needed item has sat unresumed
+  dispatchMin: number; // GH-2212: minutes since the dispatch heartbeat was last written
 }
 
 export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
@@ -1038,6 +1039,12 @@ export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
   // minutes (GH-1703), so a tighter default would fire on items the sweep
   // simply hadn't seen yet.
   answerMin: 30,
+  // A day. With no rota (the operator rejected scheduled passes — GH-2212,
+  // D1.2/D3.1), the heartbeat's writers are the event hooks and hero
+  // sittings, so a quiet-but-healthy machine can legitimately go hours
+  // between stamps; a full day of silence is where "the event lane is dark"
+  // becomes the likelier reading than "nothing happened".
+  dispatchMin: 1440,
 });
 
 export function parseSmellThresholds(
@@ -1058,6 +1065,7 @@ export function parseSmellThresholds(
     proposalDays: positive("RALPH_SMELL_PROPOSAL_DAYS", SMELL_DEFAULTS.proposalDays),
     intakeDays: positive("RALPH_SMELL_INTAKE_DAYS", SMELL_DEFAULTS.intakeDays),
     answerMin: positive("RALPH_SMELL_ANSWER_MIN", SMELL_DEFAULTS.answerMin),
+    dispatchMin: positive("RALPH_SMELL_DISPATCH_MIN", SMELL_DEFAULTS.dispatchMin),
   };
 }
 
@@ -10241,6 +10249,70 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     add("herdr-cockpit", "info", `not evaluated: ${(e as Error).message}`);
   }
 
+  // Dispatch heartbeat (GH-2212, D7.2). INFO level always, same construction
+  // as herdr-cockpit above: the dispatch lane is optional equipment, the
+  // weekly CI doctor has none, and the only remedies are human acts — so
+  // --strict never escalates it and --fix never touches it. With no
+  // scheduled rota (the operator rejected batch passes, D1.2/D3.1) the
+  // heartbeat's writers are the event hooks (watch-event.sh) and hero
+  // sittings; its age is therefore the one observable of whether the
+  // dispatch lane's unattended half is alive. An absent file is a machine
+  // that never wired the lane — ok, quietly. A present-but-unreadable stamp
+  // ages as STALE, not as ok (GH-2204's direction: a broken clock fails
+  // toward visibility), falling back to the file's own mtime first.
+  try {
+    const slug = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "-");
+    const hbPath = join(
+      process.env.RALPH_HERDR_LEDGER_ROOT || join(homedir(), ".ralph"),
+      slug(ctx.cfg.owner),
+      slug(ctx.cfg.repo),
+      "dispatch-heartbeat",
+    );
+    if (!existsSync(hbPath)) {
+      add("dispatch-heartbeat", "ok", "no heartbeat recorded (event lane / hero sittings write it; optional equipment)");
+    } else {
+      let ts: number | null = null;
+      let writer = "";
+      try {
+        const j = JSON.parse(readFileSync(hbPath, "utf8"));
+        const t = new Date(j.ts).getTime();
+        if (Number.isFinite(t)) ts = t;
+        if (typeof j.writer === "string") writer = j.writer;
+      } catch {
+        /* fall through to mtime */
+      }
+      if (ts === null) {
+        try {
+          ts = statSync(hbPath).mtimeMs;
+        } catch {
+          /* unreadable — ages as stale below */
+        }
+      }
+      if (ts === null) {
+        add(
+          "dispatch-heartbeat",
+          "info",
+          "heartbeat present but unreadable — treating as stale (toward visibility); `dispatch up` restarts the dispatch lane",
+        );
+      } else {
+        const min = Math.floor((ctx.now().getTime() - ts) / 60_000);
+        if (min >= ctx.cfg.smells.dispatchMin) {
+          add(
+            "dispatch-heartbeat",
+            "info",
+            `heartbeat stale: last written ${min}min ago${writer ? ` (by ${writer})` : ""} ≥${ctx.cfg.smells.dispatchMin}min — ` +
+              "the dispatch lane's event hooks and hero sittings have gone quiet; `dispatch up` is the remedy " +
+              "(until it ships: a hero sitting or a herdr server restart rewrites it)",
+          );
+        } else {
+          add("dispatch-heartbeat", "ok", `heartbeat ${min}min ago${writer ? ` (${writer})` : ""}`);
+        }
+      }
+    }
+  } catch (e) {
+    add("dispatch-heartbeat", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
   // GraphQL spend attribution (audit B2). INFO always: a number is a fact,
   // never a breach — the exhaustion incident's real blocker was that no
   // surface said WHO was spending. Reads the per-invocation ledger every
@@ -11361,7 +11433,12 @@ maintenance
                               (2), RALPH_SMELL_ESCALATIONS (3),
                               RALPH_SMELL_REVIEW_DAYS (7),
                               RALPH_SMELL_INTAKE_DAYS (14 — "intake-stale":
-                              items awaiting an approval decision).
+                              items awaiting an approval decision),
+                              RALPH_SMELL_DISPATCH_MIN (1440 —
+                              "dispatch-heartbeat": minutes since the event
+                              hooks or a hero sitting last stamped
+                              ~/.ralph/<owner>/<repo>/dispatch-heartbeat;
+                              GH-2212).
                               "foreign-repo-policy" reports the posture in
                               effect and whether it was configured or
                               defaulted; "foreign-items" warns when items from
