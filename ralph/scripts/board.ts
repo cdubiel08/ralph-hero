@@ -6888,9 +6888,12 @@ export interface EscalationRow extends EscalationRoute {
 
 /** The arbitration queue: every Human Needed item, classified. The lead's
  *  work is the `pending` rows; everything else (human-addressed, promoted,
- *  auto-promoted) is the human tier — the surface `board inbox` (GH-2180)
- *  builds on. Trails are fetched for the Human Needed subset only, so the
- *  read is bounded by live escalations, not board size. */
+ *  auto-promoted) is the human tier — the split `board inbox` (GH-2180)
+ *  ENFORCES since GH-2218: Tier 1 admits only the human tier, so a lead's
+ *  promotion writes the inbox directly and dispatch (which reads the inbox
+ *  like the human does) is reachable, never a rung. Trails are fetched for
+ *  the Human Needed subset only, so the read is bounded by live
+ *  escalations, not board size. */
 export function escalationsQueue(ctx: Ctx): EscalationRow[] {
   const items = listItems(ctx, QUEUE_SELECT_MINIMAL).filter((i) => i.state === "Human Needed");
   if (items.length === 0) return [];
@@ -7345,6 +7348,14 @@ export interface InboxTier1 {
    *  an operator must be able to tell "nothing held back" from "the reader
    *  dropped it". A new DeliverReason lands here visibly, never invisibly. */
   withheld: Array<{ reason: DeliverReason; count: number }>;
+  /** Human Needed rows NOT admitted because their live escalation is
+   *  lead-routed and still inside the lead's window (GH-2218, unit J of
+   *  #2208): the lead's queue, not the inbox's. A promotion — the lead's
+   *  marker or the TTL, both computed at read time by classifyEscalation —
+   *  is the admission; until then the row is counted here, never dropped
+   *  (same GH-2108 rule as `withheld`). One arbitration hop total:
+   *  worker → lead → inbox. */
+  leadPending: Array<{ number: number; lead: string | null; at: string | null }>;
   count: number;
 }
 
@@ -7394,6 +7405,12 @@ export function classifyInbox(
   /** number → why-line for Human Needed items whose trails were read; a
    *  missing or null entry degrades `detail`, never the row. */
   decisionWhys: Map<number, string | null> = new Map(),
+  /** number → escalation route for Human Needed items (GH-2218): a
+   *  lead-routed `pending` row is withheld to `leadPending` — the lead's
+   *  queue, one arbitration hop. A MISSING entry admits: an unreadable
+   *  trail may not hide a decision from the human (fail toward
+   *  visibility, the same direction as auto-promotion). */
+  routes: Map<number, EscalationRoute> = new Map(),
 ): InboxTier1 {
   const byNumber = new Map(open.map((i) => [i.number, i]));
   const seen = new Set<number>();
@@ -7405,9 +7422,18 @@ export function classifyInbox(
   };
 
   const decisions: InboxRow[] = [];
+  const leadPending: InboxTier1["leadPending"] = [];
   for (const i of open) {
     if (i.state !== "Human Needed" || seen.has(i.number)) continue;
     seen.add(i.number);
+    const route = routes.get(i.number);
+    if (route?.route === "lead" && route.disposition === "pending") {
+      // The lead's row, not the human's — withheld WITH the seen-set mark:
+      // an item in the lead's queue may not resurface in another tier
+      // (a tend proposal on it waits for the arbitration to conclude).
+      leadPending.push({ number: i.number, lead: route.lead ?? null, at: route.at ?? null });
+      continue;
+    }
     decisions.push({
       number: i.number,
       repo: i.repo ?? null,
@@ -7494,12 +7520,16 @@ export function classifyInbox(
   const withheld = [...withheldCounts.entries()]
     .map(([reason, count]) => ({ reason, count }))
     .sort((a, b) => (a.reason < b.reason ? -1 : 1));
+  leadPending.sort((a, b) => a.number - b.number);
   return {
     decisions,
     proposals,
     approvals,
     deliverBlocked,
     withheld,
+    leadPending,
+    // leadPending is deliberately OUTSIDE the count: the count is what waits
+    // on the inbox's reader, and those rows wait on the lead.
     count: decisions.length + proposals.length + approvals.length + deliverBlocked.length,
   };
 }
@@ -11025,7 +11055,12 @@ reads
                               deliver-blocked rows only a human clears
                               (convergence-stalled, no-pr; self-clearing and
                               wait-state rows are counted as withheld, never
-                              silently dropped). Every row names its literal
+                              silently dropped). Lead-routed escalations
+                              inside their window are the LEAD's rows, not
+                              the inbox's (GH-2218): counted as "with leads",
+                              admitted by promotion or the TTL — one
+                              arbitration hop, worker → lead → inbox.
+                              Every row names its literal
                               disposition verb — the invariant. --digest adds
                               Tier 2: completions since the last mark (stamp
                               under ~/.ralph/inbox/, machine-local) plus a
@@ -11266,10 +11301,13 @@ mutations
                               shape is checked by \`board contract validate
                               ralph.escalation\`, never by this verb
   promote NNN [-m "note"]     lead arbitration (GH-2179): promote a lead-routed
-                              escalation to the human — a durable marker
+                              escalation into the inbox — a durable marker
                               comment, NO state change (Human Needed is
                               already the right state; promotion changes the
-                              audience, not the machine). Refuses outside
+                              audience, not the machine). Promotion is the
+                              inbox admission (GH-2218): until it — or the
+                              TTL — the row is the lead's, and Tier 1
+                              withholds it. Refuses outside
                               Human Needed and on human-addressed escalations;
                               noop when already promoted. The other two
                               dispositions are \`answer\` (whose comment the
@@ -11440,7 +11478,7 @@ export const VERB_HELP: Record<string, string> = {
   frontier: "board frontier [--json]\n  next's eligible queue re-projected with per-item explanations (fleet feed).\n  example: board frontier --json",
   brief: "board brief [--json]\n  One orientation read: next head, queue counts, deliver/tend counts, local leases.\n  example: board brief",
   inbox:
-    "board inbox [--json] [--digest [--mark]]\n  The human's single surface: Human Needed decisions, tend proposals, Intake approvals,\n  and human-clearable deliver-blocked rows, each with its literal disposition verb.\n  --digest adds completions since the last mark + a pushWorthy verdict; --mark stamps the window.\n  example: board inbox --digest",
+    "board inbox [--json] [--digest [--mark]]\n  The human's single surface: Human Needed decisions, tend proposals, Intake approvals,\n  and human-clearable deliver-blocked rows, each with its literal disposition verb.\n  Lead-routed escalations inside their window are withheld as \"with leads\" (GH-2218) —\n  promotion or the TTL admits them; `board escalations` lists them.\n  --digest adds completions since the last mark + a pushWorthy verdict; --mark stamps the window.\n  example: board inbox --digest",
   who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  A lease whose worktree was deleted prints DEAD, not STALE: nothing can refresh it, so it is\n  not aging toward anything. `board reap-leases` clears those.\n  example: board who",
   "reap-leases": "board reap-leases [--apply] [--json]\n  Remove local lock files whose worktree no longer exists. Dry run unless --apply. Zero API.\n  The predicate is the missing CHECKOUT, never the lock's age: a lease is what deliver-queue\n  reads for local-session-active, so a clock may not be allowed to delete a live one. Any read\n  failure that is not ENOENT leaves the lock alone.\n  example: board reap-leases --apply",
   list: "board list [--state <s>] [--json]\n  Items by state. Full-board scan — prefer next/brief for orientation.\n  example: board list --state human",
@@ -11450,7 +11488,7 @@ export const VERB_HELP: Record<string, string> = {
   release: "board release <n> -m \"<where you stopped>\"\n  Give a unit back (→Backlog) with the handoff note.\n  example: board release 1234 -m \"tests red on X; next: fix parser\"",
   move: "board move <n> <state> [--why <w>] [--decision <artifact>] [--to-lead <name> | --to-human]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact,\n  an epic root with ALL children closed (GH-2198), or --why.\n  Demotions (In Progress→Backlog, In Review→In Progress) require --why (GH-2078).\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  Human Needed only: --to-lead/--to-human address the escalation (GH-2179);\n  default is the lead when RALPH_HERDR_LEAD is set, else the human.\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
   answer: "board answer <n> -m \"<the decision>\" [--resume] [--any-state]\n  Answer a Human Needed item; it stays Human Needed until the driving\n  session resumes it (board claim <n>). --resume answers AND resumes in one\n  invocation — for the driver answering its own item.\n  example: board answer 1234 -m \"ship option B\"",
-  promote: "board promote <n> [-m \"<note>\"] [--json]\n  Promote a lead-routed escalation to the human (GH-2179): durable marker\n  comment, no state change. Refuses outside Human Needed and on\n  human-addressed escalations; noop when already promoted.\n  example: board promote 1234 -m \"authorization, not knowledge — yours\"",
+  promote: "board promote <n> [-m \"<note>\"] [--json]\n  Promote a lead-routed escalation into the inbox (GH-2179/GH-2218): durable\n  marker comment, no state change — the admission that puts the row in\n  Tier 1 of `board inbox`. Refuses outside Human Needed and on\n  human-addressed escalations; noop when already promoted.\n  example: board promote 1234 -m \"authorization, not knowledge — yours\"",
   escalations: "board escalations [--json]\n  The arbitration queue (GH-2179): Human Needed items classified by audience.\n  pending = the lead's work; →human / promoted / auto-promoted (TTL\n  RALPH_LOCK_TTL_MIN elapsed, computed at read time) = the human tier.\n  example: board escalations --json",
   cancel: "board cancel <n> -m \"<reason>\"\n  Cancel (→Canceled, closes NOT_PLANNED). Reopen is the only exit.\n  example: board cancel 1234 -m \"superseded by #1300\"",
   reopen: "board reopen <n>\n  The one exit from Done/Canceled (→Backlog); accepts a pending reopen proposal.\n  example: board reopen 1234",
@@ -11771,11 +11809,19 @@ export function run(argv: string[], ctx: Ctx): number {
       // while hiding that nothing was read.
       const hn = own.filter((i) => i.state === "Human Needed").map((i) => i.number);
       const whys = new Map<number, string | null>();
+      const routes = new Map<number, EscalationRoute>();
       if (hn.length > 0) {
+        // Same trails answer both questions — the why-line AND the audience
+        // (GH-2218): a lead-routed pending escalation is the lead's row, so
+        // Tier 1 withholds it until a promotion (the lead's or the TTL's,
+        // classified at read time) admits it. Zero extra reads.
         const trails = fetchCommentTrails(ctx, hn);
-        for (const n of hn) whys.set(n, latestEscalationWhy(trails.get(n) ?? []));
+        for (const n of hn) {
+          whys.set(n, latestEscalationWhy(trails.get(n) ?? []));
+          routes.set(n, classifyEscalation(trails.get(n) ?? [], ctx.now(), ctx.cfg.lockTtlMin));
+        }
       }
-      const tier1 = classifyInbox(own, tq, dq, whys);
+      const tier1 = classifyInbox(own, tq, dq, whys, routes);
       let digest: InboxDigestFacts | null = null;
       let marked: string | null = null;
       if (flags.digest) {
@@ -11842,6 +11888,11 @@ export function run(argv: string[], ctx: Ctx): number {
         out(
           `withheld: ${tier1.withheld.map((w) => `${w.count} ${w.reason}`).join(", ")} — ` +
             `self-clearing or waiting, no human verb disposes them (\`board deliver-queue\` lists them)`,
+        );
+      if (tier1.leadPending.length > 0)
+        out(
+          `with leads: ${tier1.leadPending.map((l) => `#${l.number} (${l.lead ?? "unnamed lead"})`).join(", ")} — ` +
+            `lead-routed escalations inside their window; promotion or the TTL admits them (\`board escalations\` lists them)`,
         );
       if (digest) {
         out(
@@ -12688,7 +12739,7 @@ export function run(argv: string[], ctx: Ctx): number {
       const res = promote(ctx, number, { note });
       if (flags.json) json(res);
       else if (!res.promoted) out(`noop: #${number} is already promoted (nothing to do)`);
-      else out(`#${number}: escalation promoted to the human (was ${res.route.lead ?? "lead"}-routed)`);
+      else out(`#${number}: escalation promoted into the inbox (was ${res.route.lead ?? "lead"}-routed)`);
       return 0;
     }
 
