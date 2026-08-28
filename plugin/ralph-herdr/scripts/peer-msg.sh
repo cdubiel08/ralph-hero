@@ -33,9 +33,11 @@
 #           listed (ListAgents) arrive via --candidates (comma- or
 #           newline-separated) or stdin, and resolution is delegated to
 #           `board peer`, which holds the prefix rules and both branch
-#           grammars. Zero matches → exit 2 (that session is not running;
-#           the board is the lane). Two → exit 3 (name one explicitly —
-#           the wrong session is worse than no session).
+#           grammars. Zero matches from a non-empty list → exit 2 (that
+#           session is not running; the board is the lane). Two → exit 3
+#           (name one explicitly — the wrong session is worse than no
+#           session). An EMPTY candidate set → exit 64: that is a question
+#           never asked, not a negative answer (GH-2245).
 #   reply   answer a message you received. FROM is the transport's own
 #           `from` address, used VERBATIM — resolution would be a second
 #           guess at a fact the transport already handed over. A herdr agent
@@ -63,7 +65,8 @@
 # Exit: 0 composed (live: the address is stdout, alone)
 #       2 no live peer for TO — the board is the durable lane (C9 for a lead)
 #       3 ambiguous — two live sessions match; name one explicitly
-#      64 bad invocation (incl. a herdr name where a peer address belongs)
+#      64 bad invocation (incl. a herdr name where a peer address belongs,
+#          and an empty candidate set — enumerate first, GH-2245)
 #       1 the board CLI itself failed — the resolver's error is printed
 #
 # The discipline the sender carries out of here (stderr on every compose):
@@ -80,7 +83,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
-usage() { sed -n '2,75p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,78p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 udie() {
   echo "peer-msg: $*" >&2
   exit 64
@@ -163,6 +166,15 @@ resolve_addr() {
     raw="$CANDS"
   else
     raw=$(cat)
+  fi
+  # An empty candidate set is not an enumeration that came back empty — it is
+  # a question that was never asked (GH-2245). Rendering it as the zero-matches
+  # answer would tell the caller "dead peer, use the board" when the truth is
+  # "you forgot to enumerate", silently downgrading all live delivery.
+  if ! printf '%s' "$raw" | LC_ALL=C grep -q '[^[:space:],]'; then
+    echo "peer-msg: no candidates supplied — cannot tell a dead peer from an unasked question." >&2
+    echo "peer-msg: enumerate your transport's peers (ListAgents) and pass them via --candidates or on stdin." >&2
+    return 64
   fi
   out=$("$BOARD" peer "$target" --candidates "$raw" --json 2>&1) || true
   kind=$(printf '%s' "$out" | jq -r '.kind // empty' 2>/dev/null || true)
