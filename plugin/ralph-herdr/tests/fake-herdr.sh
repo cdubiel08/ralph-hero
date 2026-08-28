@@ -40,6 +40,8 @@
 #
 # Fixture files, first match wins (all under $FAKE_HERDR_FIXTURES):
 #   agent list                    agent-list.json         payload {agents:[…]}
+#   workspace list                workspace-list.json     payload {workspaces:[…]}
+#   pane list …                   pane-list.json          payload {panes:[…]}
 #   agent start <NAME> …          agent-start.<NAME>.json, then agent-start.json
 #   agent prompt …                agent-prompt.json
 #   agent focus <NAME>            agent-focus.json
@@ -233,6 +235,12 @@ case "$key" in
   agent-list)
     respond "cli:agent:list" "agent_list" '{"agents":[]}' agent-list
     ;;
+  workspace-list)
+    respond "cli:workspace:list" "workspace_list" '{"workspaces":[]}' workspace-list
+    ;;
+  pane-list)
+    respond "cli:pane:list" "pane_list" '{"panes":[]}' pane-list
+    ;;
   agent-start)
     # AgentInfo's required fields are present in the default because the
     # transport adapter checks the envelope, and a caller that starts an agent
@@ -315,7 +323,12 @@ case "$key" in
       api-snapshot
     ;;
   plugin-pane)
-    respond "cli:plugin:pane" "plugin_pane_opened" '{"plugin_pane":{"pane_id":"pP1"}}' plugin-pane
+    # The real 0.8.x response nests the pane: .plugin_pane.pane.pane_id
+    # (probed 2026-08-28 for GH-2213 — the flat pane_id the first model
+    # guessed does not exist).
+    respond "cli:plugin:pane" "plugin_pane_opened" \
+      '{"plugin_pane":{"entrypoint":"hero","plugin_id":"ralph-herdr","pane":{"pane_id":"pP1","workspace_id":"wT","tab_id":"wT:t2","terminal_id":"term_fake","focused":true,"agent_status":"unknown","revision":0}}}' \
+      plugin-pane
     ;;
   pane-get)
     respond "cli:pane:get" "pane_info" \

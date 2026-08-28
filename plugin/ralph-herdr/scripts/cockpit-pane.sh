@@ -46,17 +46,26 @@
 # cockpit itself. The record is decoration over an idempotence convenience —
 # nothing gates on it.
 #
+# GH-2213 (dispatch up) gave the file a second subject: the HERO pane keeps
+# the same kind of record (hero.pane.json beside cockpit.pane.json), written
+# by hero.sh and read by dispatch-up.sh's idempotence check. Same contract in
+# every direction — display-only convenience, two-fact liveness, fail-open on
+# every unreadable path — so the mechanism is defined once here and the two
+# subjects are thin wrappers over it. The record still registers hero
+# NOWHERE reconcile reads: it is not the ledger, carries no lifecycle, and
+# nothing gates on it.
+#
 # No top-level side effects. bash 3.2 compatible.
 
-# _ralph_cockpit_record_file REPO_ROOT — print the record path (creating its
-# directory). rc 1 when no board scope is resolvable — callers probe.
-# $RALPH_HERDR_COCKPIT_PANE_FILE wins outright (tests).
-_ralph_cockpit_record_file() {
-  local root="${1:-$PWD}" scope owner repo dir
-  if [ -n "${RALPH_HERDR_COCKPIT_PANE_FILE:-}" ]; then
-    dir=$(dirname "$RALPH_HERDR_COCKPIT_PANE_FILE")
+# _ralph_pane_record_file REPO_ROOT BASENAME OVERRIDE — shared record-path
+# resolution (creating the directory). rc 1 when no board scope is resolvable
+# — callers probe. A non-empty OVERRIDE wins outright (tests).
+_ralph_pane_record_file() {
+  local root="${1:-$PWD}" base="$2" override="${3-}" scope owner repo dir
+  if [ -n "$override" ]; then
+    dir=$(dirname "$override")
     mkdir -p "$dir" 2>/dev/null || return 1
-    printf '%s\n' "$RALPH_HERDR_COCKPIT_PANE_FILE"
+    printf '%s\n' "$override"
     return 0
   fi
   # Same fallback as ralph_ledger_path: the scope files live at the repo root,
@@ -69,36 +78,63 @@ _ralph_cockpit_record_file() {
   repo=$(_ralph_ledger_slug "${scope#* }")
   dir="${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}/$owner/$repo"
   mkdir -p "$dir" 2>/dev/null || return 1
-  printf '%s\n' "$dir/cockpit.pane.json"
+  printf '%s\n' "$dir/$base"
 }
 
-# ralph_cockpit_pane_stamp REPO_ROOT PANE_ID PID — record this pane as the
-# board's cockpit. Best-effort by contract: ALWAYS rc 0, and every failure is
-# silent-but-for-a-stderr-note. A cockpit must never fail to start because a
-# convenience record could not be written.
-ralph_cockpit_pane_stamp() {
-  local root="${1:-$PWD}" pane="${2-}" pid="${3-}" file
+# _ralph_cockpit_record_file REPO_ROOT — the cockpit's record path.
+_ralph_cockpit_record_file() {
+  _ralph_pane_record_file "${1:-$PWD}" cockpit.pane.json "${RALPH_HERDR_COCKPIT_PANE_FILE:-}"
+}
+
+# _ralph_hero_record_file REPO_ROOT — the hero pane's record path (GH-2213).
+_ralph_hero_record_file() {
+  _ralph_pane_record_file "${1:-$PWD}" hero.pane.json "${RALPH_HERDR_HERO_PANE_FILE:-}"
+}
+
+# _ralph_pane_record_stamp LABEL FILE_OR_EMPTY ROOT PANE_ID PID — the shared
+# stamp. Best-effort by contract: ALWAYS rc 0, and every failure is
+# silent-but-for-a-stderr-note. A pane must never fail to start because a
+# convenience record could not be written. LABEL prefixes the notes; an empty
+# FILE means the caller's record path did not resolve.
+_ralph_pane_record_stamp() {
+  local label="$1" file="$2" root="$3" pane="${4-}" pid="${5-}"
   if [ -z "$pane" ]; then
-    echo "cockpit: no HERDR_PANE_ID — a later open cannot focus this pane and will open another" >&2
+    echo "$label: no HERDR_PANE_ID — a later open cannot find this pane and will open another" >&2
     return 0
   fi
   case "$pid" in '' | *[!0-9]*) pid=$$ ;; esac
-  file=$(_ralph_cockpit_record_file "$root") || {
-    echo "cockpit: no board scope at $root — not recording this pane" >&2
+  if [ -z "$file" ]; then
+    echo "$label: no board scope at $root — not recording this pane" >&2
     return 0
-  }
+  fi
   printf '{"pane":"%s","pid":%s,"at":"%s","repo":"%s"}\n' \
     "$pane" "$pid" "$(date -u +%FT%TZ)" "$root" >"$file" 2>/dev/null ||
-    echo "cockpit: could not write $file — a later open will not find this pane" >&2
+    echo "$label: could not write $file — a later open will not find this pane" >&2
   return 0
 }
 
-# ralph_cockpit_live_pane REPO_ROOT — print the pane id of this board's LIVE
-# cockpit on rc 0; rc 1 (with no output) for every other answer, including
-# every failed read. Needs transport.sh sourced for ralph_herdr_snapshot.
-ralph_cockpit_live_pane() {
-  local root="${1:-$PWD}" file pane pid snapshot
-  file=$(_ralph_cockpit_record_file "$root") || return 1
+# ralph_cockpit_pane_stamp REPO_ROOT PANE_ID PID — record this pane as the
+# board's cockpit.
+ralph_cockpit_pane_stamp() {
+  local root="${1:-$PWD}" file
+  file=$(_ralph_cockpit_record_file "$root") || file=""
+  _ralph_pane_record_stamp cockpit "$file" "$root" "${2-}" "${3-}"
+}
+
+# ralph_hero_pane_stamp REPO_ROOT PANE_ID PID — record this pane as the
+# board's hero sitting (GH-2213). Written by hero.sh before it execs the
+# harness (exec preserves the pid), read only by dispatch-up.sh.
+ralph_hero_pane_stamp() {
+  local root="${1:-$PWD}" file
+  file=$(_ralph_hero_record_file "$root") || file=""
+  _ralph_pane_record_stamp hero "$file" "$root" "${2-}" "${3-}"
+}
+
+# _ralph_pane_record_live FILE — print the recorded pane id when it is LIVE
+# on rc 0; rc 1 (with no output) for every other answer, including every
+# failed read. Needs transport.sh sourced for ralph_herdr_snapshot.
+_ralph_pane_record_live() {
+  local file="$1" pane pid snapshot
   [ -r "$file" ] || return 1
   pane=$(jq -r '.pane // empty' "$file" 2>/dev/null) || return 1
   pid=$(jq -r '.pid // empty' "$file" 2>/dev/null) || return 1
@@ -114,4 +150,20 @@ ralph_cockpit_live_pane() {
   printf '%s' "$snapshot" |
     jq -e --arg p "$pane" '[.panes[]? | select(.pane_id == $p)] | length > 0' >/dev/null 2>&1 || return 1
   printf '%s\n' "$pane"
+}
+
+# ralph_cockpit_live_pane REPO_ROOT — print the pane id of this board's LIVE
+# cockpit on rc 0; rc 1 for every other answer.
+ralph_cockpit_live_pane() {
+  local file
+  file=$(_ralph_cockpit_record_file "${1:-$PWD}") || return 1
+  _ralph_pane_record_live "$file"
+}
+
+# ralph_hero_live_pane REPO_ROOT — print the pane id of this board's LIVE
+# hero sitting on rc 0; rc 1 for every other answer (GH-2213).
+ralph_hero_live_pane() {
+  local file
+  file=$(_ralph_hero_record_file "${1:-$PWD}") || return 1
+  _ralph_pane_record_live "$file"
 }
