@@ -237,6 +237,23 @@ func TestTrimMiddleKeepsRepoAndTail(t *testing.T) {
 	}
 }
 
+func TestAddressDisplayDropsRepoSegment(t *testing.T) {
+	if got := addressDisplay("ralph-hero/t2208-herd/w2219-topology-k"); got != "t2208-herd/w2219-topology-k" {
+		t.Errorf("team-scoped display = %q", got)
+	}
+	if got := addressDisplay("ralph-hero/w123-fix"); got != "w123-fix" {
+		t.Errorf("flat display = %q", got)
+	}
+	if got := addressDisplay("dispatch"); got != "dispatch" {
+		t.Errorf("segment-free display = %q", got)
+	}
+	// A pathological trailing-slash address is passed through rather than
+	// rendered as an empty title.
+	if got := addressDisplay("ralph-hero/"); got != "ralph-hero/" {
+		t.Errorf("trailing-slash display = %q", got)
+	}
+}
+
 func TestCardTitleIsAddressWhenKnown(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	m.agents = setAgents([]Agent{
@@ -244,8 +261,13 @@ func TestCardTitleIsAddressWhenKnown(t *testing.T) {
 			Address: "repo/t9-epic/w10-ten"},
 	})
 	out := viewModel(m)
-	if !strings.Contains(out, "repo/t9-epic/w10-ten") {
-		t.Error("card with a known agent address must render the address as its title")
+	// GH-2235: the cockpit is repo-scoped, so the title is the address's
+	// display suffix — the repo segment dropped, the rest intact.
+	if !strings.Contains(out, "t9-epic/w10-ten") {
+		t.Error("card with a known agent address must render the address display suffix as its title")
+	}
+	if strings.Contains(out, "repo/t9-epic/w10-ten") {
+		t.Error("card title must not carry the redundant repo segment (GH-2235)")
 	}
 	// A card with no agent keeps its issue title.
 	if !strings.Contains(out, "Eleven") {

@@ -168,21 +168,24 @@ LEAD=$(ralph_agent_name o "$EPIC" "${TITLE:-team}") || die "could not derive a l
 SPAWNER_ROLE="${RALPH_HERDR_SPAWNER_ROLE:-human}"
 ralph_spawn_edge_guard "$SPAWNER_ROLE" orchestrator || die "spawn edge refused (see above)"
 
-# Chain of command, DERIVED (D0.4/D4.2, GH-2209/GH-2210). Canonical
-# team-space label: `<repo>/t<epic>-<slug>` — the team slug is byte-identical
-# to the lead's own by construction (D0.3: both ride the same
-# slugify/truncate pipeline), so the segment derives from $LEAD locally and
-# the repo segment comes off the board's derived address. The lead's own
-# herd address extends it (`…/o<epic>-<slug>`) — board name's .address names
-# the unit's DRIVER lane, so the o-lane form is spelled here. The dispatch
-# seat's address is a second read. All of it degrades against an older board
-# copy: the legacy label spelling survives, no token is stamped, the brief
-# omits the address lines — addresses are chrome, and a failed read may not
-# cost the spawn.
+# Chain of command, DERIVED (D0.4/D4.2, GH-2209/GH-2210). The team ADDRESS
+# is `<repo>/t<epic>-<slug>` — the team slug is byte-identical to the lead's
+# own by construction (D0.3: both ride the same slugify/truncate pipeline),
+# so the segment derives from $LEAD locally and the repo segment comes off
+# the board's derived address. The workspace LABEL is that address's display
+# suffix (GH-2235): the sidebar groups the space under the repo already, so
+# the label drops the repo segment — `t<epic>-<slug>`, the tNNNN-semantic
+# spelling. The lead's own herd address extends the full team address
+# (`…/o<epic>-<slug>`) — board name's .address names the unit's DRIVER lane,
+# so the o-lane form is spelled here. The dispatch seat's address is a
+# second read. All of it degrades against an older board copy: the legacy
+# label spelling survives, no token is stamped, the brief omits the address
+# lines — addresses are chrome, and a failed read may not cost the spawn.
 team_label="team GH-$EPIC" lead_addr=""
 if _ralph_resolve_names "$EPIC" 2>/dev/null && [ -n "$RALPH_HERDR_NAMED_ADDRESS" ]; then
-  team_label="${RALPH_HERDR_NAMED_ADDRESS%%/*}/t${LEAD#o}"
-  lead_addr="$team_label/$LEAD"
+  team_addr="${RALPH_HERDR_NAMED_ADDRESS%%/*}/t${LEAD#o}"
+  team_label="t${LEAD#o}"
+  lead_addr="$team_addr/$LEAD"
 fi
 DISPATCH_ADDR=$("$BOARD" name dispatch --json 2>/dev/null | jq -r '.address // empty' 2>/dev/null) || DISPATCH_ADDR=""
 

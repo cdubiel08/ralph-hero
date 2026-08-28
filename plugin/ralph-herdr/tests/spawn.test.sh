@@ -108,7 +108,7 @@ is "record: parent_issue from the queue"     "45"             "$(jqr '.lineage.p
 is "record: plane is herdr"                  "herdr"          "$(jqr '.lineage.plane')"
 is "record: invoked_by is human"             "human"          "$(jqr '.lineage.spawner.invoked_by')"
 is "record: worktree branch is the board's grammar" "feat/123-fake-issue" "$(jqr '.lineage.herdr.worktree_branch')"
-is "record: workspace label is the herd address (GH-2210)" "fake-repo/w123-fake-issue" "$(jqr '.lineage.herdr.workspace_label')"
+is "record: workspace label is the address's display suffix (GH-2235)" "w123-fake-issue" "$(jqr '.lineage.herdr.workspace_label')"
 is "record: ts equals spawned_at"            "$(jqr '.ts')"   "$(jqr '.lineage.spawned_at')"
 is "record: token role is the FLEET role, not the lane (GH-1808)" "driver" "$(jqr '.tokens.role')"
 is "record: lineage carries the role too"    "driver"         "$(jqr '.lineage.role')"

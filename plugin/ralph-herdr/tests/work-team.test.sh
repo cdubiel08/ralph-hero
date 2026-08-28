@@ -132,12 +132,13 @@ is "lead record: role token too" "orchestrator" "$(jqr '.tokens.role')"
 is "lead record: the epic is the lead's issue" "900" "$(jqr '.lineage.issue')"
 is "lead record: no parent issue — the epic is the root" "false" "$(jqr '.lineage | has("parent_issue")')"
 is "lead record: depth 0" "0" "$(jqr '.tokens.depth')"
-# GH-2210: canonical team-space label — `<repo>/t<epic>-<slug>`, the team slug
-# byte-identical to the lead's own — and the lead's o-lane address stamped.
-line_has "team dry: workspace label is the canonical team address" \
-  "$OUT" 'workspace label: fake-repo/t900-teams-dispatch-and-inbox'
-is "lead record: workspace_label is the team address" \
-  "fake-repo/t900-teams-dispatch-and-inbox" "$(jqr '.lineage.herdr.workspace_label')"
+# GH-2210/GH-2235: the team-space label is the team address's DISPLAY suffix
+# — `t<epic>-<slug>`, the repo segment dropped (the sidebar's container shows
+# it) — while the lead's o-lane ADDRESS stays absolute in the token.
+line_has "team dry: workspace label is the team display suffix" \
+  "$OUT" 'workspace label: t900-teams-dispatch-and-inbox'
+is "lead record: workspace_label is the team display suffix" \
+  "t900-teams-dispatch-and-inbox" "$(jqr '.lineage.herdr.workspace_label')"
 is "lead record: address token is the lead's o-lane address (D0.4)" \
   "fake-repo/t900-teams-dispatch-and-inbox/o900-teams-dispatch-and-inbox" "$(jqr '.tokens.address')"
 
