@@ -163,10 +163,17 @@ has "repo-root fallback ambiguous: names both checkouts (b)" "wAH" "$out"
 has "repo-root fallback ambiguous: suggests --workspace" "pass --workspace" "$out"
 hasnt "repo-root fallback ambiguous: opens nothing" "plugin pane open" "$log"
 
-# --workspace disambiguates the exact same ambiguous snapshot
+# --workspace disambiguates the exact same ambiguous snapshot. The repo-path
+# argument ($REPO_MAIN) and the named workspace's own checkout ($WT_B) are
+# DIFFERENT directories on purpose — --workspace exists precisely for "same
+# repo, several worktrees", so --cwd must come from the matched workspace's
+# own checkout_path, never from the caller's repo-path argument (the pane
+# would otherwise open in the right workspace but the wrong directory).
 run "$REPO_MAIN" dashboard --placement tab --workspace wAH
 is "--workspace disambiguates: exits 0" "0" "$rc"
 has "--workspace disambiguates: opens in the named workspace" "--workspace wAH" "$log"
+has "--workspace disambiguates: cwd is the WORKSPACE's own checkout, not the repo-path argument" "--cwd $WT_B" "$log"
+hasnt "--workspace disambiguates: never uses the repo-path argument as cwd" "--cwd $REPO_MAIN " "$log"
 
 # ── argument validation, before any herdr call ──────────────────────────────
 ws_fixture "$BASE_WS"

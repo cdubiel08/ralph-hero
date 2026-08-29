@@ -167,10 +167,17 @@ ws_id="" cwd_path=""
 
 if [ -n "$WORKSPACE_OVERRIDE" ]; then
   ws_id="$WORKSPACE_OVERRIDE"
-  jq -e --arg w "$ws_id" '[.workspaces[]? | select(.workspace_id == $w)] | length == 1' \
-    <<<"$ws_out" >/dev/null 2>&1 ||
+  # Capture the matched row rather than just checking it exists: the whole
+  # point of --workspace is disambiguating "same repo, several worktrees", so
+  # its own checkout_path — not the caller's repo-path argument, which named
+  # the REPO, not necessarily THIS checkout — is what --cwd must carry. Using
+  # $TARGET here would open the right pane in the wrong directory whenever
+  # the named workspace's checkout differs from the path the caller typed.
+  match=$(jq -c --arg w "$ws_id" '[.workspaces[]? | select(.workspace_id == $w)][0] // empty' <<<"$ws_out")
+  [ -n "$match" ] ||
     die "--workspace $ws_id names no workspace herdr currently has open (see 'herdr workspace list')"
-  cwd_path="$TARGET"
+  cwd_path=$(jq -r '.worktree.checkout_path // empty' <<<"$match")
+  [ -n "$cwd_path" ] || cwd_path="$TARGET"
 else
   # Augment each workspace row with the path spellings it should match on:
   # the raw checkout_path/repo_root herdr reported, plus each one's local
