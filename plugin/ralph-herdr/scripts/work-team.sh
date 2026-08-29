@@ -208,12 +208,18 @@ fi
 
 # ── Spawn the lead ───────────────────────────────────────────────────────────
 src=$(ralph_worktree_source_dir)
-# The tool cut removes the editing surface (Edit/Write) from the lead's
-# harness. Honestly labelled: Bash remains — it is the board CLI, the herdr
-# CLI and the spawn scripts — so this is not hard read-only enforcement;
-# that stays with the role model (roles.sh: only a driver writes a tree,
-# and the one-writer guard runs at claim and at spawn).
-lead_tools="Bash,Read,Grep,Glob"
+# The tool cut removes Edit/Write/NotebookEdit from the lead's harness — READ
+# from the role registry (GH-2265), not restated here: an orchestrator's row
+# says toolBinding:true, same as every other non-driver role. Honestly
+# labelled: Bash remains available (it is the board CLI, the herdr CLI and
+# the spawn scripts, and denying it is a different mechanism with the
+# opposite failure direction — process containment, #2266) — so this is hard
+# enforcement of the editing surface only, not of the session as a whole;
+# the one-writer invariant for the TREE still rests on the role model
+# (roles.sh: only a driver writes a tree, and the one-writer guard runs at
+# claim and at spawn).
+lead_tools=()
+while IFS= read -r out; do lead_tools+=("$out"); done < <(ralph_tool_binding_args orchestrator)
 
 # The durable ref, minted BEFORE the workspace so it can ride the env: the
 # workers the lead spawns record it as their lineage parent/root, and `--env`
@@ -252,7 +258,7 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "DRY RUN — would spawn the lead for GH-$EPIC:"
   echo "  agent: $LEAD   workspace label: $team_label   cwd: $src"
   echo "  $HERDR workspace create --cwd $src --label \"$team_label\" --env RALPH_HERDR_LEAD=$LEAD --env RALPH_HERDR_TEAM_LEAD=$LEAD${ref:+ --env RALPH_HERDR_TEAM_LEAD_REF=$ref}${DISPATCH_ADDR:+ --env WHO_DISPATCH=$DISPATCH_ADDR} --env RALPH_HERDR_SPAWNER_ROLE=orchestrator --env RALPH_HERDR_INVOKED_BY=agent --no-focus"
-  echo "  $HERDR agent start $LEAD --kind claude --pane <captured> -- --tools $lead_tools"
+  echo "  $HERDR agent start $LEAD --kind claude --pane <captured>${lead_tools[*]:+ -- ${lead_tools[*]}}"
   echo "  $HERDR agent prompt $LEAD \"<lead brief: rehydrate GH-$EPIC from board state; staff via work-fleet.sh --epic $EPIC; on epic Done, self-dissolve via workspace close (D3.3)>\""
   if [ -n "$ref" ]; then
     record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "" "$(date -u +%FT%TZ)" "" "" orchestrator "" "" "" "$lead_addr") || record=""
@@ -300,7 +306,7 @@ if [ -n "$ref" ]; then
   fi
 fi
 
-if ! agent_start_when_ready "$LEAD" "$pane" --tools "$lead_tools"; then
+if ! agent_start_when_ready "$LEAD" "$pane" "${lead_tools[@]}"; then
   if printf '%s\n' "$(ralph_agents_json 2>/dev/null)" | jq -e --arg name "$LEAD" \
     'select(.name == $name)' >/dev/null 2>&1; then
     _ralph_spawn_close "$ref" "$ledger" never_started
