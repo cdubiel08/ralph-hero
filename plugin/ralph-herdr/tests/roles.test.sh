@@ -3,7 +3,7 @@
 #
 #   bash plugin/ralph-herdr/tests/roles.test.sh    # exits 0 on pass, 1 on fail
 #
-# Four things, in the order they matter:
+# Five things, in the order they matter:
 #   1. the bash mirror equals the TypeScript registry (the golden table —
 #      contracts.ts owns the vocabulary, roles.sh restates it, and a role
 #      added on one side must fail here rather than drift);
@@ -11,7 +11,9 @@
 #      sides (an edge check that fails open is not a check);
 #   3. one driver per worktree, with the liveness and fail-closed rules;
 #   4. the investigator's tool allowlist is READ from the agent definition
-#      and refuses rather than degrading.
+#      and refuses rather than degrading;
+#   5. tool binding (GH-2265) — every non-driver role's registry row denies
+#      Edit/Write/NotebookEdit, generically, never Bash.
 #
 # No herdr server, no board mutation, no writes outside $TMP.
 set -u
@@ -86,6 +88,13 @@ else
   is "exactly one role writes the tree, per contracts.ts" "driver" \
     "$(jq -r '[.ROLES | to_entries[] | select(.value.writesTree) | .key] | join(" ")' <<<"$registry")"
 
+  # toolBinding: every role but the driver needs it, per contracts.ts
+  is "every role but the driver is toolBinding:true, per contracts.ts" \
+    "$(jq -r '[.ROLES | to_entries[] | select(.value.toolBinding) | .key] | sort | join(" ")' <<<"$registry")" \
+    "$(for r in orchestrator driver investigator tender relay watcher; do
+         ralph_role_tool_binding "$r" && echo "$r"
+       done | sort | tr '\n' ' ' | sed 's/ $//')"
+
   # every edge in the registry, both directions
   edges_ok=1
   for parent in $(jq -r '.ROLES | keys[]' <<<"$registry") human; do
@@ -123,6 +132,27 @@ is "role: an investigator does not write the tree" "no" \
   "$(ralph_role_writes_tree investigator && echo yes || echo no)"
 is "role: an unknown role is not a writer" "no" \
   "$(ralph_role_writes_tree mystery && echo yes || echo no)"
+
+# GH-2265: tool binding — the generic per-role deny mechanism
+fails  "tool binding: the driver is NOT bound (may keep Edit/Write/NotebookEdit)" \
+  ralph_role_tool_binding driver
+succeeds "tool binding: an orchestrator IS bound" ralph_role_tool_binding orchestrator
+succeeds "tool binding: an investigator IS bound" ralph_role_tool_binding investigator
+succeeds "tool binding: a tender IS bound"        ralph_role_tool_binding tender
+succeeds "tool binding: a relay IS bound"          ralph_role_tool_binding relay
+succeeds "tool binding: a watcher IS bound"        ralph_role_tool_binding watcher
+succeeds "tool binding: an unknown role fails CLOSED (bound, not waved through)" \
+  ralph_role_tool_binding mystery
+
+is "tool binding args: the driver gets no restriction" "" \
+  "$(ralph_tool_binding_args driver)"
+is "tool binding args: a bound role gets --disallowedTools + the deny list" \
+  "$(printf '%s\n' '--disallowedTools' 'Edit,Write,NotebookEdit')" \
+  "$(ralph_tool_binding_args tender)"
+case "$(ralph_tool_binding_args orchestrator)" in
+  *Bash*) not_ok "tool binding args: Bash must NOT be in the deny list (process containment is #2266)" ;;
+  *) ok "tool binding args: Bash is not denied by tool binding" ;;
+esac
 
 # ── 3. one driver per worktree ───────────────────────────────────────────────
 CHECKOUT="$TMP/tree-a"

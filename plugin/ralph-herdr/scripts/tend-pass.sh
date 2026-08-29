@@ -21,11 +21,16 @@ if [ -z "$next" ]; then
   exit 0
 fi
 
+# The tender role does not write a tree (roles.sh/contracts.ts ROLES). GH-2265:
+# read the tool-binding rule from the registry rather than restate it here.
+tool_args=()
+while IFS= read -r out; do tool_args+=("$out"); done < <(ralph_tool_binding_args tender)
+
 if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "DRY RUN — would spawn tend pass (queue head #$next):"
   echo "  agent: ralph-tend"
   echo "  $HERDR tab create --cwd $REPO --label \"ralph-tend\" --no-focus"
-  echo "  $HERDR agent start ralph-tend --kind claude --pane <captured>"
+  echo "  $HERDR agent start ralph-tend --kind claude --pane <captured>${tool_args[*]:+ -- ${tool_args[*]}}"
   echo "  $HERDR agent prompt ralph-tend \"/ralph:tend\""
   exit 0
 fi
@@ -38,7 +43,7 @@ pane=$(jq -r '.root_pane.pane_id // empty' <<<"$t")
 # name-taken refusal means a pass is already live — die, never suffix. The
 # just-created tab holds only an idle shell at this point (start failed), so
 # closing it is cleanup, not killing an agent.
-if ! agent_start_when_ready ralph-tend "$pane"; then
+if ! agent_start_when_ready ralph-tend "$pane" "${tool_args[@]}"; then
   tab_id=$(jq -r '.tab.tab_id // empty' <<<"$t")
   [ -n "$tab_id" ] && "$HERDR" tab close "$tab_id" >/dev/null 2>&1 || true
   die "agent start ralph-tend failed — see the herdr error above (a live tend pass owning the name is the common cause, but exhausted startup retries land here too); cleaned up the empty tab"

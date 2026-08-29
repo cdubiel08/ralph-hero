@@ -113,8 +113,8 @@ line_has "team dry: the lead states its role for the fleet's spawn-edge guard" \
   "$OUT" "--env RALPH_HERDR_SPAWNER_ROLE=orchestrator"
 line_has "team dry: the lead's own spawns will record invoked_by=agent" \
   "$OUT" "--env RALPH_HERDR_INVOKED_BY=agent"
-line_has "team dry: the editing tools are cut from the lead's harness" \
-  "$OUT" "-- --tools Bash,Read,Grep,Glob"
+line_has "team dry: the editing tools are cut from the lead's harness (GH-2265, read from the role registry)" \
+  "$OUT" "-- --disallowedTools Edit,Write,NotebookEdit"
 line_has "team dry: the prompt names the lead's own staffing path" \
   "$OUT" "work-fleet.sh --epic 900"
 line_has "team dry: the prompt names the self-dissolve final act (D3.3, GH-2215)" \

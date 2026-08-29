@@ -59,6 +59,43 @@ ralph_role_writes_tree() {
   [ "${1-}" = "driver" ]
 }
 
+# ralph_role_tool_binding ROLE — rc 0 when ROLE's registry row requires tool
+# binding (contracts.ts ROLES[role].toolBinding). Mirrors the TypeScript field
+# rather than re-deriving it from writesTree, because the two mechanisms are
+# independent (GH-2255's design record) and a role could in principle need one
+# without the other. Opposite fail direction from ralph_role_writes_tree: an
+# unknown role here answers YES (bind it) — a role this function cannot
+# classify is not one we know may safely keep Edit/Write/NotebookEdit, and the
+# whole point of GH-2265 is that the unrestricted case is never the default.
+ralph_role_tool_binding() {
+  [ "${1-}" != "driver" ]
+}
+
+# ralph_tool_binding_args ROLE — the `claude` arguments enforcing ROLE's tool
+# binding, one per line (empty output for a role that may write — driver).
+# Callers read them into "$@" exactly like ralph_investigator_harness_args.
+#
+# --disallowedTools, not --tools: --tools REPLACES the enabled set, so
+# denying just these three would require enumerating every other builtin
+# tool, and that list drifts the moment Claude Code ships a new one (silently
+# UNDER-restricting new roles the day it happens, since an unlisted tool is
+# simply unavailable — the safe direction, but still a maintenance trap this
+# avoids entirely). --disallowedTools removes only the named tools from
+# whatever set is otherwise enabled, so Bash and every other builtin —
+# including tools that do not exist yet — stay available. Bash staying
+# available is deliberate, not a leak: process containment is #2266, a
+# different mechanism with the opposite failure direction (see contracts.ts).
+#
+# Verified empirically (GH-2265, claude 2.1.251): --disallowedTools produces
+# the identical hard failure --tools does — "No such tool available: Write.
+# Write is disabled for this session, in subagents as well as here" — never a
+# permission prompt, so a role bound this way fails exactly as loudly as the
+# investigator's existing allowlist does.
+ralph_tool_binding_args() {
+  ralph_role_tool_binding "${1-}" || return 0
+  printf '%s\n' "--disallowedTools" "Edit,Write,NotebookEdit"
+}
+
 # ralph_role_known ROLE — rc 0 when ROLE is in the registry.
 ralph_role_known() {
   case "${1-}" in
