@@ -35,6 +35,9 @@ if [[ "${1:-} ${2:-}" == "api graphql" ]]; then
   cat "$GH_STUB_DIR/twins.json"; exit 0
 fi
 if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
+  # A present fixture makes repo resolution FAIL — the fourth read-failure path
+  # (GH-2261), which never reaches the API at all.
+  [[ -f "$GH_STUB_DIR/repo_view_fails" ]] && exit 1
   echo "testowner/testrepo"; exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == *"/compare/"* ]]; then
@@ -105,6 +108,12 @@ WRONG_SHA_RUNS=$(jq -nc --arg sha "$OTHER_SHA" \
 FAILED_RUNS=$(jq -nc --arg sha "$MERGE_SHA" \
   '[{databaseId: 987, conclusion: "failure", headSha: $sha, workflowName: "release-ralph.yml"}]')
 
+# A twin query that SUCCEEDS and finds no ship twin — the settings-only shape.
+# Cases not about ancestry use it so their subject stays the one under test: an
+# absent fixture means the read FAILED, which is now a refusal in its own right
+# (GH-2261) and would mask whatever else the case was asserting.
+NO_TWINS=$(jq -nc '{data:{repository:{defaultBranchRef:{name:"main"},issue:{blockedBy:{nodes:[]}}}}}')
+
 echo "== argument validation =="
 
 dir=$(new_case '[]')
@@ -130,6 +139,7 @@ expect "kind=run needs --merge-sha" 2 "requires --merge-sha"
 echo "== kind=run is bound to the merge SHA =="
 
 dir=$(new_case "$GOOD_RUNS")
+echo "$NO_TWINS" >"$dir/twins.json"
 run_ev "$dir" 1697 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" \
   --notes "release-ralph fired on the merge" --dry-run
 expect "a successful run AT the merge SHA produces evidence" 0 "ralph-apply-evidence:v1"
@@ -154,6 +164,7 @@ expect "no runs at all ⇒ nothing to attest" 1 "no SUCCESSFUL run"
 
 dir=$(new_case "$GOOD_RUNS")
 echo "$MERGE_SHA" >"$dir/expand_to"
+echo "$NO_TWINS" >"$dir/twins.json"
 run_ev "$dir" 1697 --kind run --workflow release-ralph.yml --merge-sha "a1b2c3d" --notes "x" --dry-run
 expect "a SHORT --merge-sha is expanded before binding" 0 "ralph-apply-evidence:v1"
 
@@ -201,28 +212,61 @@ dir=$(ancestry_case ahead "$TWINS")
 run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
 expect "a run above the fix merge is accepted" 0 "ralph-apply-evidence:v1"
 
-# An unwired twin must not fail the check — settings-only apply units legitimately
-# have no ship issue. But it must SAY so, in the payload, not go quiet.
-dir=$(ancestry_case behind)
+# A read that FAILED and a subject that is genuinely ABSENT are opposite facts,
+# and folding them into one `not_evaluated` rendering is what let a flapping API
+# produce evidence the close gate admitted (GH-2261). BOTH directions are pinned
+# here on purpose: a suite asserting only the refusal would pass against an
+# implementation that refuses in both cases, which breaks every settings-only
+# apply unit — the population `no_subject` exists to serve.
+dir=$(ancestry_case behind)   # no twins.json ⇒ the graphql read FAILS
 run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
-expect "an unreadable twin does not block, but warns" 0 "ancestry NOT CHECKED"
-if jq -e '.ancestry.status == "not_evaluated" and (.ancestry.reason | length) > 0' <<<"$(payload_of)" >/dev/null; then
-  pass "not_evaluated is RECORDED with a reason — never silence"
+expect "an UNREADABLE twin refuses — a failed read is not an absent subject" 1 "could not read the blocked-by twin"
+if grep -qF "blocked_by_twin" <<<"$LAST_OUT" && ! grep -qF 'ralph-apply-evidence:v1' <<<"$LAST_OUT"; then
+  pass "the refusal names WHICH read failed, and emits no evidence"
 else
-  fail "not_evaluated recording — payload: $(payload_of)"
+  fail "unreadable-twin refusal shape — out: $LAST_OUT"
 fi
 
-dir=$(ancestry_case identical "$(jq -nc '{data:{repository:{issue:{blockedBy:{nodes:[]}}}}}')")
+# The fourth path: `gh repo view` fails, so `nwo` is empty and the twin query is
+# never issued. It must not borrow the API-read message for a read that never
+# reached the API.
+dir=$(ancestry_case behind "$TWINS")
+: >"$dir/repo_view_fails"
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
+expect "an unresolvable repo refuses with its OWN reason" 1 "could not resolve this repository"
+if grep -qF "repo_resolution" <<<"$LAST_OUT"; then
+  pass "repo resolution failure is named apart from the API read"
+else
+  fail "repo-resolution reason — out: $LAST_OUT"
+fi
+
+# An unreadable default branch cannot run the reachability test, so it cannot
+# say which fixes landed — the same failed read, one block further in.
+dir=$(ancestry_case identical "$(jq -nc --arg fix "$FIX_SHA" \
+  '{data:{repository:{issue:{blockedBy:{nodes:[{number:1952,closedByPullRequestsReferences:{nodes:[
+     {number:1955, merged:true, baseRefName:"main", mergeCommit:{oid:$fix}}]}}]}}}}}')")
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
+expect "an unreadable default branch refuses too" 1 "could not read the default branch"
+
+# The other direction, and the one that must NOT become a refusal: the query
+# succeeded and there is genuinely no ship twin.
+dir=$(ancestry_case identical "$NO_TWINS")
 run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" --notes "x" --dry-run
 expect "no blocked-by twin ⇒ not evaluated, not refused" 0 "no blocked-by twin with a merged closing PR"
+if jq -e '.ancestry.status == "not_evaluated" and .ancestry.reason_code == "no_subject"
+      and (.ancestry.reason | length) > 0' <<<"$(payload_of)" >/dev/null; then
+  pass "not_evaluated is TYPED no_subject and still carries its human reason"
+else
+  fail "no_subject typing — payload: $(payload_of)"
+fi
 
-# --fix-merge makes an unevaluable unit evaluable — and is still a real gate.
-dir=$(ancestry_case behind)
+# --fix-merge makes a subject-less unit evaluable — and is still a real gate.
+dir=$(ancestry_case behind "$NO_TWINS")
 run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" \
   --fix-merge "$FIX_SHA" --notes "x" --dry-run
 expect "--fix-merge is checked, not merely recorded" 1 "does NOT descend from the fix merge"
 
-dir=$(ancestry_case ahead)
+dir=$(ancestry_case ahead "$NO_TWINS")
 run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" \
   --fix-merge "$FIX_SHA" --notes "x" --dry-run
 if jq -e '.ancestry.checked[0].source | test("operator")' <<<"$(payload_of)" >/dev/null; then
@@ -230,6 +274,14 @@ if jq -e '.ancestry.checked[0].source | test("operator")' <<<"$(payload_of)" >/d
 else
   fail "--fix-merge provenance — payload: $(payload_of)"
 fi
+
+# --fix-merge ADDS to the derived set and can never replace it, so it cannot
+# rescue a read failure either: proceeding on an operator sha while the
+# derivation is unknown is exactly "name a weak ancestor and skip the real fix".
+dir=$(ancestry_case ahead)   # no twins.json ⇒ the read FAILS
+run_ev "$dir" 1953 --kind run --workflow release-ralph.yml --merge-sha "$MERGE_SHA" \
+  --fix-merge "$FIX_SHA" --notes "x" --dry-run
+expect "--fix-merge does not rescue a failed read" 1 "could not read the blocked-by twin"
 
 # An override that SUPPRESSED derivation would let an operator name a weak
 # ancestor and skip the real fix — this issue's own defect handed a flag.

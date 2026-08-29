@@ -3423,6 +3423,7 @@ describe("apply evidence — pure shape validation", () => {
       notes: "release-ralph fired on the ralph/** merge",
       merge_sha: sha,
       run: { workflow: "release-ralph.yml", id: 42, conclusion: "success", head_sha: sha },
+      ancestry: { status: "descends", checked: [{ fix_merge: "f".repeat(40), status: "ahead" }] },
     };
     expect(validateApplyEvidence(runEv, NOW_E)).toBeNull();
     expect(validateApplyEvidence({ ...runEv, run: { ...runEv.run, head_sha: "0000000000000000" } }, NOW_E))
@@ -3434,6 +3435,85 @@ describe("apply evidence — pure shape validation", () => {
     // checks[] does NOT substitute for the run binding on kind=run
     expect(validateApplyEvidence({ ...runEv, run: undefined, checks: [{ exit_code: 0 }] }, NOW_E))
       .toMatch(/requires a "run" object/);
+  });
+
+  // GH-2261. The posting script folded a FAILED twin read into the same
+  // `not_evaluated` bucket as a genuinely absent twin, and nothing here read
+  // `ancestry` at all — so a flapping API produced shape-valid evidence the
+  // close gate admitted. Both directions are pinned: a suite asserting only the
+  // refusal would pass against a validator that refuses `no_subject` too, which
+  // breaks every settings-only apply unit.
+  it("reads ancestry on kind=run: a failed read is refused, an absent subject passes", () => {
+    const sha = "a1b2c3d4e5f6a7b8";
+    // Stamped after ANCESTRY_REQUIRED_FROM: this is the population the rule
+    // binds. The grandfathered side is exercised explicitly at the end.
+    const NOW_A = new Date("2026-08-20T12:00:00Z");
+    const runEv = {
+      kind: "run",
+      applied_at: "2026-08-20T11:00:00Z",
+      actor: "dubiel",
+      notes: "release-ralph fired on the ralph/** merge",
+      merge_sha: sha,
+      run: { workflow: "release-ralph.yml", id: 42, conclusion: "success", head_sha: sha },
+      ancestry: { status: "descends", checked: [{ fix_merge: "f".repeat(40), status: "ahead" }] },
+    };
+    expect(validateApplyEvidence(runEv, NOW_A)).toBeNull();
+    const withAncestry = (a: unknown) => validateApplyEvidence({ ...runEv, ancestry: a }, NOW_A);
+
+    // Passes by construction — a settings-only unit legitimately has no ship
+    // twin and must need no operator assertion (GH-2198's routine-path failure).
+    expect(withAncestry({
+      status: "not_evaluated",
+      reason_code: "no_subject",
+      reason: "no blocked-by twin with a merged closing PR",
+    })).toBeNull();
+
+    for (const failed of ["blocked_by_twin", "default_branch", "repo_resolution"]) {
+      expect(withAncestry({
+        status: "not_evaluated",
+        reason_code: "read_failed",
+        failed_read: failed,
+        reason: `could not read ${failed}`,
+      })).toMatch(/needs reason_code "no_subject"/);
+    }
+    // An UNTYPED not_evaluated is the pre-GH-2261 spelling: it cannot say which
+    // of the two facts it means, so it may not pass as the benign one.
+    expect(withAncestry({ status: "not_evaluated", reason: "could not read the blocked-by twin" }))
+      .toMatch(/needs reason_code "no_subject"/);
+
+    // Absent refuses rather than passing (GH-1841's missing-base_ref call): a
+    // validator that accepted absence passes every pre-existing test and
+    // inherits the entire hole.
+    expect(withAncestry(undefined)).toMatch(/requires an "ancestry" object/);
+    expect(withAncestry("descends")).toMatch(/requires an "ancestry" object/);
+    expect(withAncestry([])).toMatch(/requires an "ancestry" object/);
+    expect(withAncestry({ status: "assumed" })).toMatch(/ancestry\.status must be/);
+
+    // ...but only forward. Evidence stamped before the field existed is
+    // grandfathered: `apply-closed-unevidenced` sweeps every closed apply unit
+    // forever and its --fix REOPENS them from a */15 cron, so refusing here
+    // would resurrect five finished units whose ancestry nobody can now
+    // re-derive — a remedy that cannot act (GH-2052). The boundary is the
+    // payload's own applied_at, so there is one predicate and no second reader.
+    const older = { ...runEv, applied_at: "2026-08-15T18:24:49Z", ancestry: undefined };
+    expect(validateApplyEvidence(older, NOW_A)).toBeNull();
+    expect(validateApplyEvidence({ ...older, applied_at: "2026-08-16T00:00:00Z" }, NOW_A))
+      .toMatch(/requires an "ancestry" object/);
+    // Grandfathering is absence only — a pre-epoch payload that DOES carry a
+    // failed read is still refused, or the bound would become an escape hatch.
+    expect(validateApplyEvidence(
+      { ...older, ancestry: { status: "not_evaluated", reason_code: "read_failed" } },
+      NOW_A,
+    )).toMatch(/needs reason_code "no_subject"/);
+
+    // Non-run kinds carry no ancestry claim and are untouched.
+    expect(validateApplyEvidence({
+      kind: "settings",
+      applied_at: "2026-08-02T11:00:00Z",
+      actor: "dubiel",
+      notes: "the label is live",
+      checks: [{ cmd: "gh label list", exit_code: 0 }],
+    }, NOW_E)).toBeNull();
   });
 });
 
