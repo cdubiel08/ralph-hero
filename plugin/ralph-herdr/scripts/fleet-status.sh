@@ -13,29 +13,54 @@
 #           Decoration by contract (tokens.sh: "Nothing may ever gate on
 #           them"); it is read here only to say what the session last claimed,
 #           and the one derivation that uses it (dead-before-start) treats it
-#           as "the session never self-reported", not as a state machine.
+#           as "the session never self-reported", not as a state machine —
+#           and never as the sole authority on whether the session did
+#           anything (GH-2274: the board and the branch outrank it).
 #   UNIT    the issue number parsed from the agent name (grammar B / legacy),
 #           tokens.issue as the fallback
 #   AGE     minutes since the ledger's spawn/discover record for the agent's
 #           exact ref (tokens.root); `-` = no record, NEVER 0m
 #   HEALTH  derived, one word:
-#             dead-before-start  agent_status idle/done while the spawner's
-#                                `spawned` token was never overwritten — the
-#                                session died before its first self-report
-#                                (the audit's encoded-but-unencoded
-#                                discriminator: 2-3 workers found dead by the
-#                                USER, not by any surface)
+#             dead-before-start  the unit's issue is OPEN, its branch carries
+#                                no commits of its own, and the spawner's
+#                                `spawned`/`briefed` token was never
+#                                overwritten — the session died before its
+#                                first self-report (the audit's
+#                                encoded-but-unencoded discriminator: 2-3
+#                                workers found dead by the USER, not by any
+#                                surface)
+#             finished           the unit's issue is CLOSED (Done/Canceled) —
+#                                a feature unit that merged or an apply unit
+#                                that closed on evidence, neither of which the
+#                                token ever caught up to (GH-2274: a merged
+#                                closing PR or a closed apply unit with zero
+#                                commits by construction must never read as
+#                                dead)
+#             unverified         a `spawned`/`briefed` token sat idle and
+#                                neither the board nor the branch could be
+#                                read to say which of the two above applies —
+#                                the third answer; never dead, never finished
 #             blocked            needs a human (either half says blocked)
 #             working|reporting  a live turn
-#             stale-token        idle now, but the last self-report says
-#                                working/reporting — the token rotted
+#             stale-token        idle now, but either the last self-report
+#                                says working/reporting (the token rotted
+#                                forward) or the branch already carries real
+#                                commits on a still-open issue while the token
+#                                never advanced past spawn (the token rotted
+#                                behind)
 #             idle               between turns, honestly
 #             unknown            herdr has no observation
 #
-# Read-only: one snapshot, one ledger read, zero board calls, zero mutations.
-# A failed snapshot is a DISTINCT failure (exit 3), never an empty table —
-# "no agents" and "could not find out" must not read alike (transport.sh's
-# founding rule). An empty scope prints its own honest line and exits 0.
+# Read-only: one snapshot, one ledger read, zero mutations, and AT MOST ONE
+# `board list --json` — only when the herd holds a candidate row (idle/done,
+# token spawned/briefed, a unit to ask about) that dead-before-start would
+# otherwise be derived for; an unreadable board read renders `unverified` for
+# every such row rather than a false "finished" or a false "dead" (GH-2274 —
+# failing toward the respawn footer is the defect this whole derivation
+# exists to close). A failed snapshot is a DISTINCT failure (exit 3), never an
+# empty table — "no agents" and "could not find out" must not read alike
+# (transport.sh's founding rule). An empty scope prints its own honest line
+# and exits 0.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,6 +78,35 @@ for arg in "$@"; do
     *) die "unknown argument '$arg' (accepts --json, --help)" ;;
   esac
 done
+
+# _fleet_status_branch_verdict WORKTREE — echo has_commits/no_commits/
+# unverified for whether WORKTREE's HEAD carries commits beyond its
+# merge-base with origin/main (read as the ref stands, no fetch — matching
+# the rest of this plugin's convention). A top-level function, not inlined at
+# its call site: bash 3.2 (what macOS ships, and what this plugin targets)
+# misparses a `case` statement written directly inside a `$(...) | while … |
+# …)` construct — the whole point of a candidate's verdict living in its own
+# function is to keep that `case` out of the nested substitution.
+_fleet_status_branch_verdict() {
+  local wt="${1-}" base count
+  [ -n "$wt" ] && [ -d "$wt" ] || {
+    echo "unverified"
+    return 0
+  }
+  base=$(git -C "$wt" merge-base HEAD origin/main 2>/dev/null) || {
+    echo "unverified"
+    return 0
+  }
+  count=$(git -C "$wt" rev-list --count "$base"..HEAD 2>/dev/null) || {
+    echo "unverified"
+    return 0
+  }
+  case "$count" in
+    '' | *[!0-9]*) echo "unverified" ;;
+    0) echo "no_commits" ;;
+    *) echo "has_commits" ;;
+  esac
+}
 
 snap=$(ralph_herdr_snapshot) || {
   rc=$?
@@ -85,7 +139,12 @@ if [ -n "$ledger_file" ] && [ -s "$ledger_file" ]; then
     | {ref: (.agent_ref // ""), ts: (.ts // "")}]' <"$ledger_file" 2>/dev/null) || spawns="[]"
 fi
 
-rows=$(jq -c --argjson panes "$pane_tokens" --argjson spawns "$spawns" '
+# Phase 1: per-row fields with NO health derivation yet — status, the
+# self-report token, the parsed unit, and the worktree path every candidate's
+# git check will need. Split out of the single pass below so the health
+# derivation can be augmented with facts (board state, branch commits) that
+# only bash/git can gather, without duplicating this parse a second time.
+prepped=$(jq -c --argjson panes "$pane_tokens" --argjson spawns "$spawns" '
   ($panes | map({key: .pane_id, value: .tokens}) | from_entries) as $ptok
   | ($spawns | map(select(.ref != "" and .ts != "")) | map({key: .ref, value: .ts}) | from_entries) as $sp
   | map(
@@ -98,18 +157,82 @@ rows=$(jq -c --argjson panes "$pane_tokens" --argjson spawns "$spawns" '
       | (if $spawned != "" then
            (try (((now - ($spawned | fromdateiso8601)) / 60) | floor | tostring + "m") catch "-")
          else "-" end) as $age
-      | (if ($a.status == "blocked" or $token == "blocked") then "blocked"
-         elif ($a.status == "idle" or $a.status == "done") and ($token == "spawned" or $token == "briefed")
-           then "dead-before-start"
-         elif ($a.status == "idle" or $a.status == "done") and ($token == "working" or $token == "reporting")
-           then "stale-token"
-         elif $a.status == "working" then (if $token == "reporting" then "reporting" else "working" end)
-         elif ($a.status == "idle" or $a.status == "done") then "idle"
-         else "unknown" end) as $health
       | {agent: $a.name, pane: ($a.pane // ""), status: ($a.status // "unknown"),
-         token: (if $token == "" then null else $token end),
-         unit: (if $unit == "" then null else ($unit | tonumber) end),
-         worktree: ($a.checkout // null), age: $age, health: $health})' <<<"$agents") || {
+         token: $token, unit: $unit, worktree: ($a.checkout // ""), age: $age})' <<<"$agents") || {
+  echo "fleet-status: could not derive the table from the snapshot" >&2
+  exit 1
+}
+
+# Candidates for the dead-before-start ambiguity: idle/done, a token that
+# never advanced past spawn, and a unit to ask the board about. Everything
+# else needs no board read and no git call.
+candidates=$(jq -c '[.[] | select(
+    (.status == "idle" or .status == "done")
+    and (.token == "spawned" or .token == "briefed")
+    and .unit != "")]' <<<"$prepped") || candidates="[]"
+
+# Phase 2: for each candidate, ask what git alone cannot answer (GH-2274's
+# root cause) — is the unit's issue still open? — via ONE `board list --json`
+# for the whole batch, then only for units that ARE open, whether the branch
+# already carries commits of its own (merge-base against origin/main, read as
+# the ref stands — no fetch, matching the rest of this plugin's convention).
+# augmented ends up [{agent, verdict}], verdict one of:
+#   finished     issue not in the open set — closed, feature or apply
+#   has_commits  issue open, branch has commits ahead of its merge-base
+#   no_commits   issue open, branch has none — the true positive
+#   unverified   the board read failed, or the branch could not be read
+augmented="[]"
+if [ "$(jq 'length' <<<"$candidates")" -gt 0 ]; then
+  board_ok=1
+  open_list=$("$BOARD" list --json 2>/dev/null) || board_ok=0
+  open_units="[]"
+  if [ "$board_ok" -eq 1 ]; then
+    open_units=$(jq -c '[.items[]?.number]' <<<"$open_list" 2>/dev/null) || {
+      board_ok=0
+      open_units="[]"
+    }
+  fi
+
+  augmented=$(jq -c '.[]' <<<"$candidates" | while IFS= read -r row; do
+    c_agent=$(jq -r '.agent' <<<"$row")
+    c_unit=$(jq -r '.unit' <<<"$row")
+    c_wt=$(jq -r '.worktree' <<<"$row")
+    if [ "$board_ok" -ne 1 ]; then
+      jq -nc --arg a "$c_agent" '{agent: $a, verdict: "unverified"}'
+      continue
+    fi
+    is_open=$(jq --argjson u "$c_unit" 'any(.[]?; . == $u)' <<<"$open_units" 2>/dev/null) || is_open="false"
+    if [ "$is_open" != "true" ]; then
+      jq -nc --arg a "$c_agent" '{agent: $a, verdict: "finished"}'
+      continue
+    fi
+    verdict=$(_fleet_status_branch_verdict "$c_wt")
+    jq -nc --arg a "$c_agent" --arg v "$verdict" '{agent: $a, verdict: $v}'
+  done | jq -cs .) || augmented="[]"
+fi
+
+rows=$(jq -c --argjson aug "$augmented" '
+  ($aug | map({key: .agent, value: .verdict}) | from_entries) as $augmap
+  | map(
+      . as $r
+      | ($augmap[$r.agent] // "") as $v
+      | (if ($r.status == "blocked" or $r.token == "blocked") then "blocked"
+         elif ($r.status == "idle" or $r.status == "done") then
+           (if ($r.token == "spawned" or $r.token == "briefed") then
+              (if $r.unit == "" then "dead-before-start"
+               elif $v == "finished" then "finished"
+               elif $v == "has_commits" then "stale-token"
+               elif $v == "no_commits" then "dead-before-start"
+               else "unverified" end)
+            elif ($r.token == "working" or $r.token == "reporting") then "stale-token"
+            else "idle" end)
+         elif $r.status == "working" then (if $r.token == "reporting" then "reporting" else "working" end)
+         else "unknown" end) as $health
+      | {agent: $r.agent, pane: $r.pane, status: $r.status,
+         token: (if $r.token == "" then null else $r.token end),
+         unit: (if $r.unit == "" then null else ($r.unit | tonumber) end),
+         worktree: (if $r.worktree == "" then null else $r.worktree end),
+         age: $r.age, health: $health})' <<<"$prepped") || {
   echo "fleet-status: could not derive the table from the snapshot" >&2
   exit 1
 }
