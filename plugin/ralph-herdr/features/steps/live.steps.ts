@@ -19,10 +19,14 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { RalphWorld, RH_SCRIPT, SCRIPTS_DIR } from './world.ts';
+import {
+  renderLiveHerdrWrapper,
+  RH_COCKPIT_LABEL,
+  RH_DISPATCH_LABEL,
+  RH_LIVE_SESSION,
+} from './live-herdr-wrapper.ts';
 
 const ALLOWED_SESSIONS = new Set(['ralph-bdd', 'ralph-probe']);
-const RH_DISPATCH_LABEL = 'ralph-bdd-rh-dispatch';
-const RH_COCKPIT_LABEL = 'ralph-bdd-rh-cockpit';
 
 interface LiveState {
   realHerdr: string;
@@ -86,7 +90,7 @@ function prepareLiveWorld(world: RalphWorld, session: string): LiveState {
   const state: LiveState = {
     realHerdr,
     repo: path.join(world.liveTmp, 'repo'),
-    wrapper: path.join(world.liveTmp, `herdr-${session}`),
+    wrapper: path.join(world.liveTmp, `herdr-${RH_LIVE_SESSION}`),
     wrapperLog: path.join(world.liveTmp, 'herdr-wrapper.log'),
     stubLog: path.join(world.liveTmp, 'rh-stubs.log'),
     scripts: path.join(world.liveTmp, 'rh-scripts'),
@@ -292,6 +296,11 @@ function sessionWrapper(w: RalphWorld): string {
 
 function installRhLiveStubs(world: RalphWorld): void {
   const state = liveState(world);
+  assert.strictEqual(
+    world.liveSession,
+    RH_LIVE_SESSION,
+    `safe rh live stubs are pinned to ${RH_LIVE_SESSION}, not ${world.liveSession}`,
+  );
   world.liveLedgerRoot = path.join(world.liveTmp, 'ledger-root');
   fs.mkdirSync(state.repo, { recursive: true });
   fs.mkdirSync(state.scripts, { recursive: true });
@@ -304,12 +313,11 @@ function installRhLiveStubs(world: RalphWorld): void {
   fs.writeFileSync(state.wrapperLog, '');
   fs.writeFileSync(state.stubLog, '');
 
-  writeExecutable(state.wrapper, [
-    '#!/bin/bash',
-    'set -u',
-    `printf '%s\\n' "$*" >>${shellQuote(state.wrapperLog)}`,
-    `exec ${shellQuote(state.realHerdr)} --session ${shellQuote(world.liveSession)} "$@"`,
-  ]);
+  fs.writeFileSync(
+    state.wrapper,
+    renderLiveHerdrWrapper({ realHerdr: state.realHerdr, callLog: state.wrapperLog, repo: state.repo }),
+  );
+  fs.chmodSync(state.wrapper, 0o755);
 
   writeExecutable(state.board, [
     '#!/bin/bash',
