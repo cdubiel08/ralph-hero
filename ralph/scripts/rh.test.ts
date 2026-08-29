@@ -266,6 +266,59 @@ describe("rh", () => {
     expect(r.stdout).toMatch(/^rh /);
   });
 
+  it.each(["registry", "cache"] as const)("selects the newest executable %s candidate when sort rejects GNU -V", (source) => {
+    // Break caught: relying on GNU sort -V makes valid installed Ralph copies unresolvable on macOS.
+    const env = installEnv();
+    const sortBin = join(tmp, "bsd-sort-bin");
+    mkdirSync(sortBin, { recursive: true });
+    writeFileSync(
+      join(sortBin, "sort"),
+      "#!/bin/sh\nfor arg in \"$@\"; do\n  [ \"$arg\" = -V ] && { echo 'sort: illegal option -- V' >&2; exit 2; }\ndone\nexec /usr/bin/sort \"$@\"\n",
+    );
+    chmodSync(join(sortBin, "sort"), 0o755);
+    env.PATH = `${sortBin}:${env.PATH}`;
+
+    const older = join(tmp, `${source}-older`);
+    const newer = join(tmp, `${source}-newer`);
+    for (const [root, label] of [[older, "older"], [newer, "newer"]]) {
+      mkdirSync(join(root, "scripts"), { recursive: true });
+      writeFileSync(join(root, "scripts", "rh"), `#!/usr/bin/env bash\nprintf 'rh ${label}\\n'\n`);
+      chmodSync(join(root, "scripts", "rh"), 0o755);
+    }
+
+    if (source === "registry") {
+      writeFileSync(
+        env.RALPH_INSTALLED_PLUGINS_FILE,
+        JSON.stringify({
+          plugins: {
+            "ralph@local": [
+              { version: "1.2.0", installPath: older },
+              { version: "1.10.0", installPath: newer },
+            ],
+          },
+        }),
+      );
+    } else {
+      const config = join(tmp, "claude-config");
+      for (const [version, entrypoint] of [["1.2.0", older], ["1.10.0", newer]]) {
+        const destination = join(config, "plugins", "cache", "marketplace", "ralph", version, "scripts");
+        mkdirSync(destination, { recursive: true });
+        writeFileSync(join(destination, "rh"), readFileSync(join(entrypoint, "scripts", "rh")));
+        chmodSync(join(destination, "rh"), 0o755);
+      }
+      env.CLAUDE_CONFIG_DIR = config;
+      env.RALPH_INSTALLED_PLUGINS_FILE = join(tmp, "missing-registry.json");
+    }
+
+    expect(runInstall([], env).status).toBe(0);
+    const shim = join(env.XDG_BIN_HOME, "rh");
+    const r = spawnSync(shim, ["version"], { cwd: tmp, encoding: "utf8", env });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("rh newer\n");
+    expect(readFileSync(shim, "utf8")).not.toContain(REPO_ROOT);
+    expect(readFileSync(shim, "utf8")).not.toContain(env.HOME);
+  });
+
   it("updates a recognized shim idempotently", () => {
     // Break caught: each upgrade appends another marker or cannot replace its own shim.
     const env = installEnv();

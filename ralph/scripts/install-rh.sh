@@ -62,27 +62,63 @@ fi
 config_dir="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
 registry="${RALPH_INSTALLED_PLUGINS_FILE:-$config_dir/plugins/installed_plugins.json}"
 
+version_is_newer() {
+  local candidate="$1"
+  local incumbent="$2"
+  local candidate_core="${candidate%%[-+]*}"
+  local incumbent_core="${incumbent%%[-+]*}"
+  local candidate_part
+  local incumbent_part
+
+  while [ -n "$candidate_core" ] || [ -n "$incumbent_core" ]; do
+    candidate_part="${candidate_core%%.*}"
+    incumbent_part="${incumbent_core%%.*}"
+    case "$candidate_part" in ""|*[!0-9]*) candidate_part=0 ;; esac
+    case "$incumbent_part" in ""|*[!0-9]*) incumbent_part=0 ;; esac
+    if [ "$candidate_part" -gt "$incumbent_part" ]; then
+      return 0
+    fi
+    if [ "$candidate_part" -lt "$incumbent_part" ]; then
+      return 1
+    fi
+    candidate_core="${candidate_core#*.}"
+    incumbent_core="${incumbent_core#*.}"
+    [ "$candidate_part" = "$candidate_core" ] && candidate_core=""
+    [ "$incumbent_part" = "$incumbent_core" ] && incumbent_core=""
+  done
+  return 1
+}
+
 if [ -r "$registry" ] && command -v jq >/dev/null 2>&1; then
-  best=$(jq -r '
+  best=""
+  best_version=""
+  while IFS=$'\t' read -r version path; do
+    [ -x "$path" ] || continue
+    if [ -z "$best" ] || version_is_newer "$version" "$best_version"; then
+      best="$path"
+      best_version="$version"
+    fi
+  done < <(jq -r '
       (.plugins // {}) | to_entries[]
       | select((.key | split("@")[0]) == "ralph")
       | .value[]? | select(.installPath != null)
-      | ((.version // "0") + "\t" + .installPath + "/scripts/rh")' "$registry" 2>/dev/null |
-    while IFS=$'\t' read -r version path; do
-      [ -x "$path" ] || continue
-      printf '%s\t%s\n' "$version" "$path"
-    done | sort -V -k1,1 | tail -1 | cut -f2-) || best=""
+      | ((.version // "0") + "\t" + .installPath + "/scripts/rh")' "$registry" 2>/dev/null)
   if [ -n "$best" ]; then
     exec "$best" "$@"
   fi
 fi
 
-best=$(for path in "$config_dir"/plugins/cache/*/ralph/*/scripts/rh; do
+best=""
+best_version=""
+for path in "$config_dir"/plugins/cache/*/ralph/*/scripts/rh; do
   [ -x "$path" ] || continue
   version="${path%/scripts/rh}"
   version="${version##*/}"
-  printf '%s\t%s\n' "$version" "$path"
-done | sort -V -k1,1 | tail -1 | cut -f2-) || best=""
+  if [ -z "$best" ] || version_is_newer "$version" "$best_version"; then
+    best="$path"
+    best_version="$version"
+  fi
+done
 if [ -n "$best" ]; then
   echo "rh: plugin registry unreadable ($registry) — using the newest cached install (a guess, not a record): $best" >&2
   exec "$best" "$@"
