@@ -5,8 +5,9 @@
   "scripts": {
     "board": "tsx ralph/scripts/board.ts",
     "test:board": "vitest run ralph/scripts/",
+    "test:rh": "vitest run ralph/scripts/rh.test.ts",
     "lint": "eslint ralph/scripts/",
-    "lint:sh": "shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh ralph/scripts/kit-src/*.sh",
+    "lint:sh": "shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh ralph/scripts/rh ralph/scripts/rh-lib/*.sh ralph/scripts/kit-src/*.sh",
     "test:naming": "bash plugin/ralph-herdr/tests/naming.test.sh",
     "test:spawn": "bash plugin/ralph-herdr/tests/spawn.test.sh",
     "test:watcher": "bash plugin/ralph-herdr/tests/watcher.test.sh",

@@ -21,3 +21,12 @@ Feature: Live herdr smoke — named test session only
     When the reconcile pass runs against the live test session
     Then reconcile completes its single pass
     And the temporary ledger root is still empty
+
+  Scenario: rh observes and composes a named test session without coding agents
+    Given an absent live herdr test session named "ralph-bdd"
+    And safe rh live stubs for board, dispatch, resume, and cockpit
+    When rh day starts the named test session
+    Then rh reports a healthy dispatch and inbox
+    And the named test session has no coding agents
+    When rh day runs again in the named test session
+    Then no second server or dispatch seat is created

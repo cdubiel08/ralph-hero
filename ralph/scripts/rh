@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# rh — Ralph Hero's portable command router.
+
+RH_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export RH_SCRIPT_DIR
+
+# shellcheck source=rh-lib/resolve.sh
+source "$RH_SCRIPT_DIR/rh-lib/resolve.sh"
+# shellcheck source=rh-lib/render.sh
+source "$RH_SCRIPT_DIR/rh-lib/render.sh"
+# shellcheck source=rh-lib/day.sh
+source "$RH_SCRIPT_DIR/rh-lib/day.sh"
+
+usage_error() {
+  echo "rh: $*" >&2
+  echo "Run 'rh help' for usage." >&2
+  return 64
+}
+
+RH_COLOR_MODE=auto
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --color=auto|--color=always|--color=never)
+      RH_COLOR_MODE="${1#--color=}"
+      shift
+      ;;
+    --help|--version) break ;;
+    --*)
+      usage_error "unknown global option '$1' (accepts --color=auto|always|never)"
+      exit $?
+      ;;
+    *) break ;;
+  esac
+done
+[ -n "${NO_COLOR:-}" ] && RH_COLOR_MODE=never
+export RH_COLOR_MODE
+
+command="${1:-}"
+case "$command" in
+  board)
+    shift
+    board=$(rh_resolve_board) || exit $?
+    exec "$board" "$@"
+    ;;
+  "")
+    rh_home
+    ;;
+  dispatch)
+    shift
+    case "${1:-}" in
+      "") rh_dispatch_status ;;
+      up)
+        [ "$#" -eq 1 ] || {
+          usage_error "unknown dispatch command '${2-}'; try 'rh dispatch up'"
+          exit $?
+        }
+        rh_dispatch_up
+        ;;
+      day)
+        shift
+        rh_day "$@"
+        ;;
+      *)
+        usage_error "unknown dispatch command '${1-}'; try 'rh dispatch'"
+        exit $?
+        ;;
+    esac
+    ;;
+  inbox)
+    shift
+    rh_inbox "$@"
+    ;;
+  fleet)
+    shift
+    rh_fleet "$@"
+    ;;
+  doctor)
+    shift
+    rh_doctor "$@"
+    ;;
+  cockpit)
+    shift
+    [ "$#" -eq 0 ] || {
+      usage_error "cockpit takes no arguments"
+      exit $?
+    }
+    rh_cockpit
+    ;;
+  team)
+    shift
+    rh_team "$@"
+    ;;
+  day)
+    shift
+    rh_day "$@"
+    ;;
+  help|-h|--help)
+    [ "$#" -eq 0 ] || shift
+    rh_render_help "${1-}"
+    ;;
+  version|--version)
+    printf 'rh %s\n' "$(rh_version)"
+    ;;
+  *)
+    usage_error "unknown command '$command'; try 'rh dispatch' or 'rh help'"
+    exit $?
+    ;;
+esac

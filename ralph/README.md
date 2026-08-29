@@ -67,7 +67,31 @@ Then, in the host repo:
 
 In an installed plugin the CLI lives at `${CLAUDE_PLUGIN_ROOT}/scripts/board` (in this repo: `ralph/scripts/board`). `board help` lists every subcommand.
 
+### Install the `rh` operator command
+
+From this repository, install the stable shim with:
+
+```bash
+bash ralph/scripts/install-rh.sh
+```
+
+The default target is `${XDG_BIN_HOME:-$HOME/.local/bin}/rh`; add that directory to `PATH` if needed. Use `--bin-dir DIR` for another target. The installer updates only a recognized Ralph Hero shim and refuses to overwrite an unrelated `rh` executable. The existing `board` command remains permanent: `rh board ...` delegates to that exact CLI rather than replacing it.
+
+`rh` accepts `--color=auto|always|never` before the command. Any non-empty `NO_COLOR` disables color, including when `--color=always` was requested.
+
 ## Everyday use
+
+| Command | Semantics |
+|---|---|
+| `rh` | read-only operator home |
+| `rh dispatch` | read-only dispatch status |
+| `rh dispatch up` | ensure Herdr + dispatch only |
+| `rh day` | ensure dispatch, resume proven teams, open cockpit + inbox |
+| `rh day --team N` | same, plus explicit new team N |
+| `rh board ...` | exact existing board CLI |
+| `rh inbox` | read-only human inbox |
+| `rh fleet` | read-only scoped fleet status |
+| `rh doctor` | read-only setup and board diagnosis |
 
 - `/ralph:board` — catch up, triage, form new tickets, answer Human Needed items, run doctor. Read-mostly; the Projects V2 UI is the dashboard.
 - `/ralph:work NNN` — drive one issue end-to-end. Also accepts an outcome description (creates the issue first) or empty args (folds Human Needed replies, then takes `board next`).

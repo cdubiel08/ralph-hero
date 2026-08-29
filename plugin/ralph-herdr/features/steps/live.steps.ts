@@ -2,11 +2,12 @@
 //
 // SAFETY CONTRACT (absolute — mirrors the suite header in live-smoke.feature):
 //   * named test sessions only (ralph-bdd / ralph-probe) — the operator's
-//     default herdr session is NEVER touched: every herdr call here goes
-//     through `herdr --session <name>`, and `herdr server stop` (unscoped)
-//     is never issued;
-//   * plain shell panes only (`herdr pane run`) — no claude/codex agents,
-//     nothing that bills;
+//     default herdr session is NEVER touched: every server/status/workspace/
+//     pane/agent call goes through `herdr --session <name>`; only named
+//     session list/stop/delete lifecycle calls are unscoped, and `herdr server
+//     stop` is never issued;
+//   * plain shell panes only (`workspace create`, `pane split`, `pane run`) —
+//     no claude/codex agents, nothing that bills;
 //   * the session is stopped AND deleted in the After hook even when a step
 //     failed;
 //   * doubly gated: the test:bdd:live npm script refuses without
@@ -17,9 +18,33 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { RalphWorld, SCRIPTS_DIR } from './world.ts';
+import { RalphWorld, RH_SCRIPT, SCRIPTS_DIR } from './world.ts';
+import {
+  renderLiveHerdrWrapper,
+  RH_COCKPIT_LABEL,
+  RH_DISPATCH_LABEL,
+  RH_LIVE_SESSION,
+} from './live-herdr-wrapper.ts';
+import {
+  assertAllowedLiveSession,
+  cleanupLiveSession,
+  sessionStateFromListResult,
+  type LiveCommandResult,
+} from './live-session-lifecycle.ts';
 
-const ALLOWED_SESSIONS = new Set(['ralph-bdd', 'ralph-probe']);
+let lifecycleEvidenceSequence = 0;
+
+interface LiveState {
+  realHerdr: string;
+  repo: string;
+  wrapper: string;
+  wrapperLog: string;
+  stubLog: string;
+  scripts: string;
+  board: string;
+}
+
+const liveStates = new WeakMap<RalphWorld, LiveState>();
 
 function gate(): void {
   if (process.env.RALPH_BDD_LIVE !== '1') {
@@ -29,10 +54,58 @@ function gate(): void {
   }
 }
 
-function herdrSession(session: string, args: string[], timeoutMs = 15_000): string {
-  if (!ALLOWED_SESSIONS.has(session)) {
-    throw new Error(`refusing to touch herdr session '${session}' — named test sessions only`);
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function writeExecutable(file: string, lines: string[]): void {
+  fs.writeFileSync(file, `${lines.join('\n')}\n`);
+  fs.chmodSync(file, 0o755);
+}
+
+function resolveExecutable(name: string): string {
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.resolve(dir, name);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return fs.realpathSync(candidate);
+    } catch {
+      // Keep searching PATH.
+    }
   }
+  throw new Error(`${name} CLI not available on PATH — live scenarios need a real install`);
+}
+
+function liveState(world: RalphWorld): LiveState {
+  const state = liveStates.get(world);
+  assert.ok(state, 'live rh state was not initialized');
+  return state;
+}
+
+function prepareLiveWorld(world: RalphWorld, session: string): LiveState {
+  gate();
+  assertAllowedLiveSession(session);
+  const realHerdr = resolveExecutable('herdr');
+  const probe = spawnSync(realHerdr, ['--version'], { encoding: 'utf8', timeout: 10_000 });
+  if (probe.status !== 0) throw new Error('herdr CLI not available on PATH — live scenarios need a real herdr install');
+  world.liveSession = session;
+  world.liveTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-bdd-live-'));
+  const state: LiveState = {
+    realHerdr,
+    repo: path.join(world.liveTmp, 'repo'),
+    wrapper: path.join(world.liveTmp, `herdr-${RH_LIVE_SESSION}`),
+    wrapperLog: path.join(world.liveTmp, 'herdr-wrapper.log'),
+    stubLog: path.join(world.liveTmp, 'rh-stubs.log'),
+    scripts: path.join(world.liveTmp, 'rh-scripts'),
+    board: path.join(world.liveTmp, 'board'),
+  };
+  liveStates.set(world, state);
+  return state;
+}
+
+function herdrSession(session: string, args: string[], timeoutMs = 15_000): string {
+  assertAllowedLiveSession(session);
   return execFileSync('herdr', ['--session', session, ...args], {
     encoding: 'utf8',
     timeout: timeoutMs,
@@ -40,11 +113,47 @@ function herdrSession(session: string, args: string[], timeoutMs = 15_000): stri
   });
 }
 
-function sessionListed(session: string): 'running' | 'stopped' | 'absent' {
-  const out = spawnSync('herdr', ['session', 'list'], { encoding: 'utf8', timeout: 10_000 });
-  const line = (out.stdout ?? '').split('\n').find((l) => l.trim().startsWith(`${session} `) || l.trim().startsWith(`${session}\t`));
-  if (!line) return 'absent';
-  return /\brunning\b/.test(line) ? 'running' : 'stopped';
+function runLifecycleCommand(realHerdr: string, args: readonly string[], evidenceDir?: string): LiveCommandResult {
+  const out = spawnSync(realHerdr, [...args], {
+    encoding: 'utf8',
+    timeout: 15_000,
+    env: { ...process.env, NO_COLOR: '1' },
+  });
+  const result: LiveCommandResult = {
+    status: out.status,
+    signal: out.signal,
+    stdout: out.stdout ?? '',
+    stderr: out.stderr ?? '',
+    ...(out.error ? { error: out.error } : {}),
+  };
+  if (evidenceDir) {
+    lifecycleEvidenceSequence += 1;
+    const file = path.join(
+      evidenceDir,
+      `session-lifecycle-${String(lifecycleEvidenceSequence).padStart(2, '0')}.json`,
+    );
+    fs.writeFileSync(file, `${JSON.stringify({
+      argv: args,
+      status: result.status,
+      signal: result.signal,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      error: result.error instanceof Error ? result.error.message : result.error,
+    }, null, 2)}\n`);
+  }
+  return result;
+}
+
+function sessionListed(session: string, realHerdr: string): 'running' | 'stopped' | 'absent' {
+  return sessionStateFromListResult(runLifecycleCommand(realHerdr, ['session', 'list']), session);
+}
+
+async function cleanupNamedLiveSession(world: RalphWorld, state: LiveState): Promise<void> {
+  await cleanupLiveSession(world.liveSession, {
+    run: (args) => runLifecycleCommand(state.realHerdr, args, world.liveTmp),
+    maxPolls: 40,
+    pollMs: 250,
+  });
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -52,15 +161,8 @@ async function sleep(ms: number): Promise<void> {
 }
 
 Given('a live herdr test session named {string}', async function (this: RalphWorld, session: string) {
-  gate();
-  if (!ALLOWED_SESSIONS.has(session)) {
-    throw new Error(`refusing session name '${session}' — the safety contract allows only ${[...ALLOWED_SESSIONS].join(', ')}`);
-  }
-  const probe = spawnSync('herdr', ['--version'], { encoding: 'utf8', timeout: 10_000 });
-  if (probe.status !== 0) throw new Error('herdr CLI not available on PATH — live scenarios need a real herdr install');
-  this.liveSession = session;
-  this.liveTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-bdd-live-'));
-  if (sessionListed(session) !== 'running') {
+  const state = prepareLiveWorld(this, session);
+  if (sessionListed(session, state.realHerdr) !== 'running') {
     // Headless server for the NAMED session, detached; the After hook stops
     // and deletes it by name. Never `herdr server stop` (unscoped).
     //
@@ -80,7 +182,7 @@ Given('a live herdr test session named {string}', async function (this: RalphWor
     const quarantine = path.join(this.liveTmp, 'startup-hook-quarantine');
     fs.mkdirSync(quarantine, { recursive: true });
     const logFd = fs.openSync(path.join(this.liveTmp, 'server.log'), 'a');
-    const child = spawn('herdr', ['--session', session, 'server'], {
+    const child = spawn(state.realHerdr, ['--session', session, 'server'], {
       detached: true,
       stdio: ['ignore', logFd, logFd],
       env: { ...process.env, RALPH_HERDR_LEDGER_ROOT: quarantine },
@@ -89,12 +191,17 @@ Given('a live herdr test session named {string}', async function (this: RalphWor
     fs.closeSync(logFd);
   }
   const deadline = Date.now() + 20_000;
-  while (sessionListed(session) !== 'running') {
+  while (sessionListed(session, state.realHerdr) !== 'running') {
     if (Date.now() > deadline) {
       throw new Error(`herdr session '${session}' did not reach running within 20s`);
     }
     await sleep(500);
   }
+});
+
+Given('an absent live herdr test session named {string}', async function (this: RalphWorld, session: string) {
+  const state = prepareLiveWorld(this, session);
+  await cleanupNamedLiveSession(this, state);
 });
 
 Given('a workspace with a plain shell pane in the test session', async function (this: RalphWorld) {
@@ -196,10 +303,233 @@ function liveEnv(w: RalphWorld, wrapper: string): NodeJS.ProcessEnv {
  */
 function sessionWrapper(w: RalphWorld): string {
   const wrapper = path.join(w.liveTmp || os.tmpdir(), 'herdr-bdd-session');
-  fs.writeFileSync(wrapper, `#!/bin/bash\nexec herdr --session ${w.liveSession} "$@"\n`);
-  fs.chmodSync(wrapper, 0o755);
+  writeExecutable(wrapper, [
+    '#!/bin/bash',
+    `exec ${shellQuote(liveState(w).realHerdr)} --session ${shellQuote(w.liveSession)} "$@"`,
+  ]);
   return wrapper;
 }
+
+function installRhLiveStubs(world: RalphWorld): void {
+  const state = liveState(world);
+  assert.strictEqual(
+    world.liveSession,
+    RH_LIVE_SESSION,
+    `safe rh live stubs are pinned to ${RH_LIVE_SESSION}, not ${world.liveSession}`,
+  );
+  world.liveLedgerRoot = path.join(world.liveTmp, 'ledger-root');
+  fs.mkdirSync(state.repo, { recursive: true });
+  fs.mkdirSync(state.scripts, { recursive: true });
+  fs.mkdirSync(world.liveLedgerRoot, { recursive: true });
+  execFileSync('git', ['init', '-q', '-b', 'main', state.repo], { stdio: 'pipe' });
+  fs.writeFileSync(
+    path.join(state.repo, '.ralph.json'),
+    '{"owner":"ralph-bdd","repo":"rh-live","projectNumber":1}\n',
+  );
+  fs.writeFileSync(state.wrapperLog, '');
+  fs.writeFileSync(state.stubLog, '');
+
+  fs.writeFileSync(
+    state.wrapper,
+    renderLiveHerdrWrapper({ realHerdr: state.realHerdr, callLog: state.wrapperLog, repo: state.repo }),
+  );
+  fs.chmodSync(state.wrapper, 0o755);
+
+  writeExecutable(state.board, [
+    '#!/bin/bash',
+    'set -u',
+    `printf 'board %s\\n' "$*" >>${shellQuote(state.stubLog)}`,
+    'case "${1-}" in',
+    "  inbox) printf 'inbox: empty\\n' ;;",
+    "  *) printf 'safe board stub: refusing %s\\n' \"$*\" >&2; exit 97 ;;",
+    'esac',
+  ]);
+
+  writeExecutable(path.join(state.scripts, 'dispatch-up.sh'), [
+    '#!/bin/bash',
+    'set -euo pipefail',
+    'HERDR="${HERDR_BIN_PATH:?}"',
+    `LABEL=${shellQuote(RH_DISPATCH_LABEL)}`,
+    `REPO=${shellQuote(state.repo)}`,
+    `LOG=${shellQuote(state.stubLog)}`,
+    "printf 'dispatch-up\\n' >>\"$LOG\"",
+    'workspaces=$("$HERDR" workspace list)',
+    "count=$(printf '%s\\n' \"$workspaces\" | jq -er --arg label \"$LABEL\" '(.result.workspaces // null) as $rows | if ($rows | type) != \"array\" then error(\"missing workspaces\") else [$rows[] | select((.label // \"\") == $label)] | length end')",
+    '[ "$count" -le 1 ] || { echo "safe dispatch stub: duplicate $LABEL workspaces" >&2; exit 1; }',
+    'if [ "$count" -eq 0 ]; then',
+    '  created=$("$HERDR" workspace create --cwd "$REPO" --label "$LABEL" --no-focus)',
+    "  ws=$(printf '%s\\n' \"$created\" | jq -er '.result.workspace.workspace_id // .result.workspace_id // empty')",
+    "  pane=$(printf '%s\\n' \"$created\" | jq -er '.result.workspace.root_pane.pane_id // .result.root_pane.pane_id // .result.pane.pane_id // empty')",
+    '  "$HERDR" pane rename "$pane" "$LABEL" >/dev/null',
+    'else',
+    "  ws=$(printf '%s\\n' \"$workspaces\" | jq -er --arg label \"$LABEL\" '.result.workspaces[] | select((.label // \"\") == $label) | .workspace_id')",
+    '  panes=$("$HERDR" pane list --workspace "$ws")',
+    "  pane_count=$(printf '%s\\n' \"$panes\" | jq -er --arg label \"$LABEL\" '(.result.panes // null) as $rows | if ($rows | type) != \"array\" then error(\"missing panes\") else [$rows[] | select(((.label // .title) // \"\") == $label)] | length end')",
+    '  [ "$pane_count" -le 1 ] || { echo "safe dispatch stub: duplicate $LABEL panes" >&2; exit 1; }',
+    '  if [ "$pane_count" -eq 0 ]; then',
+    "    pane=$(printf '%s\\n' \"$panes\" | jq -er '.result.panes[0].pane_id // empty')",
+    '    "$HERDR" pane rename "$pane" "$LABEL" >/dev/null',
+    '  fi',
+    'fi',
+    "printf 'dispatch ready: %s\\n' \"$ws\"",
+  ]);
+
+  writeExecutable(path.join(state.scripts, 'reconcile.sh'), [
+    '#!/bin/bash',
+    'set -eu',
+    `printf 'reconcile\\n' >>${shellQuote(state.stubLog)}`,
+  ]);
+  writeExecutable(path.join(state.scripts, 'resume-teams.sh'), [
+    '#!/bin/bash',
+    'set -eu',
+    `printf 'resume-teams\\n' >>${shellQuote(state.stubLog)}`,
+  ]);
+  writeExecutable(path.join(state.scripts, 'work-team.sh'), [
+    '#!/bin/bash',
+    `printf 'FORBIDDEN work-team %s\\n' "$*" >>${shellQuote(state.stubLog)}`,
+    "echo 'safe live scenario refuses team creation' >&2",
+    'exit 97',
+  ]);
+  writeExecutable(path.join(state.scripts, 'cockpit-open.sh'), [
+    '#!/bin/bash',
+    'set -euo pipefail',
+    'HERDR="${HERDR_BIN_PATH:?}"',
+    `LABEL=${shellQuote(RH_COCKPIT_LABEL)}`,
+    `DISPATCH_LABEL=${shellQuote(RH_DISPATCH_LABEL)}`,
+    `REPO=${shellQuote(state.repo)}`,
+    `LOG=${shellQuote(state.stubLog)}`,
+    "printf 'cockpit-open\\n' >>\"$LOG\"",
+    'panes=$("$HERDR" pane list)',
+    "count=$(printf '%s\\n' \"$panes\" | jq -er --arg label \"$LABEL\" '(.result.panes // null) as $rows | if ($rows | type) != \"array\" then error(\"missing panes\") else [$rows[] | select(((.label // .title) // \"\") == $label)] | length end')",
+    '[ "$count" -le 1 ] || { echo "safe cockpit stub: duplicate $LABEL panes" >&2; exit 1; }',
+    'if [ "$count" -eq 0 ]; then',
+    '  workspaces=$("$HERDR" workspace list)',
+    "  ws_count=$(printf '%s\\n' \"$workspaces\" | jq -er --arg label \"$DISPATCH_LABEL\" '[.result.workspaces[] | select((.label // \"\") == $label)] | length')",
+    '  [ "$ws_count" -eq 1 ] || { echo "safe cockpit stub: expected one $DISPATCH_LABEL workspace" >&2; exit 1; }',
+    "  ws=$(printf '%s\\n' \"$workspaces\" | jq -er --arg label \"$DISPATCH_LABEL\" '.result.workspaces[] | select((.label // \"\") == $label) | .workspace_id')",
+    '  dispatch_panes=$("$HERDR" pane list --workspace "$ws")',
+    "  anchor=$(printf '%s\\n' \"$dispatch_panes\" | jq -er --arg label \"$DISPATCH_LABEL\" '.result.panes[] | select(((.label // .title) // \"\") == $label) | .pane_id' | head -n 1)",
+    '  created=$("$HERDR" pane split "$anchor" --direction right --cwd "$REPO" --no-focus)',
+    "  pane=$(printf '%s\\n' \"$created\" | jq -er '.result.pane.pane_id // .result.root_pane.pane_id // .result.pane_id // empty')",
+    '  "$HERDR" pane rename "$pane" "$LABEL" >/dev/null',
+    'else',
+    "  pane=$(printf '%s\\n' \"$panes\" | jq -er --arg label \"$LABEL\" '.result.panes[] | select(((.label // .title) // \"\") == $label) | .pane_id')",
+    'fi',
+    '"$HERDR" plugin pane focus "$pane" >/dev/null',
+    "printf 'cockpit ready: %s\\n' \"$pane\"",
+  ]);
+}
+
+function rhLiveEnv(world: RalphWorld): NodeJS.ProcessEnv {
+  const state = liveState(world);
+  return {
+    ...liveEnv(world, state.wrapper),
+    RALPH_HOME: path.join(world.liveTmp, 'ralph-home'),
+    RALPH_BOARD: state.board,
+    RALPH_HERDR_SCRIPTS_DIR: state.scripts,
+    RALPH_RH_SERVER_ATTEMPTS: '40',
+    RALPH_RH_SERVER_POLL_SEC: '0.25',
+  };
+}
+
+function noAgents(world: RalphWorld, checkpoint: string): void {
+  const raw = herdrSession(world.liveSession, ['agent', 'list']);
+  const agents = JSON.parse(raw)?.result?.agents;
+  assert.ok(Array.isArray(agents), `agent list was not a protocol array at ${checkpoint}:\n${raw}`);
+  assert.deepStrictEqual(agents, [], `coding agents appeared at ${checkpoint}:\n${raw}`);
+}
+
+function runLiveRhDay(world: RalphWorld, checkpoint: string): void {
+  noAgents(world, `before ${checkpoint}`);
+  const state = liveState(world);
+  const r = spawnSync('/bin/bash', [RH_SCRIPT, 'day'], {
+    cwd: state.repo,
+    env: rhLiveEnv(world),
+    encoding: 'utf8',
+    timeout: 90_000,
+    input: '',
+  });
+  world.last = {
+    rc: r.status ?? -1,
+    stdout: r.stdout ?? '',
+    stderr: r.stderr ?? '',
+    out: `${r.stdout ?? ''}${r.stderr ?? ''}`,
+  };
+  noAgents(world, `after ${checkpoint}`);
+}
+
+function resultRows(raw: string, key: 'workspaces' | 'panes'): Array<Record<string, unknown>> {
+  const rows = JSON.parse(raw)?.result?.[key];
+  assert.ok(Array.isArray(rows), `${key} list did not contain a protocol array:\n${raw}`);
+  return rows;
+}
+
+function paneLabel(row: Record<string, unknown>): string {
+  return typeof row.label === 'string' ? row.label : typeof row.title === 'string' ? row.title : '';
+}
+
+Given('safe rh live stubs for board, dispatch, resume, and cockpit', function (this: RalphWorld) {
+  gate();
+  installRhLiveStubs(this);
+});
+
+When('rh day starts the named test session', function (this: RalphWorld) {
+  gate();
+  runLiveRhDay(this, 'first rh day');
+});
+
+When('rh day runs again in the named test session', function (this: RalphWorld) {
+  gate();
+  runLiveRhDay(this, 'second rh day');
+});
+
+Then('rh reports a healthy dispatch and inbox', function (this: RalphWorld) {
+  assert.strictEqual(this.last.rc, 0, `rh day failed in the safe live world:\n${this.last.out}`);
+  assert.match(this.last.stdout, /dispatch\s+ready/, `no healthy dispatch phase:\n${this.last.stdout}`);
+  assert.match(this.last.stdout, /inbox\s+ready/, `no healthy inbox phase:\n${this.last.stdout}`);
+  assert.ok(
+    fs.readFileSync(liveState(this).stubLog, 'utf8').split('\n').includes('board inbox'),
+    'rh day never reached the local inbox stub',
+  );
+});
+
+Then('the named test session has no coding agents', function (this: RalphWorld) {
+  noAgents(this, 'named-session assertion');
+});
+
+Then('no second server or dispatch seat is created', function (this: RalphWorld) {
+  assert.strictEqual(this.last.rc, 0, `second rh day failed:\n${this.last.out}`);
+  noAgents(this, 'idempotency assertion');
+  const state = liveState(this);
+  const calls = fs.readFileSync(state.wrapperLog, 'utf8').split('\n').filter(Boolean);
+  assert.strictEqual(calls.filter((line) => line === 'server').length, 1, `server starts:\n${calls.join('\n')}`);
+
+  const workspaces = resultRows(herdrSession(this.liveSession, ['workspace', 'list']), 'workspaces');
+  assert.strictEqual(
+    workspaces.filter((row) => row.label === RH_DISPATCH_LABEL).length,
+    1,
+    `expected exactly one ${RH_DISPATCH_LABEL} workspace:\n${JSON.stringify(workspaces, null, 2)}`,
+  );
+  const panes = resultRows(herdrSession(this.liveSession, ['pane', 'list']), 'panes');
+  assert.strictEqual(
+    panes.filter((row) => paneLabel(row) === RH_DISPATCH_LABEL).length,
+    1,
+    `expected exactly one ${RH_DISPATCH_LABEL} pane:\n${JSON.stringify(panes, null, 2)}`,
+  );
+  assert.strictEqual(
+    panes.filter((row) => paneLabel(row) === RH_COCKPIT_LABEL).length,
+    1,
+    `expected exactly one ${RH_COCKPIT_LABEL} pane:\n${JSON.stringify(panes, null, 2)}`,
+  );
+
+  const stubs = fs.readFileSync(state.stubLog, 'utf8');
+  assert.doesNotMatch(stubs, /^FORBIDDEN /m, `a forbidden team path ran:\n${stubs}`);
+  assert.doesNotMatch(
+    calls.join('\n'),
+    /(?:^|\s)agent start(?:\s|$)|\b(?:claude|codex|gh)\b/,
+    `the safe wrapper observed a forbidden command:\n${calls.join('\n')}`,
+  );
+});
 
 When('the reconcile pass runs against the live test session', function (this: RalphWorld) {
   gate();
@@ -405,10 +735,20 @@ Then('the live test session gained no agents', function (this: RalphWorld) {
 
 // Cleanup ALWAYS — the named session is stopped and deleted even when a step
 // failed; only ever by name, only allowlisted names.
-After({ tags: '@live' }, function (this: RalphWorld) {
-  if (this.liveSession && ALLOWED_SESSIONS.has(this.liveSession)) {
-    spawnSync('herdr', ['session', 'stop', this.liveSession], { encoding: 'utf8', timeout: 15_000 });
-    spawnSync('herdr', ['session', 'delete', this.liveSession], { encoding: 'utf8', timeout: 15_000 });
+After({ tags: '@live' }, async function (this: RalphWorld) {
+  if (this.liveSession) {
+    try {
+      assertAllowedLiveSession(this.liveSession);
+      const state = liveStates.get(this);
+      assert.ok(state, `no lifecycle state exists for named session '${this.liveSession}'`);
+      await cleanupNamedLiveSession(this, state);
+    } catch (error) {
+      const evidence = this.liveTmp || this.liveLedgerRoot || '(no evidence directory was initialized)';
+      throw new Error(
+        `live cleanup failed; exact absence was not proven and evidence is retained at ${evidence}:\n` +
+        (error instanceof Error ? error.message : String(error)),
+      );
+    }
   }
   for (const dir of [this.liveTmp, this.liveLedgerRoot]) {
     if (dir && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });

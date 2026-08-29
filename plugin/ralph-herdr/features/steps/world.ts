@@ -47,6 +47,8 @@ export const TESTS_DIR = path.join(PLUGIN_DIR, 'tests');
 export const REPO_ROOT = path.resolve(PLUGIN_DIR, '..', '..');
 /** the REAL board CLI — contract validation is offline schema work */
 export const REAL_BOARD = path.join(REPO_ROOT, 'ralph', 'scripts', 'board');
+/** the REAL portable Ralph Hero command router */
+export const RH_SCRIPT = path.join(REPO_ROOT, 'ralph', 'scripts', 'rh');
 
 export interface RunResult {
   rc: number;
@@ -61,8 +63,10 @@ export class RalphWorld extends World {
   bin = '';
   herdrFixtures = '';
   herdrLogFile = '';
+  herdrServerState = '';
   boardFixtures = '';
   boardLogFile = '';
+  rhLogFile = '';
   combinedLogFile = '';
   ledgerRoot = '';
   /** the scope every world repo resolves: acme/demo */
@@ -101,7 +105,9 @@ export class RalphWorld extends World {
     this.ledgerRoot = mkdir(this.tmp, 'ledger-root');
     this.wtDir = mkdir(this.tmp, 'wt');
     this.herdrLogFile = touch(this.tmp, 'herdr.log');
+    this.herdrServerState = path.join(this.tmp, 'herdr-server.state');
     this.boardLogFile = touch(this.tmp, 'board.log');
+    this.rhLogFile = touch(this.tmp, 'rh.log');
     this.combinedLogFile = touch(this.tmp, 'combined.log');
     this.scopedLedger = path.join(this.ledgerRoot, 'acme', 'demo', 'ledger.jsonl');
 
@@ -216,9 +222,15 @@ export class RalphWorld extends World {
       FAKE_HERDR_LOG: this.herdrLogFile,
       FAKE_BOARD_FIXTURES: this.boardFixtures,
       FAKE_BOARD_LOG: this.boardLogFile,
+      FAKE_HERDR_SERVER_STATE: this.herdrServerState,
+      RALPH_BOARD: path.join(this.bin, 'board'),
       RALPH_HERDR_LEDGER_ROOT: this.ledgerRoot,
       RALPH_HERDR_REPO: this.repoDir,
       RALPH_HERDR_BOARD: path.join(this.bin, 'board'),
+      RALPH_HERDR_SCRIPTS_DIR: SCRIPTS_DIR,
+      RALPH_HOME: path.join(this.tmp, 'ralph-home'),
+      RALPH_RH_SERVER_ATTEMPTS: '3',
+      RALPH_RH_SERVER_POLL_SEC: '0',
       NO_COLOR: '1',
       ...this.extraEnv,
       ...overrides,
@@ -263,6 +275,11 @@ export class RalphWorld extends World {
    * payload belongs here.
    */
   writeHerd(agents: Array<{ name: string | null; agent_status?: string; pane_id?: string }>): void {
+    // The public `rh` router resolves cwd through `git rev-parse`, which uses
+    // the physical /private/var spelling on macOS even when os.tmpdir() gave
+    // this world the /var alias. Record physical provenance so both direct
+    // script steps and router steps join the same checkout identity.
+    const checkout = fs.realpathSync(this.repoDir);
     const full = agents.map((a, i) => ({
       name: a.name,
       agent_status: a.agent_status ?? 'unknown',
@@ -294,8 +311,8 @@ export class RalphWorld extends World {
               worktree: {
                 repo_key: 'test/repo',
                 repo_name: 'repo',
-                repo_root: this.repoDir,
-                checkout_path: this.repoDir,
+                repo_root: checkout,
+                checkout_path: checkout,
                 is_linked_worktree: false,
               },
             },
@@ -308,7 +325,7 @@ export class RalphWorld extends World {
             focused: false,
             agent_status: a.agent_status,
             revision: 1,
-            cwd: this.repoDir,
+            cwd: checkout,
           })),
           agents: full,
         },

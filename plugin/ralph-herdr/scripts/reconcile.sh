@@ -760,8 +760,10 @@ while IFS=$'\037' read -r name _status pane agent_scope cwd; do
   # read as permission to write a tree.
   discovered_role=$(ralph_role_for_lane "$lane" 2>/dev/null) || discovered_role=""
   ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg p "$pane" \
+    --arg checkout "$repo_root" \
     --arg role "$discovered_role" --arg issue "$issue" --arg slug "$slug" \
     '{ts: $ts, ev: "discover", agent_ref: $ref, pane_id: $p, via: "reconcile",
+      checkout: $checkout,
       tokens: ({issue: $issue}
                + (if $role == "" then {} else {role: $role} end)
                + (if $slug == "" then {} else {slug: $slug} end))}')" ||

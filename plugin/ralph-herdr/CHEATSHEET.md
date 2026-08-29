@@ -20,6 +20,22 @@ been run for real or read straight out of the source it invokes.
 | Clean up finished sessions (worktrees + disk) | `bash ralph/scripts/herdr-setup.sh sweep` (dry run; `--apply` to act) | 10 |
 | Something's weird | `board doctor` · `bash plugin/ralph-herdr/scripts/doctor.sh` | 10 |
 
+**Portable `rh` command**:
+
+| Command | Semantics |
+|---|---|
+| `rh` | read-only operator home |
+| `rh dispatch` | read-only dispatch status |
+| `rh dispatch up` | ensure Herdr + dispatch only |
+| `rh day` | ensure dispatch, resume proven teams, open cockpit + inbox |
+| `rh day --team N` | same, plus explicit new team N |
+| `rh board ...` | exact existing board CLI |
+| `rh inbox` | read-only human inbox |
+| `rh fleet` | read-only scoped fleet status |
+| `rh doctor` | read-only setup and board diagnosis |
+
+Install it from this repository with `bash ralph/scripts/install-rh.sh`. The default target is `${XDG_BIN_HOME:-$HOME/.local/bin}/rh`; `--bin-dir DIR` selects another directory. The installer updates only a recognized Ralph Hero shim and refuses a collision with an unrelated executable. `rh --color=auto|always|never ...` controls human output, while any non-empty `NO_COLOR` wins and disables color. The existing `board` command remains permanent; `rh board ...` is exact delegation to it.
+
 ## 0. Quick start from zero (one-time)
 
 Skip whatever you already have. Ralph first, herdr second — the cockpit is a
