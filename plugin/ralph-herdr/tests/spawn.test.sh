@@ -943,15 +943,55 @@ REPO="$REPO_SAVED"
 is "freshness: a repo with no ralph-herdr source tree is silent" "" "$out"
 is "freshness: not-applicable returns 0" "0" "$rc"
 
-# The anchor is the load-bearing part: the notice must run the SOURCE copy of
-# the sync script, never the one beside lib.sh. When herdr executes the
-# INSTALLED plugin, those are the same directory, and a check that hashed its
-# own tree would let every stale cockpit certify itself fresh.
-if grep -q 'sync="\$REPO/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh"' "$SCRIPT_DIR/../scripts/lib.sh"; then
-  ok "freshness: the sync script is resolved from \$REPO, not from lib.sh's own tree"
-else
-  not_ok "freshness: the sync script is resolved from \$REPO, not from lib.sh's own tree"
-fi
+# The anchor is the load-bearing part, and it is pinned BY CONSTRUCTION rather
+# than by grepping lib.sh for the line that spells it. A source-text assertion
+# is the weaker half of the pair in both directions: a behaviour-preserving
+# tidy-up (hoisting the path into a local) reddens it, while the edit that
+# would actually reintroduce the hole — falling back to $SCRIPT_DIR's own copy
+# when $REPO has none — leaves the grepped line intact.
+#
+# So the fixture reproduces the real topology: lib.sh placed in an INSTALLED
+# tree and executed from there, exactly as `herdr plugin action invoke` runs
+# it, with $REPO naming a SEPARATE source checkout. Each tree carries a sync
+# script that records which one ran. If the notice ever resolved the script
+# beside itself, the installed marker would be the one written — and every
+# stale cockpit would certify itself fresh.
+ANCHOR="$TMP/anchor"
+mkdir -p "$ANCHOR/inst/plugin/ralph-herdr" "$ANCHOR/src/plugin/ralph-herdr/scripts"
+cp -R "$SCRIPT_DIR/../scripts" "$ANCHOR/inst/plugin/ralph-herdr/scripts"
+for _who in inst src; do
+  case "$_who" in
+    inst) _dir="$ANCHOR/inst/plugin/ralph-herdr/scripts" ;;
+    src)  _dir="$ANCHOR/src/plugin/ralph-herdr/scripts" ;;
+  esac
+  cat >"$_dir/herdr-plugin-sync.sh" <<MARKER
+#!/usr/bin/env bash
+echo "$_who" >"$ANCHOR/ran"
+exit 1
+MARKER
+done
+
+rm -f "$ANCHOR/ran"
+anchor_out=$(RALPH_HERDR_REPO="$ANCHOR/src" RALPH_HERDR_BOARD="$RALPH_HERDR_BOARD" \
+  bash -c ". '$ANCHOR/inst/plugin/ralph-herdr/scripts/lib.sh'; ralph_plugin_freshness_notice" 2>&1)
+anchor_rc=$?
+is "freshness: the SOURCE copy of the sync script is what runs, not the one beside lib.sh" \
+  "src" "$(cat "$ANCHOR/ran" 2>/dev/null)"
+is "freshness: the anchor case still returns 0" "0" "$anchor_rc"
+case "$anchor_out" in
+  *"INSTALLED ralph-herdr differs"*) ok "freshness: an installed-copy run still reports the drift it found" ;;
+  *) not_ok "freshness: an installed-copy run still reports the drift it found — got '$anchor_out'" ;;
+esac
+
+# The regression this replaces the grep for: a "help host repos" fallback to
+# $SCRIPT_DIR's own copy. With $REPO naming a tree that has no sync script,
+# the notice must stay SILENT (not applicable) rather than reach for the one
+# beside itself — which, run from the installed tree, is self-certification.
+rm -f "$ANCHOR/ran"
+anchor_out=$(RALPH_HERDR_REPO="$ANCHOR/nosuch" RALPH_HERDR_BOARD="$RALPH_HERDR_BOARD" \
+  bash -c ". '$ANCHOR/inst/plugin/ralph-herdr/scripts/lib.sh'; ralph_plugin_freshness_notice" 2>&1)
+is "freshness: a \$REPO with no sync script runs nothing at all" "" "$(cat "$ANCHOR/ran" 2>/dev/null)"
+is "freshness: ...and says nothing rather than falling back to its own tree" "" "$anchor_out"
 
 # Every spawn entry point carries it — a lane that spawns without the notice
 # is a lane where stale code runs unannounced.
