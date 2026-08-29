@@ -54,9 +54,17 @@ case "${1:-} ${2:-}" in
     # which is what a push landing mid-snapshot looks like to this script.
     n=$(( $(cat "$GH_STUB_DIR/view_calls" 2>/dev/null || echo 0) + 1 ))
     echo "$n" >"$GH_STUB_DIR/view_calls"
+    # GH-2276: a rate-limited GraphQL call fails with GitHub's own error text
+    # on stderr — the signal gb_looks_rate_limited matches, and the one the
+    # fix is keyed on rather than the (per GH-2278) unreliable rate_limit
+    # budget number.
+    if [[ -f "$GH_STUB_DIR/fail_view_ratelimited" ]]; then
+      echo "GraphQL: API rate limit exceeded for user ID 12345678 (https://docs.github.com/graphql/overview/resource-limitations#rate-limit)" >&2
+      exit 1
+    fi
     # GH-2276: simulates gather()'s "we genuinely cannot judge" read failing
-    # outright — no payload at all, which is what an unreachable host and an
-    # exhausted budget both look like from inside gather().
+    # outright — no payload at all, which is what an unreachable host looks
+    # like from inside gather() when GitHub gives no rate-limit signature.
     if [[ -f "$GH_STUB_DIR/fail_view" ]]; then exit 1; fi
     # gather() reads `gh pr view` twice (the snapshot, then the head re-read),
     # so call 3 begins the CONFIRMING pass. From there the *_second fixtures
@@ -2505,6 +2513,30 @@ if [ "$rc" -eq 124 ] && grep -q "GATE-WAIT budget: GraphQL exhausted, resets at"
   pass "an exhausted budget naps toward the reset instead of giving up"
 else
   fail "unreachable-exhausted-budget (rc=$rc out=${out:0:200})"
+fi
+
+# GH-2278: `gh api rate_limit`'s graphql bucket can mirror `core` and read
+# fully healthy while GraphQL is genuinely exhausted — so the fix cannot
+# depend on that number. This scenario pairs an OBSERVED rate-limit error on
+# the failing read with a rate_limit.json that claims a healthy budget, the
+# exact shape GH-2278 measured. If the give-up path fired here, the fix would
+# be inert on the case it exists for.
+D="$TMP_ROOT/ratelimited-signature-healthy-number"
+mkdir -p "$D"
+touch "$D/fail_view_ratelimited"
+cat >"$D/rate_limit.json" <<EOF
+{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":$(( $(date +%s) + 3600 ))}}}
+EOF
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  timeout 5 bash "$SCRIPT" 1740 --watch --interval 1 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 124 ] && grep -q "GATE-WAIT budget: GraphQL rate limit hit on the last read" <<<"$out" \
+   && ! grep -q "GATE-ERROR" <<<"$out"; then
+  pass "an observed rate-limit error naps instead of giving up, even when the budget number claims healthy"
+else
+  fail "ratelimited-signature-healthy-number (rc=$rc out=${out:0:200})"
 fi
 
 echo

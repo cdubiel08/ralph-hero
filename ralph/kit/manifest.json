@@ -9,7 +9,7 @@
     "scripts/copilot-review-evidence.sh": "44928bb673c17b1db6627331ca7587eec4c412a3f6782da34e51b2b02d702813",
     "scripts/merge-pr.sh": "7e6d5764020561932a113e8d8f49d3d880669bdf4baa5baaf920f94b12695666",
     "scripts/pr-file-classes.sh": "9b36a53c532d7ce0277f516b0be38eced898abdd766ad4fe011df7a717deac38",
-    "scripts/pr-gate-watch.sh": "49466f2846dc615c299a8a63fe11b8da2a853e18f5fc2e2cfd82cfdb7c622795",
+    "scripts/pr-gate-watch.sh": "2af0a5fb918ca6783acdb3c924b72b2d062d8de85a3b5ed16d0c04f8bf8afd01",
     "scripts/pr-linkage-drift.sh": "dbe3031f44ce52556ece22793b1c574b908bb104edc6ed30ff603023d31ee6be",
     "scripts/publish-apply-keywords-status.sh": "e35b5820bd0ebd24da660e09e30b4728d3d938b8b4ad2e6369bd5bb89023ce7e",
     "scripts/review-convergence.sh": "74d7afa913d2368b67278053d2e16e73d94602ea81d6c6145da425fc2d5bf0d8",
