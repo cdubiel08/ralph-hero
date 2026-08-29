@@ -30,6 +30,7 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
+[ -n "${NO_COLOR:-}" ] && RH_COLOR_MODE=never
 export RH_COLOR_MODE
 
 command="${1:-help}"

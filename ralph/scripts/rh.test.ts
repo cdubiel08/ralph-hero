@@ -32,7 +32,7 @@ function executable(contents: string): string {
 
 function runRh(
   argv: string[],
-  opts: { RALPH_BOARD?: string; cwd?: string; stdin?: string } = {},
+  opts: { RALPH_BOARD?: string; NO_COLOR?: string; cwd?: string; stdin?: string } = {},
 ): { status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string } {
   const result = spawnSync("/bin/bash", [RH, ...argv], {
     cwd: opts.cwd ?? tmp,
@@ -41,6 +41,7 @@ function runRh(
     env: {
       PATH: process.env.PATH ?? "",
       ...(opts.RALPH_BOARD ? { RALPH_BOARD: opts.RALPH_BOARD } : {}),
+      ...(opts.NO_COLOR !== undefined ? { NO_COLOR: opts.NO_COLOR } : {}),
     },
   });
   return {
@@ -76,6 +77,16 @@ exit 23
     const r = runRh(["board", "--color=always", "list"], { RALPH_BOARD: fake });
     expect(r.status).toBe(0);
     expect(readFileSync(log, "utf8")).toBe("--color=always\nlist\n");
+  });
+
+  it("uses non-empty NO_COLOR as the effective mode at a delegated command boundary", () => {
+    const fake = executable("#!/bin/bash\nprintf '<%s>\\n' \"${RH_COLOR_MODE:-}\"\n");
+    const r = runRh(["--color=always", "board", "list"], {
+      RALPH_BOARD: fake,
+      NO_COLOR: "1",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("<never>\n");
   });
 
   it("preserves a delegated board signal", () => {
