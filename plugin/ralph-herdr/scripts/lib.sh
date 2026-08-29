@@ -245,10 +245,32 @@ billing_guard() {
 #                            measurement may not read like a clean one
 #                            (GH-1971).
 #   different                the drift, loud, with the sync command.
+#
+# The MEASUREMENT is memoized per process, the MESSAGE is not. Hashing both
+# trees forks shasum per file and costs ~1.1s, which the cockpit's fzf rung
+# would otherwise pay on every spawn in its loop — usually to print nothing.
+# Nothing can change the answer inside one process either: doing so means
+# syncing the plugin under the very loop that is running, which is the act
+# this notice tells the operator to take with the fleet quiesced. Re-rendering
+# the message each call is deliberate and separate: every spawn takes the
+# risk, so every spawn is told. The memo is KEYED on the resolved script path,
+# never a bare "already ran" flag: $REPO is a variable, and a cache that
+# answered for one checkout while asked about another would report the wrong
+# tree with full confidence. Clearing _RALPH_FRESHNESS_KEY forces a re-measure.
+_RALPH_FRESHNESS_KEY=""
+_RALPH_FRESHNESS_RC=""
+_RALPH_FRESHNESS_TAIL=""
 ralph_plugin_freshness_notice() {
   local sync="$REPO/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" out rc=0
   [ -f "$sync" ] || return 0
-  out=$(bash "$sync" --check 2>&1) || rc=$?
+  if [ "$_RALPH_FRESHNESS_KEY" = "$sync" ]; then
+    rc="$_RALPH_FRESHNESS_RC"
+  else
+    out=$(bash "$sync" --check 2>&1) || rc=$?
+    _RALPH_FRESHNESS_KEY="$sync"
+    _RALPH_FRESHNESS_RC="$rc"
+    _RALPH_FRESHNESS_TAIL=$(printf '%s' "$out" | tail -1)
+  fi
   case "$rc" in
     0) ;;
     1)
@@ -256,7 +278,7 @@ ralph_plugin_freshness_notice() {
       echo "${0##*/}: spawning anyway — this is advisory, never a gate. Sync with the fleet quiesced, since it swaps code under live panes: bash $sync" >&2
       ;;
     *)
-      echo "${0##*/}: ralph-herdr freshness NOT CHECKED — $(printf '%s' "$out" | tail -1)" >&2
+      echo "${0##*/}: ralph-herdr freshness NOT CHECKED — $_RALPH_FRESHNESS_TAIL" >&2
       ;;
   esac
   return 0

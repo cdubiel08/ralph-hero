@@ -844,6 +844,10 @@ mkdir -p "$FTMP/repo/plugin/ralph-herdr/scripts" "$FTMP/other/scripts"
 # with it is the exit code (0 in sync / 1 different / anything else not
 # evaluable), and driving the real hash would make this a test of shasum.
 _fresh_stub() {
+  # The memo is keyed on the script PATH, which does not change between these
+  # cases — so each restub clears it, or every case after the first would
+  # assert against the first case's answer.
+  _RALPH_FRESHNESS_KEY=""
   cat >"$FTMP/repo/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" <<STUB
 #!/usr/bin/env bash
 echo "source    /src  aaaa"
@@ -897,6 +901,38 @@ case "$out" in
   *"stub reason line"*) ok "freshness: NOT CHECKED carries the reason" ;;
   *) not_ok "freshness: NOT CHECKED carries the reason — got '$out'" ;;
 esac
+
+# The measurement is memoized per process; the message is not. A second call
+# must still speak (every spawn takes the risk) while costing no second hash.
+_fresh_stub 1
+_fresh_run
+"$FTMP/repo/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" >/dev/null 2>&1 && :
+# Replace the stub with one that would answer "in sync" — a re-measure would
+# now go silent, so speech here proves the memo, not the stub.
+cat >"$FTMP/repo/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+out=$(_fresh_out)
+case "$out" in
+  *"INSTALLED ralph-herdr differs"*) ok "freshness: the memo answers a second call without re-hashing" ;;
+  *) not_ok "freshness: the memo answers a second call without re-hashing — got '$out'" ;;
+esac
+
+# ...but the memo is keyed on the resolved path, so a different $REPO is a
+# different question and must be measured afresh rather than answered from
+# the previous checkout's cache.
+mkdir -p "$FTMP/repo2/plugin/ralph-herdr/scripts"
+cat >"$FTMP/repo2/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+REPO_SAVED="$REPO"
+REPO="$FTMP/repo2"
+out=$(ralph_plugin_freshness_notice 2>&1)
+REPO="$REPO_SAVED"
+is "freshness: a different checkout is re-measured, not answered from cache" "" "$out"
+_RALPH_FRESHNESS_KEY=""
 
 # A host repo has no source tree to be stale against and no remedy to name:
 # NOT APPLICABLE is silence, not a permanent line nothing can clear (GH-2052).

@@ -42,7 +42,13 @@ to a version heading when that artifact next releases. Full tag history:
   and no remedy, so a permanent line would be the GH-2052 trap), in-sync is
   silent, an unreadable input reads `NOT CHECKED` with its reason (GH-1971 —
   a failed measurement may not render like a clean one), and a divergence is
-  loud with the sync command.
+  loud with the sync command. The **measurement** is memoized per process
+  (keyed on the resolved script path, so a different `$REPO` is re-measured
+  rather than answered from another checkout's cache) while the **message**
+  is re-rendered per call — hashing both trees forks `shasum` per file at
+  ~1.1s, which the cockpit's fzf rung would otherwise pay on every spawn in
+  its loop, usually to print nothing; but every spawn takes the risk, so
+  every spawn is still told.
 
 ### Fixed
 
