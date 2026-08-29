@@ -12468,6 +12468,26 @@ const MUTATING = new Set([
   "resolve", "setup", "add", "bootstrap", "promote",
 ]);
 
+export const GH_BUDGET_FLOOR_DEFAULT = 500;
+
+/** RALPH_GH_BUDGET_FLOOR — the lane budget pre-flight's GraphQL-remaining
+ *  floor (audit B2). An explicit `0` is a deliberate "disable the pre-flight"
+ *  assertion and stays silent. Anything else that is not a positive finite
+ *  number — a typo, a trailing unit, a negative value — is not evidence the
+ *  operator wants the guard OFF, so it warns and falls back to the default
+ *  (the `RALPH_ROSTER_DERIVE_MAX` shape): the one sibling knob whose failure
+ *  mode was to remove the protection rather than keep it (GH-2256). */
+export function parseGhBudgetFloor(raw: string | undefined): number {
+  if (raw === undefined) return GH_BUDGET_FLOOR_DEFAULT;
+  const v = Number(raw);
+  if (v === 0) return 0;
+  if (Number.isFinite(v) && v > 0) return v;
+  process.stderr.write(
+    `warn: RALPH_GH_BUDGET_FLOOR="${raw}" is not a positive number — using ${GH_BUDGET_FLOOR_DEFAULT}\n`,
+  );
+  return GH_BUDGET_FLOOR_DEFAULT;
+}
+
 export function run(argv: string[], ctx: Ctx): number {
   const [cmd, ...rest] = argv;
   const { positional, flags } = parseArgs(rest);
@@ -12511,8 +12531,8 @@ export function run(argv: string[], ctx: Ctx): number {
   // of the GraphQL one (GH-1804's measurement). Fails OPEN on an unreadable
   // budget — a transient outage must never read as starvation (GH-1817).
   if (["next", "frontier", "deliver-queue", "tend-queue", "dep-candidates", "brief", "inbox"].includes(cmd)) {
-    const floor = Number(process.env.RALPH_GH_BUDGET_FLOOR ?? 500);
-    if (Number.isFinite(floor) && floor > 0) {
+    const floor = parseGhBudgetFloor(process.env.RALPH_GH_BUDGET_FLOOR);
+    if (floor > 0) {
       const r = ctx.exec(["gh", "api", "--hostname", ctx.cfg.host, "rate_limit"]);
       if (r.code === 0) {
         try {
