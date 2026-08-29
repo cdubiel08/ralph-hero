@@ -59,6 +59,11 @@ fi
 # double any standing lead.
 herd=$(ralph_agents_json 2>/dev/null) || {
   echo "resume-teams: herd is unreadable — launching nothing" >&2
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    epic=$(jq -r '.epic' <<<"$candidate")
+    echo "resume team GH-$epic: skipped — herd is unreadable"
+  done <<<"$candidates"
   exit 3
 }
 

@@ -189,6 +189,10 @@ seed_lead 'o903-team#ffff6666' "$REPO_DIR"
 HERDR_BIN_PATH=/usr/bin/false run_resume
 is "unreadable herd exits 3" "3" "$RC"
 line_has "unreadable herd is visible" "$OUT" "resume-teams: herd is unreadable — launching nothing"
+is "unreadable herd skips GH-902 exactly once" "1" \
+  "$(printf '%s\n' "$OUT" | grep -c '^resume team GH-902: skipped — herd is unreadable$' || true)"
+is "unreadable herd skips GH-903 exactly once" "1" \
+  "$(printf '%s\n' "$OUT" | grep -c '^resume team GH-903: skipped — herd is unreadable$' || true)"
 is "unreadable herd launches nothing" "0" "$(wc -l <"$TEAM_LOG" | tr -d ' ')"
 
 # work-team's clean completion is a successful resume pass.
