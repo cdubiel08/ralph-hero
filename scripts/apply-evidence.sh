@@ -162,7 +162,22 @@ if [[ "$KIND" == "run" ]]; then
   # `git merge-base --is-ancestor`, which needs BOTH commits in the local
   # object store — in a fresh worktree or in CI that fails for a reason
   # unrelated to ancestry, which is precisely the fail-open being closed here.
+  #
+  # `ancestry_reason` is paired with a TYPED `ancestry_reason_code` because the
+  # free-text string covered two opposite facts under one `not_evaluated`
+  # rendering (GH-2261): a question with no SUBJECT (a settings-only unit with
+  # no ship twin — legitimately proceeds) and a question whose READ failed (we
+  # do not know whether a subject exists — must refuse). A failed read
+  # rendering as a calm pass is the defect this whole check exists to remove,
+  # and the compare-API `unknown` path below already applies that rule; these
+  # two paths were the ones it missed. The code is what `validateApplyEvidence`
+  # keys on, so the close gate becomes a second enforcement point instead of
+  # trusting this script alone — and `no_subject` passes there BY
+  # CONSTRUCTION, needing no operator assertion (an escape hatch every
+  # legitimate unit must carry is the routine path, not an escape hatch).
   ancestry_reason=""
+  ancestry_reason_code=""
+  ancestry_failed_read=""
   derived_shas=""
   operator_shas=""
   if [[ -n "$FIX_MERGE" ]]; then
@@ -178,8 +193,16 @@ if [[ "$KIND" == "run" ]]; then
             closedByPullRequestsReferences(first:10,includeClosedPrs:true){
               nodes{ number merged baseRefName mergeCommit{ oid } } } } } } }
       }' 2>/dev/null || echo ''); fi
-    if [[ -z "$twins" ]]; then
+    if [[ -z "$nwo" ]]; then
+      # Its own string: this never reached the API, and telling the operator
+      # the API could not be read would name the wrong thing to retry.
+      ancestry_reason="could not resolve this repository (gh repo view) to look the twin up"
+      ancestry_reason_code="read_failed"
+      ancestry_failed_read="repo_resolution"
+    elif [[ -z "$twins" ]]; then
       ancestry_reason="could not read the blocked-by twin from the API"
+      ancestry_reason_code="read_failed"
+      ancestry_failed_read="blocked_by_twin"
     else
       # Requiring EVERY collected merge is sound once they are all on the
       # default branch: each is reachable from it, so any commit at or above
@@ -200,8 +223,11 @@ if [[ "$KIND" == "run" ]]; then
           | select(.merged == true) | .mergeCommit.oid // empty ] | unique | .[]' <<<"$twins")
       if [[ -z "$candidates" ]]; then
         ancestry_reason="no blocked-by twin with a merged closing PR"
+        ancestry_reason_code="no_subject"
       elif [[ -z "$def_branch" ]]; then
         ancestry_reason="could not read the default branch to test which fixes landed"
+        ancestry_reason_code="read_failed"
+        ancestry_failed_read="default_branch"
       else
         while read -r cand; do
           [[ -n "$cand" ]] || continue
@@ -215,10 +241,27 @@ if [[ "$KIND" == "run" ]]; then
             *) echo "--- ancestry: ${cand:0:8} is not reachable from $def_branch ($landed) — not a required ancestor" ;;
           esac
         done <<<"$candidates"
-        [[ -n "$derived_shas" ]] || ancestry_reason="no blocked-by twin whose closing PR landed on $def_branch"
+        if [[ -z "$derived_shas" ]]; then
+          ancestry_reason="no blocked-by twin whose closing PR landed on $def_branch"
+          ancestry_reason_code="no_subject"
+        fi
       fi
     fi
   }
+
+  # A read that FAILED is refused here, before anything is composed — the same
+  # treatment the compare-API `unknown` path below already gets, for the same
+  # reason. --fix-merge deliberately does NOT rescue it: the flag ADDS to the
+  # derived set and can never replace it, so proceeding on an operator sha
+  # while the derivation is unknown is precisely "name a weak ancestor and skip
+  # the real fix" — this check's own defect handed a flag (GH-1961/GH-2261).
+  if [[ "$ancestry_reason_code" == "read_failed" ]]; then
+    echo "ERROR: ancestry could not be evaluated — $ancestry_reason (failed read:" >&2
+    echo "       $ancestry_failed_read). Posting nothing; re-run once it responds." >&2
+    echo "       An unreadable read is not an absent subject, and unverified ancestry" >&2
+    echo "       may not reach Done (GH-1961, GH-2261)." >&2
+    exit 1
+  fi
 
   # Operator assertions are added to the derived set, never substituted for it.
   fix_shas=$(printf '%s\n%s\n' "$derived_shas" "$operator_shas" | sed '/^$/d' | sort -u)
@@ -227,8 +270,8 @@ if [[ "$KIND" == "run" ]]; then
     echo "WARNING: ancestry NOT CHECKED — $ancestry_reason." >&2
     echo "         Recency and a green conclusion are not ancestry (GH-1961). Pass" >&2
     echo "         --fix-merge <sha> to make this checkable." >&2
-    payload=$(jq -c --argjson p "$payload" --arg why "$ancestry_reason" \
-      '$p + {ancestry: {status: "not_evaluated", reason: $why}}' <<<'null')
+    payload=$(jq -c --argjson p "$payload" --arg why "$ancestry_reason" --arg code "$ancestry_reason_code" \
+      '$p + {ancestry: {status: "not_evaluated", reason_code: $code, reason: $why}}' <<<'null')
   else
     checked='[]'
     while read -r fix; do

@@ -755,6 +755,31 @@ const VERIFY_AFTER_RE = /<!--\s*ralph-verify-after:\s*([^\s>]+)\s*-->/;
 /** Clock skew tolerance for `applied_at` — a runner minutes ahead of GitHub
  *  must not have its honest evidence rejected as time-travelling. */
 const APPLIED_AT_SKEW_MS = 5 * 60_000;
+/** `ancestry` (GH-1961) is required on `kind=run` evidence stamped at or after
+ *  this instant, and grandfathered before it (GH-2261).
+ *
+ *  The rule itself is "an absent field cannot answer the question, so it
+ *  refuses" — GH-1841's missing-`base_ref` call. What that call could assume
+ *  and this one cannot is that the affected population is IN FLIGHT: an
+ *  attestation is re-run in seconds, while apply evidence is swept by
+ *  `apply-closed-unevidenced` over every closed apply unit forever, and its
+ *  `--fix` REOPENS them — from a cron that fires every 15 minutes. Measured on this board: five
+ *  closes from before the field existed (#1697, #1728, #1739, #1771, #1953),
+ *  all genuinely applied, none of whose ancestry anyone can now re-derive for
+ *  a run that has aged out of the API. A line whose remedy cannot act is the
+ *  GH-2052 unsatisfiable-remedy trap, and here it would have resurrected five
+ *  finished units unattended.
+ *
+ *  So the bound is on the payload's OWN `applied_at`, not on a sweep or a
+ *  caller: one predicate, one definition, no second reader to drift. It is
+ *  self-closing — the set can only shrink, because `apply-evidence.sh` stamps
+ *  `applied_at` from the clock and every payload it can produce today carries
+ *  ancestry. The date is after both GH-1961's merge (2026-08-15T16:38Z) and
+ *  the last pre-ancestry payload observed here (#1953, 18:24Z the same day) —
+ *  merging a gate is not when it becomes true, since agents call the installed
+ *  copy (GH-1825). It defends nothing against a hand-forged payload, and is
+ *  not meant to: shape validity is the floor, not proof. */
+const ANCESTRY_REQUIRED_FROM = Date.parse("2026-08-16T00:00:00Z");
 
 /** Reads the `apply` block from .github/ralph-merge-policy.json.
  *  Fails CLOSED on a malformed policy file, exactly like merge-pr.sh: a
@@ -868,7 +893,32 @@ export function validateApplyEvidence(raw: unknown, now: Date): string | null {
     if (r.head_sha.trim() !== mergeSha) {
       return `run.head_sha ${r.head_sha.trim().slice(0, 8)} != merge_sha ${mergeSha.slice(0, 8)} — that run did not execute the merged code`;
     }
-    return null;
+    // The GH-1961 ancestry rule's SECOND enforcement point (GH-2261). It lived
+    // only in the posting script's refusal path, and that path folded a failed
+    // twin read into the same `not_evaluated` bucket as a genuinely absent
+    // twin — so a flapping API produced shape-valid evidence the close gate
+    // admitted, because nothing here read `ancestry` at all. #2161 closed
+    // through that hole; it was safe only because a human re-derived the
+    // ancestry by hand, not because the gate held.
+    //
+    // `no_subject` passes BY CONSTRUCTION so a settings-only unit needs no
+    // operator assertion: an escape hatch the legitimate majority must use
+    // every time stops being read and becomes the path (the `--why` failure
+    // GH-2198 fixed). An ABSENT `ancestry` refuses rather than passing — it
+    // predates the binding, so it cannot answer the question, the same call
+    // GH-1841 made for a payload with no `base_ref`; a validator that accepted
+    // absence would pass every existing test and inherit the whole hole.
+    const anc = e.ancestry;
+    if (!anc || typeof anc !== "object" || Array.isArray(anc)) {
+      if (new Date(e.applied_at).getTime() < ANCESTRY_REQUIRED_FROM) return null;
+      return `kind=run evidence requires an "ancestry" object (GH-1961) — re-run scripts/apply-evidence.sh to produce one`;
+    }
+    if (anc.status === "descends") return null;
+    if (anc.status === "not_evaluated") {
+      if (anc.reason_code === "no_subject") return null;
+      return `ancestry "not_evaluated" needs reason_code "no_subject" (got ${JSON.stringify(anc.reason_code)}) — a read that FAILED is not an absent subject, and may not pass as one`;
+    }
+    return `ancestry.status must be "descends" or "not_evaluated" (got ${JSON.stringify(anc.status)})`;
   }
   const checks = e.checks;
   if (!Array.isArray(checks) || checks.length === 0) {
