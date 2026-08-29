@@ -78,6 +78,25 @@ CI runs the same command on every PR (and push to main) touching
 construction — path-filtered contexts must never be required checks
 (GH-2057).
 
+### Mutation testing — the stale `__pycache__` trap
+
+Accepting a unit under this batch's mutation-testing practice means: mutate
+the code, confirm the suite reddens, restore the original, confirm the suite
+goes green again. On these Python modules the restore step has a false-red
+trap — after restoring a mutated `.py`, a stale `__pycache__` can still serve
+the **mutant's** compiled bytecode, so the suite stays red while `git status`
+reports the tree clean. That reads exactly like the restore didn't take (or
+worse, like a real defect that survived). If the suite doesn't go green
+immediately after a restore that `git diff` shows as clean, clear the cache
+before trusting the red:
+
+```bash
+find scripts/dream -name '__pycache__' -exec rm -rf {} + 2>/dev/null
+```
+
+This is scoped to Python modules under `scripts/dream/`; the TypeScript, Go
+and shell suites elsewhere in this repo have no equivalent cache to go stale.
+
 ### Backfill the existing backlog
 
 To seed reflections from the accumulated raw backlog (e.g. after first
