@@ -383,21 +383,26 @@ def _rejected_claims(wiki_dir: Path) -> list[str]:
     return out
 
 
-def _promoted_titles(wiki_dir: Path) -> list[str]:
-    """Axioms already promoted to wiki entries (GH-1518).
+def _promoted_titles_with_status(wiki_dir: Path) -> tuple[list[str], list[str]]:
+    """``(titles, unreadable_paths)`` — the read AND whether it was complete.
 
-    A wiki entry's H1 *is* the axiom in declarative form — that is the curate
-    skill's own body contract — so the title is the comparable text.
+    Split out for GH-2259. A skipped entry is harmless to the dedup callers
+    below (they stage a duplicate at worst), but it is NOT harmless to a
+    near-miss scan: a candidate matching the skipped entry then records
+    ``near_misses: 0``, and a report reading that as "the trigger has not
+    fired" would be certifying a negative from a failed read.
     """
     out: list[str] = []
+    unreadable: list[str] = []
     wiki_dir = Path(wiki_dir).expanduser()
     if not wiki_dir.exists():
-        return out
+        return out, unreadable
     for path in sorted(wiki_dir.glob("*.md")):
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
             log.warning("Could not read wiki entry %s: %s", path, exc)
+            unreadable.append(str(path))
             continue
         for line in text.splitlines():
             if line.startswith("# "):
@@ -405,7 +410,16 @@ def _promoted_titles(wiki_dir: Path) -> list[str]:
                 if title:
                     out.append(title)
                 break
-    return out
+    return out, unreadable
+
+
+def _promoted_titles(wiki_dir: Path) -> list[str]:
+    """Axioms already promoted to wiki entries (GH-1518).
+
+    A wiki entry's H1 *is* the axiom in declarative form — that is the curate
+    skill's own body contract — so the title is the comparable text.
+    """
+    return _promoted_titles_with_status(wiki_dir)[0]
 
 
 def _rejected_hashes(wiki_dir: Path) -> set[str]:
@@ -595,8 +609,8 @@ def near_miss_threshold() -> float:
     return value
 
 
-def _neighbour_corpus(wiki_dir: Path) -> list[tuple[str, str]]:
-    """``(text, source)`` for every axiom #1965's trigger names.
+def _neighbour_corpus(wiki_dir: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    """``(corpus, problems)`` for every axiom #1965's trigger names.
 
     Exactly the two sets in that trigger — ``wiki/*.md`` H1s and
     ``_rejected.jsonl`` claims — and deliberately NOT pending
@@ -604,10 +618,26 @@ def _neighbour_corpus(wiki_dir: Path) -> list[tuple[str, str]]:
     already recorded by ``log_suppressions`` as ``staged``/``batch``, and
     folding it in here would make the accumulated count answer a different
     question than the one the deferral is waiting on.
+
+    ``problems`` is non-empty when the comparison set is INCOMPLETE. It is
+    reported, never repaired: a scan against a partial corpus still records
+    everything it found — withholding the hits would lose real evidence — but
+    it may not be read as a certified zero, so the scan carries the flag and
+    the report refuses the "trigger has not fired" wording. The wrapping here
+    (rather than in ``_rejected_claims`` itself) is deliberate: the existing
+    dedup callers' behaviour on an unreadable file is untouched by this unit.
     """
-    return [(t, "promoted") for t in _promoted_titles(wiki_dir)] + [
-        (c, "rejected") for c in _rejected_claims(wiki_dir)
-    ]
+    problems: list[str] = []
+    titles, unreadable = _promoted_titles_with_status(wiki_dir)
+    problems.extend(f"unreadable wiki entry: {p}" for p in unreadable)
+    try:
+        rejected = _rejected_claims(wiki_dir)
+    except OSError as exc:
+        log.warning("Could not read the rejection log under %s: %s", wiki_dir, exc)
+        problems.append(f"unreadable _rejected.jsonl: {exc}")
+        rejected = []
+    corpus = [(t, "promoted") for t in titles] + [(c, "rejected") for c in rejected]
+    return corpus, problems
 
 
 def nearest_neighbour(
@@ -655,7 +685,7 @@ def record_near_misses(
     wiki_dir = Path(wiki_dir).expanduser()
     if threshold is None:
         threshold = near_miss_threshold()
-    corpus = _neighbour_corpus(wiki_dir)
+    corpus, problems = _neighbour_corpus(wiki_dir)
     known_hashes = {_candidate_hash(text) for text, _ in corpus}
 
     hits: list[dict[str, Any]] = []
@@ -691,6 +721,11 @@ def record_near_misses(
         "candidates": len([c for c in candidates if str(c.get("axiom", "")).strip()]),
         "compared_against": len(corpus),
         "near_misses": len(hits),
+        # False means the comparison set could not be fully read, so this
+        # scan's zero is not certifiable. Recorded rather than suppressed:
+        # the hits it DID find are real evidence.
+        "corpus_complete": not problems,
+        "corpus_problems": problems,
         "metric": NEAR_MISS_METRIC,
         "threshold": threshold,
         "recorded_at": now.astimezone(timezone.utc).isoformat(),
@@ -713,6 +748,12 @@ def record_near_misses(
             rec["similarity"],
             rec["neighbour_source"],
             rec["axiom"],
+        )
+    if problems:
+        log.warning(
+            "Near-miss scan ran against an INCOMPLETE corpus (%s); its zero is "
+            "not certifiable and the report will say so.",
+            "; ".join(problems),
         )
     log.info(
         "Near-miss scan: %d of %d candidate(s) resemble one of %d known axiom(s) "
@@ -739,6 +780,7 @@ def near_miss_summary(wiki_dir: Path) -> dict[str, Any]:
         "path": str(path),
         "instrumented": False,
         "runs": 0,
+        "incomplete_scans": 0,
         "near_misses": 0,
         "distinct_candidates": 0,
         "by_source": {},
@@ -770,6 +812,11 @@ def near_miss_summary(wiki_dir: Path) -> dict[str, Any]:
         if kind == "scan":
             out["instrumented"] = True
             out["runs"] += 1
+            # Absent on records written before GH-2259 carried the flag; those
+            # cannot vouch for their corpus either, so absence counts as
+            # incomplete rather than as complete.
+            if rec.get("corpus_complete") is not True:
+                out["incomplete_scans"] += 1
             at = rec.get("recorded_at")
             if isinstance(at, str):
                 if out["first_scan_at"] is None:
@@ -818,7 +865,20 @@ def format_near_miss_report(summary: dict[str, Any]) -> str:
         lines.append(f"  vs:          {by}")
     if summary["max_similarity"] is not None:
         lines.append(f"  max sim:     {summary['max_similarity']:.4f}")
-    if summary["near_misses"] == 0:
+    if summary["incomplete_scans"]:
+        lines.append(
+            f"  incomplete:  {summary['incomplete_scans']} of {summary['runs']} "
+            f"scan(s) ran against a corpus that could not be fully read"
+        )
+    if summary["near_misses"] == 0 and summary["incomplete_scans"]:
+        lines.append(
+            "  verdict:     zero recorded, but NOT CERTIFIABLE — at least one "
+            "scan compared against an incomplete corpus, so a candidate "
+            "matching a skipped entry would have gone uncounted. This says "
+            "nothing either way about #1965's trigger; fix the unreadable "
+            "entries named in the scan records and re-run."
+        )
+    elif summary["near_misses"] == 0:
         lines.append(
             "  verdict:     ZERO churn recorded across the scans above. "
             "#1965's trigger has not fired."
@@ -1087,6 +1147,16 @@ def run_meta_reflect(
     if now is None:
         now = datetime.now(tz=timezone.utc)
     prune_candidates(wiki_dir)
+    # GH-2259 / codex P2: the instrument must record that it RAN, not merely
+    # that it found something. ``empty`` and ``deferred`` are the common quiet
+    # weeks and ``failed`` is the model defect; all three return before the
+    # candidate stream exists, and without a scan here a repo that has been
+    # quiet (or whose LLM has been dead) for a month reports NOT INSTRUMENTED
+    # — reviving the exact collapse this unit removes. A scan with
+    # ``candidates: 0`` is the honest record of a run with nothing to compare.
+    def _scan_only() -> int:
+        return record_near_misses([], wiki_dir, now=now)
+
     since = now - timedelta(days=window_days)
     reflections = fetch_recent_reflections(db_path, since)
     log.info(
@@ -1097,12 +1167,14 @@ def run_meta_reflect(
     )
     if not reflections:
         log.info("No reflections in window; nothing to meta-reflect.")
+        _scan_only()
         return MetaRunResult(
             outcome=OUTCOME_EMPTY,
             reason=f"no reflections in the last {window_days}d",
         )
     if len(reflections) < min_reflections:
         log.info("Below min_reflections; deferring meta-reflection.")
+        _scan_only()
         return MetaRunResult(
             outcome=OUTCOME_DEFERRED,
             reflections=len(reflections),
@@ -1126,6 +1198,7 @@ def run_meta_reflect(
             "WARNING logs above for the LLM failure.",
             len(reflections),
         )
+        _scan_only()
         return MetaRunResult(
             outcome=OUTCOME_FAILED,
             reflections=len(reflections),

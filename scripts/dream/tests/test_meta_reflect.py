@@ -1015,6 +1015,74 @@ class TestNearMissInstrumentation:
         hits = [r for r in self._records(wiki) if r["kind"] == "near-miss"]
         assert [h["axiom"] for h in hits] == [paraphrase]
 
+    def test_quiet_week_still_records_a_scan(self, tmp_path: Path) -> None:
+        """A run that never reaches the candidate stream must still say it ran.
+
+        ``empty`` and ``deferred`` are the COMMON weekly outcomes. Without a
+        scan on those paths a quiet month reports NOT INSTRUMENTED while
+        ``main()`` prints zero near-misses at a file that does not exist —
+        this unit's own collapse, one layer in.
+        """
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred"])
+        empty_db = tmp_path / "empty.db"
+        _seed(empty_db, [])
+        r = meta_reflect.run_meta_reflect(empty_db, wiki, "http://x", "m", now=NOW)
+        assert r.outcome == meta_reflect.OUTCOME_EMPTY
+        assert meta_reflect.near_miss_summary(wiki)["instrumented"] is True
+
+        wiki2 = self._wiki(tmp_path / "b", promoted=["Attention is sacred"])
+        few = tmp_path / "few.db"
+        _seed(few, [{"id": "r1", "date": "2026-06-25T00:00:00+00:00", "content": "x"}])
+        r2 = meta_reflect.run_meta_reflect(few, wiki2, "http://x", "m", now=NOW)
+        assert r2.outcome == meta_reflect.OUTCOME_DEFERRED
+        summary = meta_reflect.near_miss_summary(wiki2)
+        assert summary["instrumented"] is True
+        assert summary["runs"] == 1
+        assert summary["near_misses"] == 0
+
+    def test_incomplete_corpus_zero_is_not_certified(self, tmp_path: Path) -> None:
+        """A zero from a corpus we could not fully read is not evidence.
+
+        ``_promoted_titles`` warns and SKIPS an unreadable entry. A candidate
+        matching that entry then records 0, and the old report wording said
+        "#1965's trigger has not fired" — certifying a negative off a failed
+        read, which is the one thing this file refuses everywhere else.
+        """
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred"])
+        bad = wiki / "unreadable.md"
+        bad.write_text("# Never bulk-promote candidates\n", encoding="utf-8")
+        bad.chmod(0o000)
+        try:
+            meta_reflect.record_near_misses(
+                [{"axiom": "Never bulk-promote the candidates"}], wiki, now=NOW
+            )
+            scans = [r for r in self._records(wiki) if r["kind"] == "scan"]
+            assert scans[0]["corpus_complete"] is False
+            assert scans[0]["corpus_problems"]
+            report = meta_reflect.format_near_miss_report(meta_reflect.near_miss_summary(wiki))
+            assert "NOT CERTIFIABLE" in report
+            assert "has not fired" not in report
+        finally:
+            bad.chmod(0o644)
+
+    def test_complete_corpus_still_certifies_zero(self, tmp_path: Path) -> None:
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred"])
+        meta_reflect.record_near_misses([{"axiom": "Unrelated claim on locks"}], wiki, now=NOW)
+        summary = meta_reflect.near_miss_summary(wiki)
+        assert summary["incomplete_scans"] == 0
+        assert "has not fired" in meta_reflect.format_near_miss_report(summary)
+
+    def test_scan_without_the_flag_counts_as_incomplete(self, tmp_path: Path) -> None:
+        """Pre-GH-2259 records cannot vouch for their corpus either."""
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / meta_reflect.NEAR_MISS_FILENAME).write_text(
+            json.dumps({"kind": "scan", "near_misses": 0, "recorded_at": "2026-01-01T00:00:00+00:00"})
+            + "\n",
+            encoding="utf-8",
+        )
+        assert meta_reflect.near_miss_summary(wiki)["incomplete_scans"] == 1
+
     def test_report_flag_exits_without_running(self, tmp_path: Path, capsys) -> None:
         wiki = self._wiki(tmp_path, promoted=["Attention is sacred"])
         meta_reflect.record_near_misses([{"axiom": "Unrelated claim"}], wiki, now=NOW)

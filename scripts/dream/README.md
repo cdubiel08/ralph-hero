@@ -360,9 +360,21 @@ Four properties carry it:
   default.
 - **Zero is stated, never implied.** Every run writes one `kind: "scan"`
   record even when it finds nothing, so an absent file means *not
-  instrumented* and `near_misses: 0` means *ran and found none*. The scan also
-  carries `compared_against`, because zero near-misses against zero known
-  axioms is arithmetic rather than evidence.
+  instrumented* and `near_misses: 0` means *ran and found none*. That includes
+  the runs that never reach the candidate stream — `empty`, `deferred` and the
+  `failed` defect-zero all record a `candidates: 0` scan, because those are the
+  common weekly outcomes and without them a quiet month reports NOT
+  INSTRUMENTED. The scan also carries `compared_against`, because zero
+  near-misses against zero known axioms is arithmetic rather than evidence.
+- **A zero from an incomplete corpus is not certified.** `_promoted_titles`
+  warns and skips a `*.md` it cannot read, so a candidate matching the skipped
+  entry would go uncounted. The scan records `corpus_complete` and names what
+  it could not read, and `--near-miss-report` then refuses the "trigger has not
+  fired" wording for that window — it says the zero answers nothing either way
+  and points at the unreadable entries. The hits it *did* find are still
+  recorded; withholding them would lose real evidence. A scan record with no
+  flag at all (written before this existed) counts as incomplete, since it
+  cannot vouch for its corpus either.
 - **The metric is named in the record.** `token-jaccard-v1` is lexical bag-of-
   words overlap, deliberately not embedding cosine — an unlabelled `0.42`
   would invite exactly the confusion a #1965 calibration pass must avoid. The
