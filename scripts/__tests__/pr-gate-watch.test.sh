@@ -2495,7 +2495,14 @@ else
   fail "unreachable-healthy-budget (rc=$rc out=${out:0:200})"
 fi
 
-D="$TMP_ROOT/unreachable-exhausted-budget"
+# Codex review (PR #2285, P2): the pre-spend budget NUMBER means "below the
+# floor", not "exhausted" — a merely-low-but-nonzero reading (or, as here, an
+# exhausted one with no confirming error) must NOT suppress the counter on
+# its own, or an unrelated real failure (bad permissions, a malformed
+# response) coinciding with a low budget would nap toward a reset forever
+# instead of surfacing after 3 polls. Only the OBSERVED rate-limit signature
+# (the test above) may do that; the number alone may not.
+D="$TMP_ROOT/exhausted-number-no-signature-still-gives-up"
 mkdir -p "$D"
 touch "$D/fail_view"
 cat >"$D/rate_limit.json" <<EOF
@@ -2503,16 +2510,14 @@ cat >"$D/rate_limit.json" <<EOF
 EOF
 set +e
 out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
-  timeout 5 bash "$SCRIPT" 1740 --watch --interval 1 2>&1)
+  timeout 10 bash "$SCRIPT" 1740 --watch --interval 1 2>&1)
 rc=$?
 set -e
-# A backoff longer than the 5s timeout means the watcher is still alive,
-# asleep, when timeout kills it (rc 124) — it never reached the give-up path.
-if [ "$rc" -eq 124 ] && grep -q "GATE-WAIT budget: GraphQL exhausted, resets at" <<<"$out" \
-   && ! grep -q "GATE-ERROR" <<<"$out"; then
-  pass "an exhausted budget naps toward the reset instead of giving up"
+if [ "$rc" -eq 1 ] && grep -q "GATE-ERROR: gh unreachable for 3 consecutive polls" <<<"$out" \
+   && ! grep -q "GATE-WAIT budget" <<<"$out"; then
+  pass "a low/exhausted budget NUMBER with no observed signature still gives up (does not mask unrelated failures)"
 else
-  fail "unreachable-exhausted-budget (rc=$rc out=${out:0:200})"
+  fail "exhausted-number-no-signature-still-gives-up (rc=$rc out=${out:0:200})"
 fi
 
 # GH-2278: `gh api rate_limit`'s graphql bucket can mirror `core` and read

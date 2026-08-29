@@ -1176,33 +1176,16 @@ while :; do
     sleep "$INTERVAL"
     continue
   else
-    # A plain failure (rc 1): not confirmed as rate-limiting, but still not
-    # necessarily "unreachable" — gb_backoff_seconds is a best-effort SECOND
-    # signal in case the budget number above happens to be accurate for this
-    # poll. It is never load-bearing (the rc==2 branch above is what this fix
-    # actually depends on): when it reads healthy or unreadable it changes
-    # nothing, and the give-up path below is exactly what ran before GH-2276.
-    backoff=$(gb_backoff_seconds)
-    if [ "${backoff:-0}" -gt 0 ]; then
-      gb_report_low
-      reset_epoch=$(( $(date +%s) + backoff ))
-      reset_clock=$(date -r "$reset_epoch" '+%H:%M:%S' 2>/dev/null \
-        || date -u -d "@$reset_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-        || echo "epoch $reset_epoch")
-      wait_line="GATE-WAIT budget: GraphQL exhausted, resets at $reset_clock"
-      if [ "$wait_line" != "$last" ]; then
-        printf '%s\n' "$wait_line"
-        last="$wait_line"
-      fi
-      # Deliberately not counted toward `fails`: this poll didn't fail to
-      # reach GitHub, it correctly declined to spend into a known-empty
-      # budget. The reset can be up to an hour out; cap the nap so a watcher
-      # stays interruptible and re-reports rather than going dark until the
-      # top of the hour.
-      [ "$backoff" -gt 300 ] && backoff=300
-      sleep "$backoff"
-      continue
-    fi
+    # A plain failure (rc 1): GitHub gave no rate-limit signature on this
+    # read, so it is not excluded from the counter. Codex review (PR #2285):
+    # an earlier version of this branch also consulted gb_backoff_seconds —
+    # the pre-spend budget NUMBER, not an observed error — as a second
+    # signal. That number means "below the floor", not "exhausted", so a
+    # merely-low-but-nonzero budget (say 499/500) would have swallowed an
+    # UNRELATED real failure (bad permissions, a malformed response) into a
+    # budget-wait loop that never gives up, hiding it for up to an hour
+    # instead of surfacing it after 3 polls. Only the confirmed signal above
+    # may suppress the counter; a plain failure always counts.
     fails=$((fails + 1))
     if [ "$fails" -ge 3 ]; then
       echo "GATE-ERROR: gh unreachable for $fails consecutive polls — giving up"
