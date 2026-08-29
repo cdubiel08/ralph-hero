@@ -102,7 +102,9 @@ lock_overrides() {
 }
 
 rc=0
-checked=0
+lockfiles=0
+with_overrides=0
+verified=0
 
 for dir in "${dirs[@]}"; do
   pkg="$dir/package.json"
@@ -112,14 +114,15 @@ for dir in "${dirs[@]}"; do
   [ -f "$pkg" ] || err "$rel: pnpm-lock.yaml with no package.json beside it"
   [ -r "$lock" ] || err "$rel: pnpm-lock.yaml is not readable"
 
+  lockfiles=$((lockfiles + 1))
   want=$(manifest_overrides "$pkg") || err "$rel/package.json is not readable JSON"
   if [ -z "$want" ]; then
-    echo "  $rel: no pnpm.overrides declared"
+    echo "  $rel: no pnpm.overrides declared — nothing to verify here"
     continue
   fi
 
   have=$(lock_overrides "$lock")
-  checked=$((checked + 1))
+  with_overrides=$((with_overrides + 1))
 
   while IFS=$'\t' read -r key val; do
     [ -n "$key" ] || continue
@@ -130,11 +133,23 @@ for dir in "${dirs[@]}"; do
     elif [ "$got" != "$val" ]; then
       fail_msg "$rel: pnpm.overrides entry \"$key\" is \"$val\" in package.json but \"$got\" in pnpm-lock.yaml. A silently weakened floor is the same defect as a deleted one."
       rc=1
+    else
+      verified=$((verified + 1))
     fi
   done <<<"$want"
 done
 
+# A verified floor and an absent one must not read alike. The subset assertion
+# is vacuously true over an empty set, and the FAIL message above names the
+# exact route into that state ("do not delete the entry from package.json to
+# make this pass") — so a human clearing the red leg the quick way would
+# otherwise land on a green check whose wording says the floor is fine. Same
+# defect class this guard exists for, one layer in: two facts, one rendering.
 if [ "$rc" -eq 0 ]; then
-  echo "PNPM OVERRIDES PASS  — every pnpm.overrides entry is present in its lockfile ($checked lockfile(s) with overrides)"
+  if [ "$with_overrides" -eq 0 ]; then
+    echo "PNPM OVERRIDES PASS  — NOTHING VERIFIED: no pnpm.overrides declared in any of the $lockfiles lockfile(s) scanned. A lockfile that never carried a floor cannot have dropped one; this is not a statement that any floor is intact."
+  else
+    echo "PNPM OVERRIDES PASS  — $verified floor(s) verified present in $with_overrides of $lockfiles lockfile(s) scanned"
+  fi
 fi
 exit "$rc"

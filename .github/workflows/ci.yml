@@ -72,9 +72,13 @@ jobs:
       # "don't match", never that a security floor was dropped. The reader who
       # needs that sentence is skimming a red leg on a bot PR, so it has to be
       # the first failure in the log, not the second.
+      #
+      # No directory argument: the script discovers every committed
+      # pnpm-lock.yaml, so a second pnpm project added later is covered by the
+      # wiring and not only by the script.
       - name: pnpm overrides present in lockfile
         working-directory: ${{ github.workspace }}
-        run: bash scripts/check-pnpm-overrides.sh plugin/ralph-demo/remotion
+        run: bash scripts/check-pnpm-overrides.sh
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

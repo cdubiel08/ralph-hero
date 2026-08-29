@@ -80,13 +80,39 @@ else
   fail "weakened floor" "rc=$rc out=$out"
 fi
 
-# 4. No pnpm.overrides at all is a legitimate state, not a failure.
+# 4. No pnpm.overrides at all is a legitimate state, not a failure — but it
+#    must not RENDER like a verified one. The subset assertion is vacuously
+#    true over an empty set, and the FAIL message names the exact route into
+#    that state ("do not delete the entry from package.json to make this
+#    pass"), so a human clearing the red leg the quick way would otherwise
+#    land on a green check whose wording says the floor is fine. That is the
+#    defect this guard exists for, appearing inside the guard.
 d=$(fixture none "" "")
 out=$(run "$d"); rc=$?
 if [ "$rc" -eq 0 ] && [[ "$out" == *"no pnpm.overrides declared"* ]]; then
   pass "no overrides declared -> PASS [0]"
 else
   fail "no overrides declared" "rc=$rc out=$out"
+fi
+if [[ "$out" == *"NOTHING VERIFIED"* ]]; then
+  pass "nothing-verified summary says so in words, not a digit"
+else
+  fail "nothing-verified summary" "out=$out"
+fi
+
+# 4b. The two green states must not differ only in a parenthetical count.
+d=$(fixture healthy2 "$WS_PKG" "$WS_LOCK")
+verified_out=$(run "$d")
+d=$(fixture stripped "" "")
+vacuous_out=$(run "$d")
+v_sum=$(printf '%s\n' "$verified_out" | grep 'PNPM OVERRIDES PASS')
+n_sum=$(printf '%s\n' "$vacuous_out" | grep 'PNPM OVERRIDES PASS')
+if [[ "$v_sum" == *"floor(s) verified present"* ]] \
+   && [[ "$n_sum" != *"floor(s) verified present"* ]] \
+   && [[ "$(printf '%s' "$v_sum" | tr -d '0-9')" != "$(printf '%s' "$n_sum" | tr -d '0-9')" ]]; then
+  pass "verified vs nothing-verified differ in words, not only in digits"
+else
+  fail "verified vs nothing-verified" "verified=$v_sum vacuous=$n_sum"
 fi
 
 # 5. YAML may quote the key; the guard compares the key, not its spelling.
