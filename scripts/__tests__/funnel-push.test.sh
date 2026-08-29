@@ -8,9 +8,10 @@
 # which is the half a live-network test could not pin down.
 #
 # Covers: force push on a PR branch redirects; a plain fast-forward push never
-# does; a non-PR branch never does; an unreadable `gh` fails OPEN; the
-# deliver-push.sh segment exempts itself; and a QUOTED `git push --force`
-# (documentation about this rail) is not treated as a command being run.
+# does; a non-PR branch never does; an unreadable `gh` fails OPEN *and says so*
+# while a measured "no open PR" stays silent (GH-2263 — the two must not render
+# alike); the deliver-push.sh segment exempts itself; and a QUOTED
+# `git push --force` (documentation about this rail) is not a command being run.
 
 set -euo pipefail
 
@@ -28,7 +29,8 @@ cat >"$STUB/git" <<'EOF'
 printf '%s\n' "${STUB_BRANCH:-feat/1930-courtesy-funnel-for}"
 EOF
 
-# gh stub: STUB_GH_PRS is the count to report; "fail" exits non-zero.
+# gh stub: STUB_GH_PRS is the count to report; "fail" exits non-zero, and any
+# non-numeric value is the unparseable-answer path.
 cat >"$STUB/gh" <<'EOF'
 #!/usr/bin/env bash
 [ "${STUB_GH_PRS:-1}" = "fail" ] && exit 1
@@ -59,6 +61,24 @@ expect_rc() {
     pass "$desc (exit $LAST_RC)"
   else
     fail "$desc — expected exit $expected, got $LAST_RC. stderr: $LAST_ERR"
+  fi
+}
+
+expect_stderr_empty() {
+  local desc="$1"
+  if [[ -z "$LAST_ERR" ]]; then
+    pass "$desc"
+  else
+    fail "$desc — expected silence, got: $LAST_ERR"
+  fi
+}
+
+expect_stderr_says() {
+  local desc="$1" needle="$2"
+  if [[ "$LAST_ERR" == *"$needle"* ]]; then
+    pass "$desc"
+  else
+    fail "$desc — stderr lacks '$needle': ${LAST_ERR:-<empty>}"
   fi
 }
 
@@ -95,15 +115,30 @@ expect_rc "fast-forward push is never funneled" 0
 run_hook "git push --follow-tags origin feat/1930-courtesy-funnel-for"
 expect_rc "--follow-tags is not -f" 0
 
+# --- GH-2263: fail open, but blind and measured must not render alike -------
+#
+# By this point the hazard is established, so the only remaining unknown is
+# what the rail could not read. All three exit 0 — the rail is never
+# enforcement — but only the two blind ones speak.
+#
 # An assignment prefix on a FUNCTION call persists in bash after it returns,
 # so the stub state is set and unset explicitly rather than inline.
+
 export STUB_GH_PRS=0
 run_hook "git push --force origin scratch/experiment"
 expect_rc "force push with no open PR passes" 0
+expect_stderr_empty "a MEASURED no-open-PR stays silent (a line here is how the two below stop being read)"
 
 export STUB_GH_PRS=fail
 run_hook "git push --force origin feat/1930-courtesy-funnel-for"
 expect_rc "unreadable gh fails OPEN" 0
+expect_stderr_says "a BLIND gh names the branch it could not read" "feat/1930-courtesy-funnel-for"
+expect_stderr_says "a BLIND gh says the lease rail did not evaluate" "did NOT evaluate"
+
+export STUB_GH_PRS="not-a-number"
+run_hook "git push --force origin feat/1930-courtesy-funnel-for"
+expect_rc "unparseable PR count fails OPEN" 0
+expect_stderr_says "an UNPARSEABLE count says the lease rail did not evaluate" "did NOT evaluate"
 unset STUB_GH_PRS
 
 run_hook "bash ralph/scripts/deliver-push.sh --branch feat/1930-courtesy-funnel-for --expect abc123"
