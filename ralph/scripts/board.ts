@@ -3511,7 +3511,14 @@ export type LeaseProbe = (number: number) => LeaseHold | null;
  *
  *  Own-session locks are excluded. A deliver pass driven from the very session
  *  that holds the unit is not racing itself, and blocking there would make the
- *  lane unable to close out its own work. */
+ *  lane unable to close out its own work.
+ *
+ *  Issue numbers are per-repo (GH-2293): the sessions dir is machine-shared,
+ *  so a sibling repo's own `wt-<N>-*.json` sits in the same directory and
+ *  names a DIFFERENT issue #N. Excluded only on a CONFIRMED cross-repo
+ *  mismatch — an unresolvable checkout on either side keeps blocking, the
+ *  same fail-safe direction the TTL itself already takes (over-block, never
+ *  lose a commit). */
 export function localSessionLease(ctx: Ctx): LeaseProbe | null {
   if (!ctx.session?.dir) return null;
   let names: string[];
@@ -3522,6 +3529,10 @@ export function localSessionLease(ctx: Ctx): LeaseProbe | null {
   }
   const cutoff = ctx.now().getTime() - ctx.cfg.lockTtlMin * 60_000;
   const ttlMs = ctx.cfg.lockTtlMin * 60_000;
+  // Resolved once: the answer is the same for every row, and a failure here
+  // leaves every hold's repo identity unknown rather than marking every hold
+  // foreign, which would silently disarm the guard (readLocalLeases, GH-2108).
+  const ourCommon = ctx.repoRoot ? gitCommonDir(ctx.repoRoot) : null;
   const holds = new Map<number, LeaseHold>();
   for (const name of names) {
     // The same shape `worktreeLockPath` writes. Matched with an anchored
@@ -3535,6 +3546,9 @@ export function localSessionLease(ctx: Ctx): LeaseProbe | null {
     if (!held) continue;
     if (held.freshMs < cutoff) continue; // aged out on the board claim's own clock
     if (held.lock.session === ctx.session.id) continue; // ours
+    const theirCommon =
+      worktreeState(held.lock.worktree) === "present" ? gitCommonDir(held.lock.worktree) : null;
+    if (ourCommon && theirCommon && ourCommon !== theirCommon) continue; // a different repo's #N
     // Several worktrees may hold the same unit (each has its own digest). Keep
     // the one that expires LAST: the row may not re-enter the queue while any
     // live session still holds it.
