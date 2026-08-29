@@ -37,7 +37,7 @@ rh_status() {
 }
 
 rh_herdr_status_row() {
-  local herdr server_status
+  local herdr server_status server_state
   herdr=$(rh_resolve_herdr_bin) || {
     rh_status failed herdr 'not evaluated' 'server status unavailable'
     return 1
@@ -46,8 +46,17 @@ rh_herdr_status_row() {
     rh_status failed herdr 'not evaluated' 'server status unavailable'
     return 1
   }
-  [ -n "$server_status" ] || {
-    rh_status attention herdr degraded 'empty server status'
+  [ -n "$server_status" ] && command -v jq >/dev/null 2>&1 || {
+    rh_status failed herdr 'not evaluated' 'server status unavailable'
+    return 1
+  }
+  server_state=$(printf '%s\n' "$server_status" |
+    jq -er 'if type == "object" and (.status | type == "string") then .status else empty end' 2>/dev/null) || {
+      rh_status failed herdr 'not evaluated' 'server status unavailable'
+      return 1
+    }
+  [ "$server_state" = "running" ] || {
+    rh_status failed herdr 'not evaluated' 'server status unavailable'
     return 1
   }
   rh_status healthy herdr running 'server status observed'

@@ -75,7 +75,7 @@ function readLines(path: string): string[] {
 
 function runSurface(
   argv: string[],
-  env: { NO_COLOR?: string; LC_ALL?: string } = {},
+  env: { NO_COLOR?: string; LC_ALL?: string; herdrStatus?: string } = {},
 ): { status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string } {
   boardLog = join(tmp, "board.log");
   herdrLog = join(tmp, "herdr.log");
@@ -102,7 +102,7 @@ esac
     `#!/bin/bash
 printf '%s\\n' "$*" >>"${herdrLog}"
 case "$*" in
-  'status server --json') echo '{"status":"running"}' ;;
+  'status server --json') printf '%s\\n' '${env.herdrStatus ?? '{"status":"running"}'}' ;;
 esac
 `,
   );
@@ -215,5 +215,17 @@ exit 23
   it("a C locale uses the ASCII state vocabulary", () => {
     const r = runSurface([], { LC_ALL: "C", NO_COLOR: "1" });
     expect(r.stdout).toMatch(/\b(OK|WARN|FAIL)\b/);
+  });
+
+  it.each([
+    ["malformed JSON", "not json"],
+    ["an empty object", "{}"],
+    ["an explicit stopped state", '{"status":"stopped"}'],
+    ["an empty successful response", ""],
+  ])("dispatch renders %s as not evaluated", (_description, herdrStatus) => {
+    const r = runSurface(["dispatch"], { LC_ALL: "C", NO_COLOR: "1", herdrStatus });
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("FAIL herdr        not evaluated    server status unavailable");
+    expect(r.stdout).not.toContain("herdr        running");
   });
 });
