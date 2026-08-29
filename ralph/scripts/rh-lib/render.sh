@@ -1,6 +1,156 @@
 #!/usr/bin/env bash
 # rh-owned rendering. Delegated board output never passes through this file.
 
+rh_color_init() {
+  RH_GREEN="" RH_AMBER="" RH_RED="" RH_CYAN="" RH_DIM="" RH_RESET=""
+  [ -n "${NO_COLOR:-}" ] && return 0
+  case "${RH_COLOR_MODE:-auto}" in
+    never) return 0 ;;
+    auto) [ -t 1 ] || return 0 ;;
+    always) ;;
+    *) echo "rh: invalid color mode '${RH_COLOR_MODE:-}'" >&2; return 64 ;;
+  esac
+  RH_GREEN=$(printf '\033[32m')
+  RH_AMBER=$(printf '\033[33m')
+  RH_RED=$(printf '\033[31m')
+  RH_CYAN=$(printf '\033[36m')
+  RH_DIM=$(printf '\033[2m')
+  RH_RESET=$(printf '\033[0m')
+}
+
+rh_status() {
+  local kind="$1" label="$2" value="$3" detail="$4" color glyph
+  case "$kind" in
+    healthy) color="$RH_GREEN"; glyph="●"; glyph_ascii="OK" ;;
+    attention) color="$RH_AMBER"; glyph="▲"; glyph_ascii="WARN" ;;
+    failed) color="$RH_RED"; glyph="■"; glyph_ascii="FAIL" ;;
+    action) color="$RH_CYAN"; glyph="◆"; glyph_ascii="DO" ;;
+    metadata) color="$RH_DIM"; glyph="·"; glyph_ascii="INFO" ;;
+    *) echo "rh: invalid status kind '$kind'" >&2; return 64 ;;
+  esac
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *UTF-8*|*utf8*|*utf-8*) ;;
+    *) glyph="$glyph_ascii" ;;
+  esac
+  printf '%s%s %-12s%s %-16s %s%s%s\n' \
+    "$color" "$glyph" "$label" "$RH_RESET" "$value" "$RH_DIM" "$detail" "$RH_RESET"
+}
+
+rh_herdr_status_row() {
+  local herdr server_status
+  herdr=$(rh_resolve_herdr_bin) || {
+    rh_status failed herdr 'not evaluated' 'server status unavailable'
+    return 1
+  }
+  server_status=$("$herdr" status server --json 2>/dev/null) || {
+    rh_status failed herdr 'not evaluated' 'server status unavailable'
+    return 1
+  }
+  [ -n "$server_status" ] || {
+    rh_status attention herdr degraded 'empty server status'
+    return 1
+  }
+  rh_status healthy herdr running 'server status observed'
+}
+
+rh_dispatch_status() {
+  local board repo output rc=0
+  rh_color_init || return $?
+  repo=$(rh_repo_root) || return $?
+  rh_herdr_status_row || rc=1
+  board=$(rh_resolve_board) || {
+    rh_status failed dispatch 'not evaluated' 'board is unavailable'
+    rh_status failed teams 'not evaluated' 'board is unavailable'
+    return 1
+  }
+  output=$("$board" who dispatch 2>&1) || {
+    rh_status failed dispatch 'not evaluated' 'dispatch address unavailable'
+    rc=1
+    output=""
+  }
+  if [ -n "$output" ]; then
+    rh_status healthy dispatch ready 'address observed'
+  else
+    rh_status failed dispatch 'not evaluated' 'empty dispatch address'
+    rc=1
+  fi
+  output=$("$board" roster 2>&1) || {
+    rh_status failed teams 'not evaluated' 'roster unavailable'
+    rc=1
+    output=""
+  }
+  if [ -n "$output" ]; then
+    rh_status healthy teams ready 'roster observed'
+  else
+    rh_status failed teams 'not evaluated' 'empty roster'
+    rc=1
+  fi
+  return "$rc"
+}
+
+rh_inbox() {
+  local board arg
+  board=$(rh_resolve_board) || return $?
+  for arg in "$@"; do
+    case "$arg" in
+      --json|--digest) ;;
+      --mark)
+        echo "rh inbox is read-only; use 'rh board inbox --digest --mark' for the explicit stamp" >&2
+        return 64
+        ;;
+      *) echo "rh inbox: unknown argument '$arg' (accepts --json, --digest)" >&2; return 64 ;;
+    esac
+  done
+  "$board" inbox "$@"
+}
+
+rh_fleet() {
+  local scripts repo
+  repo=$(rh_repo_root) || return $?
+  scripts=$(rh_resolve_herdr_scripts "$repo") || return $?
+  (cd "$repo" && RALPH_HERDR_REPO="$repo" bash "$scripts/fleet-status.sh" "$@")
+}
+
+rh_doctor() {
+  local board repo rc=0
+  repo=$(rh_repo_root) || return $?
+  board=$(rh_resolve_board) || return $?
+  "$board" doctor || rc=1
+  RALPH_HERDR_REPO="$repo" RALPH_HERDR_BOARD="$board" bash "$RH_SCRIPT_DIR/herdr-setup.sh" check || rc=1
+  return "$rc"
+}
+
+rh_home_prompt() {
+  local choice
+  printf '\n[d] start day   [c] cockpit   [i] inbox   [f] fleet   [q] quit\n> '
+  IFS= read -r choice || return 0
+  case "$choice" in
+    d) rh_day ;;
+    c) rh_cockpit ;;
+    i) rh_inbox ;;
+    f) rh_fleet ;;
+    q|'') return 0 ;;
+    *) echo "unknown action '$choice'" >&2; return 64 ;;
+  esac
+}
+
+rh_home() {
+  local board repo rc=0
+  rh_color_init || return $?
+  repo=$(rh_repo_root) || return $?
+  printf 'ralph hero  %s\n\n' "$(basename "$repo")"
+  rh_herdr_status_row || rc=1
+  board=$(rh_resolve_board) || return $?
+  printf '\nBRIEF\n'
+  "$board" brief || rc=1
+  printf '\nINBOX\n'
+  "$board" inbox || rc=1
+  if [ -t 0 ] && [ -t 1 ]; then
+    rh_home_prompt || rc=$?
+  fi
+  return "$rc"
+}
+
 rh_render_help() {
   case "${1:-}" in
     ""|rh)

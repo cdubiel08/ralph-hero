@@ -33,12 +33,35 @@ done
 [ -n "${NO_COLOR:-}" ] && RH_COLOR_MODE=never
 export RH_COLOR_MODE
 
-command="${1:-help}"
+command="${1:-}"
 case "$command" in
   board)
     shift
     board=$(rh_resolve_board) || exit $?
     exec "$board" "$@"
+    ;;
+  "")
+    rh_home
+    ;;
+  dispatch)
+    shift
+    [ "$#" -eq 0 ] || {
+      usage_error "unknown dispatch command '${1-}'; try 'rh dispatch'"
+      exit $?
+    }
+    rh_dispatch_status
+    ;;
+  inbox)
+    shift
+    rh_inbox "$@"
+    ;;
+  fleet)
+    shift
+    rh_fleet "$@"
+    ;;
+  doctor)
+    shift
+    rh_doctor "$@"
     ;;
   help|-h|--help)
     [ "$#" -eq 0 ] || shift
@@ -46,9 +69,6 @@ case "$command" in
     ;;
   version|--version)
     printf 'rh %s\n' "$(rh_version)"
-    ;;
-  "")
-    rh_render_help
     ;;
   *)
     usage_error "unknown command '$command'; try 'rh dispatch' or 'rh help'"
