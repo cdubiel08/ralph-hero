@@ -39,8 +39,11 @@
 # places, and a bare repo-root guess cannot tell which one you meant." That
 # refuses, listing the candidates, rather than picking one silently — the
 # same "a different checkout" scenario this plugin's docs already name
-# elsewhere (herdr-plugin-sync.sh). `--workspace <id>` is the disambiguation
-# escape hatch, and skips path matching entirely.
+# elsewhere (herdr-plugin-sync.sh). `--workspace <id>` is a DISAMBIGUATION
+# hatch, not a bypass of repo identity: it must still name one of the
+# workspaces <repo-path> itself matches (by checkout_path or, coarser,
+# repo_root) — an id for an unrelated repo is refused, naming what that
+# workspace's own checkout actually is, never opened against silently.
 #
 # Paths are compared after `cd DIR && pwd -P` (the realpath idiom this repo
 # already uses in scope.sh) on both sides, so a symlinked path (macOS's
@@ -90,9 +93,11 @@ Options:
   --placement overlay|split|tab|zoomed   default: split
   --direction right|down                 default: right (split only)
   --focus | --no-focus                   default: --focus
-  --workspace ID   skip path matching — use this exact herdr workspace id
-                   (the disambiguation escape hatch when a repo has several
-                   worktrees open and repo-path alone cannot tell them apart)
+  --workspace ID   disambiguate among the workspaces <repo-path> itself
+                   matches (when a repo has several worktrees open and
+                   repo-path alone cannot tell them apart) — an id for a
+                   workspace that does not belong to <repo-path> is refused,
+                   never silently opened against
   -h, --help
 
 No matching workspace, or more than one with no --workspace to pick among
@@ -163,73 +168,79 @@ TARGET=$(printf '%s' "$REPO_REAL" | sed 's|/*$||')
 ws_out=$(ralph_herdr_call workspace_list workspace list) ||
   die "cannot read the herdr workspace list ($(ralph_herdr_err_code "${ws_out:-}" || true)) — refusing to guess which workspace holds $REPO_PATH"
 
-ws_id="" cwd_path=""
+ws_id="" cwd_path="" match=""
+
+# Augment every workspace row with the path spellings it should match on: the
+# raw checkout_path/repo_root herdr reported, plus each one's local realpath
+# when it still resolves. Two separate arrays (never merged) is what keeps
+# checkout_path an unambiguous win over the repo-family fallback. Computed
+# UNCONDITIONALLY — --workspace disambiguates AMONG these candidates, it does
+# not skip past them, so the membership check below needs the same set the
+# auto-pick path uses.
+augmented=""
+while IFS= read -r wsrow; do
+  [ -n "$wsrow" ] || continue
+  cp=$(jq -r '.worktree.checkout_path // empty' <<<"$wsrow")
+  rr=$(jq -r '.worktree.repo_root // empty' <<<"$wsrow")
+  pcp="" prr=""
+  [ -z "$cp" ] || pcp=$(_iv_realpath "$cp")
+  [ -z "$rr" ] || prr=$(_iv_realpath "$rr")
+  row=$(jq -c --arg cp "$cp" --arg rr "$rr" --arg pcp "$pcp" --arg prr "$prr" '
+    . + {
+      _cp_paths: ([$cp, $pcp] | map(select(. != "")) | unique),
+      _rr_paths: ([$rr, $prr] | map(select(. != "")) | unique)
+    }' <<<"$wsrow")
+  augmented="$augmented$row"$'\n'
+done < <(jq -c '.workspaces[]?' <<<"$ws_out")
+ws_augmented=$(jq -sc '{workspaces: .}' <<<"$augmented")
+
+primary=$(jq -c --arg t "$TARGET" '[.workspaces[] | select(._cp_paths | index($t))]' <<<"$ws_augmented")
+n_primary=$(jq 'length' <<<"$primary")
+
+_iv_candidates() {
+  jq -r '.[] | "  \(.workspace_id) (\(.label // "?")) — \(.worktree.checkout_path // .worktree.repo_root // "no worktree recorded")"' <<<"$1"
+}
 
 if [ -n "$WORKSPACE_OVERRIDE" ]; then
-  ws_id="$WORKSPACE_OVERRIDE"
-  # Capture the matched row rather than just checking it exists: the whole
-  # point of --workspace is disambiguating "same repo, several worktrees", so
-  # its own checkout_path — not the caller's repo-path argument, which named
-  # the REPO, not necessarily THIS checkout — is what --cwd must carry. Using
-  # $TARGET here would open the right pane in the wrong directory whenever
-  # the named workspace's checkout differs from the path the caller typed.
-  match=$(jq -c --arg w "$ws_id" '[.workspaces[]? | select(.workspace_id == $w)][0] // empty' <<<"$ws_out")
+  match=$(jq -c --arg w "$WORKSPACE_OVERRIDE" '[.workspaces[]? | select(.workspace_id == $w)][0] // empty' <<<"$ws_augmented")
   [ -n "$match" ] ||
-    die "--workspace $ws_id names no workspace herdr currently has open (see 'herdr workspace list')"
-  cwd_path=$(jq -r '.worktree.checkout_path // empty' <<<"$match")
-  [ -n "$cwd_path" ] || cwd_path="$TARGET"
-else
-  # Augment each workspace row with the path spellings it should match on:
-  # the raw checkout_path/repo_root herdr reported, plus each one's local
-  # realpath when it still resolves. Two separate arrays (never merged) is
-  # what keeps checkout_path an unambiguous win over the repo-family fallback.
-  augmented=""
-  while IFS= read -r wsrow; do
-    [ -n "$wsrow" ] || continue
-    cp=$(jq -r '.worktree.checkout_path // empty' <<<"$wsrow")
-    rr=$(jq -r '.worktree.repo_root // empty' <<<"$wsrow")
-    pcp="" prr=""
-    [ -z "$cp" ] || pcp=$(_iv_realpath "$cp")
-    [ -z "$rr" ] || prr=$(_iv_realpath "$rr")
-    row=$(jq -c --arg cp "$cp" --arg rr "$rr" --arg pcp "$pcp" --arg prr "$prr" '
-      . + {
-        _cp_paths: ([$cp, $pcp] | map(select(. != "")) | unique),
-        _rr_paths: ([$rr, $prr] | map(select(. != "")) | unique)
-      }' <<<"$wsrow")
-    augmented="$augmented$row"$'\n'
-  done < <(jq -c '.workspaces[]?' <<<"$ws_out")
-  ws_augmented=$(jq -sc '{workspaces: .}' <<<"$augmented")
-
-  primary=$(jq -c --arg t "$TARGET" '[.workspaces[] | select(._cp_paths | index($t))]' <<<"$ws_augmented")
-  n_primary=$(jq 'length' <<<"$primary")
-
-  _iv_candidates() {
-    jq -r '.[] | "  \(.workspace_id) (\(.label // "?")) — \(.worktree.checkout_path // .worktree.repo_root // "no worktree recorded")"' <<<"$1"
-  }
-
-  if [ "$n_primary" -eq 1 ]; then
-    match=$(jq -c '.[0]' <<<"$primary")
-  elif [ "$n_primary" -gt 1 ]; then
-    die "$n_primary herdr workspaces are open at exactly '$TARGET':
+    die "--workspace $WORKSPACE_OVERRIDE names no workspace herdr currently has open (see 'herdr workspace list')"
+  # Membership, not existence: --workspace disambiguates AMONG the workspaces
+  # repo-path itself would have matched (by checkout_path or, coarser,
+  # repo_root) — it is not a way to point this script at a different repo
+  # entirely. Without this, --workspace <id-of-repo-B> against
+  # `invoke.sh /path/to/repo-A ...` would silently open repo B's own
+  # checkout_path with no mismatch signal at all — the exact failure class
+  # this script exists to close, just moved one level down.
+  is_member=$(jq -r --arg t "$TARGET" \
+    '((._cp_paths // []) + (._rr_paths // [])) | index($t) != null' <<<"$match")
+  if [ "$is_member" != "true" ]; then
+    actual=$(jq -r '.worktree.checkout_path // .worktree.repo_root // "no worktree recorded"' <<<"$match")
+    die "--workspace $WORKSPACE_OVERRIDE does not belong to repo path '$REPO_PATH' (resolved: $TARGET) — that workspace's own checkout is '$actual'. --workspace only picks among the workspaces repo-path itself matches; it does not retarget which repo you are opening a pane in."
+  fi
+elif [ "$n_primary" -eq 1 ]; then
+  match=$(jq -c '.[0]' <<<"$primary")
+elif [ "$n_primary" -gt 1 ]; then
+  die "$n_primary herdr workspaces are open at exactly '$TARGET':
 $(_iv_candidates "$primary")
 pass --workspace <id> to pick one"
-  else
-    fallback=$(jq -c --arg t "$TARGET" '[.workspaces[] | select(._rr_paths | index($t))]' <<<"$ws_augmented")
-    n_fallback=$(jq 'length' <<<"$fallback")
-    if [ "$n_fallback" -eq 1 ]; then
-      match=$(jq -c '.[0]' <<<"$fallback")
-    elif [ "$n_fallback" -gt 1 ]; then
-      die "'$REPO_PATH' names a repo open in $n_fallback different checkouts (a different worktree each) — repo-root alone cannot tell them apart:
+else
+  fallback=$(jq -c --arg t "$TARGET" '[.workspaces[] | select(._rr_paths | index($t))]' <<<"$ws_augmented")
+  n_fallback=$(jq 'length' <<<"$fallback")
+  if [ "$n_fallback" -eq 1 ]; then
+    match=$(jq -c '.[0]' <<<"$fallback")
+  elif [ "$n_fallback" -gt 1 ]; then
+    die "'$REPO_PATH' names a repo open in $n_fallback different checkouts (a different worktree each) — repo-root alone cannot tell them apart:
 $(_iv_candidates "$fallback")
 pass --workspace <id> to pick one, or name the exact checkout's own path"
-    else
-      die "no herdr workspace has repo path '$REPO_PATH' (resolved: $TARGET) open — open it first ('herdr workspace create --cwd $REPO_PATH' or 'herdr worktree create/open'), or check the path"
-    fi
+  else
+    die "no herdr workspace has repo path '$REPO_PATH' (resolved: $TARGET) open — open it first ('herdr workspace create --cwd $REPO_PATH' or 'herdr worktree create/open'), or check the path"
   fi
-  ws_id=$(jq -r '.workspace_id' <<<"$match")
-  cwd_path=$(jq -r '.worktree.checkout_path // empty' <<<"$match")
-  [ -n "$cwd_path" ] || cwd_path="$TARGET"
 fi
+
+ws_id=$(jq -r '.workspace_id' <<<"$match")
+cwd_path=$(jq -r '.worktree.checkout_path // empty' <<<"$match")
+[ -n "$cwd_path" ] || cwd_path="$TARGET"
 
 # split/zoomed need an existing pane id INSIDE the target workspace; herdr
 # refuses --workspace alone for either (invalid_params, live-confirmed for

@@ -144,6 +144,16 @@ run "$REPO_MAIN" dashboard --workspace does-not-exist
 is "--workspace naming an unknown id: refuses" "1" "$rc"
 has "--workspace naming an unknown id: says so" "names no workspace herdr currently has open" "$out"
 
+# --workspace naming a REAL workspace, but for an UNRELATED repo — the
+# second P1: --workspace must disambiguate among repo-path's own candidates,
+# never retarget to a different repo entirely. w7 (other-repo) exists in
+# $BASE_WS but shares neither checkout_path nor repo_root with $REPO_MAIN.
+run "$REPO_MAIN" dashboard --workspace w7
+is "--workspace naming an unrelated repo's workspace: refuses" "1" "$rc"
+has "--workspace naming an unrelated repo's workspace: names the mismatch" "does not belong to repo path" "$out"
+has "--workspace naming an unrelated repo's workspace: names its actual checkout" "$OTHER_REPO" "$out"
+hasnt "--workspace naming an unrelated repo's workspace: opens nothing" "plugin pane open" "$log"
+
 # repo_root matches TWO worktree workspaces (wAD, wAH) with no checkout_path
 # match of its own — the "same repo, several checkouts" case. Simulated by
 # asking for a path that only the fallback tier can see: strip the main
