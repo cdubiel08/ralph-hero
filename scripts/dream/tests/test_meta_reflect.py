@@ -969,6 +969,52 @@ class TestNearMissInstrumentation:
         ]
         assert [s["axiom"] for s in staged] == [paraphrase]
 
+    def test_suppressed_candidate_is_still_recorded(self, tmp_path: Path) -> None:
+        """Pins the ORDER: recording happens before the paraphrase gate.
+
+        Its sibling above cannot. That candidate stages, so it survives the
+        gate and gets recorded whichever side of ``filter_paraphrases`` the
+        call sits on — moving the call leaves all of those tests green. The
+        mirror case is the one that separates the orderings: a candidate the
+        gate DROPS is in the raw stream and absent from the filtered one, so
+        ``near_misses == 1`` with ``staged == 0`` is only reachable by reading
+        the raw stream.
+
+        The failure this guards is quiet by construction. A refactor that
+        moved the call would raise nothing and simply stop covering suppressed
+        candidates — and #1965's deferral would then lift on an under-report
+        that looks exactly like a calmer corpus.
+        """
+        db = tmp_path / "k.db"
+        _seed(db, [
+            {"id": f"r{i}", "date": "2026-06-25T00:00:00+00:00", "content": f"reflection {i}"}
+            for i in range(6)
+        ])
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred; never bulk-promote candidates"])
+        paraphrase = "Never bulk-promote candidates; attention is sacred"
+
+        def post(url, body, timeout):  # noqa: ANN001, ARG001
+            if "de-duplicating" in body["messages"][0]["content"]:
+                # The gate drops it — the case the sibling test cannot reach.
+                return 200, {"choices": [{"message": {"content": '{"duplicates": [0]}'}}]}
+            return 200, {
+                "choices": [{"message": {"content": json.dumps(
+                    {"candidates": [{"axiom": paraphrase, "rationale": "r", "source_reflection_ids": []}]}
+                )}}]
+            }
+
+        result = meta_reflect.run_meta_reflect(
+            db, wiki, "http://x", "m", now=NOW, http_post=post
+        )
+        assert result.staged == 0
+        assert result.outcome == meta_reflect.OUTCOME_SUPPRESSED
+        assert result.near_misses == 1, (
+            "a suppressed candidate must still be recorded — if this is 0 the "
+            "near-miss call has moved behind filter_paraphrases"
+        )
+        hits = [r for r in self._records(wiki) if r["kind"] == "near-miss"]
+        assert [h["axiom"] for h in hits] == [paraphrase]
+
     def test_report_flag_exits_without_running(self, tmp_path: Path, capsys) -> None:
         wiki = self._wiki(tmp_path, promoted=["Attention is sacred"])
         meta_reflect.record_near_misses([{"axiom": "Unrelated claim"}], wiki, now=NOW)
