@@ -107,36 +107,79 @@ export const LANE_CHARS = Object.keys(LANES) as Lane[];
 /** The role registry. A role answers ONE question the lane letter cannot:
  *  may this agent write the working tree it was spawned into?
  *
- *  `writesTree` is the invariant's whole surface. Exactly one agent per
- *  worktree may carry a role with `writesTree: true` — that is what makes a
- *  shared checkout safe where GH-1774's K sibling writers were not, and it is
- *  enforced at the spawn path (ralph_driver_guard), not asked of prose.
+ *  Containment is two independent mechanisms (design record:
+ *  thoughts/shared/ideas/2026-08-16-containment-two-layers-design.md), with
+ *  different enforcement authorities, different coverage, and OPPOSITE
+ *  failure directions: `toolBinding` (Edit/Write/NotebookEdit — enforced by
+ *  the harness before a tool runs, fails CLOSED and loudly) and
+ *  `processContainment` (Bash and every child process — enforced by the
+ *  kernel, fails OPEN and silently). A role that may not write the tree
+ *  needs BOTH: either mechanism alone leaves the other channel unguarded.
+ *  Both are required fields of the same row, so tsc refuses a role that
+ *  declares one and not the other — the half-specified state is
+ *  unrepresentable rather than caught later by a spawn path that might
+ *  forget. This unit types the registry only; nothing here wires either
+ *  mechanism onto the spawn path (that is #A2 and #A3).
+ *
+ *  `writesTree` is DERIVED — true unless both mechanisms deny — never
+ *  authored on a row, so it cannot drift from them. It is still an own,
+ *  enumerable property of every `ROLES` entry (not a separate table), so
+ *  every pre-existing consumer — LANE_ROLES, spawnEdgeAllowed, the `role`
+ *  TOKENS validator, and roles.sh's bash mirror via the golden-table test —
+ *  reads it exactly as before this unit.
  *
  *  `spawns` is the edge rule: which roles this role may spawn on the herdr
  *  plane. An empty list is a LEAF — investigators, tenders, relays and
  *  watchers spawn nothing. (The watcher's refill is not a counterexample: a
  *  refill spawn is recorded as a depth-0 ROOT with no parent ref, the same
  *  shape a human click produces, so it crosses no edge here.) */
-export const ROLES = {
+const ROLE_DEFS = {
   orchestrator: {
     doc: "plans and dispatches; owns no tree",
-    writesTree: false,
+    toolBinding: true,
+    processContainment: true,
     spawns: ["driver", "investigator", "tender"],
   },
   driver: {
     doc: "the one writer in a worktree — holds the board claim, cuts the branch",
-    writesTree: true,
+    toolBinding: false,
+    processContainment: false,
     spawns: ["investigator"],
   },
   investigator: {
     doc: "read-only fan-out worker (ralph/agents/investigator.md); a leaf",
-    writesTree: false,
+    toolBinding: true,
+    processContainment: true,
     spawns: [],
   },
-  tender: { doc: "board metadata hygiene; writes no tree", writesTree: false, spawns: [] },
-  relay: { doc: "message transport; writes no tree", writesTree: false, spawns: [] },
-  watcher: { doc: "observes and reconciles; writes no tree", writesTree: false, spawns: [] },
-} as const satisfies Record<string, { doc: string; writesTree: boolean; spawns: readonly string[] }>;
+  tender: {
+    doc: "board metadata hygiene; writes no tree",
+    toolBinding: true,
+    processContainment: true,
+    spawns: [],
+  },
+  relay: {
+    doc: "message transport; writes no tree",
+    toolBinding: true,
+    processContainment: true,
+    spawns: [],
+  },
+  watcher: {
+    doc: "observes and reconciles; writes no tree",
+    toolBinding: true,
+    processContainment: true,
+    spawns: [],
+  },
+} as const satisfies Record<string, { doc: string; toolBinding: boolean; processContainment: boolean; spawns: readonly string[] }>;
+
+type RoleRow = (typeof ROLE_DEFS)[keyof typeof ROLE_DEFS] & { writesTree: boolean };
+
+export const ROLES = Object.fromEntries(
+  Object.entries(ROLE_DEFS).map(([role, def]) => [
+    role,
+    { ...def, writesTree: !(def.toolBinding && def.processContainment) } as RoleRow,
+  ]),
+) as Record<keyof typeof ROLE_DEFS, RoleRow>;
 export type Role = keyof typeof ROLES;
 export const ROLE_NAMES = Object.keys(ROLES) as Role[];
 
