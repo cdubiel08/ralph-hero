@@ -76,7 +76,11 @@ rh_day() {
       --team)
         shift
         [ "$#" -gt 0 ] || { echo "rh day: --team needs an epic number" >&2; return 64; }
-        case "$1" in ''|*[!0-9]*) echo "rh day: invalid epic '$1'" >&2; return 64 ;; esac
+        case "$1" in
+          ''|*[!0-9]*) echo "rh day: invalid epic '$1'" >&2; return 64 ;;
+          *[1-9]*) ;;
+          *) echo "rh day: invalid epic '$1'" >&2; return 64 ;;
+        esac
         case " ${teams[*]-} " in *" $1 "*) ;; *) teams+=("$1") ;; esac
         ;;
       *) echo "rh day: unknown argument '$1'" >&2; return 64 ;;

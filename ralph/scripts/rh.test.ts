@@ -348,6 +348,8 @@ exit 23
   it.each([
     [["day", "--team"], "--team needs an epic number"],
     [["day", "--team", "not-an-epic"], "invalid epic 'not-an-epic'"],
+    [["day", "--team", "0"], "invalid epic '0'"],
+    [["day", "--team", "000"], "invalid epic '000'"],
     [["day", "--unknown"], "unknown argument '--unknown'"],
   ])("%j rejects every invalid day argument before mutation", (args, message) => {
     const r = runSurface(args);
