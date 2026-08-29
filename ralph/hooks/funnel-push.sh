@@ -14,7 +14,9 @@
 #   * only a branch with an OPEN PR. That is the "PR branch" the issue names,
 #     and it is also the only branch a deliver lane ever touches. Unknown or
 #     unreadable PR state fails OPEN: a courtesy rail may not strand a push
-#     because `gh` was rate-limited.
+#     because `gh` was rate-limited — but it names the blindness on stderr, so
+#     that a push the rail could not evaluate does not read like one it cleared
+#     (GH-2263). A measured "no open PR" stays silent.
 #   * only when the plugin actually ships deliver-push.sh — a redirect must
 #     name a path the session can run.
 #
@@ -98,9 +100,25 @@ while IFS= read -r -d "$CS_SEP" raw_seg; do
   fi
   [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] || continue
 
-  # Open PR? Unreadable answer fails OPEN — see header.
-  PRS=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length' 2>/dev/null) || continue
-  [[ "$PRS" =~ ^[0-9]+$ ]] || continue
+  # Open PR? Unreadable answer fails OPEN — see header. It also SPEAKS, which
+  # the two facts below are why (GH-2263): by this point the hazard is already
+  # established — a force push, in one of the three grammars, on a named branch
+  # — so the only thing left is the fact the rail could not read. Blind silence
+  # and measured silence rendered identically, and the operator issued the
+  # destructive push believing the lease rail had looked. Exit stays 0: this is
+  # a courtesy rail, and a transient outage may not strand a session's own push.
+  if ! PRS=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length' 2>/dev/null); then
+    printf 'funnel-push: could not read open PRs for %s (gh unavailable); the GH-1917 lease rail did NOT evaluate this push.\n' \
+      "$BRANCH" >&2
+    continue
+  fi
+  if [[ ! "$PRS" =~ ^[0-9]+$ ]]; then
+    printf 'funnel-push: unparseable open-PR count for %s (gh returned %q); the GH-1917 lease rail did NOT evaluate this push.\n' \
+      "$BRANCH" "$PRS" >&2
+    continue
+  fi
+  # A measured zero stays SILENT. The rail evaluated and had nothing to say, and
+  # a line on every ordinary force push is how the two above stop being read.
   [ "$PRS" -gt 0 ] || continue
 
   printf 'Force-pushing a branch with an open PR goes through the lease script:\n  bash %q --branch %q --expect <sha>\nIt pins the expected remote head, so a peer that moved the branch is a typed refusal instead of a silent clobber (GH-1917).\n' \
