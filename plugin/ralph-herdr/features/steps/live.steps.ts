@@ -25,8 +25,14 @@ import {
   RH_DISPATCH_LABEL,
   RH_LIVE_SESSION,
 } from './live-herdr-wrapper.ts';
+import {
+  assertAllowedLiveSession,
+  cleanupLiveSession,
+  sessionStateFromListResult,
+  type LiveCommandResult,
+} from './live-session-lifecycle.ts';
 
-const ALLOWED_SESSIONS = new Set(['ralph-bdd', 'ralph-probe']);
+let lifecycleEvidenceSequence = 0;
 
 interface LiveState {
   realHerdr: string;
@@ -79,9 +85,7 @@ function liveState(world: RalphWorld): LiveState {
 
 function prepareLiveWorld(world: RalphWorld, session: string): LiveState {
   gate();
-  if (!ALLOWED_SESSIONS.has(session)) {
-    throw new Error(`refusing session name '${session}' — the safety contract allows only ${[...ALLOWED_SESSIONS].join(', ')}`);
-  }
+  assertAllowedLiveSession(session);
   const realHerdr = resolveExecutable('herdr');
   const probe = spawnSync(realHerdr, ['--version'], { encoding: 'utf8', timeout: 10_000 });
   if (probe.status !== 0) throw new Error('herdr CLI not available on PATH — live scenarios need a real herdr install');
@@ -101,9 +105,7 @@ function prepareLiveWorld(world: RalphWorld, session: string): LiveState {
 }
 
 function herdrSession(session: string, args: string[], timeoutMs = 15_000): string {
-  if (!ALLOWED_SESSIONS.has(session)) {
-    throw new Error(`refusing to touch herdr session '${session}' — named test sessions only`);
-  }
+  assertAllowedLiveSession(session);
   return execFileSync('herdr', ['--session', session, ...args], {
     encoding: 'utf8',
     timeout: timeoutMs,
@@ -111,14 +113,47 @@ function herdrSession(session: string, args: string[], timeoutMs = 15_000): stri
   });
 }
 
-function sessionListed(session: string): 'running' | 'stopped' | 'absent' {
-  const out = spawnSync('herdr', ['session', 'list'], { encoding: 'utf8', timeout: 10_000 });
-  if (out.status !== 0) {
-    throw new Error(`herdr session list failed — refusing to infer absence:\n${out.stdout ?? ''}${out.stderr ?? ''}`);
+function runLifecycleCommand(realHerdr: string, args: readonly string[], evidenceDir?: string): LiveCommandResult {
+  const out = spawnSync(realHerdr, [...args], {
+    encoding: 'utf8',
+    timeout: 15_000,
+    env: { ...process.env, NO_COLOR: '1' },
+  });
+  const result: LiveCommandResult = {
+    status: out.status,
+    signal: out.signal,
+    stdout: out.stdout ?? '',
+    stderr: out.stderr ?? '',
+    ...(out.error ? { error: out.error } : {}),
+  };
+  if (evidenceDir) {
+    lifecycleEvidenceSequence += 1;
+    const file = path.join(
+      evidenceDir,
+      `session-lifecycle-${String(lifecycleEvidenceSequence).padStart(2, '0')}.json`,
+    );
+    fs.writeFileSync(file, `${JSON.stringify({
+      argv: args,
+      status: result.status,
+      signal: result.signal,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      error: result.error instanceof Error ? result.error.message : result.error,
+    }, null, 2)}\n`);
   }
-  const line = (out.stdout ?? '').split('\n').find((l) => l.trim().startsWith(`${session} `) || l.trim().startsWith(`${session}\t`));
-  if (!line) return 'absent';
-  return /\brunning\b/.test(line) ? 'running' : 'stopped';
+  return result;
+}
+
+function sessionListed(session: string, realHerdr: string): 'running' | 'stopped' | 'absent' {
+  return sessionStateFromListResult(runLifecycleCommand(realHerdr, ['session', 'list']), session);
+}
+
+async function cleanupNamedLiveSession(world: RalphWorld, state: LiveState): Promise<void> {
+  await cleanupLiveSession(world.liveSession, {
+    run: (args) => runLifecycleCommand(state.realHerdr, args, world.liveTmp),
+    maxPolls: 40,
+    pollMs: 250,
+  });
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -127,7 +162,7 @@ async function sleep(ms: number): Promise<void> {
 
 Given('a live herdr test session named {string}', async function (this: RalphWorld, session: string) {
   const state = prepareLiveWorld(this, session);
-  if (sessionListed(session) !== 'running') {
+  if (sessionListed(session, state.realHerdr) !== 'running') {
     // Headless server for the NAMED session, detached; the After hook stops
     // and deletes it by name. Never `herdr server stop` (unscoped).
     //
@@ -156,7 +191,7 @@ Given('a live herdr test session named {string}', async function (this: RalphWor
     fs.closeSync(logFd);
   }
   const deadline = Date.now() + 20_000;
-  while (sessionListed(session) !== 'running') {
+  while (sessionListed(session, state.realHerdr) !== 'running') {
     if (Date.now() > deadline) {
       throw new Error(`herdr session '${session}' did not reach running within 20s`);
     }
@@ -166,26 +201,7 @@ Given('a live herdr test session named {string}', async function (this: RalphWor
 
 Given('an absent live herdr test session named {string}', async function (this: RalphWorld, session: string) {
   const state = prepareLiveWorld(this, session);
-  const listed = sessionListed(session);
-  if (listed === 'running') {
-    spawnSync(state.realHerdr, ['session', 'stop', session], { encoding: 'utf8', timeout: 15_000 });
-  }
-  if (listed !== 'absent') {
-    const deleted = spawnSync(state.realHerdr, ['session', 'delete', session], {
-      encoding: 'utf8',
-      timeout: 15_000,
-    });
-    assert.strictEqual(
-      deleted.status,
-      0,
-      `could not delete pre-existing named test session '${session}':\n${deleted.stdout ?? ''}${deleted.stderr ?? ''}`,
-    );
-  }
-  const deadline = Date.now() + 10_000;
-  while (sessionListed(session) !== 'absent') {
-    if (Date.now() > deadline) throw new Error(`herdr session '${session}' did not become absent within 10s`);
-    await sleep(250);
-  }
+  await cleanupNamedLiveSession(this, state);
 });
 
 Given('a workspace with a plain shell pane in the test session', async function (this: RalphWorld) {
@@ -719,10 +735,20 @@ Then('the live test session gained no agents', function (this: RalphWorld) {
 
 // Cleanup ALWAYS — the named session is stopped and deleted even when a step
 // failed; only ever by name, only allowlisted names.
-After({ tags: '@live' }, function (this: RalphWorld) {
-  if (this.liveSession && ALLOWED_SESSIONS.has(this.liveSession)) {
-    spawnSync('herdr', ['session', 'stop', this.liveSession], { encoding: 'utf8', timeout: 15_000 });
-    spawnSync('herdr', ['session', 'delete', this.liveSession], { encoding: 'utf8', timeout: 15_000 });
+After({ tags: '@live' }, async function (this: RalphWorld) {
+  if (this.liveSession) {
+    try {
+      assertAllowedLiveSession(this.liveSession);
+      const state = liveStates.get(this);
+      assert.ok(state, `no lifecycle state exists for named session '${this.liveSession}'`);
+      await cleanupNamedLiveSession(this, state);
+    } catch (error) {
+      const evidence = this.liveTmp || this.liveLedgerRoot || '(no evidence directory was initialized)';
+      throw new Error(
+        `live cleanup failed; exact absence was not proven and evidence is retained at ${evidence}:\n` +
+        (error instanceof Error ? error.message : String(error)),
+      );
+    }
   }
   for (const dir of [this.liveTmp, this.liveLedgerRoot]) {
     if (dir && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });

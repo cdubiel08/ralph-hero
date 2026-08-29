@@ -49,25 +49,8 @@ rh_phase() {
 }
 
 rh_herdr_status_row() {
-  local herdr server_status server_state
-  herdr=$(rh_resolve_herdr_bin) || {
-    rh_status failed herdr 'not evaluated' 'server status unavailable'
-    return 1
-  }
-  server_status=$("$herdr" status server --json 2>/dev/null) || {
-    rh_status failed herdr 'not evaluated' 'server status unavailable'
-    return 1
-  }
-  [ -n "$server_status" ] && command -v jq >/dev/null 2>&1 || {
-    rh_status failed herdr 'not evaluated' 'server status unavailable'
-    return 1
-  }
-  server_state=$(printf '%s\n' "$server_status" |
-    jq -er 'if type == "object" and (.status | type == "string") then .status else empty end' 2>/dev/null) || {
-      rh_status failed herdr 'not evaluated' 'server status unavailable'
-      return 1
-    }
-  [ "$server_state" = "running" ] || {
+  local server_state
+  server_state=$(rh_herdr_server_state 2>/dev/null) || {
     rh_status failed herdr 'not evaluated' 'server status unavailable'
     return 1
   }
@@ -127,15 +110,18 @@ rh_inbox() {
 
 rh_fleet() {
   local scripts repo
+  rh_resolve_board_once || return $?
   repo=$(rh_repo_root) || return $?
   scripts=$(rh_resolve_herdr_scripts "$repo") || return $?
-  (cd "$repo" && RALPH_HERDR_REPO="$repo" bash "$scripts/fleet-status.sh" "$@")
+  (cd "$repo" && RALPH_HERDR_REPO="$repo" RALPH_HERDR_BOARD="$_RH_RESOLVED_BOARD" \
+    bash "$scripts/fleet-status.sh" "$@")
 }
 
 rh_doctor() {
   local board repo rc=0
   repo=$(rh_repo_root) || return $?
-  board=$(rh_resolve_board) || return $?
+  rh_resolve_board_once || return $?
+  board="$_RH_RESOLVED_BOARD"
   "$board" doctor || rc=1
   RALPH_HERDR_REPO="$repo" RALPH_HERDR_BOARD="$board" bash "$RH_SCRIPT_DIR/herdr-setup.sh" check || rc=1
   return "$rc"

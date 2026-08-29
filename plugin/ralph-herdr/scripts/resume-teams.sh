@@ -19,9 +19,17 @@ ledger=$(ralph_ledger_path "$REPO") || {
   exit 1
 }
 
-# An absent or empty ledger is a known empty candidate set. Stop before the
-# herd read: there is no liveness question until durable evidence names a
-# prior team.
+# An absent or readable empty ledger is a known empty candidate set. A present
+# object that cannot be opened is unknown evidence even when its size is zero;
+# reject non-regular objects before any read can block.
+if [ ! -e "$ledger" ] && [ ! -L "$ledger" ]; then
+  echo "resume teams: none recorded"
+  exit 0
+fi
+[ -f "$ledger" ] && { : <"$ledger"; } 2>/dev/null || {
+  echo "resume-teams: ledger is unreadable — launching nothing" >&2
+  exit 1
+}
 if [ ! -s "$ledger" ]; then
   echo "resume teams: none recorded"
   exit 0

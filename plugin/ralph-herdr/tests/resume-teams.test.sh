@@ -53,10 +53,14 @@ mkdir -p "$(dirname "$LEDGER")"
 TEAM_LOG="$TMP/team.log"
 export TEAM_LOG
 : >"$TEAM_LOG"
+TEAM_INVOKED_BY_LOG="$TMP/team-invoked-by.log"
+export TEAM_INVOKED_BY_LOG
+: >"$TEAM_INVOKED_BY_LOG"
 TEAM_SH="$TMP/fake-work-team.sh"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf '\''%s\n'\'' "$*" >>"$TEAM_LOG"' \
+  'printf '\''%s\n'\'' "${RALPH_HERDR_INVOKED_BY-}" >>"$TEAM_INVOKED_BY_LOG"' \
   'case "${1-}" in' \
   '  904) exit "${TEAM_RC_904:-0}" ;;' \
   '  905) exit "${TEAM_RC_905:-0}" ;;' \
@@ -86,6 +90,7 @@ line_has() {
 reset_case() {
   : >"$LEDGER"
   : >"$TEAM_LOG"
+  : >"$TEAM_INVOKED_BY_LOG"
   : >"$FAKE_HERDR_LOG"
   unset TEAM_RC_904 TEAM_RC_905
   herd_fixture '[]' "$REPO_DIR"
@@ -114,6 +119,17 @@ is "empty ledger exits 0" "0" "$RC"
 line_has "empty ledger is explicit" "$OUT" "resume teams: none recorded"
 is "empty ledger launches nothing" "0" "$(wc -l <"$TEAM_LOG" | tr -d ' ')"
 is "empty ledger does not read herd" "0" "$(wc -l <"$FAKE_HERDR_LOG" | tr -d ' ')"
+
+# A present ledger is evidence even when it is zero bytes. If that object is
+# unreadable, size alone must not collapse unknown evidence into an empty set.
+reset_case
+chmod 000 "$LEDGER"
+run_resume
+chmod 600 "$LEDGER"
+is "unreadable zero-length ledger exits 1" "1" "$RC"
+line_has "unreadable zero-length ledger is visible" "$OUT" "resume-teams: ledger is unreadable — launching nothing"
+is "unreadable zero-length ledger launches nothing" "0" "$(wc -l <"$TEAM_LOG" | tr -d ' ')"
+is "unreadable zero-length ledger does not read herd" "0" "$(wc -l <"$FAKE_HERDR_LOG" | tr -d ' ')"
 
 # Records outside the closed evidence grammar never become candidates.
 reset_case
@@ -145,6 +161,7 @@ seed_lead 'o900-team#bbbb2222' "$REPO_DIR"
 run_resume
 is "deduplicated team exits 0" "0" "$RC"
 is "one epic is deduplicated" "1" "$(grep -c '^900 --lead-only$' "$TEAM_LOG")"
+is "resume delegation carries scheduler provenance" "scheduler" "$(head -n 1 "$TEAM_INVOKED_BY_LOG")"
 line_has "deduplicated candidate is visible" "$OUT" "resume team GH-900:"
 
 # A live lead in the one fresh snapshot suppresses delegated restart.

@@ -2,9 +2,7 @@
 # Explicit mutating actions for the rh command surface.
 
 rh_server_ready() {
-  local herdr
-  herdr=$(rh_resolve_herdr_bin) || return $?
-  "$herdr" status server --json >/dev/null 2>&1
+  rh_herdr_server_state >/dev/null 2>&1
 }
 
 rh_ensure_server() {
@@ -30,9 +28,11 @@ rh_ensure_server() {
 rh_run_herdr_script() {
   local script="$1" repo scripts
   shift
+  rh_resolve_board_once || return $?
   repo=$(rh_repo_root) || return $?
   scripts=$(rh_resolve_herdr_scripts "$repo") || return $?
-  (cd "$repo" && RALPH_HERDR_REPO="$repo" RALPH_HERDR_SCRIPTS="$scripts" bash "$scripts/$script" "$@")
+  (cd "$repo" && RALPH_HERDR_REPO="$repo" RALPH_HERDR_BOARD="$_RH_RESOLVED_BOARD" \
+    RALPH_HERDR_SCRIPTS="$scripts" bash "$scripts/$script" "$@")
 }
 
 rh_dispatch_up() {
@@ -90,7 +90,8 @@ rh_day() {
 
   rh_color_init || return $?
   repo=$(rh_repo_root) || return $?
-  board=$(rh_resolve_board) || return $?
+  rh_resolve_board_once || return $?
+  board="$_RH_RESOLVED_BOARD"
   herdr=$(rh_resolve_herdr_bin) || return $?
   scripts=$(rh_resolve_herdr_scripts "$repo") || return $?
   jq_bin=$(command -v jq) || {

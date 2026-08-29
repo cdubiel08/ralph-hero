@@ -32,10 +32,21 @@ done
 mkdir -p "$bin_dir"
 target="$bin_dir/rh"
 
-if [ -e "$target" ] && ! grep -q '^# ralph-hero-rh-shim:v1$' "$target" 2>/dev/null; then
+refuse_target() {
   echo "install-rh: refusing to replace unrelated executable $target" >&2
   echo "install-rh: choose another directory: bash $0 --bin-dir <directory>" >&2
   exit 1
+}
+
+# Never follow a foreign filesystem object while deciding ownership. In
+# particular, -e is false for a dangling symlink, -f follows a live symlink,
+# and grep on a FIFO blocks waiting for a writer.
+if [ -L "$target" ]; then
+  refuse_target
+fi
+if [ -e "$target" ]; then
+  [ -f "$target" ] || refuse_target
+  grep -Fqx '# ralph-hero-rh-shim:v1' "$target" 2>/dev/null || refuse_target
 fi
 
 temporary="$(mktemp "$bin_dir/.rh.XXXXXX")"

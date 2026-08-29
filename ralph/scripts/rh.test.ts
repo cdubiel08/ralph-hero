@@ -7,7 +7,19 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,17 +78,19 @@ function installEnv(): InstallEnv {
   };
 }
 
-function runInstall(argv: string[], env: InstallEnv) {
+function runInstall(argv: string[], env: InstallEnv, timeout = 10_000) {
   const result = spawnSync("/bin/bash", [INSTALL_RH, ...argv], {
     cwd: tmp,
     encoding: "utf8",
     env,
+    timeout,
   });
   return {
     status: result.status,
     signal: result.signal,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
+    errorCode: (result.error as NodeJS.ErrnoException | undefined)?.code,
   };
 }
 
@@ -91,6 +105,7 @@ function runRh(
     RALPH_HOME?: string;
     RALPH_RH_SERVER_ATTEMPTS?: string;
     RALPH_RH_SERVER_POLL_SEC?: string;
+    PATH?: string;
     cwd?: string;
     stdin?: string;
   } = {},
@@ -100,7 +115,7 @@ function runRh(
     encoding: "utf8",
     input: opts.stdin,
     env: {
-      PATH: process.env.PATH ?? "",
+      PATH: opts.PATH ?? process.env.PATH ?? "",
       ...(opts.RALPH_BOARD ? { RALPH_BOARD: opts.RALPH_BOARD } : {}),
       ...(opts.NO_COLOR !== undefined ? { NO_COLOR: opts.NO_COLOR } : {}),
       ...(opts.LC_ALL !== undefined ? { LC_ALL: opts.LC_ALL } : {}),
@@ -140,6 +155,7 @@ type SurfaceEnv = {
   teamRc?: Record<string, number>;
   idempotentTeams?: boolean;
   isolatedLog?: string;
+  PATH?: string;
 };
 
 function fixtureEnv(env: SurfaceEnv = {}) {
@@ -338,6 +354,47 @@ describe("rh", () => {
     expect(readFileSync(join(env.XDG_BIN_HOME, "rh"), "utf8")).toContain("echo foreign");
   });
 
+  it.each(["dangling", "live"] as const)("refuses a %s symlink target without replacing it", (kind) => {
+    // Break caught: -e follows live links and is false for dangling links, so
+    // either kind can be mistaken for an installer-owned regular file.
+    const env = installEnv();
+    mkdirSync(env.XDG_BIN_HOME, { recursive: true });
+    const target = join(env.XDG_BIN_HOME, "rh");
+    const referent = join(tmp, `${kind}-referent`);
+    if (kind === "live") {
+      writeFileSync(referent, "#!/bin/bash\n# ralph-hero-rh-shim:v1\nprintf 'owned referent\\n'\n");
+    }
+    symlinkSync(referent, target);
+    const referentBefore = kind === "live" ? readFileSync(referent, "utf8") : undefined;
+
+    const r = runInstall([], env);
+
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("refusing to replace unrelated executable");
+    expect(lstatSync(target).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(target)).toBe(referent);
+    expect(kind === "live" ? readFileSync(referent, "utf8") : existsSync(referent)).toBe(
+      kind === "live" ? referentBefore : false,
+    );
+  });
+
+  it("refuses a FIFO target without blocking or changing it", () => {
+    // Break caught: inspecting a FIFO with grep waits for a writer, hanging the
+    // installer instead of refusing the foreign filesystem object.
+    const env = installEnv();
+    mkdirSync(env.XDG_BIN_HOME, { recursive: true });
+    const target = join(env.XDG_BIN_HOME, "rh");
+    expect(spawnSync("mkfifo", [target]).status).toBe(0);
+
+    const r = runInstall([], env, 1_000);
+
+    expect(r.errorCode).toBeUndefined();
+    expect(r.status).not.toBeNull();
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("refusing to replace unrelated executable");
+    expect(statSync(target).isFIFO()).toBe(true);
+  });
+
   it("contains no source-checkout or user-specific absolute path", () => {
     // Break caught: the generated shim is pinned to the checkout that installed it.
     const env = installEnv();
@@ -498,6 +555,20 @@ exit 23
     expect(readLines(scriptLog)).toEqual(["dispatch-up"]);
   });
 
+  it.each([
+    ["an empty successful response", ""],
+    ["malformed JSON", "not json"],
+    ["an empty object", "{}"],
+    ["an explicit stopped state", '{"status":"stopped"}'],
+  ])("dispatch up does not treat %s as server readiness", (_description, herdrStatus) => {
+    // Break caught: exit-zero status transport without a running payload skips
+    // server startup and lets dispatch claim readiness from malformed state.
+    const r = runSurface(["dispatch", "up"], fixtureEnv({ herdrStatus }));
+    expect(r.status).toBe(0);
+    expect(readLines(herdrLog).filter((line) => line === "server")).toHaveLength(1);
+    expect(readLines(scriptLog)).toEqual(["dispatch-up"]);
+  });
+
   it("cockpit refuses a down server without starting it", () => {
     const r = runSurface(["cockpit"], fixtureEnv({ server: "down" }));
     expect(r.status).not.toBe(0);
@@ -509,6 +580,60 @@ exit 23
     const r = runSurface(["team", "2208"], fixtureEnv({ server: "running" }));
     expect(r.status).toBe(0);
     expect(readLines(scriptLog)).toEqual(["dispatch-up", "work-team 2208"]);
+  });
+
+  it("binds the one resolved board executable into every installed-host Herdr script", () => {
+    // Break caught: a host repository without ralph/scripts/board lets Herdr
+    // delegates resolve a different board (or no board) than rh preflight did.
+    const repo = join(tmp, "installed-host");
+    const scripts = join(tmp, "installed-herdr-scripts");
+    const calls = join(tmp, "installed-herdr-calls.log");
+    const board = join(tmp, "resolved-board");
+    const herdr = join(tmp, "resolved-herdr");
+    mkdirSync(repo, { recursive: true });
+    mkdirSync(scripts, { recursive: true });
+    spawnSync("git", ["init", "-q", repo], { encoding: "utf8" });
+
+    writeFileSync(board, "#!/bin/bash\n[ \"${1-}\" = inbox ] && printf 'BOARD INBOX\\n'\n");
+    chmodSync(board, 0o755);
+    writeFileSync(
+      herdr,
+      "#!/bin/bash\n[ \"$*\" = 'status server --json' ] && printf '{\"status\":\"running\"}\\n'\n",
+    );
+    chmodSync(herdr, 0o755);
+
+    for (const script of [
+      "dispatch-up.sh",
+      "reconcile.sh",
+      "resume-teams.sh",
+      "work-team.sh",
+      "cockpit-open.sh",
+      "fleet-status.sh",
+    ]) {
+      writeFileSync(
+        join(scripts, script),
+        `#!/bin/bash\nprintf '%s\\t%s\\n' '${script}' "\${RALPH_HERDR_BOARD-}" >>"${calls}"\n`,
+      );
+      chmodSync(join(scripts, script), 0o755);
+    }
+
+    expect(existsSync(join(repo, "ralph", "scripts", "board"))).toBe(false);
+    const opts = {
+      RALPH_BOARD: board,
+      HERDR_BIN_PATH: herdr,
+      RALPH_HERDR_SCRIPTS_DIR: scripts,
+      cwd: repo,
+    };
+    expect(runRh(["day", "--team", "2208"], opts).status).toBe(0);
+    expect(runRh(["fleet"], opts).status).toBe(0);
+    expect(readLines(calls)).toEqual([
+      `dispatch-up.sh\t${board}`,
+      `reconcile.sh\t${board}`,
+      `resume-teams.sh\t${board}`,
+      `work-team.sh\t${board}`,
+      `cockpit-open.sh\t${board}`,
+      `fleet-status.sh\t${board}`,
+    ]);
   });
 
   it("team refuses a non-positive or non-numeric epic before dispatch", () => {
@@ -596,6 +721,54 @@ exit 23
     expect(r.stdout).toContain("started");
   });
 
+  it.each([
+    {
+      description: "reconcile failure continues through cockpit and inbox",
+      args: ["day"],
+      env: { reconcileRc: 7 },
+      status: 1,
+      phase: "reconcile",
+      state: "failed",
+      scripts: ["dispatch-up", "reconcile", "resume-teams", "cockpit-open"],
+    },
+    {
+      description: "cockpit failure still renders inbox",
+      args: ["day"],
+      env: { cockpitRc: 8 },
+      status: 1,
+      phase: "cockpit",
+      state: "failed",
+      scripts: ["dispatch-up", "reconcile", "resume-teams", "cockpit-open"],
+    },
+    {
+      description: "inbox failure aggregates attention",
+      args: ["day"],
+      env: { inboxRc: 9 },
+      status: 1,
+      phase: "inbox",
+      state: "attention",
+      scripts: ["dispatch-up", "reconcile", "resume-teams", "cockpit-open"],
+    },
+    {
+      description: "explicit team rc 4 is clean completion",
+      args: ["day", "--team", "2208"],
+      env: { teamRc: { "2208": 4 } },
+      status: 0,
+      phase: "team GH-2208",
+      state: "skipped",
+      scripts: ["dispatch-up", "reconcile", "resume-teams", "work-team 2208", "cockpit-open"],
+    },
+  ])("day: $description", ({ args, env, status, phase, state, scripts }) => {
+    // Break caught: partial-failure aggregation either aborts independent
+    // recovery phases or loses a nonzero/clean-complete result in the summary.
+    const r = runSurface(args, fixtureEnv(env));
+    expect(r.status).toBe(status);
+    expect(readLines(scriptLog)).toEqual(scripts);
+    expect(readLines(boardLog)).toContain("inbox");
+    expect(r.stdout).toContain(phase);
+    expect(r.stdout).toContain(state);
+  });
+
   it("dispatch day and day invoke the same ordered phases", () => {
     const direct = runSurface(["day"], fixtureEnv({ isolatedLog: "direct" }));
     const nested = runSurface(["dispatch", "day"], fixtureEnv({ isolatedLog: "nested" }));
@@ -640,5 +813,24 @@ exit 23
     expect(r.status).toBe(1);
     expect(r.stdout).toContain("FAIL herdr        not evaluated    server status unavailable");
     expect(r.stdout).not.toContain("herdr        running");
+  });
+
+  it("renders visible read-only attention when jq is unavailable on PATH", () => {
+    // Break caught: a missing parser must not turn an unknown Herdr response
+    // into healthy status, usage success, or a mutation attempt.
+    const isolatedPath = join(tmp, "path-without-jq");
+    mkdirSync(isolatedPath);
+    symlinkSync("/usr/bin/dirname", join(isolatedPath, "dirname"));
+    symlinkSync("/usr/bin/git", join(isolatedPath, "git"));
+    const r = runSurface(["dispatch"], {
+      PATH: isolatedPath,
+      LC_ALL: "C",
+      NO_COLOR: "1",
+    });
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("FAIL herdr        not evaluated    server status unavailable");
+    expect(readLines(boardLog)).toEqual(["who dispatch", "roster"]);
+    expect(readLines(herdrLog).some((line) => /^(server|workspace|plugin pane|agent )/.test(line))).toBe(false);
+    expect(readLines(scriptLog)).toEqual([]);
   });
 });
