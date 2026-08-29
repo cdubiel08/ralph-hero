@@ -1903,6 +1903,23 @@ describe("bounded queue read (GH-1785) — listOwnOpenItems", () => {
       expect(capture(["list", "--state", "backlog"])).not.toContain("#2 [In Review]");
     });
 
+    it("an unparseable --state refuses rather than rendering as an empty board (GH-2254)", () => {
+      // The defect: an unrecognized value filtered against a string no item
+      // can equal, so it printed nothing at exit 0 — indistinguishable from a
+      // genuinely empty queue. `all` is the measured reproducer: it is the
+      // give-me-everything idiom `gh issue list --state all` teaches, and it
+      // rendered a 4-item board as calm and empty.
+      expect(() => capture(["list", "--state", "all"])).toThrow(UsageError);
+      expect(() => capture(["list", "--state", "backlig"])).toThrow(UsageError);
+      expect(() => capture(["list", "--state", "backlig"])).toThrow(/backlig/);
+      expect(() => capture(["list", "--state", ""])).toThrow(UsageError);
+      // A valueless --state listed EVERYTHING, which is a third answer wearing
+      // the unfiltered list's clothes.
+      expect(() => capture(["list", "--state"])).toThrow(UsageError);
+      // Aliases still resolve; only unreadable input refuses.
+      expect(capture(["list", "--state", "wip"])).not.toContain("#1 [Backlog]");
+    });
+
     it("--json reports foreignEvaluated so \"not read\" cannot be mistaken for \"none there\"", () => {
       const bounded = JSON.parse(capture(["list", "--json"]));
       expect(bounded.foreignEvaluated).toBe(false);
