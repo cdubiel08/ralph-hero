@@ -380,9 +380,14 @@ Four properties carry it:
   would invite exactly the confusion a #1965 calibration pass must avoid. The
   durable calibration data is the recorded **pairs**; the number is the index
   into them.
-- **Best-effort.** An unwritable log warns and returns 0 rather than costing a
-  run — and the missing scan record then reads as "not instrumented" rather
-  than as "no churn", which is the right direction.
+- **Best-effort.** An unwritable log warns and returns `None` — **never `0`**,
+  which is reserved for "wrote a scan and found nothing" — rather than costing
+  a run. `main()` reflects that `None` into `dream-meta-state.json`'s
+  `near_misses` field and warns via `dream_health.warn_if_uninstrumented`
+  (GH-2283): a third reading, distinct from the file being wholly absent
+  (never instrumented, possibly a prior run) and from a real `0` (this run
+  ran clean and found nothing). Advisory only — a missing datum never fails
+  the weekly run.
 
 Read it with `uv run meta_reflect.py --near-miss-report`, which prints the
 accumulated count and exits without running. Curate reads the same file at its

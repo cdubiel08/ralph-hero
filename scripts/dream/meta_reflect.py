@@ -120,7 +120,11 @@ class MetaRunResult:
     candidates: int = 0
     reason: str = ""
     # GH-2259: near-miss records this run wrote. Reported, never branched on.
-    near_misses: int = 0
+    # GH-2283: None (not 0) means the scan write itself failed this run — see
+    # record_near_misses. 0 stays "wrote a scan, found nothing"; a caller that
+    # collapsed None into 0 would make an OSError read exactly like a quiet
+    # week, reviving the ambiguity this instrument exists to remove.
+    near_misses: int | None = 0
 
     @property
     def failed(self) -> bool:
@@ -661,12 +665,13 @@ def record_near_misses(
     *,
     now: datetime,
     threshold: float | None = None,
-) -> int:
+) -> int | None:
     """Record candidates that resemble a known axiom without hashing to it.
 
-    Returns the number of near-miss records written. **Records only.** Nothing
-    in this function or any caller drops, reorders or re-scores a candidate on
-    what it finds — the candidates list is not even returned.
+    Returns the number of near-miss records written, or **None** when the
+    scan itself could not be written this run (GH-2283). **Records only.**
+    Nothing in this function or any caller drops, reorders or re-scores a
+    candidate on what it finds — the candidates list is not even returned.
 
     Every run appends one ``kind: "scan"`` record, including when it found
     nothing, because "no churn" and "not instrumented" must not read alike: an
@@ -678,9 +683,10 @@ def record_near_misses(
     #1965 is about, and ``log_suppressions`` already records them.
 
     **Best-effort by construction**, like ``log_suppressions``: an unwritable
-    log warns and returns 0 rather than costing a run. That direction is right
-    twice over — the run survives, and the missing scan record reads as "not
-    instrumented" rather than as "no churn".
+    log warns and returns None rather than costing a run — never 0, which
+    would collapse "this run's write failed" into "this run found nothing",
+    the exact ambiguity a caller (``main()``) needs to tell apart to warn on
+    the former without ever failing the run over it.
     """
     wiki_dir = Path(wiki_dir).expanduser()
     if threshold is None:
@@ -740,7 +746,7 @@ def record_near_misses(
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except OSError as exc:
         log.warning("Could not record near-miss scan to %s: %s", path, exc)
-        return 0
+        return None
     for rec in hits:
         log.info(
             "Near miss (%s %.2f) vs %s axiom: %s",
@@ -1154,7 +1160,7 @@ def run_meta_reflect(
     # quiet (or whose LLM has been dead) for a month reports NOT INSTRUMENTED
     # — reviving the exact collapse this unit removes. A scan with
     # ``candidates: 0`` is the honest record of a run with nothing to compare.
-    def _scan_only() -> int:
+    def _scan_only() -> int | None:
         return record_near_misses([], wiki_dir, now=now)
 
     since = now - timedelta(days=window_days)
@@ -1167,14 +1173,13 @@ def run_meta_reflect(
     )
     if not reflections:
         log.info("No reflections in window; nothing to meta-reflect.")
-        _scan_only()
         return MetaRunResult(
             outcome=OUTCOME_EMPTY,
             reason=f"no reflections in the last {window_days}d",
+            near_misses=_scan_only(),
         )
     if len(reflections) < min_reflections:
         log.info("Below min_reflections; deferring meta-reflection.")
-        _scan_only()
         return MetaRunResult(
             outcome=OUTCOME_DEFERRED,
             reflections=len(reflections),
@@ -1182,6 +1187,7 @@ def run_meta_reflect(
                 f"deferring: {len(reflections)} reflection(s) in window, "
                 f"min_reflections={min_reflections}"
             ),
+            near_misses=_scan_only(),
         )
     candidates = synthesize_candidates(
         reflections, llm_url, model, max_candidates=max_candidates, http_post=http_post
@@ -1198,7 +1204,6 @@ def run_meta_reflect(
             "WARNING logs above for the LLM failure.",
             len(reflections),
         )
-        _scan_only()
         return MetaRunResult(
             outcome=OUTCOME_FAILED,
             reflections=len(reflections),
@@ -1206,6 +1211,7 @@ def run_meta_reflect(
                 "reflections cleared the gate but zero candidates were "
                 "synthesized; see WARNING logs"
             ),
+            near_misses=_scan_only(),
         )
     synthesized = len(candidates)
     # GH-2259: instrument BEFORE any filter, so a recorded candidate provably
@@ -1366,9 +1372,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     # GH-2259: printed on every run, zero included — the whole point is that a
     # run with no churn says so rather than staying silent.
-    print(
-        f"Recorded {result.near_misses} paraphrase near-miss(es) at "
-        f"{wiki_dir}/{NEAR_MISS_FILENAME} (recorded only; nothing suppressed)"
+    # GH-2283: near_misses is None, not 0, when the scan write itself failed
+    # this run — that is not the same as zero churn, so it gets a distinct
+    # message and a standing WARN (never a fail: dream_health.warn_if_uninstrumented).
+    if result.near_misses is None:
+        print(
+            f"Paraphrase near-miss recording FAILED for this run at "
+            f"{wiki_dir}/{NEAR_MISS_FILENAME} (see WARNING above; not the "
+            f"same as zero churn)"
+        )
+    else:
+        print(
+            f"Recorded {result.near_misses} paraphrase near-miss(es) at "
+            f"{wiki_dir}/{NEAR_MISS_FILENAME} (recorded only; nothing suppressed)"
+        )
+    dream_health.warn_if_uninstrumented(
+        label="paraphrase-churn near-miss scan (GH-2259)",
+        recorded=result.near_misses,
+        log=log,
     )
 
     # GH-2159: record every terminal outcome, then alarm on the one defect.

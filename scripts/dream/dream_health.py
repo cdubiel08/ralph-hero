@@ -68,6 +68,39 @@ def write_run_state(
         return None
 
 
+def warn_if_uninstrumented(
+    *,
+    label: str,
+    recorded: int | None,
+    log: logging.Logger | None = None,
+) -> str | None:
+    """WARN (never fail) when an optional per-run instrument left no record.
+
+    GH-2283: ``write_run_state`` already knows a cadence *ran*; this is the
+    other half — whether that run's own optional instrumentation (currently
+    the weekly paraphrase-churn near-miss scan, GH-2259) left verifiable
+    evidence of having done so. ``recorded`` is the caller's own count of
+    what its instrument wrote THIS run: ``None`` means the write itself
+    failed (the instrument's contract, e.g. ``record_near_misses``, reserves
+    ``None`` for exactly that — never ``0``, which means "wrote a record and
+    found nothing"). Collapsing the two would make a silent write failure
+    read exactly like a quiet week, which is the defect this unit exists to
+    remove one layer further out than the code path GH-2259/GH-2275 already
+    fixed.
+
+    Returns the warning text (also logged) or ``None`` when there is nothing
+    to warn about. Advisory only, like the rest of this module: never raises
+    and never changes a caller's exit code — a missing datum may not cost a
+    real run that otherwise completed cleanly.
+    """
+    log = log or _log
+    if recorded is not None:
+        return None
+    msg = f"{label}: instrument did not record for this run (see warnings above)."
+    log.warning(msg)
+    return msg
+
+
 def emit_failure_issue(
     *,
     title: str,
