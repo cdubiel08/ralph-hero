@@ -64,6 +64,8 @@ A candidate is high-signal if it:
 - Is prescriptive, not descriptive (a rule, constraint, or heuristic — not "here's what we did")
 - Appears durable: not tied to a specific date, project name, or version
 
+**Read the paraphrase-churn record** `~/projects/thoughts/wiki/_near_misses.jsonl` and report its accumulated count to the user in one line before presenting candidates (`uv run scripts/dream/meta_reflect.py --near-miss-report` prints it directly). This is GH-2259's instrumentation for #1965: each `kind: "near-miss"` record is a staged candidate that lexically resembled an entry already in `wiki/*.md` or `_rejected.jsonl` without hashing to it, named beside the neighbour it resembles and the similarity. **Nothing was suppressed on it** — the recorded candidates still reached this gate, which is why you may see one in the list below. Three readings, and they are not interchangeable: an **absent file** means the instrumentation has never run (not "no churn"); a count of **zero** across one or more `kind: "scan"` records means it ran and found none, so #1965's trigger has not fired; a **non-zero** count is #1965's trigger firing, and those records are the calibration set a session picking up #1965 would use. Report the number; do not act on it here.
+
 Read existing wiki entries from `~/projects/thoughts/wiki/*.md` and the rejection log `~/projects/thoughts/wiki/_rejected.jsonl` before presenting. **Skip any candidate that's already covered by an existing entry** (orthogonality) **or already in the rejection log** (don't re-propose what was already rejected).
 
 Output of this step: a ranked candidate list, ordered by promotability. Keep it internal — do not show it to the user as a bulk list.

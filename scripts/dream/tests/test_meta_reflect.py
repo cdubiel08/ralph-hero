@@ -813,3 +813,169 @@ class TestEmitMetaFailureIssue:
             "Could not file dream failure alarm" in rec.message
             for rec in caplog.records
         )
+
+
+class TestNearMissInstrumentation:
+    """GH-2259: measure the churn #1965's deferral is waiting on.
+
+    Records only. Every test here that asserts a recording must also be able to
+    show that nothing downstream changed because of it.
+    """
+
+    def _wiki(self, tmp_path: Path, *, promoted: list[str] = (), rejected: list[str] = ()) -> Path:
+        wiki = tmp_path / "wiki"
+        wiki.mkdir(parents=True, exist_ok=True)
+        for i, title in enumerate(promoted):
+            (wiki / f"e{i}.md").write_text(f"# {title}\n\nbody\n", encoding="utf-8")
+        if rejected:
+            (wiki / "_rejected.jsonl").write_text(
+                "".join(json.dumps({"claim": c}) + "\n" for c in rejected), encoding="utf-8"
+            )
+        return wiki
+
+    def _records(self, wiki: Path) -> list[dict]:
+        path = wiki / meta_reflect.NEAR_MISS_FILENAME
+        if not path.exists():
+            return []
+        return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+    def test_planted_paraphrase_is_recorded_with_its_neighbour(self, tmp_path: Path) -> None:
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred; never bulk-promote candidates"])
+        n = meta_reflect.record_near_misses(
+            [{"axiom": "Never bulk-promote candidates; attention is sacred"}], wiki, now=NOW
+        )
+        assert n == 1
+        hits = [r for r in self._records(wiki) if r["kind"] == "near-miss"]
+        assert len(hits) == 1
+        assert hits[0]["neighbour"] == "Attention is sacred; never bulk-promote candidates"
+        assert hits[0]["neighbour_source"] == "promoted"
+        assert hits[0]["similarity"] > 0.3
+        assert hits[0]["metric"] == meta_reflect.NEAR_MISS_METRIC
+
+    def test_rejected_claims_are_a_neighbour_source(self, tmp_path: Path) -> None:
+        wiki = self._wiki(tmp_path, rejected=["Prefer small pull requests over large ones"])
+        meta_reflect.record_near_misses(
+            [{"axiom": "Prefer small pull requests, never large ones"}], wiki, now=NOW
+        )
+        hits = [r for r in self._records(wiki) if r["kind"] == "near-miss"]
+        assert [h["neighbour_source"] for h in hits] == ["rejected"]
+
+    def test_no_churn_records_zero_rather_than_staying_silent(self, tmp_path: Path) -> None:
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred; never bulk-promote candidates"])
+        n = meta_reflect.record_near_misses(
+            [{"axiom": "Postgres advisory locks release on session end"}], wiki, now=NOW
+        )
+        assert n == 0
+        scans = [r for r in self._records(wiki) if r["kind"] == "scan"]
+        assert len(scans) == 1
+        assert scans[0]["near_misses"] == 0
+        assert scans[0]["candidates"] == 1
+        assert scans[0]["compared_against"] == 1
+
+    def test_zero_churn_and_not_instrumented_do_not_read_alike(self, tmp_path: Path) -> None:
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred"])
+        assert meta_reflect.near_miss_summary(wiki)["instrumented"] is False
+        meta_reflect.record_near_misses([{"axiom": "Unrelated claim about locks"}], wiki, now=NOW)
+        after = meta_reflect.near_miss_summary(wiki)
+        assert after["instrumented"] is True
+        assert after["near_misses"] == 0
+        assert "NOT INSTRUMENTED" in meta_reflect.format_near_miss_report(
+            meta_reflect.near_miss_summary(tmp_path / "empty-wiki")
+        )
+        assert "ZERO churn recorded" in meta_reflect.format_near_miss_report(after)
+
+    def test_scan_records_the_comparison_set_size(self, tmp_path: Path) -> None:
+        """Zero near-misses against zero known axioms is arithmetic, not evidence."""
+        wiki = tmp_path / "wiki"
+        meta_reflect.record_near_misses([{"axiom": "Anything at all"}], wiki, now=NOW)
+        scans = [r for r in self._records(wiki) if r["kind"] == "scan"]
+        assert scans[0]["compared_against"] == 0
+
+    def test_exact_hash_match_is_not_a_near_miss(self, tmp_path: Path) -> None:
+        axiom = "Attention is sacred; never bulk-promote candidates"
+        wiki = self._wiki(tmp_path, promoted=[axiom])
+        assert meta_reflect.record_near_misses([{"axiom": axiom.upper()}], wiki, now=NOW) == 0
+
+    def test_pending_candidates_are_not_a_neighbour_source(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "_candidates.jsonl").write_text(
+            json.dumps({"hash": "x", "axiom": "Attention is sacred; never bulk-promote"}) + "\n",
+            encoding="utf-8",
+        )
+        n = meta_reflect.record_near_misses(
+            [{"axiom": "Never bulk-promote; attention is sacred"}], wiki, now=NOW
+        )
+        assert n == 0
+
+    def test_records_accumulate_across_runs(self, tmp_path: Path) -> None:
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred; never bulk-promote candidates"])
+        cand = [{"axiom": "Never bulk-promote candidates; attention is sacred"}]
+        meta_reflect.record_near_misses(cand, wiki, now=NOW)
+        meta_reflect.record_near_misses(cand, wiki, now=NOW)
+        summary = meta_reflect.near_miss_summary(wiki)
+        assert summary["runs"] == 2
+        assert summary["near_misses"] == 2
+        assert summary["distinct_candidates"] == 1
+        assert summary["by_source"] == {"promoted": 2}
+        assert "churn recorded" in meta_reflect.format_near_miss_report(summary)
+
+    def test_unwritable_log_costs_nothing(self, tmp_path: Path, monkeypatch) -> None:
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred; never bulk-promote candidates"])
+
+        def boom(*a, **k):
+            raise OSError("read-only")
+
+        monkeypatch.setattr(Path, "open", boom)
+        assert meta_reflect.record_near_misses(
+            [{"axiom": "Never bulk-promote candidates; attention is sacred"}], wiki, now=NOW
+        ) == 0
+
+    def test_threshold_out_of_range_falls_back_to_default(self, monkeypatch) -> None:
+        for bad in ["0", "1.5", "-0.2", "not-a-number"]:
+            monkeypatch.setenv("RALPH_META_NEAR_MISS_MIN", bad)
+            assert meta_reflect.near_miss_threshold() == meta_reflect.DEFAULT_NEAR_MISS_MIN
+        monkeypatch.setenv("RALPH_META_NEAR_MISS_MIN", "0.55")
+        assert meta_reflect.near_miss_threshold() == 0.55
+
+    def test_recorded_candidate_still_reaches_the_gate_and_stages(self, tmp_path: Path) -> None:
+        """Acceptance: nothing is suppressed as a result of a recorded near-miss."""
+        db = tmp_path / "k.db"
+        _seed(db, [
+            {"id": f"r{i}", "date": "2026-06-25T00:00:00+00:00", "content": f"reflection {i}"}
+            for i in range(6)
+        ])
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred; never bulk-promote candidates"])
+        paraphrase = "Never bulk-promote candidates; attention is sacred"
+
+        def post(url, body, timeout):  # noqa: ANN001, ARG001
+            if "de-duplicating" in body["messages"][0]["content"]:
+                return 200, {"choices": [{"message": {"content": '{"duplicates": []}'}}]}
+            return 200, {
+                "choices": [{"message": {"content": json.dumps(
+                    {"candidates": [{"axiom": paraphrase, "rationale": "r", "source_reflection_ids": []}]}
+                )}}]
+            }
+
+        result = meta_reflect.run_meta_reflect(
+            db, wiki, "http://x", "m", now=NOW, http_post=post
+        )
+        assert result.near_misses == 1
+        assert result.staged == 1
+        staged = [
+            json.loads(l)
+            for l in (wiki / "_candidates.jsonl").read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+        assert [s["axiom"] for s in staged] == [paraphrase]
+
+    def test_report_flag_exits_without_running(self, tmp_path: Path, capsys) -> None:
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred"])
+        meta_reflect.record_near_misses([{"axiom": "Unrelated claim"}], wiki, now=NOW)
+        code = meta_reflect.main([
+            "--near-miss-report", "--wiki-dir", str(wiki), "--config", str(tmp_path / "none.yaml")
+        ])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "ZERO churn recorded" in out
+        assert "Staged" not in out
