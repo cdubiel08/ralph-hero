@@ -585,6 +585,8 @@ is "reconcile: open agent with no live counterpart marked lost" "1" \
   "$(lcount "$RLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost" and .via=="reconcile"')"
 is "reconcile: unledgered live agent discovered (fresh ref + tokens)" "1" \
   "$(lcount "$RLEDGER" '.ev=="discover" and (.agent_ref | test("^w5-alpha#[0-9a-f]{8}$")) and .pane_id=="p5" and .via=="reconcile" and .tokens.role=="driver" and .tokens.issue=="5" and .tokens.slug=="alpha"')"
+is "reconcile: discovery retains its proven checkout" "$REPO_DIR" \
+  "$(jq -r 'select(.ev=="discover" and (.agent_ref | startswith("w5-alpha#"))) | .checkout // empty' "$RLEDGER")"
 is "reconcile: legacy singleton never ledgered" "0" \
   "$(grep -c 'ralph-deliver' "$RLEDGER" || true)"
 is "reconcile: non-ralph agent never ledgered" "0" \

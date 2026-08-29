@@ -96,8 +96,7 @@ reset_case() {
   herd_fixture '[]' "$REPO_DIR"
 }
 
-# A positive fixture mirrors a real lead spawn/discover record: current
-# session, grammar-B o-lane durable ref, orchestrator role, and checkout.
+# A positive spawn fixture carries the checkout recorded at pane creation.
 seed_lead() {
   ref="$1" checkout="$2" ev="${3:-spawn}"
   jq -nc --arg session "$SESSION" --arg ev "$ev" --arg ref "$ref" \
@@ -105,6 +104,17 @@ seed_lead() {
     '{ts:"2026-08-29T12:00:00Z", ev:$ev, session:$session,
       agent_ref:$ref, checkout:$checkout,
       lineage:{role:"orchestrator"}, tokens:{role:"orchestrator"}}' >>"$LEDGER"
+}
+
+# Reconcile's historical discovery shape proves the session, role, and durable
+# ref but carries no checkout. Keep it literal so this test cannot accidentally
+# strengthen the production record and hide compatibility defects.
+seed_legacy_discover() {
+  ref="$1"
+  jq -nc --arg session "$SESSION" --arg ref "$ref" \
+    '{ts:"2026-08-29T12:01:00Z", ev:"discover", session:$session,
+      agent_ref:$ref, pane_id:"p-discovered", via:"reconcile",
+      tokens:{role:"orchestrator"}}' >>"$LEDGER"
 }
 
 run_resume() {
@@ -164,6 +174,16 @@ is "one epic is deduplicated" "1" "$(grep -c '^900 --lead-only$' "$TEAM_LOG")"
 is "resume delegation carries scheduler provenance" "scheduler" "$(head -n 1 "$TEAM_INVOKED_BY_LOG")"
 line_has "deduplicated candidate is visible" "$OUT" "resume team GH-900:"
 
+# A checkout-less legacy discovery is corroborating intent, not contradictory
+# checkout evidence, when a spawn already proves exactly one checkout.
+reset_case
+seed_lead 'o900-team#aaaa1111' "$REPO_DIR"
+seed_legacy_discover 'o900-team#bbbb2222'
+run_resume
+is "spawn plus legacy discover exits 0" "0" "$RC"
+is "legacy discover does not poison proven checkout" "1" "$(grep -c '^900 --lead-only$' "$TEAM_LOG")"
+line_has "mixed evidence resumes visibly" "$OUT" "resume team GH-900: resumed"
+
 # A live lead in the one fresh snapshot suppresses delegated restart.
 reset_case
 seed_lead 'o900-team#aaaa1111' "$REPO_DIR"
@@ -173,10 +193,22 @@ is "live lead exits 0" "0" "$RC"
 is "live lead is not delegated" "0" "$(wc -l <"$TEAM_LOG" | tr -d ' ')"
 line_has "live lead skip is visible" "$OUT" "resume team GH-900: already live"
 
+# A freshly reconciled live lead may have a legacy checkout-less discovery
+# record. Liveness is already the strongest no-duplicate proof, so it must be
+# recognized before checkout evidence needed only for a dead-team restart.
+reset_case
+seed_legacy_discover 'o906-team#abcd9060'
+herd_fixture '[{"name":"o906-team","agent_status":"working","pane_id":"p906"}]' "$REPO_DIR"
+run_resume
+is "live legacy discovery exits 0" "0" "$RC"
+is "live legacy discovery launches nothing" "0" "$(wc -l <"$TEAM_LOG" | tr -d ' ')"
+line_has "live legacy discovery is already live" "$OUT" "resume team GH-906: already live"
+
 # Contradictory durable checkout evidence is visible and fails closed.
 reset_case
 seed_lead 'o901-team#cccc3333' "$REPO_DIR"
 seed_lead 'o901-team#dddd4444' "$OTHER_REPO"
+herd_fixture '[{"name":"o901-team","agent_status":"working","pane_id":"p901"}]' "$REPO_DIR"
 run_resume
 is "ambiguous checkout exits 1" "1" "$RC"
 line_has "ambiguity is visible" "$OUT" "resume team GH-901: skipped — contradictory checkout evidence"
@@ -186,14 +218,25 @@ is "ambiguous team launches nothing" "0" "$(grep -c '^901 ' "$TEAM_LOG" || true)
 reset_case
 seed_lead 'o901-team#cccc3333' "$REPO_DIR"
 seed_lead 'o901-team#dddd4444' ""
+herd_fixture '[{"name":"o901-team","agent_status":"working","pane_id":"p901"}]' "$REPO_DIR"
 run_resume
 is "missing checkout exits 1" "1" "$RC"
 line_has "missing checkout is visible" "$OUT" "resume team GH-901: skipped — contradictory checkout evidence"
 is "missing checkout launches nothing" "0" "$(grep -c '^901 ' "$TEAM_LOG" || true)"
 
+# A dead legacy discovery with no checkout still cannot authorize a restart:
+# it names prior intent but cannot prove which local checkout should run it.
+reset_case
+seed_legacy_discover 'o906-team#abcd9060'
+run_resume
+is "legacy discover without checkout exits 1" "1" "$RC"
+line_has "legacy discover without checkout is visible" "$OUT" "resume team GH-906: skipped — contradictory checkout evidence"
+is "legacy discover without checkout launches nothing" "0" "$(grep -c '^906 ' "$TEAM_LOG" || true)"
+
 # A unique checkout must resolve to this repository's exact git toplevel.
 reset_case
 seed_lead 'o901-team#cccc3333' "$OTHER_REPO"
+herd_fixture '[{"name":"o901-team","agent_status":"working","pane_id":"p901"}]' "$REPO_DIR"
 run_resume
 is "foreign checkout exits 1" "1" "$RC"
 line_has "foreign checkout is visible" "$OUT" "resume team GH-901: skipped — checkout does not match this repository"

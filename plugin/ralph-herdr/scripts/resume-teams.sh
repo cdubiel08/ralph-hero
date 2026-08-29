@@ -44,13 +44,16 @@ candidates=$(jq -cs --arg session "$session" '
     | (.agent_ref // "") as $ref
     | ($ref | capture("^o(?<epic>[0-9]+)-[a-z0-9-]+#[0-9a-f]+$")?) as $m
     | select($m != null)
-    | {epic: $m.epic, checkout: (.checkout // "")}
+    | {epic: $m.epic, ev: .ev, checkout: (.checkout // "")}
   ]
   | group_by(.epic)
   | map({
       epic: .[0].epic,
       checkouts: ([.[].checkout | select(length > 0)] | unique),
-      missingCheckout: any(.[]; .checkout == "")
+      # Historical reconciliation discoveries carry no checkout. They may
+      # corroborate one checkout-bearing record, but can never supply a path
+      # themselves. A checkout-less spawn remains contradictory evidence.
+      missingCheckout: any(.[]; .ev == "spawn" and .checkout == "")
     })
   | .[]' "$ledger") || {
   echo "resume-teams: ledger is unreadable — launching nothing" >&2
@@ -84,24 +87,37 @@ while IFS= read -r candidate; do
   missing=$(jq -r '.missingCheckout' <<<"$candidate")
   checkout_count=$(jq -r '.checkouts | length' <<<"$candidate")
 
-  if [ "$missing" = "true" ] || [ "$checkout_count" -ne 1 ]; then
+  # Liveness may excuse only the absence of checkout on a legacy discovery.
+  # It must never hide a checkout-less spawn or two explicit checkout owners.
+  if [ "$missing" = "true" ] || [ "$checkout_count" -gt 1 ]; then
     echo "resume team GH-$epic: skipped — contradictory checkout evidence"
     overall=1
     continue
   fi
 
-  checkout=$(jq -r '.checkouts[0]' <<<"$candidate")
-  checkout_root=$(git -C "$checkout" rev-parse --show-toplevel 2>/dev/null) || checkout_root=""
-  repo_root=$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null) || repo_root=""
-  if [ -z "$checkout_root" ] || [ -z "$repo_root" ] || [ "$checkout_root" != "$repo_root" ]; then
-    echo "resume team GH-$epic: skipped — checkout does not match this repository"
-    overall=1
-    continue
+  checkout=""
+  if [ "$checkout_count" -eq 1 ]; then
+    checkout=$(jq -r '.checkouts[0]' <<<"$candidate")
+    checkout_root=$(git -C "$checkout" rev-parse --show-toplevel 2>/dev/null) || checkout_root=""
+    repo_root=$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+    if [ -z "$checkout_root" ] || [ -z "$repo_root" ] || [ "$checkout_root" != "$repo_root" ]; then
+      echo "resume team GH-$epic: skipped — checkout does not match this repository"
+      overall=1
+      continue
+    fi
   fi
 
+  # A scoped live lead cannot be duplicated and needs no restart path. This is
+  # the narrow compatibility lane for legacy discover-only records.
   if jq -s -e --arg prefix "o$epic-" \
     'any(.[]; ((.name // "") | startswith($prefix)))' <<<"$herd" >/dev/null 2>&1; then
     echo "resume team GH-$epic: already live"
+    continue
+  fi
+
+  if [ "$checkout_count" -eq 0 ]; then
+    echo "resume team GH-$epic: skipped — contradictory checkout evidence"
+    overall=1
     continue
   fi
 

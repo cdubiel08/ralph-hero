@@ -515,8 +515,9 @@ _ralph_ledger_latest_address() {
 }
 # GH-1809's three: the pane's shell pid at spawn (a rebuilt pane's differs),
 # the worktree path (board scope without needing the pane back), and the issue
-# whose claim this worker holds. All optional — records written before GH-1809,
-# and discover records, carry none.
+# whose claim this worker holds. All optional for historical compatibility.
+# Discover records have no shell pid; reconciliation discoveries now retain
+# their proven checkout, while records written before that addition do not.
 _ralph_ledger_latest_shell_pid() {
   _ralph_ledger_latest '((.shell_pid // "") | tostring)' "$@"
 }
