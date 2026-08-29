@@ -8,6 +8,8 @@ export RH_SCRIPT_DIR
 source "$RH_SCRIPT_DIR/rh-lib/resolve.sh"
 # shellcheck source=rh-lib/render.sh
 source "$RH_SCRIPT_DIR/rh-lib/render.sh"
+# shellcheck source=rh-lib/day.sh
+source "$RH_SCRIPT_DIR/rh-lib/day.sh"
 
 usage_error() {
   echo "rh: $*" >&2
@@ -45,11 +47,20 @@ case "$command" in
     ;;
   dispatch)
     shift
-    [ "$#" -eq 0 ] || {
-      usage_error "unknown dispatch command '${1-}'; try 'rh dispatch'"
-      exit $?
-    }
-    rh_dispatch_status
+    case "${1:-}" in
+      "") rh_dispatch_status ;;
+      up)
+        [ "$#" -eq 1 ] || {
+          usage_error "unknown dispatch command '${2-}'; try 'rh dispatch up'"
+          exit $?
+        }
+        rh_dispatch_up
+        ;;
+      *)
+        usage_error "unknown dispatch command '${1-}'; try 'rh dispatch'"
+        exit $?
+        ;;
+    esac
     ;;
   inbox)
     shift
@@ -62,6 +73,18 @@ case "$command" in
   doctor)
     shift
     rh_doctor "$@"
+    ;;
+  cockpit)
+    shift
+    [ "$#" -eq 0 ] || {
+      usage_error "cockpit takes no arguments"
+      exit $?
+    }
+    rh_cockpit
+    ;;
+  team)
+    shift
+    rh_team "$@"
     ;;
   help|-h|--help)
     [ "$#" -eq 0 ] || shift

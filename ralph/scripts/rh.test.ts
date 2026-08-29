@@ -16,6 +16,7 @@ const RH = join(fileURLToPath(new URL(".", import.meta.url)), "rh");
 let tmp: string;
 let boardLog: string;
 let herdrLog: string;
+let scriptLog: string;
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "rh-test-"));
@@ -40,6 +41,9 @@ function runRh(
     LC_ALL?: string;
     HERDR_BIN_PATH?: string;
     RALPH_HERDR_SCRIPTS_DIR?: string;
+    RALPH_HOME?: string;
+    RALPH_RH_SERVER_ATTEMPTS?: string;
+    RALPH_RH_SERVER_POLL_SEC?: string;
     cwd?: string;
     stdin?: string;
   } = {},
@@ -55,6 +59,9 @@ function runRh(
       ...(opts.LC_ALL !== undefined ? { LC_ALL: opts.LC_ALL } : {}),
       ...(opts.HERDR_BIN_PATH ? { HERDR_BIN_PATH: opts.HERDR_BIN_PATH } : {}),
       ...(opts.RALPH_HERDR_SCRIPTS_DIR ? { RALPH_HERDR_SCRIPTS_DIR: opts.RALPH_HERDR_SCRIPTS_DIR } : {}),
+      ...(opts.RALPH_HOME ? { RALPH_HOME: opts.RALPH_HOME } : {}),
+      ...(opts.RALPH_RH_SERVER_ATTEMPTS ? { RALPH_RH_SERVER_ATTEMPTS: opts.RALPH_RH_SERVER_ATTEMPTS } : {}),
+      ...(opts.RALPH_RH_SERVER_POLL_SEC ? { RALPH_RH_SERVER_POLL_SEC: opts.RALPH_RH_SERVER_POLL_SEC } : {}),
     },
   });
   return {
@@ -73,12 +80,18 @@ function readLines(path: string): string[] {
   }
 }
 
+function fixtureEnv(env: { NO_COLOR?: string; LC_ALL?: string; herdrStatus?: string; server?: "down" | "running" } = {}) {
+  return env;
+}
+
 function runSurface(
   argv: string[],
-  env: { NO_COLOR?: string; LC_ALL?: string; herdrStatus?: string } = {},
+  env: { NO_COLOR?: string; LC_ALL?: string; herdrStatus?: string; server?: "down" | "running" } = fixtureEnv(),
 ): { status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string } {
   boardLog = join(tmp, "board.log");
   herdrLog = join(tmp, "herdr.log");
+  scriptLog = join(tmp, "scripts.log");
+  const serverState = join(tmp, "server-state");
   const scripts = join(tmp, "herdr-scripts");
   const repo = join(tmp, "repo");
   mkdirSync(scripts, { recursive: true });
@@ -97,29 +110,56 @@ esac
 `,
   );
   chmodSync(join(tmp, "fake-board"), 0o755);
+  writeFileSync(serverState, env.herdrStatus !== undefined ? "custom" : (env.server ?? "running"));
   writeFileSync(
     join(tmp, "fake-herdr"),
     `#!/bin/bash
-printf '%s\\n' "$*" >>"${herdrLog}"
 case "$*" in
-  'status server --json') printf '%s\\n' '${env.herdrStatus ?? '{"status":"running"}'}' ;;
+  'status server --json')
+    if [ "$(cat "${serverState}")" = down ]; then sleep 0.05; fi
+    printf '%s\\n' "$*" >>"${herdrLog}"
+    if [ "$(cat "${serverState}")" = custom ]; then
+      printf '%s\\n' '${env.herdrStatus ?? '{"status":"running"}'}'
+    elif [ "$(cat "${serverState}")" = running ]; then
+      printf '%s\\n' '{"status":"running"}'
+    else
+      exit 1
+    fi
+    ;;
+  server)
+    printf '%s\\n' "$*" >>"${herdrLog}"
+    printf running >"${serverState}"
+    ;;
 esac
 `,
   );
   chmodSync(join(tmp, "fake-herdr"), 0o755);
-  writeFileSync(join(tmp, "dispatch-up.sh"), "#!/bin/bash\n");
-  writeFileSync(join(tmp, "fleet-status.sh"), `#!/bin/bash
+  writeFileSync(join(scripts, "dispatch-up.sh"), `#!/bin/bash
+printf '%s\\n' dispatch-up >>"${scriptLog}"
+`);
+  writeFileSync(join(scripts, "cockpit-open.sh"), `#!/bin/bash
+printf '%s\\n' cockpit-open >>"${scriptLog}"
+`);
+  writeFileSync(join(scripts, "work-team.sh"), `#!/bin/bash
+printf 'work-team %s\\n' "$*" >>"${scriptLog}"
+`);
+  writeFileSync(join(scripts, "fleet-status.sh"), `#!/bin/bash
 printf '%s\\n' "fleet-status $*" >>"${herdrLog}"
 echo 'FLEET STATUS'
 `);
-  chmodSync(join(tmp, "dispatch-up.sh"), 0o755);
-  chmodSync(join(tmp, "fleet-status.sh"), 0o755);
+  chmodSync(join(scripts, "dispatch-up.sh"), 0o755);
+  chmodSync(join(scripts, "cockpit-open.sh"), 0o755);
+  chmodSync(join(scripts, "work-team.sh"), 0o755);
+  chmodSync(join(scripts, "fleet-status.sh"), 0o755);
   // A real Git root exercises the same repository gate as the public command.
   spawnSync("git", ["init", "-q", repo], { encoding: "utf8" });
   const result = runRh(argv, {
     RALPH_BOARD: join(tmp, "fake-board"),
     HERDR_BIN_PATH: join(tmp, "fake-herdr"),
     RALPH_HERDR_SCRIPTS_DIR: scripts,
+    RALPH_HOME: join(tmp, "ralph-home"),
+    RALPH_RH_SERVER_ATTEMPTS: "3",
+    RALPH_RH_SERVER_POLL_SEC: "0",
     cwd: repo,
     ...env,
   });
@@ -199,6 +239,49 @@ exit 23
     const r = runSurface(["inbox", "--digest", "--mark"]);
     expect(r.status).toBe(64);
     expect(r.stderr).toContain("use 'rh board inbox --digest --mark'");
+  });
+
+  it("dispatch up starts a missing server and invokes only dispatch-up once", () => {
+    const r = runSurface(["dispatch", "up"], fixtureEnv({ server: "down" }));
+    expect(r.status).toBe(0);
+    expect(readLines(herdrLog)).toEqual([
+      "status server --json",
+      "server",
+      "status server --json",
+      "status server --json",
+    ]);
+    expect(readLines(scriptLog)).toEqual(["dispatch-up"]);
+  });
+
+  it("dispatch up reuses a healthy server", () => {
+    const r = runSurface(["dispatch", "up"], fixtureEnv({ server: "running" }));
+    expect(r.status).toBe(0);
+    expect(readLines(herdrLog).filter((l) => l === "server")).toHaveLength(0);
+    expect(readLines(scriptLog)).toEqual(["dispatch-up"]);
+  });
+
+  it("cockpit refuses a down server without starting it", () => {
+    const r = runSurface(["cockpit"], fixtureEnv({ server: "down" }));
+    expect(r.status).not.toBe(0);
+    expect(readLines(herdrLog)).not.toContain("server");
+    expect(readLines(scriptLog)).not.toContain("cockpit-open");
+  });
+
+  it("team is explicit and ensures dispatch before exactly one epic", () => {
+    const r = runSurface(["team", "2208"], fixtureEnv({ server: "running" }));
+    expect(r.status).toBe(0);
+    expect(readLines(scriptLog)).toEqual(["dispatch-up", "work-team 2208"]);
+  });
+
+  it("team refuses a non-positive or non-numeric epic before dispatch", () => {
+    for (const epic of ["0", "-1", "extra"]) {
+      const r = runSurface(["team", epic]);
+      expect(r.status).toBe(64);
+      expect(readLines(scriptLog)).toEqual([]);
+    }
+    const r = runSurface(["team", "2208", "extra"]);
+    expect(r.status).toBe(64);
+    expect(readLines(scriptLog)).toEqual([]);
   });
 
   it("NO_COLOR wins over --color=always", () => {
