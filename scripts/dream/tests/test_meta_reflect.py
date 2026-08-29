@@ -927,9 +927,28 @@ class TestNearMissInstrumentation:
             raise OSError("read-only")
 
         monkeypatch.setattr(Path, "open", boom)
+        # GH-2283: None, not 0 — 0 means "wrote a scan, found nothing" and
+        # collapsing a write failure into it would hide an OSError as a quiet
+        # week. The run still costs nothing: no exception escapes.
         assert meta_reflect.record_near_misses(
             [{"axiom": "Never bulk-promote candidates; attention is sacred"}], wiki, now=NOW
-        ) == 0
+        ) is None
+
+    def test_unwritable_log_reflected_as_none_in_run_result(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """GH-2283: a scan-write failure must surface, not read as zero churn."""
+        db = tmp_path / "k.db"
+        _seed(db, [])  # no reflections -> OUTCOME_EMPTY, the common weekly case
+        wiki = self._wiki(tmp_path, promoted=[])
+
+        def boom(*a, **k):
+            raise OSError("read-only")
+
+        monkeypatch.setattr(Path, "open", boom)
+        result = meta_reflect.run_meta_reflect(db, wiki, "http://x", "m", now=NOW)
+        assert result.outcome == meta_reflect.OUTCOME_EMPTY
+        assert result.near_misses is None
 
     def test_threshold_out_of_range_falls_back_to_default(self, monkeypatch) -> None:
         for bad in ["0", "1.5", "-0.2", "not-a-number"]:
