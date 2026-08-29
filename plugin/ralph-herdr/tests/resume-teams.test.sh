@@ -34,6 +34,7 @@ mkdir -p "$FAKE_HERDR_FIXTURES" "$FAKE_BOARD_FIXTURES"
 : >"$FAKE_BOARD_LOG"
 
 REPO_DIR="$TMP/repo"
+LINKED_REPO="$TMP/repo-linked"
 OTHER_REPO="$TMP/other-repo"
 git init -q -b main "$REPO_DIR" 2>/dev/null || {
   git init -q "$REPO_DIR" && git -C "$REPO_DIR" checkout -q -b main
@@ -44,6 +45,7 @@ git init -q -b main "$OTHER_REPO" 2>/dev/null || {
 printf '{"owner":"test","repo":"resume-fixture","projectNumber":1}\n' >"$REPO_DIR/.ralph.json"
 git -C "$REPO_DIR" add .ralph.json
 git -C "$REPO_DIR" -c user.email=t@t -c user.name=t commit -q -m init
+git -C "$REPO_DIR" worktree add -q -b resume-linked "$LINKED_REPO"
 git -C "$OTHER_REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 
 LEDGER="$RALPH_HERDR_LEDGER_ROOT/test/resume-fixture/ledger.jsonl"
@@ -117,6 +119,18 @@ seed_legacy_discover() {
       tokens:{role:"orchestrator"}}' >>"$LEDGER"
 }
 
+# Reconcile's current discovery shape retains the checkout proven by Herdr's
+# workspace provenance. For a linked workspace that is the linked worktree,
+# while work-team's spawn record names Herdr's source checkout.
+seed_reconciled_discover() {
+  ref="$1" checkout="$2"
+  jq -nc --arg session "$SESSION" --arg ref "$ref" \
+    --arg checkout "$checkout" \
+    '{ts:"2026-08-29T12:01:00Z", ev:"discover", session:$session,
+      agent_ref:$ref, pane_id:"p-discovered", via:"reconcile",
+      checkout:$checkout, tokens:{role:"orchestrator"}}' >>"$LEDGER"
+}
+
 run_resume() {
   RC=0
   OUT=$(RALPH_HERDR_REPO="$REPO_DIR" bash "$SCRIPTS/resume-teams.sh" </dev/null 2>&1) || RC=$?
@@ -183,6 +197,18 @@ run_resume
 is "spawn plus legacy discover exits 0" "0" "$RC"
 is "legacy discover does not poison proven checkout" "1" "$(grep -c '^900 --lead-only$' "$TEAM_LOG")"
 line_has "mixed evidence resumes visibly" "$OUT" "resume team GH-900: resumed"
+
+# A source checkout and one of its linked worktrees are two paths to the same
+# local repository, not two owners. This is the real record pairing produced
+# when work-team spawns from Herdr's source and reconciliation later observes
+# the lead through linked-worktree provenance.
+reset_case
+seed_lead 'o900-team#aaaa1111' "$REPO_DIR"
+seed_reconciled_discover 'o900-team#bbbb2222' "$LINKED_REPO"
+run_resume
+is "source plus linked discovery exits 0" "0" "$RC"
+is "linked discovery resumes the durable team once" "1" "$(grep -c '^900 --lead-only$' "$TEAM_LOG")"
+line_has "linked checkout evidence resumes visibly" "$OUT" "resume team GH-900: resumed"
 
 # A live lead in the one fresh snapshot suppresses delegated restart.
 reset_case

@@ -65,6 +65,19 @@ if [ -z "$candidates" ]; then
   exit 0
 fi
 
+# checkout_repo_identity CHECKOUT — print the physical Git common directory.
+# A source checkout and each of its linked worktrees have different toplevels
+# but one common directory, so this is the local repository identity Git itself
+# provides. Separate clones remain distinct even when they point at the same
+# remote, which keeps the resume boundary fail-closed.
+checkout_repo_identity() {
+  local checkout="$1" common
+  [ -n "$checkout" ] || return 1
+  common=$(git -C "$checkout" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  [ -d "$common" ] || return 1
+  (cd "$common" && pwd -P)
+}
+
 # One fresh snapshot is shared by every candidate. An unknown herd is never an
 # empty herd: fail before the first delegation so a transient read cannot
 # double any standing lead.
@@ -80,6 +93,7 @@ herd=$(ralph_agents_json 2>/dev/null) || {
 
 team_sh="${RALPH_HERDR_WORK_TEAM:-$SCRIPT_DIR/work-team.sh}"
 overall=0
+repo_identity=$(checkout_repo_identity "$REPO" 2>/dev/null) || repo_identity=""
 
 while IFS= read -r candidate; do
   [ -n "$candidate" ] || continue
@@ -88,23 +102,45 @@ while IFS= read -r candidate; do
   checkout_count=$(jq -r '.checkouts | length' <<<"$candidate")
 
   # Liveness may excuse only the absence of checkout on a legacy discovery.
-  # It must never hide a checkout-less spawn or two explicit checkout owners.
-  if [ "$missing" = "true" ] || [ "$checkout_count" -gt 1 ]; then
+  # It must never hide a checkout-less spawn.
+  if [ "$missing" = "true" ]; then
     echo "resume team GH-$epic: skipped — contradictory checkout evidence"
     overall=1
     continue
   fi
 
   checkout=""
-  if [ "$checkout_count" -eq 1 ]; then
-    checkout=$(jq -r '.checkouts[0]' <<<"$candidate")
-    checkout_root=$(git -C "$checkout" rev-parse --show-toplevel 2>/dev/null) || checkout_root=""
-    repo_root=$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null) || repo_root=""
-    if [ -z "$checkout_root" ] || [ -z "$repo_root" ] || [ "$checkout_root" != "$repo_root" ]; then
-      echo "resume team GH-$epic: skipped — checkout does not match this repository"
+  checkout_mismatch=0
+  if [ "$checkout_count" -gt 0 ]; then
+    # Compare repository identity, not raw toplevel strings. Reconciliation
+    # can prove a linked worktree while the original spawn proves Herdr's
+    # source checkout; both are legitimate evidence when their Git common dir
+    # is the same. Every explicit path must resolve and match the repository
+    # from which this resume pass was invoked.
+    while IFS= read -r recorded_checkout; do
+      [ -n "$recorded_checkout" ] || continue
+      recorded_identity=$(checkout_repo_identity "$recorded_checkout" 2>/dev/null) || recorded_identity=""
+      if [ -z "$repo_identity" ] || [ -z "$recorded_identity" ] || [ "$recorded_identity" != "$repo_identity" ]; then
+        checkout_mismatch=1
+        break
+      fi
+    done <<EOF
+$(jq -r '.checkouts[]' <<<"$candidate")
+EOF
+    if [ "$checkout_mismatch" -eq 1 ]; then
+      if [ "$checkout_count" -gt 1 ]; then
+        echo "resume team GH-$epic: skipped — contradictory checkout evidence"
+      else
+        echo "resume team GH-$epic: skipped — checkout does not match this repository"
+      fi
       overall=1
       continue
     fi
+
+    # The current checkout is now proven to be the same local repository as
+    # every durable path. work-team resolves Herdr's source checkout itself,
+    # so execution does not depend on the ledger's lexicographic path order.
+    checkout="$REPO"
   fi
 
   # A scoped live lead cannot be duplicated and needs no restart path. This is
