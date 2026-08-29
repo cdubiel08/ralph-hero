@@ -54,7 +54,7 @@ rh_wsl_stop_delete() {
   return "$lifecycle_rc"
 }
 rh_wsl_require_session_absent() {
-  local phase list_out list_err line name status directory socket saw_header
+  local phase list_out list_err line name status directory socket extra saw_header
   phase=${1-}
   case "$phase" in initial|cleanup) ;; *) echo "invalid absence-proof phase: $phase" >&2; return 1 ;; esac
   list_out="$WSL_RH_TMP/session-list-$phase.txt"
@@ -66,16 +66,16 @@ rh_wsl_require_session_absent() {
   saw_header=0
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
-    read -r name status directory socket <<<"$line"
+    read -r name status directory socket extra <<<"$line"
     if [ "$saw_header" -eq 0 ]; then
-      if [ "$name" != name ] || [ "$status" != status ] || [ "$directory" != directory ] || [ "$socket" != socket ]; then
+      if [ "$name" != name ] || [ "$status" != status ] || [ "$directory" != directory ] || [ "$socket" != socket ] || [ -n "$extra" ]; then
         echo "$phase session list had an unparseable header; retaining $list_out" >&2
         return 1
       fi
       saw_header=1
       continue
     fi
-    if [ -z "$name" ] || [ -z "$directory" ] || [ -z "$socket" ]; then
+    if [ -z "$name" ] || [ -z "$status" ] || [ -z "$directory" ] || [ -z "$socket" ] || [ -n "$extra" ]; then
       echo "$phase session list had an unparseable row; retaining $list_out" >&2
       return 1
     fi
