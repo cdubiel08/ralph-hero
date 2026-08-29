@@ -39,6 +39,11 @@
 #                        spaces (unset = no logging)
 #
 # Fixture files, first match wins (all under $FAKE_HERDR_FIXTURES):
+#   status server --json          no fixture: reads FAKE_HERDR_SERVER_STATE;
+#                                 `running` returns {status:"running"}, while
+#                                 an absent/non-running state refuses
+#   server                        atomically writes `running` to
+#                                 FAKE_HERDR_SERVER_STATE
 #   agent list                    agent-list.json         payload {agents:[…]}
 #   workspace list                workspace-list.json     payload {workspaces:[…]}
 #   pane list …                   pane-list.json          payload {panes:[…]}
@@ -232,6 +237,26 @@ if raw_body "$key"; then
 fi
 
 case "$key" in
+  status-server)
+    if [ -n "${FAKE_HERDR_SERVER_STATE:-}" ] &&
+      [ -f "$FAKE_HERDR_SERVER_STATE" ] &&
+      grep -q 'running' "$FAKE_HERDR_SERVER_STATE"; then
+      printf '{"status":"running"}\n'
+      exit 0
+    fi
+    printf '{"error":{"code":"server_unavailable","message":"fake Herdr server is unavailable"}}\n' >&2
+    exit 1
+    ;;
+  server-)
+    if [ -z "${FAKE_HERDR_SERVER_STATE:-}" ]; then
+      printf '{"error":{"code":"fake_herdr_missing_server_state","message":"FAKE_HERDR_SERVER_STATE is required"}}\n' >&2
+      exit 1
+    fi
+    _server_tmp="${FAKE_HERDR_SERVER_STATE}.tmp.$$"
+    printf 'running\n' >"$_server_tmp" || exit 1
+    mv "$_server_tmp" "$FAKE_HERDR_SERVER_STATE" || exit 1
+    exit 0
+    ;;
   agent-list)
     respond "cli:agent:list" "agent_list" '{"agents":[]}' agent-list
     ;;

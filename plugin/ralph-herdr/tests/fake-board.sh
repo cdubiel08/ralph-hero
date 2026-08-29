@@ -35,6 +35,9 @@
 #   answer N …           answer.<N>.json, then answer.json, else board.ts's
 #                        "answer commented; stays Human Needed — resume
 #                        pending" line (GH-2204)
+#   brief                brief.json, else a canned empty queue summary
+#   inbox                inbox.json, else a canned empty decision summary
+#   doctor               doctor.json, else a canned healthy diagnosis
 #   name N [--json]      name.<N>.json, then name.json, else a canned
 #                        GH-1807 name envelope (feat/N-fake-issue + its
 #                        legacyBranch) — the spawn path's branch source
@@ -97,6 +100,18 @@ rc_for() {
 }
 
 case "${1-} ${2-}" in
+  "brief"*)
+    emit_fixture brief || printf 'next: none\nqueues: 0 eligible, 0 blocked\n'
+    key="brief"
+    ;;
+  "inbox"*)
+    emit_fixture inbox || printf 'inbox: empty — no decisions waiting\n'
+    key="inbox"
+    ;;
+  "doctor"*)
+    emit_fixture doctor || printf 'ok — fake board healthy\n'
+    key="doctor"
+    ;;
   "frontier --json")
     # No fixture = the verb does not exist on this board CLI (usage, 64).
     emit_fixture frontier || {
