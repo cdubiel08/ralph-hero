@@ -293,8 +293,16 @@ me_attestation_field() {
 # have opposite correct responses (wait for the reviewer vs. retry the read).
 # Pinned by a regression test (CodeRabbit, #1839).
 me_review_mode_approved() {
-  local pr="$1" bot="$2" head="$3" reviews count
-  reviews=$(gh api "repos/{owner}/{repo}/pulls/$pr/reviews" --paginate 2>/dev/null | jq -s 'add // []') || return 3
+  local pr="$1" bot="$2" head="$3" raw reviews count
+  # Split, not piped: a pipeline's status is jq's unless the CALLER set
+  # pipefail, and `jq -s 'add // []'` succeeds on the empty input a failed
+  # `gh api` leaves behind — so the exit-3 distinction above would silently
+  # become exit 1 for any caller that did not set it. This library documents
+  # that it imposes no shell options on its callers, so the guard may not
+  # depend on one (GH-2262).
+  raw=$(gh api "repos/{owner}/{repo}/pulls/$pr/reviews" --paginate 2>/dev/null) || return 3
+  # --paginate emits one array per page; slurp + add flattens them.
+  reviews=$(jq -s 'add // []' <<<"$raw" 2>/dev/null) || return 3
   count=$(jq -r "$ME_JQ_LIB"' me_approved_reviews($bot; $head) | length' \
     --arg bot "$bot" --arg head "$head" <<<"$reviews") || return 3
   [[ "${count:-0}" -gt 0 ]]

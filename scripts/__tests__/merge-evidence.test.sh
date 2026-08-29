@@ -307,6 +307,40 @@ PATH="$STUB_BIN:$PATH" me_attestation_comment 1764 >/dev/null 2>&1; rc=$?
 eq "an unreadable comments API is exit 3"      "3" "$rc"
 rm -f "$GH_STUB_DIR/fail"
 
+# --- the exit-3 guard may not depend on the caller's shell options ---------
+echo "=== me_review_mode_approved is exit-3 without caller pipefail (GH-2262) ==="
+
+# The defect: the guard was a PIPELINE (`gh api ... | jq -s 'add // []'`), so
+# its status was jq's unless the caller had set pipefail — and `jq -s` succeeds
+# on the empty input a failed `gh api` leaves behind, yielding []. Every current
+# caller happens to set pipefail, so this was latent; but the library documents
+# that it imposes no shell options on its callers, so the distinction between
+# "no approval at this head" (1) and "could not read the API" (3) may not be
+# inherited from one. Running under pipefail ON only would pass against the
+# defective code, which is the entire point.
+run_in_shell() { # run_in_shell <set-opts> <code> — a FRESH bash, not a subshell
+  PATH="$STUB_BIN:$PATH" bash -c "set $1; . '$LIB'; $2" >/dev/null 2>&1
+}
+
+APPROVED_PAGES=$(jq -n --arg h abc123 \
+  '[{user:{login:"chatgpt-codex-connector[bot]"},state:"APPROVED",commit_id:$h}]')
+
+printf '%s\n' "$APPROVED_PAGES" >"$GH_STUB_DIR/pages.json"
+run_in_shell "-uo pipefail" 'me_review_mode_approved 1764 "chatgpt-codex-connector[bot]" abc123'
+eq "an approval at head is exit 0 (pipefail on)"  "0" "$?"
+run_in_shell "-u" 'me_review_mode_approved 1764 "chatgpt-codex-connector[bot]" abc123'
+eq "an approval at head is exit 0 (pipefail OFF)" "0" "$?"
+
+run_in_shell "-u" 'me_review_mode_approved 1764 "chatgpt-codex-connector[bot]" other999'
+eq "no approval at this head is exit 1 (pipefail OFF)" "1" "$?"
+
+touch "$GH_STUB_DIR/fail"
+run_in_shell "-uo pipefail" 'me_review_mode_approved 1764 "chatgpt-codex-connector[bot]" abc123'
+eq "an unreadable reviews API is exit 3 (pipefail on)"  "3" "$?"
+run_in_shell "-u" 'me_review_mode_approved 1764 "chatgpt-codex-connector[bot]" abc123'
+eq "an unreadable reviews API is exit 3 (pipefail OFF)" "3" "$?"
+rm -f "$GH_STUB_DIR/fail"
+
 # --- evidence-script runner ------------------------------------------------
 echo "=== evidence-script runner fails loud, never silently ok ==="
 
