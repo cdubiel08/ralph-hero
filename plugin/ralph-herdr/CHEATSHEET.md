@@ -356,8 +356,12 @@ on purpose and returns instantly if the state already matches.
 `herdr agent list | python3 …` reshape: agent, pane, herdr's `agent_status`,
 the pane's state token, unit, worktree, age from the ledger, and a derived
 HEALTH column whose one load-bearing verdict is `dead-before-start`
-(agent_status idle/done while the spawner's `spawned` token was never
-overwritten — the session died before its first self-report):
+(agent_status idle/done, the spawner's `spawned` token never overwritten,
+the unit's issue still OPEN, and its branch carries no commits of its own —
+the session died before its first self-report). The token alone never
+decides it (GH-2274): a driver that finished without a later self-report —
+a merged feature or a zero-commit apply unit closed on evidence — reads
+`finished`, and an unreadable board/branch reads `unverified`, never dead:
 
 ```bash
 bash plugin/ralph-herdr/scripts/fleet-status.sh [--json]
