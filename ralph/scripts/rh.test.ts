@@ -7,12 +7,14 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const RH = join(fileURLToPath(new URL(".", import.meta.url)), "rh");
+const INSTALL_RH = join(fileURLToPath(new URL(".", import.meta.url)), "install-rh.sh");
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 let tmp: string;
 let boardLog: string;
 let herdrLog: string;
@@ -31,6 +33,51 @@ function executable(contents: string): string {
   writeFileSync(path, contents);
   chmodSync(path, 0o755);
   return path;
+}
+
+type InstallEnv = Record<string, string> & {
+  HOME: string;
+  XDG_BIN_HOME: string;
+  RALPH_INSTALLED_PLUGINS_FILE: string;
+  PATH: string;
+};
+
+function installEnv(): InstallEnv {
+  const home = join(tmp, "install-home");
+  const plugin = join(tmp, "registered-ralph");
+  const registry = join(tmp, "registry", "installed_plugins.json");
+  mkdirSync(join(plugin, "scripts"), { recursive: true });
+  mkdirSync(join(tmp, "registry"), { recursive: true });
+  writeFileSync(join(plugin, "scripts", "rh"), "#!/usr/bin/env bash\nprintf 'rh registered\\n'\n");
+  chmodSync(join(plugin, "scripts", "rh"), 0o755);
+  writeFileSync(
+    registry,
+    JSON.stringify({
+      plugins: {
+        "ralph@local": [{ version: "99.0.0", installPath: plugin }],
+      },
+    }),
+  );
+  return {
+    HOME: home,
+    XDG_BIN_HOME: join(tmp, "bin"),
+    RALPH_INSTALLED_PLUGINS_FILE: registry,
+    PATH: process.env.PATH ?? "",
+  };
+}
+
+function runInstall(argv: string[], env: InstallEnv) {
+  const result = spawnSync("/bin/bash", [INSTALL_RH, ...argv], {
+    cwd: tmp,
+    encoding: "utf8",
+    env,
+  });
+  return {
+    status: result.status,
+    signal: result.signal,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
 }
 
 function runRh(
@@ -207,6 +254,104 @@ function logFor(fixture: string): string {
 }
 
 describe("rh", () => {
+  it("installs an executable shim into XDG_BIN_HOME and resolves the registered Ralph plugin at call time", () => {
+    // Break caught: skipping the registry resolver leaves an installed shim unable to find Ralph.
+    const env = installEnv();
+    expect(runInstall([], env).status).toBe(0);
+    const shim = join(env.XDG_BIN_HOME, "rh");
+    expect(statSync(shim).mode & 0o111).not.toBe(0);
+    expect(readFileSync(shim, "utf8")).toContain("# ralph-hero-rh-shim:v1");
+    const r = spawnSync(shim, ["version"], { cwd: tmp, encoding: "utf8", env });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/^rh /);
+  });
+
+  it("updates a recognized shim idempotently", () => {
+    // Break caught: each upgrade appends another marker or cannot replace its own shim.
+    const env = installEnv();
+    expect(runInstall([], env).status).toBe(0);
+    expect(runInstall([], env).status).toBe(0);
+    expect(readFileSync(join(env.XDG_BIN_HOME, "rh"), "utf8").match(/ralph-hero-rh-shim:v1/g)).toHaveLength(1);
+  });
+
+  it("refuses to replace a foreign rh executable", () => {
+    // Break caught: installation overwrites an unrelated command named rh.
+    const env = installEnv();
+    mkdirSync(env.XDG_BIN_HOME, { recursive: true });
+    writeFileSync(join(env.XDG_BIN_HOME, "rh"), "#!/bin/sh\necho foreign\n", { mode: 0o755 });
+    const r = runInstall([], env);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("refusing to replace unrelated executable");
+    expect(readFileSync(join(env.XDG_BIN_HOME, "rh"), "utf8")).toContain("echo foreign");
+  });
+
+  it("contains no source-checkout or user-specific absolute path", () => {
+    // Break caught: the generated shim is pinned to the checkout that installed it.
+    const env = installEnv();
+    expect(runInstall([], env).status).toBe(0);
+    const shim = readFileSync(join(env.XDG_BIN_HOME, "rh"), "utf8");
+    expect(shim).not.toContain(REPO_ROOT);
+    expect(shim).not.toContain(env.HOME);
+  });
+
+  it("uses an explicit executable development entrypoint", () => {
+    // Break caught: an explicit development override is ignored in favor of an installed copy.
+    const env = installEnv();
+    env.RALPH_RH_ENTRYPOINT = executable("#!/usr/bin/env bash\nprintf 'rh development\\n'\n");
+    expect(runInstall([], env).status).toBe(0);
+    const r = spawnSync(join(env.XDG_BIN_HOME, "rh"), ["version"], { cwd: tmp, encoding: "utf8", env });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("rh development\n");
+  });
+
+  it("refuses a broken explicit development entrypoint", () => {
+    // Break caught: a typo in an override silently runs a different Ralph copy.
+    const env = installEnv();
+    env.RALPH_RH_ENTRYPOINT = join(tmp, "missing-rh");
+    expect(runInstall([], env).status).toBe(0);
+    const r = spawnSync(join(env.XDG_BIN_HOME, "rh"), ["version"], { cwd: tmp, encoding: "utf8", env });
+    expect(r.status).toBe(69);
+    expect(r.stderr).toContain("RALPH_RH_ENTRYPOINT is not executable");
+  });
+
+  it("uses the current checkout before an installed plugin", () => {
+    // Break caught: working in this checkout unexpectedly runs a separately installed release.
+    const env = installEnv();
+    expect(runInstall([], env).status).toBe(0);
+    const r = spawnSync(join(env.XDG_BIN_HOME, "rh"), ["version"], { cwd: REPO_ROOT, encoding: "utf8", env });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/^rh /);
+    expect(r.stdout).not.toBe("rh registered\n");
+  });
+
+  it("labels the newest cache fallback as a guess", () => {
+    // Break caught: an unregistered cache copy is used silently or without choosing the newest version.
+    const env = installEnv();
+    const config = join(tmp, "claude-config");
+    const cached = join(config, "plugins", "cache", "marketplace", "ralph", "12.0.0", "scripts");
+    mkdirSync(cached, { recursive: true });
+    writeFileSync(join(cached, "rh"), "#!/usr/bin/env bash\nprintf 'rh cached\\n'\n");
+    chmodSync(join(cached, "rh"), 0o755);
+    env.CLAUDE_CONFIG_DIR = config;
+    env.RALPH_INSTALLED_PLUGINS_FILE = join(tmp, "missing-registry.json");
+    expect(runInstall([], env).status).toBe(0);
+    const r = spawnSync(join(env.XDG_BIN_HOME, "rh"), ["version"], { cwd: tmp, encoding: "utf8", env });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("rh cached\n");
+    expect(r.stderr).toContain("a guess, not a record");
+  });
+
+  it("fails with a setup remedy when no Ralph entrypoint can be resolved", () => {
+    // Break caught: a fresh machine reports success while the shim has no runnable Ralph command.
+    const env = installEnv();
+    env.CLAUDE_CONFIG_DIR = join(tmp, "empty-config");
+    env.RALPH_INSTALLED_PLUGINS_FILE = join(tmp, "missing-registry.json");
+    expect(runInstall([], env).status).toBe(0);
+    const r = spawnSync(join(env.XDG_BIN_HOME, "rh"), ["version"], { cwd: tmp, encoding: "utf8", env });
+    expect(r.status).toBe(69);
+    expect(r.stderr).toContain("install the ralph Claude Code plugin");
+  });
+
   it("executes the resolved board with byte-identical argv, stdin, streams, and rc", () => {
     const fake = executable(`#!/bin/bash
 printf 'argc=%s\\n' "$#"
