@@ -54,6 +54,18 @@ case "${1:-} ${2:-}" in
     # which is what a push landing mid-snapshot looks like to this script.
     n=$(( $(cat "$GH_STUB_DIR/view_calls" 2>/dev/null || echo 0) + 1 ))
     echo "$n" >"$GH_STUB_DIR/view_calls"
+    # GH-2276: a rate-limited GraphQL call fails with GitHub's own error text
+    # on stderr — the signal gb_looks_rate_limited matches, and the one the
+    # fix is keyed on rather than the (per GH-2278) unreliable rate_limit
+    # budget number.
+    if [[ -f "$GH_STUB_DIR/fail_view_ratelimited" ]]; then
+      echo "GraphQL: API rate limit exceeded for user ID 12345678 (https://docs.github.com/graphql/overview/resource-limitations#rate-limit)" >&2
+      exit 1
+    fi
+    # GH-2276: simulates gather()'s "we genuinely cannot judge" read failing
+    # outright — no payload at all, which is what an unreachable host looks
+    # like from inside gather() when GitHub gives no rate-limit signature.
+    if [[ -f "$GH_STUB_DIR/fail_view" ]]; then exit 1; fi
     # gather() reads `gh pr view` twice (the snapshot, then the head re-read),
     # so call 3 begins the CONFIRMING pass. From there the *_second fixtures
     # are served: that is how a test says "the world changed between passes".
@@ -104,6 +116,12 @@ case "${1:-} ${2:-}" in
       fi
       if [[ -f "$GH_STUB_DIR/fail_reviews" ]]; then exit 1; fi
     fi
+    ;;
+  "api rate_limit")
+    # GH-2276: gh-budget.sh's gb_snapshot reads this. Healthy by default so
+    # every test that never drops a rate_limit.json fixture sees the same
+    # fails-open behavior it saw before this endpoint had a stub case at all.
+    serve rate_limit.json '{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":9999999999}}}'
     ;;
   *) echo "stub: unhandled gh $*" >&2; exit 64 ;;
 esac
@@ -2455,6 +2473,75 @@ if grep -q "note: reviewer silent at head" "$D/watch.out" \
   pass "an unparseable branch omits the board command rather than guessing"
 else
   fail "foreign-branch note wrong: $(cat "$D/watch.out")"
+fi
+
+echo "=== GH-2276: budget exhaustion vs real unreachability ==="
+# Two facts that both make gather()'s `gh pr view` come back empty must not
+# render as the one GATE-ERROR: a healthy budget means the host is genuinely
+# unreachable (give up, unchanged); an exhausted budget is recoverable by
+# waiting and must never count toward the give-up threshold.
+D="$TMP_ROOT/unreachable-healthy-budget"
+mkdir -p "$D"
+touch "$D/fail_view"
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  timeout 10 bash "$SCRIPT" 1740 --watch --interval 1 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 1 ] && grep -q "GATE-ERROR: gh unreachable for 3 consecutive polls" <<<"$out" \
+   && ! grep -q "GATE-WAIT budget" <<<"$out"; then
+  pass "a healthy budget still gives up on real unreachability (unchanged)"
+else
+  fail "unreachable-healthy-budget (rc=$rc out=${out:0:200})"
+fi
+
+# Codex review (PR #2285, P2): the pre-spend budget NUMBER means "below the
+# floor", not "exhausted" — a merely-low-but-nonzero reading (or, as here, an
+# exhausted one with no confirming error) must NOT suppress the counter on
+# its own, or an unrelated real failure (bad permissions, a malformed
+# response) coinciding with a low budget would nap toward a reset forever
+# instead of surfacing after 3 polls. Only the OBSERVED rate-limit signature
+# (the test above) may do that; the number alone may not.
+D="$TMP_ROOT/exhausted-number-no-signature-still-gives-up"
+mkdir -p "$D"
+touch "$D/fail_view"
+cat >"$D/rate_limit.json" <<EOF
+{"resources":{"graphql":{"remaining":0,"limit":5000,"reset":$(( $(date +%s) + 3600 ))}}}
+EOF
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  timeout 10 bash "$SCRIPT" 1740 --watch --interval 1 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 1 ] && grep -q "GATE-ERROR: gh unreachable for 3 consecutive polls" <<<"$out" \
+   && ! grep -q "GATE-WAIT budget" <<<"$out"; then
+  pass "a low/exhausted budget NUMBER with no observed signature still gives up (does not mask unrelated failures)"
+else
+  fail "exhausted-number-no-signature-still-gives-up (rc=$rc out=${out:0:200})"
+fi
+
+# GH-2278: `gh api rate_limit`'s graphql bucket can mirror `core` and read
+# fully healthy while GraphQL is genuinely exhausted — so the fix cannot
+# depend on that number. This scenario pairs an OBSERVED rate-limit error on
+# the failing read with a rate_limit.json that claims a healthy budget, the
+# exact shape GH-2278 measured. If the give-up path fired here, the fix would
+# be inert on the case it exists for.
+D="$TMP_ROOT/ratelimited-signature-healthy-number"
+mkdir -p "$D"
+touch "$D/fail_view_ratelimited"
+cat >"$D/rate_limit.json" <<EOF
+{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":$(( $(date +%s) + 3600 ))}}}
+EOF
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  timeout 5 bash "$SCRIPT" 1740 --watch --interval 1 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 124 ] && grep -q "GATE-WAIT budget: GraphQL rate limit hit on the last read" <<<"$out" \
+   && ! grep -q "GATE-ERROR" <<<"$out"; then
+  pass "an observed rate-limit error naps instead of giving up, even when the budget number claims healthy"
+else
+  fail "ratelimited-signature-healthy-number (rc=$rc out=${out:0:200})"
 fi
 
 echo

@@ -652,6 +652,7 @@ json_array_or_empty() {
 gather() {
 
   local checks pr_json reviews comments fetch_ok checks_ok comments_ok head_before head_after
+  local pr_err pr_err_file pr_rc=0
   # The PR read comes FIRST so every other query is collected against a KNOWN
   # head, and the head is re-read at the end to prove it did not move
   # underneath the snapshot (codex P2, PR #1764). `gh pr checks` exposes no
@@ -664,9 +665,28 @@ gather() {
   # `mergeable` is computed asynchronously by GitHub and `author` decides
   # policy exemption; both are inputs to the ladder, so both are fetched here
   # rather than assumed.
+  #
+  # GH-2276: stderr is captured (not just discarded to /dev/null) so a
+  # GraphQL rate-limit failure can be told apart from real unreachability.
+  # This is deliberately NOT keyed on gb_backoff_seconds/gb_snapshot — GH-2278
+  # established that `gh api rate_limit`'s `.resources.graphql` mirrors
+  # `.resources.core` and can read a fully healthy budget while GraphQL is at
+  # zero, which would make that signal say "healthy" on exactly the failure
+  # this exists to catch. GitHub's own error text on the failing call is the
+  # signal that is actually true at the moment of failure, and costs no extra
+  # read — reusing gb_looks_rate_limited (GH-1817), the same text match the
+  # write-side guard already trusts.
+  pr_err_file=$(mktemp) || return 1
   pr_json=$(gh pr view "$PR" \
-    --json state,reviewDecision,headRefOid,baseRefName,author,mergeable 2>/dev/null) || return 1
-  [ -n "$pr_json" ] || return 1
+    --json state,reviewDecision,headRefOid,baseRefName,author,mergeable 2>"$pr_err_file") || pr_rc=$?
+  pr_err=$(cat "$pr_err_file" 2>/dev/null)
+  rm -f "$pr_err_file"
+  if [ "$pr_rc" -ne 0 ] || [ -z "$pr_json" ]; then
+    if gb_looks_rate_limited "$pr_json$pr_err"; then
+      return 2
+    fi
+    return 1
+  fi
   head_before=$(jq -r '.headRefOid // ""' <<<"$pr_json")
 
   # A PR that is no longer open is FINISHED, and nothing gathered below can
@@ -1014,8 +1034,9 @@ gather() {
 # recommends; the gate decides. A stale GATE-READY therefore costs one refused
 # merge-pr run that prints the real reason, never a bad merge.
 snapshot() {
-  local line second
-  line=$(gather) || return 1
+  local line second rc=0
+  line=$(gather) || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
 
   case "$line" in
     GATE-READY*) ;;
@@ -1113,7 +1134,9 @@ fails=0
 verdict_since=$(date +%s)
 silent_noted=false
 while :; do
-  if line=$(snapshot); then
+  rc=0
+  line=$(snapshot) || rc=$?
+  if [ "$rc" -eq 0 ]; then
     fails=0
     if [ "$line" != "$last" ]; then
       printf '%s\n' "$line"
@@ -1131,12 +1154,45 @@ while :; do
       esac
     fi
     if is_terminal "$line"; then exit 0; fi
+  elif [ "$rc" -eq 2 ]; then
+    # GH-2276: gather() observed GitHub's own GraphQL rate-limit error text
+    # directly on the failing read (gb_looks_rate_limited, GH-1817's write-side
+    # guard reused for a read). That is trustworthy at the moment it happens —
+    # unlike the pre-spend budget NUMBER below, which GH-2278 found reads a
+    # fully healthy `.resources.graphql` while GraphQL is genuinely at zero,
+    # because that REST field mirrors `.resources.core`. This is not a `fails`
+    # increment: the read didn't fail to reach GitHub, GitHub told us why.
+    #
+    # Deliberately not computing a reset deadline to sleep to: GH-2278 also
+    # measured that endpoint's `reset` epoch rolling forward with the clock
+    # rather than holding still, so it is not a trustworthy wake time either.
+    # Re-probing at the normal poll cadence is enough — a rejected call costs
+    # no extra budget, so there is nothing to back off FROM.
+    wait_line="GATE-WAIT budget: GraphQL rate limit hit on the last read — retrying"
+    if [ "$wait_line" != "$last" ]; then
+      printf '%s\n' "$wait_line"
+      last="$wait_line"
+    fi
+    sleep "$INTERVAL"
+    continue
   else
+    # A plain failure (rc 1): GitHub gave no rate-limit signature on this
+    # read, so it is not excluded from the counter. Codex review (PR #2285):
+    # an earlier version of this branch also consulted gb_backoff_seconds —
+    # the pre-spend budget NUMBER, not an observed error — as a second
+    # signal. That number means "below the floor", not "exhausted", so a
+    # merely-low-but-nonzero budget (say 499/500) would have swallowed an
+    # UNRELATED real failure (bad permissions, a malformed response) into a
+    # budget-wait loop that never gives up, hiding it for up to an hour
+    # instead of surfacing it after 3 polls. Only the confirmed signal above
+    # may suppress the counter; a plain failure always counts.
     fails=$((fails + 1))
     if [ "$fails" -ge 3 ]; then
       echo "GATE-ERROR: gh unreachable for $fails consecutive polls — giving up"
       exit 1
     fi
+    sleep "$INTERVAL"
+    continue
   fi
   # GH-1817: this is the repo's one sanctioned poll loop, and a poll loop on
   # this token is what drove the budget to 0/5000 on 2026-08-12, blocking every
