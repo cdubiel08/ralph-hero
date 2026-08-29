@@ -54,6 +54,10 @@ case "${1:-} ${2:-}" in
     # which is what a push landing mid-snapshot looks like to this script.
     n=$(( $(cat "$GH_STUB_DIR/view_calls" 2>/dev/null || echo 0) + 1 ))
     echo "$n" >"$GH_STUB_DIR/view_calls"
+    # GH-2276: simulates gather()'s "we genuinely cannot judge" read failing
+    # outright — no payload at all, which is what an unreachable host and an
+    # exhausted budget both look like from inside gather().
+    if [[ -f "$GH_STUB_DIR/fail_view" ]]; then exit 1; fi
     # gather() reads `gh pr view` twice (the snapshot, then the head re-read),
     # so call 3 begins the CONFIRMING pass. From there the *_second fixtures
     # are served: that is how a test says "the world changed between passes".
@@ -104,6 +108,12 @@ case "${1:-} ${2:-}" in
       fi
       if [[ -f "$GH_STUB_DIR/fail_reviews" ]]; then exit 1; fi
     fi
+    ;;
+  "api rate_limit")
+    # GH-2276: gh-budget.sh's gb_snapshot reads this. Healthy by default so
+    # every test that never drops a rate_limit.json fixture sees the same
+    # fails-open behavior it saw before this endpoint had a stub case at all.
+    serve rate_limit.json '{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":9999999999}}}'
     ;;
   *) echo "stub: unhandled gh $*" >&2; exit 64 ;;
 esac
@@ -2455,6 +2465,46 @@ if grep -q "note: reviewer silent at head" "$D/watch.out" \
   pass "an unparseable branch omits the board command rather than guessing"
 else
   fail "foreign-branch note wrong: $(cat "$D/watch.out")"
+fi
+
+echo "=== GH-2276: budget exhaustion vs real unreachability ==="
+# Two facts that both make gather()'s `gh pr view` come back empty must not
+# render as the one GATE-ERROR: a healthy budget means the host is genuinely
+# unreachable (give up, unchanged); an exhausted budget is recoverable by
+# waiting and must never count toward the give-up threshold.
+D="$TMP_ROOT/unreachable-healthy-budget"
+mkdir -p "$D"
+touch "$D/fail_view"
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  timeout 10 bash "$SCRIPT" 1740 --watch --interval 1 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 1 ] && grep -q "GATE-ERROR: gh unreachable for 3 consecutive polls" <<<"$out" \
+   && ! grep -q "GATE-WAIT budget" <<<"$out"; then
+  pass "a healthy budget still gives up on real unreachability (unchanged)"
+else
+  fail "unreachable-healthy-budget (rc=$rc out=${out:0:200})"
+fi
+
+D="$TMP_ROOT/unreachable-exhausted-budget"
+mkdir -p "$D"
+touch "$D/fail_view"
+cat >"$D/rate_limit.json" <<EOF
+{"resources":{"graphql":{"remaining":0,"limit":5000,"reset":$(( $(date +%s) + 3600 ))}}}
+EOF
+set +e
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
+  timeout 5 bash "$SCRIPT" 1740 --watch --interval 1 2>&1)
+rc=$?
+set -e
+# A backoff longer than the 5s timeout means the watcher is still alive,
+# asleep, when timeout kills it (rc 124) — it never reached the give-up path.
+if [ "$rc" -eq 124 ] && grep -q "GATE-WAIT budget: GraphQL exhausted, resets at" <<<"$out" \
+   && ! grep -q "GATE-ERROR" <<<"$out"; then
+  pass "an exhausted budget naps toward the reset instead of giving up"
+else
+  fail "unreachable-exhausted-budget (rc=$rc out=${out:0:200})"
 fi
 
 echo

@@ -1132,11 +1132,41 @@ while :; do
     fi
     if is_terminal "$line"; then exit 0; fi
   else
+    # GH-2276: a snapshot failure is not automatically "gh unreachable" — an
+    # exhausted GraphQL budget makes every `gh` read inside gather() fail the
+    # same way a downed host would, but it is recoverable by waiting and
+    # self-clearing on a reset timestamp this process already has in hand
+    # (gb_backoff_seconds, GH-1817). Consult it BEFORE counting toward the
+    # give-up threshold, so "investigate connectivity" and "wait N minutes"
+    # stop rendering as the one terminal GATE-ERROR.
+    backoff=$(gb_backoff_seconds)
+    if [ "${backoff:-0}" -gt 0 ]; then
+      gb_report_low
+      reset_epoch=$(( $(date +%s) + backoff ))
+      reset_clock=$(date -r "$reset_epoch" '+%H:%M:%S' 2>/dev/null \
+        || date -u -d "@$reset_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+        || echo "epoch $reset_epoch")
+      wait_line="GATE-WAIT budget: GraphQL exhausted, resets at $reset_clock"
+      if [ "$wait_line" != "$last" ]; then
+        printf '%s\n' "$wait_line"
+        last="$wait_line"
+      fi
+      # Deliberately not counted toward `fails`: this poll didn't fail to
+      # reach GitHub, it correctly declined to spend into a known-empty
+      # budget. The reset can be up to an hour out; cap the nap so a watcher
+      # stays interruptible and re-reports rather than going dark until the
+      # top of the hour.
+      [ "$backoff" -gt 300 ] && backoff=300
+      sleep "$backoff"
+      continue
+    fi
     fails=$((fails + 1))
     if [ "$fails" -ge 3 ]; then
       echo "GATE-ERROR: gh unreachable for $fails consecutive polls — giving up"
       exit 1
     fi
+    sleep "$INTERVAL"
+    continue
   fi
   # GH-1817: this is the repo's one sanctioned poll loop, and a poll loop on
   # this token is what drove the budget to 0/5000 on 2026-08-12, blocking every
