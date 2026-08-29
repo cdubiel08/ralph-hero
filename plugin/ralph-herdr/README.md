@@ -52,7 +52,9 @@ herdr plugin install cdubiel08/ralph-hero/plugin/ralph-herdr
 ```
 
 Invoke actions from a workspace whose cwd is the ralph-configured repo (herdr's action
-menu, or `herdr plugin action invoke <id> --plugin ralph-herdr`).
+menu, or `herdr plugin action invoke <id> --plugin ralph-herdr`) — or, to target a
+specific repo by path regardless of which workspace currently has UI focus, `bash
+plugin/ralph-herdr/scripts/invoke.sh <repo-path> <id>` (GH-2291; see the CHEATSHEET §2).
 
 ## The nesting model
 

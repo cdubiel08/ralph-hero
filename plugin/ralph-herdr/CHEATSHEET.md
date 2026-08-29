@@ -10,8 +10,8 @@ been run for real or read straight out of the source it invokes.
 |---|---|---|
 | Launch a fleet on workable items | `bash plugin/ralph-herdr/scripts/work-fleet.sh` (add issue numbers for exactly those) | 6 |
 | Launch a TEAM for an epic (lead-only; the lead staffs its workers) | `bash plugin/ralph-herdr/scripts/work-team.sh EPIC` (re-run respawns a dead lead) | 6 |
-| Open the cockpit | `herdr plugin action invoke cockpit --plugin ralph-herdr` | 3 |
-| Sit with the board (attended dispatch) | `herdr plugin action invoke hero --plugin ralph-herdr` | 2 |
+| Open the cockpit | `bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> cockpit` (targets *that* repo's board regardless of which workspace has focus — see §2) | 3 |
+| Sit with the board (attended dispatch) | `bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> hero` | 2 |
 | Stand up the dispatch seat (hero pane in the repo's main workspace, idempotent) | `bash plugin/ralph-herdr/scripts/dispatch-up.sh` (re-run heals; doctor's `dispatch-heartbeat` remedy) | 2 |
 | Board state / who's working | `board list` · `board next` · `herdr agent list` | 7 |
 | Fleet health at a glance (incl. dead-before-start) | `bash plugin/ralph-herdr/scripts/fleet-status.sh` | 7 |
@@ -97,26 +97,46 @@ Detach with `ctrl+b q` — everything keeps running. Never launch a nested
 
 ## 2. The actions
 
-Invoke from a shell whose workspace cwd is the ralph-configured repo (or use
-herdr's action menu with that workspace focused).
+Every action below is a `[[panes]]` entrypoint. Target one **by repo path**,
+deterministically — this never depends on which workspace has UI focus
+(GH-2291; see the note below on why that matters):
 
 ```bash
-herdr plugin action invoke cockpit      --plugin ralph-herdr   # THE board pane: TUI → fzf → dashboard
-herdr plugin action invoke dashboard    --plugin ralph-herdr   # read-only watch loop
-herdr plugin action invoke work-next    --plugin ralph-herdr   # 1 work session, board-next
-herdr plugin action invoke work-fleet   --plugin ralph-herdr   # up to N frontier issues in parallel
-herdr plugin action invoke work-these   --plugin ralph-herdr   # same fleet, on issues you name (prompts)
-herdr plugin action invoke hero         --plugin ralph-herdr   # attended dispatch: an interactive /ralph:hero session (brief + leases + inbox)
-herdr plugin action invoke dispatch-up  --plugin ralph-herdr   # dispatch up (GH-2213/GH-2246): hero pane in the repo's main workspace + roster; idempotent, nothing scheduled
-herdr plugin action invoke answer       --plugin ralph-herdr   # answer a Human Needed item, comment-first
-herdr plugin action invoke attend       --plugin ralph-herdr   # focus whatever is blocked (carries the question)
-herdr plugin action invoke deliver-pass --plugin ralph-herdr   # shepherd In Review PRs
-herdr plugin action invoke tend-pass    --plugin ralph-herdr   # hygiene pass
-herdr plugin action invoke doctor       --plugin ralph-herdr   # invariant sweep, popup
-herdr plugin action invoke reconcile    --plugin ralph-herdr   # heal the watcher ledger (also runs at server start)
-bash scripts/reconcile.sh --dry-run                            # same pass, every write withheld
-bash scripts/reconcile.sh --adopt                              # sweep a ledger too old to prove it is yours
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> cockpit       # THE board pane: TUI → fzf → dashboard
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> dashboard     # read-only watch loop
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> work-next     # 1 work session, board-next
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> work-fleet    # up to N frontier issues in parallel
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> work-these    # same fleet, on issues you name (prompts)
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> hero          # attended dispatch: an interactive /ralph:hero session (brief + leases + inbox)
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> dispatch-up   # dispatch up (GH-2213/GH-2246): hero pane in the repo's main workspace + roster; idempotent, nothing scheduled
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> answer        # answer a Human Needed item, comment-first
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> attend        # focus whatever is blocked (carries the question)
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> deliver-pass  # shepherd In Review PRs
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> tend-pass     # hygiene pass
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> doctor        # invariant sweep
+bash plugin/ralph-herdr/scripts/invoke.sh <repo-path> reconcile     # heal the watcher ledger (also runs at server start)
+bash scripts/reconcile.sh --dry-run                                 # same pass, every write withheld
+bash scripts/reconcile.sh --adopt                                   # sweep a ledger too old to prove it is yours
 ```
+
+`<repo-path>` is a directory herdr already has open as a workspace — the main
+checkout or a linked worktree. `invoke.sh` resolves it against `herdr
+workspace list`'s own worktree records (never `HERDR_PLUGIN_CONTEXT_JSON`) and
+refuses, naming candidates, when more than one workspace matches (a repo open
+in several worktrees at once). `--placement`/`--direction`/`--focus` default
+to split/right/focus and are overridable (`invoke.sh --help`); a workspace
+with several candidate panes takes the first one for split/zoomed placement —
+pass `--workspace <id>` to pick a specific one.
+
+**Why this exists**: `herdr plugin action invoke <id> --plugin ralph-herdr`
+(the action menu, or typed from any shell) still works and is unchanged — but
+it resolves its target from `HERDR_PLUGIN_CONTEXT_JSON`, which reflects
+whichever workspace currently has UI FOCUS, not the invoking shell's own cwd.
+On a machine with one repo open that's the same thing; on a multi-repo
+machine it can silently target the wrong repo's board (GH-2269 made the
+mismatch visible; this closes the gap it left open — a way to target a repo
+by name). Use `invoke.sh` whenever the target matters and you are not
+certain which workspace is focused.
 
 Three more are **pane** actions — they act on the pane you have focused, not on
 the workspace, so invoke them from the pane you want to fork:
