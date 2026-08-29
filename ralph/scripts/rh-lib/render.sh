@@ -19,7 +19,7 @@ rh_color_init() {
 }
 
 rh_status() {
-  local kind="$1" label="$2" value="$3" detail="$4" color glyph
+  local kind="$1" label="$2" value="$3" detail="$4" color glyph glyph_ascii
   case "$kind" in
     healthy) color="$RH_GREEN"; glyph="●"; glyph_ascii="OK" ;;
     attention) color="$RH_AMBER"; glyph="▲"; glyph_ascii="WARN" ;;
@@ -34,6 +34,18 @@ rh_status() {
   esac
   printf '%s%s %-12s%s %-16s %s%s%s\n' \
     "$color" "$glyph" "$label" "$RH_RESET" "$value" "$RH_DIM" "$detail" "$RH_RESET"
+}
+
+rh_phase() {
+  local name="$1" state="$2" detail="$3" kind
+  case "$state" in
+    ready|unchanged|resumed) kind=healthy ;;
+    started) kind=action ;;
+    skipped|attention) kind=attention ;;
+    failed) kind=failed ;;
+    *) echo "rh: invalid phase state '$state'" >&2; return 64 ;;
+  esac
+  rh_status "$kind" "$name" "$state" "$detail"
 }
 
 rh_herdr_status_row() {

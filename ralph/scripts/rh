@@ -56,6 +56,10 @@ case "$command" in
         }
         rh_dispatch_up
         ;;
+      day)
+        shift
+        rh_day "$@"
+        ;;
       *)
         usage_error "unknown dispatch command '${1-}'; try 'rh dispatch'"
         exit $?
@@ -85,6 +89,10 @@ case "$command" in
   team)
     shift
     rh_team "$@"
+    ;;
+  day)
+    shift
+    rh_day "$@"
     ;;
   help|-h|--help)
     [ "$#" -eq 0 ] || shift

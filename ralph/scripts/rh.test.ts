@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,20 +80,37 @@ function readLines(path: string): string[] {
   }
 }
 
-function fixtureEnv(env: { NO_COLOR?: string; LC_ALL?: string; herdrStatus?: string; server?: "down" | "running" } = {}) {
+type SurfaceEnv = {
+  NO_COLOR?: string;
+  LC_ALL?: string;
+  herdrStatus?: string;
+  server?: "down" | "running";
+  dispatchRc?: number;
+  reconcileRc?: number;
+  resumeRc?: number;
+  cockpitRc?: number;
+  inboxRc?: number;
+  teamRc?: Record<string, number>;
+  idempotentTeams?: boolean;
+  isolatedLog?: string;
+};
+
+function fixtureEnv(env: SurfaceEnv = {}) {
   return env;
 }
 
 function runSurface(
   argv: string[],
-  env: { NO_COLOR?: string; LC_ALL?: string; herdrStatus?: string; server?: "down" | "running" } = fixtureEnv(),
+  env: SurfaceEnv = fixtureEnv(),
 ): { status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string } {
-  boardLog = join(tmp, "board.log");
-  herdrLog = join(tmp, "herdr.log");
-  scriptLog = join(tmp, "scripts.log");
-  const serverState = join(tmp, "server-state");
-  const scripts = join(tmp, "herdr-scripts");
-  const repo = join(tmp, "repo");
+  const fixture = env.isolatedLog ?? "default";
+  boardLog = join(tmp, `board-${fixture}.log`);
+  herdrLog = join(tmp, `herdr-${fixture}.log`);
+  scriptLog = join(tmp, `scripts-${fixture}.log`);
+  const serverState = join(tmp, `server-state-${fixture}`);
+  const teamState = join(tmp, `team-state-${fixture}`);
+  const scripts = join(tmp, `herdr-scripts-${fixture}`);
+  const repo = join(tmp, `repo-${fixture}`);
   mkdirSync(scripts, { recursive: true });
   mkdirSync(repo, { recursive: true });
   writeFileSync(
@@ -102,7 +119,7 @@ function runSurface(
 printf '%s\\n' "$*" >>"${boardLog}"
 case "$*" in
   brief) echo 'BOARD BRIEF' ;;
-  inbox*) echo 'BOARD INBOX' ;;
+  inbox*) echo 'BOARD INBOX'; exit ${env.inboxRc ?? 0} ;;
   'who dispatch'*) echo 'DISPATCH ADDRESS' ;;
   roster*) echo 'ROSTER' ;;
   doctor) echo 'BOARD DOCTOR' ;;
@@ -110,7 +127,9 @@ esac
 `,
   );
   chmodSync(join(tmp, "fake-board"), 0o755);
-  writeFileSync(serverState, env.herdrStatus !== undefined ? "custom" : (env.server ?? "running"));
+  if (!existsSync(serverState)) {
+    writeFileSync(serverState, env.herdrStatus !== undefined ? "custom" : (env.server ?? "running"));
+  }
   writeFileSync(
     join(tmp, "fake-herdr"),
     `#!/bin/bash
@@ -136,18 +155,35 @@ esac
   chmodSync(join(tmp, "fake-herdr"), 0o755);
   writeFileSync(join(scripts, "dispatch-up.sh"), `#!/bin/bash
 printf '%s\\n' dispatch-up >>"${scriptLog}"
+exit ${env.dispatchRc ?? 0}
+`);
+  writeFileSync(join(scripts, "reconcile.sh"), `#!/bin/bash
+printf '%s\\n' reconcile >>"${scriptLog}"
+exit ${env.reconcileRc ?? 0}
+`);
+  writeFileSync(join(scripts, "resume-teams.sh"), `#!/bin/bash
+printf '%s\\n' resume-teams >>"${scriptLog}"
+exit ${env.resumeRc ?? 0}
 `);
   writeFileSync(join(scripts, "cockpit-open.sh"), `#!/bin/bash
 printf '%s\\n' cockpit-open >>"${scriptLog}"
+exit ${env.cockpitRc ?? 0}
 `);
   writeFileSync(join(scripts, "work-team.sh"), `#!/bin/bash
-printf 'work-team %s\\n' "$*" >>"${scriptLog}"
+${env.idempotentTeams ? `grep -Fxq "$1" "${teamState}" 2>/dev/null && exit 0
+printf '%s\\n' "$1" >>"${teamState}"
+` : ""}printf 'work-team %s\\n' "$*" >>"${scriptLog}"
+case "$1" in
+${Object.entries(env.teamRc ?? {}).map(([epic, rc]) => `  ${epic}) exit ${rc} ;;`).join("\n")}
+esac
 `);
   writeFileSync(join(scripts, "fleet-status.sh"), `#!/bin/bash
 printf '%s\\n' "fleet-status $*" >>"${herdrLog}"
 echo 'FLEET STATUS'
 `);
   chmodSync(join(scripts, "dispatch-up.sh"), 0o755);
+  chmodSync(join(scripts, "reconcile.sh"), 0o755);
+  chmodSync(join(scripts, "resume-teams.sh"), 0o755);
   chmodSync(join(scripts, "cockpit-open.sh"), 0o755);
   chmodSync(join(scripts, "work-team.sh"), 0o755);
   chmodSync(join(scripts, "fleet-status.sh"), 0o755);
@@ -164,6 +200,10 @@ echo 'FLEET STATUS'
     ...env,
   });
   return result;
+}
+
+function logFor(fixture: string): string {
+  return join(tmp, `scripts-${fixture}.log`);
 }
 
 describe("rh", () => {
@@ -282,6 +322,96 @@ exit 23
     const r = runSurface(["team", "2208", "extra"]);
     expect(r.status).toBe(64);
     expect(readLines(scriptLog)).toEqual([]);
+  });
+
+  it("naked day never invokes work-team when no durable team exists", () => {
+    const r = runSurface(["day"], fixtureEnv({ server: "running" }));
+    expect(r.status).toBe(0);
+    expect(readLines(scriptLog)).toEqual([
+      "dispatch-up",
+      "reconcile",
+      "resume-teams",
+      "cockpit-open",
+    ]);
+    expect(readLines(scriptLog).some((line) => line.startsWith("work-team "))).toBe(false);
+  });
+
+  it("repeatable team flags are validated and deduplicated before mutation", () => {
+    const r = runSurface(["day", "--team", "2208", "--team", "2208", "--team", "2176"]);
+    expect(r.status).toBe(0);
+    expect(readLines(scriptLog).filter((line) => line.startsWith("work-team "))).toEqual([
+      "work-team 2208",
+      "work-team 2176",
+    ]);
+  });
+
+  it.each([
+    [["day", "--team"], "--team needs an epic number"],
+    [["day", "--team", "not-an-epic"], "invalid epic 'not-an-epic'"],
+    [["day", "--unknown"], "unknown argument '--unknown'"],
+  ])("%j rejects every invalid day argument before mutation", (args, message) => {
+    const r = runSurface(args);
+    expect(r.status).toBe(64);
+    expect(r.stderr).toContain(message);
+    expect(readLines(scriptLog)).toEqual([]);
+    expect(readLines(boardLog)).toEqual([]);
+    expect(readLines(herdrLog)).toEqual([]);
+  });
+
+  it("dispatch failure prevents every dependent phase", () => {
+    const r = runSurface(["day"], fixtureEnv({ dispatchRc: 1 }));
+    expect(r.status).not.toBe(0);
+    expect(readLines(scriptLog)).toEqual(["dispatch-up"]);
+    expect(r.stdout).toContain("dispatch");
+    expect(r.stdout).toContain("failed");
+  });
+
+  it("resume ambiguity continues to cockpit and inbox but returns nonzero", () => {
+    const r = runSurface(["day"], fixtureEnv({ resumeRc: 1 }));
+    expect(r.status).not.toBe(0);
+    expect(readLines(scriptLog)).toContain("cockpit-open");
+    expect(readLines(boardLog)).toContain("inbox");
+    expect(r.stdout).toContain("teams");
+    expect(r.stdout).toContain("attention");
+  });
+
+  it("an explicit-team failure leaves later independent phases visible and aggregates nonzero", () => {
+    const r = runSurface(
+      ["day", "--team", "2208", "--team", "2176"],
+      fixtureEnv({ teamRc: { "2208": 1 } }),
+    );
+    expect(r.status).not.toBe(0);
+    expect(readLines(scriptLog)).toEqual([
+      "dispatch-up",
+      "reconcile",
+      "resume-teams",
+      "work-team 2208",
+      "work-team 2176",
+      "cockpit-open",
+    ]);
+    expect(readLines(boardLog)).toContain("inbox");
+    expect(r.stdout).toContain("team GH-2208");
+    expect(r.stdout).toContain("failed");
+    expect(r.stdout).toContain("team GH-2176");
+    expect(r.stdout).toContain("started");
+  });
+
+  it("dispatch day and day invoke the same ordered phases", () => {
+    const direct = runSurface(["day"], fixtureEnv({ isolatedLog: "direct" }));
+    const nested = runSurface(["dispatch", "day"], fixtureEnv({ isolatedLog: "nested" }));
+    expect(direct.status).toBe(0);
+    expect(direct.status).toBe(nested.status);
+    const directPhases = readLines(logFor("direct"));
+    expect(directPhases).toEqual(["dispatch-up", "reconcile", "resume-teams", "cockpit-open"]);
+    expect(directPhases).toEqual(readLines(logFor("nested")));
+  });
+
+  it("rerunning day reuses the server and does not duplicate an idempotent explicit team start", () => {
+    const env = fixtureEnv({ isolatedLog: "rerun", server: "down", idempotentTeams: true });
+    expect(runSurface(["day", "--team", "2208"], env).status).toBe(0);
+    expect(runSurface(["day", "--team", "2208"], env).status).toBe(0);
+    expect(readLines(join(tmp, "herdr-rerun.log")).filter((line) => line === "server")).toHaveLength(1);
+    expect(readLines(logFor("rerun")).filter((line) => line === "work-team 2208")).toHaveLength(1);
   });
 
   it("NO_COLOR wins over --color=always", () => {
