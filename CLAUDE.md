@@ -28,6 +28,12 @@ run `gofmt -l .` (must print nothing) before `go vet ./... && go test ./...`.
 
 ralph-knowledge builds/tests from `plugin/ralph-knowledge/` (`npm ci && npm run build && npm test`).
 
+`scripts/dream/` (Python, `uv run --locked --extra test pytest tests/`) is the
+one Python surface in this repo where units are accepted under a
+mutate-restore-confirm mutation-testing practice; that surface's `README.md`
+documents a false-red trap in the restore step (a stale `__pycache__`) and its
+one-line remedy — read it before mutation-testing a change there.
+
 ## The Board (source of truth)
 
 Seven states, one machine, three write lanes — all in `ralph/scripts/board.ts` (run via `ralph/scripts/board`, a bun→tsx shim):
