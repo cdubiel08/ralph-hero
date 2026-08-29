@@ -23,7 +23,7 @@ Six issues discovered during real-world setup where repo owner (org) != project 
 
 ## Desired End State
 
-A user with an org repo (`centerpoint-energy/repo`) and a personal project (`chad-a-dubiel_cpe` project #3) can configure ralph-hero with separate credentials and owners, get clear validation at setup time, and see immediate feedback if something is misconfigured.
+A user with an org repo (`<org>/repo`) and a personal project (`<personal-account>` project #3) can configure ralph-hero with separate credentials and owners, get clear validation at setup time, and see immediate feedback if something is misconfigured.
 
 ### Verification
 - [ ] Can configure separate repo token and project token
@@ -121,8 +121,8 @@ return createGitHubClient({
 - [x] `npm run build` succeeds with no type errors
 
 #### Manual Verification
-- [ ] With `RALPH_GH_OWNER=centerpoint-energy` and `RALPH_GH_PROJECT_OWNER=chad-a-dubiel_cpe`, `ralph_hero__get_project` returns the personal project
-- [ ] `ralph_hero__list_issues` still uses `centerpoint-energy` for repo queries
+- [ ] With `RALPH_GH_OWNER=<org>` and `RALPH_GH_PROJECT_OWNER=<personal-account>`, `ralph_hero__get_project` returns the personal project
+- [ ] `ralph_hero__list_issues` still uses `<org>` for repo queries
 
 ---
 
