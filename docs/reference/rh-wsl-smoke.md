@@ -12,19 +12,18 @@ test -d "$LINUX_REPO/.git"
 test -d "$WINDOWS_REPO/.git"
 ```
 
-Create one absolute wrapper for a disposable named Herdr session. All direct Herdr checks below use `"$WSL_HERDR"`; all `rh` calls go through `rh_wsl`, which supplies that same wrapper plus scratch Ralph state. The only calls made through the real binary are exact named-session lifecycle cleanup:
+Create one absolute wrapper for a disposable named Herdr session. All direct Herdr checks below use `"$WSL_HERDR"`; all `rh` calls go through `rh_wsl`, which supplies that same wrapper plus scratch Ralph state. The only calls made through the real binary are exact named-session lifecycle cleanup and read-only `session list` absence proofs:
 
 ```bash
+set -euo pipefail
 readonly WSL_RH_SESSION="ralph-wsl-smoke"
-WSL_RH_TMP=$(mktemp -d /tmp/ralph-wsl-smoke.XXXXXX)
-readonly WSL_RH_TMP
 WSL_HERDR_REAL=$(command -v herdr)
 readonly WSL_HERDR_REAL
 case "$WSL_HERDR_REAL" in /*) ;; *) echo "herdr did not resolve absolutely: $WSL_HERDR_REAL" >&2; false ;; esac
+WSL_RH_TMP=$(mktemp -d /tmp/ralph-wsl-smoke.XXXXXX)
+readonly WSL_RH_TMP
 WSL_HERDR="$WSL_RH_TMP/herdr-$WSL_RH_SESSION"
 readonly WSL_HERDR
-"$WSL_HERDR_REAL" session stop "$WSL_RH_SESSION" >/dev/null 2>&1 || true
-"$WSL_HERDR_REAL" session delete "$WSL_RH_SESSION" >/dev/null 2>&1 || true
 {
   printf '%s\n' '#!/bin/bash' 'for arg in "$@"; do' \
     '  case "$arg" in --session|--session=*|--no-session|--remote|--remote=*|--remote-keybindings|--remote-keybindings=*) echo "refusing session override" >&2; exit 64 ;; esac' \
@@ -34,6 +33,75 @@ readonly WSL_HERDR
 } > "$WSL_HERDR"
 chmod 700 "$WSL_HERDR"
 case "$WSL_HERDR" in /*) ;; *) echo "wrapper is not absolute: $WSL_HERDR" >&2; false ;; esac
+rh_wsl_stop_delete() {
+  local phase stop_out stop_err delete_out delete_err
+  phase=${1-}
+  case "$phase" in initial|cleanup) ;; *) echo "invalid cleanup phase: $phase" >&2; return 1 ;; esac
+  stop_out="$WSL_RH_TMP/session-stop-$phase.txt"
+  stop_err="$WSL_RH_TMP/session-stop-$phase.stderr.txt"
+  delete_out="$WSL_RH_TMP/session-delete-$phase.txt"
+  delete_err="$WSL_RH_TMP/session-delete-$phase.stderr.txt"
+  local lifecycle_rc
+  lifecycle_rc=0
+  if ! "$WSL_HERDR_REAL" session stop "$WSL_RH_SESSION" >"$stop_out" 2>"$stop_err"; then
+    echo "$phase stop failed; retaining evidence after the required session-list check" >&2
+    lifecycle_rc=1
+  fi
+  if ! "$WSL_HERDR_REAL" session delete "$WSL_RH_SESSION" >"$delete_out" 2>"$delete_err"; then
+    echo "$phase delete failed; retaining evidence after the required session-list check" >&2
+    lifecycle_rc=1
+  fi
+  return "$lifecycle_rc"
+}
+rh_wsl_require_session_absent() {
+  local phase list_out list_err line name status directory socket saw_header
+  phase=${1-}
+  case "$phase" in initial|cleanup) ;; *) echo "invalid absence-proof phase: $phase" >&2; return 1 ;; esac
+  list_out="$WSL_RH_TMP/session-list-$phase.txt"
+  list_err="$WSL_RH_TMP/session-list-$phase.stderr.txt"
+  if ! NO_COLOR=1 "$WSL_HERDR_REAL" session list >"$list_out" 2>"$list_err"; then
+    echo "$phase session list failed; retaining evidence under $WSL_RH_TMP" >&2
+    return 1
+  fi
+  saw_header=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    read -r name status directory socket <<<"$line"
+    if [ "$saw_header" -eq 0 ]; then
+      if [ "$name" != name ] || [ "$status" != status ] || [ "$directory" != directory ] || [ "$socket" != socket ]; then
+        echo "$phase session list had an unparseable header; retaining $list_out" >&2
+        return 1
+      fi
+      saw_header=1
+      continue
+    fi
+    if [ -z "$name" ] || [ -z "$directory" ] || [ -z "$socket" ]; then
+      echo "$phase session list had an unparseable row; retaining $list_out" >&2
+      return 1
+    fi
+    case "$status" in running|stopped) ;; *)
+      echo "$phase session list had unknown status '$status'; retaining $list_out" >&2
+      return 1
+    esac
+    if [ "$name" = "$WSL_RH_SESSION" ]; then
+      echo "$phase cleanup left exact session '$WSL_RH_SESSION'; retaining evidence under $WSL_RH_TMP" >&2
+      return 1
+    fi
+  done <"$list_out"
+  if [ "$saw_header" -ne 1 ]; then
+    echo "$phase session list was empty; retaining $list_out" >&2
+    return 1
+  fi
+  return 0
+}
+initial_lifecycle_rc=0
+initial_absence_rc=0
+rh_wsl_stop_delete initial || initial_lifecycle_rc=$?
+rh_wsl_require_session_absent initial || initial_absence_rc=$?
+if [ "$initial_lifecycle_rc" -ne 0 ] || [ "$initial_absence_rc" -ne 0 ]; then
+  echo "initial cleanup failed; wrapper and evidence retained under $WSL_RH_TMP" >&2
+  false
+fi
 mkdir -p "$WSL_RH_TMP/ralph-home" "$WSL_RH_TMP/ledger-root"
 rh_wsl() {
   HERDR_BIN_PATH="$WSL_HERDR" \
@@ -42,10 +110,12 @@ rh_wsl() {
     rh "$@"
 }
 rh_wsl_cleanup() {
-  "$WSL_HERDR_REAL" session stop "$WSL_RH_SESSION" >/dev/null 2>&1 || true
-  "$WSL_HERDR_REAL" session delete "$WSL_RH_SESSION" >/dev/null 2>&1 || true
-  if "$WSL_HERDR" status server --json >/dev/null 2>&1; then
-    echo "named session still answers after cleanup: $WSL_RH_SESSION" >&2
+  local lifecycle_rc absence_rc
+  lifecycle_rc=0
+  absence_rc=0
+  rh_wsl_stop_delete cleanup || lifecycle_rc=$?
+  rh_wsl_require_session_absent cleanup || absence_rc=$?
+  if [ "$lifecycle_rc" -ne 0 ] || [ "$absence_rc" -ne 0 ]; then
     return 1
   fi
   case "$WSL_RH_TMP" in /tmp/ralph-wsl-smoke.*) ;; *)
@@ -55,10 +125,20 @@ rh_wsl_cleanup() {
   [ "$WSL_HERDR" = "$WSL_RH_TMP/herdr-$WSL_RH_SESSION" ] || return 1
   rm -rf "$WSL_RH_TMP"
 }
-trap rh_wsl_cleanup EXIT
+rh_wsl_on_exit() {
+  local prior_rc
+  prior_rc=$1
+  trap - EXIT
+  if ! rh_wsl_cleanup; then
+    echo "WSL smoke cleanup failed; wrapper and evidence retained under $WSL_RH_TMP" >&2
+    exit 1
+  fi
+  exit "$prior_rc"
+}
+trap 'rh_wsl_on_exit "$?"' EXIT
 ```
 
-Expected: `WSL_HERDR_REAL` and `WSL_HERDR` are absolute, the prior disposable session is absent, and no command below can select the default Herdr session.
+Expected: `WSL_HERDR_REAL` and `WSL_HERDR` are absolute; `session-list-initial.txt` has the expected header and no row whose first field is exactly `ralph-wsl-smoke`; and no command below can select the default Herdr session. A lifecycle, transport, protocol, executable, parse, or remaining-session problem stops here and retains the wrapper plus captured stdout/stderr under `WSL_RH_TMP`.
 
 ## 1. Install under `~/.local/bin`
 
@@ -158,15 +238,15 @@ Expected: the board preflight identifies the intended open disposable epic, the 
 
 ## Cleanup
 
-After recording evidence, delete the exact named session and scratch wrapper. The `EXIT` trap does the same if an earlier command fails:
+After recording evidence, disable the automatic trap and invoke the same fail-closed cleanup explicitly. Cleanup removes scratch state only after a successful parseable session list proves the exact named session absent:
 
 ```bash
-rh_wsl_cleanup
 trap - EXIT
+rh_wsl_cleanup
 test ! -e "$WSL_HERDR"
 ```
 
-Expected: cleanup first verifies through the wrapper that the named session no longer answers, then removes the wrapper and scratch state. The final path check exits 0, and the default Herdr session was never selected or stopped.
+Expected: `session-list-cleanup.txt` has the expected header and no exact `ralph-wsl-smoke` row, then the wrapper and scratch state are removed and the final path check exits 0. If lifecycle teardown, session listing, parsing, or the exact absence proof fails, cleanup exits nonzero and retains the wrapper, captured session-list stdout/stderr, logs, and scratch state for investigation. The default Herdr session is never selected or stopped.
 
 ## Evidence record
 
