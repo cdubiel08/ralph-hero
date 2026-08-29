@@ -141,8 +141,10 @@ it resolves its target from `HERDR_PLUGIN_CONTEXT_JSON`, which reflects
 whichever workspace currently has UI FOCUS, not the invoking shell's own cwd.
 On a machine with one repo open that's the same thing; on a multi-repo
 machine it can silently target the wrong repo's board (GH-2269 made the
-mismatch visible; this closes the gap it left open — a way to target a repo
-by name). Use `invoke.sh` whenever the target matters and you are not
+mismatch visible — every action prints the repo it resolved, readable via
+`herdr plugin log list --plugin ralph-herdr`, and refuses, naming the path,
+when that workspace has no board config; this closes the gap it left open —
+a way to target a repo by name). Use `invoke.sh` whenever the target matters and you are not
 certain which workspace is focused.
 
 Three more are **pane** actions — they act on the pane you have focused, not on

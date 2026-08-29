@@ -53,5 +53,16 @@ if command -v herdr >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     | jq -r '.result.plugins[] | select(.plugin_id == "ralph-herdr") | .plugin_root' 2>/dev/null || true)
   [ -n "${root:-}" ] && [ -f "$root/CHEATSHEET.md" ] && CHEAT="$root/CHEATSHEET.md"
 fi
-echo "operator asks, answered (do not re-derive): 'launch a fleet' -> herdr plugin action invoke work-fleet --plugin ralph-herdr (or work-these for named issues); 'open the cockpit' -> herdr plugin action invoke cockpit --plugin ralph-herdr; 'board status / who is working' -> board list + board next + herdr agent list. Full cheat sheet: $CHEAT"
+# GH-2269: these invoke forms target the FOCUSED workspace, never this
+# shell's cwd, and herdr gives no --workspace/--cwd to pin it — a launch
+# typed here can spawn against whatever repo last had focus. The by-path
+# spelling in CHEATSHEET.md §6 (`bash plugin/ralph-herdr/scripts/work-fleet.sh`)
+# runs with THIS shell's own cwd instead, but only a vendored ralph-hero
+# checkout has that path to run it from — a host repo installing ralph as a
+# Claude Code plugin does not, which is why this line still gives the invoke
+# form (the comment above). The caveat travels inline instead: every action
+# now prints the repo it resolved before it does anything (GH-2269's
+# resolve-workspace.sh), so the remedy for a session that cannot path into
+# plugin/ralph-herdr/scripts/ is to read that line, not to skip the check.
+echo "operator asks, answered (do not re-derive): 'launch a fleet' -> herdr plugin action invoke work-fleet --plugin ralph-herdr (or work-these for named issues; targets the FOCUSED workspace, not this shell — check the resolved repo it prints in herdr plugin log before trusting it, or run bash plugin/ralph-herdr/scripts/work-fleet.sh directly when this checkout has that path); 'open the cockpit' -> herdr plugin action invoke cockpit --plugin ralph-herdr (same caveat; or bash plugin/ralph-herdr/scripts/cockpit-open.sh); 'board status / who is working' -> board list + board next + herdr agent list. Full cheat sheet: $CHEAT"
 exit 0
