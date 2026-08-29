@@ -13173,9 +13173,21 @@ export function run(argv: string[], ctx: Ctx): number {
       const { own, foreign } =
         allRepos ? ownRepo(ctx, walk.open) : { own: walk.open, foreign: [] as QueueItem[] };
       let items = own;
-      if (typeof flags.state === "string") {
-        const s = parseStateArg(flags.state);
-        items = items.filter((i) => i.state === (s ?? flags.state));
+      // An unreadable filter is not an empty board (GH-2254). `s ?? flags.state`
+      // compared every item against a string no state can equal, so a typo'd
+      // `--state backlig` printed nothing at exit 0 — byte-identical to a
+      // genuinely empty queue, on the one surface a human reads for truth.
+      // `move` and `create` already refuse the same input; this was the last
+      // reader that guessed. A valueless `--state` is refused for the same
+      // reason: silently listing everything is a third answer wearing the
+      // unfiltered one's clothes.
+      if ("state" in flags) {
+        const s = typeof flags.state === "string" ? parseStateArg(flags.state) : null;
+        if (!s)
+          throw new UsageError(
+            `unknown state ${typeof flags.state === "string" ? JSON.stringify(flags.state) : "(no value given)"} — expected one of: ${STATES.join(" | ")}`,
+          );
+        items = items.filter((i) => i.state === s);
       }
       if (flags.json) json({ items, foreign, foreignEvaluated: allRepos, cache: cacheFacts(walk) });
       else {
