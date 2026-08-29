@@ -23,12 +23,18 @@ interface RhRun {
   out: string;
 }
 
-const scratch = new WeakMap<RalphWorld, { candidateEpics: number[] }>();
+const scratch = new WeakMap<
+  RalphWorld,
+  { candidateEpics: number[]; acceptedReadOnlyBoardCommands: string[] }
+>();
 
-function state(world: RalphWorld): { candidateEpics: number[] } {
+function state(world: RalphWorld): {
+  candidateEpics: number[];
+  acceptedReadOnlyBoardCommands: string[];
+} {
   let value = scratch.get(world);
   if (!value) {
-    value = { candidateEpics: [] };
+    value = { candidateEpics: [], acceptedReadOnlyBoardCommands: [] };
     scratch.set(world, value);
   }
   return value;
@@ -201,6 +207,10 @@ function attemptedTeamEpics(world: RalphWorld): number[] {
   });
 }
 
+function isExpectedReadOnlyBoardCommand(line: string): boolean {
+  return ['brief', 'inbox', 'who dispatch', 'roster'].includes(line);
+}
+
 function assertNoBoardSelection(world: RalphWorld): void {
   const selection = world.boardLog().filter((line) => /^(frontier|next)(?: |$)/.test(line));
   assert.deepStrictEqual(
@@ -253,6 +263,19 @@ Given('dispatch up will fail', function (this: RalphWorld) {
 
 When('the operator runs naked rh', function (this: RalphWorld) {
   runOperator(this, []);
+});
+
+When('read-only board command classification is pressure-tested', function (this: RalphWorld) {
+  const commands = [
+    'brief',
+    'inbox',
+    'who dispatch',
+    'roster',
+    'inbox --digest --mark',
+    'doctor',
+    'doctor --fix',
+  ];
+  state(this).acceptedReadOnlyBoardCommands = commands.filter(isExpectedReadOnlyBoardCommand);
 });
 
 When('the operator runs rh dispatch', function (this: RalphWorld) {
@@ -313,10 +336,17 @@ Then('rh fails', function (this: RalphWorld) {
 Then('no mutating board or Herdr command ran', function (this: RalphWorld) {
   const unexpectedBoard = this
     .boardLog()
-    .filter((line) => !/^(brief|inbox|who dispatch|roster|doctor)(?: |$)/.test(line));
+    .filter((line) => !isExpectedReadOnlyBoardCommand(line));
   const unexpectedHerdr = this.herdrLog().filter((line) => line !== 'status server --json');
   assert.deepStrictEqual(unexpectedBoard, [], `unexpected board command(s):\n${unexpectedBoard.join('\n')}`);
   assert.deepStrictEqual(unexpectedHerdr, [], `unexpected Herdr command(s):\n${unexpectedHerdr.join('\n')}`);
+});
+
+Then('only exact read-only board commands are accepted', function (this: RalphWorld) {
+  assert.deepStrictEqual(
+    state(this).acceptedReadOnlyBoardCommands,
+    ['brief', 'inbox', 'who dispatch', 'roster'],
+  );
 });
 
 Then('the Herdr server was started once', function (this: RalphWorld) {

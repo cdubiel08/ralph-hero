@@ -152,13 +152,15 @@ emit_raw() {
   return 1
 }
 
-# rc_for KEY — the forced exit code from "$FIX/<KEY>.rc", default 0.
+# rc_for KEY [DEFAULT] — the forced exit code from "$FIX/<KEY>.rc", or the
+# caller's DEFAULT (0 when omitted). Lifecycle reads need a nonzero default
+# while still honoring the same fixture override convention as every command.
 rc_for() {
-  local key="$1"
+  local key="$1" default="${2:-0}"
   if [ -n "$FIX" ] && [ -f "$FIX/$key.rc" ]; then
     cat "$FIX/$key.rc"
   else
-    echo 0
+    echo "$default"
   fi
 }
 
@@ -242,20 +244,20 @@ case "$key" in
       [ -f "$FAKE_HERDR_SERVER_STATE" ] &&
       grep -q 'running' "$FAKE_HERDR_SERVER_STATE"; then
       printf '{"status":"running"}\n'
-      exit 0
+      exit "$(rc_for "$key")"
     fi
     printf '{"error":{"code":"server_unavailable","message":"fake Herdr server is unavailable"}}\n' >&2
-    exit 1
+    exit "$(rc_for "$key" 1)"
     ;;
   server-)
     if [ -z "${FAKE_HERDR_SERVER_STATE:-}" ]; then
       printf '{"error":{"code":"fake_herdr_missing_server_state","message":"FAKE_HERDR_SERVER_STATE is required"}}\n' >&2
-      exit 1
+      exit "$(rc_for "$key" 1)"
     fi
     _server_tmp="${FAKE_HERDR_SERVER_STATE}.tmp.$$"
     printf 'running\n' >"$_server_tmp" || exit 1
     mv "$_server_tmp" "$FAKE_HERDR_SERVER_STATE" || exit 1
-    exit 0
+    exit "$(rc_for "$key")"
     ;;
   agent-list)
     respond "cli:agent:list" "agent_list" '{"agents":[]}' agent-list

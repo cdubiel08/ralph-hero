@@ -12,6 +12,10 @@ Feature: Ralph Hero command surface
     Then rh reports attention
     And no mutating board or Herdr command ran
 
+  Scenario: Read-only log classification rejects mutating lookalikes
+    When read-only board command classification is pressure-tested
+    Then only exact read-only board commands are accepted
+
   Scenario: Dispatch up ensures only dispatch prerequisites
     When the operator runs rh dispatch up
     Then rh succeeds

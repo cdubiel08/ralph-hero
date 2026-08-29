@@ -79,6 +79,28 @@ is "valid: the RESULT is returned, not the envelope" "agent_list" \
 is "valid: no envelope fields leak into the result" "null" \
   "$(printf '%s' "$OUT" | jq -r '.id // "null"')"
 
+# Lifecycle commands use the same forced-rc convention as every protocol
+# command in the fake. Their normal output/state effects still happen first;
+# the fixture overrides only the observed command result.
+export FAKE_HERDR_SERVER_STATE="$TMP/server.state"
+reset
+printf 'running\n' >"$FAKE_HERDR_SERVER_STATE"
+printf '17\n' >"$FAKE_HERDR_FIXTURES/status-server.rc"
+RC=0
+OUT=$("$HERDR_BIN_PATH" status server --json 2>"$TMP/err") || RC=$?
+is "lifecycle rc: status server honors its fixture override" "17" "$RC"
+is "lifecycle rc: status server keeps its healthy body" '{"status":"running"}' "$OUT"
+
+reset
+rm -f "$FAKE_HERDR_SERVER_STATE"
+printf '18\n' >"$FAKE_HERDR_FIXTURES/server-.rc"
+RC=0
+"$HERDR_BIN_PATH" server >"$TMP/out" 2>"$TMP/err" || RC=$?
+is "lifecycle rc: bare server honors its fixture override" "18" "$RC"
+is "lifecycle rc: bare server keeps its atomic running transition" "running" \
+  "$(cat "$FAKE_HERDR_SERVER_STATE" 2>/dev/null)"
+unset FAKE_HERDR_SERVER_STATE
+
 # Additive tolerance: a future Herdr adding fields must not break this plugin.
 # Required-fields-only validation is the whole reason this is safe to assert.
 reset
