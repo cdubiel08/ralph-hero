@@ -26,6 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 trap hold_pane EXIT
 
 billing_guard
+ralph_plugin_freshness_notice
 
 lane=tend
 agent=ralph-tend

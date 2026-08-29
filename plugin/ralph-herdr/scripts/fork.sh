@@ -100,6 +100,7 @@ fi
 # A fork starts a harness, so the same billing guard the spawn paths run
 # applies: a stray API key here bills credits exactly as it would there.
 billing_guard
+ralph_plugin_freshness_notice
 
 # ── Read the source pane ─────────────────────────────────────────────────────
 # Through the strict adapter, so what comes back is a validated pane_info and

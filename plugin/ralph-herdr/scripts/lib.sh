@@ -215,6 +215,53 @@ billing_guard() {
   fi
 }
 
+# ralph_plugin_freshness_notice — spawn-time observability for the drift that
+# doctor's `ralph-herdr-content` line reports (GH-2260). ADVISORY: it returns
+# 0 on every path and gates nothing. The remedy swaps code under a live
+# cockpit, so it is the operator's act with the fleet quiesced; refusing a
+# spawn over a stale plugin is strictly worse than spawning on one.
+#
+# The subject is anchored at $REPO — the checkout the spawn is cwd'd to — and
+# the SOURCE copy of herdr-plugin-sync.sh is the one run, never $SCRIPT_DIR's.
+# That anchor is the whole reason this detects anything: when herdr executes
+# the INSTALLED copy (`plugin action invoke`, the fleet lane, the dispatch
+# seat — the lanes that actually run stale code), the installed script's own
+# SRC_TREE *is* the installed tree, so it would hash a tree against itself and
+# every stale cockpit would certify itself fresh.
+#
+# Running that script rather than re-implementing its hash is deliberate: the
+# behavior surface already lives in two mirrored copies (it and
+# herdr-setup.sh's `ralph-herdr-content` line), and a third held in sync by a
+# comment asking for it is the GH-1843 shape.
+#
+# Four outcomes, none conflated:
+#   no source tree at $REPO  silent — NOT APPLICABLE, not unevaluated. A host
+#                            repo has no tree to be stale against and no
+#                            remedy to name, and a permanent line whose remedy
+#                            cannot act is the GH-2052 trap.
+#   in sync                  silent — the common case; a preamble that prints
+#                            on every spawn stops being read (GH-2048).
+#   unreadable               NOT CHECKED, with the reason — a failed
+#                            measurement may not read like a clean one
+#                            (GH-1971).
+#   different                the drift, loud, with the sync command.
+ralph_plugin_freshness_notice() {
+  local sync="$REPO/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" out rc=0
+  [ -f "$sync" ] || return 0
+  out=$(bash "$sync" --check 2>&1) || rc=$?
+  case "$rc" in
+    0) ;;
+    1)
+      echo "${0##*/}: the INSTALLED ralph-herdr differs from $REPO/plugin/ralph-herdr — the cockpit's own lanes (plugin action invoke, the fleet, the dispatch seat) execute that installed copy, not this checkout." >&2
+      echo "${0##*/}: spawning anyway — this is advisory, never a gate. Sync with the fleet quiesced, since it swaps code under live panes: bash $sync" >&2
+      ;;
+    *)
+      echo "${0##*/}: ralph-herdr freshness NOT CHECKED — $(printf '%s' "$out" | tail -1)" >&2
+      ;;
+  esac
+  return 0
+}
+
 # ralph_herdr_tab_create LABEL — the lane spawns' tab, through the adapter.
 # Prints the validated `tab_created` result (callers read .root_pane.pane_id
 # and .tab.tab_id off it); dies with the reason herdr gave otherwise.

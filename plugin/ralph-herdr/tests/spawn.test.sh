@@ -834,6 +834,100 @@ for v in $HERD_PANE_ENV; do
   is "scrub: $v is unset for the suite" "unset" "${!v-unset}"
 done
 
+# ── ralph_plugin_freshness_notice (GH-2260) ──────────────────────────────────
+# The spawn-time half of doctor's `ralph-herdr-content` line. Advisory by
+# construction, so every case asserts rc 0; what varies is what it SAYS.
+FTMP="$TMP/freshness"
+mkdir -p "$FTMP/repo/plugin/ralph-herdr/scripts" "$FTMP/other/scripts"
+
+# A stub standing in for herdr-plugin-sync.sh --check: the function's contract
+# with it is the exit code (0 in sync / 1 different / anything else not
+# evaluable), and driving the real hash would make this a test of shasum.
+_fresh_stub() {
+  cat >"$FTMP/repo/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" <<STUB
+#!/usr/bin/env bash
+echo "source    /src  aaaa"
+echo "installed /inst bbbb"
+echo "stub reason line" >&2
+exit $1
+STUB
+}
+
+# rc must survive into the parent shell, so it is captured here rather than
+# inside a command substitution — a subshell's assignment would never return.
+_fresh_rc=0
+_fresh_run() {
+  local saved="$REPO"
+  REPO="$FTMP/repo"
+  ralph_plugin_freshness_notice >"$FTMP/out" 2>&1
+  _fresh_rc=$?
+  REPO="$saved"
+}
+_fresh_out() { _fresh_run; cat "$FTMP/out"; }
+
+_fresh_stub 0
+is "freshness: an in-sync tree says nothing" "" "$(_fresh_out)"
+is "freshness: in sync returns 0" "0" "$_fresh_rc"
+
+_fresh_stub 1
+out=$(_fresh_out)
+is "freshness: a divergence still returns 0 — advisory, never a gate" "0" "$_fresh_rc"
+case "$out" in
+  *"INSTALLED ralph-herdr differs"*) ok "freshness: a divergence names the drift" ;;
+  *) not_ok "freshness: a divergence names the drift — got '$out'" ;;
+esac
+case "$out" in
+  *"herdr-plugin-sync.sh"*) ok "freshness: a divergence names the sync command" ;;
+  *) not_ok "freshness: a divergence names the sync command — got '$out'" ;;
+esac
+case "$out" in
+  *"never a gate"*) ok "freshness: a divergence says the spawn proceeds" ;;
+  *) not_ok "freshness: a divergence says the spawn proceeds — got '$out'" ;;
+esac
+
+# An unreadable input may not render like a clean one (GH-1971).
+_fresh_stub 2
+out=$(_fresh_out)
+is "freshness: an unevaluable check still returns 0" "0" "$_fresh_rc"
+case "$out" in
+  *"NOT CHECKED"*) ok "freshness: unevaluable reads NOT CHECKED, not clean" ;;
+  *) not_ok "freshness: unevaluable reads NOT CHECKED, not clean — got '$out'" ;;
+esac
+case "$out" in
+  *"stub reason line"*) ok "freshness: NOT CHECKED carries the reason" ;;
+  *) not_ok "freshness: NOT CHECKED carries the reason — got '$out'" ;;
+esac
+
+# A host repo has no source tree to be stale against and no remedy to name:
+# NOT APPLICABLE is silence, not a permanent line nothing can clear (GH-2052).
+REPO_SAVED="$REPO"
+REPO="$FTMP/other"
+out=$(ralph_plugin_freshness_notice 2>&1); rc=$?
+REPO="$REPO_SAVED"
+is "freshness: a repo with no ralph-herdr source tree is silent" "" "$out"
+is "freshness: not-applicable returns 0" "0" "$rc"
+
+# The anchor is the load-bearing part: the notice must run the SOURCE copy of
+# the sync script, never the one beside lib.sh. When herdr executes the
+# INSTALLED plugin, those are the same directory, and a check that hashed its
+# own tree would let every stale cockpit certify itself fresh.
+if grep -q 'sync="\$REPO/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh"' "$SCRIPT_DIR/../scripts/lib.sh"; then
+  ok "freshness: the sync script is resolved from \$REPO, not from lib.sh's own tree"
+else
+  not_ok "freshness: the sync script is resolved from \$REPO, not from lib.sh's own tree"
+fi
+
+# Every spawn entry point carries it — a lane that spawns without the notice
+# is a lane where stale code runs unannounced.
+for _f in work-fleet.sh work-next.sh work-team.sh hero.sh dispatch-up.sh fork.sh deliver-pass.sh tend-pass.sh cockpit-fzf.sh; do
+  if grep -q '^ *ralph_plugin_freshness_notice$' "$SCRIPT_DIR/../scripts/$_f"; then
+    ok "freshness: $_f announces plugin staleness at spawn"
+  else
+    not_ok "freshness: $_f announces plugin staleness at spawn"
+  fi
+done
+
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
