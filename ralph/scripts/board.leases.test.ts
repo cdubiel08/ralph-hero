@@ -18,6 +18,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync, existsSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  localSessionLease,
   partitionBriefLeases,
   readLocalLeases,
   reapDeadLeases,
@@ -183,6 +184,34 @@ describe("readLocalLeases — which repo a checkout belongs to (GH-2108)", () =>
     writeLock(41, linkedWorktree(other, "feat-41-z"));
     const rows = readLocalLeases(ctxFor(join(root, "no-such-root")));
     expect(forIssue(rows, 41).sameRepo).toBeNull();
+  });
+});
+
+describe("localSessionLease — cross-repo isolation (GH-2293)", () => {
+  it("a sibling repo's lock on the same issue number is not a hold — issue numbers are per-repo", () => {
+    const mine = gitRepo("repo-a");
+    const other = gitRepo("repo-b");
+    writeLock(76, linkedWorktree(other, "feat-76-y"));
+    expect(localSessionLease(ctxFor(mine))!(76)).toBeNull();
+  });
+
+  it("a lock on our own repo's worktree for the same number still blocks", () => {
+    const mine = gitRepo("repo-a");
+    const wt = linkedWorktree(mine, "feat-76-y");
+    writeLock(76, wt);
+    expect(localSessionLease(ctxFor(mine))!(76)).not.toBeNull();
+  });
+
+  it("a checkout that is gone keeps blocking — unresolvable is not evidence of a different repo", () => {
+    const mine = gitRepo("repo-a");
+    writeLock(76, join(root, "never-existed"));
+    expect(localSessionLease(ctxFor(mine))!(76)).not.toBeNull();
+  });
+
+  it("an unresolvable own repoRoot keeps blocking too — the fail-safe direction, over-block never under", () => {
+    const other = gitRepo("repo-b");
+    writeLock(76, linkedWorktree(other, "feat-76-y"));
+    expect(localSessionLease(ctxFor(join(root, "no-such-root")))!(76)).not.toBeNull();
   });
 });
 
