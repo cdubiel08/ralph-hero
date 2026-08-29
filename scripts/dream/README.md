@@ -324,3 +324,66 @@ about what gets staged, and it is **best-effort by construction**: an
 unwritable log warns and returns 0 rather than costing a staging run. This is the
 hierarchy level that finally seeds the wiki tier and resolves the
 reflection→wiki catch-22.
+
+**Paraphrase churn is measured, not remembered** (GH-2259). #1965 defers
+embedding-similarity dedup on a trigger nothing counted: curate sessions
+"start seeing re-proposed paraphrases of entries already in `wiki/*.md` or
+`_rejected.jsonl`". That reasoning is right — a similarity threshold picked
+without measured churn silently suppresses distinct axioms — but the trigger
+could only fire if a human happened to notice a paraphrase across weekly runs
+and remembered the earlier one, so churn and no churn rendered identically and
+the deferral could never lift on its own evidence.
+
+`_suppressed.jsonl` is not that measurement, in three ways. It records only
+what was **dropped**, so a near-neighbour the paraphrase gate judged distinct
+leaves no trace; it carries no similarity and does not name **which** known
+axiom the candidate resembles, so there is nothing to calibrate against; and
+the gate feeding its `paraphrase` rows fails open, so a week with the local
+model offline records nothing while looking exactly like a week with no churn.
+
+Every run now appends to `<wiki_dir>/_near_misses.jsonl`. For each **raw**
+synthesized candidate — read before any filter, which is what makes it
+provable that a recorded candidate still reaches the paraphrase gate and the
+human gate behind it — the nearest known axiom is found and, at or above
+`RALPH_META_NEAR_MISS_MIN` (0.3), recorded with the candidate text, the
+neighbour it resembles, that neighbour's source, and the similarity. Exact
+`_candidate_hash` matches are excluded: those are not this churn, and
+`log_suppressions` already has them.
+
+Four properties carry it:
+
+- **It records; it never filters.** Nothing in the pipeline branches on the
+  count. Choosing a threshold and suppressing on it is #1965's job and stays
+  deferred until this produces the data. `RALPH_META_NEAR_MISS_MIN` is
+  deliberately low and over-inclusive because it selects what is *written
+  down*, never what is dropped; a value outside `(0, 1]` warns and uses the
+  default.
+- **Zero is stated, never implied.** Every run writes one `kind: "scan"`
+  record even when it finds nothing, so an absent file means *not
+  instrumented* and `near_misses: 0` means *ran and found none*. That includes
+  the runs that never reach the candidate stream — `empty`, `deferred` and the
+  `failed` defect-zero all record a `candidates: 0` scan, because those are the
+  common weekly outcomes and without them a quiet month reports NOT
+  INSTRUMENTED. The scan also carries `compared_against`, because zero
+  near-misses against zero known axioms is arithmetic rather than evidence.
+- **A zero from an incomplete corpus is not certified.** `_promoted_titles`
+  warns and skips a `*.md` it cannot read, so a candidate matching the skipped
+  entry would go uncounted. The scan records `corpus_complete` and names what
+  it could not read, and `--near-miss-report` then refuses the "trigger has not
+  fired" wording for that window — it says the zero answers nothing either way
+  and points at the unreadable entries. The hits it *did* find are still
+  recorded; withholding them would lose real evidence. A scan record with no
+  flag at all (written before this existed) counts as incomplete, since it
+  cannot vouch for its corpus either.
+- **The metric is named in the record.** `token-jaccard-v1` is lexical bag-of-
+  words overlap, deliberately not embedding cosine — an unlabelled `0.42`
+  would invite exactly the confusion a #1965 calibration pass must avoid. The
+  durable calibration data is the recorded **pairs**; the number is the index
+  into them.
+- **Best-effort.** An unwritable log warns and returns 0 rather than costing a
+  run — and the missing scan record then reads as "not instrumented" rather
+  than as "no churn", which is the right direction.
+
+Read it with `uv run meta_reflect.py --near-miss-report`, which prints the
+accumulated count and exits without running. Curate reads the same file at its
+candidate-hunt step. Knob: `RALPH_META_NEAR_MISS_MIN` (0.3).

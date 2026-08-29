@@ -54,6 +54,15 @@ DEFAULT_MAX_CANDIDATES = int(os.environ.get("RALPH_META_MAX_CANDIDATES", "3"))
 # cut is simply not compared against, which stages a duplicate at worst.
 DEFAULT_DEDUP_MAX_EXISTING = int(os.environ.get("RALPH_META_DEDUP_MAX_EXISTING", "150"))
 
+# GH-2259: near-miss instrumentation. #1965 (embedding-similarity dedup) is
+# deferred on a condition nothing measured — "curate starts seeing re-proposed
+# paraphrases of entries already in wiki/*.md or _rejected.jsonl" — so churn
+# happening and churn not happening read alike and the deferral can never lift
+# on its own evidence. This threshold is deliberately LOW and over-inclusive:
+# it selects what gets RECORDED, never what gets dropped. Choosing the dedup
+# threshold is #1965's job and stays deferred until this produces the data.
+DEFAULT_NEAR_MISS_MIN = 0.3
+
 # Per-reflection content slice for the prompt (reflections are already compact).
 REFLECTION_CLIP = 700
 
@@ -110,6 +119,8 @@ class MetaRunResult:
     reflections: int = 0
     candidates: int = 0
     reason: str = ""
+    # GH-2259: near-miss records this run wrote. Reported, never branched on.
+    near_misses: int = 0
 
     @property
     def failed(self) -> bool:
@@ -372,21 +383,26 @@ def _rejected_claims(wiki_dir: Path) -> list[str]:
     return out
 
 
-def _promoted_titles(wiki_dir: Path) -> list[str]:
-    """Axioms already promoted to wiki entries (GH-1518).
+def _promoted_titles_with_status(wiki_dir: Path) -> tuple[list[str], list[str]]:
+    """``(titles, unreadable_paths)`` — the read AND whether it was complete.
 
-    A wiki entry's H1 *is* the axiom in declarative form — that is the curate
-    skill's own body contract — so the title is the comparable text.
+    Split out for GH-2259. A skipped entry is harmless to the dedup callers
+    below (they stage a duplicate at worst), but it is NOT harmless to a
+    near-miss scan: a candidate matching the skipped entry then records
+    ``near_misses: 0``, and a report reading that as "the trigger has not
+    fired" would be certifying a negative from a failed read.
     """
     out: list[str] = []
+    unreadable: list[str] = []
     wiki_dir = Path(wiki_dir).expanduser()
     if not wiki_dir.exists():
-        return out
+        return out, unreadable
     for path in sorted(wiki_dir.glob("*.md")):
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
             log.warning("Could not read wiki entry %s: %s", path, exc)
+            unreadable.append(str(path))
             continue
         for line in text.splitlines():
             if line.startswith("# "):
@@ -394,7 +410,16 @@ def _promoted_titles(wiki_dir: Path) -> list[str]:
                 if title:
                     out.append(title)
                 break
-    return out
+    return out, unreadable
+
+
+def _promoted_titles(wiki_dir: Path) -> list[str]:
+    """Axioms already promoted to wiki entries (GH-1518).
+
+    A wiki entry's H1 *is* the axiom in declarative form — that is the curate
+    skill's own body contract — so the title is the comparable text.
+    """
+    return _promoted_titles_with_status(wiki_dir)[0]
 
 
 def _rejected_hashes(wiki_dir: Path) -> set[str]:
@@ -507,6 +532,364 @@ def log_suppressions(
         return 0
     log.info("Recorded %d suppressed candidate(s) at %s", len(lines), path)
     return len(lines)
+
+
+# ---------------------------------------------------------------------------
+# Near-miss instrumentation (GH-2259) — records, never filters
+# ---------------------------------------------------------------------------
+#
+# #1965 defers embedding-similarity dedup on a trigger nothing measures: curate
+# sessions "start seeing re-proposed paraphrases of entries already in
+# wiki/*.md or _rejected.jsonl". Nothing counted them, so that trigger could
+# only fire if a human happened to notice a paraphrase across weekly runs and
+# remembered the earlier one — churn and no churn rendered identically, and the
+# deferral could never lift on its own evidence.
+#
+# ``_suppressed.jsonl`` (GH-2040) is not that measurement, in three ways that
+# each matter here. It only records what was DROPPED, so a near-neighbour the
+# paraphrase gate judged distinct leaves no trace; it carries no similarity and
+# does not name WHICH known axiom the candidate resembles, so there is nothing
+# to calibrate a threshold against; and the gate that feeds its ``paraphrase``
+# rows fails open, so a week with the local model offline records nothing while
+# looking exactly like a week with no churn.
+#
+# This layer is therefore deliberately action-free. It runs on the RAW
+# synthesized candidates, before any filter, records at a low over-inclusive
+# threshold, and returns a count that no caller branches on. Suppressing
+# anything here would be the guess #1965 refuses to make.
+
+NEAR_MISS_FILENAME = "_near_misses.jsonl"
+
+# Named IN the record. A future reader calibrating #1965 will be comparing
+# these numbers against embedding cosine, and the two are not the same scale —
+# an unlabelled 0.42 invites exactly that mistake.
+NEAR_MISS_METRIC = "token-jaccard-v1"
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokens(text: str) -> frozenset[str]:
+    return frozenset(_TOKEN_RE.findall(str(text).lower()))
+
+
+def _token_jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    """Scale-free lexical overlap in [0, 1]. Empty on either side is 0.0.
+
+    Jaccard rather than the overlap coefficient used elsewhere in this repo:
+    overlap reads 1.0 whenever a short axiom's words are a subset of a long
+    one's, which for one-sentence claims is common and uninformative. Nothing
+    acts on the number, so the bias that matters is toward a number a human can
+    rank pairs by.
+    """
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def near_miss_threshold() -> float:
+    """``RALPH_META_NEAR_MISS_MIN``, else :data:`DEFAULT_NEAR_MISS_MIN`.
+
+    Out of range warns and uses the default — a threshold this low is a
+    recording knob, and a typo silently widening or emptying the record would
+    corrupt the only calibration data #1965 will have.
+    """
+    raw = os.environ.get("RALPH_META_NEAR_MISS_MIN")
+    if raw is None or raw.strip() == "":
+        return DEFAULT_NEAR_MISS_MIN
+    try:
+        value = float(raw)
+    except ValueError:
+        log.warning("RALPH_META_NEAR_MISS_MIN=%r is not a number; using %s", raw, DEFAULT_NEAR_MISS_MIN)
+        return DEFAULT_NEAR_MISS_MIN
+    if not 0.0 < value <= 1.0:
+        log.warning(
+            "RALPH_META_NEAR_MISS_MIN=%s is outside (0, 1]; using %s", value, DEFAULT_NEAR_MISS_MIN
+        )
+        return DEFAULT_NEAR_MISS_MIN
+    return value
+
+
+def _neighbour_corpus(wiki_dir: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    """``(corpus, problems)`` for every axiom #1965's trigger names.
+
+    Exactly the two sets in that trigger — ``wiki/*.md`` H1s and
+    ``_rejected.jsonl`` claims — and deliberately NOT pending
+    ``_candidates.jsonl`` entries: a restatement of something still pending is
+    already recorded by ``log_suppressions`` as ``staged``/``batch``, and
+    folding it in here would make the accumulated count answer a different
+    question than the one the deferral is waiting on.
+
+    ``problems`` is non-empty when the comparison set is INCOMPLETE. It is
+    reported, never repaired: a scan against a partial corpus still records
+    everything it found — withholding the hits would lose real evidence — but
+    it may not be read as a certified zero, so the scan carries the flag and
+    the report refuses the "trigger has not fired" wording. The wrapping here
+    (rather than in ``_rejected_claims`` itself) is deliberate: the existing
+    dedup callers' behaviour on an unreadable file is untouched by this unit.
+    """
+    problems: list[str] = []
+    titles, unreadable = _promoted_titles_with_status(wiki_dir)
+    problems.extend(f"unreadable wiki entry: {p}" for p in unreadable)
+    try:
+        rejected = _rejected_claims(wiki_dir)
+    except OSError as exc:
+        log.warning("Could not read the rejection log under %s: %s", wiki_dir, exc)
+        problems.append(f"unreadable _rejected.jsonl: {exc}")
+        rejected = []
+    corpus = [(t, "promoted") for t in titles] + [(c, "rejected") for c in rejected]
+    return corpus, problems
+
+
+def nearest_neighbour(
+    axiom: str, corpus: list[tuple[str, str]]
+) -> tuple[str, str, float] | None:
+    """The single most similar ``(text, source, similarity)``, or None."""
+    tokens = _tokens(axiom)
+    if not tokens or not corpus:
+        return None
+    best: tuple[str, str, float] | None = None
+    for text, source in corpus:
+        score = _token_jaccard(tokens, _tokens(text))
+        if best is None or score > best[2]:
+            best = (text, source, score)
+    return best
+
+
+def record_near_misses(
+    candidates: list[dict[str, Any]],
+    wiki_dir: Path,
+    *,
+    now: datetime,
+    threshold: float | None = None,
+) -> int:
+    """Record candidates that resemble a known axiom without hashing to it.
+
+    Returns the number of near-miss records written. **Records only.** Nothing
+    in this function or any caller drops, reorders or re-scores a candidate on
+    what it finds — the candidates list is not even returned.
+
+    Every run appends one ``kind: "scan"`` record, including when it found
+    nothing, because "no churn" and "not instrumented" must not read alike: an
+    absent file means this never ran, a scan with ``near_misses: 0`` means it
+    ran and found none. The scan also carries ``compared_against``, since zero
+    near-misses against zero known axioms is arithmetic, not evidence.
+
+    Exact ``_candidate_hash`` matches are excluded: those are not the churn
+    #1965 is about, and ``log_suppressions`` already records them.
+
+    **Best-effort by construction**, like ``log_suppressions``: an unwritable
+    log warns and returns 0 rather than costing a run. That direction is right
+    twice over — the run survives, and the missing scan record reads as "not
+    instrumented" rather than as "no churn".
+    """
+    wiki_dir = Path(wiki_dir).expanduser()
+    if threshold is None:
+        threshold = near_miss_threshold()
+    corpus, problems = _neighbour_corpus(wiki_dir)
+    known_hashes = {_candidate_hash(text) for text, _ in corpus}
+
+    hits: list[dict[str, Any]] = []
+    for c in candidates:
+        axiom = str(c.get("axiom", "")).strip()
+        if not axiom:
+            continue
+        h = _candidate_hash(axiom)
+        if h in known_hashes:
+            continue
+        best = nearest_neighbour(axiom, corpus)
+        if best is None or best[2] < threshold:
+            continue
+        text, source, score = best
+        hits.append(
+            {
+                "kind": "near-miss",
+                "hash": h,
+                "axiom": axiom,
+                "neighbour": text,
+                "neighbour_source": source,
+                "neighbour_hash": _candidate_hash(text),
+                "similarity": round(score, 4),
+                "metric": NEAR_MISS_METRIC,
+                "threshold": threshold,
+                "recorded_at": now.astimezone(timezone.utc).isoformat(),
+                "source": "meta-reflect",
+            }
+        )
+
+    scan = {
+        "kind": "scan",
+        "candidates": len([c for c in candidates if str(c.get("axiom", "")).strip()]),
+        "compared_against": len(corpus),
+        "near_misses": len(hits),
+        # False means the comparison set could not be fully read, so this
+        # scan's zero is not certifiable. Recorded rather than suppressed:
+        # the hits it DID find are real evidence.
+        "corpus_complete": not problems,
+        "corpus_problems": problems,
+        "metric": NEAR_MISS_METRIC,
+        "threshold": threshold,
+        "recorded_at": now.astimezone(timezone.utc).isoformat(),
+        "source": "meta-reflect",
+    }
+
+    path = wiki_dir / NEAR_MISS_FILENAME
+    try:
+        wiki_dir.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            for rec in [scan, *hits]:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        log.warning("Could not record near-miss scan to %s: %s", path, exc)
+        return 0
+    for rec in hits:
+        log.info(
+            "Near miss (%s %.2f) vs %s axiom: %s",
+            NEAR_MISS_METRIC,
+            rec["similarity"],
+            rec["neighbour_source"],
+            rec["axiom"],
+        )
+    if problems:
+        log.warning(
+            "Near-miss scan ran against an INCOMPLETE corpus (%s); its zero is "
+            "not certifiable and the report will say so.",
+            "; ".join(problems),
+        )
+    log.info(
+        "Near-miss scan: %d of %d candidate(s) resemble one of %d known axiom(s) "
+        "at >= %.2f %s (recorded, nothing suppressed) -> %s",
+        len(hits),
+        scan["candidates"],
+        len(corpus),
+        threshold,
+        NEAR_MISS_METRIC,
+        path,
+    )
+    return len(hits)
+
+
+def near_miss_summary(wiki_dir: Path) -> dict[str, Any]:
+    """Read back what ``record_near_misses`` accumulated.
+
+    ``instrumented`` is the field that carries the point: False means no scan
+    has ever been recorded, which is the answer that must never be confused
+    with ``near_misses: 0``.
+    """
+    path = Path(wiki_dir).expanduser() / NEAR_MISS_FILENAME
+    out: dict[str, Any] = {
+        "path": str(path),
+        "instrumented": False,
+        "runs": 0,
+        "incomplete_scans": 0,
+        "near_misses": 0,
+        "distinct_candidates": 0,
+        "by_source": {},
+        "max_similarity": None,
+        "first_scan_at": None,
+        "last_scan_at": None,
+        "metric": NEAR_MISS_METRIC,
+    }
+    if not path.exists():
+        return out
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        log.warning("Could not read %s: %s", path, exc)
+        return out
+    distinct: set[str] = set()
+    by_source: dict[str, int] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        kind = rec.get("kind")
+        if kind == "scan":
+            out["instrumented"] = True
+            out["runs"] += 1
+            # Absent on records written before GH-2259 carried the flag; those
+            # cannot vouch for their corpus either, so absence counts as
+            # incomplete rather than as complete.
+            if rec.get("corpus_complete") is not True:
+                out["incomplete_scans"] += 1
+            at = rec.get("recorded_at")
+            if isinstance(at, str):
+                if out["first_scan_at"] is None:
+                    out["first_scan_at"] = at
+                out["last_scan_at"] = at
+        elif kind == "near-miss":
+            out["near_misses"] += 1
+            h = rec.get("hash")
+            if isinstance(h, str):
+                distinct.add(h)
+            src = str(rec.get("neighbour_source", "unknown"))
+            by_source[src] = by_source.get(src, 0) + 1
+            sim = rec.get("similarity")
+            if isinstance(sim, (int, float)) and not isinstance(sim, bool):
+                if out["max_similarity"] is None or sim > out["max_similarity"]:
+                    out["max_similarity"] = float(sim)
+    out["distinct_candidates"] = len(distinct)
+    out["by_source"] = by_source
+    return out
+
+
+def format_near_miss_report(summary: dict[str, Any]) -> str:
+    """One-screen answer to "is there paraphrase churn?" (GH-2259 / #1965)."""
+    if not summary.get("instrumented"):
+        return (
+            f"Paraphrase churn: NOT INSTRUMENTED — no scan recorded at "
+            f"{summary['path']}.\n"
+            f"This is not a report of zero churn. Run meta_reflect.py at least "
+            f"once to start recording."
+        )
+    lines = [
+        f"Paraphrase churn (GH-2259 instrumentation for #1965)",
+        f"  record:      {summary['path']}",
+        f"  metric:      {summary['metric']} (NOT embedding cosine)",
+        f"  scans:       {summary['runs']}"
+        + (
+            f"  ({summary['first_scan_at']} -> {summary['last_scan_at']})"
+            if summary.get("first_scan_at")
+            else ""
+        ),
+        f"  near misses: {summary['near_misses']} "
+        f"({summary['distinct_candidates']} distinct candidate(s))",
+    ]
+    if summary["by_source"]:
+        by = ", ".join(f"{k}={v}" for k, v in sorted(summary["by_source"].items()))
+        lines.append(f"  vs:          {by}")
+    if summary["max_similarity"] is not None:
+        lines.append(f"  max sim:     {summary['max_similarity']:.4f}")
+    if summary["incomplete_scans"]:
+        lines.append(
+            f"  incomplete:  {summary['incomplete_scans']} of {summary['runs']} "
+            f"scan(s) ran against a corpus that could not be fully read"
+        )
+    if summary["near_misses"] == 0 and summary["incomplete_scans"]:
+        lines.append(
+            "  verdict:     zero recorded, but NOT CERTIFIABLE — at least one "
+            "scan compared against an incomplete corpus, so a candidate "
+            "matching a skipped entry would have gone uncounted. This says "
+            "nothing either way about #1965's trigger; fix the unreadable "
+            "entries named in the scan records and re-run."
+        )
+    elif summary["near_misses"] == 0:
+        lines.append(
+            "  verdict:     ZERO churn recorded across the scans above. "
+            "#1965's trigger has not fired."
+        )
+    else:
+        lines.append(
+            "  verdict:     churn recorded. #1965's trigger has fired; the "
+            "records above are its calibration set."
+        )
+    lines.append("  Nothing here was suppressed — this layer records only.")
+    return "\n".join(lines)
 
 
 def prune_candidates(wiki_dir: Path) -> int:
@@ -764,6 +1147,16 @@ def run_meta_reflect(
     if now is None:
         now = datetime.now(tz=timezone.utc)
     prune_candidates(wiki_dir)
+    # GH-2259 / codex P2: the instrument must record that it RAN, not merely
+    # that it found something. ``empty`` and ``deferred`` are the common quiet
+    # weeks and ``failed`` is the model defect; all three return before the
+    # candidate stream exists, and without a scan here a repo that has been
+    # quiet (or whose LLM has been dead) for a month reports NOT INSTRUMENTED
+    # — reviving the exact collapse this unit removes. A scan with
+    # ``candidates: 0`` is the honest record of a run with nothing to compare.
+    def _scan_only() -> int:
+        return record_near_misses([], wiki_dir, now=now)
+
     since = now - timedelta(days=window_days)
     reflections = fetch_recent_reflections(db_path, since)
     log.info(
@@ -774,12 +1167,14 @@ def run_meta_reflect(
     )
     if not reflections:
         log.info("No reflections in window; nothing to meta-reflect.")
+        _scan_only()
         return MetaRunResult(
             outcome=OUTCOME_EMPTY,
             reason=f"no reflections in the last {window_days}d",
         )
     if len(reflections) < min_reflections:
         log.info("Below min_reflections; deferring meta-reflection.")
+        _scan_only()
         return MetaRunResult(
             outcome=OUTCOME_DEFERRED,
             reflections=len(reflections),
@@ -803,6 +1198,7 @@ def run_meta_reflect(
             "WARNING logs above for the LLM failure.",
             len(reflections),
         )
+        _scan_only()
         return MetaRunResult(
             outcome=OUTCOME_FAILED,
             reflections=len(reflections),
@@ -812,6 +1208,11 @@ def run_meta_reflect(
             ),
         )
     synthesized = len(candidates)
+    # GH-2259: instrument BEFORE any filter, so a recorded candidate provably
+    # still reaches the paraphrase gate and the human gate behind it. Reading
+    # the raw stream is also what lets the record cover candidates the gate
+    # keeps — the population #1965 needs and _suppressed.jsonl cannot show.
+    near_misses = record_near_misses(candidates, wiki_dir, now=now)
     candidates = filter_paraphrases(
         candidates,
         _existing_axioms(wiki_dir),
@@ -827,6 +1228,7 @@ def run_meta_reflect(
             outcome=OUTCOME_SUPPRESSED,
             reflections=len(reflections),
             candidates=synthesized,
+            near_misses=near_misses,
             reason="every candidate restated a known axiom (paraphrase gate)",
         )
     staged = stage_candidates(candidates, wiki_dir, now=now)
@@ -836,6 +1238,7 @@ def run_meta_reflect(
             outcome=OUTCOME_SUPPRESSED,
             reflections=len(reflections),
             candidates=synthesized,
+            near_misses=near_misses,
             reason="every candidate was already staged, promoted or rejected",
         )
     return MetaRunResult(
@@ -843,6 +1246,7 @@ def run_meta_reflect(
         staged=staged,
         reflections=len(reflections),
         candidates=synthesized,
+        near_misses=near_misses,
     )
 
 
@@ -911,6 +1315,15 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="owner/repo for the standing failure alarm (default: gh's own resolution)",
     )
+    parser.add_argument(
+        "--near-miss-report",
+        action="store_true",
+        help=(
+            "Print the accumulated paraphrase-churn record (GH-2259) and exit "
+            "without running. This is the number #1965's deferral is waiting "
+            "on; it distinguishes zero churn from no instrumentation."
+        ),
+    )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
 
@@ -926,6 +1339,10 @@ def main(argv: list[str] | None = None) -> int:
     wiki_dir = _expand(
         args.wiki_dir or cfg.get("wiki_dir") or "~/projects/thoughts/wiki"
     )
+    if args.near_miss_report:
+        print(format_near_miss_report(near_miss_summary(wiki_dir)))
+        return 0
+
     llm_url = _resolve_llm_url(args.llm_url, cfg)
     model = args.model or cfg.get("llm_model") or DEFAULT_LLM_MODEL
     state_path = _expand(
@@ -947,6 +1364,12 @@ def main(argv: list[str] | None = None) -> int:
         f"Staged {result.staged} wiki candidate(s) at "
         f"{wiki_dir}/_candidates.jsonl [{result.outcome}]"
     )
+    # GH-2259: printed on every run, zero included — the whole point is that a
+    # run with no churn says so rather than staying silent.
+    print(
+        f"Recorded {result.near_misses} paraphrase near-miss(es) at "
+        f"{wiki_dir}/{NEAR_MISS_FILENAME} (recorded only; nothing suppressed)"
+    )
 
     # GH-2159: record every terminal outcome, then alarm on the one defect.
     # Both are best-effort by construction — neither may fail the run it
@@ -962,6 +1385,7 @@ def main(argv: list[str] | None = None) -> int:
         reflections=result.reflections,
         candidates=result.candidates,
         staged=result.staged,
+        near_misses=result.near_misses,
     )
     if result.failed:
         emit_meta_failure_issue(
