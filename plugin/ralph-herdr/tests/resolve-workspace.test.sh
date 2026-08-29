@@ -120,5 +120,72 @@ case "$stderr" in
   *) not_ok "same-board checkout B: stderr did not name '$CHECKOUT_B' — got '$stderr'" ;;
 esac
 
+# ── 7. three distinct causes of "no usable board config", never collapsed
+#      into one message with a WRONG remedy (QA finding on GH-2269/#2286):
+#      no config file at all (remedy: focus the intended workspace) vs a
+#      config file that IS the focused repo's own but is broken (remedy:
+#      fix the file, not re-focus) — malformed JSON, and valid JSON missing
+#      owner/repo. board.ts:1005/1031 distinguish the first from the rest;
+#      collapsing all three here would make the printed remedy wrong for a
+#      correctly-focused-but-broken-config workspace.
+BADJSON="$TMP/badjson-repo"
+mkdir -p "$BADJSON"
+printf '{ this is not json' >"$BADJSON/.ralph.json"
+run_resolve "{\"workspace_cwd\":\"$BADJSON\"}"
+is "malformed .ralph.json: refuses (rc 1)" "1" "$rc"
+is "malformed .ralph.json: prints nothing to stdout" "" "$stdout"
+case "$stderr" in
+  *MALFORMED*"$BADJSON/.ralph.json"*) ok "malformed .ralph.json: names the broken file" ;;
+  *) not_ok "malformed .ralph.json: did not name the broken file — got '$stderr'" ;;
+esac
+case "$stderr" in
+  *"NOT a focus problem"*) ok "malformed .ralph.json: remedy says fix the file, not re-focus" ;;
+  *) not_ok "malformed .ralph.json: remedy still tells the operator to re-focus — got '$stderr'" ;;
+esac
+case "$stderr" in
+  *"focus the intended repo's workspace and retry"*) not_ok "malformed .ralph.json: must NOT reuse the no-config remedy" ;;
+  *) ok "malformed .ralph.json: does not reuse the no-config remedy" ;;
+esac
+
+ARRAYCFG="$TMP/array-repo"
+mkdir -p "$ARRAYCFG"
+printf '[]' >"$ARRAYCFG/.ralph.json"
+run_resolve "{\"workspace_cwd\":\"$ARRAYCFG\"}"
+is "non-object JSON (array): refuses (rc 1)" "1" "$rc"
+case "$stderr" in
+  *MALFORMED*) ok "non-object JSON (array): treated as malformed, like board.ts:1009" ;;
+  *) not_ok "non-object JSON (array): not flagged as malformed — got '$stderr'" ;;
+esac
+
+MISSING_OWNER="$TMP/missing-owner-repo"
+mkdir -p "$MISSING_OWNER"
+printf '{"projectNumber":1}\n' >"$MISSING_OWNER/.ralph.json"
+run_resolve "{\"workspace_cwd\":\"$MISSING_OWNER\"}"
+is "valid JSON missing owner/repo: refuses (rc 1)" "1" "$rc"
+is "valid JSON missing owner/repo: prints nothing to stdout" "" "$stdout"
+case "$stderr" in
+  *"missing owner/repo"*) ok "valid JSON missing owner/repo: distinct message naming what's missing" ;;
+  *) not_ok "valid JSON missing owner/repo: message did not name what's missing — got '$stderr'" ;;
+esac
+case "$stderr" in
+  *"NOT a focus problem"*) ok "valid JSON missing owner/repo: remedy says fix the config, not re-focus" ;;
+  *) not_ok "valid JSON missing owner/repo: remedy still tells the operator to re-focus — got '$stderr'" ;;
+esac
+case "$stderr" in
+  *MALFORMED*) not_ok "valid JSON missing owner/repo: must NOT be reported as malformed" ;;
+  *) ok "valid JSON missing owner/repo: not conflated with malformed JSON" ;;
+esac
+
+# The three refusal messages must all differ from one another — the defect
+# being fixed was three causes rendering byte-identically.
+run_resolve "{\"workspace_cwd\":\"$UNCONFIGURED\"}"; no_config_err="$stderr"
+run_resolve "{\"workspace_cwd\":\"$BADJSON\"}"; malformed_err="$stderr"
+run_resolve "{\"workspace_cwd\":\"$MISSING_OWNER\"}"; missing_err="$stderr"
+if [ "$no_config_err" != "$malformed_err" ] && [ "$no_config_err" != "$missing_err" ] && [ "$malformed_err" != "$missing_err" ]; then
+  ok "three failure causes produce three distinct messages"
+else
+  not_ok "two or more failure causes still render identically"
+fi
+
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
