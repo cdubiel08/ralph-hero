@@ -24,6 +24,8 @@ import {
   dismissedDepPairs,
   parseDepCandidatesCap,
   parseDepOverlapMin,
+  parseGhBudgetFloor,
+  GH_BUDGET_FLOOR_DEFAULT,
   scoreDepCandidates,
   TEND_DEP_JUDGED_MARKER,
   APPLY_EVIDENCE_MARKER,
@@ -8722,6 +8724,79 @@ describe("typed transport handling", () => {
       }
     } finally {
       errSpy.mockRestore();
+    }
+  });
+
+  it("a typo'd RALPH_GH_BUDGET_FLOOR warns and keeps the pre-flight ARMED at the default; explicit 0 disables it quietly (GH-2256)", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    const starved: Ctx = {
+      ...ctx,
+      exec: (argv, stdin) => {
+        if (argv.join(" ") === `gh api --hostname github.com rate_limit`)
+          return { code: 0, stdout: JSON.stringify({ resources: { graphql: { remaining: 3, reset: 1755600000 } } }), stderr: "" };
+        return ctx.exec(argv, stdin);
+      },
+    };
+    const err: string[] = [];
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+      err.push(String(s));
+      return true;
+    });
+    try {
+      const old = process.env.RALPH_GH_BUDGET_FLOOR;
+      try {
+        // A typo does not disable the guard — it still defers under the
+        // (warned-and-defaulted) floor, and it says so on stderr.
+        process.env.RALPH_GH_BUDGET_FLOOR = "abc";
+        expect(run(["next"], starved)).toBe(75);
+        expect(err.some((l) => l.includes('RALPH_GH_BUDGET_FLOOR="abc" is not a positive number — using 500'))).toBe(true);
+
+        // A one-character typo on an otherwise-valid value: same outcome.
+        err.length = 0;
+        process.env.RALPH_GH_BUDGET_FLOOR = "999999abc";
+        expect(run(["next"], starved)).toBe(75);
+        expect(err.some((l) => l.includes('RALPH_GH_BUDGET_FLOOR="999999abc"'))).toBe(true);
+
+        // An explicit 0 is a deliberate assertion — disabled, and silent.
+        err.length = 0;
+        process.env.RALPH_GH_BUDGET_FLOOR = "0";
+        expect(run(["next"], starved)).toBe(0);
+        expect(err).toEqual([]);
+      } finally {
+        if (old === undefined) delete process.env.RALPH_GH_BUDGET_FLOOR;
+        else process.env.RALPH_GH_BUDGET_FLOOR = old;
+      }
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+});
+
+describe("parseGhBudgetFloor (GH-2256)", () => {
+  it("defaults to 500; an explicit 0 disables silently; a typo warns and falls back", () => {
+    const err: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+      err.push(String(s));
+      return true;
+    });
+    try {
+      expect(parseGhBudgetFloor(undefined)).toBe(GH_BUDGET_FLOOR_DEFAULT);
+      expect(parseGhBudgetFloor("999999")).toBe(999999);
+      expect(err).toEqual([]); // valid values never warn
+
+      // Explicit 0 is a deliberate "disable the guard" assertion — stays quiet.
+      expect(parseGhBudgetFloor("0")).toBe(0);
+      expect(err).toEqual([]);
+
+      // Unparseable / negative values are NOT evidence the guard should be
+      // off — they warn and the guard stays armed at the default, never at 0.
+      expect(parseGhBudgetFloor("abc")).toBe(GH_BUDGET_FLOOR_DEFAULT);
+      expect(parseGhBudgetFloor("999999abc")).toBe(GH_BUDGET_FLOOR_DEFAULT);
+      expect(parseGhBudgetFloor("-5")).toBe(GH_BUDGET_FLOOR_DEFAULT);
+      expect(err.length).toBe(3);
+      for (const line of err) expect(line).toMatch(/RALPH_GH_BUDGET_FLOOR=".*" is not a positive number — using 500/);
+    } finally {
+      spy.mockRestore();
     }
   });
 });
