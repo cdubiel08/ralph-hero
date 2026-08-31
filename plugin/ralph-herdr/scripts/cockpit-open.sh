@@ -10,11 +10,16 @@
 #
 #   live cockpit for this board  → herdr plugin pane focus <pane_id>
 #   none, or any unreadable read → plugin pane open (today's behavior)
-#   --no-focus                   → ensure it exists beside the current seat
+#   --no-focus                   → ensure it exists without changing focus
+#   --beside-focused             → require the attended cockpit in the
+#                                  focused pane's workspace; target new splits
+#                                  at that pane
 #
-# Fail-open is the direction on purpose: a duplicate pane costs a pane, a
+# Fail-open is the normal direction on purpose: a duplicate pane costs a pane, a
 # refusal costs the cockpit. See cockpit-pane.sh for what "live" means and why
-# it is two facts rather than one.
+# it is two facts rather than one. The attended --beside-focused mode is the
+# exception: an unreadable/ambiguous focus cannot prove the requested topology,
+# so it refuses instead of opening into an arbitrary workspace.
 #
 # A deliberate SECOND cockpit stays reachable and needs no flag — the [[panes]]
 # entrypoint is untouched, so `herdr plugin pane open --plugin ralph-herdr
@@ -43,11 +48,13 @@ log() { echo "$(date -u +%FT%TZ) cockpit-open: $*"; }
 
 cwd=""
 focus_arg="--focus"
+beside_focused=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --no-focus) focus_arg="--no-focus" ;;
+    --beside-focused) beside_focused=true ;;
     -h | --help)
-      echo "usage: cockpit-open.sh [--no-focus] [CWD]"
+      echo "usage: cockpit-open.sh [--no-focus [--beside-focused]] [CWD]"
       exit 0
       ;;
     --*)
@@ -64,20 +71,60 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+if [ "$beside_focused" = true ] && [ "$focus_arg" != "--no-focus" ]; then
+  echo "cockpit-open.sh: --beside-focused requires --no-focus" >&2
+  exit 64
+fi
 if [ -z "$cwd" ] && [ -n "${HERDR_PLUGIN_CONTEXT_JSON:-}" ]; then
   cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd // empty' <<<"$HERDR_PLUGIN_CONTEXT_JSON" 2>/dev/null) || cwd=""
 fi
 [ -n "$cwd" ] || cwd="$PWD"
 
-if pane=$(ralph_cockpit_live_pane "$cwd"); then
-  if [ "$focus_arg" = "--no-focus" ]; then
-    log "cockpit already live in pane $pane — leaving focus on the current seat"
-    exit 0
+target_pane="" target_workspace="" snapshot=""
+if [ "$beside_focused" = true ]; then
+  snapshot=$(ralph_herdr_snapshot) || {
+    log "cannot prove one focused dispatch pane — the Herdr snapshot is unavailable" >&2
+    exit 1
+  }
+  focused_count=$(jq -r '[.panes[]? | select(.focused == true)] | length' <<<"$snapshot" 2>/dev/null) || focused_count=0
+  if [ "$focused_count" != "1" ]; then
+    log "cannot prove one focused dispatch pane — snapshot reported $focused_count" >&2
+    exit 1
   fi
-  log "cockpit already live in pane $pane — focusing it"
-  exec "$HERDR" plugin pane focus "$pane"
+  target_pane=$(jq -r '[.panes[] | select(.focused == true)][0].pane_id // empty' <<<"$snapshot")
+  target_workspace=$(jq -r '[.panes[] | select(.focused == true)][0].workspace_id // empty' <<<"$snapshot")
+  if [ -z "$target_pane" ] || [ -z "$target_workspace" ]; then
+    log "cannot prove one focused dispatch pane — its pane or workspace id is missing" >&2
+    exit 1
+  fi
 fi
 
-log "no live cockpit for this board — opening one"
-exec "$HERDR" plugin pane open --plugin "${HERDR_PLUGIN_ID:-ralph-herdr}" \
-  --entrypoint cockpit --placement split --direction right --cwd "$cwd" "$focus_arg"
+if pane=$(ralph_cockpit_live_pane "$cwd"); then
+  if [ "$focus_arg" = "--no-focus" ]; then
+    if [ "$beside_focused" = true ]; then
+      cockpit_workspace=$(jq -r --arg p "$pane" '[.panes[]? | select(.pane_id == $p)][0].workspace_id // empty' <<<"$snapshot")
+      if [ -n "$cockpit_workspace" ] && [ "$cockpit_workspace" = "$target_workspace" ]; then
+        log "cockpit already live in pane $pane in the focused workspace — leaving focus on dispatch"
+        exit 0
+      fi
+      log "cockpit pane $pane is live outside the focused workspace — opening one beside dispatch"
+    else
+      log "cockpit already live in pane $pane — leaving focus on the current seat"
+      exit 0
+    fi
+  else
+    log "cockpit already live in pane $pane — focusing it"
+    exec "$HERDR" plugin pane focus "$pane"
+  fi
+fi
+
+if [ -n "$target_pane" ]; then
+  log "no satisfying cockpit in the focused workspace — opening one beside dispatch"
+  exec "$HERDR" plugin pane open --plugin "${HERDR_PLUGIN_ID:-ralph-herdr}" \
+    --entrypoint cockpit --placement split --direction right --target-pane "$target_pane" \
+    --cwd "$cwd" "$focus_arg"
+else
+  log "no live cockpit for this board — opening one"
+  exec "$HERDR" plugin pane open --plugin "${HERDR_PLUGIN_ID:-ralph-herdr}" \
+    --entrypoint cockpit --placement split --direction right --cwd "$cwd" "$focus_arg"
+fi

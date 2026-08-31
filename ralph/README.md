@@ -98,7 +98,8 @@ The default target is `${XDG_BIN_HOME:-$HOME/.local/bin}/rh`; add that directory
 dispatch hero and cockpit, prints the inbox summary, and then attaches the full
 Herdr UI with the current repository's dispatch hero selected. When run inside
 Herdr it switches the existing client to that hero rather than nesting another
-client. Pipes, scripts, CI, and `--no-attach` retain the background-only path.
+client. Pipes, CI, other non-TTY automation, and `--no-attach` retain the
+background-only path.
 
 - `/ralph:board` — catch up, triage, form new tickets, answer Human Needed items, run doctor. Read-mostly; the Projects V2 UI is the dashboard.
 - `/ralph:work NNN` — drive one issue end-to-end. Also accepts an outcome description (creates the issue first) or empty args (folds Human Needed replies, then takes `board next`).

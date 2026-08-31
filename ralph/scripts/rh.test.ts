@@ -683,7 +683,7 @@ exit 23
       "dispatch-up",
       "reconcile",
       "resume-teams",
-      "cockpit-open",
+      "cockpit-open --no-focus",
     ]);
     expect(readLines(scriptLog).some((line) => line.startsWith("work-team "))).toBe(false);
     expect(readLines(herdrLog)).not.toContain("attach");
@@ -698,7 +698,7 @@ exit 23
       "dispatch-up --focus",
       "reconcile",
       "resume-teams",
-      "cockpit-open --no-focus",
+      "cockpit-open --no-focus --beside-focused",
     ]);
     expect(readLines(herdrLog).at(-1)).toBe("attach");
     expect(r.stdout.indexOf("inbox")).toBeGreaterThanOrEqual(0);
@@ -717,7 +717,7 @@ exit 23
       "dispatch-up --focus",
       "reconcile",
       "resume-teams",
-      "cockpit-open --no-focus",
+      "cockpit-open --no-focus --beside-focused",
     ]);
     expect(readLines(herdrLog)).not.toContain("attach");
   });
@@ -734,7 +734,7 @@ exit 23
       "dispatch-up",
       "reconcile",
       "resume-teams",
-      "cockpit-open",
+      "cockpit-open --no-focus",
     ]);
     expect(readLines(herdrLog)).not.toContain("attach");
   });
@@ -785,7 +785,7 @@ exit 23
   it("resume ambiguity continues to cockpit and inbox but returns nonzero", () => {
     const r = runSurface(["day"], fixtureEnv({ resumeRc: 1 }));
     expect(r.status).not.toBe(0);
-    expect(readLines(scriptLog)).toContain("cockpit-open");
+    expect(readLines(scriptLog)).toContain("cockpit-open --no-focus");
     expect(readLines(boardLog)).toContain("inbox");
     expect(r.stdout).toContain("teams");
     expect(r.stdout).toContain("attention");
@@ -803,7 +803,7 @@ exit 23
       "resume-teams",
       "work-team 2208",
       "work-team 2176",
-      "cockpit-open",
+      "cockpit-open --no-focus",
     ]);
     expect(readLines(boardLog)).toContain("inbox");
     expect(r.stdout).toContain("team GH-2208");
@@ -820,7 +820,7 @@ exit 23
       status: 1,
       phase: "reconcile",
       state: "failed",
-      scripts: ["dispatch-up", "reconcile", "resume-teams", "cockpit-open"],
+      scripts: ["dispatch-up", "reconcile", "resume-teams", "cockpit-open --no-focus"],
     },
     {
       description: "cockpit failure still renders inbox",
@@ -829,7 +829,7 @@ exit 23
       status: 1,
       phase: "cockpit",
       state: "failed",
-      scripts: ["dispatch-up", "reconcile", "resume-teams", "cockpit-open"],
+      scripts: ["dispatch-up", "reconcile", "resume-teams", "cockpit-open --no-focus"],
     },
     {
       description: "inbox failure aggregates attention",
@@ -838,7 +838,7 @@ exit 23
       status: 1,
       phase: "inbox",
       state: "attention",
-      scripts: ["dispatch-up", "reconcile", "resume-teams", "cockpit-open"],
+      scripts: ["dispatch-up", "reconcile", "resume-teams", "cockpit-open --no-focus"],
     },
     {
       description: "explicit team rc 4 is clean completion",
@@ -847,7 +847,7 @@ exit 23
       status: 0,
       phase: "team GH-2208",
       state: "skipped",
-      scripts: ["dispatch-up", "reconcile", "resume-teams", "work-team 2208", "cockpit-open"],
+      scripts: ["dispatch-up", "reconcile", "resume-teams", "work-team 2208", "cockpit-open --no-focus"],
     },
   ])("day: $description", ({ args, env, status, phase, state, scripts }) => {
     // Break caught: partial-failure aggregation either aborts independent
@@ -866,7 +866,7 @@ exit 23
     expect(direct.status).toBe(0);
     expect(direct.status).toBe(nested.status);
     const directPhases = readLines(logFor("direct"));
-    expect(directPhases).toEqual(["dispatch-up", "reconcile", "resume-teams", "cockpit-open"]);
+    expect(directPhases).toEqual(["dispatch-up", "reconcile", "resume-teams", "cockpit-open --no-focus"]);
     expect(directPhases).toEqual(readLines(logFor("nested")));
   });
 

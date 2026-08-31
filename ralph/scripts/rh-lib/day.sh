@@ -168,12 +168,16 @@ rh_day() {
 
   phase_rc=0
   if [ "$enter_ui" -eq 1 ]; then
-    rh_run_herdr_script cockpit-open.sh --no-focus || phase_rc=$?
+    rh_run_herdr_script cockpit-open.sh --no-focus --beside-focused || phase_rc=$?
   else
-    rh_run_herdr_script cockpit-open.sh || phase_rc=$?
+    rh_run_herdr_script cockpit-open.sh --no-focus || phase_rc=$?
   fi
   if [ "$phase_rc" -eq 0 ]; then
-    rh_phase cockpit ready "cockpit standing beside dispatch"
+    if [ "$enter_ui" -eq 1 ]; then
+      rh_phase cockpit ready "cockpit standing beside dispatch"
+    else
+      rh_phase cockpit ready "cockpit standing without a focus change"
+    fi
   else
     rh_phase cockpit failed "cockpit could not be opened"
     rc=1

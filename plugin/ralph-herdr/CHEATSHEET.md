@@ -40,7 +40,8 @@ Install it from this repository with `bash ralph/scripts/install-rh.sh`. The def
 At an interactive macOS or WSL terminal, `rh day` finishes preparation by
 attaching the full Herdr UI with this repository's dispatch hero selected and
 the cockpit standing beside it. Inside Herdr it switches the current client
-instead of nesting one. Scripts, pipes, CI, and `--no-attach` prepare only.
+instead of nesting one. Pipes, CI, other non-TTY automation, and `--no-attach`
+prepare only.
 
 ## 0. Quick start from zero (one-time)
 
