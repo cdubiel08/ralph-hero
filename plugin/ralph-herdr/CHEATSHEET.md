@@ -26,8 +26,9 @@ been run for real or read straight out of the source it invokes.
 |---|---|
 | `rh` | read-only operator home |
 | `rh dispatch` | read-only dispatch status |
-| `rh dispatch up` | ensure Herdr + dispatch only |
-| `rh day` | ensure dispatch, resume proven teams, open cockpit + inbox |
+| `rh dispatch up` | ensure Herdr + dispatch only; do not change focus |
+| `rh day` | prepare/resume, then enter Herdr on this repo's dispatch from an interactive terminal |
+| `rh day --no-attach` | prepare/resume without changing focus or attaching Herdr |
 | `rh day --team N` | same, plus explicit new team N |
 | `rh board ...` | exact existing board CLI |
 | `rh inbox` | read-only human inbox |
@@ -35,6 +36,12 @@ been run for real or read straight out of the source it invokes.
 | `rh doctor` | read-only setup and board diagnosis |
 
 Install it from this repository with `bash ralph/scripts/install-rh.sh`. The default target is `${XDG_BIN_HOME:-$HOME/.local/bin}/rh`; `--bin-dir DIR` selects another directory. The installer updates only a recognized Ralph Hero shim and refuses a collision with an unrelated executable. `rh --color=auto|always|never ...` controls human output, while any non-empty `NO_COLOR` wins and disables color. The existing `board` command remains permanent; `rh board ...` is exact delegation to it.
+
+At an interactive macOS or WSL terminal, `rh day` finishes preparation by
+attaching the full Herdr UI with this repository's dispatch hero selected and
+the cockpit standing beside it. Inside Herdr it switches the current client
+instead of nesting one. Pipes, CI, other non-TTY automation, and `--no-attach`
+prepare only.
 
 ## 0. Quick start from zero (one-time)
 

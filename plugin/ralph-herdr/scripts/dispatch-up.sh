@@ -64,11 +64,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 trap hold_pane EXIT
 
+focus=false
 case "${1-}" in
   -h | --help)
     trap - EXIT
     cat <<'EOF'
-usage: dispatch-up.sh
+usage: dispatch-up.sh [--focus]
 
 Ensure the hero pane is up in the repo's MAIN workspace (the one the
 fleet's worktrees nest under — GH-2246; the dispatch address stays
@@ -76,15 +77,18 @@ fleet's worktrees nest under — GH-2246; the dispatch address stays
 (recreate space, reopen pane) rather than refusing. A live hero still
 sitting in a legacy `<repo>/dispatch` workspace is left alone and noted.
 Arms nothing scheduled — the unattended half of dispatch is the event
-lane (watch-event.sh).
+lane (watch-event.sh). By default the command ensures the seat without
+changing focus; --focus enters the proven hero pane after healing it.
 
 Knobs: RALPH_ALLOW_API_BILLING (the hero session bills like any spawn).
 EOF
     exit 0
     ;;
+  --focus) focus=true ;;
   "") ;;
-  *) die "unknown argument '${1-}' (takes none; --help)" ;;
+  *) die "unknown argument '${1-}' (accepts --focus; --help)" ;;
 esac
+[ "$#" -le 1 ] || die "unknown argument '${2-}' (accepts --focus; --help)"
 
 # The hero session this stands up bills like any spawned one — refuse before
 # creating anything, so a billing refusal leaves no half-built space.
@@ -185,11 +189,19 @@ if [ -z "$hero_pane" ]; then
   # hero.sh stamps the record from inside the pane.
   out=$(ralph_herdr_call plugin_pane_opened plugin pane open \
     --plugin "${HERDR_PLUGIN_ID:-ralph-herdr}" --entrypoint hero \
-    --workspace "$ws_id" --placement tab --cwd "$src" --focus) ||
+    --workspace "$ws_id" --placement tab --cwd "$src" --no-focus) ||
     die "could not open the hero pane in the main workspace ($(ralph_herdr_err_code "${out:-}" || true)) — the space is up (workspace $ws_id); see the diagnostic above"
   # Probed on 0.8.x: the opened pane rides .plugin_pane.pane.pane_id.
   hero_pane=$(jq -r '.plugin_pane.pane.pane_id // empty' <<<"$out")
   hero_state="opened"
+fi
+
+# The default contract is ensure-only. The attended day path opts into one
+# final focus after the hero pane has been proven live or successfully opened,
+# avoiding an intermediate jump while the rest of the surface is prepared.
+if [ "$focus" = true ]; then
+  "$HERDR" plugin pane focus "$hero_pane" >/dev/null ||
+    die "could not focus the hero pane $hero_pane — the dispatch seat is up but the day surface could not enter it"
 fi
 
 # The legacy note — the migration half GH-2246 owes live machines. Never a

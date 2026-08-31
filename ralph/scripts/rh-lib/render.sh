@@ -167,8 +167,8 @@ Usage: rh [--color=auto|always|never] COMMAND [ARGS...]
 Commands:
   board <args...>       Run the existing board CLI unchanged
   dispatch              Show dispatch status
-  dispatch up           Ensure dispatch prerequisites
-  dispatch day          Start the configured day
+  dispatch up           Ensure dispatch prerequisites without changing focus
+  dispatch day          Prepare the day; enter Herdr from an interactive shell
   day                   Alias for "rh dispatch day"
   cockpit               Open the Ralph cockpit
   team EPIC             Ensure one named epic team
@@ -183,6 +183,19 @@ EOF
       ;;
     board)
       printf '%s\n' 'Usage: rh board <existing-board-args...>'
+      ;;
+    day)
+      cat <<'EOF'
+Usage: rh day [--team EPIC]... [--no-attach]
+
+Ensure dispatch, reconcile scoped state, resume evidence-backed teams, ensure
+the cockpit beside dispatch, and render the inbox. From an interactive terminal
+the command then enters the full Herdr UI focused on this repository's dispatch
+hero. Inside Herdr it focuses that seat without nesting a second client.
+
+--no-attach keeps the calling shell in place. Non-interactive invocations also
+prepare the day without changing focus or attaching a client.
+EOF
       ;;
     *)
       echo "rh: unknown help topic '$1'; run 'rh help'" >&2

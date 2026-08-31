@@ -496,7 +496,9 @@ is "preview: no agent means no herdr traffic" "0" "$(log_count "$FAKE_HERDR_LOG"
 # record file is redirected with RALPH_HERDR_COCKPIT_PANE_FILE, the snapshot
 # comes from fake-herdr, and the "live" pid is a real sleep this test owns.
 PANEREC="$TMP/cockpit.pane.json"
+HEROREC="$TMP/hero.pane.json"
 export RALPH_HERDR_COCKPIT_PANE_FILE="$PANEREC"
+export RALPH_HERDR_HERO_PANE_FILE="$HEROREC"
 
 # A snapshot that contains pane wCK:p9 — the fixture the record will name.
 cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
@@ -510,8 +512,12 @@ EOF
 sleep 300 & LIVE_PID=$!
 DEAD_PID=$!
 ( sleep 0 ) & DEAD_PID=$!; wait "$DEAD_PID" 2>/dev/null || true
+printf '{"pane":"pHero","pid":%s,"at":"2026-08-22T00:00:00Z","repo":"%s"}\n' \
+  "$LIVE_PID" "$TMP" >"$HEROREC"
 
 run_open() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" "$TMP" 2>&1) || RC=$?; }
+run_open_no_focus() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" --no-focus "$TMP" 2>&1) || RC=$?; }
+run_open_beside_focused() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" --no-focus --beside-focused "$TMP" 2>&1) || RC=$?; }
 
 # ── no record at all → open (today's behavior, unchanged) ────────────────────
 rm -f "$PANEREC"; clear_logs
@@ -537,6 +543,120 @@ is "focus: focused the recorded pane" "1" \
   "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus wCK:p9')"
 is "focus: opened NOTHING — the whole point" "0" \
   "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+
+# ── live record + --no-focus → ensure only, never steal the day seat ────────
+clear_logs
+run_open_no_focus
+is "no-focus live: exits 0" "0" "$RC"
+line_has "no-focus live: reports the existing pane" "$OUT" "wCK:p9"
+is "no-focus live: does not focus it" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+is "no-focus live: opens nothing" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+
+# ── no record + --no-focus → open beside dispatch without taking focus ─────
+rm -f "$PANEREC"; clear_logs
+run_open_no_focus
+is "no-focus open: exits 0" "0" "$RC"
+is "no-focus open: opens one cockpit" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open --plugin ralph-herdr --entrypoint cockpit')"
+is "no-focus open: asks Herdr not to steal focus" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --no-focus')"
+is "no-focus open: never asks for focus" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --focus')"
+
+# Restore the live record for the liveness degradation cases below.
+printf '{"pane":"wCK:p9","pid":%s,"at":"2026-08-22T00:00:00Z","repo":"%s"}\n' \
+  "$LIVE_PID" "$TMP" >"$PANEREC"
+
+# ── attended day: a cockpit in the hero tab satisfies the surface ───────────
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":true,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_focused
+is "beside same tab: exits 0" "0" "$RC"
+is "beside same tab: reuses the live cockpit" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+is "beside same tab: never steals focus" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+
+# ── attended day: another tab is not visible beside the dispatch hero ───────
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wMain","tab_id":"wMain:t1","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":true,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_focused
+is "beside other tab: exits 0" "0" "$RC"
+is "beside other tab: opens a dispatch-adjacent cockpit" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open --plugin ralph-herdr --entrypoint cockpit')"
+is "beside other tab: targets the focused hero" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --target-pane pHero')"
+
+# ── attended day: a cockpit elsewhere does not satisfy the dispatch surface ─
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wOther","tab_id":"wOther:t1","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":true,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_focused
+is "beside other workspace: exits 0" "0" "$RC"
+is "beside other workspace: opens a dispatch-adjacent cockpit" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open --plugin ralph-herdr --entrypoint cockpit')"
+is "beside other workspace: targets the focused hero" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --target-pane pHero')"
+is "beside other workspace: never steals focus" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --no-focus')"
+
+# ── attended day: global focus must still be THIS repo's proven hero ────────
+# Preparation can take long enough for the operator to focus another repo.
+# Never use that ambient pane as the target for this repo's cockpit.
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wMain","tab_id":"wMain:t1","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":false,"agent_status":"working","revision":1},
+   {"pane_id":"pOther","workspace_id":"wOther","tab_id":"wOther:t1","terminal_id":"term_o","focused":true,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_focused
+is "beside foreign focus: exits nonzero" "1" "$RC"
+line_has "beside foreign focus: names the repo-bound hero mismatch" "$OUT" "is not this repo's live dispatch hero pHero"
+is "beside foreign focus: opens nothing in another repo" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+
+# ── attended day: no uniquely focused pane is an honest refusal ─────────────
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[{"pane_id":"wCK:p9","workspace_id":"wOther","tab_id":"wOther:t1","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_focused
+is "beside unknown focus: exits nonzero" "1" "$RC"
+line_has "beside unknown focus: says the topology is unproven" "$OUT" "cannot prove one focused dispatch pane"
+is "beside unknown focus: opens nothing blindly" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+
+# Restore the original liveness fixture for the degradation cases below.
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[{"pane_id":"wCK:p9","workspace_id":"wCK","tab_id":"wCK:t1",
+           "terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
 
 # ── dead pid, pane still in the snapshot → open ──────────────────────────────
 # A pane outlives the process inside it (herdr fires pane.exited and leaves the
@@ -608,6 +728,7 @@ line_has "stamp: says the next open cannot focus this pane" "$OUT" "HERDR_PANE_I
 is "stamp: wrote no record" "" "$(cat "$PANEREC" 2>/dev/null)"
 rm -f "$TREE/cockpit/ralph-cockpit"
 unset RALPH_HERDR_COCKPIT_PANE_FILE
+unset RALPH_HERDR_HERO_PANE_FILE
 
 echo "1..$n"
 echo "# $pass passed, $fail failed"

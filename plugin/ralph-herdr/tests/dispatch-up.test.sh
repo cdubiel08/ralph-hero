@@ -98,6 +98,7 @@ rc=$?
 has "creates the main workspace on the source checkout, labeled by it" "$(cat "$FAKE_HERDR_LOG")" "workspace create --cwd $SRC --label fake-herdr-parent --no-focus"
 hasnt "never creates an address-labeled sibling (GH-2246)" "$(cat "$FAKE_HERDR_LOG")" "workspace create .*--label fake/dispatch"
 has "opens the hero pane into the created space" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open --plugin ralph-herdr --entrypoint hero --workspace wT --placement tab"
+has "ensure-only leaves the new hero unfocused" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --no-focus"
 has "summary names created + opened" "$out" "workspace wT (created), hero pane pP1 (opened)"
 has "summary still carries the dispatch address" "$out" "dispatch up: fake/dispatch"
 has "prints the roster" "$out" "ROSTER (fake)"
@@ -129,6 +130,26 @@ hasnt "no workspace created" "$(cat "$FAKE_HERDR_LOG")" "workspace create"
 hasnt "no hero pane opened" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open"
 has "summary names standing + live" "$out" "workspace wM (standing), hero pane pH (live)"
 has "roster still prints" "$out" "ROSTER (fake)"
+
+# ── 3b. explicit focus: the day surface enters the live hero seat ────────────
+reset
+printf '{"workspaces":[%s]}\n' "$MAIN_WS" >"$FAKE_HERDR_FIXTURES/workspace-list.json"
+live_hero pH
+printf '{"panes":[{"pane_id":"pH","workspace_id":"wM","tab_id":"wM:t2","terminal_id":"t","focused":false,"agent_status":"working","revision":1}]}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-list.json"
+out=$(run_up --focus)
+rc=$?
+[ "$rc" = 0 ] && ok "focus run exits 0" || not_ok "focus run exits 0 — rc $rc: $out"
+has "focus targets the proven hero pane" "$(cat "$FAKE_HERDR_LOG")" "plugin pane focus pH"
+hasnt "focus does not duplicate the hero" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open"
+
+# ── 3c. explicit focus + missing seat: open quietly, then enter it ───────────
+reset
+out=$(run_up --focus)
+rc=$?
+[ "$rc" = 0 ] && ok "focus heal exits 0" || not_ok "focus heal exits 0 — rc $rc: $out"
+has "focus heal opens without an intermediate jump" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --no-focus"
+has "focus heal enters the newly proven hero" "$(cat "$FAKE_HERDR_LOG")" "plugin pane focus pP1"
 
 # ── 4. hero live but in ANOTHER space (not legacy) — open where it belongs ──
 reset
@@ -193,7 +214,7 @@ rc=$?
 has "degradation is named" "$out" "roster read failed"
 has "the space still came up" "$out" "workspace wT (created)"
 
-# ── 10. arguments: none taken ───────────────────────────────────────────────
+# ── 10. arguments: only the internal focus mode is accepted ─────────────────
 reset
 out=$(run_up --rota)
 rc=$?
