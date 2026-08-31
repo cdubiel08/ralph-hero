@@ -110,6 +110,7 @@ function runRh(
     RALPH_RH_SERVER_ATTEMPTS?: string;
     RALPH_RH_SERVER_POLL_SEC?: string;
     HERDR_ENV?: string;
+    HERDR_PANE_ID?: string;
     PATH?: string;
     cwd?: string;
     stdin?: string;
@@ -127,6 +128,7 @@ function runRh(
     ...(opts.RALPH_RH_SERVER_ATTEMPTS ? { RALPH_RH_SERVER_ATTEMPTS: opts.RALPH_RH_SERVER_ATTEMPTS } : {}),
     ...(opts.RALPH_RH_SERVER_POLL_SEC ? { RALPH_RH_SERVER_POLL_SEC: opts.RALPH_RH_SERVER_POLL_SEC } : {}),
     ...(opts.HERDR_ENV !== undefined ? { HERDR_ENV: opts.HERDR_ENV } : {}),
+    ...(opts.HERDR_PANE_ID !== undefined ? { HERDR_PANE_ID: opts.HERDR_PANE_ID } : {}),
   };
   const command = ["/bin/bash", RH, ...argv];
   // BSD script needs its own parent TTY; expect supplies one on macOS.
@@ -172,6 +174,7 @@ type SurfaceEnv = {
   isolatedLog?: string;
   PATH?: string;
   HERDR_ENV?: string;
+  HERDR_PANE_ID?: string;
   interactive?: boolean;
   attachRc?: number;
 };
@@ -711,6 +714,23 @@ exit 23
     const r = runSurface(
       ["day"],
       fixtureEnv({ interactive: true, HERDR_ENV: "1", isolatedLog: "interactive-inside" }),
+    );
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+    expect(readLines(scriptLog)).toEqual([
+      "dispatch-up --focus",
+      "reconcile",
+      "resume-teams",
+      "cockpit-open --no-focus --beside-focused",
+    ]);
+    expect(readLines(herdrLog)).not.toContain("attach");
+  });
+
+  it("interactive day in a managed plugin pane never nests a client", () => {
+    // Plugin panes always carry HERDR_PANE_ID, while HERDR_ENV is exported by
+    // session wrappers such as hero.sh rather than by every pane entrypoint.
+    const r = runSurface(
+      ["day"],
+      fixtureEnv({ interactive: true, HERDR_PANE_ID: "wMain:pPlugin", isolatedLog: "interactive-plugin-pane" }),
     );
     expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
     expect(readLines(scriptLog)).toEqual([

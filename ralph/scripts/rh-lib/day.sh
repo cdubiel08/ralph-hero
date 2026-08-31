@@ -195,9 +195,11 @@ rh_day() {
   # An attended day ends at the full Herdr surface. Outside Herdr, the bare
   # client attaches to the already-focused dispatch hero; inside a managed
   # pane, dispatch-up's explicit focus switched the existing client and a
-  # second client would only nest the UI. Automation and --no-attach never
-  # cross this boundary.
-  if [ "$enter_ui" -eq 1 ] && [ "${HERDR_ENV:-}" != "1" ]; then
+  # second client would only nest the UI. HERDR_PANE_ID is the identity Herdr
+  # injects into every pane; HERDR_ENV is additionally exported by session
+  # wrappers such as hero.sh. Either proves we are already inside. Automation
+  # and --no-attach never cross this boundary.
+  if [ "$enter_ui" -eq 1 ] && [ "${HERDR_ENV:-}" != "1" ] && [ -z "${HERDR_PANE_ID:-}" ]; then
     phase_rc=0
     "$herdr" || phase_rc=$?
     if [ "$phase_rc" -ne 0 ]; then
