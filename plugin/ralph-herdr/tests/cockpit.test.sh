@@ -565,7 +565,23 @@ is "no-focus open: never asks for focus" "0" \
 printf '{"pane":"wCK:p9","pid":%s,"at":"2026-08-22T00:00:00Z","repo":"%s"}\n' \
   "$LIVE_PID" "$TMP" >"$PANEREC"
 
-# ── attended day: a cockpit in the hero workspace satisfies the surface ─────
+# ── attended day: a cockpit in the hero tab satisfies the surface ───────────
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":true,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_focused
+is "beside same tab: exits 0" "0" "$RC"
+is "beside same tab: reuses the live cockpit" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+is "beside same tab: never steals focus" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+
+# ── attended day: another tab is not visible beside the dispatch hero ───────
 cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
 {"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
  "panes":[
@@ -575,16 +591,20 @@ cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
 EOF
 clear_logs
 run_open_beside_focused
-is "beside same workspace: exits 0" "0" "$RC"
-is "beside same workspace: reuses the live cockpit" "0" \
-  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
-is "beside same workspace: never steals focus" "0" \
-  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+is "beside other tab: exits 0" "0" "$RC"
+is "beside other tab: opens a dispatch-adjacent cockpit" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open --plugin ralph-herdr --entrypoint cockpit')"
+is "beside other tab: targets the focused hero" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --target-pane pHero')"
 
 # ── attended day: a cockpit elsewhere does not satisfy the dispatch surface ─
-sed 's/"wCK:p9","workspace_id":"wMain"/"wCK:p9","workspace_id":"wOther"/' \
-  "$FAKE_HERDR_FIXTURES/api-snapshot.json" >"$FAKE_HERDR_FIXTURES/api-snapshot.other.json"
-mv "$FAKE_HERDR_FIXTURES/api-snapshot.other.json" "$FAKE_HERDR_FIXTURES/api-snapshot.json"
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wOther","tab_id":"wOther:t1","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":true,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
 clear_logs
 run_open_beside_focused
 is "beside other workspace: exits 0" "0" "$RC"
