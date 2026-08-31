@@ -496,7 +496,9 @@ is "preview: no agent means no herdr traffic" "0" "$(log_count "$FAKE_HERDR_LOG"
 # record file is redirected with RALPH_HERDR_COCKPIT_PANE_FILE, the snapshot
 # comes from fake-herdr, and the "live" pid is a real sleep this test owns.
 PANEREC="$TMP/cockpit.pane.json"
+HEROREC="$TMP/hero.pane.json"
 export RALPH_HERDR_COCKPIT_PANE_FILE="$PANEREC"
+export RALPH_HERDR_HERO_PANE_FILE="$HEROREC"
 
 # A snapshot that contains pane wCK:p9 — the fixture the record will name.
 cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
@@ -510,6 +512,8 @@ EOF
 sleep 300 & LIVE_PID=$!
 DEAD_PID=$!
 ( sleep 0 ) & DEAD_PID=$!; wait "$DEAD_PID" 2>/dev/null || true
+printf '{"pane":"pHero","pid":%s,"at":"2026-08-22T00:00:00Z","repo":"%s"}\n' \
+  "$LIVE_PID" "$TMP" >"$HEROREC"
 
 run_open() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" "$TMP" 2>&1) || RC=$?; }
 run_open_no_focus() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" --no-focus "$TMP" 2>&1) || RC=$?; }
@@ -615,6 +619,24 @@ is "beside other workspace: targets the focused hero" "1" \
 is "beside other workspace: never steals focus" "1" \
   "$(log_count "$FAKE_HERDR_LOG" ' --no-focus')"
 
+# ── attended day: global focus must still be THIS repo's proven hero ────────
+# Preparation can take long enough for the operator to focus another repo.
+# Never use that ambient pane as the target for this repo's cockpit.
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wMain","tab_id":"wMain:t1","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":false,"agent_status":"working","revision":1},
+   {"pane_id":"pOther","workspace_id":"wOther","tab_id":"wOther:t1","terminal_id":"term_o","focused":true,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_focused
+is "beside foreign focus: exits nonzero" "1" "$RC"
+line_has "beside foreign focus: names the repo-bound hero mismatch" "$OUT" "is not this repo's live dispatch hero pHero"
+is "beside foreign focus: opens nothing in another repo" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+
 # ── attended day: no uniquely focused pane is an honest refusal ─────────────
 cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
 {"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
@@ -706,6 +728,7 @@ line_has "stamp: says the next open cannot focus this pane" "$OUT" "HERDR_PANE_I
 is "stamp: wrote no record" "" "$(cat "$PANEREC" 2>/dev/null)"
 rm -f "$TREE/cockpit/ralph-cockpit"
 unset RALPH_HERDR_COCKPIT_PANE_FILE
+unset RALPH_HERDR_HERO_PANE_FILE
 
 echo "1..$n"
 echo "# $pass passed, $fail failed"

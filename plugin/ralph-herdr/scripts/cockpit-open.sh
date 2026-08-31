@@ -80,7 +80,7 @@ if [ -z "$cwd" ] && [ -n "${HERDR_PLUGIN_CONTEXT_JSON:-}" ]; then
 fi
 [ -n "$cwd" ] || cwd="$PWD"
 
-target_pane="" target_workspace="" target_tab="" snapshot=""
+target_pane="" target_workspace="" target_tab="" hero_pane="" snapshot=""
 if [ "$beside_focused" = true ]; then
   snapshot=$(ralph_herdr_snapshot) || {
     log "cannot prove one focused dispatch pane — the Herdr snapshot is unavailable" >&2
@@ -96,6 +96,14 @@ if [ "$beside_focused" = true ]; then
   target_tab=$(jq -r '[.panes[] | select(.focused == true)][0].tab_id // empty' <<<"$snapshot")
   if [ -z "$target_pane" ] || [ -z "$target_workspace" ] || [ -z "$target_tab" ]; then
     log "cannot prove one focused dispatch pane — its pane, workspace, or tab id is missing" >&2
+    exit 1
+  fi
+  hero_pane=$(ralph_hero_live_pane "$cwd") || {
+    log "cannot prove this repo's live dispatch hero — refusing an ambient focus target" >&2
+    exit 1
+  }
+  if [ "$target_pane" != "$hero_pane" ]; then
+    log "focused pane $target_pane is not this repo's live dispatch hero $hero_pane — refusing a cross-repo cockpit target" >&2
     exit 1
   fi
 fi
