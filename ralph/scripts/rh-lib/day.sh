@@ -37,7 +37,7 @@ rh_run_herdr_script() {
 
 rh_dispatch_up() {
   rh_ensure_server || return $?
-  rh_run_herdr_script dispatch-up.sh || return $?
+  rh_run_herdr_script dispatch-up.sh "$@" || return $?
   rh_server_ready
 }
 
@@ -68,11 +68,18 @@ rh_team() {
 }
 
 rh_day() {
-  local repo board herdr scripts jq_bin script epic phase_rc phase_output rc=0
+  local repo board herdr scripts jq_bin script epic phase_rc phase_output rc=0 enter_ui=0
   local teams=()
+
+  if [ -t 0 ] && [ -t 1 ]; then
+    enter_ui=1
+  fi
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      --no-attach)
+        enter_ui=0
+        ;;
       --team)
         shift
         [ "$#" -gt 0 ] || { echo "rh day: --team needs an epic number" >&2; return 64; }
@@ -107,7 +114,11 @@ rh_day() {
   done
 
   phase_rc=0
-  rh_dispatch_up || phase_rc=$?
+  if [ "$enter_ui" -eq 1 ]; then
+    rh_dispatch_up --focus || phase_rc=$?
+  else
+    rh_dispatch_up || phase_rc=$?
+  fi
   if [ "$phase_rc" -ne 0 ]; then
     rh_phase dispatch failed "dependent day phases were not run"
     return "$phase_rc"
@@ -156,9 +167,13 @@ rh_day() {
   done
 
   phase_rc=0
-  rh_run_herdr_script cockpit-open.sh || phase_rc=$?
+  if [ "$enter_ui" -eq 1 ]; then
+    rh_run_herdr_script cockpit-open.sh --no-focus || phase_rc=$?
+  else
+    rh_run_herdr_script cockpit-open.sh || phase_rc=$?
+  fi
   if [ "$phase_rc" -eq 0 ]; then
-    rh_phase cockpit ready "cockpit opened or focused"
+    rh_phase cockpit ready "cockpit standing beside dispatch"
   else
     rh_phase cockpit failed "cockpit could not be opened"
     rc=1
@@ -171,6 +186,20 @@ rh_day() {
   else
     rh_phase inbox attention "inbox could not be rendered"
     rc=1
+  fi
+
+  # An attended day ends at the full Herdr surface. Outside Herdr, the bare
+  # client attaches to the already-focused dispatch hero; inside a managed
+  # pane, dispatch-up's explicit focus switched the existing client and a
+  # second client would only nest the UI. Automation and --no-attach never
+  # cross this boundary.
+  if [ "$enter_ui" -eq 1 ] && [ "${HERDR_ENV:-}" != "1" ]; then
+    phase_rc=0
+    "$herdr" || phase_rc=$?
+    if [ "$phase_rc" -ne 0 ]; then
+      rh_phase herdr failed "full UI exited before the day seat was attached"
+      rc=1
+    fi
   fi
 
   return "$rc"

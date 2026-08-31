@@ -34,6 +34,10 @@ let scriptLog: string;
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "rh-test-"));
+  writeFileSync(
+    join(tmp, "pty-run.exp"),
+    "set timeout -1\nspawn -noecho {*}$argv\nexpect eof\nset result [wait]\nexit [lindex $result 3]\n",
+  );
 });
 
 afterEach(() => {
@@ -105,26 +109,37 @@ function runRh(
     RALPH_HOME?: string;
     RALPH_RH_SERVER_ATTEMPTS?: string;
     RALPH_RH_SERVER_POLL_SEC?: string;
+    HERDR_ENV?: string;
     PATH?: string;
     cwd?: string;
     stdin?: string;
+    tty?: boolean;
   } = {},
 ): { status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string } {
-  const result = spawnSync("/bin/bash", [RH, ...argv], {
+  const env = {
+    PATH: opts.PATH ?? process.env.PATH ?? "",
+    ...(opts.RALPH_BOARD ? { RALPH_BOARD: opts.RALPH_BOARD } : {}),
+    ...(opts.NO_COLOR !== undefined ? { NO_COLOR: opts.NO_COLOR } : {}),
+    ...(opts.LC_ALL !== undefined ? { LC_ALL: opts.LC_ALL } : {}),
+    ...(opts.HERDR_BIN_PATH ? { HERDR_BIN_PATH: opts.HERDR_BIN_PATH } : {}),
+    ...(opts.RALPH_HERDR_SCRIPTS_DIR ? { RALPH_HERDR_SCRIPTS_DIR: opts.RALPH_HERDR_SCRIPTS_DIR } : {}),
+    ...(opts.RALPH_HOME ? { RALPH_HOME: opts.RALPH_HOME } : {}),
+    ...(opts.RALPH_RH_SERVER_ATTEMPTS ? { RALPH_RH_SERVER_ATTEMPTS: opts.RALPH_RH_SERVER_ATTEMPTS } : {}),
+    ...(opts.RALPH_RH_SERVER_POLL_SEC ? { RALPH_RH_SERVER_POLL_SEC: opts.RALPH_RH_SERVER_POLL_SEC } : {}),
+    ...(opts.HERDR_ENV !== undefined ? { HERDR_ENV: opts.HERDR_ENV } : {}),
+  };
+  const command = ["/bin/bash", RH, ...argv];
+  // BSD script needs its own parent TTY; expect supplies one on macOS.
+  // util-linux script provides the equivalent status-preserving PTY in CI/WSL.
+  const ptyCommand = process.platform === "darwin" ? "/usr/bin/expect" : "script";
+  const ptyArgs = process.platform === "darwin"
+    ? [join(tmp, "pty-run.exp"), ...command]
+    : ["-q", "-e", "-c", command.map((arg) => `'${arg.replaceAll("'", `'\"'\"'`)}'`).join(" "), "/dev/null"];
+  const result = spawnSync(opts.tty ? ptyCommand : command[0], opts.tty ? ptyArgs : command.slice(1), {
     cwd: opts.cwd ?? tmp,
     encoding: "utf8",
     input: opts.stdin,
-    env: {
-      PATH: opts.PATH ?? process.env.PATH ?? "",
-      ...(opts.RALPH_BOARD ? { RALPH_BOARD: opts.RALPH_BOARD } : {}),
-      ...(opts.NO_COLOR !== undefined ? { NO_COLOR: opts.NO_COLOR } : {}),
-      ...(opts.LC_ALL !== undefined ? { LC_ALL: opts.LC_ALL } : {}),
-      ...(opts.HERDR_BIN_PATH ? { HERDR_BIN_PATH: opts.HERDR_BIN_PATH } : {}),
-      ...(opts.RALPH_HERDR_SCRIPTS_DIR ? { RALPH_HERDR_SCRIPTS_DIR: opts.RALPH_HERDR_SCRIPTS_DIR } : {}),
-      ...(opts.RALPH_HOME ? { RALPH_HOME: opts.RALPH_HOME } : {}),
-      ...(opts.RALPH_RH_SERVER_ATTEMPTS ? { RALPH_RH_SERVER_ATTEMPTS: opts.RALPH_RH_SERVER_ATTEMPTS } : {}),
-      ...(opts.RALPH_RH_SERVER_POLL_SEC ? { RALPH_RH_SERVER_POLL_SEC: opts.RALPH_RH_SERVER_POLL_SEC } : {}),
-    },
+    env,
   });
   return {
     status: result.status,
@@ -156,6 +171,9 @@ type SurfaceEnv = {
   idempotentTeams?: boolean;
   isolatedLog?: string;
   PATH?: string;
+  HERDR_ENV?: string;
+  interactive?: boolean;
+  attachRc?: number;
 };
 
 function fixtureEnv(env: SurfaceEnv = {}) {
@@ -197,6 +215,11 @@ esac
     join(tmp, "fake-herdr"),
     `#!/bin/bash
 case "$*" in
+  '')
+    printf '%s\\n' attach >>"${herdrLog}"
+    printf 'HERDR ATTACHED\\n'
+    exit ${env.attachRc ?? 0}
+    ;;
   'status server --json')
     if [ "$(cat "${serverState}")" = down ]; then sleep 0.05; fi
     printf '%s\\n' "$*" >>"${herdrLog}"
@@ -217,7 +240,7 @@ esac
   );
   chmodSync(join(tmp, "fake-herdr"), 0o755);
   writeFileSync(join(scripts, "dispatch-up.sh"), `#!/bin/bash
-printf '%s\\n' dispatch-up >>"${scriptLog}"
+printf 'dispatch-up%s\\n' "\${*:+ $*}" >>"${scriptLog}"
 exit ${env.dispatchRc ?? 0}
 `);
   writeFileSync(join(scripts, "reconcile.sh"), `#!/bin/bash
@@ -229,7 +252,7 @@ printf '%s\\n' resume-teams >>"${scriptLog}"
 exit ${env.resumeRc ?? 0}
 `);
   writeFileSync(join(scripts, "cockpit-open.sh"), `#!/bin/bash
-printf '%s\\n' cockpit-open >>"${scriptLog}"
+printf 'cockpit-open%s\\n' "\${*:+ $*}" >>"${scriptLog}"
 exit ${env.cockpitRc ?? 0}
 `);
   writeFileSync(join(scripts, "work-team.sh"), `#!/bin/bash
@@ -259,6 +282,8 @@ echo 'FLEET STATUS'
     RALPH_HOME: join(tmp, "ralph-home"),
     RALPH_RH_SERVER_ATTEMPTS: "3",
     RALPH_RH_SERVER_POLL_SEC: "0",
+    HERDR_ENV: env.HERDR_ENV,
+    tty: env.interactive,
     cwd: repo,
     ...env,
   });
@@ -508,6 +533,10 @@ exit 23
   it("help and version work outside a git repository", () => {
     expect(runRh(["help"], { cwd: tmp }).status).toBe(0);
     expect(runRh(["--help"], { cwd: tmp }).status).toBe(0);
+    const dayHelp = runRh(["help", "day"], { cwd: tmp });
+    expect(dayHelp.status).toBe(0);
+    expect(dayHelp.stdout).toContain("--no-attach");
+    expect(dayHelp.stdout).toContain("interactive terminal");
     expect(runRh(["version"], { cwd: tmp }).stdout).toMatch(/^rh /);
     expect(runRh(["--version"], { cwd: tmp }).stdout).toMatch(/^rh /);
   });
@@ -657,6 +686,68 @@ exit 23
       "cockpit-open",
     ]);
     expect(readLines(scriptLog).some((line) => line.startsWith("work-team "))).toBe(false);
+    expect(readLines(herdrLog)).not.toContain("attach");
+  });
+
+  it("interactive day enters the full Herdr UI on dispatch after the inbox", () => {
+    // Break caught: an interactive shell prepares detached panes and returns
+    // to its prompt instead of entering the repo's attended dispatch seat.
+    const r = runSurface(["day"], fixtureEnv({ interactive: true, isolatedLog: "interactive-outside" }));
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+    expect(readLines(scriptLog)).toEqual([
+      "dispatch-up --focus",
+      "reconcile",
+      "resume-teams",
+      "cockpit-open --no-focus",
+    ]);
+    expect(readLines(herdrLog).at(-1)).toBe("attach");
+    expect(r.stdout.indexOf("inbox")).toBeGreaterThanOrEqual(0);
+    expect(r.stdout.indexOf("HERDR ATTACHED")).toBeGreaterThan(r.stdout.indexOf("inbox"));
+  });
+
+  it("interactive day inside Herdr focuses dispatch without nesting a client", () => {
+    // Break caught: invoking day from a managed pane nests a second Herdr TUI
+    // instead of switching the existing client to the dispatch seat.
+    const r = runSurface(
+      ["day"],
+      fixtureEnv({ interactive: true, HERDR_ENV: "1", isolatedLog: "interactive-inside" }),
+    );
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+    expect(readLines(scriptLog)).toEqual([
+      "dispatch-up --focus",
+      "reconcile",
+      "resume-teams",
+      "cockpit-open --no-focus",
+    ]);
+    expect(readLines(herdrLog)).not.toContain("attach");
+  });
+
+  it("day --no-attach preserves the background-only path in an interactive shell", () => {
+    // Break caught: the explicit escape hatch still changes focus or takes
+    // over the calling terminal.
+    const r = runSurface(
+      ["day", "--no-attach"],
+      fixtureEnv({ interactive: true, isolatedLog: "interactive-no-attach" }),
+    );
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+    expect(readLines(scriptLog)).toEqual([
+      "dispatch-up",
+      "reconcile",
+      "resume-teams",
+      "cockpit-open",
+    ]);
+    expect(readLines(herdrLog)).not.toContain("attach");
+  });
+
+  it("interactive day reports an attach failure after completing preparation", () => {
+    const r = runSurface(
+      ["day"],
+      fixtureEnv({ interactive: true, attachRc: 7, isolatedLog: "interactive-attach-failure" }),
+    );
+    expect(r.status).toBe(1);
+    expect(readLines(herdrLog).at(-1)).toBe("attach");
+    expect(r.stdout).toContain("herdr");
+    expect(r.stdout).toContain("failed");
   });
 
   it("repeatable team flags are validated and deduplicated before mutation", () => {

@@ -10,6 +10,7 @@
 #
 #   live cockpit for this board  → herdr plugin pane focus <pane_id>
 #   none, or any unreadable read → plugin pane open (today's behavior)
+#   --no-focus                   → ensure it exists beside the current seat
 #
 # Fail-open is the direction on purpose: a duplicate pane costs a pane, a
 # refusal costs the cockpit. See cockpit-pane.sh for what "live" means and why
@@ -40,17 +41,43 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { echo "$(date -u +%FT%TZ) cockpit-open: $*"; }
 
-cwd="${1-}"
+cwd=""
+focus_arg="--focus"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --no-focus) focus_arg="--no-focus" ;;
+    -h | --help)
+      echo "usage: cockpit-open.sh [--no-focus] [CWD]"
+      exit 0
+      ;;
+    --*)
+      echo "cockpit-open.sh: unknown argument '$1'" >&2
+      exit 64
+      ;;
+    *)
+      if [ -n "$cwd" ]; then
+        echo "cockpit-open.sh: only one CWD may be supplied" >&2
+        exit 64
+      fi
+      cwd="$1"
+      ;;
+  esac
+  shift
+done
 if [ -z "$cwd" ] && [ -n "${HERDR_PLUGIN_CONTEXT_JSON:-}" ]; then
   cwd=$(jq -r '.workspace_cwd // .focused_pane_cwd // empty' <<<"$HERDR_PLUGIN_CONTEXT_JSON" 2>/dev/null) || cwd=""
 fi
 [ -n "$cwd" ] || cwd="$PWD"
 
 if pane=$(ralph_cockpit_live_pane "$cwd"); then
+  if [ "$focus_arg" = "--no-focus" ]; then
+    log "cockpit already live in pane $pane — leaving focus on the current seat"
+    exit 0
+  fi
   log "cockpit already live in pane $pane — focusing it"
   exec "$HERDR" plugin pane focus "$pane"
 fi
 
 log "no live cockpit for this board — opening one"
 exec "$HERDR" plugin pane open --plugin "${HERDR_PLUGIN_ID:-ralph-herdr}" \
-  --entrypoint cockpit --placement split --direction right --cwd "$cwd" --focus
+  --entrypoint cockpit --placement split --direction right --cwd "$cwd" "$focus_arg"

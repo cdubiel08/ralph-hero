@@ -85,13 +85,20 @@ The default target is `${XDG_BIN_HOME:-$HOME/.local/bin}/rh`; add that directory
 |---|---|
 | `rh` | read-only operator home |
 | `rh dispatch` | read-only dispatch status |
-| `rh dispatch up` | ensure Herdr + dispatch only |
-| `rh day` | ensure dispatch, resume proven teams, open cockpit + inbox |
+| `rh dispatch up` | ensure Herdr + dispatch only; do not change focus |
+| `rh day` | prepare/resume the day, then enter Herdr on this repo's dispatch from an interactive terminal |
+| `rh day --no-attach` | prepare/resume the day without changing focus or attaching Herdr |
 | `rh day --team N` | same, plus explicit new team N |
 | `rh board ...` | exact existing board CLI |
 | `rh inbox` | read-only human inbox |
 | `rh fleet` | read-only scoped fleet status |
 | `rh doctor` | read-only setup and board diagnosis |
+
+`rh day` is terminal-aware. At an interactive macOS or WSL shell it ensures the
+dispatch hero and cockpit, prints the inbox summary, and then attaches the full
+Herdr UI with the current repository's dispatch hero selected. When run inside
+Herdr it switches the existing client to that hero rather than nesting another
+client. Pipes, scripts, CI, and `--no-attach` retain the background-only path.
 
 - `/ralph:board` — catch up, triage, form new tickets, answer Human Needed items, run doctor. Read-mostly; the Projects V2 UI is the dashboard.
 - `/ralph:work NNN` — drive one issue end-to-end. Also accepts an outcome description (creates the issue first) or empty args (folds Human Needed replies, then takes `board next`).

@@ -512,6 +512,7 @@ DEAD_PID=$!
 ( sleep 0 ) & DEAD_PID=$!; wait "$DEAD_PID" 2>/dev/null || true
 
 run_open() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" "$TMP" 2>&1) || RC=$?; }
+run_open_no_focus() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" --no-focus "$TMP" 2>&1) || RC=$?; }
 
 # ── no record at all → open (today's behavior, unchanged) ────────────────────
 rm -f "$PANEREC"; clear_logs
@@ -537,6 +538,31 @@ is "focus: focused the recorded pane" "1" \
   "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus wCK:p9')"
 is "focus: opened NOTHING — the whole point" "0" \
   "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+
+# ── live record + --no-focus → ensure only, never steal the day seat ────────
+clear_logs
+run_open_no_focus
+is "no-focus live: exits 0" "0" "$RC"
+line_has "no-focus live: reports the existing pane" "$OUT" "wCK:p9"
+is "no-focus live: does not focus it" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+is "no-focus live: opens nothing" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+
+# ── no record + --no-focus → open beside dispatch without taking focus ─────
+rm -f "$PANEREC"; clear_logs
+run_open_no_focus
+is "no-focus open: exits 0" "0" "$RC"
+is "no-focus open: opens one cockpit" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open --plugin ralph-herdr --entrypoint cockpit')"
+is "no-focus open: asks Herdr not to steal focus" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --no-focus')"
+is "no-focus open: never asks for focus" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --focus')"
+
+# Restore the live record for the liveness degradation cases below.
+printf '{"pane":"wCK:p9","pid":%s,"at":"2026-08-22T00:00:00Z","repo":"%s"}\n' \
+  "$LIVE_PID" "$TMP" >"$PANEREC"
 
 # ── dead pid, pane still in the snapshot → open ──────────────────────────────
 # A pane outlives the process inside it (herdr fires pane.exited and leaves the
