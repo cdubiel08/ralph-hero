@@ -1102,3 +1102,24 @@ func TestWrapWords(t *testing.T) {
 		t.Errorf("empty input yields one empty line: %q", got)
 	}
 }
+
+func TestRenderInboxViewClipsAnOverTallSelectedRowToTheBody(t *testing.T) {
+	m := inboxViewModel()
+	m.mode = ModeInbox
+	m.inboxCards[0].Question = strings.Repeat("a very long decision that wraps across many many lines of the view ", 12)
+	m.inboxWithheld = "1 settling"
+	m.width, m.height = 60, 14
+	out := viewModel(m)
+	if !strings.Contains(out, "row clipped to the screen") {
+		t.Errorf("an over-tall selected row must say it was clipped; got:\n%s", out)
+	}
+	// The footers and the legend survive below it.
+	for _, want := range []string{"withheld: 1 settling", "i/esc close"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("clipping must keep %q on screen; got:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "\n"); n > m.height {
+		t.Errorf("view rendered %d lines for a %d-row terminal:\n%s", n, m.height, out)
+	}
+}

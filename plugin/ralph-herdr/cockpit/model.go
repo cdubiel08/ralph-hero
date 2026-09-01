@@ -390,6 +390,10 @@ type Model struct {
 	// esc and the answer's result land back in the view rather than in browse.
 	inboxRow    int
 	inboxReturn bool
+	// inboxRereadWanted: an answer landed while a cadence read was already in
+	// flight. That read started BEFORE the answer, so its result cannot show
+	// the disposition — one more read is owed when it lands.
+	inboxRereadWanted bool
 
 	// Cursor + mode.
 	col, row int

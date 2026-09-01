@@ -948,16 +948,33 @@ func renderInbox(m Model, bodyHeight int) string {
 		}
 		shown := 0
 		for i := top; i < len(blocks); i++ {
-			need := len(blocks[i])
+			block := blocks[i]
+			need := len(block)
 			// The "below" marker needs a line if anything will be left over.
 			reserve := 0
 			if i < len(blocks)-1 {
 				reserve = 1
 			}
-			if used+need+reserve > avail && i != m.inboxRow {
-				break
+			if used+need+reserve > avail {
+				if i != m.inboxRow {
+					break
+				}
+				// The selected row alone outgrows the budget (a long decision
+				// in a short terminal). It still renders — it is what the
+				// cursor is on — but CLIPPED to the budget, so the footers,
+				// legend, status and an active answer input stay on screen.
+				// The row says so, and names the way to read the rest.
+				room := avail - used - reserve
+				if room < 2 {
+					room = 2
+				}
+				if room < need {
+					block = append(append([]string{}, block[:room-1]...),
+						styleDim.Render("      (row clipped to the screen — g opens the issue)"))
+					need = len(block)
+				}
 			}
-			lines = append(lines, blocks[i]...)
+			lines = append(lines, block...)
 			used += need
 			shown++
 		}

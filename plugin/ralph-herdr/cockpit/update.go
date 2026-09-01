@@ -186,15 +186,26 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		m.inboxInFlight = false
 		m.lastInbox = time.Now()
 		m.inboxErr = msg.err
+		// A read that predates an answer cannot show its disposition — pay
+		// the one read still owed, whether this one succeeded or failed.
+		var owed tea.Cmd
+		if m.inboxRereadWanted {
+			m.inboxRereadWanted = false
+			m.inboxInFlight = true
+			owed = fetchInboxCmd(m.cfg, m.runner)
+		}
 		if !msg.ok {
 			m.inboxOK = false
-			return m, nil
+			return m, owed
 		}
 		m.inboxOK = true
 		m.inboxCards = msg.cards
 		m.inboxWithheld = msg.withheld
 		m.inboxLeads = msg.leads
 		m.clampInboxRow()
+		if owed != nil {
+			return m, owed
+		}
 		// Same clamp as doneMsg: the list length just changed under the cursor.
 		m.clampCursor()
 		return m, nil
@@ -768,8 +779,16 @@ func (m Model) answerReturnMode() Mode {
 // inboxRefreshAfterAnswer re-reads the inbox after an answer landed from the
 // view, so the row the human just disposed does not sit there looking
 // pending. nil when the view is not up — the column's own cadence covers it.
+//
+// A read already in flight is NOT sufficient: it started before the answer
+// landed, so its result still shows the row as pending. It is marked as owed
+// instead, and the inboxMsg handler pays it when that read returns.
 func (m *Model) inboxRefreshAfterAnswer() tea.Cmd {
-	if !m.inboxViewUp() || m.inboxInFlight {
+	if !m.inboxViewUp() {
+		return nil
+	}
+	if m.inboxInFlight {
+		m.inboxRereadWanted = true
 		return nil
 	}
 	m.inboxInFlight = true

@@ -1096,3 +1096,31 @@ func TestStaleOverlayMessagesNeverHijackTheInboxView(t *testing.T) {
 		}
 	}
 }
+
+func TestInboxViewAnswerDuringAnInFlightReadStillGetsItsOwnReread(t *testing.T) {
+	// A cadence read that started BEFORE the answer cannot show the
+	// disposition; the post-answer read is owed, not satisfied by it.
+	m := inboxViewModel()
+	m.mode = ModeAnswer
+	m.inboxReturn = true
+	m.sending = true
+	m.inboxInFlight = true
+	m, cmd := updateModel(m, answerDoneMsg{issue: 30, boardOK: true})
+	if !m.inboxRereadWanted {
+		t.Fatal("an answer landing during an in-flight read must mark a re-read as owed")
+	}
+	_ = cmd
+	// The pre-answer read lands: its rows are shown AND the owed read fires.
+	m, cmd = updateModel(m, inboxMsg{ok: true, cards: m.inboxCards})
+	if cmd == nil || !m.inboxInFlight || m.inboxRereadWanted {
+		t.Errorf("the owed re-read must fire when the stale read lands: cmd=%v inFlight=%v owed=%v", cmd != nil, m.inboxInFlight, m.inboxRereadWanted)
+	}
+	// A FAILED stale read pays the owed read too.
+	m2 := inboxViewModel()
+	m2.mode = ModeInbox
+	m2.inboxRereadWanted = true
+	m2, cmd2 := updateModel(m2, inboxMsg{err: "boom"})
+	if cmd2 == nil || !m2.inboxInFlight {
+		t.Error("a failed stale read must still pay the owed re-read")
+	}
+}
