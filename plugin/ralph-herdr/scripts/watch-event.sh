@@ -103,18 +103,19 @@ ledger_root() { printf '%s\n' "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"; }
 
 # ledger_for_agent NAME — find the ledger that holds NAME open; prints
 # "FILE<TAB>REF" for the first match. rc 1 when no ledger knows the agent.
-# Ledgers nest as <root>/<owner>/<repo>/ledger.jsonl (see ledger.sh).
+# Enumerated via ralph_ledger_enum (locator paths — post phase D a fresh
+# machine's ledger is sqlite-only, invisible to a *.jsonl glob).
 ledger_for_agent() {
   local name="$1" f ref
-  for f in "$(ledger_root)"/*/*/ledger.jsonl; do
-    [ -f "$f" ] || continue
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
     ref=$(RALPH_HERDR_LEDGER="$f" ralph_ledger_open_agents |
       awk -F'#' -v n="$name" '$1 == n { print; exit }') || ref=""
     if [ -n "$ref" ]; then
       printf '%s\t%s\n' "$f" "$ref"
       return 0
     fi
-  done
+  done < <(RALPH_HERDR_LEDGER_ROOT="$(ledger_root)" ralph_ledger_enum)
   return 1
 }
 
@@ -405,8 +406,11 @@ handle_gone() {
   [ -n "$live_json" ] ||
     log "herd unreadable for the $reason sweep — children adopt conservatively (orphaned); reconcile heals"
   ts=$(date -u +%FT%TZ)
-  for f in "$(ledger_root)"/*/*/ledger.jsonl; do
-    [ -f "$f" ] || continue
+  # Locator enumeration (ralph_ledger_enum), never a *.jsonl glob: post
+  # phase D a fresh machine's ledger is sqlite-only and a glob on the frozen
+  # extension would sweep right past it.
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
     export RALPH_HERDR_LEDGER="$f"
     # Adoption re-parents records, so the candidate parents must come from THIS
     # ledger's repository. An empty set (unreadable herd, foreign repository)
@@ -450,7 +454,7 @@ handle_gone() {
     if [ -n "$refs" ]; then
       ralph_heartbeat_write "$f" watch-event "$reason" || true
     fi
-  done
+  done < <(RALPH_HERDR_LEDGER_ROOT="$(ledger_root)" ralph_ledger_enum)
 }
 
 case "$EVENT" in

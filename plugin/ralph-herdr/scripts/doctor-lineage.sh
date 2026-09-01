@@ -158,14 +158,14 @@ in_ledger_scope() {
 # empty by definition.
 ledger_files() {
   if [ -n "${RALPH_HERDR_LEDGER:-}" ]; then
-    [ -f "$RALPH_HERDR_LEDGER" ] && printf '%s\n' "$RALPH_HERDR_LEDGER"
+    # Presence includes the sqlite sibling — post phase D a fresh machine
+    # has no jsonl at all (2>/dev/null: the probe's deprecation courtesy
+    # belongs to reads, not to this enumeration).
+    _ralph_ledger_present "$RALPH_HERDR_LEDGER" 2>/dev/null &&
+      printf '%s\n' "$RALPH_HERDR_LEDGER"
     return 0
   fi
-  local f
-  for f in "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"/*/*/ledger.jsonl; do
-    [ -f "$f" ] && printf '%s\n' "$f"
-  done
-  return 0
+  ralph_ledger_enum
 }
 
 open_rows=""

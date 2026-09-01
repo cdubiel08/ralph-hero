@@ -98,8 +98,14 @@ fails() {
   out=$("$@" 2>/dev/null) || rc=$?
   if [ "$rc" -ne 0 ]; then ok "$desc"; else not_ok "$desc — expected failure, got rc 0 ('$out')"; fi
 }
-# lcount FILE JQ_BOOL_EXPR — number of ledger records matching the expression
-lcount() { jq -rs "[.[] | select($2)] | length" <"$1"; }
+# lcount FILE JQ_BOOL_EXPR — number of ledger records matching the expression.
+# Reads through _ralph_ledger_events: since phase D (GH-2311) appends land in
+# the sqlite tape, and the raw jsonl no longer carries them.
+# shellcheck source=../scripts/ledger.sh
+. "$SCRIPTS/ledger.sh"
+lcount() { _ralph_ledger_events "$1" 2>/dev/null | jq -rs "[.[] | select($2)] | length"; }
+# levents FILE — the ledger's event stream (either tape form)
+levents() { _ralph_ledger_events "$1" 2>/dev/null; }
 # jqf FILE EXPR — raw jq read of a JSON file
 jqf() { jq -r "$2" "$1"; }
 # log_count LOG REGEX — matching lines in an invocation log
@@ -482,15 +488,15 @@ is "refill A: the dead w-lane exit is ledgered" "1" \
 is "refill A: one frontier spawn ledgered (grammar-B name from the title)" "1" \
   "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w301-add-refill-support#"))')"
 is "refill A: the spawn is honestly machine-initiated" "scheduler" \
-  "$(jq -rs '[.[] | select(.ev=="spawn")] | last | .lineage.spawner.invoked_by' <"$RLEDGER")"
+  "$(levents "$RLEDGER" | jq -rs '[.[] | select(.ev=="spawn")] | last | .lineage.spawner.invoked_by')"
 # GH-1809: the live path records what reconcile later needs to tell a herdr
 # restart from a crash — the pane's shell pid, and a checkout to resolve the
 # board scope from. Asserted on the LIVE path specifically: the dry-run plan
 # has no pane to read either from, so only this covers it.
 is "refill A: spawn record carries the pane's shell pid" "9000" \
-  "$(jq -rs '[.[] | select(.ev=="spawn")] | last | .shell_pid' <"$RLEDGER")"
+  "$(levents "$RLEDGER" | jq -rs '[.[] | select(.ev=="spawn")] | last | .shell_pid')"
 is "refill A: spawn record carries the worktree checkout" "$WT" \
-  "$(jq -rs '[.[] | select(.ev=="spawn")] | last | .checkout' <"$RLEDGER")"
+  "$(levents "$RLEDGER" | jq -rs '[.[] | select(.ev=="spawn")] | last | .checkout')"
 is "refill A: the refill_spawn annotation binds run + issue + budget" "1" \
   "$(lcount "$RLEDGER" ".ev==\"refill_spawn\" and .run_id==\"$RRID\" and .issue==301 and .budget_left==6")"
 is "refill A: budget consumed + pick recorded atomically" "6 [100,301]" \

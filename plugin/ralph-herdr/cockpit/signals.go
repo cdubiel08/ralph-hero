@@ -7,10 +7,13 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -198,21 +201,45 @@ type ledgerRow struct {
 
 // readLedger parses the spawn history. Malformed lines are skipped — the
 // ledger is append-only and a torn final write must not cost the whole file —
-// but an unreadable FILE is reported, so "no ledger here" and "every agent
+// but an unreadable SOURCE is reported, so "no ledger here" and "every agent
 // predates the ledger" stay distinguishable.
+//
+// Since phase D (GH-2311) the tape is the sqlite sibling: when it exists it
+// is served, full stop — the JSONL beside it is frozen at conversion time,
+// and serving it would render every later spawn invisible. An unreadable
+// present tape reads as "not read" (Read=false), never as the frozen file.
+// Only a machine with no sqlite at all still reads the legacy JSONL. The
+// sibling path is an extension swap mirroring ralph_lc_db_path (the GH-2310
+// shape); the read shells out to sqlite3 rather than linking a driver, the
+// same dependency every shell reader already carries.
 func readLedger(path string) Ledger {
 	l := Ledger{ByRef: map[string]LedgerSpawn{}, ByIssue: map[int]LedgerSpawn{}}
 	if path == "" {
 		return l
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return l
+	var src io.Reader
+	db := strings.TrimSuffix(path, ".jsonl") + ".sqlite"
+	if _, err := os.Stat(db); err == nil {
+		bin := os.Getenv("RALPH_SQLITE3_BIN")
+		if bin == "" {
+			bin = "sqlite3"
+		}
+		out, err := exec.Command(bin, db, "SELECT payload FROM facts ORDER BY seq;").Output()
+		if err != nil {
+			return l
+		}
+		src = bytes.NewReader(out)
+	} else {
+		f, err := os.Open(path)
+		if err != nil {
+			return l
+		}
+		defer f.Close()
+		src = f
 	}
-	defer f.Close()
 	l.Read = true
 
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(src)
 	// Lineage records carry a nested object; the default 64 KiB token is
 	// ample, but a single over-long line must skip rather than abort the scan.
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)

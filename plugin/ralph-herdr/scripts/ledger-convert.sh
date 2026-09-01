@@ -3,11 +3,12 @@
 # (GH-2305, phase A of the ledger SQLite deprecation path).
 #
 # Builds/updates `ledger.sqlite` beside `ledger.jsonl` (schema v1 below).
-# PURE ADDITION: no writer or reader of the JSONL changes; the sqlite file is
-# a derived artifact the JSONL can always regenerate — and the other way
-# round: `--export` prints JSONL from the sqlite in seq order, byte-identical
-# to the input it was built from (a CI test, not a claim). This is also the
-# disaster-recovery path for every later phase, maintained until ralph 1.0.0.
+# Since phase D (GH-2311) the sqlite IS the tape and appends land there
+# directly; this converter is the adoption path for a legacy JSONL (run by
+# hand, or by the writer's absent-DB auto-create when a JSONL exists) and
+# `--export` is the ONE sanctioned way to get JSONL back out — seq order,
+# byte-identical to the input it was built from (a CI test, not a claim).
+# The export lane is the disaster-recovery path, maintained until ralph 1.0.0.
 #
 #   bash ledger-convert.sh [LEDGER_JSONL]        # convert / update sibling .sqlite
 #   bash ledger-convert.sh --export [LEDGER_JSONL]  # regenerate JSONL on stdout
@@ -93,6 +94,27 @@ ralph_lc_hash_line() {
 # ralph_lc_user_version DB — print the db's user_version, or rc 1.
 ralph_lc_user_version() {
   "${RALPH_SQLITE3_BIN:-sqlite3}" "${1-}" 'PRAGMA user_version;' 2>/dev/null
+}
+
+# Schema v1 DDL — ONE definition (the GH-1843 shape): the converter's build
+# below and the writer's absent-DB auto-create (ledger.sh, phase D / GH-2311)
+# both run exactly this. IF NOT EXISTS throughout, so re-running completes a
+# half-created db rather than failing it.
+_RALPH_LC_DDL='CREATE TABLE IF NOT EXISTS facts(
+  seq INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT NULL,
+  agent TEXT, unit INTEGER, reason TEXT, pane TEXT,
+  payload TEXT NOT NULL,
+  phash TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS ix_unit ON facts(unit);
+CREATE INDEX IF NOT EXISTS ix_kind ON facts(kind, ts);'
+
+# ralph_lc_init_db DB — create/complete schema v1 in DB (idempotent). The
+# writer's fresh-tape path: a machine with no JSONL and no sqlite starts here.
+ralph_lc_init_db() {
+  "${RALPH_SQLITE3_BIN:-sqlite3}" "${1-}" "PRAGMA journal_mode=WAL;
+$_RALPH_LC_DDL
+PRAGMA user_version=1;" >/dev/null
 }
 
 # _ralph_lc_require_tools — sqlite3 + a hasher, each refusal naming its
@@ -244,14 +266,7 @@ ralph_lc_convert() {
 .bail on
 PRAGMA journal_mode=WAL;
 BEGIN;
-CREATE TABLE IF NOT EXISTS facts(
-  seq INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT NULL,
-  agent TEXT, unit INTEGER, reason TEXT, pane TEXT,
-  payload TEXT NOT NULL,
-  phash TEXT NOT NULL UNIQUE
-);
-CREATE INDEX IF NOT EXISTS ix_unit ON facts(unit);
-CREATE INDEX IF NOT EXISTS ix_kind ON facts(kind, ts);
+$_RALPH_LC_DDL
 CREATE TEMP TABLE staging(
   seq TEXT, ts TEXT, kind TEXT, agent TEXT, unit TEXT, reason TEXT,
   pane TEXT, payload TEXT, phash TEXT
