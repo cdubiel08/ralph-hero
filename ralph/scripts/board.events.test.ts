@@ -134,6 +134,9 @@ describe("board events --since", () => {
     for (const argv of [["events"], ["events", "--since"], ["events", "--since", "abc"], ["events", "--since", "-1"]]) {
       expect(() => run(argv, ctx())).toThrow(UsageError);
     }
+    // Digits-only but beyond 2^53: a malformed CURSOR, not an unreadable
+    // ledger — exit 64 semantics, never 69.
+    expect(() => run(["events", "--since", "9".repeat(400)], ctx())).toThrow(UsageError);
   });
 
   it("absent db is a normal state: exit 0, empty --json result, named on stderr", () => {

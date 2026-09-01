@@ -12996,6 +12996,11 @@ export function run(argv: string[], ctx: Ctx): number {
             "non-negative integer (`--since 0` reads everything)",
         );
       const since = Number(sinceRaw);
+      // Digits-only is not enough: past 2^53 Number() rounds (and eventually
+      // yields Infinity), which would compose invalid SQL and misreport a
+      // malformed CURSOR as an unreadable LEDGER (exit 69 instead of 64).
+      if (!Number.isSafeInteger(since))
+        throw new UsageError(`--since ${sinceRaw} is beyond the integer range a cursor can hold (max ${Number.MAX_SAFE_INTEGER})`);
       const root = process.env.RALPH_HERDR_LEDGER_ROOT || join(homedir(), ".ralph");
       const db = join(root, ctx.cfg.owner, ctx.cfg.repo, "ledger.sqlite");
       if (!existsSync(db)) {
