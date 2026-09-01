@@ -70,17 +70,22 @@ type Card struct {
 	Verb  string
 }
 
-// PR chip fates (GH-2062). Five, and the two that mean "we did not find out"
-// are deliberately separate: PRFateNone is a read that says this issue has no
-// PR (blank chip), while an issue ABSENT from the map was never read (grey ?).
-// An unread chip that rendered like a clean one is the failure GH-1971 fixed
-// on the merge side.
+// PR chip fates (GH-2062, GH-2321). Six, and the two that mean "we did not
+// find out" are deliberately separate: PRFateNone is a read that says this
+// issue has no PR (blank chip), while an issue ABSENT from the map was never
+// read (grey ?). An unread chip that rendered like a clean one is the failure
+// GH-1971 fixed on the merge side.
+//
+// PRFateConflict is the sixth (GH-2321): a merge-conflicted PR used to demote
+// to pending and render the SAME amber as checks-still-running, but "wait" and
+// "someone must rebase" are different next actions.
 const (
-	PRFateNone    = "none"
-	PRFateReady   = "ready"
-	PRFatePending = "pending"
-	PRFateMerged  = "merged"
-	PRFateClosed  = "closed"
+	PRFateNone     = "none"
+	PRFateReady    = "ready"
+	PRFatePending  = "pending"
+	PRFateConflict = "conflict"
+	PRFateMerged   = "merged"
+	PRFateClosed   = "closed"
 )
 
 // PRMark is the chosen PR for one In Review card.
@@ -96,12 +101,15 @@ type PRMark struct {
 // not predicted, and the cockpit is a viewer: `scripts/merge-pr.sh` is still
 // the only thing that answers whether a PR may merge. The honest cost of that
 // restraint is that a FAILING check renders the same amber as a still-running
-// one — the spec allots four inks and red is spoken for by closed-unmerged.
+// one — red is spoken for by closed-unmerged.
 //
 // A null rollup (no check has run yet) and a null mergeability (GitHub
 // recomputes it lazily) are both "not proven ready", never "ready": green
-// requires the positive fact. Only CONFLICTING demotes on mergeability, so the
-// UNKNOWN GitHub returns while recomputing cannot flap a green chip to amber.
+// requires the positive fact. Only CONFLICTING is read off mergeability, so
+// the UNKNOWN GitHub returns while recomputing cannot flap a green chip.
+//
+// CONFLICTING outranks the check rollup (GH-2321): whatever the checks say, a
+// conflicted PR's next action is a rebase, and checks re-run after one.
 func prFate(state string, merged bool, checks, mergeable string) string {
 	if merged || state == "MERGED" {
 		return PRFateMerged
@@ -109,7 +117,10 @@ func prFate(state string, merged bool, checks, mergeable string) string {
 	if state != "OPEN" {
 		return PRFateClosed
 	}
-	if checks == "SUCCESS" && mergeable != "CONFLICTING" {
+	if mergeable == "CONFLICTING" {
+		return PRFateConflict
+	}
+	if checks == "SUCCESS" {
 		return PRFateReady
 	}
 	return PRFatePending
@@ -120,11 +131,12 @@ func prFate(state string, merged bool, checks, mergeable string) string {
 // newest (highest number) wins. PRFateNone ranks last so any real PR displaces
 // the zero value.
 var chipRank = map[string]int{
-	PRFateReady:   0,
-	PRFatePending: 0, // one class: both are "the open PR", ink differs
-	PRFateMerged:  1,
-	PRFateClosed:  2,
-	PRFateNone:    3,
+	PRFateReady:    0,
+	PRFatePending:  0, // one class: all three are "the open PR", ink differs
+	PRFateConflict: 0,
+	PRFateMerged:   1,
+	PRFateClosed:   2,
+	PRFateNone:     3,
 }
 
 func betterChip(a, b PRMark) bool {

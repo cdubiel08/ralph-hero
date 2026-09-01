@@ -57,11 +57,11 @@ var (
 	dotNone      = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 
 	// Priority. Colour is reserved for the two that mean "now": red alert at
-	// P0, yellow at P1. P2/P3 are white fill over a dimmed remainder.
+	// P0, yellow at P1. P2/P3 are plain white; an unset one shares P0's red,
+	// because a null priority is a defect the operator must fix now.
 	prioP0   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
 	prioFill = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	prioWhit = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
-	prioEmpt = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 
 	// Worktree diff.
 	diffAdd    = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
@@ -72,11 +72,12 @@ var (
 	// PR chip (GH-2062). One ink per fate, and `prUnread` is the SAME grey the
 	// diff chip's ±? uses — across the card, "we could not read this" has one
 	// colour, and it is never a colour that also means a state.
-	prReady   = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — checks green, no conflict
-	prPending = lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // amber — running, failing, or conflicted
-	prMerged  = lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // purple — landed
-	prClosed  = lipgloss.NewStyle().Foreground(lipgloss.Color("203")) // red — closed unmerged
-	prUnread  = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	prReady    = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — checks green, no conflict
+	prPending  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // amber — running or failing
+	prConflict = lipgloss.NewStyle().Foreground(lipgloss.Color("205")) // magenta — merge conflict, rebase needed
+	prMerged   = lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // purple — landed
+	prClosed   = lipgloss.NewStyle().Foreground(lipgloss.Color("203")) // red — closed unmerged
+	prUnread   = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
 
 	// Epic rollup: the done/total takes the SAME purple merged PRs use —
 	// both mean "landed".
@@ -609,9 +610,14 @@ func diffChip(m Model, card Card) string {
 //     ordinary state (a rollup-advanced epic parent, a human-placed item), and
 //     a chip for it would be noise on every card in that class.
 //
-// The remaining three are the PR's fate: green ready, amber pending, purple
-// merged, red closed-unmerged. "Ready" is checks-green-and-unconflicted, never
-// a merge-gate verdict — see prFate.
+// The remaining four are the PR's fate: green ready, amber pending, magenta
+// conflicted, purple merged, red closed-unmerged. "Ready" is checks-green-and-
+// unconflicted, never a merge-gate verdict — see prFate.
+//
+// Conflict carries a trailing `!` as well as its own ink (GH-2321): it is the
+// one open-PR fate whose next action is a human's, and a monochrome terminal
+// collapses ink alone. The mark is on the chip, not the glyph, so `⇅#N` still
+// scans as "the PR" on every card.
 func prChip(m Model, card Card, g glyphSet) string {
 	label := strings.TrimSpace(g.pr + " ")
 	mark, ok := m.cardPR(card.Number)
@@ -624,6 +630,8 @@ func prChip(m Model, card Card, g glyphSet) string {
 		return prReady.Render(num)
 	case PRFatePending:
 		return prPending.Render(num)
+	case PRFateConflict:
+		return prConflict.Render(num + "!")
 	case PRFateMerged:
 		return prMerged.Render(num)
 	case PRFateClosed:
@@ -684,40 +692,25 @@ func closedLabel(card Card, now time.Time) string {
 	return "closed " + formatAge(now.Sub(at)) + " ago"
 }
 
-// priorityGlyph — P0 is an alert, P1-P3 a three-bar meter: P1 fills all three
-// in yellow, P2 two, P3 one, white over a dimmed remainder.
+// priorityGlyph — the priority as its own two-letter name: red P0, yellow P1,
+// white P2/P3. The three-bar meter this replaced (GH-2321) was read by an
+// operator as a broken PR-state glyph beside the estimate: P2 and P3 differed
+// only in fill count and P1 only in colour, so it carried less than the two
+// characters it stood in for.
 //
-// Two limits stated rather than hidden: P2 and P3 differ only in fill count,
-// and P1 differs from them only in colour, so a monochrome terminal collapses
-// the three into a bar chart. An UNSET priority renders as an empty meter
-// rather than as blank — a null priority sinks an item below stale backlog in
-// `board next`, so it is a real defect and should look like one.
+// An UNSET priority renders as a red `P?` rather than as blank — a null
+// priority sinks an item below stale backlog in `board next`, so it is a real
+// defect and takes the alert ink P0 uses. Fixed width, so line 3 aligns.
 func priorityGlyph(p string) string {
-	if p == "P0" {
-		return prioP0.Render("[!]")
-	}
-	n := 0
 	switch p {
+	case "P0":
+		return prioP0.Render("P0")
 	case "P1":
-		n = 3
-	case "P2":
-		n = 2
-	case "P3":
-		n = 1
+		return prioFill.Render("P1")
+	case "P2", "P3":
+		return prioWhit.Render(p)
 	}
-	fill := prioWhit
-	if n == 3 {
-		fill = prioFill
-	}
-	out := ""
-	for i, mark := range []string{"▁", "▃", "▅"} {
-		if i < n {
-			out += fill.Render(mark)
-		} else {
-			out += prioEmpt.Render(mark)
-		}
-	}
-	return out
+	return prioP0.Render("P?")
 }
 
 // ageChip — the LIVE agent's age since spawn, at minute precision so the

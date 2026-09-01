@@ -221,7 +221,7 @@ read. **A marking we could not measure never renders like a measured one:**
 | branch | the live session's `tokens.branch`, else the newest ledger spawn for the issue — so an In Review card still names its branch after the session exited |
 | `+N/-N` | the agent's own worktree vs its merge base, In Progress only. `±?` = unreadable **or** not yet measured; nothing at all = no live session. `+0/-0` is a real measurement. Untracked files are not counted — `git diff` cannot see them, and staging them would mutate a live agent's index from a viewer |
 | age | time since spawn from `~/.ralph/<owner>/<repo>/ledger.jsonl`, joined on the exact `agent_ref`. Minute precision. No record = `—`, **never** `0m` |
-| priority | red `[!]` at P0, else a three-bar meter (P1 yellow/3, P2 2, P3 1). An unset priority is an EMPTY meter, not a blank — it sinks the item in `board next` and should look like a defect |
+| priority | the literal name: red `P0`, yellow `P1`, white `P2`/`P3` (GH-2321 dropped the bar meter — it read as a broken glyph). An unset priority is a red `P?`, not a blank — it sinks the item in `board next` and should look like a defect |
 
 Card markings (GH-2062) — the ones whose data must be FETCHED. They ride a
 second, slower cadence (`RALPH_COCKPIT_SIGNAL_INTERVAL`, default 120s, floored
@@ -231,7 +231,7 @@ never as a value.**
 
 | Marking | Reads |
 |---|---|
-| `⇅ #2049` | the In Review PR chip, from `board card-signals --json`. **Green** open with checks green and no conflict, **amber** open otherwise, **purple** merged, **red** closed unmerged. Grey `⇅ ?` = the read failed or has not landed; *nothing at all* = we read it and this issue genuinely has no PR — a rollup-advanced epic parent, say |
+| `⇅ #2049` | the In Review PR chip, from `board card-signals --json`. **Green** open with checks green and no conflict, **amber** open with checks running or failing, **magenta `⇅ #2049!`** open but merge-conflicted (someone must rebase — the `!` survives a monochrome terminal), **purple** merged, **red** closed unmerged. Grey `⇅ ?` = the read failed or has not landed; *nothing at all* = we read it and this issue genuinely has no PR — a rollup-advanced epic parent, say |
 | `❯ #1994 Epic: … 2/4` | the epic rollup, same read: parent name in the comment ink, `done/total` in the merged-PR purple. `2/50+` = the child list was TRUNCATED, so the tally is a floor. No rollup read leaves the bare `❯ #1994` GH-2061 already drew |
 | Done · 14d | the `D` column, from `board closed --json` — own-repo items closed as COMPLETED inside `RALPH_AUDIT_DAYS`. Read lazily on the first `D` and refreshed only while it is on screen. Cancels (`NOT_PLANNED`) are excluded, matching `reconcile`. Four empty states stay apart: unread, read-failed, nothing-closed, and an ordinary empty column |
 | Inbox | the `I` column, from `board inbox --json` Tier 1 (GH-2181) — same lazy, shown-only cadence and the same empty-state honesty. A decision card renders its why-line (`a` answers it in place); every other card renders its literal disposition verb; held-back deliver rows are counted in a `withheld:` footer, never dropped silently |

@@ -40,7 +40,11 @@ func TestPrFateNeverGreensWhatItCannotSee(t *testing.T) {
 		// Demoting on it would flap a green chip to amber for no reason a human
 		// could act on, so only CONFLICTING demotes.
 		{"open, green, mergeability not yet computed", "OPEN", false, "SUCCESS", "UNKNOWN", PRFateReady},
-		{"open, green, conflicted", "OPEN", false, "SUCCESS", "CONFLICTING", PRFatePending},
+		// A conflict is its own fate whatever the checks say (GH-2321): the
+		// next action is a rebase, after which the checks re-run anyway.
+		{"open, green, conflicted", "OPEN", false, "SUCCESS", "CONFLICTING", PRFateConflict},
+		{"open, checks running, conflicted", "OPEN", false, "PENDING", "CONFLICTING", PRFateConflict},
+		{"open, no rollup, conflicted", "OPEN", false, "", "CONFLICTING", PRFateConflict},
 		{"open, checks running", "OPEN", false, "PENDING", "MERGEABLE", PRFatePending},
 		{"open, checks failing", "OPEN", false, "FAILURE", "MERGEABLE", PRFatePending},
 		// The load-bearing one: NO rollup at all (no check has run) must never

@@ -664,23 +664,54 @@ func TestDoneSwapClampsTheCursorAndKeepsItsThreeEmptyStatesApart(t *testing.T) {
 	}
 }
 
-func TestPriorityGlyphMarksP0AndNullDistinctly(t *testing.T) {
-	if !strings.Contains(priorityGlyph("P0"), "[!]") {
-		t.Error("P0 must be an alert, not a meter position")
+func TestPriorityGlyphIsLiteralAndNullIsDistinct(t *testing.T) {
+	// GH-2321: the bar meter read as a broken glyph; the priority is now its
+	// own name, legible on a monochrome terminal without a legend.
+	for _, p := range []string{"P0", "P1", "P2", "P3"} {
+		if g := priorityGlyph(p); !strings.Contains(g, p) {
+			t.Errorf("priorityGlyph(%q) = %q, must carry the literal name", p, g)
+		}
 	}
 	// A null priority sinks an item below stale backlog in `board next`, so it
-	// is a real defect and renders as an EMPTY meter rather than as blank.
+	// is a real defect and renders as a visible `P?` rather than as blank.
 	empty := priorityGlyph("")
-	if empty == "" {
-		t.Error("an unset priority must render as an empty meter, not as nothing")
+	if !strings.Contains(empty, "P?") {
+		t.Errorf("an unset priority must render as P?, not as %q", empty)
 	}
-	for _, p := range []string{"P1", "P2", "P3"} {
+	for _, p := range []string{"P0", "P1", "P2", "P3"} {
 		if g := priorityGlyph(p); lipgloss.Width(g) != lipgloss.Width(empty) {
-			t.Errorf("priorityGlyph(%q) is %d cells, empty is %d — the meter must be fixed-width",
+			t.Errorf("priorityGlyph(%q) is %d cells, empty is %d — the glyph must be fixed-width",
 				p, lipgloss.Width(g), lipgloss.Width(empty))
 		}
 	}
 }
+
+func TestPRChipConflictHasItsOwnMark(t *testing.T) {
+	// GH-2321: a conflicted PR rendered the same amber ⇅#N as checks still
+	// running. The two must differ in the BYTES, not only the ink — a
+	// monochrome terminal collapses colour, and "wait" and "someone must
+	// rebase" are different next actions.
+	m := testModel(&fakeRunner{})
+	card := Card{Number: 20, State: columnStates[1]}
+	m.signalsOK = true
+	m.prs = map[int]PRMark{20: {Number: 2277, Fate: PRFatePending}}
+	pending := prChip(m, card, asciiGlyphs)
+	m.prs = map[int]PRMark{20: {Number: 2277, Fate: PRFateConflict}}
+	conflict := prChip(m, card, asciiGlyphs)
+	if !strings.Contains(conflict, "#2277!") {
+		t.Errorf("conflict chip = %q, want the number followed by the ! mark", conflict)
+	}
+	if strings.Contains(pending, "!") {
+		t.Errorf("pending chip = %q must not carry the conflict mark", pending)
+	}
+	if stripANSI(pending) == stripANSI(conflict) {
+		t.Error("pending and conflict chips must differ once colour is stripped")
+	}
+}
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
 
 func TestAgeChipDashesRatherThanZero(t *testing.T) {
 	m := testModel(&fakeRunner{})
