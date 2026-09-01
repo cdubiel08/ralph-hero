@@ -125,22 +125,13 @@ src=$(ralph_worktree_source_dir)
 base=$(basename "$src")
 
 # 2. The repo's MAIN workspace, found by cwd match on the source checkout
-# (GH-2246) — fail-closed: an unreadable list cannot prove absence, and a
-# second workspace on the same checkout is the duplicate this command
-# exists to prevent. The worktree binding is the primary key (it is what
-# makes the sidebar nest the fleet's worktrees underneath); the label
-# fallback covers a main workspace this script itself created, which herdr
-# reports without a worktree object.
+# (GH-2246; resolution rule shared in lib.sh's ralph_main_ws_from_list) —
+# fail-closed: an unreadable list cannot prove absence, and a second
+# workspace on the same checkout is the duplicate this command exists to
+# prevent.
 ws_out=$(ralph_herdr_call workspace_list workspace list) ||
   die "cannot read the workspace list ($(ralph_herdr_err_code "${ws_out:-}" || true)) — refusing to guess whether the repo's main workspace exists"
-ws_id=$(jq -r --arg src "$src" \
-  '[.workspaces[] | select(((.worktree.is_linked_worktree // false) | not) and ((.worktree.checkout_path // "") == $src))][0].workspace_id // empty' \
-  <<<"$ws_out" 2>/dev/null) || ws_id=""
-if [ -z "$ws_id" ]; then
-  ws_id=$(jq -r --arg l "$base" \
-    '[.workspaces[] | select((.label == $l) and ((.worktree.is_linked_worktree // false) | not) and ((.worktree.checkout_path // "") == ""))][0].workspace_id // empty' \
-    <<<"$ws_out" 2>/dev/null) || ws_id=""
-fi
+ws_id=$(ralph_main_ws_from_list "$ws_out" "$src")
 n_match=$(jq -r --arg src "$src" \
   '[.workspaces[] | select(((.worktree.is_linked_worktree // false) | not) and ((.worktree.checkout_path // "") == $src))] | length' \
   <<<"$ws_out" 2>/dev/null) || n_match=0

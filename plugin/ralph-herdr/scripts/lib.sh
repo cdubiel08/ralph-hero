@@ -538,6 +538,30 @@ ralph_worktree_source_dir() {
   fi
 }
 
+# ralph_main_ws_from_list WS_JSON SRC — resolve the repo's MAIN workspace id
+# from a `workspace list` body (the GH-2246 rule, one definition — dispatch-up
+# and the lane openers both read it). Primary key: the non-linked worktree
+# binding on the source checkout — that binding is what makes the sidebar nest
+# the fleet's worktrees underneath. Fallback: a workspace labeled with the
+# checkout's basename and carrying no worktree object — the shape a main
+# workspace this plugin itself created (dispatch-up's `workspace create`)
+# reports. Prints the id, or nothing when no workspace matches; the CALLER
+# owns the workspace-list read and its failure direction, because those
+# directions legitimately differ (dispatch-up fails closed — it would create
+# a duplicate; a lane opener falls back to the invoking workspace).
+ralph_main_ws_from_list() {
+  local ws_out="$1" src="$2" ws_id
+  ws_id=$(jq -r --arg src "$src" \
+    '[.workspaces[] | select(((.worktree.is_linked_worktree // false) | not) and ((.worktree.checkout_path // "") == $src))][0].workspace_id // empty' \
+    <<<"$ws_out" 2>/dev/null) || ws_id=""
+  if [ -z "$ws_id" ]; then
+    ws_id=$(jq -r --arg l "$(basename "$src")" \
+      '[.workspaces[] | select((.label == $l) and ((.worktree.is_linked_worktree // false) | not) and ((.worktree.checkout_path // "") == ""))][0].workspace_id // empty' \
+      <<<"$ws_out" 2>/dev/null) || ws_id=""
+  fi
+  printf '%s' "$ws_id"
+}
+
 # spawn_work_session N [QUEUE_JSON] — spawn one /ralph:work session for issue N.
 #
 # The single sanctioned spawn path (extracted from work-next.sh; work-fleet.sh

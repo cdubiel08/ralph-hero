@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# deliver-pass.sh — cockpit action: one /ralph:deliver pass in its own tab.
+# deliver-pass.sh — cockpit action: one /ralph:deliver pass, one lane tab.
 #
 # Empty `next` means spawn nothing — the lane contract. The pass itself runs
 # inside the spawned session; this script only reads the queue and builds
-# herdr layout, then execs into notify-watch.sh so the cockpit pane becomes
-# the pass's attention surface.
+# herdr layout, then execs into notify-watch.sh so this pane becomes the
+# pass's attention surface.
+#
+# ONE TAB PER LANE (GH-2317): lane-open.sh placed this launcher pane as a
+# tab in the repo's MAIN workspace, so this pane IS the lane tab's
+# script-log pane — the agent gets a split beside it, and the tab is named
+# from the LANE (the word the skill already spells: /ralph:deliver), never a
+# third vocabulary. Run from a bare shell instead (no HERDR_PANE_ID to
+# split), the pre-GH-2317 shape survives: a fresh lane tab whose root pane
+# hosts the agent, this terminal the watcher.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,40 +23,71 @@ trap hold_pane EXIT
 
 billing_guard
 
+lane=deliver
+agent=ralph-deliver
+
 next=$("$BOARD" deliver-queue --json | jq -r '.next.number // empty')
 if [ -z "$next" ]; then
-  echo "deliver queue empty — nothing to spawn"
+  echo "$lane queue empty — nothing to spawn"
   exit 0
 fi
 
 if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
-  echo "DRY RUN — would spawn deliver pass (queue head #$next):"
-  echo "  agent: ralph-deliver"
-  echo "  $HERDR tab create --cwd $REPO --label \"ralph-deliver\" --no-focus"
-  echo "  $HERDR agent start ralph-deliver --kind claude --pane <captured>"
-  echo "  $HERDR agent prompt ralph-deliver \"/ralph:deliver\""
+  echo "DRY RUN — would spawn $lane pass (queue head #$next):"
+  echo "  agent: $agent"
+  if [ -n "${HERDR_PANE_ID:-}" ]; then
+    echo "  $HERDR tab rename <own tab> $lane"
+    echo "  $HERDR pane split $HERDR_PANE_ID --direction down --cwd $REPO --no-focus"
+  else
+    echo "  $HERDR tab create --cwd $REPO --label \"$lane\" --no-focus"
+  fi
+  echo "  $HERDR agent start $agent --kind claude --pane <captured>"
+  echo "  $HERDR agent prompt $agent \"/ralph:$lane\""
   exit 0
 fi
 
-t=$(ralph_herdr_tab_create "ralph-deliver")
-pane=$(jq -r '.root_pane.pane_id // empty' <<<"$t")
-[ -n "$pane" ] || die "no pane id in tab response"
+if [ -n "${HERDR_PANE_ID:-}" ]; then
+  # In-tab shape: rename our tab from the lane (best-effort — the label is
+  # chrome and a failed rename may not cost the pass), then split the agent
+  # pane below. Full width for both surfaces; the logs stay on top.
+  tab=$(ralph_herdr_call pane_info pane get "$HERDR_PANE_ID" 2>/dev/null \
+    | jq -r '.pane.tab_id // empty' 2>/dev/null) || tab=""
+  if [ -n "$tab" ]; then
+    "$HERDR" tab rename "$tab" "$lane" >/dev/null 2>&1 || true
+  fi
+  rc=0
+  s=$(ralph_herdr_call pane_info pane split "$HERDR_PANE_ID" --direction down --cwd "$REPO" --no-focus) || rc=$?
+  case "$rc" in
+    0) ;;
+    2) die "herdr refused to split the $lane tab for the agent pane: $(ralph_herdr_err_code "$s") — $(ralph_herdr_err_message "$s")" ;;
+    3) die "herdr did not answer the $lane agent-pane split (unreachable, or timed out — a timed-out split may still have landed; check the tab before retrying)" ;;
+    *) die "herdr's answer to the $lane agent-pane split was not a response this plugin can read — see the transport error above" ;;
+  esac
+  pane=$(jq -r '.pane.pane_id // empty' <<<"$s")
+  [ -n "$pane" ] || die "no pane id in split response"
+  cleanup_pane="$pane" cleanup_tab=""
+else
+  t=$(ralph_herdr_tab_create "$lane")
+  pane=$(jq -r '.root_pane.pane_id // empty' <<<"$t")
+  [ -n "$pane" ] || die "no pane id in tab response"
+  cleanup_pane="" cleanup_tab=$(jq -r '.tab.tab_id // empty' <<<"$t")
+fi
 
 # One live pass per lane: the unique agent name is the interlock. A
 # name-taken refusal means a pass is already live — die, never suffix. The
-# just-created tab holds only an idle shell at this point (start failed), so
-# closing it is cleanup, not killing an agent.
-if ! agent_start_when_ready ralph-deliver "$pane"; then
-  tab_id=$(jq -r '.tab.tab_id // empty' <<<"$t")
-  [ -n "$tab_id" ] && "$HERDR" tab close "$tab_id" >/dev/null 2>&1 || true
-  die "agent start ralph-deliver failed — see the herdr error above (a live deliver pass owning the name is the common cause, but exhausted startup retries land here too); cleaned up the empty tab"
+# pane just created for the agent holds only an idle shell at this point
+# (start failed), so closing it is cleanup, not killing an agent.
+if ! agent_start_when_ready "$agent" "$pane"; then
+  [ -n "$cleanup_pane" ] && "$HERDR" pane close "$cleanup_pane" >/dev/null 2>&1 || true
+  [ -n "$cleanup_tab" ] && "$HERDR" tab close "$cleanup_tab" >/dev/null 2>&1 || true
+  die "agent start $agent failed — see the herdr error above (a live $lane pass owning the name is the common cause, but exhausted startup retries land here too); cleaned up the empty agent pane"
 fi
 # Past this point the agent is LIVE — a prompt failure must not strand it
 # silently, and hold_pane must not claim "no session spawned" about it.
 export RALPH_HERDR_AGENT_LIVE=1
-ralph_herdr_agent_prompt ralph-deliver "/ralph:deliver" >/dev/null \
-  || die "prompt delivery failed — agent ralph-deliver is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt ralph-deliver \"/ralph:deliver\""
+ralph_herdr_agent_prompt "$agent" "/ralph:$lane" >/dev/null \
+  || die "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:$lane\""
 
-echo "spawned deliver pass (queue head #$next, pane $pane, agent ralph-deliver)"
+echo "spawned $lane pass (queue head #$next, pane $pane, agent $agent)"
 
-exec "$SCRIPT_DIR/notify-watch.sh" ralph-deliver
+exec "$SCRIPT_DIR/notify-watch.sh" "$agent"
