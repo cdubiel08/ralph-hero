@@ -301,6 +301,18 @@ line_has "link-offer by hand: the refusal names the opener contract" "$OUT" \
   "opened by link-open.sh, not by hand"
 line_has "link-offer by hand: the hold trap caught it" "$OUT" "no session spawned"
 
+# The same refusal under a caller that asserted it is not a pane: the refusal
+# still prints and still exits 1, but nothing waits on a stdin with no human
+# behind it. End to end on a real trap site, not the trap function alone.
+clear_logs
+RC=0
+OUT=$(printf '' | RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+  RALPH_HERDR_NO_HOLD=1 bash "$SCRIPTS/link-offer.sh" 2>&1) || RC=$?
+is "link-offer NO_HOLD: still refused, rc 1" "1" "$RC"
+line_has "link-offer NO_HOLD: the refusal is still printed" "$OUT" \
+  "opened by link-open.sh, not by hand"
+line_lacks "link-offer NO_HOLD: nobody is asked to press Enter" "$OUT" "press Enter"
+
 # ═══ 3. attend — carry the blocking question ═════════════════════════════════
 # Nothing blocked → herd calm.
 herd_fixture '[]'

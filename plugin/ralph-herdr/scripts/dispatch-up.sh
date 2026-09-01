@@ -65,11 +65,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 trap hold_pane EXIT
 
 focus=false
+focus_only=false
 case "${1-}" in
   -h | --help)
     trap - EXIT
     cat <<'EOF'
-usage: dispatch-up.sh [--focus]
+usage: dispatch-up.sh [--focus | --focus-only]
 
 Ensure the hero pane is up in the repo's MAIN workspace (the one the
 fleet's worktrees nest under — GH-2246; the dispatch address stays
@@ -79,16 +80,36 @@ sitting in a legacy `<repo>/dispatch` workspace is left alone and noted.
 Arms nothing scheduled — the unattended half of dispatch is the event
 lane (watch-event.sh). By default the command ensures the seat without
 changing focus; --focus enters the proven hero pane after healing it.
+--focus-only focuses this repo's already-standing hero pane and exits;
+it heals nothing, opens nothing, and prints no roster. Refuses when no
+live hero is recorded.
 
 Knobs: RALPH_ALLOW_API_BILLING (the hero session bills like any spawn).
 EOF
     exit 0
     ;;
   --focus) focus=true ;;
+  --focus-only) focus_only=true ;;
   "") ;;
-  *) die "unknown argument '${1-}' (accepts --focus; --help)" ;;
+  *) die "unknown argument '${1-}' (accepts --focus, --focus-only; --help)" ;;
 esac
-[ "$#" -le 1 ] || die "unknown argument '${2-}' (accepts --focus; --help)"
+[ "$#" -le 1 ] || die "unknown argument '${2-}' (accepts --focus, --focus-only; --help)"
+
+# --focus-only: the attended day's LAST act (rh day). Focus is deliberately
+# separated from the ensure phases — the phases print into the invoking
+# terminal, so focusing before they finish buries their output. Refuses rather
+# than guessing: a stale, dead, or never-written hero record and an unreadable
+# snapshot are one rc-1 answer from ralph_hero_live_pane, and focusing some
+# other pane on that evidence is worse than not moving at all. It runs BEFORE
+# billing_guard: this mode spawns and bills nothing.
+if [ "$focus_only" = true ]; then
+  pane=$(ralph_hero_live_pane "$REPO") ||
+    die "no live dispatch hero recorded for this repo — run \`dispatch up\` first"
+  "$HERDR" plugin pane focus "$pane" >/dev/null ||
+    die "could not focus the hero pane $pane"
+  echo "dispatch focus: hero pane $pane"
+  exit 0
+fi
 
 # The hero session this stands up bills like any spawned one — refuse before
 # creating anything, so a billing refusal leaves no half-built space.

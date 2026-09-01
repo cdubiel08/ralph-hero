@@ -198,7 +198,8 @@ live=$(printf '%s\n' "$herd" | jq -r --arg pfx "o$EPIC-" '
 finish() {
   trap - EXIT
   echo "$1"
-  [ -t 0 ] && { printf 'Enter to close.\n'; read -r _ || true; }
+  # Same constraint as hold_pane: a caller that is not a pane says so.
+  [ -t 0 ] && [ -z "${RALPH_HERDR_NO_HOLD:-}" ] && { printf 'Enter to close.\n'; read -r _ || true; }
   exit 0
 }
 

@@ -14,6 +14,13 @@
 #   --beside-focused             → require the attended cockpit in the
 #                                  focused pane's tab; target new splits
 #                                  at that pane
+#   --beside-hero                → the same topology, keyed on this repo's
+#                                  live dispatch hero: the target is derived
+#                                  from the hero record and the snapshot,
+#                                  never from focus, because focus is a live
+#                                  UI property that can move between the
+#                                  phase that sets it and the phase that
+#                                  reads it
 #
 # Fail-open is the normal direction on purpose: a duplicate pane costs a pane, a
 # refusal costs the cockpit. See cockpit-pane.sh for what "live" means and why
@@ -49,12 +56,17 @@ log() { echo "$(date -u +%FT%TZ) cockpit-open: $*"; }
 cwd=""
 focus_arg="--focus"
 beside_focused=false
+beside_hero=false
+# `beside` is what gates the --no-focus requirement and the tab/workspace
+# comparison below: both modes prove a target pane, they differ only in how.
+beside=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --no-focus) focus_arg="--no-focus" ;;
-    --beside-focused) beside_focused=true ;;
+    --beside-focused) beside_focused=true beside=true ;;
+    --beside-hero) beside_hero=true beside=true ;;
     -h | --help)
-      echo "usage: cockpit-open.sh [--no-focus [--beside-focused]] [CWD]"
+      echo "usage: cockpit-open.sh [--no-focus [--beside-focused|--beside-hero]] [CWD]"
       exit 0
       ;;
     --*)
@@ -71,8 +83,12 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-if [ "$beside_focused" = true ] && [ "$focus_arg" != "--no-focus" ]; then
-  echo "cockpit-open.sh: --beside-focused requires --no-focus" >&2
+if [ "$beside_focused" = true ] && [ "$beside_hero" = true ]; then
+  echo "cockpit-open.sh: --beside-focused and --beside-hero are mutually exclusive" >&2
+  exit 64
+fi
+if [ "$beside" = true ] && [ "$focus_arg" != "--no-focus" ]; then
+  echo "cockpit-open.sh: --beside-focused/--beside-hero requires --no-focus" >&2
   exit 64
 fi
 if [ -z "$cwd" ] && [ -n "${HERDR_PLUGIN_CONTEXT_JSON:-}" ]; then
@@ -81,11 +97,20 @@ fi
 [ -n "$cwd" ] || cwd="$PWD"
 
 target_pane="" target_workspace="" target_tab="" hero_pane="" snapshot=""
-if [ "$beside_focused" = true ]; then
-  snapshot=$(ralph_herdr_snapshot) || {
-    log "cannot prove one focused dispatch pane — the Herdr snapshot is unavailable" >&2
+# ONE snapshot serves both modes: the target's workspace and tab are read from
+# the same rows its proof came from, so a pane that moved between two reads
+# cannot put the cockpit in a tab nobody is looking at.
+if [ "$beside" = true ]; then
+  if ! snapshot=$(ralph_herdr_snapshot); then
+    if [ "$beside_focused" = true ]; then
+      log "cannot prove one focused dispatch pane — the Herdr snapshot is unavailable" >&2
+    else
+      log "cannot prove this repo's live dispatch hero — the Herdr snapshot is unavailable" >&2
+    fi
     exit 1
-  }
+  fi
+fi
+if [ "$beside_focused" = true ]; then
   focused_count=$(jq -r '[.panes[]? | select(.focused == true)] | length' <<<"$snapshot" 2>/dev/null) || focused_count=0
   if [ "$focused_count" != "1" ]; then
     log "cannot prove one focused dispatch pane — snapshot reported $focused_count" >&2
@@ -106,11 +131,23 @@ if [ "$beside_focused" = true ]; then
     log "focused pane $target_pane is not this repo's live dispatch hero $hero_pane — refusing a cross-repo cockpit target" >&2
     exit 1
   fi
+elif [ "$beside_hero" = true ]; then
+  hero_pane=$(ralph_hero_live_pane "$cwd") || {
+    log "cannot prove this repo's live dispatch hero — refusing an ambient cockpit target" >&2
+    exit 1
+  }
+  target_pane="$hero_pane"
+  target_workspace=$(jq -r --arg p "$hero_pane" '[.panes[]? | select(.pane_id == $p)][0].workspace_id // empty' <<<"$snapshot" 2>/dev/null) || target_workspace=""
+  target_tab=$(jq -r --arg p "$hero_pane" '[.panes[]? | select(.pane_id == $p)][0].tab_id // empty' <<<"$snapshot" 2>/dev/null) || target_tab=""
+  if [ -z "$target_workspace" ] || [ -z "$target_tab" ]; then
+    log "this repo's live dispatch hero $hero_pane carries no workspace or tab id in the snapshot — refusing an unprovable cockpit target" >&2
+    exit 1
+  fi
 fi
 
 if pane=$(ralph_cockpit_live_pane "$cwd"); then
   if [ "$focus_arg" = "--no-focus" ]; then
-    if [ "$beside_focused" = true ]; then
+    if [ "$beside" = true ]; then
       cockpit_workspace=$(jq -r --arg p "$pane" '[.panes[]? | select(.pane_id == $p)][0].workspace_id // empty' <<<"$snapshot")
       cockpit_tab=$(jq -r --arg p "$pane" '[.panes[]? | select(.pane_id == $p)][0].tab_id // empty' <<<"$snapshot")
       if [ -n "$cockpit_workspace" ] && [ "$cockpit_workspace" = "$target_workspace" ] &&

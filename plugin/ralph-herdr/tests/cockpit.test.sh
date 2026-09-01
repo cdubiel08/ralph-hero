@@ -518,6 +518,7 @@ printf '{"pane":"pHero","pid":%s,"at":"2026-08-22T00:00:00Z","repo":"%s"}\n' \
 run_open() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" "$TMP" 2>&1) || RC=$?; }
 run_open_no_focus() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" --no-focus "$TMP" 2>&1) || RC=$?; }
 run_open_beside_focused() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" --no-focus --beside-focused "$TMP" 2>&1) || RC=$?; }
+run_open_beside_hero() { RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" --no-focus --beside-hero "$TMP" 2>&1) || RC=$?; }
 
 # ── no record at all → open (today's behavior, unchanged) ────────────────────
 rm -f "$PANEREC"; clear_logs
@@ -649,6 +650,100 @@ is "beside unknown focus: exits nonzero" "1" "$RC"
 line_has "beside unknown focus: says the topology is unproven" "$OUT" "cannot prove one focused dispatch pane"
 is "beside unknown focus: opens nothing blindly" "0" \
   "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+
+# ── --beside-hero: the same topology keyed on the hero RECORD, not on focus ──
+# `rh day` no longer focuses the hero before the cockpit phase, so the focused
+# pane is whatever the operator was reading. The target is derived instead.
+
+# A cockpit already in the hero's tab satisfies the surface.
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":false,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_hero
+is "beside-hero same tab: exits 0" "0" "$RC"
+is "beside-hero same tab: reuses the live cockpit" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+is "beside-hero same tab: never steals focus" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane focus')"
+
+# A cockpit in another tab of the same space is not beside the hero.
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wMain","tab_id":"wMain:t1","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":false,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_hero
+is "beside-hero other tab: exits 0" "0" "$RC"
+is "beside-hero other tab: opens a hero-adjacent cockpit" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open --plugin ralph-herdr --entrypoint cockpit')"
+is "beside-hero other tab: targets the recorded hero" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --target-pane pHero')"
+
+# A cockpit in another workspace likewise.
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wOther","tab_id":"wOther:t1","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":false,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_hero
+is "beside-hero other workspace: exits 0" "0" "$RC"
+is "beside-hero other workspace: opens a hero-adjacent cockpit" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open --plugin ralph-herdr --entrypoint cockpit')"
+is "beside-hero other workspace: targets the recorded hero" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --target-pane pHero')"
+is "beside-hero other workspace: never steals focus" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --no-focus')"
+
+# The regression this mode exists for: the SAME fixture --beside-focused
+# refuses on (another repo's pane focused, the hero unfocused) succeeds here,
+# because focus is not evidence about which pane is this repo's hero.
+cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
+{"snapshot":{"version":1,"protocol":19,"workspaces":[],"tabs":[],
+ "panes":[
+   {"pane_id":"wCK:p9","workspace_id":"wMain","tab_id":"wMain:t1","terminal_id":"term_ck","focused":false,"agent_status":"unknown","revision":1},
+   {"pane_id":"pHero","workspace_id":"wMain","tab_id":"wMain:t2","terminal_id":"term_h","focused":false,"agent_status":"working","revision":1},
+   {"pane_id":"pOther","workspace_id":"wOther","tab_id":"wOther:t1","terminal_id":"term_o","focused":true,"agent_status":"working","revision":1}],
+ "layouts":[],"agents":[]}}
+EOF
+clear_logs
+run_open_beside_hero
+is "beside-hero foreign focus: exits 0 where --beside-focused refuses" "0" "$RC"
+is "beside-hero foreign focus: still targets this repo's hero" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --target-pane pHero')"
+is "beside-hero foreign focus: never targets the focused stranger" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" ' --target-pane pOther')"
+
+# No hero record → refuse; an ambient pane is never a substitute.
+mv "$HEROREC" "$TMP/hero.pane.json.bak"
+clear_logs
+run_open_beside_hero
+is "beside-hero no record: exits nonzero" "1" "$RC"
+line_has "beside-hero no record: names the unprovable hero" "$OUT" \
+  "cannot prove this repo's live dispatch hero"
+is "beside-hero no record: opens nothing" "0" \
+  "$(log_count "$FAKE_HERDR_LOG" 'plugin pane open')"
+mv "$TMP/hero.pane.json.bak" "$HEROREC"
+
+# Argument shape: the beside modes need --no-focus and exclude each other.
+clear_logs
+RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" --beside-hero "$TMP" 2>&1) || RC=$?
+is "beside-hero without --no-focus: exits 64" "64" "$RC"
+line_has "beside-hero without --no-focus: names the requirement" "$OUT" "requires --no-focus"
+RC=0; OUT=$(bash "$SCRIPTS/cockpit-open.sh" --no-focus --beside-focused --beside-hero "$TMP" 2>&1) || RC=$?
+is "beside-focused + beside-hero: exits 64" "64" "$RC"
+line_has "beside-focused + beside-hero: names the exclusion" "$OUT" "mutually exclusive"
+is "argument refusals read nothing" "0" "$(log_count "$FAKE_HERDR_LOG" 'api snapshot')"
 
 # Restore the original liveness fixture for the degradation cases below.
 cat >"$FAKE_HERDR_FIXTURES/api-snapshot.json" <<'EOF'
