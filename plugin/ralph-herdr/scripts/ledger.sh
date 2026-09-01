@@ -219,7 +219,7 @@ ralph_session_key() {
 # WARNS on stderr and proceeds. The cost of any skipped insert is a parity
 # gap the next ledger-convert.sh run backfills (phash-keyed) — never data.
 _ralph_ledger_sqlite_insert() {
-  local file="${1-}" line="${2-}" db sq uv seq at ph proj q err
+  local file="${1-}" line="${2-}" db sq uv seq at ph proj q out
   local f_ts f_ev f_agent f_unit f_reason f_pane
   # A tree without ledger-convert.sh has no converter, so no sqlite ledger to
   # keep current — nothing to do (the guarded source above already skipped).
@@ -283,15 +283,30 @@ _ralph_ledger_sqlite_insert() {
   # INSERT OR IGNORE: a retry, or a line the converter already imported, is a
   # no-op — the converter's own idempotence rule. busy_timeout bounds a
   # writer collision on the WAL db at 2s; past it the warn below answers,
-  # never a blocked append.
-  err=$("$sq" "$db" "PRAGMA busy_timeout=2000;
+  # never a blocked append. The trailing SELECT reads back what the insert
+  # did: an ignored insert whose standing row carries a DIFFERENT phash means
+  # the two files diverged before this append — a state neither this sink nor
+  # the converter may overwrite (fail-closed, phase A's rule) and one the
+  # parity check's count+last-phash shape can miss mid-file, so it is warned
+  # HERE, at the one moment the divergent row is actually touched.
+  out=$("$sq" "$db" "PRAGMA busy_timeout=2000;
 INSERT OR IGNORE INTO facts(seq, ts, kind, agent, unit, reason, pane, payload, phash)
   VALUES ($seq, '$f_ts', '$f_ev', nullif('$f_agent',''),
           CAST(nullif('$f_unit','') AS INTEGER), nullif('$f_reason',''),
-          nullif('$f_pane',''), '$line', '$ph');" 2>&1 >/dev/null) || {
-    echo "ralph_ledger_append: sqlite sink failed on $db (${err:0:160}) — JSONL holds the record, ledger-convert.sh backfills" >&2
+          nullif('$f_pane',''), '$line', '$ph');
+SELECT changes() || '|' || coalesce((SELECT phash FROM facts WHERE seq=$seq), '');" 2>&1) || {
+    echo "ralph_ledger_append: sqlite sink failed on $db (${out:0:160}) — JSONL holds the record, ledger-convert.sh backfills" >&2
     return 0
   }
+  # The PRAGMA echoes its value on a line of its own — the read-back is the
+  # LAST line of the invocation's output.
+  out=${out##*$'\n'}
+  case "$out" in
+    0\|"$ph") : ;; # standing identical row — the converter imported it first
+    0\|*)
+      echo "ralph_ledger_append: sqlite sink — $db already holds a DIFFERENT fact at seq $seq (the files diverged before this append; nothing here overwrites): inspect with doctor-parity.sh before trusting either sink" >&2
+      ;;
+  esac
   return 0
 }
 

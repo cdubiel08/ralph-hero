@@ -109,6 +109,17 @@ is "quoted payload stored verbatim" "$(sed -n 7p "$L")" "$(sqlite3 "$DB" 'SELECT
 bash "$CONVERT" --export "$L" >"$TMP/export2.jsonl" 2>/dev/null
 if cmp -s "$L" "$TMP/export2.jsonl"; then ok "export still byte-identical"; else not_ok "export still byte-identical"; fi
 
+# ── pre-existing DIVERGENT row at our seq: warned, never overwritten ─────────
+# The parity check's count+last-phash shape can miss a mid-file divergence,
+# so the sink warns at the one moment the divergent row is touched — and
+# leaves it standing (nothing on the append path overwrites, phase A's rule).
+sqlite3 "$DB" "INSERT INTO facts(seq, ts, kind, payload, phash) VALUES (8, 'tx', 'poison', 'not our line', 'deadbeef');"
+OUT=$(ralph_ledger_append '{"ts":"t7","ev":"state","agent_ref":"w9-x#aa","state":"working"}' 2>&1); RC=$?
+is "append over a divergent row exits 0" "0" "$RC"
+has "divergent row is warned" "DIFFERENT fact at seq 8" "$OUT"
+is "jsonl still got the line" "8" "$(wc -l <"$L" | tr -d ' ')"
+is "divergent row left standing" "not our line" "$(sqlite3 "$DB" 'SELECT payload FROM facts WHERE seq=8;')"
+
 echo "1..$n"
 echo "# pass $pass fail $fail"
 [ "$fail" -eq 0 ]
