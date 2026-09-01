@@ -328,16 +328,28 @@ spawn_turn_started() {
 
 # hold_pane — EXIT trap for the spawn scripts. A plugin pane closes the instant
 # its command exits, taking the reason with it (a pane that flashes and
-# vanishes teaches nothing). The spawn scripts exec into notify-watch.sh on
-# success, so reaching this trap means the spawn did not complete — but that
-# splits into two truths: nothing started (empty queue, refusal), or the agent
-# DID start and only the dispatch after it failed (prompt delivery). Callers
-# set RALPH_HERDR_AGENT_LIVE=1 the moment agent start succeeds so the trap
-# never claims "no session" while a live agent sits idle in a pane.
+# vanishes teaches nothing), so the trap holds the pane open until a human
+# reads it. It is reached on EVERY exit of a script that did not exec away —
+# success included — so the banner may not assert that a spawn failed; the rc
+# and RALPH_HERDR_AGENT_LIVE (set by callers the moment agent start succeeds)
+# are the only two facts it has. Three outcomes are distinguished: a live-but-
+# undispatched agent, a clean exit, and a spawn that never started.
 hold_pane() {
   local rc=$?
+  # RALPH_HERDR_NO_HOLD is the CALLER's assertion that this process is not a
+  # pane entrypoint: nothing closes on exit, so there is nothing to hold and
+  # no human on this stdin. The assertion must come from the caller — no
+  # environment variable distinguishes a pane entrypoint from a subprocess of
+  # one (HERDR_PANE_ID/HERDR_ENV are inherited by every child), which is the
+  # same property day.sh relies on to know it is inside Herdr at all.
+  # RESIDUAL, deliberately not closed: `bash dispatch-up.sh` run BY HAND from a
+  # managed pane shell sets nothing and still holds, because that invocation
+  # passed through no caller that could assert anything.
+  [ -z "${RALPH_HERDR_NO_HOLD:-}" ] || return 0
   if [ -n "${RALPH_HERDR_AGENT_LIVE:-}" ]; then
     printf '\n[ralph-herdr] agent STARTED but dispatch did not complete (exit %d) — the agent is live and idle; see the error above for the manual prompt command. Enter to close.\n' "$rc"
+  elif [ "$rc" -eq 0 ]; then
+    printf '\n[ralph-herdr] done (exit 0) — press Enter to close this pane.\n'
   else
     printf '\n[ralph-herdr] no session spawned (exit %d) — press Enter to close this pane.\n' "$rc"
   fi

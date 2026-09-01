@@ -214,7 +214,31 @@ rc=$?
 has "degradation is named" "$out" "roster read failed"
 has "the space still came up" "$out" "workspace wT (created)"
 
-# ── 10. arguments: only the internal focus mode is accepted ─────────────────
+# ── 3d. --focus-only: enter the standing seat, heal and open NOTHING ────────
+# The attended day's last act. Everything the ensure phases would do has
+# already run earlier in the same `rh day`, so this mode is a bare read.
+reset
+printf '{"workspaces":[%s]}\n' "$MAIN_WS" >"$FAKE_HERDR_FIXTURES/workspace-list.json"
+live_hero pH
+out=$(run_up --focus-only)
+rc=$?
+[ "$rc" = 0 ] && ok "focus-only exits 0" || not_ok "focus-only exits 0 — rc $rc: $out"
+has "focus-only focuses the recorded hero" "$(cat "$FAKE_HERDR_LOG")" "plugin pane focus pH"
+hasnt "focus-only creates no workspace" "$(cat "$FAKE_HERDR_LOG")" "workspace create"
+hasnt "focus-only opens no pane" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open"
+hasnt "focus-only prints no roster" "$(cat "$FAKE_BOARD_LOG")" "^roster"
+has "focus-only names the pane it entered" "$out" "dispatch focus: hero pane pH"
+
+# ── 3e. --focus-only with no live hero: refuse, never focus a guess ─────────
+reset
+printf '{"workspaces":[%s]}\n' "$MAIN_WS" >"$FAKE_HERDR_FIXTURES/workspace-list.json"
+out=$(run_up --focus-only)
+rc=$?
+[ "$rc" != 0 ] && ok "focus-only without a live hero refuses" || not_ok "focus-only without a live hero refuses — rc 0: $out"
+has "refusal names the remedy" "$out" "no live dispatch hero recorded for this repo"
+hasnt "no pane was focused on a guess" "$(cat "$FAKE_HERDR_LOG")" "plugin pane focus"
+
+# ── 10. arguments: only the internal focus modes are accepted ───────────────
 reset
 out=$(run_up --rota)
 rc=$?

@@ -698,10 +698,11 @@ exit 23
     const r = runSurface(["day"], fixtureEnv({ interactive: true, isolatedLog: "interactive-outside" }));
     expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
     expect(readLines(scriptLog)).toEqual([
-      "dispatch-up --focus",
+      "dispatch-up",
       "reconcile",
       "resume-teams",
-      "cockpit-open --no-focus --beside-focused",
+      "cockpit-open --no-focus --beside-hero",
+      "dispatch-up --focus-only",
     ]);
     expect(readLines(herdrLog).at(-1)).toBe("attach");
     expect(r.stdout.indexOf("inbox")).toBeGreaterThanOrEqual(0);
@@ -717,10 +718,11 @@ exit 23
     );
     expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
     expect(readLines(scriptLog)).toEqual([
-      "dispatch-up --focus",
+      "dispatch-up",
       "reconcile",
       "resume-teams",
-      "cockpit-open --no-focus --beside-focused",
+      "cockpit-open --no-focus --beside-hero",
+      "dispatch-up --focus-only",
     ]);
     expect(readLines(herdrLog)).not.toContain("attach");
   });
@@ -734,12 +736,86 @@ exit 23
     );
     expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
     expect(readLines(scriptLog)).toEqual([
-      "dispatch-up --focus",
+      "dispatch-up",
       "reconcile",
       "resume-teams",
-      "cockpit-open --no-focus --beside-focused",
+      "cockpit-open --no-focus --beside-hero",
+      "dispatch-up --focus-only",
     ]);
     expect(readLines(herdrLog)).not.toContain("attach");
+  });
+
+  it("interactive day moves focus only after every phase has printed", () => {
+    // Break caught: focusing the hero pane in phase 1 buries the reconcile,
+    // team, cockpit and inbox output the operator invoked the day to read.
+    const r = runSurface(["day"], fixtureEnv({ interactive: true, isolatedLog: "interactive-focus-last" }));
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+    const lines = readLines(scriptLog);
+    expect(lines[0]).toBe("dispatch-up");
+    expect(lines.at(-1)).toBe("dispatch-up --focus-only");
+    expect(lines.indexOf("dispatch-up --focus-only")).toBeGreaterThan(
+      lines.indexOf("cockpit-open --no-focus --beside-hero"),
+    );
+  });
+
+  it("a partially failed interactive day never moves focus", () => {
+    // Break caught: a day that failed partway focuses the dispatch seat anyway
+    // and scrolls the failures the operator has to see out of view.
+    const r = runSurface(
+      ["day"],
+      fixtureEnv({ interactive: true, reconcileRc: 7, isolatedLog: "interactive-focus-withheld" }),
+    );
+    expect(r.status).not.toBe(0);
+    expect(readLines(scriptLog)).not.toContain("dispatch-up --focus-only");
+  });
+
+  it("every Herdr script rh invokes is told it is not a pane entrypoint", () => {
+    // Break caught: without RALPH_HERDR_NO_HOLD the plugin scripts' hold_pane
+    // trap reads the invoking terminal's stdin and blocks the whole day on an
+    // Enter nobody is there to press.
+    const repo = join(tmp, "no-hold-host");
+    const scripts = join(tmp, "no-hold-scripts");
+    const calls = join(tmp, "no-hold-calls.log");
+    const board = join(tmp, "no-hold-board");
+    const herdr = join(tmp, "no-hold-herdr");
+    mkdirSync(repo, { recursive: true });
+    mkdirSync(scripts, { recursive: true });
+    spawnSync("git", ["init", "-q", repo], { encoding: "utf8" });
+
+    writeFileSync(board, "#!/bin/bash\n[ \"${1-}\" = inbox ] && printf 'BOARD INBOX\\n'\n");
+    chmodSync(board, 0o755);
+    writeFileSync(
+      herdr,
+      "#!/bin/bash\n[ \"$*\" = 'status server --json' ] && printf '{\"status\":\"running\"}\\n'\n",
+    );
+    chmodSync(herdr, 0o755);
+
+    for (const script of [
+      "dispatch-up.sh",
+      "reconcile.sh",
+      "resume-teams.sh",
+      "work-team.sh",
+      "cockpit-open.sh",
+      "fleet-status.sh",
+    ]) {
+      writeFileSync(
+        join(scripts, script),
+        `#!/bin/bash\nprintf '%s\\t%s\\n' '${script}' "\${RALPH_HERDR_NO_HOLD-}" >>"${calls}"\n`,
+      );
+      chmodSync(join(scripts, script), 0o755);
+    }
+
+    const opts = {
+      RALPH_BOARD: board,
+      HERDR_BIN_PATH: herdr,
+      RALPH_HERDR_SCRIPTS_DIR: scripts,
+      cwd: repo,
+    };
+    expect(runRh(["day", "--team", "2208"], opts).status).toBe(0);
+    expect(runRh(["fleet"], opts).status).toBe(0);
+    const seen = readLines(calls);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen).toEqual(seen.map((line) => `${line.split("\t")[0]}\t1`));
   });
 
   it("day --no-attach preserves the background-only path in an interactive shell", () => {

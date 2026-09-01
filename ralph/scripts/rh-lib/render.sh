@@ -113,8 +113,13 @@ rh_fleet() {
   rh_resolve_board_once || return $?
   repo=$(rh_repo_root) || return $?
   scripts=$(rh_resolve_herdr_scripts "$repo") || return $?
+  # RALPH_HERDR_NO_HOLD for the same reason rh_run_herdr_script sets it, and
+  # scoped the same way: this is a subprocess of the invoking terminal, not a
+  # pane entrypoint. fleet-status.sh carries no hold_pane trap today; the
+  # assertion is about which side of the pane boundary the CALLER is on, and
+  # is not conditional on which script happens to trap.
   (cd "$repo" && RALPH_HERDR_REPO="$repo" RALPH_HERDR_BOARD="$_RH_RESOLVED_BOARD" \
-    bash "$scripts/fleet-status.sh" "$@")
+    RALPH_HERDR_NO_HOLD=1 bash "$scripts/fleet-status.sh" "$@")
 }
 
 rh_doctor() {

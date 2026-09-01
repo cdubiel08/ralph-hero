@@ -31,8 +31,13 @@ rh_run_herdr_script() {
   rh_resolve_board_once || return $?
   repo=$(rh_repo_root) || return $?
   scripts=$(rh_resolve_herdr_scripts "$repo") || return $?
+  # RALPH_HERDR_NO_HOLD is scoped to THIS invocation and must never be exported
+  # globally (a shell profile, a parent environment): rh_ensure_server runs
+  # before and outside this subshell, so a global would ride the Herdr server
+  # into every pane it later spawns and silently disarm hold_pane for the real
+  # panes it exists to hold open.
   (cd "$repo" && RALPH_HERDR_REPO="$repo" RALPH_HERDR_BOARD="$_RH_RESOLVED_BOARD" \
-    RALPH_HERDR_SCRIPTS="$scripts" bash "$scripts/$script" "$@")
+    RALPH_HERDR_SCRIPTS="$scripts" RALPH_HERDR_NO_HOLD=1 bash "$scripts/$script" "$@")
 }
 
 rh_dispatch_up() {
@@ -114,11 +119,7 @@ rh_day() {
   done
 
   phase_rc=0
-  if [ "$enter_ui" -eq 1 ]; then
-    rh_dispatch_up --focus || phase_rc=$?
-  else
-    rh_dispatch_up || phase_rc=$?
-  fi
+  rh_dispatch_up || phase_rc=$?
   if [ "$phase_rc" -ne 0 ]; then
     rh_phase dispatch failed "dependent day phases were not run"
     return "$phase_rc"
@@ -168,7 +169,7 @@ rh_day() {
 
   phase_rc=0
   if [ "$enter_ui" -eq 1 ]; then
-    rh_run_herdr_script cockpit-open.sh --no-focus --beside-focused || phase_rc=$?
+    rh_run_herdr_script cockpit-open.sh --no-focus --beside-hero || phase_rc=$?
   else
     rh_run_herdr_script cockpit-open.sh --no-focus || phase_rc=$?
   fi
@@ -190,6 +191,21 @@ rh_day() {
   else
     rh_phase inbox attention "inbox could not be rendered"
     rc=1
+  fi
+
+  # Focus moves ONCE, and only at the end of a successful attended run: every
+  # phase above prints into the invoking terminal, so an earlier focus buries
+  # the output it produced. A run that failed partway keeps focus where the
+  # failures are readable — the operator has to see them before being moved.
+  if [ "$enter_ui" -eq 1 ] && [ "$rc" -eq 0 ]; then
+    phase_rc=0
+    rh_run_herdr_script dispatch-up.sh --focus-only || phase_rc=$?
+    if [ "$phase_rc" -eq 0 ]; then
+      rh_phase focus ready "dispatch seat focused"
+    else
+      rh_phase focus attention "the day is prepared; the dispatch seat could not be focused"
+      rc=1
+    fi
   fi
 
   # An attended day ends at the full Herdr surface. Outside Herdr, the bare
