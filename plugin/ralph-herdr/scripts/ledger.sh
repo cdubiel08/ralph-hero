@@ -252,7 +252,7 @@ ralph_session_key() {
 # (watch-event's exit sweep), and the mkdir lock is not re-entrant — a second
 # acquisition would deadlock, then break its own caller's lock at ~15s.
 _ralph_ledger_sqlite_append() {
-  local file="${1-}" line="${2-}" db sq uv seq ph proj q out line_sql attempt
+  local file="${1-}" line="${2-}" db sq uv seq ph proj q out line_sql attempt jl
   local f_ts f_ev f_agent f_unit f_reason f_pane had_lock
   # The sqlite rules — db path, phash, DDL, projection — live in
   # ledger-convert.sh (ONE definition, GH-1843). A stripped tree without the
@@ -417,6 +417,22 @@ $file"
   # (the guarantee) is already durable, and nothing derives history from an
   # appended row's phash (the converter's phash rule exists for JSONL
   # import idempotence, and a frozen JSONL never re-imports these rows).
+  # While a frozen/legacy JSONL exists, its ENTIRE line range is reserved
+  # for the converter — rejected lines included, whose repair "converts into
+  # its own slot" by the converter's contract. Appends allocate above it, so
+  # no new fact can ever occupy a line's seq. The count is one grep per
+  # append and static (the JSONL never grows post-D); an uncountable file
+  # refuses, per the probe rule above.
+  jl=0
+  if [ -s "$file" ]; then
+    jl=$(grep -c '' <"$file" 2>/dev/null) || jl=""
+    case "$jl" in
+      '' | *[!0-9]*)
+        echo "ralph_ledger_append: cannot count the legacy JSONL's reserved range — the fact was NOT recorded" >&2
+        return 1
+        ;;
+    esac
+  fi
   ph="provisional:$$:${RANDOM-0}${RANDOM-0}:$(date +%s 2>/dev/null || true)"
   # busy_timeout waits out ordinary write contention, but a peer converting
   # the db to WAL holds an EXCLUSIVE lock that can outlive it on a slow
@@ -427,7 +443,7 @@ $file"
   while :; do
     if out=$("$sq" "$db" "PRAGMA busy_timeout=2000;
 INSERT INTO facts(seq, ts, kind, agent, unit, reason, pane, payload, phash)
-  SELECT coalesce(max(seq), 0) + 1, '$f_ts', '$f_ev', nullif('$f_agent',''),
+  SELECT max(coalesce(max(seq), 0), $jl) + 1, '$f_ts', '$f_ev', nullif('$f_agent',''),
          CAST(nullif('$f_unit','') AS INTEGER), nullif('$f_reason',''),
          nullif('$f_pane',''), '$line_sql', '$ph'
   FROM facts;

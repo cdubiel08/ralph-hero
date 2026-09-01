@@ -146,6 +146,26 @@ done
 # (restore the pre-existing 7-fact shape the assertions below expect: 2 seeded + 6 appends = 8)
 sqlite3 "$DB" 'DELETE FROM facts WHERE seq=8;'
 
+# ── a trailing REJECT line's seq slot stays reserved for its repair ──────────
+# (The converter's contract: a later fix of a malformed line converts into
+# its own slot. An append occupying it would foreclose the repair forever.)
+( # subshell: keeps the main fixture flow untouched
+  RTMP="$TMP/rej"
+  mkdir -p "$RTMP"
+  export RALPH_HERDR_LEDGER="$RTMP/ledger.jsonl"
+  printf '%s\n' \
+    '{"ts":"j1","ev":"spawn","agent_ref":"w8-r#e8","session":"s8"}' \
+    'this line is not json — a reject with a reserved slot' >"$RTMP/ledger.jsonl"
+  bash -c ". '$SCRIPTS/ledger.sh'; ralph_ledger_append '{\"ts\":\"j2\",\"ev\":\"state\",\"agent_ref\":\"w8-r#e8\",\"state\":\"x\"}'" 2>/dev/null
+  seqs=$(sqlite3 "$RTMP/ledger.sqlite" 'SELECT group_concat(seq, "|") FROM (SELECT seq FROM facts ORDER BY seq);')
+  if [ "$seqs" = "1|3" ]; then
+    echo "SLOT-RESERVED"
+  else
+    echo "SLOT-BURNED:$seqs"
+  fi
+) >"$TMP/rej.out"
+is "a trailing reject's slot is never occupied by an append" "SLOT-RESERVED" "$(cat "$TMP/rej.out")"
+
 # ── parity: healthy post-D shape (tape ahead of the frozen jsonl) ────────────
 OUT=$(bash "$PARITY" 2>&1); RC=$?
 is "parity passes on the healthy post-D shape" "0" "$RC"
