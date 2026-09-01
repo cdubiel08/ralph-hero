@@ -209,6 +209,7 @@ verbatim; Human Needed cards show the blocking question).
 | `d` / `g` / `q` | PR diff popup / open in browser / quit |
 | `D` | swap the third column between Human Needed and Done · 14d (upper-case — `d` is the PR diff) |
 | `I` | swap the third column to the Inbox — `board inbox` Tier 1 (decisions, tend proposals, Intake approvals, deliver-blocked), each card carrying its disposition verb. `D` and `I` displace each other |
+| `i` | inbox VIEW (GH-2318) — the queue-level flip-to surface: the same Tier 1 read at full width, decision text wrapped in full, `j`/`k` scroll, `a`/`⏎` answers the selected decision row (`board answer NNN -m`, then the nudge) and lands back in the view, `g` opens the issue, `i`/`esc` closes. Case picks the shape: `I` swaps a column, `i` replaces the body |
 | mouse | click selects, double-click observes |
 
 Card markings (GH-2061) — everything below is machine-local, no extra network
@@ -234,6 +235,7 @@ never as a value.**
 | `❯ #1994 Epic: … 2/4` | the epic rollup, same read: parent name in the comment ink, `done/total` in the merged-PR purple. `2/50+` = the child list was TRUNCATED, so the tally is a floor. No rollup read leaves the bare `❯ #1994` GH-2061 already drew |
 | Done · 14d | the `D` column, from `board closed --json` — own-repo items closed as COMPLETED inside `RALPH_AUDIT_DAYS`. Read lazily on the first `D` and refreshed only while it is on screen. Cancels (`NOT_PLANNED`) are excluded, matching `reconcile`. Four empty states stay apart: unread, read-failed, nothing-closed, and an ordinary empty column |
 | Inbox | the `I` column, from `board inbox --json` Tier 1 (GH-2181) — same lazy, shown-only cadence and the same empty-state honesty. A decision card renders its why-line (`a` answers it in place); every other card renders its literal disposition verb; held-back deliver rows are counted in a `withheld:` footer, never dropped silently |
+| Inbox view | the `i` body (GH-2318) — the same rows, full width: decision text wrapped (up to 8 lines) instead of clipped to a card line, the verb under each row, a cursor, and two counted footers (`withheld:`, `with leads:` per GH-2218). Unread / read-failed / empty stay distinct; a failed refresh keeps the last rows and labels them stale |
 
 **Green is not a merge verdict.** It means checks green and no known conflict —
 nothing more. Contract rule 7 is that gates are RUN, not predicted, and the

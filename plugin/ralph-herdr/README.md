@@ -297,6 +297,7 @@ from a phone-sized pane without opening anything.
 | `s` | **spawn** — a `/ralph:work` session for the card, via the same `spawn_work_session` path as `work-next` |
 | `v` | **DAG view** — text tree from `board frontier --json`: eligible items with their closed edges, blocked items with their open blocker lists |
 | `T` | **topology view** (GH-2219, D6.1) — the roster tree from `board roster --json`: dispatch → teams → leads → workers, liveness dots joining `agent_status` with the C8 `state` token, escalation counts per rung from `board escalations` (best-effort: a failed count renders NOT COUNTED, never zero) |
+| `i` | **inbox view** (GH-2318) — the queue-level flip-to surface over `board inbox --json` Tier 1: every row at full width, the decision text WRAPPED rather than clipped to one card line, its disposition verb under it, `j`/`k` scroll, `a`/`Enter` answers the selected decision row through the same comment-first `board answer` path and returns to the view, `g` opens the issue. Same read and cadence as the `I` column (one reader, no second parse); opening takes a fresh snapshot, so close-and-reopen is the refresh. Footers count what the reader held back — `withheld:` and GH-2218's `with leads:` — never dropped. Lower-case beside `I` deliberately: same letter, same subject, case picks the shape (`I` swaps a column, `i` replaces the body) |
 | `d` | **PR diff** — `gh pr diff` in a popup pane (`herdr plugin pane open`) |
 | `g` | open the issue in the browser |
 | `q` | quit |

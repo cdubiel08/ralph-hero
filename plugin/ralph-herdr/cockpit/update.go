@@ -186,13 +186,26 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		m.inboxInFlight = false
 		m.lastInbox = time.Now()
 		m.inboxErr = msg.err
+		// A read that predates an answer cannot show its disposition — pay
+		// the one read still owed, whether this one succeeded or failed.
+		var owed tea.Cmd
+		if m.inboxRereadWanted {
+			m.inboxRereadWanted = false
+			m.inboxInFlight = true
+			owed = fetchInboxCmd(m.cfg, m.runner)
+		}
 		if !msg.ok {
 			m.inboxOK = false
-			return m, nil
+			return m, owed
 		}
 		m.inboxOK = true
 		m.inboxCards = msg.cards
 		m.inboxWithheld = msg.withheld
+		m.inboxLeads = msg.leads
+		m.clampInboxRow()
+		if owed != nil {
+			return m, owed
+		}
 		// Same clamp as doneMsg: the list length just changed under the cursor.
 		m.clampCursor()
 		return m, nil
@@ -297,11 +310,12 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 				// refused the move — re-answering would duplicate the
 				// comment (the fzf rung's exact guidance: retry the MOVE,
 				// not the answer). The text is on the record; clear it.
-				m.mode = ModeBrowse
+				m.mode = m.answerReturnMode()
 				m.input = ""
 				m.inputErr = ""
 				m.status = fmt.Sprintf("#%d: the Answer comment IS on the record — only the move failed; retry the MOVE (board claim %d), never re-answer", msg.issue, msg.issue)
-				return m, nil
+				refresh := m.inboxRefreshAfterAnswer()
+				return m, refresh
 			}
 			// The durable half failed — preserve the answer text for retry.
 			// Hedged: an unlabeled crash could still land after the comment,
@@ -310,7 +324,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			m.inputErr = fmt.Sprintf("board answer failed: %s — text preserved, ⏎ retries (if the Answer comment already posted, esc and retry the move: board claim %d)", msg.boardDetail, msg.issue)
 			return m, nil
 		}
-		m.mode = ModeBrowse
+		m.mode = m.answerReturnMode()
 		m.input = ""
 		m.inputErr = ""
 		board := fmt.Sprintf("board: ✓ #%d answered", msg.issue)
@@ -327,7 +341,8 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		// write, so the cadence returns to the floor too — more is coming.
 		m.pollInFlight = true
 		m.snapToFloor()
-		return m, fetchBoardCmd(m.cfg, m.runner)
+		refresh := m.inboxRefreshAfterAnswer()
+		return m, tea.Batch(fetchBoardCmd(m.cfg, m.runner), refresh)
 
 	case spawnDoneMsg:
 		switch msg.rc {
@@ -418,6 +433,9 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.mode = ModeBrowse
 		}
 		return m, nil
+
+	case ModeInbox:
+		return updateInboxKey(m, key)
 	}
 
 	// ModeBrowse.
@@ -532,10 +550,68 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.inboxInFlight = true
 		return m, fetchInboxCmd(m.cfg, m.runner)
 
+	case "i":
+		return openInboxView(m)
+
 	case "g":
 		card, ok := m.selectedCard()
 		if !ok {
 			m.status = "no card selected"
+			return m, nil
+		}
+		return m, openBrowserCmd(card)
+	}
+	return m, nil
+}
+
+// openInboxView flips the body to the inbox VIEW (GH-2318) — the queue-level
+// surface over `board inbox` Tier 1. Lower-case `i` beside the `I` column
+// swap deliberately: same letter, same subject, case picks the shape (I swaps
+// a column, i replaces the body — the D/T split mirrored). The press takes a
+// fresh snapshot when none is in flight, so close-and-reopen IS the refresh;
+// while the view is up it rides the signal cadence like the I column.
+func openInboxView(m Model) (Model, tea.Cmd) {
+	m.mode = ModeInbox
+	m.inboxReturn = false
+	m.clampInboxRow()
+	m.status = "Inbox — Tier 1, oldest first; a/⏎ answers a decision row; i or esc returns"
+	if m.inboxInFlight {
+		return m, nil
+	}
+	m.inboxInFlight = true
+	return m, fetchInboxCmd(m.cfg, m.runner)
+}
+
+// updateInboxKey is the inbox view's own key map: a cursor over rows, the
+// answer verb on the selected decision, the browser on any row, and the
+// three ways out. Nothing here mutates the board except through the same
+// ModeAnswer input the card's `a` uses.
+func updateInboxKey(m Model, key string) (Model, tea.Cmd) {
+	switch key {
+	case "esc", "q", "i":
+		m.mode = ModeBrowse
+		m.inboxReturn = false
+	case "j", "down":
+		m.inboxRow++
+		m.clampInboxRow()
+	case "k", "up":
+		m.inboxRow--
+		m.clampInboxRow()
+	case "a", "enter":
+		card, ok := m.selectedInboxCard()
+		if !ok {
+			m.status = "inbox: no row selected"
+			return m, nil
+		}
+		next, cmd := verbAnswerCard(m, card)
+		if next.mode == ModeAnswer {
+			next.inboxReturn = true
+		}
+		return next, cmd
+	case "g":
+		card, ok := m.selectedInboxCard()
+		if !ok {
+			m.status = "inbox: no row selected"
 			return m, nil
 		}
 		return m, openBrowserCmd(card)
@@ -552,7 +628,7 @@ func updateInputKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		// Leave the mode but KEEP the text — esc must never destroy typing.
-		m.mode = ModeBrowse
+		m.mode = m.answerReturnMode()
 		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.input)
@@ -660,7 +736,24 @@ func verbAnswer(m Model) (Model, tea.Cmd) {
 		m.status = "no card selected"
 		return m, nil
 	}
-	if card.State != "Human Needed" {
+	m.inboxReturn = false
+	return verbAnswerCard(m, card)
+}
+
+// verbAnswerCard opens the answer input on one card. Two shapes qualify: a
+// Human Needed card, and an inbox DECISION row — which IS a Human Needed item
+// seen through the queue (the CHEATSHEET's "a answers it in place"; the card
+// carries inboxState, so a state-only test refused exactly the row it
+// promised). Every other inbox row has a disposition verb that is not
+// `answer`, and the cockpit names it rather than running it: it is a viewer.
+func verbAnswerCard(m Model, card Card) (Model, tea.Cmd) {
+	switch {
+	case card.State == "Human Needed":
+	case card.State == inboxState && card.Queue == "decision":
+	case card.State == inboxState:
+		m.status = fmt.Sprintf("#%d is an inbox %s, not a decision — dispose it by hand: %s", card.Number, card.Queue, card.Verb)
+		return m, nil
+	default:
 		m.status = fmt.Sprintf("#%d is %q — a answers Human Needed cards", card.Number, card.State)
 		return m, nil
 	}
@@ -672,6 +765,34 @@ func verbAnswer(m Model) (Model, tea.Cmd) {
 	m.inputWho = ""
 	m.inputErr = ""
 	return m, nil
+}
+
+// answerReturnMode is where the answer input hands back to: the inbox view
+// when the answer was launched from it, browse otherwise.
+func (m Model) answerReturnMode() Mode {
+	if m.inboxReturn {
+		return ModeInbox
+	}
+	return ModeBrowse
+}
+
+// inboxRefreshAfterAnswer re-reads the inbox after an answer landed from the
+// view, so the row the human just disposed does not sit there looking
+// pending. nil when the view is not up — the column's own cadence covers it.
+//
+// A read already in flight is NOT sufficient: it started before the answer
+// landed, so its result still shows the row as pending. It is marked as owed
+// instead, and the inboxMsg handler pays it when that read returns.
+func (m *Model) inboxRefreshAfterAnswer() tea.Cmd {
+	if !m.inboxViewUp() {
+		return nil
+	}
+	if m.inboxInFlight {
+		m.inboxRereadWanted = true
+		return nil
+	}
+	m.inboxInFlight = true
+	return fetchInboxCmd(m.cfg, m.runner)
 }
 
 func verbSpawn(m Model) (Model, tea.Cmd) {

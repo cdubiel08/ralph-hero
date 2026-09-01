@@ -919,3 +919,208 @@ func TestVerbFork(t *testing.T) {
 		}
 	})
 }
+
+// ── inbox view (GH-2318) ────────────────────────────────────────────────────
+
+func inboxViewModel() Model {
+	m := testModel(&fakeRunner{})
+	m.inboxOK = true
+	m.lastInbox = time.Now()
+	m.inboxCards = []Card{
+		{Number: 30, Repo: "o/r", State: inboxState, Queue: "decision", Title: "Thirty",
+			Question: "merge or split the epic?", Verb: `board answer 30 -m "<the decision>"`},
+		{Number: 40, Repo: "o/r", State: inboxState, Queue: "approval", Title: "Forty",
+			Question: `reject: board cancel 40 -m "<why>"`, Verb: "board move 40 backlog"},
+		{Number: 50, Repo: "o/r", State: inboxState, Queue: "proposal", Title: "Fifty",
+			Verb: "board resolve 50 --accept"},
+	}
+	return m
+}
+
+func TestInboxViewOpensOnLowercaseIAndTakesASnapshot(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m, cmd := updateKey(m, keyMsg("i"))
+	if m.mode != ModeInbox {
+		t.Fatalf("mode = %v, want ModeInbox", m.mode)
+	}
+	if cmd == nil || !m.inboxInFlight {
+		t.Fatal("opening the inbox view must dispatch the inbox read immediately")
+	}
+	if m.showInbox {
+		t.Error("the view must not also swap the third column — one view at a time")
+	}
+	// A read already in flight is not doubled.
+	m2 := testModel(&fakeRunner{})
+	m2.inboxInFlight = true
+	m2, cmd2 := updateKey(m2, keyMsg("i"))
+	if m2.mode != ModeInbox || cmd2 != nil {
+		t.Error("an in-flight read must not be dispatched twice on open")
+	}
+}
+
+func TestInboxViewClosesOnIEscQ(t *testing.T) {
+	for _, k := range []string{"i", "esc", "q"} {
+		m := inboxViewModel()
+		m.mode = ModeInbox
+		m, _ = updateKey(m, keyMsg(k))
+		if m.mode != ModeBrowse {
+			t.Errorf("%q must close the inbox view; mode = %v", k, m.mode)
+		}
+	}
+}
+
+func TestInboxViewCursorIsBoundedAndSurvivesARefresh(t *testing.T) {
+	m := inboxViewModel()
+	m.mode = ModeInbox
+	m, _ = updateKey(m, keyMsg("k"))
+	if m.inboxRow != 0 {
+		t.Errorf("k at the top must stay at 0; row = %d", m.inboxRow)
+	}
+	for i := 0; i < 5; i++ {
+		m, _ = updateKey(m, keyMsg("j"))
+	}
+	if m.inboxRow != 2 {
+		t.Errorf("j past the end must clamp to the last row; row = %d", m.inboxRow)
+	}
+	// The list shrank under the cursor (a decision was answered elsewhere).
+	m, _ = updateModel(m, inboxMsg{ok: true, cards: m.inboxCards[:1]})
+	if m.inboxRow != 0 {
+		t.Errorf("a refresh that shrank the list must clamp the cursor; row = %d", m.inboxRow)
+	}
+	if _, ok := m.selectedInboxCard(); !ok {
+		t.Error("the cursor must land on a row that exists")
+	}
+}
+
+func TestInboxViewAnswersADecisionRowAndReturnsToTheView(t *testing.T) {
+	for _, k := range []string{"a", "enter"} {
+		m := inboxViewModel()
+		m.mode = ModeInbox
+		m, _ = updateKey(m, keyMsg(k))
+		if m.mode != ModeAnswer || m.inputFor != 30 || !m.inboxReturn {
+			t.Fatalf("%q on a decision row: mode=%v inputFor=%d inboxReturn=%v", k, m.mode, m.inputFor, m.inboxReturn)
+		}
+		if !m.inboxViewUp() {
+			t.Error("the view must stay behind the input line while the answer is typed")
+		}
+		// esc keeps the text and lands back in the VIEW, not in browse.
+		m.input = "typed so far"
+		m, _ = updateKey(m, keyMsg("esc"))
+		if m.mode != ModeInbox || m.input != "typed so far" {
+			t.Errorf("esc from a view-launched answer: mode=%v input=%q", m.mode, m.input)
+		}
+	}
+}
+
+func TestInboxViewAnswerResultLandsBackInTheViewAndRereads(t *testing.T) {
+	m := inboxViewModel()
+	m.mode = ModeInbox
+	m, _ = updateKey(m, keyMsg("a"))
+	m.input = "merge it"
+	m.mode = ModeAnswer
+	m.sending = true
+	m, cmd := updateModel(m, answerDoneMsg{issue: 30, boardOK: true})
+	if m.mode != ModeInbox {
+		t.Errorf("a successful answer from the view must return to the view; mode = %v", m.mode)
+	}
+	if cmd == nil || !m.inboxInFlight {
+		t.Error("the view must re-read the inbox after its own answer landed")
+	}
+	// The post-comment move refusal returns the same way.
+	m2 := inboxViewModel()
+	m2.mode = ModeAnswer
+	m2.inboxReturn = true
+	m2.sending = true
+	m2, _ = updateModel(m2, answerDoneMsg{issue: 30, boardOK: false, boardPosted: true, boardDetail: "x"})
+	if m2.mode != ModeInbox {
+		t.Errorf("a posted-but-unmoved answer from the view must return to the view; mode = %v", m2.mode)
+	}
+}
+
+func TestInboxViewRefusesToAnswerANonDecisionRowNamingItsVerb(t *testing.T) {
+	m := inboxViewModel()
+	m.mode = ModeInbox
+	m.inboxRow = 1
+	m, _ = updateKey(m, keyMsg("a"))
+	if m.mode != ModeInbox {
+		t.Fatalf("a on an approval row must stay in the view; mode = %v", m.mode)
+	}
+	if !strings.Contains(m.status, "board move 40 backlog") || !strings.Contains(m.status, "approval") {
+		t.Errorf("the refusal must name the row's own disposition verb; status = %q", m.status)
+	}
+}
+
+func TestInboxViewOnAnEmptyInboxRefusesQuietly(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.mode = ModeInbox
+	m.inboxOK = true
+	for _, k := range []string{"a", "enter", "g", "j", "k"} {
+		m, _ = updateKey(m, keyMsg(k))
+		if m.mode != ModeInbox {
+			t.Errorf("%q on an empty inbox view must not change mode; mode = %v", k, m.mode)
+		}
+	}
+}
+
+func TestBrowseAnswerAcceptsAnInboxDecisionCard(t *testing.T) {
+	// The I column's decision card IS a Human Needed item (CHEATSHEET: "a
+	// answers it in place"); a state-only test refused exactly that row.
+	m := inboxViewModel()
+	m.showInbox = true
+	m.col, m.row = 2, 0
+	m, _ = updateKey(m, keyMsg("a"))
+	if m.mode != ModeAnswer || m.inputFor != 30 || m.inboxReturn {
+		t.Errorf("a on an inbox decision card: mode=%v inputFor=%d inboxReturn=%v", m.mode, m.inputFor, m.inboxReturn)
+	}
+	// A non-decision inbox card is still refused, naming its verb.
+	m2 := inboxViewModel()
+	m2.showInbox = true
+	m2.col, m2.row = 2, 1
+	m2, _ = updateKey(m2, keyMsg("a"))
+	if m2.mode != ModeBrowse || !strings.Contains(m2.status, "board move 40 backlog") {
+		t.Errorf("a on an approval card: mode=%v status=%q", m2.mode, m2.status)
+	}
+}
+
+func TestStaleOverlayMessagesNeverHijackTheInboxView(t *testing.T) {
+	m := inboxViewModel()
+	m.mode = ModeInbox
+	for _, msg := range []tea.Msg{
+		peekMsg{who: "w10-ten", text: "tail"},
+		dagMsg{text: "FRONTIER"},
+		topoMsg{rows: []TopoRow{{Name: "w10-ten"}}},
+	} {
+		next, _ := updateModel(m, msg)
+		if next.mode != ModeInbox {
+			t.Errorf("%T must not replace the inbox view; mode = %v", msg, next.mode)
+		}
+	}
+}
+
+func TestInboxViewAnswerDuringAnInFlightReadStillGetsItsOwnReread(t *testing.T) {
+	// A cadence read that started BEFORE the answer cannot show the
+	// disposition; the post-answer read is owed, not satisfied by it.
+	m := inboxViewModel()
+	m.mode = ModeAnswer
+	m.inboxReturn = true
+	m.sending = true
+	m.inboxInFlight = true
+	m, cmd := updateModel(m, answerDoneMsg{issue: 30, boardOK: true})
+	if !m.inboxRereadWanted {
+		t.Fatal("an answer landing during an in-flight read must mark a re-read as owed")
+	}
+	_ = cmd
+	// The pre-answer read lands: its rows are shown AND the owed read fires.
+	m, cmd = updateModel(m, inboxMsg{ok: true, cards: m.inboxCards})
+	if cmd == nil || !m.inboxInFlight || m.inboxRereadWanted {
+		t.Errorf("the owed re-read must fire when the stale read lands: cmd=%v inFlight=%v owed=%v", cmd != nil, m.inboxInFlight, m.inboxRereadWanted)
+	}
+	// A FAILED stale read pays the owed read too.
+	m2 := inboxViewModel()
+	m2.mode = ModeInbox
+	m2.inboxRereadWanted = true
+	m2, cmd2 := updateModel(m2, inboxMsg{err: "boom"})
+	if cmd2 == nil || !m2.inboxInFlight {
+		t.Error("a failed stale read must still pay the owed re-read")
+	}
+}

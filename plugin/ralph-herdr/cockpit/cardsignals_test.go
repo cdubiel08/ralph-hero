@@ -449,14 +449,14 @@ func TestSpawnRefusesAClosedCard(t *testing.T) {
 
 func TestParseInboxRefusesAPayloadWithNoTier1Object(t *testing.T) {
 	for _, raw := range []string{`{}`, `null`, `{"digest":null}`, `{"tier1":null}`, `nope`} {
-		if _, _, err := parseInbox(raw); err == nil {
+		if _, _, _, err := parseInbox(raw); err == nil {
 			t.Errorf("parseInbox(%q) read a malformed payload as an empty inbox", raw)
 		}
 	}
 }
 
 func TestParseInboxKeepsTheCLISectionOrderAndTheRowFacts(t *testing.T) {
-	cards, withheld, err := parseInbox(`{"tier1":{
+	cards, withheld, _, err := parseInbox(`{"tier1":{
 	  "decisions":[{"number":1,"repo":"o/r","title":"d","queue":"decision","priority":"P1","detail":"merge or split?","verb":"board answer 1 -m \"<the decision>\""}],
 	  "proposals":[{"number":2,"repo":"o/r","title":"p","queue":"proposal","priority":null,"detail":null,"verb":"board resolve 2 --accept"}],
 	  "approvals":[{"number":3,"repo":null,"title":"a","queue":"approval","priority":"P2","estimate":"S","detail":"reject: board cancel 3","verb":"board move 3 backlog"}],
@@ -520,5 +520,20 @@ func TestSpawnRefusesAnInboxCardAndNamesItsVerb(t *testing.T) {
 	}
 	if !strings.Contains(m.status, "board move 5 backlog") {
 		t.Errorf("status = %q, want the row's disposition verb", m.status)
+	}
+}
+
+func TestParseInboxCountsRowsStillWithTheirLeads(t *testing.T) {
+	_, _, leads, err := parseInbox(`{"tier1":{"decisions":[],"proposals":[],"approvals":[],"deliverBlocked":[],"withheld":[],
+	  "leadPending":[{"number":2219,"lead":"o2208-herd-topology","at":"2026-09-01T00:00:00Z"},{"number":7,"lead":null,"at":null}],"count":0}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leads != "#2219 (o2208-herd-topology), #7 (unnamed lead)" {
+		t.Errorf("leads = %q — a null lead is named as unreadable, never blank", leads)
+	}
+	// An absent leadPending array (older CLI) is simply no line, not a failure.
+	if _, _, leads, err := parseInbox(`{"tier1":{"decisions":[],"proposals":[],"approvals":[],"deliverBlocked":[],"withheld":[],"count":0}}`); err != nil || leads != "" {
+		t.Errorf("absent leadPending: leads=%q err=%v", leads, err)
 	}
 }

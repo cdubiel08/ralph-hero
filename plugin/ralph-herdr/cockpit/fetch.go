@@ -232,6 +232,7 @@ type doneMsg struct {
 type inboxMsg struct {
 	cards    []Card
 	withheld string
+	leads    string // GH-2218: rows still with their leads — "#N (lead), #M (lead)"
 	ok       bool
 	err      string
 }
@@ -453,7 +454,7 @@ func parseClosed(out string) ([]Card, int, error) {
 // own section order (decisions, proposals, approvals, deliver-blocked — the
 // precedence classifyInbox already decided). Same pointer rule: an absent
 // `tier1` object is a failed read, never an empty inbox.
-func parseInbox(out string) ([]Card, string, error) {
+func parseInbox(out string) (cards []Card, withheld, leads string, err error) {
 	type row struct {
 		Number   int     `json:"number"`
 		Repo     *string `json:"repo"`
@@ -474,13 +475,17 @@ func parseInbox(out string) ([]Card, string, error) {
 				Reason string `json:"reason"`
 				Count  int    `json:"count"`
 			} `json:"withheld"`
+			LeadPending []struct {
+				Number int     `json:"number"`
+				Lead   *string `json:"lead"`
+			} `json:"leadPending"`
 		} `json:"tier1"`
 	}
-	if err := json.Unmarshal([]byte(out), &payload); err != nil {
-		return nil, "", fmt.Errorf("inbox --json: %w", err)
+	if uerr := json.Unmarshal([]byte(out), &payload); uerr != nil {
+		return nil, "", "", fmt.Errorf("inbox --json: %w", uerr)
 	}
 	if payload.Tier1 == nil {
-		return nil, "", fmt.Errorf("inbox --json: payload carries no tier1 object — a malformed read is not an empty inbox")
+		return nil, "", "", fmt.Errorf("inbox --json: payload carries no tier1 object — a malformed read is not an empty inbox")
 	}
 	deref := func(p *string) string {
 		if p == nil {
@@ -488,7 +493,6 @@ func parseInbox(out string) ([]Card, string, error) {
 		}
 		return *p
 	}
-	var cards []Card
 	for _, rows := range [][]row{
 		payload.Tier1.Decisions, payload.Tier1.Proposals,
 		payload.Tier1.Approvals, payload.Tier1.DeliverBlocked,
@@ -505,7 +509,18 @@ func parseInbox(out string) ([]Card, string, error) {
 	for _, w := range payload.Tier1.Withheld {
 		parts = append(parts, fmt.Sprintf("%d %s", w.Count, w.Reason))
 	}
-	return cards, strings.Join(parts, ", "), nil
+	// GH-2218: a lead-routed decision inside its window is the LEAD's row.
+	// Counted here by number and lead so the view can say where it is; a null
+	// lead is an unreadable route payload and is named as such, never blank.
+	leadParts := make([]string, 0, len(payload.Tier1.LeadPending))
+	for _, l := range payload.Tier1.LeadPending {
+		who := "unnamed lead"
+		if l.Lead != nil && *l.Lead != "" {
+			who = *l.Lead
+		}
+		leadParts = append(leadParts, fmt.Sprintf("#%d (%s)", l.Number, who))
+	}
+	return cards, strings.Join(parts, ", "), strings.Join(leadParts, ", "), nil
 }
 
 // parseAgents validates a protocol-19 session_snapshot envelope and returns
@@ -1130,11 +1145,11 @@ func fetchInboxCmd(cfg Config, r Runner) tea.Cmd {
 		if err != nil {
 			return inboxMsg{err: explainReadFailure(probe, deadline, timedOut, stderr+out, err)}
 		}
-		cards, withheld, perr := parseInbox(out)
+		cards, withheld, leads, perr := parseInbox(out)
 		if perr != nil {
 			return inboxMsg{err: perr.Error()}
 		}
-		return inboxMsg{cards: cards, withheld: withheld, ok: true}
+		return inboxMsg{cards: cards, withheld: withheld, leads: leads, ok: true}
 	}
 }
 
