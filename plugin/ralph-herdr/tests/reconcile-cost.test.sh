@@ -232,8 +232,8 @@ anchor_herd
 run_reconcile "$ROOT"
 is "lazy: three ledgers of candidates still cost one re-probe" "2" "$(log_count '^api snapshot')"
 case "$OUT" in
-  *"exit "*"reason lost"*) ok "lazy: the candidates were actually swept (the probe ran)" ;;
-  *) not_ok "lazy: expected exit-lost records, got '$OUT'" ;;
+  *"exit "*"reason swept-unknown"*) ok "lazy: the candidates were actually swept (the probe ran)" ;;
+  *) not_ok "lazy: expected exit swept-unknown records, got '$OUT'" ;;
 esac
 
 echo "# ═══ 5. \`pane process-info\` is per-worker BY DESIGN, and pinned ═══"

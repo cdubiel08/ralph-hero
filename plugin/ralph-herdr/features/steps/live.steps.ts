@@ -674,8 +674,10 @@ Then('both records are marked lost', function (this: RalphWorld) {
   // The control that makes the refusals above measurements rather than
   // tautologies: same ledger, same live server, same empty herd — the ONLY
   // difference is the writer stamp, and the sweep runs.
+  // "marked lost" is the concept; GH-2309 renamed the sweep's spelling to
+  // the honest swept-unknown ("lost" remains only in pre-enum rows).
   const lost = d8Records(this)
-    .filter((r) => r.ev === 'exit' && r.reason === 'lost')
+    .filter((r) => r.ev === 'exit' && r.reason === 'swept-unknown')
     .map((r) => r.agent_ref)
     .sort();
   assert.deepStrictEqual(

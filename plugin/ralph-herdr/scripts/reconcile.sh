@@ -12,9 +12,9 @@
 #                  {ev: exit, reason: restart_killed|crashed} and its board
 #                  claim RELEASED. Runs first, so phase A only sees what it
 #                  does not already explain. The ONLY board write in this file
-#   A  exit lost   every open ledger agent THIS SERVER OWNS with no live
-#                  herdr agent of that
-#                  name gets {ev: exit, reason: lost} — after a FRESH
+#   A  exit swept  every open ledger agent THIS SERVER OWNS with no live
+#                  herdr agent of that name gets {ev: exit, reason:
+#                  swept-unknown} ("lost" pre-GH-2309) — after a FRESH
 #                  agent-list re-probe, so a spawn that completed mid-pass
 #                  (ledger-open, absent from the pass-start snapshot) is
 #                  never falsely exited. Ledger only: an absence is not
@@ -666,10 +666,13 @@ while IFS= read -r f; do
             continue
             ;;
         esac
+        # reason=swept-unknown (GH-2309): the honest name for what this sweep
+        # proves — an absence, asked twice — never how the worker ended.
+        # Pre-enum rows say "lost"; readers map it via ralph_ledger_reason_canon.
         ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" \
-          '{ts: $ts, ev: "exit", agent_ref: $ref, reason: "lost", via: "reconcile"}')" ||
-          log "exit-lost append failed for $ref"
-        log "exit $ref (reason lost) [$f]"
+          '{ts: $ts, ev: "exit", agent_ref: $ref, reason: "swept-unknown", via: "reconcile"}')" ||
+          log "exit-swept append failed for $ref"
+        log "exit $ref (reason swept-unknown) [$f]"
         # NO claim release here, deliberately. Phase A's evidence is an
         # ABSENCE — this name is not in the herd — and an absence does not
         # survive being asked of the wrong server. herdr runs [[startup]] for

@@ -582,7 +582,7 @@ case "$OUT" in
   *) not_ok "reconcile: single pass, then exit — no completion line in '$OUT'" ;;
 esac
 is "reconcile: open agent with no live counterpart marked lost" "1" \
-  "$(lcount "$RLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost" and .via=="reconcile"')"
+  "$(lcount "$RLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="swept-unknown" and .via=="reconcile"')"
 is "reconcile: unledgered live agent discovered (fresh ref + tokens)" "1" \
   "$(lcount "$RLEDGER" '.ev=="discover" and (.agent_ref | test("^w5-alpha#[0-9a-f]{8}$")) and .pane_id=="p5" and .via=="reconcile" and .tokens.role=="driver" and .tokens.issue=="5" and .tokens.slug=="alpha"')"
 is "reconcile: discovery retains its proven checkout" "$REPO_DIR" \
@@ -713,7 +713,7 @@ herd_fixture '[]'
 : >"$FAKE_HERDR_LOG"
 run_reconcile "$MROOT"
 is "shared ledger: our own absent record is still swept" "1" \
-  "$(lcount "$MLEDGER" '.ev=="exit" and .agent_ref=="w1-ours#aaaa" and .reason=="lost"')"
+  "$(lcount "$MLEDGER" '.ev=="exit" and .agent_ref=="w1-ours#aaaa" and .reason=="swept-unknown"')"
 is "shared ledger: theirs still is not, even with no herd at all" "0" \
   "$(lcount "$MLEDGER" '.ev=="exit" and .agent_ref=="w2-theirs#bbbb"')"
 
@@ -738,7 +738,7 @@ herd_fixture '[]'
 run_reconcile "$QROOT"
 is "quiesced ledger: reconcile exits 0" "0" "$RC"
 is "quiesced ledger: the stale record is finally swept" "1" \
-  "$(lcount "$QLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost"')"
+  "$(lcount "$QLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="swept-unknown"')"
 
 # (b) the guard is not weakened: another server's key is no proof at all.
 quiesced_ledger "someone-else"
@@ -763,7 +763,7 @@ case "$OUT" in
   *) not_ok "--adopt: says out loud that it overrode the verdict — got '$OUT'" ;;
 esac
 is "--adopt: the legacy stale record is swept" "1" \
-  "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="lost"')"
+  "$(lcount "$FLEDGER" '.ev=="exit" and .agent_ref=="w9-gone#ffff" and .reason=="swept-unknown"')"
 
 # (c2) --adopt is scoped to the ledger NAMED (GH-1944). It used to sit inside
 # the ledger walk, so one assertion about one inspected ledger silently
@@ -788,7 +788,7 @@ RC=0
 OUT=$(RALPH_HERDR_LEDGER_ROOT="$AROOT" bash "$SCRIPTS/reconcile.sh" --adopt "$A1" 2>&1) || RC=$?
 is "--adopt PATH: exits 0" "0" "$RC"
 is "--adopt PATH: the named ledger is swept" "1" \
-  "$(lcount "$A1" '.ev=="exit" and .agent_ref=="w1-one#aaaa" and .reason=="lost"')"
+  "$(lcount "$A1" '.ev=="exit" and .agent_ref=="w1-one#aaaa" and .reason=="swept-unknown"')"
 is "--adopt PATH: the OTHER unproven ledger is untouched" "0" \
   "$(lcount "$A2" '.ev=="exit"')"
 
@@ -828,7 +828,7 @@ RC=0
 OUT=$(RALPH_HERDR_LEDGER_ROOT="$AROOT" bash "$SCRIPTS/reconcile.sh" --adopt "$TMP/link-to-one.jsonl" 2>&1) || RC=$?
 is "--adopt via a symlinked basename: exits 0" "0" "$RC"
 is "--adopt via a symlinked basename: the named ledger is swept" "1" \
-  "$(lcount "$A1" '.ev=="exit" and .agent_ref=="w1-one#aaaa" and .reason=="lost"')"
+  "$(lcount "$A1" '.ev=="exit" and .agent_ref=="w1-one#aaaa" and .reason=="swept-unknown"')"
 is "--adopt via a symlinked basename: the other ledger is still untouched" "0" \
   "$(lcount "$A2" '.ev=="exit"')"
 
@@ -841,7 +841,7 @@ OUT=$(RALPH_HERDR_LEDGER_ROOT="$QROOT" bash "$SCRIPTS/reconcile.sh" --dry-run 2>
 is "--dry-run: exits 0" "0" "$RC"
 is "--dry-run: the ledger is untouched" "$before" "$(wc -l <"$QLEDGER" | tr -d ' ')"
 case "$OUT" in
-  *'would append:'*'"reason":"lost"'*) ok "--dry-run: reports the exact sweep it withheld" ;;
+  *'would append:'*'"reason":"swept-unknown"'*) ok "--dry-run: reports the exact sweep it withheld" ;;
   *) not_ok "--dry-run: reports the exact sweep it withheld — got '$OUT'" ;;
 esac
 is "--dry-run: no token pushed" "0" "$(log_count '^pane report-metadata ')"
@@ -1030,7 +1030,7 @@ is "wrong server: pass exits 0" "0" "$RC"
 # the two exit-lost records here. GH-1863 closed it: neither pane is in this
 # server's snapshot, so the ledger is not this server's to sweep.
 is "wrong server: phase A closes nothing either (GH-1863)" "0" \
-  "$(lcount "$CROOT4/acme/demo/ledger.jsonl" '.ev=="exit" and .reason=="lost"')"
+  "$(lcount "$CROOT4/acme/demo/ledger.jsonl" '.ev=="exit" and (.reason=="lost" or .reason=="swept-unknown")')"
 is "wrong server: NOT ONE board call, from either phase" "0" \
   "$(wc -l <"$FAKE_BOARD_LOG" | tr -d ' ')"
 is "legacy record (no recorded shell pid): empty pane releases nothing" "0" \
