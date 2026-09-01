@@ -321,7 +321,9 @@ func TestColWindowFollowsCursor(t *testing.T) {
 
 func TestViewScrollFollowKeepsSelectionVisible(t *testing.T) {
 	m := testModel(&fakeRunner{})
-	m.width, m.height = 120, 14 // bodyHeight 10 → visible = 2
+	// Wide enough for the one-line legend (GH-2319 wraps it under ~165 cols,
+	// which would take a body row): bodyHeight 10 → visible = 2.
+	m.width, m.height = 200, 14
 	var cards []Card
 	for i := 0; i < 8; i++ {
 		cards = append(cards, card(200+i, "In Progress", fmt.Sprintf("Deep%d", i)))
@@ -342,7 +344,7 @@ func TestViewScrollFollowKeepsSelectionVisible(t *testing.T) {
 
 func TestHitTestScrolledWindow(t *testing.T) {
 	m := testModel(&fakeRunner{})
-	m.width, m.height = 120, 14 // visible = 2
+	m.width, m.height = 200, 14 // one-line legend (see above); visible = 2
 	var cards []Card
 	for i := 0; i < 8; i++ {
 		cards = append(cards, card(200+i, "In Progress", fmt.Sprintf("Deep%d", i)))
@@ -1121,5 +1123,94 @@ func TestRenderInboxViewClipsAnOverTallSelectedRowToTheBody(t *testing.T) {
 	}
 	if n := strings.Count(out, "\n"); n > m.height {
 		t.Errorf("view rendered %d lines for a %d-row terminal:\n%s", n, m.height, out)
+	}
+}
+
+// GH-2319: the hotkey legend wraps at a narrow pane instead of truncating —
+// one whole hint per break, every verb still on screen, and the body shrinks
+// by exactly the rows the legend grew.
+func TestLegendWrapsWholeHintsWhenNarrow(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.width, m.height = 60, 30
+	lines := legendLines(m)
+	if len(lines) < 2 {
+		t.Fatalf("a 60-col pane must wrap the browse legend; got %d line(s): %q", len(lines), lines)
+	}
+	for _, l := range lines {
+		if lipgloss.Width(l) > m.width {
+			t.Errorf("legend row overflows %d cols: %q", m.width, l)
+		}
+	}
+	if got := strings.Join(lines, legendSep); got != legend(m) {
+		t.Errorf("wrapping must lose no hint and split none:\n got %q\nwant %q", got, legend(m))
+	}
+}
+
+func TestLegendStaysOneLineWhenWide(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.width, m.height = 220, 30
+	if lines := legendLines(m); len(lines) != 1 || lines[0] != legend(m) {
+		t.Errorf("a wide pane keeps the one-line legend; got %q", lines)
+	}
+}
+
+func TestLegendCapMarksDroppedHints(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.width, m.height = 18, 30
+	lines := legendLines(m)
+	if len(lines) != maxLegendRows {
+		t.Fatalf("legend must cap at %d rows; got %d", maxLegendRows, len(lines))
+	}
+	if !strings.HasSuffix(lines[len(lines)-1], "…") {
+		t.Errorf("a capped legend must say hints were dropped; last row %q", lines[len(lines)-1])
+	}
+	for _, l := range lines {
+		if lipgloss.Width(l) > m.width {
+			t.Errorf("legend row overflows %d cols: %q", m.width, l)
+		}
+	}
+}
+
+func TestNarrowViewKeepsWrappedLegendInsideTerminalHeight(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	// 26 rows, not 24: with hidden cards the body spends two rows past its
+	// budget (the "+N more" line and the blank separator ride the rounding
+	// slack in visibleCards) on heights where that slack is 0 — a defect that
+	// predates the wrapped legend and is tracked separately.
+	m.width, m.height = 60, 26
+	var cards []Card
+	for i := 0; i < 12; i++ {
+		cards = append(cards, card(400+i, "In Progress", fmt.Sprintf("Card%d", i)))
+	}
+	m.cols = [3][]Card{cards, nil, nil}
+	m.status = "status here"
+	if got := headerRows + bodyHeightOf(m) + footerRowsOf(m); got != m.height {
+		t.Errorf("header+body+footer = %d, want the %d-row terminal", got, m.height)
+	}
+	if fr := footerRowsOf(m); fr != len(legendLines(m))+1 || fr < 3 {
+		t.Errorf("footer rows = %d for a %d-line legend", fr, len(legendLines(m)))
+	}
+	out := viewModel(m)
+	lines := strings.Split(out, "\n")
+	if len(lines) > m.height {
+		t.Errorf("view rendered %d lines for a %d-row terminal:\n%s", len(lines), m.height, out)
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, "status here") {
+		t.Errorf("status line must stay the last row; got %q", last)
+	}
+	if !strings.Contains(out, "q quit") || !strings.Contains(out, "h/l col") {
+		t.Errorf("both ends of the legend must survive the wrap:\n%s", out)
+	}
+	// Body sizing and mouse mapping share footerRowsOf, so a click still lands
+	// on the card it renders over.
+	start, end := colWindow(m, 0, bodyHeightOf(m))
+	for i := start; i < end; i++ {
+		y := headerRows + colHeaderRows + (i-start)*cardRows
+		if !strings.Contains(lines[y], fmt.Sprintf("#%d", cards[i].Number)) {
+			t.Errorf("y=%d should render card #%d; got %q", y, cards[i].Number, lines[y])
+		}
+		if c, r, ok := hitTest(m, 5, y); !ok || c != 0 || r != i {
+			t.Errorf("hitTest(5,%d) = (%d,%d,%v), want (0,%d,true)", y, c, r, ok, i)
+		}
 	}
 }
