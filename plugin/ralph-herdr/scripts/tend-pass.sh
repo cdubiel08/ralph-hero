@@ -53,6 +53,13 @@ contain_out=$(ralph_process_containment_args tender "$REPO") ||
 contain_args=()
 while IFS= read -r out; do [ -n "$out" ] && contain_args+=("$out"); done <<<"$contain_out"
 harness_args=("${tool_args[@]}" "${contain_args[@]}")
+# GH-2267: the tool-binding outcome, read off the argv the pane will be
+# handed. Lane passes are unledgered by construction (README: fixed names,
+# no durable ref), so the achieved values are printed here, not recorded —
+# a writing tool left enabled still refuses.
+tool_binding=$(ralph_tool_binding_observed "${harness_args[@]}")
+[ "$tool_binding" != not_applied ] ||
+  die "tool binding not_applied for the tender (a writing tool is left enabled by: ${harness_args[*]}) — not spawning a writer into $REPO"
 
 if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "DRY RUN — would spawn $lane pass (queue head #$next):"
@@ -66,6 +73,7 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "  $HERDR agent start $agent --kind claude --pane <captured>${tool_args[*]:+ -- ${tool_args[*]}}${contain_args[*]:+ --settings <process containment: seatbelt denyWrite $REPO>}"
   [ "${#contain_args[@]}" -gt 0 ] &&
     echo "  containment probe: prompt <captured> to touch <inside $REPO> <outside \$RALPH_HOME/containment-probes>; refuse unless applied"
+  echo "  tool binding: $tool_binding (read off the argv above — GH-2267; lane passes are unledgered, so this is printed, not recorded)"
   echo "  $HERDR agent prompt $agent \"/ralph:$lane\""
   exit 0
 fi
@@ -129,6 +137,7 @@ if [ "${#contain_args[@]}" -gt 0 ]; then
   }
   echo "process containment: $outcome for $agent (a Bash write inside $REPO was refused by the kernel; tool binding is the separate GH-2265 mechanism)"
 fi
+echo "tool binding: $tool_binding for $agent (the harness accepted the flags at start; no in-pane observation — GH-2267)"
 
 ralph_herdr_agent_prompt "$agent" "/ralph:$lane" >/dev/null \
   || die "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:$lane\""

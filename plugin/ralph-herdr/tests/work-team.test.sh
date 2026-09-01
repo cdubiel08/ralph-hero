@@ -131,6 +131,12 @@ line_has "team dry: the sandbox profile rides the same argv as a SEPARATE flag (
   "$OUT" "-- --disallowedTools Edit,Write,NotebookEdit --settings <process containment: seatbelt denyWrite $REPO_DIR>"
 line_has "team dry: the plan names the in-pane probe and its refusal" \
   "$OUT" "containment probe: prompt <captured> to touch <inside $REPO_DIR>"
+# GH-2267: the provisional row predates the probe, so the achieved outcomes
+# land as their own event — both fields named, tool binding read off the argv.
+line_has "team dry: the plan names the containment event that follows the probe (GH-2267)" \
+  "$OUT" 'ledger append (containment, after the probe): {ev: "containment"'
+line_has "team dry: the event carries tool_binding read off the argv" \
+  "$OUT" 'tool_binding: "accepted", process_containment: <probe verdict>'
 
 # GH-2266: an unmeasured platform refuses the lead before any plan is printed
 RALPH_HERDR_UNAME=Linux run_wt 900

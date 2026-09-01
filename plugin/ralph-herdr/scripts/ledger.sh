@@ -25,7 +25,8 @@
 #   `session` is ralph_session_key — the server that WROTE the record, stamped
 #   by ralph_ledger_append. It is how reconcile proves a ledger is its own once
 #   the last pane that would have proven it is gone (GH-1933).
-#   ev vocabulary: spawn | state | adopt | exit | discover | lost ("lost" is
+#   ev vocabulary: spawn | state | adopt | exit | discover | containment |
+#   lost ("lost" is
 #   reserved; a lost agent is recorded as ev=exit reason=swept-unknown —
 #   spelled "lost" before GH-2309, see the exit-reason enum below).
 #     spawn     appended by lib.sh's spawn path AT PANE CREATION — the one
@@ -43,6 +44,13 @@
 #     exit      watcher/reconcile/spawn: {reason: <exit reason>}.
 #     discover  watcher/reconcile: a live ralph agent with no open ledger
 #               record (spawned while the ledger didn't exist, or by hand).
+#     containment  spawn path (GH-2267): {tool_binding, process_containment,
+#               via: "spawn"} — what the spawn ACHIEVED for each mechanism,
+#               one contracts.ts CONTAINMENT_OUTCOMES word each, written
+#               after the in-pane probe for a record that was provisional
+#               before it. Spawn records written after their probe carry the
+#               same two fields at top level instead. Neutral to the open-set
+#               reduce: it never opens or closes a row.
 #
 #   EXIT REASON ENUM (GH-2309, phase C). The typed vocabulary for exit.reason:
 #     finished | yielded | crashed | restart-killed | swept-unknown |
@@ -958,6 +966,18 @@ _ralph_ledger_latest_checkout() {
 }
 _ralph_ledger_latest_issue() {
   _ralph_ledger_latest '(((try .tokens.issue catch null) // "") | tostring)' "$@"
+}
+# GH-2267 — what the spawn ACHIEVED for each containment mechanism, read
+# from wherever the producer put it (the spawn record, or the `containment`
+# event that follows a provisional row). Two readers on purpose: one helper
+# returning both would be the single-field collapse the design record
+# refuses, one level up. Empty means the record predates GH-2267 or the
+# outcome was never recorded — never "off" (that is `not_requested`).
+_ralph_ledger_latest_tool_binding() {
+  _ralph_ledger_latest '((.tool_binding // "") | tostring)' "$@"
+}
+_ralph_ledger_latest_process_containment() {
+  _ralph_ledger_latest '((.process_containment // "") | tostring)' "$@"
 }
 
 # ralph_ledger_children REF — open agent_refs whose latest parent edge points

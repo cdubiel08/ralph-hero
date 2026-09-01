@@ -96,6 +96,69 @@ ralph_tool_binding_args() {
   printf '%s\n' "--disallowedTools" "Edit,Write,NotebookEdit"
 }
 
+# ralph_tool_binding_observed [HARNESS_ARG...] — the tool-binding outcome a
+# spawn ACHIEVED (GH-2267), read off the argv actually handed to `agent start`
+# and never off the registry row: one CONTAINMENT_OUTCOMES word on stdout,
+# rc 0 always (this observes; the caller decides).
+#   not_requested  no binding flag in the argv at all — the driver; beside
+#                  `role: tender` it is the flags-dropped defect, and it reads
+#                  as one because the role is its own field on the record
+#   accepted       every one of Edit, Write, NotebookEdit is outside the
+#                  enabled set the argv describes (--disallowedTools naming
+#                  it, or a --tools allowlist omitting it)
+#   not_applied    a binding flag was passed and still leaves one of the
+#                  three enabled — a writer in the tree; callers refuse
+#
+# WHY `accepted` AND NOT `applied`: the harness refuses an unknown flag at
+# start (a failed `agent start`, loud) and answers a bound tool with "No such
+# tool available" (GH-2265, measured) — so what the spawn path can observe
+# without a turn is that the flags were handed over and the start succeeded.
+# That is a real observation of the harness, one level short of a kernel
+# denial, and it gets its own word so a reader never mistakes it for one.
+# No in-pane Write-tool self-test runs yet, deliberately: in an interactive
+# pane whose Write tool is NOT bound, a Write outside cwd may raise a
+# permission dialog instead of a file, and a probe reading "no file" as
+# `applied` would pass exactly the case it exists to catch. That behaviour
+# is unmeasured; measuring it is a follow-up, not an assumption made here.
+ralph_tool_binding_observed() {
+  local a tools="" deny="" have_tools=0 have_deny=0 t enabled
+  while [ "$#" -gt 0 ]; do
+    a="$1"
+    shift
+    case "$a" in
+      --disallowedTools) have_deny=1; deny="${1-}"; shift || true ;;
+      --disallowedTools=*) have_deny=1; deny="${a#*=}" ;;
+      --tools) have_tools=1; tools="${1-}"; shift || true ;;
+      --tools=*) have_tools=1; tools="${a#*=}" ;;
+    esac
+  done
+  if [ "$have_tools" = 0 ] && [ "$have_deny" = 0 ]; then
+    echo not_requested
+    return 0
+  fi
+  tools=$(printf '%s' "$tools" | tr -d '[:space:]')
+  deny=$(printf '%s' "$deny" | tr -d '[:space:]')
+  for t in Edit Write NotebookEdit; do
+    enabled=1
+    if [ "$have_tools" = 1 ]; then
+      case ",$tools," in
+        *",$t,"*) enabled=1 ;;
+        *) enabled=0 ;;
+      esac
+    fi
+    if [ "$enabled" = 1 ] && [ "$have_deny" = 1 ]; then
+      case ",$deny," in
+        *",$t,"*) enabled=0 ;;
+      esac
+    fi
+    if [ "$enabled" = 1 ]; then
+      echo not_applied
+      return 0
+    fi
+  done
+  echo accepted
+}
+
 # ── Process containment (GH-2266) — the OTHER half of the tree invariant ─────
 #
 # Tool binding (above) fails CLOSED and loudly: the model receives "No such
@@ -150,7 +213,7 @@ ralph_role_process_containment() {
 # ralph_containment_outcomes — the achieved-value vocabulary, one per line;
 # mirror of contracts.ts CONTAINMENT_OUTCOMES (golden-table tested).
 ralph_containment_outcomes() {
-  printf '%s\n' applied not_applied not_available inapplicable unverified
+  printf '%s\n' applied not_applied not_available inapplicable unverified accepted not_requested
 }
 
 # ralph_process_containment_platform — prints the kernel mechanism this

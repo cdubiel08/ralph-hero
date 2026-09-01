@@ -194,6 +194,7 @@ log_has "tend: the sandbox profile reaches the harness argv beside tool binding"
 log_has "tend: the profile denies the checkout by REALPATH" "\"denyWrite\":\[\"$REPO_REAL\"\]"
 log_has "tend: the probe prompt reaches the pane BEFORE the pass prompt" "agent prompt ralph-tend Containment self-test"
 has "tend: the pass reports the observed outcome" "$out" "process containment: applied for ralph-tend"
+has "tend: tool binding is reported beside it as its own line (GH-2267)" "$out" "tool binding: accepted for ralph-tend"
 case "$(grep 'agent prompt ralph-tend' "$FAKE_HERDR_LOG" | head -2 | tail -1)" in
   *"/ralph:tend"*) ok "tend: the real prompt is delivered only AFTER the probe" ;;
   *) not_ok "tend: prompt order — got: $(grep 'agent prompt ralph-tend' "$FAKE_HERDR_LOG" | cut -c1-80)" ;;
@@ -300,6 +301,7 @@ out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" RALPH_HERDR_DRY_RUN=true run_
 has "tend dry: the plan shows the sandbox beside tool binding" "$out" \
   "-- --disallowedTools Edit,Write,NotebookEdit --settings <process containment: seatbelt denyWrite $REPO_DIR>"
 has "tend dry: the plan names the probe and its refusal" "$out" "containment probe: prompt <captured> to touch"
+has "tend dry: the plan reports tool binding off the argv, separately (GH-2267)" "$out" "tool binding: accepted (read off the argv"
 log_hasnt "tend dry: no agent started" "agent start"
 log_hasnt "tend dry: no prompt sent" "agent prompt"
 

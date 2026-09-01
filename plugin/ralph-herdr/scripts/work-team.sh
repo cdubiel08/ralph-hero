@@ -231,6 +231,12 @@ lead_contain_out=$(ralph_process_containment_args orchestrator "$src") ||
 lead_contain=()
 while IFS= read -r out; do [ -n "$out" ] && lead_contain+=("$out"); done <<<"$lead_contain_out"
 lead_harness=("${lead_tools[@]}" "${lead_contain[@]}")
+# GH-2267: what the lead's spawn ACHIEVES for tool binding, read off the argv
+# it is about to be handed — not off the registry row that produced it. A
+# writing tool left enabled refuses before any surface exists.
+lead_tb=$(ralph_tool_binding_observed "${lead_harness[@]}")
+[ "$lead_tb" != not_applied ] ||
+  die "tool binding not_applied for GH-$EPIC's lead (a writing tool is left enabled by: ${lead_harness[*]}) — not spawning a writer into $src"
 
 # The durable ref, minted BEFORE the workspace so it can ride the env: the
 # workers the lead spawns record it as their lineage parent/root, and `--env`
@@ -276,6 +282,7 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   if [ -n "$ref" ]; then
     record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "" "$(date -u +%FT%TZ)" "" "" orchestrator "" "" "" "$lead_addr") || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"
+    echo "  ledger append (containment, after the probe): {ev: \"containment\", agent_ref: \"$ref\", tool_binding: \"$lead_tb\", process_containment: <probe verdict>, via: \"spawn\"}"
   fi
   finish "team GH-$EPIC: DRY RUN — lead plan printed above; workers are the lead's to staff (D3.2)"
 fi
@@ -338,13 +345,23 @@ export RALPH_HERDR_AGENT_LIVE=1
 if [ "${#lead_contain[@]}" -gt 0 ]; then
   outcome=$(spawn_containment_probe "$LEAD" "$pane" "$src" \
     "close the team space (herdr workspace close ${lead_ws:-<workspace-id>}) and re-run work-team.sh $EPIC") || {
+    # The refusal is recorded as the two achieved values BEFORE the row is
+    # closed (GH-2267): a reader who was not present must be able to tell
+    # this pane from a contained one off the ledger alone.
+    _ralph_spawn_containment_event "$ref" "$ledger" "$lead_tb" "${outcome:-unverified}"
     _ralph_spawn_close "$ref" "$ledger" "containment_${outcome:-unverified}"
     [ -n "$lead_ws" ] && "$HERDR" workspace close "$lead_ws" >/dev/null 2>&1 || true
     RALPH_HERDR_AGENT_LIVE=""
     die "process containment ${outcome:-unverified} for $LEAD (pane $pane) — an uncontained lead must not receive its brief; closed the team space (the probe's reason is above)"
   }
   echo "process containment: $outcome for $LEAD (a Bash write inside $src was refused by the kernel)"
+else
+  outcome=not_requested
 fi
+echo "tool binding: $lead_tb for $LEAD"
+# The provisional record predates both outcomes (it is written before `agent
+# start`), so they land as their own event now that they are known.
+_ralph_spawn_containment_event "$ref" "$ledger" "$lead_tb" "$outcome"
 
 if [ -n "$record" ]; then
   set --

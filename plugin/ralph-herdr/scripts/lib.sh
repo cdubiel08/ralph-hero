@@ -449,9 +449,20 @@ notify() {
 
 # _ralph_spawn_record REF N PARENT_ISSUE BRANCH LABEL PANE TS [SHELL_PID] [CHECKOUT]
 #                     [ROLE] [PARENT_REF] [DEPTH] [ROOT_REF] [ADDRESS]
+#                     [TOOL_BINDING] [PROCESS_CONTAINMENT]
 # — print the ledger spawn event as ONE compact JSON line:
 #   {ts, ev: "spawn", agent_ref, pane_id?, shell_pid?, checkout?,
-#    lineage: <C7>, tokens: <C8 map>}
+#    tool_binding?, process_containment?, lineage: <C7>, tokens: <C8 map>}
+#
+# tool_binding and process_containment (GH-2267) are what the spawn ACHIEVED
+# for each containment mechanism — two top-level fields, one
+# CONTAINMENT_OUTCOMES word each, never one field carrying both and never
+# derived from the role token (the design record's collapse). They ride the
+# spawn record only where the outcome is known when the record is written:
+# an investigator's record is appended after its probe, a driver requested
+# nothing. A record written BEFORE the outcome exists (the team lead's
+# provisional row) leaves both empty and a later `containment` event carries
+# them — see _ralph_spawn_containment_event. Empty omits the field.
 #
 # shell_pid and checkout sit at the EVENT's top level, deliberately outside
 # .lineage: the C7 producer schema is .strict() and refuses unknown keys, and
@@ -489,7 +500,7 @@ _ralph_spawn_record() {
   # or a spawn that never read `board name`); a positional, never an env read,
   # so a stale address from an earlier spawn in the same shell cannot leak
   # onto a different unit's record.
-  local address="${14-}"
+  local address="${14-}" tool_binding="${15-}" process_containment="${16-}"
   local parsed lane slug epoch by
   parsed=$(ralph_agent_parse "${ref%%#*}") || return 1
   # shellcheck disable=SC2086  # intentional: parse output is space-separated
@@ -516,11 +527,14 @@ _ralph_spawn_record() {
     --arg lane "$lane" --arg slug "$slug" --arg epoch "$epoch" \
     --arg by "$by" --arg shell "$shell_pid" --arg checkout "$checkout" \
     --arg role "$role" --arg parent "$parent_ref" --arg depth "$depth" \
-    --arg root "$root_ref" --arg address "$address" '
+    --arg root "$root_ref" --arg address "$address" \
+    --arg tb "$tool_binding" --arg pc "$process_containment" '
     {ts: $ts, ev: "spawn", agent_ref: $ref}
     + (if $pane == "" then {} else {pane_id: $pane} end)
     + (if $shell == "" then {} else {shell_pid: $shell} end)
     + (if $checkout == "" then {} else {checkout: $checkout} end)
+    + (if $tb == "" then {} else {tool_binding: $tb} end)
+    + (if $pc == "" then {} else {process_containment: $pc} end)
     + {lineage:
         ({contract: "ralph.lineage", contract_version: 1,
           agent_ref: $ref, issue: $n}
@@ -1132,6 +1146,35 @@ touch '$inside' '$outside'; echo PROBE_RC=\$?"
   return 1
 }
 
+# _ralph_spawn_containment_event REF LEDGER TOOL_BINDING PROCESS_CONTAINMENT
+# — append the achieved containment outcomes (GH-2267) for a spawn whose
+# record was written BEFORE they were known (the provisional row, audit D2b):
+#   {ts, ev: "containment", agent_ref, tool_binding, process_containment,
+#    via: "spawn"}
+# Both words come from CONTAINMENT_OUTCOMES; both are REQUIRED here, because
+# a containment event naming one mechanism would be read as the other being
+# unknown, and this event exists so that nothing about either is unknown. An
+# unknown `ev` is neutral to every open-set reducer in ledger.sh (spawn/
+# discover open, exit closes, everything else passes through), so the event
+# can never open or close a row. Written on success AND on refusal — the
+# refusal is the fact this line of work exists to keep (a `not_applied` that
+# lived only in a stderr line and an exit reason string was the paperwork
+# nobody could re-read). Best-effort like _ralph_spawn_close: a failed append
+# warns, since the spawn's own record already stands.
+_ralph_spawn_containment_event() {
+  local ref="${1-}" ledger="${2-}" tb="${3-}" pc="${4-}"
+  { [ -n "$ref" ] && [ -n "$ledger" ]; } || return 0
+  { [ -n "$tb" ] && [ -n "$pc" ]; } || {
+    echo "spawn: not recording containment for $ref — both outcomes are required (tool_binding='${tb}', process_containment='${pc}')" >&2
+    return 0
+  }
+  RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$(jq -nc \
+    --arg ts "$(date -u +%FT%TZ)" --arg ref "$ref" --arg tb "$tb" --arg pc "$pc" \
+    '{ts: $ts, ev: "containment", agent_ref: $ref, tool_binding: $tb, process_containment: $pc, via: "spawn"}')" ||
+    echo "spawn: could not record containment for $ref (tool_binding=$tb process_containment=$pc) — the ledger row says nothing about either" >&2
+  return 0
+}
+
 # _ralph_spawn_close REF LEDGER REASON — close a provisional spawn record for
 # a worker that never started (audit D2b). Best-effort: a failed append warns
 # and leaves the row open, which reconcile's pane-proved phase E then closes.
@@ -1366,7 +1409,8 @@ spawn_work_session() {
       return 1
     }
     record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "" "$(date -u +%FT%TZ)" \
-      "" "" "" "$lead_ref" "$lead_depth" "$lead_ref" "${RALPH_HERDR_NAMED_ADDRESS-}") || record=""
+      "" "" "" "$lead_ref" "$lead_depth" "$lead_ref" "${RALPH_HERDR_NAMED_ADDRESS-}" \
+      "$(ralph_tool_binding_observed)" not_requested) || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"
     echo "  tokens push (pane <captured>): $(jq -r '[.tokens | to_entries[] | "\(.key)=\(.value)"] | join(" ")' <<<"$record" 2>/dev/null || echo '<none>')"
     RALPH_HERDR_SPAWNED_AGENT="$agent"
@@ -1480,8 +1524,15 @@ spawn_work_session() {
   ledger=""
   if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
     RALPH_HERDR_SPAWNED_REF="$ref"
+    # GH-2267: a driver is the one writer, and this path hands `agent start`
+    # no harness argument at all — no binding flag, no sandbox document. Both
+    # outcomes are therefore `not_requested`, read off the (empty) argv this
+    # path passes rather than off the role: the observation is the spawner's
+    # own act, and it is written so an absent field keeps meaning "a record
+    # from before this existed", never "known off".
     record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "$pane" "$ts" \
-      "$shell_pid" "$RALPH_HERDR_SPAWNED_WORKTREE" "" "$lead_ref" "$lead_depth" "$lead_ref" "${RALPH_HERDR_NAMED_ADDRESS-}") || record=""
+      "$shell_pid" "$RALPH_HERDR_SPAWNED_WORKTREE" "" "$lead_ref" "$lead_depth" "$lead_ref" "${RALPH_HERDR_NAMED_ADDRESS-}" \
+      "$(ralph_tool_binding_observed)" not_requested) || record=""
     ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
     if [ -n "$record" ] && [ -n "$ledger" ]; then
       RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" || {
