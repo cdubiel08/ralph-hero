@@ -12,7 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realExec, run, UsageError, type Ctx } from "./board.js";
@@ -36,7 +36,10 @@ function dbPath(): string {
 
 /** Build a v1-shaped fixture db with the given payloads at seq 1..n. */
 function buildDb(payloads: string[], userVersion = 1): string {
-  const db = dbPath();
+  return buildDbAt(dbPath(), payloads, userVersion);
+}
+
+function buildDbAt(db: string, payloads: string[], userVersion = 1): string {
   const inserts = payloads
     .map((p, i) => `INSERT INTO facts(seq, payload) VALUES(${i + 1}, '${p.replaceAll("'", "''")}');`)
     .join("\n");
@@ -62,12 +65,16 @@ function capture() {
   return { lines, errs, restore: () => (outSpy.mockRestore(), errSpy.mockRestore()) };
 }
 
+let savedExplicit: string | undefined;
+
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "board-events-"));
   savedRoot = process.env.RALPH_HERDR_LEDGER_ROOT;
   savedBin = process.env.RALPH_SQLITE3_BIN;
+  savedExplicit = process.env.RALPH_HERDR_LEDGER;
   process.env.RALPH_HERDR_LEDGER_ROOT = root;
   delete process.env.RALPH_SQLITE3_BIN;
+  delete process.env.RALPH_HERDR_LEDGER;
 });
 
 afterEach(() => {
@@ -75,6 +82,13 @@ afterEach(() => {
   else process.env.RALPH_HERDR_LEDGER_ROOT = savedRoot;
   if (savedBin === undefined) delete process.env.RALPH_SQLITE3_BIN;
   else process.env.RALPH_SQLITE3_BIN = savedBin;
+  if (savedExplicit === undefined) delete process.env.RALPH_HERDR_LEDGER;
+  else process.env.RALPH_HERDR_LEDGER = savedExplicit;
+  try {
+    chmodSync(join(root, "cdubiel08"), 0o755); // undo the EACCES fixture so rmSync can sweep
+  } catch {
+    /* not every test creates it */
+  }
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -189,6 +203,49 @@ describe("board events --since", () => {
     }
     expect(code).toBe(69);
     expect(c.errs.join("")).toContain("user_version=2");
+  });
+
+  it("the database column seq is authoritative — a payload's own seq may not shadow it", () => {
+    buildDb(['{"seq":999,"kind":"a"}']);
+    const c = capture();
+    try {
+      expect(run(["events", "--since", "0", "--json"], ctx())).toBe(0);
+    } finally {
+      c.restore();
+    }
+    const v = JSON.parse(c.lines.join(""));
+    expect(v.facts).toEqual([{ seq: 1, kind: "a" }]);
+    expect(v.cursor).toBe(1);
+  });
+
+  it("an explicit RALPH_HERDR_LEDGER wins: the sqlite sibling beside it is read", () => {
+    const custom = join(root, "elsewhere");
+    mkdirSync(custom, { recursive: true });
+    buildDbAt(join(custom, "ledger.sqlite"), ['{"kind":"custom"}']);
+    process.env.RALPH_HERDR_LEDGER = join(custom, "ledger.jsonl");
+    const c = capture();
+    try {
+      expect(run(["events", "--since", "0"], ctx())).toBe(0);
+    } finally {
+      c.restore();
+    }
+    expect(c.lines).toEqual(['1\t{"kind":"custom"}\n']);
+  });
+
+  it("a ledger behind an untraversable directory is exit 69, never 'not converted'", () => {
+    buildDb(['{"seq":1}']);
+    chmodSync(join(root, "cdubiel08"), 0o000);
+    const c = capture();
+    let code: number;
+    try {
+      code = run(["events", "--since", "0", "--json"], ctx());
+    } finally {
+      c.restore();
+      chmodSync(join(root, "cdubiel08"), 0o755);
+    }
+    expect(code).toBe(69);
+    expect(c.lines).toEqual([]);
+    expect(c.errs.join("")).toContain("could not read");
   });
 
   it("a missing sqlite3 binary is a typed refusal (exit 69) naming the install", () => {

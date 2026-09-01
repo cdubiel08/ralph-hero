@@ -13001,9 +13001,25 @@ export function run(argv: string[], ctx: Ctx): number {
       // malformed CURSOR as an unreadable LEDGER (exit 69 instead of 64).
       if (!Number.isSafeInteger(since))
         throw new UsageError(`--since ${sinceRaw} is beyond the integer range a cursor can hold (max ${Number.MAX_SAFE_INTEGER})`);
+      // The plugin's path rule in FULL (ledger.sh): an explicit
+      // RALPH_HERDR_LEDGER names the JSONL file and wins — the sqlite
+      // sibling sits beside it (ledger-convert.sh builds it there).
+      const explicit = process.env.RALPH_HERDR_LEDGER;
       const root = process.env.RALPH_HERDR_LEDGER_ROOT || join(homedir(), ".ralph");
-      const db = join(root, ctx.cfg.owner, ctx.cfg.repo, "ledger.sqlite");
-      if (!existsSync(db)) {
+      const db = explicit
+        ? join(dirname(explicit), "ledger.sqlite")
+        : join(root, ctx.cfg.owner, ctx.cfg.repo, "ledger.sqlite");
+      // Absence is ENOENT and nothing else: existsSync collapses EACCES into
+      // false, which would render an access failure as "no events" — the
+      // unreadable-vs-absent line this verb's whole contract draws.
+      try {
+        statSync(db);
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") {
+          process.stderr.write(`board events: could not read ${db} — ${code ?? (e as Error).message}\n`);
+          return 69;
+        }
         // An unconverted machine is a NORMAL state, not an error — exit 0
         // with an empty result. But say so on stderr, or "not converted yet"
         // renders exactly like "nothing happened".
@@ -13058,7 +13074,9 @@ export function run(argv: string[], ctx: Ctx): number {
         const cursor = rows.length ? rows[rows.length - 1].seq : since;
         const facts = rows.map((r) => {
           try {
-            return { seq: r.seq, ...JSON.parse(r.payload) };
+            // Column seq LAST: it is the durable ledger position the cursor
+            // walks, so a payload carrying its own `seq` may not shadow it.
+            return { ...JSON.parse(r.payload), seq: r.seq };
           } catch {
             // A payload we cannot parse is carried raw rather than dropped —
             // a cursor read may not lose a fact it walked past.
