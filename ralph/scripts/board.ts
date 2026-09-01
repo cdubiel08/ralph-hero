@@ -36,6 +36,7 @@ import {
   formatAgentName,
   formatBranchName,
   formatDispatchAddress,
+  formatDispatchAgentName,
   formatTeamSegment,
   DISPATCH_SEGMENT,
   parseBranchName,
@@ -11916,7 +11917,11 @@ reads
                               picks the agent lane. The ONLY place a transport
                               may read the convention from — no second copy of
                               the grammar. \`board name dispatch\` prints the
-                              dispatch space's address (<repo>/dispatch)
+                              dispatch space's address (<repo>/dispatch) and
+                              the seat's AGENT NAME (GH-2315): the hyphenated
+                              address, legal on both messaging planes and
+                              deliberately outside grammar B so reconcile
+                              never ledgers the seat
   peer NNN [--candidates a,b] the unit's live PEER ADDRESS (GH-1918), resolved
                               against candidate names on stdin (one per line)
                               or --candidates. The peer namespace is harness-
@@ -11932,7 +11937,11 @@ reads
                               by the SOURCE-CHECKOUT leaf instead — the lead
                               and the hero hold no worktree, so that leaf is
                               their peer root; every source-checkout session
-                              shares it, so ambiguity is refused, not judged
+                              shares it, so ambiguity is refused, not judged.
+                              \`peer dispatch\` first prefers an exact match on
+                              the seat's derived agent name (GH-2315) — a
+                              hero spawned under \`claude --name\` resolves
+                              precisely; the leaf filter is the fallback
   tree NNN                    subtree with states
   claim show NNN [--json]     the claim as the board holds it: holders, shared
                               since, age vs TTL, raw text when garbled
@@ -13181,8 +13190,15 @@ export function run(argv: string[], ctx: Ctx): number {
       // address of the board's own ops seat (D5.1).
       if (positional[0] === DISPATCH_SEGMENT) {
         const address = formatDispatchAddress(ctx.cfg.repo);
-        if (flags.json) json({ repo: ctx.cfg.repo, address });
-        else out(`address  ${address}`);
+        // GH-2315: the seat's agent name — the hyphenated address, legal on
+        // both messaging planes and unparseable by grammar B (the reconcile
+        // carve-out). hero.sh mints from HERE, never from a shell copy.
+        const agentName = formatDispatchAgentName(ctx.cfg.repo);
+        if (flags.json) json({ repo: ctx.cfg.repo, address, agentName });
+        else {
+          out(`address  ${address}`);
+          out(`agent    ${agentName}`);
+        }
         return 0;
       }
       const num = requireNumber(positional[0]);
@@ -13275,6 +13291,22 @@ export function run(argv: string[], ctx: Ctx): number {
         if (leaf === "")
           throw new RefusalError(`derived an empty source-checkout leaf from "${common}" — cannot filter the peer namespace`);
         const candidates = readCandidates();
+        // GH-2315: the hero seat carries its DERIVED name on the peer plane
+        // (hero.sh spawns the harness under it), so an exact match on the mint
+        // resolves the dispatch role precisely — the lead-vs-hero ambiguity
+        // below is only the fallback for an unnamed (pre-2315) sitting. Exact
+        // only: a harness-suffixed variant means a second seat took the name
+        // first, and picking among them is the ambiguity rule's job.
+        if (role === DISPATCH_SEGMENT) {
+          const seat = formatDispatchAgentName(ctx.cfg.repo);
+          // Repeats of one address are one session (resolvePeerAddress's own
+          // dedupe rule), so any exact presence resolves.
+          if (candidates.includes(seat)) {
+            if (flags.json) json({ role, peerPrefix: leaf, peerPrefixes: [leaf], candidates, kind: "resolved", address: seat });
+            else out(seat);
+            return 0;
+          }
+        }
         const res = resolvePeerAddress([leaf], candidates);
         if (flags.json) json({ role, peerPrefix: leaf, peerPrefixes: [leaf], candidates, ...res });
         else if (res.kind === "resolved") out(res.address);

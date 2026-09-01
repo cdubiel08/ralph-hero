@@ -106,7 +106,18 @@ case "$1" in
       { echo "fleet-send: board who dispatch failed:" >&2; printf '%s\n' "$who" >&2; exit 1; }
     count=$(printf '%s' "$who" | jq -r '.live | length' 2>/dev/null) || count=""
     case "$count" in
-      1) AGENT=$(printf '%s' "$who" | jq -r '.live[0].name') ;;
+      1)
+        # `// empty`, because a row CAN carry the address token without a
+        # name (a hand-stamped pane, or a half-registered pre-GH-2315 hero) —
+        # and `herdr agent prompt` addresses names only, so jq's literal
+        # "null" would be prompted as a name and refused confusingly.
+        AGENT=$(printf '%s' "$who" | jq -r '.live[0].name // empty')
+        if [ -z "$AGENT" ]; then
+          echo "fleet-send: the live dispatch seat has no agent NAME (its pane carries the address token but was never renamed) — herdr prompts names only." >&2
+          echo "fleet-send: dispatch's durable address IS the board (D5.1) — \`board comment NNN -m …\`; the inbox reads the board." >&2
+          exit 5
+        fi
+        ;;
       0 | "")
         echo "fleet-send: no live dispatch seat (token-stamped panes only — a token-less hero is invisible here)." >&2
         echo "fleet-send: dispatch's durable address IS the board (D5.1) — \`board comment NNN -m …\`; the inbox reads the board." >&2

@@ -416,7 +416,9 @@ back as distinct exit codes (0 delivered · 4 unconfirmed · 2 refused ·
 3 unreachable · 5 no live role match · 6 ambiguous role). The to-address is
 role-agnostic (GH-2216): a literal agent name, `--lead [EPIC]` (resolved via
 `board who lead EPIC`, or `$RALPH_HERDR_LEAD` verbatim when the spawn
-stamped it), or `--dispatch` (via `board who dispatch`; a token-less hero is
+stamped it), or `--dispatch` (via `board who dispatch`; the hero seat
+registers under its derived agent name — `board name dispatch` prints it,
+e.g. `ralph-hero-dispatch` (GH-2315) — while a pre-2315 token-less hero is
 invisible there, and the refusal names the board — D5.1). Zero-or-many live
 matches refuse, never guess. `--wait` is stripped, loudly, on any standing
 seat (`o`-lane, `$RALPH_HERDR_LEAD`, or a role target) — a seat blocked on
@@ -433,9 +435,11 @@ GH-2216) — fleet-send's sibling for the harness transport: it composes, it
 never sends. `brief` resolves the target from your enumerated live peers
 (`ListAgents` → `--candidates`, delegated to `board peer` — an address is
 enumerated, never constructed); TO is an issue number, `lead`, or
-`dispatch` (roles filter by the source-checkout leaf — the lead and the
-hero hold no worktree — so a hero beside a lead is a refusal, and the herd
-lane above is the precise one); `reply` takes a received message's `from`
+`dispatch` (an exact match on the seat's derived name — the hero spawns
+under `claude --name`, GH-2315 — resolves first; otherwise roles filter by
+the source-checkout leaf — the lead and the hero hold no worktree — so an
+unnamed hero beside a lead is a refusal, and the herd lane above is the
+precise one); `reply` takes a received message's `from`
 address verbatim and refuses a herdr agent name (a different namespace that
 does not resolve there); `live` is the liveness check alone. Failed
 liveness names the durable lane: the C9 board comment, whose escalation TTL

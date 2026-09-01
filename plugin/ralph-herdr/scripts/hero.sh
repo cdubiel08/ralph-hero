@@ -11,13 +11,17 @@
 # nothing here grants anything.
 #
 # NEVER LOAD-BEARING (the unit's own bar): hero takes no claim, holds no
-# lock, owns no worktree, and is deliberately NOT a herdr agent — no `agent
-# start`, no ledger row, no watcher lifecycle, no C8 tokens. Killing this
-# pane loses nothing; the next invoke re-derives everything from the board.
-# Exec-ing the harness directly instead of going through spawn_work_session
-# is that decision in code: registering hero would hand reconcile a session
-# whose disappearance is NORMAL, and give the one surface defined by its
-# disposability a record something could start to lean on.
+# lock, owns no worktree, and has no ledger row or watcher lifecycle. Killing
+# this pane loses nothing; the next invoke re-derives everything from the
+# board. Exec-ing the harness directly instead of going through
+# spawn_work_session is that decision in code: ledgering hero would hand
+# reconcile a session whose disappearance is NORMAL, and give the one surface
+# defined by its disposability a record something could start to lean on.
+# What GH-2315 added — a NAME on both messaging planes and the `address` C8
+# token — stays inside the bar, because the name deliberately does not parse
+# as grammar B and reconcile/watch-event admit agents by that parse: the seat
+# is messageable live, and still invisible to every lifecycle sweep (see the
+# seat-name section below).
 #
 # The work-these template: TOML action + this script, no build step. The
 # hero ACTION still has no focus-or-open — a human who clicks it twice can
@@ -69,4 +73,71 @@ fi
 . "$SCRIPT_DIR/cockpit-pane.sh"
 ralph_hero_pane_stamp "$REPO" "${HERDR_PANE_ID:-}" $$
 
+# ── The seat's derived agent name (GH-2315) ──────────────────────────────────
+# Operator decision 2026-09-01: the seat MUST be addressable — a unique,
+# derived name leads and peers can always message. The name is minted by
+# `board name dispatch` (contracts.ts formatDispatchAgentName — the hyphenated
+# form of the GH-2209 address, e.g. ralph-hero-dispatch); reading it here
+# instead of rebuilding it keeps one grammar (GH-1807). It serves BOTH planes:
+#
+#   peer plane   the harness starts under `claude --name <seat>`, so
+#                SendMessage/ListAgents carry the derived name and
+#                `board peer dispatch` resolves it exactly.
+#   herd plane   herdr auto-detects the harness as an anonymous agent; the
+#                backgrounded helper below waits for that detection, renames
+#                the agent to the same name, and only THEN stamps the
+#                `address` C8 token — so a `board who dispatch` live row
+#                always carries a promptable name, and fleet-send --dispatch
+#                reaches the pane.
+#
+# The NEVER-LOAD-BEARING bar survives intact, and the name itself is the
+# carve-out: it deliberately does not parse as grammar B, and reconcile and
+# watch-event admit agents by that parse — so the seat is messageable live but
+# never ledgered, never swept, never adopted (the ralph-deliver/ralph-tend
+# precedent). Still no claim, no lock, no worktree, no ledger row; killing the
+# pane loses nothing, and a herdr server restart drops the name and token with
+# the sitting (there is no ledger record to re-push from — the next
+# `dispatch up` re-derives everything, which is the bar working as stated).
+#
+# Every step is best-effort: a board that cannot answer, a taken name (a
+# second hero, or a stale seat), or a herdr refusal costs the CHROME — the
+# seat degrades to the anonymous status quo and the sitting proceeds. The
+# honest surface is `board who dispatch`, which renders a token-less hero as
+# "no live binding visible" rather than pretending.
+SEAT_NAME="" SEAT_ADDR=""
+if names=$(cd "$REPO" && "$BOARD" name dispatch --json 2>/dev/null); then
+  SEAT_NAME=$(printf '%s' "$names" | jq -r '.agentName // empty' 2>/dev/null) || SEAT_NAME=""
+  SEAT_ADDR=$(printf '%s' "$names" | jq -r '.address // empty' 2>/dev/null) || SEAT_ADDR=""
+fi
+
+if [ -n "$SEAT_NAME" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
+  # Rename-then-token, detached: the agent record does not exist until the
+  # exec'd harness is detected, so the helper polls for it. Output is
+  # discarded — after the exec this shell's streams are the harness's screen,
+  # and a warning painted into a TUI is worse than none; the observable truth
+  # lives in `board who dispatch`. Rename BEFORE token: a token-stamped
+  # dispatch row must always carry a promptable name (fleet-send reads .name),
+  # so a refused rename (name taken — a second hero) leaves the token off too.
+  # The whole subshell is stream-detached: after the exec these fds are the
+  # harness's screen, and a helper that inherits a caller's capture pipe
+  # would hold it open for the poll's whole lifetime.
+  (
+    for _ in $(seq 1 30); do
+      sleep 2
+      out=$("${HERDR_BIN_PATH:-herdr}" agent get "$HERDR_PANE_ID" 2>/dev/null) || continue
+      jq -e '.result.agent' <<<"$out" >/dev/null 2>&1 || continue
+      "${HERDR_BIN_PATH:-herdr}" agent rename "$HERDR_PANE_ID" "$SEAT_NAME" || exit 0
+      [ -n "$SEAT_ADDR" ] && ralph_tokens_push "$HERDR_PANE_ID" "address=$SEAT_ADDR"
+      exit 0
+    done
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+fi
+
+# --name is newer than some installed harnesses; probe rather than assume — an
+# unknown flag would abort the exec and hold the pane on a usage error. Absent
+# support degrades the PEER name only; the herd-plane rename above still runs.
+if [ -n "$SEAT_NAME" ] && claude --help 2>/dev/null | grep -q -- '--name'; then
+  exec claude --name "$SEAT_NAME" "/ralph:hero"
+fi
 exec claude "/ralph:hero"

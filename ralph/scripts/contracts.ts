@@ -253,7 +253,12 @@ export function slugBudget(issue: number): number {
 /** Truncate at the last full word of ≥3 chars within budget, else hard cut;
  *  strip trailing hyphens either way. */
 export function truncateSlug(slug: string, issue: number): string {
-  const budget = slugBudget(issue);
+  return truncateToBudget(slug, slugBudget(issue));
+}
+
+/** The truncation rule with an explicit budget — truncateSlug derives its
+ *  budget from an issue number; the dispatch-seat mint has none. */
+function truncateToBudget(slug: string, budget: number): string {
   if (slug.length <= budget) return slug;
   let keep = "";
   for (const w of slug.split("-")) {
@@ -529,6 +534,30 @@ export function formatTeamSegment(epic: number, title: string): string {
 export function formatDispatchAddress(repo: string): string {
   if (!REPO_SEGMENT_RE.test(repo)) throw new RangeError(`not a legal repo segment: ${JSON.stringify(repo)}`);
   return `${repo}/${DISPATCH_SEGMENT}`;
+}
+
+/** The dispatch seat's AGENT NAME (GH-2315): the hyphenated form of the
+ *  dispatch address — one derived name that is legal on BOTH messaging planes,
+ *  since herdr agent names and the harness's peer/SendMessage names each
+ *  refuse `/` (probed live: herdr answers invalid_agent_name; the harness
+ *  documents letters/digits/hyphen/underscore). `board name dispatch` prints
+ *  it and hero.sh reads it there — a shell copy would be a second grammar
+ *  (GH-1807).
+ *
+ *  The name is ALSO the never-load-bearing carve-out (GH-2182) in one move:
+ *  reconcile phase B and watch-event admit agents via parseAgentName, so a
+ *  name that deliberately cannot parse as grammar B is messageable live but
+ *  never ledgered, never swept, never adopted — the ralph-deliver/ralph-tend
+ *  precedent. `<repo>-dispatch` only parses when the repo itself spells a
+ *  lane char + digits (`w2-foo` → lane w, issue 2, slug `foo-dispatch`);
+ *  that case flips to `dispatch-<base>`, structurally immune because a letter
+ *  follows the lane char. Both shapes satisfy HERDR_NAME_RE and fail
+ *  parseAgentName — pinned by test, since reconcile immunity rides on it. */
+export function formatDispatchAgentName(repo: string): string {
+  if (!REPO_SEGMENT_RE.test(repo)) throw new RangeError(`not a legal repo segment: ${JSON.stringify(repo)}`);
+  const base = truncateToBudget(slugify(repo), NAME_MAX - DISPATCH_SEGMENT.length - 1);
+  const name = `${base}-${DISPATCH_SEGMENT}`;
+  return parseAgentName(name) === null ? name : `${DISPATCH_SEGMENT}-${base}`;
 }
 
 /** The full address for (repo, team?, lane, issue, title). `team` is the
