@@ -20,6 +20,12 @@
 # converter is opt-in in phase A). Any unreadable path — db, jsonl, a schema
 # newer than v1 — reads `not evaluated`, never ok and never a GAP.
 #
+# Each ledger also renders its read-fallback stamp (GH-2309, phase C): the
+# read flip in ledger.sh stamps ledger-fallback.last ({ts, why}, overwritten)
+# whenever a read fell back to the JSONL, keeping stderr clean on the read
+# path — this line is where that record becomes visible. Age + why when
+# present, "no fallback recorded" otherwise; advisory like everything here.
+#
 # Counts compare VALID lines only (a JSON object per line): the converter
 # routes malformed lines to the .rejects sidecar, so they exist on neither
 # side of the comparison by construction.
@@ -77,11 +83,44 @@ ledger_scope_tail() {
   printf '%s/%s' "$(basename "$(dirname "$dir")")" "$(basename "$dir")"
 }
 
+# age_of ISO_TS — human-ish age of an ISO-8601 UTC timestamp; the raw
+# timestamp when neither date dialect can parse it (BSD -j -f vs GNU -d).
+age_of() {
+  local ts="${1-}" t0 now d
+  t0=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" +%s 2>/dev/null) ||
+    t0=$(date -u -d "$ts" +%s 2>/dev/null) || { printf '%s' "$ts"; return 0; }
+  now=$(date -u +%s)
+  d=$((now - t0))
+  if [ "$d" -lt 0 ]; then printf '%s' "$ts"
+  elif [ "$d" -lt 120 ]; then printf '%ss ago' "$d"
+  elif [ "$d" -lt 7200 ]; then printf '%sm ago' "$((d / 60))"
+  else printf '%sh ago' "$((d / 3600))"
+  fi
+}
+
+# fallback_note SCOPE FILE — render the read-fallback stamp ledger.sh's read
+# flip (GH-2309) leaves beside FILE: age + why when present, "no fallback
+# recorded" otherwise. Advisory like everything here — a fallback is the
+# readers protecting themselves, and the stamp is how a human learns the
+# sqlite side is not being read.
+fallback_note() {
+  local scope="${1-}" f="${2-}" stampf sts swhy
+  stampf="$(dirname "$f")/ledger-fallback.last"
+  if [ ! -f "$stampf" ]; then
+    note "parity-$scope" "no fallback recorded"
+    return 0
+  fi
+  sts=$(jq -r '.ts // ""' "$stampf" 2>/dev/null) || sts=""
+  swhy=$(jq -r '.why // ""' "$stampf" 2>/dev/null) || swhy=""
+  note "parity-$scope" "read fallback $(age_of "$sts") — ${swhy:-unrecorded why}"
+}
+
 checked=0
 unconverted=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   scope=$(ledger_scope_tail "$f")
+  fallback_note "$scope" "$f"
   db=$(ralph_lc_db_path "$f")
   if [ ! -f "$db" ]; then
     unconverted=$((unconverted + 1))

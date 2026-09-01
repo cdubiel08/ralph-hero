@@ -19,7 +19,8 @@
 #   by ralph_ledger_append. It is how reconcile proves a ledger is its own once
 #   the last pane that would have proven it is gone (GH-1933).
 #   ev vocabulary: spawn | state | adopt | exit | discover | lost ("lost" is
-#   reserved; today a lost agent is recorded as ev=exit reason=lost).
+#   reserved; a lost agent is recorded as ev=exit reason=swept-unknown —
+#   spelled "lost" before GH-2309, see the exit-reason enum below).
 #     spawn     appended by lib.sh's spawn path AT PANE CREATION — the one
 #               documented carve-out from "the watcher is the sole appender"
 #               (spawn happens before any event hook can fire; a single-line
@@ -32,9 +33,24 @@
 #     state     watcher: {agent_status} (raw herdr status) or {state}
 #               (lifecycle token value, e.g. "orphaned").
 #     adopt     watcher orphan pass: {parent: new, prev_parent: old}.
-#     exit      watcher: {reason: pane_exited|pane_closed|lost}.
+#     exit      watcher/reconcile/spawn: {reason: <exit reason>}.
 #     discover  watcher/reconcile: a live ralph agent with no open ledger
 #               record (spawned while the ledger didn't exist, or by hand).
+#
+#   EXIT REASON ENUM (GH-2309, phase C). The typed vocabulary for exit.reason:
+#     finished | yielded | crashed | restart-killed | swept-unknown |
+#     pane-closed | pane-exited
+#   Reserved values exist before anything emits them: finished/yielded need
+#   heartbeat/handshake signals that are a separate swing. Live writers today:
+#   reconcile's sweep emits swept-unknown (the honest name for what the sweep
+#   proves — an absence asked twice, nothing about how the worker ended; the
+#   pre-enum spelling was "lost"), phase E's pane-proved verdicts emit
+#   crashed/restart_killed (claim-recover.sh), and the event hooks emit
+#   pane_exited/pane_closed. never_started (the spawn path's provisional
+#   close) is via-spawn bookkeeping, outside this enum. Historical rows are
+#   NEVER rewritten; a reader that branches on reason normalizes through
+#   ralph_ledger_reason_canon (the ONE alias mapping — lost → swept-unknown,
+#   underscore spellings → their hyphenated enum forms), never per consumer.
 #
 #   Appends are single-line `>>` writes (O_APPEND) issued as ONE write(2):
 #   the line goes through an EXTERNAL printf, whose fresh stdio buffer holds
@@ -400,6 +416,134 @@ ralph_ledger_unlock_held() {
   return 0
 }
 
+# ── the read flip (GH-2309, phase C) ─────────────────────────────────────────
+# Every read helper below consumes the ledger through _ralph_ledger_events,
+# which serves the SAME event lines from the sibling ledger.sqlite when it is
+# provably current, and from the JSONL exactly as before otherwise. Serving
+# payload verbatim through the same jq reductions is what makes the flip
+# byte/shape-compatible BY CONSTRUCTION — the helpers feed jq across ~20
+# scripts, so compatibility is not a property to approximate per helper.
+#
+# Eligibility (ALL must hold, per read): ledger.sqlite exists beside the
+# JSONL, its `PRAGMA user_version` is exactly 1, and a cheap parity probe
+# passes — the last JSONL line's phash (the converter's seq-salted rule) must
+# exist in facts.phash, one indexed lookup against the UNIQUE index, never a
+# full count. ANY other answer — missing file, unreadable, future schema,
+# probe miss, no sqlite3, a stripped tree with no converter — falls back to
+# the JSONL path exactly as today.
+#
+# Fallback is observable, never silent — and never loud to callers: the read
+# helpers run inside jq pipelines everywhere, so stderr stays clean and the
+# record is a stamp file beside the ledger, ledger-fallback.last ({ts, why},
+# overwritten each time). doctor-parity.sh renders it (age + why) under the
+# usual advisory rules.
+#
+# Honest limit: the probe proves the TAIL converted, not every row — a
+# dual-write insert the sink skipped mid-file (each skip warned at append
+# time) leaves a gap the probe cannot see until the next ledger-convert.sh
+# run backfills it. That is the probe the design chose: one lookup, fail
+# toward the JSONL on every readable signal of trouble.
+
+# _ralph_ledger_fallback_stamp FILE WHY — overwrite FILE's sibling
+# ledger-fallback.last with {ts, why}. Best-effort and silent: the stamp is
+# observability, and a stamp failure may not fail (or narrate into) a read.
+_ralph_ledger_fallback_stamp() {
+  local file="${1-}" why="${2-}"
+  [ -n "$file" ] || return 0
+  printf '{"ts":"%s","why":"%s"}\n' "$(date -u +%FT%TZ)" "$why" \
+    >"$(dirname "$file")/ledger-fallback.last" 2>/dev/null || true
+  return 0
+}
+
+# _ralph_ledger_sqlite_eligible FILE — print the sibling db path when the
+# sqlite ledger may serve reads for FILE; otherwise stamp the fallback and
+# rc 1. Never writes to stderr.
+_ralph_ledger_sqlite_eligible() {
+  local file="${1-}" db sq uv seq last ph hit out
+  if ! command -v ralph_lc_db_path >/dev/null 2>&1; then
+    _ralph_ledger_fallback_stamp "$file" "converter helpers unavailable (stripped tree)"
+    return 1
+  fi
+  db=$(ralph_lc_db_path "$file") || {
+    _ralph_ledger_fallback_stamp "$file" "no sibling db path"
+    return 1
+  }
+  if [ ! -f "$db" ]; then
+    _ralph_ledger_fallback_stamp "$file" "ledger.sqlite absent (not converted yet)"
+    return 1
+  fi
+  sq="${RALPH_SQLITE3_BIN:-sqlite3}"
+  if ! command -v "$sq" >/dev/null 2>&1; then
+    _ralph_ledger_fallback_stamp "$file" "no sqlite3 ('$sq')"
+    return 1
+  fi
+  # Parity probe inputs: the last JSONL line, hashed under the converter's
+  # seq-salted rule. grep -c counts the trailing-newline-terminated lines the
+  # appender writes — the same count the dual-write sink uses for seq, so the
+  # two sides of the probe share one line-number rule; tail reads the last
+  # line without a second full-file scan.
+  seq=$(grep -c '' <"$file" 2>/dev/null) || seq=""
+  case "$seq" in
+    '' | *[!0-9]* | 0)
+      _ralph_ledger_fallback_stamp "$file" "cannot count jsonl lines"
+      return 1
+      ;;
+  esac
+  last=$(tail -n 1 "$file" 2>/dev/null) || last=""
+  ph=$(ralph_lc_hash_line "$seq" "$last" 2>/dev/null) || ph=""
+  if [ -z "$ph" ]; then
+    _ralph_ledger_fallback_stamp "$file" "no sha256 tool for the parity probe"
+    return 1
+  fi
+  # ONE sqlite invocation answers both questions — user_version, then the
+  # indexed phash lookup (readers run per (ref, field) in some callers, so a
+  # saved fork per read is worth the two-line parse).
+  out=$("$sq" "$db" "PRAGMA user_version;
+SELECT count(1) FROM facts WHERE phash='$ph';" 2>/dev/null) || out=""
+  uv=${out%%$'\n'*}
+  hit=${out##*$'\n'}
+  if [ "$uv" != "1" ]; then
+    _ralph_ledger_fallback_stamp "$file" "user_version='${uv:-unreadable}' (need 1)"
+    return 1
+  fi
+  if [ "$hit" != "1" ]; then
+    _ralph_ledger_fallback_stamp "$file" "parity probe miss (jsonl line $seq not in sqlite)"
+    return 1
+  fi
+  printf '%s\n' "$db"
+}
+
+# _ralph_ledger_events FILE — the ledger's event lines on stdout: payload
+# rows from the eligible sqlite (seq order — the converter's byte-identity
+# guarantee), else the JSONL verbatim. The sqlite read is CAPTURED before a
+# byte is emitted, so a failed read falls back cleanly instead of emitting a
+# torn prefix; WAL readers don't block on writers, so no busy_timeout.
+_ralph_ledger_events() {
+  local file="${1-}" db out
+  if db=$(_ralph_ledger_sqlite_eligible "$file"); then
+    if out=$("${RALPH_SQLITE3_BIN:-sqlite3}" "$db" 'SELECT payload FROM facts ORDER BY seq;' 2>/dev/null); then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    _ralph_ledger_fallback_stamp "$file" "sqlite read failed"
+  fi
+  cat "$file"
+}
+
+# ralph_ledger_reason_canon REASON — the ONE legacy-alias mapping for the
+# exit-reason enum (see the header): historical spellings normalize to their
+# enum value, everything else passes through verbatim. Historical rows are
+# never rewritten — consumers that branch on reason call this instead.
+ralph_ledger_reason_canon() {
+  case "${1-}" in
+    lost) printf 'swept-unknown\n' ;;
+    pane_exited) printf 'pane-exited\n' ;;
+    pane_closed) printf 'pane-closed\n' ;;
+    restart_killed) printf 'restart-killed\n' ;;
+    *) printf '%s\n' "${1-}" ;;
+  esac
+}
+
 # ralph_ledger_open_agents [REPO_ROOT] — agent_refs (one per line) with a
 # spawn/discover event and no later exit. Order-aware reduce: an exit closes
 # the ref; a fresh spawn/discover of the SAME ref (shouldn't happen — epochs
@@ -410,13 +554,13 @@ ralph_ledger_open_agents() {
   local file
   file=$(ralph_ledger_path "$@") || return 1
   [ -s "$file" ] || return 0
-  jq -rs '
+  _ralph_ledger_events "$file" | jq -rs '
     reduce .[] as $e ({};
       if ($e.agent_ref // "") == "" then .
       elif $e.ev == "spawn" or $e.ev == "discover" then .[$e.agent_ref] = true
       elif $e.ev == "exit" then .[$e.agent_ref] = false
       else . end)
-    | to_entries[] | select(.value) | .key' <"$file"
+    | to_entries[] | select(.value) | .key'
 }
 
 # ralph_ledger_open_ref NAME [REPO_ROOT] — the open agent_ref whose name part
@@ -454,7 +598,7 @@ ralph_ledger_last() {
   [ -n "$ref" ] || return 1
   file=$(ralph_ledger_path) || return 1
   [ -s "$file" ] || return 1
-  out=$(jq -c --arg ref "$ref" -s 'map(select(.agent_ref == $ref)) | last // empty' <"$file")
+  out=$(_ralph_ledger_events "$file" | jq -c --arg ref "$ref" -s 'map(select(.agent_ref == $ref)) | last // empty')
   [ -n "$out" ] || return 1
   printf '%s\n' "$out"
 }
@@ -472,7 +616,7 @@ ralph_ledger_open_for_pane() {
   [ -n "$pane" ] || return 1
   file=$(ralph_ledger_path) || return 1
   [ -s "$file" ] || return 0
-  jq -rs --arg p "$pane" '
+  _ralph_ledger_events "$file" | jq -rs --arg p "$pane" '
     reduce .[] as $e ({open: {}, pane: {}};
       if ($e.agent_ref // "") == "" then .
       else
@@ -483,7 +627,7 @@ ralph_ledger_open_for_pane() {
            | if $pp == "" then . else .pane[$e.agent_ref] = $pp end)
       end)
     | .pane as $pn
-    | .open | to_entries[] | select(.value and ($pn[.key] == $p)) | .key' <"$file"
+    | .open | to_entries[] | select(.value and ($pn[.key] == $p)) | .key'
 }
 
 # _ralph_ledger_latest FIELD_EXPR REF — last non-empty value of a per-record
@@ -498,11 +642,11 @@ _ralph_ledger_latest() {
   [ -n "$ref" ] || return 1
   file=$(ralph_ledger_path) || return 1
   [ -s "$file" ] || return 1
-  out=$(jq -r --arg ref "$ref" -s "
+  out=$(_ralph_ledger_events "$file" | jq -r --arg ref "$ref" -s "
     [ .[]
       | select(.agent_ref == \$ref)
       | $expr ]
-    | map(select(. != null and . != \"\")) | last // empty" <"$file")
+    | map(select(. != null and . != \"\")) | last // empty")
   [ -n "$out" ] || return 1
   printf '%s\n' "$out"
 }
@@ -556,7 +700,7 @@ ralph_ledger_open_rows() {
   local file
   file=$(ralph_ledger_path "$@") || return 1
   [ -s "$file" ] || return 0
-  jq -rs '
+  _ralph_ledger_events "$file" | jq -rs '
     def keep($cur; $new): if ($new == null or $new == "") then $cur else $new end;
     def col: (. // "") | tostring | gsub("[\u001f\t\r\n]"; " ");
     reduce .[] as $e ({open: {}, f: {}, s: {}};
@@ -589,7 +733,7 @@ ralph_ledger_open_rows() {
     | [$ref, ($v.pane|col), ($v.shell_pid|col), ($v.harness|col),
        ($v.parent|col), ($v.state|col), ($v.issue|col), ($v.checkout|col),
        ($v.tokens|col), (($s[$ref] // "")|col)]
-    | join("\u001f")' <"$file"
+    | join("\u001f")'
 }
 
 # ralph_ledger_open_sessions [REPO_ROOT] — the distinct session keys that
@@ -607,7 +751,7 @@ ralph_ledger_open_sessions() {
   local file
   file=$(ralph_ledger_path "$@") || return 1
   [ -s "$file" ] || return 0
-  jq -rs '
+  _ralph_ledger_events "$file" | jq -rs '
     reduce .[] as $e ({open: {}, s: {}};
       (($e.agent_ref // "")) as $ref
       | if $ref == "" then .
@@ -617,7 +761,7 @@ ralph_ledger_open_sessions() {
         else . end)
     | .s as $s
     | [.open | to_entries[] | select(.value) | ($s[.key] // "")]
-    | map(select(. != "")) | unique | .[]' <"$file"
+    | map(select(. != "")) | unique | .[]'
 }
 
 # Latest parent edge for a ref (adopt events win over the spawn/discover
@@ -673,7 +817,7 @@ ralph_ledger_children() {
   [ -n "$ref" ] || return 1
   file=$(ralph_ledger_path) || return 1
   [ -s "$file" ] || return 0
-  jq -rs --arg ref "$ref" '
+  _ralph_ledger_events "$file" | jq -rs --arg ref "$ref" '
     reduce .[] as $e ({open: {}, par: {}};
       if ($e.agent_ref // "") == "" then .
       else
@@ -687,7 +831,7 @@ ralph_ledger_children() {
     | .open | to_entries[]
     | select(.value)
     | select(($par[.key] // "") == $ref)
-    | .key' <"$file"
+    | .key'
 }
 
 # ralph_ledger_orphan_pass DEAD_REF LIVE_NAMES [ONLY_REFS] — the adoption

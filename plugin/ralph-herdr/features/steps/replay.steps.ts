@@ -542,7 +542,9 @@ Then('the pre-restart ledger lines are still byte-identical on disk', function (
 
 Then('{string} was marked lost via reconcile', function (this: RalphWorld, ref: string) {
   const hits = this.ledgerRecords().filter(
-    (r) => r.ev === 'exit' && r.agent_ref === ref && r.reason === 'lost' && r.via === 'reconcile',
+    // "marked lost" is the concept; GH-2309 renamed the sweep's spelling to
+    // the honest swept-unknown ("lost" remains only in pre-enum rows).
+    (r) => r.ev === 'exit' && r.agent_ref === ref && r.reason === 'swept-unknown' && r.via === 'reconcile',
   );
   assert.strictEqual(hits.length, 1);
 });
