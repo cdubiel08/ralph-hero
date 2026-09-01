@@ -369,6 +369,27 @@ case "$(cat "$TMP/probe.err")" in
   *) not_ok "probe: unverified must say neither marker appeared — got '$(cat "$TMP/probe.err")'" ;;
 esac
 
+# PR #2337 P1: a target this process cannot write outside the sandbox proves
+# nothing — the probe must refuse as unverified, never read the (inevitable)
+# missing inside marker as a denial.
+export FAKE_HERDR_LOG="$TMP/herdr.log"
+mkdir -p "$TMP/tree-ro" && chmod 555 "$TMP/tree-ro"
+if [ "$(id -u)" -eq 0 ] || { : >"$TMP/tree-ro/.w"; } 2>/dev/null; then
+  rm -f "$TMP/tree-ro/.w" 2>/dev/null; ok "probe: (skipped — this user can write a 555 directory) unwritable-root case"
+  ok "probe: (skipped) unwritable-root names the pre-check"
+  ok "probe: (skipped) unwritable-root sends no prompt"
+else
+  : >"$FAKE_HERDR_LOG"
+  out=$(FAKE_PROBE_MODE=applied RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-ro" "re-spawn" 2>"$TMP/probe.err"); rc=$?
+  is "probe: an inside target unwritable OUTSIDE the sandbox is unverified (rc 1), never applied" "1 unverified" "$rc $out"
+  case "$(cat "$TMP/probe.err")" in
+    *"not writable even OUTSIDE the sandbox"*) ok "probe: unwritable-root names the pre-check, not a denial" ;;
+    *) not_ok "probe: unwritable-root must name the pre-check — got '$(cat "$TMP/probe.err")'" ;;
+  esac
+  if grep -q 'agent prompt' "$FAKE_HERDR_LOG"; then not_ok "probe: unwritable-root must not prompt the pane at all"; else ok "probe: unwritable-root sends no prompt"; fi
+fi
+chmod 755 "$TMP/tree-ro"
+
 # The prompt itself: inside operand FIRST (an inert sandbox writes it before
 # the outside marker lands), both quoted, one command.
 export FAKE_HERDR_LOG="$TMP/herdr.log"

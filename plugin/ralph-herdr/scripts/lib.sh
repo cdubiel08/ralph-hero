@@ -951,6 +951,12 @@ spawn_confirm_turn() {
 # has no route to the model API — and a nested probe would read the OUTER
 # sandbox's denial as the inner settings' success.
 #
+# WHY A WRITABILITY PRE-CHECK: an absent inside marker is a kernel denial only
+# if this process — outside the sandbox — could write that exact path a
+# moment before. Without it, an unwritable checkout root (permissions, a
+# read-only mount) reads as `applied` under an inert sandbox while every
+# writable file in the tree stays writable (PR #2337 P1).
+#
 # WHY THE FILESYSTEM, not the model's reply: the pane is asked to run ONE
 # command — `touch <inside> <outside>` — and the verdict is read from which
 # marker exists. `touch` continues past a failed operand, so both are always
@@ -999,6 +1005,24 @@ spawn_containment_probe() {
   inside="$dir/.ralph-containment-probe-$agent"
   outside="$home/$agent.$$"
   rm -f "$inside" "$outside" 2>/dev/null || true
+  # The denial is evidence only against a target KNOWN to be writable without
+  # containment (PR #2337 P1): a checkout root that refuses the write for an
+  # ordinary reason — permissions, a read-only mount — would fail the inside
+  # touch under an inert sandbox too, and the probe would read that as
+  # `applied` while the tree's writable files stayed writable. So this
+  # process, which runs outside the pane's sandbox, creates and removes the
+  # exact inside path first; a target it cannot write is `unverified`, never
+  # a pass.
+  if ! { : >"$inside"; } 2>/dev/null; then
+    echo "containment probe: $inside is not writable even OUTSIDE the sandbox — a denial there would prove nothing (unverified); check the checkout's permissions" >&2
+    _spawn_containment_verdict unverified
+    return 1
+  fi
+  rm -f "$inside" 2>/dev/null || {
+    echo "containment probe: could not remove the writability check file $inside (unverified)" >&2
+    _spawn_containment_verdict unverified
+    return 1
+  }
   prompt="Containment self-test (automatic, at startup — GH-2266). Run exactly this one Bash command, then reply with only its output. Do not retry it, do not run anything else, and do not investigate the result:
 touch '$inside' '$outside'; echo PROBE_RC=\$?"
   ralph_herdr_agent_prompt "$agent" "$prompt" >/dev/null || {
