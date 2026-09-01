@@ -952,3 +952,153 @@ func TestLegendNamesTopology(t *testing.T) {
 		t.Errorf("topology overlay legend must be esc close: %q", legend(m))
 	}
 }
+
+// ── inbox view (GH-2318) ────────────────────────────────────────────────────
+
+func TestRenderInboxViewRowsInFull(t *testing.T) {
+	m := inboxViewModel()
+	m.mode = ModeInbox
+	m.inboxCards[0].Question = strings.Repeat("a long decision line that the three-line card had to clip ", 4)
+	m.inboxWithheld = "1 reviewer-rate-limited"
+	m.inboxLeads = "#2219 (o2208-herd-topology)"
+	m.width, m.height = 100, 40
+	out := viewModel(m)
+	for _, want := range []string{
+		"inbox — repo  (Tier 1)",
+		"3 waiting — 1 decisions, 1 proposals, 1 approvals, 0 deliver-blocked",
+		"#30", "decision", "Thirty",
+		"? a long decision line",
+		`→ board answer 30 -m "<the decision>"`,
+		"#40", "approval", `reject: board cancel 40 -m "<why>"`, "→ board move 40 backlog",
+		"#50", "proposal", "→ board resolve 50 --accept",
+		"withheld: 1 reviewer-rate-limited",
+		"with leads: #2219 (o2208-herd-topology)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("inbox view must contain %q; got:\n%s", want, out)
+		}
+	}
+	// The decision text is WRAPPED, not clipped to one line: its tail survives.
+	if strings.Count(out, "three-line") < 4 {
+		t.Errorf("the decision text must wrap in full; got:\n%s", out)
+	}
+	// The columns are not drawn behind it.
+	if strings.Contains(out, "Eleven") {
+		t.Error("the inbox view must replace the columns, not overlay them")
+	}
+	// The selected row carries the cursor gutter; only one row does.
+	if strings.Count(out, "▌") == 0 {
+		t.Error("the selected row must carry the cursor gutter")
+	}
+}
+
+func TestRenderInboxViewEmptyStatesStayApart(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.mode = ModeInbox
+	m.width, m.height = 100, 30
+
+	unread := viewModel(m)
+	if !strings.Contains(unread, "(reading the inbox…)") || strings.Contains(unread, "inbox empty") {
+		t.Errorf("an unread inbox must not claim emptiness; got:\n%s", unread)
+	}
+
+	m.inboxOK = false
+	m.inboxErr = "gh api graphql failed (exit 1)"
+	failed := viewModel(m)
+	if !strings.Contains(failed, "inbox read failed: gh api graphql failed") || strings.Contains(failed, "inbox empty") {
+		t.Errorf("a failed read must name its cause and never read as empty; got:\n%s", failed)
+	}
+
+	// A failed REFRESH over rows keeps the rows and says they may be stale.
+	m.inboxCards = inboxViewModel().inboxCards
+	stale := viewModel(m)
+	if !strings.Contains(stale, "showing the last good read (3 rows)") || !strings.Contains(stale, "#30") {
+		t.Errorf("a failed refresh must keep the last rows and label them; got:\n%s", stale)
+	}
+
+	m.inboxCards = nil
+	m.inboxErr = ""
+	m.inboxOK = true
+	m.inboxLeads = "#7 (unnamed lead)"
+	empty := viewModel(m)
+	if !strings.Contains(empty, "(inbox empty — no decisions waiting)") {
+		t.Errorf("a successful empty read must say so; got:\n%s", empty)
+	}
+	if !strings.Contains(empty, "with leads: #7 (unnamed lead)") {
+		t.Errorf("rows held by leads must be counted even over an empty inbox; got:\n%s", empty)
+	}
+}
+
+func TestRenderInboxViewScrollsToKeepTheCursorVisible(t *testing.T) {
+	m := inboxViewModel()
+	m.mode = ModeInbox
+	m.inboxCards = nil
+	for i := 0; i < 30; i++ {
+		m.inboxCards = append(m.inboxCards, Card{Number: 100 + i, State: inboxState, Queue: "decision",
+			Title: fmt.Sprintf("Row %d", i), Question: "q?", Verb: fmt.Sprintf("board answer %d", 100+i)})
+	}
+	m.width, m.height = 100, 24
+	top := viewModel(m)
+	if !strings.Contains(top, "#100") || !strings.Contains(top, "more below — j scrolls") {
+		t.Errorf("at the top the first row and the below-marker must render; got:\n%s", top)
+	}
+	if strings.Contains(top, "above — k scrolls") {
+		t.Error("no above-marker at the top")
+	}
+	m.inboxRow = 29
+	bottom := viewModel(m)
+	if !strings.Contains(bottom, "#129") || !strings.Contains(bottom, "above — k scrolls") {
+		t.Errorf("at the bottom the last row and the above-marker must render; got:\n%s", bottom)
+	}
+	if strings.Contains(bottom, "more below") {
+		t.Error("no below-marker at the bottom")
+	}
+	// The rendered body never exceeds the body height it was given.
+	if n := strings.Count(bottom, "\n"); n > m.height+2 {
+		t.Errorf("view rendered %d lines for a %d-row terminal", n, m.height)
+	}
+}
+
+func TestRenderInboxViewStaysBehindTheAnswerInput(t *testing.T) {
+	m := inboxViewModel()
+	m.mode = ModeAnswer
+	m.inboxReturn = true
+	m.inputFor = 30
+	m.input = "merge it"
+	m.width, m.height = 100, 30
+	out := viewModel(m)
+	if !strings.Contains(out, "merge or split the epic?") || !strings.Contains(out, "answer #30") {
+		t.Errorf("the decision text and the input line must both render; got:\n%s", out)
+	}
+	if strings.Contains(out, "Eleven") {
+		t.Error("the columns must not replace the view while its answer is typed")
+	}
+}
+
+func TestLegendNamesInboxView(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	if !strings.Contains(legend(m), "i inbox") || !strings.Contains(legend(m), "I inbox⇄human") {
+		t.Errorf("browse legend must name both inbox keys: %q", legend(m))
+	}
+	m.mode = ModeInbox
+	if !strings.Contains(legend(m), "a/⏎ answer decision") || !strings.Contains(legend(m), "i/esc close") {
+		t.Errorf("inbox view legend must name answer and close: %q", legend(m))
+	}
+}
+
+func TestWrapWords(t *testing.T) {
+	got := wrapWords("one two three four", 9, 0)
+	want := []string{"one two", "three", "four"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("wrap = %q, want %q", got, want)
+	}
+	if got := wrapWords("abcdefghij", 4, 0); strings.Join(got, "|") != "abcd|efgh|ij" {
+		t.Errorf("an over-long word must hard-break: %q", got)
+	}
+	if got := wrapWords("a b c d e f", 1, 2); len(got) != 2 || !strings.HasSuffix(got[1], "…") {
+		t.Errorf("a clipped wrap must end in an ellipsis: %q", got)
+	}
+	if got := wrapWords("", 10, 0); len(got) != 1 || got[0] != "" {
+		t.Errorf("empty input yields one empty line: %q", got)
+	}
+}

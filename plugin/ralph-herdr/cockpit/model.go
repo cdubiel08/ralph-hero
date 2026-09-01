@@ -27,6 +27,7 @@ const (
 	ModeAnswer        // input line → board answer FIRST, then best-effort nudge
 	ModeDag           // text tree from board frontier --json
 	ModeTopology      // roster tree from board roster --json (GH-2219, unit K)
+	ModeInbox         // full-body inbox view over board inbox Tier 1 (GH-2318)
 )
 
 // columnStates — the three cockpit columns, board Workflow State names
@@ -382,6 +383,13 @@ type Model struct {
 	inboxWithheld string // "N reason, M reason" — GH-2108: held-back rows are counted, never dropped silently
 	lastInbox     time.Time
 	inboxInFlight bool
+	inboxLeads    string // GH-2218 "with leads" — rows a lead still holds, counted, never dropped
+	// Inbox VIEW (GH-2318) — the queue-level flip-to surface (`i`) over the
+	// same read the `I` column uses. inboxRow is the cursor inside it.
+	// inboxReturn marks an answer launched FROM the view, so the input line's
+	// esc and the answer's result land back in the view rather than in browse.
+	inboxRow    int
+	inboxReturn bool
 
 	// Cursor + mode.
 	col, row int
@@ -507,6 +515,14 @@ func (m Model) selectedCard() (Card, bool) {
 		return Card{}, false
 	}
 	return cards[m.row], true
+}
+
+// selectedInboxCard is the inbox view's row under its cursor, if any.
+func (m Model) selectedInboxCard() (Card, bool) {
+	if m.inboxRow < 0 || m.inboxRow >= len(m.inboxCards) {
+		return Card{}, false
+	}
+	return m.inboxCards[m.inboxRow], true
 }
 
 // agentFor picks the agent to observe/peek/reply for an issue: w-lane first,
@@ -692,7 +708,7 @@ func (m Model) doneDue(now time.Time) bool {
 // inboxDue gates the inbox read the same way: shown-only, so a cockpit nobody
 // has pressed `I` on never pays for the four-queue walk.
 func (m Model) inboxDue(now time.Time) bool {
-	if m.inboxInFlight || !m.showInbox {
+	if m.inboxInFlight || !(m.showInbox || m.inboxViewUp()) {
 		return false
 	}
 	return m.lastInbox.IsZero() || !now.Before(m.lastInbox.Add(m.cfg.SignalInterval))
@@ -861,6 +877,29 @@ func agentSignature(byIssue map[int][]Agent) string {
 
 // clampCursor keeps the cursor on a real card after any board refresh or
 // column move; an empty column parks the cursor at row 0.
+// inboxViewUp is whether the body is drawing the inbox VIEW — including while
+// an answer launched from it is being typed, since the view stays behind the
+// input line and its rows must keep refreshing.
+func (m Model) inboxViewUp() bool {
+	return m.mode == ModeInbox || (m.mode == ModeAnswer && m.inboxReturn)
+}
+
+// clampInboxRow keeps the inbox view's cursor on a row that exists — the list
+// changes under it on every refresh (an answered decision leaves it).
+func (m *Model) clampInboxRow() {
+	n := len(m.inboxCards)
+	if n == 0 {
+		m.inboxRow = 0
+		return
+	}
+	if m.inboxRow >= n {
+		m.inboxRow = n - 1
+	}
+	if m.inboxRow < 0 {
+		m.inboxRow = 0
+	}
+}
+
 func (m *Model) clampCursor() {
 	if m.col < 0 {
 		m.col = 0

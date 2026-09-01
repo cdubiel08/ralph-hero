@@ -158,7 +158,13 @@ func viewModel(m Model) string {
 	case ModeTopology:
 		b.WriteString(renderTopology(m, bodyHeight))
 	default:
-		b.WriteString(renderColumns(m, bodyHeight))
+		if m.inboxViewUp() {
+			// The inbox view stays behind the answer input it launched, so
+			// the human types against the decision text they are answering.
+			b.WriteString(renderInbox(m, bodyHeight))
+		} else {
+			b.WriteString(renderColumns(m, bodyHeight))
+		}
 	}
 	b.WriteString("\n")
 
@@ -178,7 +184,10 @@ func legend(m Model) string {
 	if m.mode == ModePeek || m.mode == ModeDag || m.mode == ModeTopology {
 		return "esc close"
 	}
-	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · T topology · d diff · D done⇄human · I inbox⇄human · g browser · q quit"
+	if m.mode == ModeInbox {
+		return "j/k row · a/⏎ answer decision · g browser · i/esc close"
+	}
+	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · T topology · i inbox · d diff · D done⇄human · I inbox⇄human · g browser · q quit"
 }
 
 // bodyHeightOf mirrors viewModel's body sizing — shared with hitTest so the
@@ -341,7 +350,7 @@ func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
 // the selected card. No boxes and no per-card borders — a border is two more
 // rows of chrome per card in a column that is already three cards deep.
 func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
-	selected := m.mode != ModePeek && m.mode != ModeDag && m.mode != ModeTopology && colIdx == m.col && rowIdx == m.row
+	selected := m.mode != ModePeek && m.mode != ModeDag && m.mode != ModeTopology && m.mode != ModeInbox && colIdx == m.col && rowIdx == m.row
 	g := m.glyphSet()
 	inner := width - 2 // gutter char + one space
 	if inner < 1 {
@@ -854,6 +863,262 @@ func renderTopology(m Model, bodyHeight int) string {
 	title := "topology — " + m.topoRepo + "  (machine-local; board claims not read)"
 	content := styleTitle.Render(truncate(title, innerW)) + "\n" + strings.Join(lines, "\n")
 	return styleOverlay.Width(innerW + 2).Render(content)
+}
+
+// ── inbox view (GH-2318) ────────────────────────────────────────────────────
+
+// inboxDetailMaxLines caps how much of one row's detail the view wraps. The
+// point of the view is to READ the decision text the card truncates to one
+// line, so the cap is generous; past it the row says the issue has more.
+const inboxDetailMaxLines = 8
+
+// renderInbox draws the queue-level inbox surface: every Tier 1 row at full
+// width, the decision text wrapped rather than clipped, the disposition verb
+// under it, and a cursor. The three empty states stay apart exactly as the
+// I column keeps them (unread / read failed / empty), and the two GH-2108
+// honesty lines — withheld and with-leads — render as footers: rows the
+// reader held back are counted, never dropped.
+func renderInbox(m Model, bodyHeight int) string {
+	innerW := m.width - 6
+	if innerW < 20 {
+		innerW = 20
+	}
+	maxLines := bodyHeight - 4
+	if maxLines < 3 {
+		maxLines = 3
+	}
+
+	title := "inbox — Tier 1"
+	if m.cfg.Repo != "" {
+		title = "inbox — " + baseName(m.cfg.Repo) + "  (Tier 1)"
+	}
+	switch {
+	case m.inboxInFlight && m.lastInbox.IsZero():
+		title += "  " + styleDim.Render("reading…")
+	case !m.lastInbox.IsZero():
+		title += "  " + styleDim.Render("read "+m.lastInbox.Format("15:04:05"))
+		if m.inboxInFlight {
+			title += styleDim.Render(" · refreshing…")
+		}
+	}
+
+	var head []string
+	switch {
+	case !m.inboxOK && m.inboxErr != "":
+		head = append(head, styleErr.Render("inbox read failed: "+m.inboxErr))
+		if len(m.inboxCards) > 0 {
+			head = append(head, styleErr.Render(fmt.Sprintf("showing the last good read (%d rows) — these may be stale", len(m.inboxCards))))
+		}
+	case !m.inboxOK:
+		head = append(head, styleDim.Render("(reading the inbox…)"))
+	case len(m.inboxCards) == 0:
+		head = append(head, styleDim.Render("(inbox empty — no decisions waiting)"))
+	default:
+		head = append(head, styleQuestion.Render(inboxCountLine(m.inboxCards)))
+	}
+
+	var foot []string
+	if m.inboxOK && m.inboxWithheld != "" {
+		foot = append(foot, styleDim.Render("withheld: "+m.inboxWithheld+" (self-clearing)"))
+	}
+	if m.inboxOK && m.inboxLeads != "" {
+		foot = append(foot, styleDim.Render("with leads: "+m.inboxLeads+" — a promotion (the lead's or the TTL's) admits them"))
+	}
+
+	// Rows → line blocks. Built in full first so the scroll window can be
+	// computed over real heights: rows are variable-height by design.
+	blocks := make([][]string, 0, len(m.inboxCards))
+	for i, c := range m.inboxCards {
+		blocks = append(blocks, inboxRowLines(m, c, i == m.inboxRow, innerW))
+	}
+
+	avail := maxLines - len(head) - len(foot)
+	if avail < 2 {
+		avail = 2
+	}
+	lines := append([]string{}, head...)
+	if len(blocks) > 0 {
+		top := inboxWindowTop(blocks, m.inboxRow, avail)
+		used := 0
+		// Reserve one line for each of the two scroll markers only when it
+		// is needed, so a short list never spends rows on chrome.
+		if top > 0 {
+			lines = append(lines, styleDim.Render(fmt.Sprintf("(↑ %d above — k scrolls)", top)))
+			used++
+		}
+		shown := 0
+		for i := top; i < len(blocks); i++ {
+			need := len(blocks[i])
+			// The "below" marker needs a line if anything will be left over.
+			reserve := 0
+			if i < len(blocks)-1 {
+				reserve = 1
+			}
+			if used+need+reserve > avail && i != m.inboxRow {
+				break
+			}
+			lines = append(lines, blocks[i]...)
+			used += need
+			shown++
+		}
+		if rest := len(blocks) - top - shown; rest > 0 {
+			lines = append(lines, styleDim.Render(fmt.Sprintf("(+%d more below — j scrolls)", rest)))
+		}
+	}
+	lines = append(lines, foot...)
+	for i := range lines {
+		lines[i] = truncate(lines[i], innerW)
+	}
+	content := styleTitle.Render(truncate(title, innerW)) + "\n" + strings.Join(lines, "\n")
+	return styleOverlay.Width(innerW + 2).Render(content)
+}
+
+// inboxCountLine is the CLI's own summary line, per queue, so the view and
+// `board inbox` agree about what is waiting.
+func inboxCountLine(cards []Card) string {
+	n := map[string]int{}
+	for _, c := range cards {
+		n[c.Queue]++
+	}
+	return fmt.Sprintf("%d waiting — %d decisions, %d proposals, %d approvals, %d deliver-blocked",
+		len(cards), n["decision"], n["proposal"], n["approval"], n["deliver-blocked"])
+}
+
+// inboxRowLines renders one row as a block: the head line (cursor gutter,
+// number, queue, priority/estimate, title), the wrapped detail, and the
+// disposition verb. Selection changes INK and the gutter glyph, never the
+// block's height — the scroll window is computed over these heights.
+func inboxRowLines(m Model, c Card, selected bool, width int) []string {
+	bar, barStyle := "│", styleGutter
+	numStyle, textStyle := styleNum, styleCardText
+	if selected {
+		bar, barStyle = "▌", styleGutterS
+		numStyle, textStyle = styleNumSel, styleNumSel
+	}
+	gutter := barStyle.Render(bar) + " "
+	indent := barStyle.Render(bar) + "    "
+	inner := width - 2
+	if inner < 10 {
+		inner = 10
+	}
+
+	head := numStyle.Render(fmt.Sprintf("#%d", c.Number))
+	if c.Queue != "" {
+		head += "  " + styleMeta.Render(c.Queue)
+	}
+	if c.Priority != "" {
+		head += "  " + priorityGlyph(c.Priority)
+	}
+	if c.Estimate != "" {
+		head += " " + styleMeta.Render("["+c.Estimate+"]")
+	}
+	if n := len(m.agents[c.Number]); n > 0 {
+		head += "  " + dotWorking.Render(fmt.Sprintf("%s%d", m.glyphSet().agents, n))
+	}
+	titleW := inner - lipgloss.Width(head) - 2
+	if titleW > 3 {
+		head += "  " + textStyle.Render(trimTo(c.Title, titleW))
+	}
+	lines := []string{gutter + head}
+
+	detailW := inner - 4
+	if detailW < 10 {
+		detailW = 10
+	}
+	switch {
+	case c.Queue == "decision":
+		// The phone-answerable line, in full: this is the one thing the
+		// card could not show and the reason the view exists.
+		q := c.Question
+		if q == "" {
+			q = "(decision text unavailable — see the issue's Decision needed comment; g opens it)"
+		}
+		for _, l := range wrapWords("? "+q, detailW, inboxDetailMaxLines) {
+			lines = append(lines, indent+styleQuestion.Render(l))
+		}
+	case c.Question != "":
+		// approval: the reject arm; deliver-blocked: the reason. Never the
+		// question ink — these rows are not answered, they are disposed.
+		for _, l := range wrapWords(c.Question, detailW, inboxDetailMaxLines) {
+			lines = append(lines, indent+styleMeta.Render(l))
+		}
+	}
+	if c.Verb != "" {
+		lines = append(lines, indent+styleMeta.Render("→ "+c.Verb))
+	}
+	return lines
+}
+
+// inboxWindowTop picks the first block to draw so the selected block is fully
+// visible inside avail lines: the smallest top such that top..selected fits.
+// Stateless by design — the cursor, not a remembered offset, decides the
+// window, so a list that shrank under a refresh cannot strand the scroll.
+func inboxWindowTop(blocks [][]string, selected, avail int) int {
+	if selected >= len(blocks) {
+		selected = len(blocks) - 1
+	}
+	if selected < 0 {
+		return 0
+	}
+	top := selected
+	used := len(blocks[selected])
+	for top > 0 {
+		// One line is reserved for the "above" marker whenever top > 0.
+		if used+len(blocks[top-1])+1 > avail {
+			break
+		}
+		used += len(blocks[top-1])
+		top--
+	}
+	return top
+}
+
+// wrapWords word-wraps s to width cells, at most maxLines lines; a clipped
+// last line ends in an ellipsis. Rune-aware, and a single over-long word is
+// hard-broken rather than overflowing the box. An empty s yields one empty
+// line so a caller's loop still emits the row.
+func wrapWords(s string, width, maxLines int) []string {
+	if width < 1 {
+		width = 1
+	}
+	var out []string
+	var cur []rune
+	flush := func() {
+		out = append(out, string(cur))
+		cur = cur[:0]
+	}
+	for _, word := range strings.Fields(s) {
+		w := []rune(word)
+		for len(w) > width {
+			if len(cur) > 0 {
+				flush()
+			}
+			out = append(out, string(w[:width]))
+			w = w[width:]
+		}
+		switch {
+		case len(cur) == 0:
+			cur = append(cur, w...)
+		case len(cur)+1+len(w) <= width:
+			cur = append(cur, ' ')
+			cur = append(cur, w...)
+		default:
+			flush()
+			cur = append(cur, w...)
+		}
+	}
+	if len(cur) > 0 || len(out) == 0 {
+		flush()
+	}
+	if maxLines > 0 && len(out) > maxLines {
+		out = out[:maxLines]
+		last := []rune(out[maxLines-1])
+		if len(last) >= width {
+			last = last[:width-1]
+		}
+		out[maxLines-1] = string(last) + "…"
+	}
+	return out
 }
 
 // escLabel names a live escalation's audience — where the decision sits now.
