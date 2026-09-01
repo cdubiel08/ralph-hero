@@ -284,6 +284,12 @@ case "$key" in
   agent-focus)
     respond "cli:agent:focus" "ok" '{}' agent-focus
     ;;
+  agent-rename)
+    # GH-2315: hero.sh renames the auto-detected seat agent. Per-TARGET
+    # fixture first, so "this rename is refused (name taken)" is expressible
+    # while other renames answer normally.
+    respond "cli:agent:rename" "ok" '{}' "agent-rename.${3-}" agent-rename
+    ;;
   agent-get | agent-wait)
     # Both answer agent_info (probed on 0.8.x — `agent wait` returns the
     # AgentInfo of the state it woke on). The default status is `idle`, a

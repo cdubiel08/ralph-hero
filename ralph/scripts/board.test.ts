@@ -5996,13 +5996,16 @@ describe("board name: the one place a transport reads the convention (GH-1807)",
     });
   });
 
-  it("board name dispatch prints the dispatch space's durable address (D5.1)", () => {
+  it("board name dispatch prints the dispatch space's durable address (D5.1) and the seat's agent name (GH-2315)", () => {
     const ctx = makeCtx(new FakeGh());
     expect(JSON.parse(say(["name", "dispatch", "--json"], ctx))).toEqual({
       repo: "ralph-hero",
       address: "ralph-hero/dispatch",
+      agentName: "ralph-hero-dispatch",
     });
-    expect(say(["name", "dispatch"], ctx)).toContain("address  ralph-hero/dispatch");
+    const text = say(["name", "dispatch"], ctx);
+    expect(text).toContain("address  ralph-hero/dispatch");
+    expect(text).toContain("agent    ralph-hero-dispatch");
   });
 
   it("kind comes from labels; the apply label outranks them, but only once armed", () => {
@@ -6077,6 +6080,20 @@ describe("board name: the one place a transport reads the convention (GH-1807)",
     // DIFFERENT worktree's leaf, not a source-checkout session.
     const near = JSON.parse(say(["peer", "lead", "--candidates", "ralph-hero-extra-thing", "--json"], ctx));
     expect(near.kind).toBe("none");
+
+    // GH-2315: a hero spawned under its derived name resolves EXACTLY, ahead
+    // of the leaf filter — the structural ambiguity above is only the
+    // fallback for an unnamed (pre-2315) sitting.
+    const seat = JSON.parse(
+      say(["peer", "dispatch", "--candidates", "ralph-hero-a2,ralph-hero-dispatch,ralph-hero-8f", "--json"], ctx),
+    );
+    expect(seat).toMatchObject({ role: "dispatch", kind: "resolved", address: "ralph-hero-dispatch" });
+    expect(run(["peer", "dispatch", "--candidates", "ralph-hero-a2,ralph-hero-dispatch"], ctx)).toBe(0);
+    // The preference is dispatch-only: the seat name says nothing about which
+    // session is the LEAD, so `peer lead` keeps the structural refusal.
+    expect(
+      JSON.parse(say(["peer", "lead", "--candidates", "ralph-hero-a2,ralph-hero-dispatch", "--json"], ctx)).kind,
+    ).toBe("ambiguous");
 
     // From the source checkout itself git answers ".git" — the leaf is then
     // the repo root's own basename.

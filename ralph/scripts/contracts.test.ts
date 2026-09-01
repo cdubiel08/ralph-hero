@@ -30,7 +30,9 @@ import {
   DISPATCH_SEGMENT,
   formatAddress,
   formatDispatchAddress,
+  formatDispatchAgentName,
   formatTeamSegment,
+  HERDR_NAME_RE,
   parseAddress,
   TOKENS,
   peerPrefix,
@@ -535,6 +537,53 @@ describe("naming: herd addresses (GH-2209, topology A)", () => {
     expect(v("ralph-hero/dispatch")).toBe(true);
     expect(v("2209")).toBe(false);
     expect(v("w2209-topology")).toBe(false);
+  });
+});
+
+describe("naming: dispatch seat agent name (GH-2315)", () => {
+  it("is the hyphenated dispatch address", () => {
+    expect(formatDispatchAgentName("ralph-hero")).toBe("ralph-hero-dispatch");
+    expect(formatDispatchAgentName("landcrawler-ai")).toBe("landcrawler-ai-dispatch");
+  });
+
+  it("sanitizes the repo segment into the herdr name charset (dots, case, leading digits)", () => {
+    expect(formatDispatchAgentName("My.Repo")).toBe("my-repo-dispatch");
+    expect(formatDispatchAgentName("2048_game")).toBe("game-dispatch"); // slugify strips the leading non-letter run
+  });
+
+  it("every mint satisfies herdr's own name rule and NEVER parses as grammar B — reconcile immunity rides on this", () => {
+    const repos = [
+      "ralph-hero",
+      "landcrawler-ai",
+      "My.Repo",
+      "2048_game",
+      "w2-foo", // the one shape whose hyphenated form WOULD parse
+      "o1-x",
+      "a-very-long-repository-name-that-overflows-the-budget",
+      "x",
+    ];
+    for (const r of repos) {
+      const n = formatDispatchAgentName(r);
+      expect(HERDR_NAME_RE.test(n), `${r} → ${n}`).toBe(true);
+      expect(parseAgentName(n), `${r} → ${n}`).toBeNull();
+    }
+  });
+
+  it("a repo spelling lane+digits flips to the dispatch-first shape rather than parsing as a work agent", () => {
+    // "w2-foo-dispatch" would parse as {lane w, issue 2, slug foo-dispatch} —
+    // reconcile would ledger the seat, exactly what GH-2182's bar forbids.
+    expect(formatDispatchAgentName("w2-foo")).toBe("dispatch-w2-foo");
+  });
+
+  it("stays within the 32-char name budget on long repos", () => {
+    const n = formatDispatchAgentName("a-very-long-repository-name-that-overflows-the-budget");
+    expect(n.length).toBeLessThanOrEqual(32);
+    expect(n.endsWith("-dispatch")).toBe(true);
+  });
+
+  it("refuses an illegal repo segment like its address sibling", () => {
+    expect(() => formatDispatchAgentName("own/er")).toThrow(RangeError);
+    expect(() => formatDispatchAgentName("")).toThrow(RangeError);
   });
 });
 
