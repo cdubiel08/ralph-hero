@@ -77,7 +77,7 @@ esac
 # ── 4. .claude/settings.json's env block is honoured too, mirroring board.ts
 SETTINGS_CFG="$TMP/settings-repo"
 mkdir -p "$SETTINGS_CFG/.claude"
-printf '{"env":{"RALPH_GH_OWNER":"acme","RALPH_GH_REPO":"gadgets"}}\n' >"$SETTINGS_CFG/.claude/settings.json"
+printf '{"env":{"RALPH_GH_OWNER":"acme","RALPH_GH_REPO":"gadgets","RALPH_GH_PROJECT_NUMBER":"2"}}\n' >"$SETTINGS_CFG/.claude/settings.json"
 run_resolve "{\"workspace_cwd\":\"$SETTINGS_CFG\"}"
 is "settings.json env block: resolves same as .ralph.json" "0" "$rc"
 case "$stderr" in
@@ -176,13 +176,65 @@ case "$stderr" in
   *) ok "valid JSON missing owner/repo: not conflated with malformed JSON" ;;
 esac
 
-# The three refusal messages must all differ from one another — the defect
-# being fixed was three causes rendering byte-identically.
+# ── 8. owner/repo present but no projectNumber (GH-2336): the scope read
+#      passes (owner/repo IS its key) but board.ts:1032 refuses in init, so
+#      the pane would open and die anonymously — a fourth distinct refusal,
+#      one per config-file shape, and the coercion mirrors board.ts's
+#      Number(x ?? 0): 0 and a non-numeric string refuse, a numeric string
+#      passes.
+NO_PROJECT="$TMP/no-project-repo"
+mkdir -p "$NO_PROJECT"
+printf '{"owner":"acme","repo":"widgets"}\n' >"$NO_PROJECT/.ralph.json"
+run_resolve "{\"workspace_cwd\":\"$NO_PROJECT\"}"
+is ".ralph.json missing projectNumber: refuses (rc 1)" "1" "$rc"
+is ".ralph.json missing projectNumber: prints nothing to stdout" "" "$stdout"
+case "$stderr" in
+  *"missing projectNumber"*"'projectNumber'"*) ok ".ralph.json missing projectNumber: names the missing key for this file shape" ;;
+  *) not_ok ".ralph.json missing projectNumber: message did not name projectNumber — got '$stderr'" ;;
+esac
+case "$stderr" in
+  *"NOT a focus problem"*) ok ".ralph.json missing projectNumber: remedy says fix the config, not re-focus" ;;
+  *) not_ok ".ralph.json missing projectNumber: remedy still tells the operator to re-focus — got '$stderr'" ;;
+esac
+case "$stderr" in
+  *"missing owner/repo"*|*MALFORMED*) not_ok ".ralph.json missing projectNumber: must NOT reuse the owner/repo or malformed message" ;;
+  *) ok ".ralph.json missing projectNumber: not conflated with the owner/repo or malformed refusals" ;;
+esac
+
+NO_PROJECT_SETTINGS="$TMP/no-project-settings-repo"
+mkdir -p "$NO_PROJECT_SETTINGS/.claude"
+printf '{"env":{"RALPH_GH_OWNER":"acme","RALPH_GH_REPO":"gadgets"}}\n' >"$NO_PROJECT_SETTINGS/.claude/settings.json"
+run_resolve "{\"workspace_cwd\":\"$NO_PROJECT_SETTINGS\"}"
+is "settings.json missing RALPH_GH_PROJECT_NUMBER: refuses (rc 1)" "1" "$rc"
+is "settings.json missing RALPH_GH_PROJECT_NUMBER: prints nothing to stdout" "" "$stdout"
+case "$stderr" in
+  *"missing projectNumber"*"env.RALPH_GH_PROJECT_NUMBER"*) ok "settings.json missing RALPH_GH_PROJECT_NUMBER: names the env key for this file shape" ;;
+  *) not_ok "settings.json missing RALPH_GH_PROJECT_NUMBER: message did not name the env key — got '$stderr'" ;;
+esac
+
+# board.ts coerces with Number(): "0" and a non-numeric string are refused
+# there too, so they refuse here; a numeric string is accepted there, so it
+# is accepted here.
+printf '{"owner":"acme","repo":"widgets","projectNumber":0}\n' >"$NO_PROJECT/.ralph.json"
+run_resolve "{\"workspace_cwd\":\"$NO_PROJECT\"}"
+is "projectNumber 0: refuses like board.ts's falsy test" "1" "$rc"
+printf '{"owner":"acme","repo":"widgets","projectNumber":"three"}\n' >"$NO_PROJECT/.ralph.json"
+run_resolve "{\"workspace_cwd\":\"$NO_PROJECT\"}"
+is "non-numeric projectNumber: refuses like board.ts's Number() NaN" "1" "$rc"
+printf '{"env":{"RALPH_GH_OWNER":"acme","RALPH_GH_REPO":"gadgets","RALPH_GH_PROJECT_NUMBER":"7"}}\n' >"$NO_PROJECT_SETTINGS/.claude/settings.json"
+run_resolve "{\"workspace_cwd\":\"$NO_PROJECT_SETTINGS\"}"
+is "numeric-string RALPH_GH_PROJECT_NUMBER (settings.json's only shape): resolves (rc 0)" "0" "$rc"
+
+# The four refusal messages must all differ from one another — the defect
+# being fixed was distinct causes rendering byte-identically.
+printf '{"owner":"acme","repo":"widgets"}\n' >"$NO_PROJECT/.ralph.json"
 run_resolve "{\"workspace_cwd\":\"$UNCONFIGURED\"}"; no_config_err="$stderr"
 run_resolve "{\"workspace_cwd\":\"$BADJSON\"}"; malformed_err="$stderr"
 run_resolve "{\"workspace_cwd\":\"$MISSING_OWNER\"}"; missing_err="$stderr"
-if [ "$no_config_err" != "$malformed_err" ] && [ "$no_config_err" != "$missing_err" ] && [ "$malformed_err" != "$missing_err" ]; then
-  ok "three failure causes produce three distinct messages"
+run_resolve "{\"workspace_cwd\":\"$NO_PROJECT\"}"; no_project_err="$stderr"
+if [ "$no_config_err" != "$malformed_err" ] && [ "$no_config_err" != "$missing_err" ] && [ "$malformed_err" != "$missing_err" ] \
+   && [ "$no_project_err" != "$no_config_err" ] && [ "$no_project_err" != "$malformed_err" ] && [ "$no_project_err" != "$missing_err" ]; then
+  ok "four failure causes produce four distinct messages"
 else
   not_ok "two or more failure causes still render identically"
 fi
