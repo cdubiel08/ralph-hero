@@ -55,6 +55,8 @@ import {
   parseDefer,
   formatDefer,
   doctor,
+  classifyStateGuardLog,
+  stateGuardVerdict,
   parsePrOrphanPolicy,
   prOrphans,
   PR_ORPHAN_DEFAULT_IGNORE,
@@ -1694,6 +1696,174 @@ describe("doctor (legacy states, archived items)", () => {
       "-R",
       "github.com/cdubiel08/ralph-hero",
     ]);
+  });
+
+  // GH-2282: the state-guard line names the cause, and each cause gets its
+  // own verdict shape. A rate limit, a rotten PAT and a real bug used to
+  // render identically, and this repo rotated a healthy PAT off that twice.
+  const RL_LOG = [
+    "guard\tReconciler lane — field-drift sweep\t2026-08-29T00:30:03.0741060Z ✗ gh-auth: github.com",
+    "guard\tReconciler lane — field-drift sweep\t2026-08-29T00:30:03.0741594Z   X Failed to log in to github.com using token (GH_TOKEN)",
+    "guard\tReconciler lane — field-drift sweep\t2026-08-29T00:30:03.0742808Z   - The token in GH_TOKEN is invalid.",
+    "guard\tReconciler lane — field-drift sweep\t2026-08-29T00:30:03.0744864Z ✗ cache: gh api graphql rate limited: gh: API rate limit already exceeded for user ID 68287507.",
+    "guard\tReconciler lane — field-drift sweep\t2026-08-29T00:30:03.0928569Z ##[error]Process completed with exit code 1.",
+  ].join("\n");
+  const PAT_LOG =
+    "guard\tEvent lane — adopt / reconcile / parent gate\t2026-08-08T02:02:39.0000000Z error: project cdubiel08/#3 not found (checked user + organization)";
+
+  it("classifyStateGuardLog: rate-limit evidence outranks the auth line the same starved token also prints", () => {
+    // run 33223698651's log carries BOTH "token in GH_TOKEN is invalid" and
+    // the rate-limit line; an auth-first reading names the credential.
+    const c = classifyStateGuardLog(RL_LOG);
+    expect(c.cause).toBe("rate-limited");
+    expect(c.evidence).toMatch(/rate limit already exceeded/);
+    expect(c.evidence).not.toMatch(/^guard\t/);
+  });
+
+  it("classifyStateGuardLog: the 2026-08-08 expired-PAT wording and Bad credentials both read as auth", () => {
+    expect(classifyStateGuardLog(PAT_LOG).cause).toBe("auth");
+    expect(classifyStateGuardLog("x\ty\t2026-08-08T00:00:00Z HTTP 401: Bad credentials").cause).toBe("auth");
+    expect(classifyStateGuardLog("x\ty\t2026-08-08T00:00:00Z ::error::ROUTING_PAT secret is missing or empty").cause).toBe("auth");
+  });
+
+  it("classifyStateGuardLog: an unrecognised failure is other, never one of the two named causes", () => {
+    const c = classifyStateGuardLog("x\ty\t2026-08-08T00:00:00Z TypeError: cannot read properties of undefined");
+    expect(c).toEqual({ cause: "other", evidence: null });
+  });
+
+  it("doctor: a green state-guard window makes no run-view call (costs exactly what it did)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.runListJson = JSON.stringify([
+      { conclusion: "success", updatedAt: "2026-08-29T00:48:00Z", event: "issues", databaseId: 2, url: "u2" },
+      { conclusion: "success", updatedAt: "2026-08-29T00:30:00Z", event: "schedule", databaseId: 1, url: "u1" },
+    ]);
+    gh.runViewLog = RL_LOG;
+    const report = doctor(ctx);
+    expect(report.checks.find((c) => c.name === "state-guard")?.level).toBe("ok");
+    expect(gh.runViewCalls).toEqual([]);
+  });
+
+  it("doctor: a rate-limited failure followed by green runs is an info line, not a ✗ (GH-2282)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.runListJson = JSON.stringify([
+      { conclusion: "success", updatedAt: "2026-08-29T00:49:00Z", event: "issues", databaseId: 3, url: "u3" },
+      { conclusion: "success", updatedAt: "2026-08-29T00:48:00Z", event: "issues", databaseId: 2, url: "u2" },
+      { conclusion: "failure", updatedAt: "2026-08-29T00:30:06Z", event: "schedule", databaseId: 33223698651, url: "https://github.com/cdubiel08/ralph-hero/actions/runs/33223698651" },
+      { conclusion: "success", updatedAt: "2026-08-29T00:15:00Z", event: "schedule", databaseId: 1, url: "u1" },
+    ]);
+    gh.runViewLog = RL_LOG;
+    const prev = process.env.GITHUB_WORKFLOW;
+    try {
+      delete process.env.GITHUB_WORKFLOW;
+      const report = doctor(ctx);
+      const check = report.checks.find((c) => c.name === "state-guard");
+      expect(check?.level).toBe("info");
+      expect(check?.detail).toMatch(/^rate-limited, self-healed — no action/);
+      // both greens are issue-lane runs: the budget is proven back, the cron lane is not
+      expect(check?.detail).toMatch(/2 green runs since \(none on the schedule lane yet\)/);
+      expect(check?.detail).toMatch(/schedule run at 2026-08-29T00:30Z/);
+      expect(check?.detail).toMatch(/actions\/runs\/33223698651/);
+      expect(check?.detail).not.toMatch(/^auth|rotate ROUTING_PAT/);
+      expect(report.ok).toBe(true);
+      // info is advisory by construction: --strict never escalates it
+      expect(doctor(ctx, { strict: true }).checks.find((c) => c.name === "state-guard")?.level).toBe("info");
+      // exactly one log read, for the newest failure, pinned to the configured repo
+      expect(gh.runViewCalls.length).toBeGreaterThan(0);
+      expect(gh.runViewCalls[0].slice(0, 6)).toEqual(["gh", "run", "view", "33223698651", "-R", "github.com/cdubiel08/ralph-hero"]);
+    } finally {
+      if (prev === undefined) delete process.env.GITHUB_WORKFLOW;
+      else process.env.GITHUB_WORKFLOW = prev;
+    }
+  });
+
+  it("doctor: a rate-limited failure with no green run since still fails, says wait, names the reset — and warns inside the wall (GH-1722 kept)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.now = () => new Date("2026-08-29T00:40:00Z");
+    gh.runListJson = JSON.stringify([
+      { conclusion: "failure", updatedAt: "2026-08-29T00:30:06Z", event: "schedule", databaseId: 33223698651, url: "u" },
+      { conclusion: "success", updatedAt: "2026-08-29T00:15:00Z", event: "schedule", databaseId: 1, url: "u1" },
+    ]);
+    gh.runViewLog = RL_LOG;
+    const prev = process.env.GITHUB_WORKFLOW;
+    try {
+      delete process.env.GITHUB_WORKFLOW;
+      const outside = doctor(ctx);
+      const c = outside.checks.find((x) => x.name === "state-guard");
+      expect(c?.level).toBe("fail");
+      expect(c?.detail).toMatch(/^rate-limited — wait, do not rotate the PAT/);
+      expect(c?.detail).toMatch(/by ~2026-08-29T01:30Z/);
+      expect(c?.detail).toMatch(/no green run since/);
+      expect(outside.ok).toBe(false);
+
+      process.env.GITHUB_WORKFLOW = "state-guard";
+      const inside = doctor(ctx).checks.find((x) => x.name === "state-guard");
+      expect(inside?.level).toBe("warn");
+      expect(inside?.detail).toMatch(/self-run/);
+    } finally {
+      if (prev === undefined) delete process.env.GITHUB_WORKFLOW;
+      else process.env.GITHUB_WORKFLOW = prev;
+    }
+  });
+
+  it("doctor: an auth failure leads with the credential, by evidence (GH-2282)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.runListJson = JSON.stringify([
+      { conclusion: "failure", updatedAt: "2026-08-08T02:02:39Z", event: "issues", databaseId: 31234064054, url: "u" },
+      { conclusion: "failure", updatedAt: "2026-08-08T02:02:41Z", event: "issues", databaseId: 31234061590, url: "v" },
+    ]);
+    gh.runViewLog = PAT_LOG;
+    const prev = process.env.GITHUB_WORKFLOW;
+    try {
+      delete process.env.GITHUB_WORKFLOW;
+      const c = doctor(ctx).checks.find((x) => x.name === "state-guard");
+      expect(c?.level).toBe("fail");
+      expect(c?.detail).toMatch(/^auth — rotate ROUTING_PAT/);
+      expect(c?.detail).toMatch(/project cdubiel08\/#3 not found/);
+      expect(c?.detail).toMatch(/2\/2 in window: issues@2026-08-08T02:02Z, issues@2026-08-08T02:02Z/);
+      // newest failure is judged: the 02:02:41 run (sorted by time, not by list order)
+      expect(gh.runViewCalls[0][3]).toBe("31234061590");
+    } finally {
+      if (prev === undefined) delete process.env.GITHUB_WORKFLOW;
+      else process.env.GITHUB_WORKFLOW = prev;
+    }
+  });
+
+  it("doctor: an unreadable failure log renders as other with the run URL — never as success, never as a cause it could not prove", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.runListJson = JSON.stringify([
+      { conclusion: "success", updatedAt: "2026-08-08T03:00:00Z", event: "schedule", databaseId: 2, url: "u2" },
+      { conclusion: "failure", updatedAt: "2026-08-08T02:00:00Z", event: "schedule", databaseId: 1, url: "https://x/runs/1" },
+    ]);
+    gh.runViewLog = null;
+    const prev = process.env.GITHUB_WORKFLOW;
+    try {
+      delete process.env.GITHUB_WORKFLOW;
+      const c = doctor(ctx).checks.find((x) => x.name === "state-guard");
+      expect(c?.level).toBe("fail");
+      expect(c?.detail).toMatch(/^other — debug https:\/\/x\/runs\/1/);
+      expect(c?.detail).toMatch(/failure log unreadable/);
+      expect(c?.detail).toMatch(/1 green run since\. /); // same lane: no lane note
+      expect(c?.detail).not.toMatch(/rate-limited|rotate/);
+    } finally {
+      if (prev === undefined) delete process.env.GITHUB_WORKFLOW;
+      else process.env.GITHUB_WORKFLOW = prev;
+    }
+  });
+
+  it("stateGuardVerdict: a rate-limited failure older than the hourly window with no run since says the window has passed", () => {
+    const v = stateGuardVerdict({
+      runs: [{ conclusion: "failure", updatedAt: "2026-08-29T00:30:00Z", event: "schedule", databaseId: 9, url: "u" }],
+      selfRun: false,
+      now: new Date("2026-08-29T02:00:00Z"),
+      readFailedLog: () => RL_LOG,
+    });
+    expect(v.level).toBe("fail");
+    expect(v.detail).toMatch(/hourly window has passed since \(~2026-08-29T01:30Z\); the next fire will tell/);
   });
 
   it("doctor: a green state-guard window is ok even inside the workflow", () => {

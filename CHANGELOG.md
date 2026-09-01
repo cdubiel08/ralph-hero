@@ -19,6 +19,14 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Changed
 
+- **Doctor's `state-guard` line names the cause (GH-2282).** A rate limit, a
+  rotten `ROUTING_PAT` and a real bug rendered identically as
+  `N/5 recent runs not successful`; the newest failure's log is now read (one
+  call, only when a failure exists) and the check emits a distinct verdict
+  shape per cause — `rate-limited, self-healed` (`i`, once green runs follow),
+  `rate-limited — wait` (names the reset), `auth — rotate ROUTING_PAT` (quotes
+  the evidence), `other — debug <run URL>` (incl. an unreadable log). Per-run
+  `event` (cron vs event lane) rides the existing list call.
 - **`board answer` no longer claims the unit to the answerer — the resume
   edge belongs to the resuming agent (GH-2204)**. The verb's default is now
   comment-only: the **Answer** comment lands (timestamped by a

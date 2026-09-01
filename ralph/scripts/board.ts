@@ -10085,6 +10085,122 @@ export function prOrphans(ctx: Ctx): PrOrphanReport {
   };
 }
 
+// ---------------------------------------------------------------------------
+// state-guard failure classification (GH-2282)
+//
+// The proof-of-fire check used to render a rate limit, a rotten PAT and a real
+// bug as one string — `N/5 recent runs not successful` — and this repo has
+// rotated a healthy PAT off that reading twice. The classifier names the cause
+// from the newest failure's own log, and each cause gets its OWN verdict
+// shape rather than one verdict with a suffix: a reader at 1am must see the
+// remedy first, not parse it out of the tail.
+// ---------------------------------------------------------------------------
+
+export type StateGuardCause = "rate-limited" | "auth" | "other";
+
+export type StateGuardRun = {
+  conclusion?: string | null;
+  updatedAt?: string;
+  event?: string;
+  databaseId?: number;
+  url?: string;
+};
+
+// Rate-limit evidence is tested FIRST and outranks auth evidence: a starved
+// token also fails `gh auth status` with "The token in GH_TOKEN is invalid"
+// (run 33223698651 printed exactly that beside the rate-limit line), so an
+// auth-first reading of the same log names the credential — the false lead
+// this classifier exists to remove.
+const STATE_GUARD_RATE_LIMIT_RE = /rate limit|RATE_LIMITED|secondary rate|abuse detection/i;
+// Auth evidence a rate limit does not also produce. `project … not found
+// (checked user + organization)` is what the 2026-08-08 expired-PAT incident
+// actually logged (run 31234064054): a token without project scope reads the
+// board as absent, and a configured project vanishing is the far rarer cause.
+const STATE_GUARD_AUTH_RE =
+  /Bad credentials|HTTP 401|ROUTING_PAT secret is missing|token .*\b(expired|revoked)\b|requires .*\bscope|Resource not accessible by (integration|personal access token)|project \S+ not found \(checked user \+ organization\)/i;
+// `gh run view --log-failed` prefixes every line with `job\tstep\ttimestamp `.
+const ACTIONS_LOG_PREFIX_RE = /^[^\t\n]*\t[^\t\n]*\t\S+Z\s*/;
+
+export function classifyStateGuardLog(log: string): { cause: StateGuardCause; evidence: string | null } {
+  const lines = log.split("\n").map((l) => l.replace(ACTIONS_LOG_PREFIX_RE, "").trim());
+  const find = (re: RegExp) => lines.find((l) => re.test(l)) ?? null;
+  const rl = find(STATE_GUARD_RATE_LIMIT_RE);
+  if (rl) return { cause: "rate-limited", evidence: rl };
+  const au = find(STATE_GUARD_AUTH_RE);
+  if (au) return { cause: "auth", evidence: au };
+  return { cause: "other", evidence: null };
+}
+
+function stateGuardMinute(iso?: string): string {
+  if (!iso) return "?";
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(t).toISOString().replace(/:\d\d\.\d{3}Z$/, "Z") : iso;
+}
+
+export function stateGuardVerdict(args: {
+  runs: StateGuardRun[];
+  selfRun: boolean;
+  now: Date;
+  readFailedLog: (run: StateGuardRun) => string | null;
+}): { level: DoctorLevel; detail: string } {
+  const at = (r: StateGuardRun) => Date.parse(r.updatedAt ?? "") || 0;
+  const concluded = args.runs.filter((r) => r.conclusion).sort((a, b) => at(b) - at(a));
+  const bad = concluded.filter((r) => r.conclusion !== "success");
+  const newest = bad[0];
+  if (!newest) return { level: "ok", detail: `last ${concluded.length} runs green` };
+  const greens = concluded.filter((r) => r.conclusion === "success" && at(r) > at(newest));
+  const greenSince = greens.length;
+  // A green run on ANY lane proves the shared token's budget is back (the
+  // 2026-08-29 incident healed on two issue-lane runs), but it does not prove
+  // the failed lane has fired since — say so rather than let a cross-lane
+  // green read as a completed reconcile sweep.
+  const sameLaneNote =
+    greenSince > 0 && newest.event && !greens.some((r) => r.event === newest.event)
+      ? ` (none on the ${newest.event} lane yet)`
+      : "";
+  const lanes = bad.map((r) => `${r.event ?? "?"}@${stateGuardMinute(r.updatedAt)}`).join(", ");
+  const window = `${bad.length}/${concluded.length} in window: ${lanes}`;
+  const ref = newest.url ?? (newest.databaseId ? `run ${newest.databaseId}` : "run id unknown");
+  const lane = newest.event ?? "?";
+  const t = stateGuardMinute(newest.updatedAt);
+  const failLevel: DoctorLevel = args.selfRun ? "warn" : "fail";
+  const selfNote = args.selfRun ? " (self-run: warn, letting this run go green so the window can heal)" : "";
+  const since =
+    greenSince === 0 ? "no green run since" : `${greenSince} green run${greenSince === 1 ? "" : "s"} since${sameLaneNote}`;
+
+  const log = args.readFailedLog(newest);
+  const cls = log === null ? { cause: "other" as const, evidence: null } : classifyStateGuardLog(log);
+  const ev = cls.evidence ? ` evidence: "${cls.evidence.slice(0, 160)}".` : "";
+
+  if (cls.cause === "rate-limited") {
+    if (greenSince > 0) {
+      return {
+        level: "info",
+        detail: `rate-limited, self-healed — no action: ${lane} run at ${t} starved the GraphQL budget; ${since}. Nothing to rotate, nothing to debug. ${window}. ${ref}`,
+      };
+    }
+    const reset = new Date(at(newest) + 60 * 60 * 1000);
+    const resetNote =
+      args.now.getTime() >= reset.getTime()
+        ? `the hourly window has passed since (~${stateGuardMinute(reset.toISOString())}); the next fire will tell`
+        : `self-heals when the hourly window resets (by ~${stateGuardMinute(reset.toISOString())})`;
+    return {
+      level: failLevel,
+      detail: `rate-limited — wait, do not rotate the PAT: ${lane} run at ${t} starved the GraphQL budget; ${resetNote}; ${since}. ${window}. ${ref}${selfNote}`,
+    };
+  }
+  if (cls.cause === "auth") {
+    return {
+      level: failLevel,
+      detail: `auth — rotate ROUTING_PAT: ${lane} run at ${t} could not authenticate; ${since}.${ev} ${window}. ${ref}${selfNote}`,
+    };
+  }
+  return {
+    level: failLevel,
+    detail: `other — debug ${ref}: ${lane} run at ${t} failed for an unclassified reason${log === null ? " (failure log unreadable)" : ""}; ${since}. ${window}${selfNote}`,
+  };
+}
+
 export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {}): DoctorReport {
   // The write-guard carve-out (GH-1806), enforced HERE and not only at the CLI
   // dispatch, so a programmatic caller cannot route around it. --fix selects
@@ -10882,17 +10998,19 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   }
 
   // state-guard proof-of-fire (Phase 2 workflow; tolerate absence)
+  const repoRef = `${ctx.cfg.host}/${ctx.cfg.owner}/${ctx.cfg.repo}`;
   const runs = ctx.exec([
     // -R pins the check to the CONFIGURED repo (and host): run from a foreign
     // clone this must not judge whatever repo cwd resolves to.
-    "gh", "run", "list", "-R", `${ctx.cfg.host}/${ctx.cfg.owner}/${ctx.cfg.repo}`,
+    "gh", "run", "list", "-R", repoRef,
     "--workflow", "state-guard.yml", "--limit", "5",
-    "--json", "conclusion,updatedAt",
+    // event/databaseId/url ride the same call: zero extra cost (GH-2282).
+    "--json", "conclusion,updatedAt,event,databaseId,url",
   ]);
   if (runs.code === 0) {
     try {
-      const parsed = JSON.parse(runs.stdout);
-      const bad = parsed.filter((r: any) => r.conclusion && r.conclusion !== "success");
+      const parsed: StateGuardRun[] = JSON.parse(runs.stdout);
+      const bad = parsed.filter((r) => r.conclusion && r.conclusion !== "success");
       if (parsed.length === 0) add("state-guard", "warn", "no runs recorded");
       else if (bad.length === 0) add("state-guard", "ok", `last ${parsed.length} runs green`);
       else {
@@ -10903,11 +11021,16 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         // local runs and doctor.yml keep the fail — the wall's watchers are
         // outside the wall.
         const selfRun = process.env.GITHUB_WORKFLOW === "state-guard";
-        add(
-          "state-guard",
-          selfRun ? "warn" : "fail",
-          `${bad.length}/${parsed.length} recent runs not successful${selfRun ? " (self-run: warn, letting this run go green so the window can heal)" : ""}`,
-        );
+        // The failed-log read is the ONE extra call, and it fires only here —
+        // a green window costs exactly what it cost before. An unreadable log
+        // classifies as `other`, never as a cause it could not prove.
+        const readFailedLog = (run: StateGuardRun): string | null => {
+          if (!run.databaseId) return null;
+          const r = ctx.exec(["gh", "run", "view", String(run.databaseId), "-R", repoRef, "--log-failed"]);
+          return r.code === 0 ? r.stdout : null;
+        };
+        const v = stateGuardVerdict({ runs: parsed, selfRun, now: ctx.now(), readFailedLog });
+        add("state-guard", v.level, v.detail);
       }
     } catch {
       add("state-guard", "warn", "run list unparseable");
