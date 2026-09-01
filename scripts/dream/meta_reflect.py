@@ -41,7 +41,16 @@ log = logging.getLogger("ralph.dream.meta_reflect")
 
 DEFAULT_LLM_URL = "http://localhost:12000"
 DEFAULT_LLM_MODEL = "mlx-community/gemma-4-26b-a4b-it-mxfp8"
-DEFAULT_LLM_TIMEOUT_S = int(os.environ.get("RALPH_DREAM_LLM_TIMEOUT_S", "180"))
+
+# GH-2300: the weekly synthesis call is ONE completion over the whole window,
+# so its wall time grows with the week while a fixed timeout does not. It
+# shared the nightly's ``RALPH_DREAM_LLM_TIMEOUT_S`` (180 s, sized for an
+# 8-member cluster) and timed out at 47 reflections after serving 42 and 45
+# at ~115 s. Two bounds replace the shared constant: the prompt is capped at
+# the newest ``RALPH_META_MAX_REFLECTIONS`` in the window, and the call gets
+# its own budget sized to that cap. The nightly's knob no longer governs it.
+DEFAULT_LLM_TIMEOUT_S = int(os.environ.get("RALPH_META_LLM_TIMEOUT_S", "600"))
+DEFAULT_MAX_REFLECTIONS = int(os.environ.get("RALPH_META_MAX_REFLECTIONS", "60"))
 
 # How many reflections must accumulate in the window before a meta-reflection
 # run is worthwhile, and how many candidates to ask the model for.
@@ -91,8 +100,10 @@ META_FAILURE_MARKER = "<!-- ralph-dream-meta-health:v1 -->"
 
 # Terminal outcomes of a weekly run. ``empty`` / ``deferred`` / ``suppressed``
 # are healthy zeroes; ``failed`` is the defect — reflections cleared the gate
-# and the model produced no parseable candidate, which is what an unreachable
-# endpoint, an unloaded model and a garbage completion all look like.
+# and the model produced no candidate. The CAUSE is typed beside it
+# (``SynthesisResult.failure``, GH-2300): a timeout, an unreachable endpoint,
+# a non-200 and a garbage completion used to render as one ``failed`` whose
+# alarm listed guesses, and the first real fire was none of them.
 OUTCOME_WROTE = "wrote"
 OUTCOME_EMPTY = "empty"
 OUTCOME_DEFERRED = "deferred"
@@ -117,8 +128,15 @@ class MetaRunResult:
     outcome: str
     staged: int = 0
     reflections: int = 0
+    # GH-2300: how many of ``reflections`` actually reached the prompt — equal
+    # unless the window exceeded the cap, and recorded so a capped run and an
+    # uncapped one never read alike.
+    reflections_fed: int = 0
     candidates: int = 0
     reason: str = ""
+    # GH-2300: typed cause of a ``failed`` run (one of SYNTHESIS_FAILURES);
+    # empty on every other outcome.
+    failure: str = ""
     # GH-2259: near-miss records this run wrote. Reported, never branched on.
     # GH-2283: None (not 0) means the scan write itself failed this run — see
     # record_near_misses. 0 stays "wrote a scan, found nothing"; a caller that
@@ -136,12 +154,22 @@ def emit_meta_failure_issue(
     reflections: int,
     state_path: Path | str,
     repo: str | None = None,
+    failure: str = "",
+    reason: str = "",
 ) -> str | None:
     """File ONE standing alarm for a defect-zero weekly run.
 
     Same dedup-by-title contract as the nightly's alarm; the title and marker
-    differ so the two pipelines never share one issue.
+    differ so the two pipelines never share one issue. The body names the
+    typed cause (GH-2300) rather than listing guesses: the alarm is filed
+    once and read by whoever picks it up, so it must carry the fact the log
+    already knows.
     """
+    cause = (
+        f"Cause: `{failure}` — {reason}\n"
+        if failure
+        else "Cause: not recorded (see the WARNING lines in the log).\n"
+    )
     body = (
         f"{META_FAILURE_MARKER}\n"
         f"The weekly dream-loop meta-reflection run had **{reflections} "
@@ -150,10 +178,10 @@ def emit_meta_failure_issue(
         f"a healthy quiet week is `outcome: empty`, `deferred` or "
         f"`suppressed` in the run state, never `failed`.\n"
         f"\n"
-        f"Likely causes: unreachable LLM endpoint, an unloaded or wrongly-"
-        f"named model (the weekly job passes the gate-resolved `--model`), or "
-        f"a completion the candidate parser could not read. See GH-2110 for "
-        f"the class.\n"
+        f"{cause}"
+        f"Knobs: `RALPH_META_LLM_TIMEOUT_S` ({DEFAULT_LLM_TIMEOUT_S}s), "
+        f"`RALPH_META_MAX_REFLECTIONS` ({DEFAULT_MAX_REFLECTIONS}); the weekly "
+        f"job passes the gate-resolved `--model`. See GH-2110 for the class.\n"
         f"\n"
         f"- Run state: `{state_path}`\n"
         f"- Log: `~/Library/Logs/ralph-dream-weekly.err`\n"
@@ -232,9 +260,11 @@ def build_meta_prompt(reflections: list[dict[str, Any]], max_candidates: int) ->
     )
 
 
-def parse_candidates(text: str) -> list[dict[str, Any]]:
-    """Parse the model's ``{"candidates": [...]}`` response. Tolerant of fences;
-    drops entries lacking a non-empty ``axiom``. Returns ``[]`` on any failure."""
+def _candidate_list(text: str) -> list[Any] | None:
+    """The raw ``candidates`` list from the model's JSON, or ``None`` when the
+    completion carried no readable ``{"candidates": [...]}`` at all. The two
+    are different facts (GH-2300): an empty list is the model's answer, ``None``
+    is a completion the parser could not read."""
     raw = (text or "").strip()
     if raw.startswith("```"):
         nl = raw.find("\n")
@@ -245,15 +275,24 @@ def parse_candidates(text: str) -> list[dict[str, Any]]:
     start = raw.find("{")
     end = raw.rfind("}")
     if start == -1 or end == -1 or end < start:
-        return []
+        return None
     try:
         data = json.loads(raw[start : end + 1])
     except json.JSONDecodeError:
-        return []
+        return None
     if not isinstance(data, dict):
-        return []
+        return None
     cands = data.get("candidates")
     if not isinstance(cands, list):
+        return None
+    return cands
+
+
+def parse_candidates(text: str) -> list[dict[str, Any]]:
+    """Parse the model's ``{"candidates": [...]}`` response. Tolerant of fences;
+    drops entries lacking a non-empty ``axiom``. Returns ``[]`` on any failure."""
+    cands = _candidate_list(text)
+    if cands is None:
         return []
     out: list[dict[str, Any]] = []
     for c in cands:
@@ -276,6 +315,46 @@ def parse_candidates(text: str) -> list[dict[str, Any]]:
     return out
 
 
+# GH-2300: the typed causes of a synthesis that produced nothing. ``timeout``
+# is the one the first real ``failed`` run had, and the one the untyped alarm
+# did not list.
+SYNTHESIS_FAILURES = (
+    "timeout",
+    "unreachable",
+    "http-status",
+    "payload-shape",
+    "unparseable",
+    "model-empty",
+)
+
+
+@dataclass(frozen=True)
+class SynthesisResult:
+    """What the synthesis call produced, and — when nothing — why not.
+
+    ``failure`` is one of :data:`SYNTHESIS_FAILURES` or ``""`` when at least
+    one candidate came back. A bare list could not carry the distinction, and
+    the weekly run state and alarm are read by a human days later, so the
+    cause has to travel with the zero rather than live only in a log line.
+    """
+
+    candidates: list[dict[str, Any]]
+    failure: str = ""
+    detail: str = ""
+
+
+def _classify_llm_exception(exc: BaseException) -> str:
+    """``timeout`` for a read/connect/pool timeout, ``unreachable`` otherwise.
+
+    Matched on the exception's class name rather than an ``httpx`` import so
+    the injected ``http_post`` test seam (and any other transport) classifies
+    the same way: every httpx timeout class is named ``*Timeout*``.
+    """
+    if isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.lower():
+        return "timeout"
+    return "unreachable"
+
+
 def synthesize_candidates(
     reflections: list[dict[str, Any]],
     llm_url: str = DEFAULT_LLM_URL,
@@ -283,11 +362,17 @@ def synthesize_candidates(
     *,
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
     http_post: Any | None = None,
-) -> list[dict[str, Any]]:
-    """Ask the local model for wiki candidates. Fail-open: ``[]`` on any error."""
+    timeout_s: int = DEFAULT_LLM_TIMEOUT_S,
+) -> SynthesisResult:
+    """Ask the local model for wiki candidates.
+
+    Fail-open — never raises — but never silent either: an empty result
+    carries its typed cause (GH-2300).
+    """
     if not reflections:
-        return []
+        return SynthesisResult([], "model-empty", "no reflections to synthesize from")
     prompt = build_meta_prompt(reflections, max_candidates)
+    shape = f"{len(reflections)} reflection(s), {len(prompt)}-char prompt"
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -299,23 +384,46 @@ def synthesize_candidates(
         if http_post is None:
             import httpx  # type: ignore[import-untyped]
 
-            with httpx.Client(timeout=DEFAULT_LLM_TIMEOUT_S) as client:
+            with httpx.Client(timeout=timeout_s) as client:
                 resp = client.post(url, json=body)
             status, payload = resp.status_code, resp.json()
         else:
-            status, payload = http_post(url, body, DEFAULT_LLM_TIMEOUT_S)
+            status, payload = http_post(url, body, timeout_s)
     except Exception as exc:  # noqa: BLE001
-        log.warning("meta-reflect LLM call to %s failed: %s", url, exc)
-        return []
+        failure = _classify_llm_exception(exc)
+        if failure == "timeout":
+            detail = f"LLM call to {url} timed out after {timeout_s}s ({shape})"
+        else:
+            detail = f"LLM call to {url} failed: {exc} ({shape})"
+        log.warning("meta-reflect %s", detail)
+        return SynthesisResult([], failure, detail)
     if status != 200:
-        log.warning("meta-reflect LLM returned status %d", status)
-        return []
+        detail = f"LLM at {url} returned status {status} ({shape})"
+        log.warning("meta-reflect %s", detail)
+        return SynthesisResult([], "http-status", detail)
     try:
         content = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        log.warning("Unexpected meta-reflect payload shape: %s", exc)
-        return []
+        detail = f"unexpected LLM payload shape: {exc!r}"
+        log.warning("meta-reflect %s", detail)
+        return SynthesisResult([], "payload-shape", detail)
+    raw_list = _candidate_list(content)
+    if raw_list is None:
+        detail = f"completion carried no readable candidates JSON ({shape})"
+        log.warning("meta-reflect %s", detail)
+        return SynthesisResult([], "unparseable", detail)
     parsed = parse_candidates(content)
+    if not parsed:
+        if raw_list:
+            detail = (
+                f"completion listed {len(raw_list)} candidate(s), none with an "
+                f"axiom ({shape})"
+            )
+            log.warning("meta-reflect %s", detail)
+            return SynthesisResult([], "unparseable", detail)
+        detail = f"model answered with an empty candidate list ({shape})"
+        log.warning("meta-reflect %s", detail)
+        return SynthesisResult([], "model-empty", detail)
     # The prompt ASKS for at most max_candidates; nothing makes the model
     # comply. Enforce the cap here, at the single boundary every downstream
     # path crosses, so the documented weekly upper bound on queue growth is a
@@ -328,7 +436,7 @@ def synthesize_candidates(
             max_candidates,
         )
         parsed = parsed[:max_candidates]
-    return parsed
+    return SynthesisResult(parsed)
 
 
 # ---------------------------------------------------------------------------
@@ -1166,6 +1274,8 @@ def run_meta_reflect(
     window_days: int = DEFAULT_WINDOW_DAYS,
     min_reflections: int = DEFAULT_MIN_REFLECTIONS,
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
+    max_reflections: int = DEFAULT_MAX_REFLECTIONS,
+    llm_timeout_s: int = DEFAULT_LLM_TIMEOUT_S,
     now: datetime | None = None,
     http_post: Any | None = None,
 ) -> MetaRunResult:
@@ -1173,8 +1283,13 @@ def run_meta_reflect(
 
     Returns a :class:`MetaRunResult` — the terminal outcome, not merely the
     staged count. Four of the five outcomes stage zero, and only ``failed``
-    (reflections cleared the gate, the model produced nothing parseable) is a
-    defect; ``main()`` records the outcome and alarms on that one.
+    (reflections cleared the gate, the model produced nothing) is a defect;
+    ``main()`` records the outcome and its typed cause and alarms on that one.
+
+    The prompt is bounded (GH-2300): only the newest ``max_reflections`` in
+    the window reach the model, so the synthesis call's wall time is a
+    function of the cap rather than of how busy the week was, and
+    ``llm_timeout_s`` is sized to the cap.
 
     Consumed candidates are pruned first, before the defer gate — the staging
     file's hygiene does not depend on there being enough reflections to run.
@@ -1218,28 +1333,43 @@ def run_meta_reflect(
             ),
             near_misses=_scan_only(),
         )
-    candidates = synthesize_candidates(
-        reflections, llm_url, model, max_candidates=max_candidates, http_post=http_post
+    fed = reflections
+    if max_reflections > 0 and len(reflections) > max_reflections:
+        # Newest first: fetch orders by date ASC, so the tail is the most
+        # recent. The window count stays the recorded fact; the cap is what
+        # reached the prompt.
+        fed = reflections[-max_reflections:]
+        log.info(
+            "Window holds %d reflections; feeding the newest %d "
+            "(RALPH_META_MAX_REFLECTIONS)",
+            len(reflections),
+            len(fed),
+        )
+    synthesis = synthesize_candidates(
+        fed,
+        llm_url,
+        model,
+        max_candidates=max_candidates,
+        http_post=http_post,
+        timeout_s=llm_timeout_s,
     )
+    candidates = synthesis.candidates
     if not candidates:
-        # The defect zero. ``synthesize_candidates`` fails open on an
-        # unreachable endpoint, a non-200, an unexpected payload shape and an
-        # unparseable completion alike, so this branch cannot name the cause —
-        # only that a run above the gate produced nothing, which is exactly
-        # what a quiet week must not be allowed to look like.
+        # The defect zero: a run above the gate produced nothing, which is
+        # exactly what a quiet week must not be allowed to look like. The
+        # cause travels with it (GH-2300) rather than living only in the log.
         log.warning(
             "Meta-reflect synthesized ZERO candidates from %d reflection(s) "
-            "above the gate. That is the defect zero, not a quiet week — see "
-            "WARNING logs above for the LLM failure.",
-            len(reflections),
+            "above the gate (%s). That is the defect zero, not a quiet week.",
+            len(fed),
+            synthesis.failure,
         )
         return MetaRunResult(
             outcome=OUTCOME_FAILED,
             reflections=len(reflections),
-            reason=(
-                "reflections cleared the gate but zero candidates were "
-                "synthesized; see WARNING logs"
-            ),
+            reflections_fed=len(fed),
+            reason=synthesis.detail,
+            failure=synthesis.failure,
             near_misses=_scan_only(),
         )
     synthesized = len(candidates)
@@ -1262,6 +1392,7 @@ def run_meta_reflect(
         return MetaRunResult(
             outcome=OUTCOME_SUPPRESSED,
             reflections=len(reflections),
+            reflections_fed=len(fed),
             candidates=synthesized,
             near_misses=near_misses,
             reason="every candidate restated a known axiom (paraphrase gate)",
@@ -1272,6 +1403,7 @@ def run_meta_reflect(
         return MetaRunResult(
             outcome=OUTCOME_SUPPRESSED,
             reflections=len(reflections),
+            reflections_fed=len(fed),
             candidates=synthesized,
             near_misses=near_misses,
             reason="every candidate was already staged, promoted or rejected",
@@ -1280,6 +1412,7 @@ def run_meta_reflect(
         outcome=OUTCOME_WROTE,
         staged=staged,
         reflections=len(reflections),
+        reflections_fed=len(fed),
         candidates=synthesized,
         near_misses=near_misses,
     )
@@ -1332,6 +1465,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS)
     parser.add_argument("--min-reflections", type=int, default=DEFAULT_MIN_REFLECTIONS)
     parser.add_argument("--max-candidates", type=int, default=DEFAULT_MAX_CANDIDATES)
+    parser.add_argument(
+        "--max-reflections",
+        type=int,
+        default=DEFAULT_MAX_REFLECTIONS,
+        help=(
+            "Newest N reflections in the window that reach the prompt; bounds "
+            "the synthesis call's wall time (0 = uncapped). $RALPH_META_MAX_REFLECTIONS."
+        ),
+    )
+    parser.add_argument(
+        "--llm-timeout",
+        type=int,
+        default=DEFAULT_LLM_TIMEOUT_S,
+        help="Seconds allowed per LLM call, sized to --max-reflections. $RALPH_META_LLM_TIMEOUT_S.",
+    )
     parser.add_argument(
         "--llm-url",
         default=None,
@@ -1394,6 +1542,8 @@ def main(argv: list[str] | None = None) -> int:
         window_days=args.window_days,
         min_reflections=args.min_reflections,
         max_candidates=args.max_candidates,
+        max_reflections=args.max_reflections,
+        llm_timeout_s=args.llm_timeout,
     )
     print(
         f"Staged {result.staged} wiki candidate(s) at "
@@ -1433,15 +1583,19 @@ def main(argv: list[str] | None = None) -> int:
         reason=result.reason,
         log=log,
         reflections=result.reflections,
+        reflections_fed=result.reflections_fed,
         candidates=result.candidates,
         staged=result.staged,
         near_misses=result.near_misses,
+        failure=result.failure,
     )
     if result.failed:
         emit_meta_failure_issue(
             reflections=result.reflections,
             state_path=state_path,
             repo=args.gh_repo,
+            failure=result.failure,
+            reason=result.reason,
         )
     return exit_code
 
