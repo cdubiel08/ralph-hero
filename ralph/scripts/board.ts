@@ -11883,6 +11883,11 @@ reads
               [--json]        (dry run by default). Keyed on the checkout being
                               absent, never on age — a live lease may not be
                               deletable by a clock. Zero API
+  events --since SEQ [--json] facts appended to this repo's ledger.sqlite
+                              after cursor SEQ — one seq<TAB>payload line per
+                              fact, or --json {cursor, facts}. Zero API.
+                              Absent db = not converted yet (exit 0, empty);
+                              an UNREADABLE db is exit 69, never empty
   get NNN [--json]            issue: state, claim, parent/children, blockers, PRs
   list [--state S] [--json]   open items on the board — a bounded own-repo
                               read (open issues only), not a full project
@@ -12304,6 +12309,8 @@ export const VERB_HELP: Record<string, string> = {
     "board inbox [--json] [--digest [--mark]]\n  The human's single surface: Human Needed decisions, tend proposals, Intake approvals,\n  and human-clearable deliver-blocked rows, each with its literal disposition verb.\n  Lead-routed escalations inside their window are withheld as \"with leads\" (GH-2218) —\n  promotion or the TTL admits them; `board escalations` lists them.\n  --digest adds completions since the last mark + a pushWorthy verdict; --mark stamps the window.\n  example: board inbox --digest",
   who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  A lease whose worktree was deleted prints DEAD, not STALE: nothing can refresh it, so it is\n  not aging toward anything. `board reap-leases` clears those.\n  example: board who",
   "reap-leases": "board reap-leases [--apply] [--json]\n  Remove local lock files whose worktree no longer exists. Dry run unless --apply. Zero API.\n  The predicate is the missing CHECKOUT, never the lock's age: a lease is what deliver-queue\n  reads for local-session-active, so a clock may not be allowed to delete a live one. Any read\n  failure that is not ENOENT leaves the lock alone.\n  example: board reap-leases --apply",
+  events:
+    "board events --since SEQ [--json]\n  Read-only cursor over ~/.ralph/<owner>/<repo>/ledger.sqlite (GH-2310): every fact with\n  seq > SEQ, in order — one `seq<TAB>payload` line per fact, or --json {cursor, facts}.\n  Zero GraphQL, zero gh; RALPH_HERDR_LEDGER_ROOT overrides the root like ledger.sh.\n  Absent db = not converted yet: exit 0 and an empty result (run ledger-convert.sh).\n  An UNREADABLE db, a missing sqlite3, or a user_version above 1 is exit 69 — never empty.\n  example: board events --since 0 --json",
   list: "board list [--state <s>] [--json]\n  Items by state. Full-board scan — prefer next/brief for orientation.\n  example: board list --state human",
   get: "board get <n> [--json]\n  One issue with board fields, parity with what move/claim write.\n  example: board get 1234",
   create: "board create (--intake | --backlog | --state <s>) --title <t> [--body <b>] [--parent <n>] [--estimate XS..XL] [--priority P0..P3] [--apply]\n  Files an issue onto the board. Retry-safe (twin dedupe, GH-1973).\n  The landing state is REQUIRED — there is no default, because filing is not approving:\n    --intake   tracked, not yet approved; invisible to next/frontier (Priority/Estimate optional)\n    --backlog  approved and ready to work (Priority and Estimate REQUIRED)\n  example: board create --backlog --title \"fix the gate\" --priority P1 --estimate S",
@@ -12359,7 +12366,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
   "blocked-by", "body", "candidates", "decision", "estimate", "holder", "host",
   "label", "lane", "limit", "message", "on", "out", "owner", "parent", "priority",
-  "project", "recheck", "repo", "state", "title", "to-lead", "until", "why",
+  "project", "recheck", "repo", "since", "state", "title", "to-lead", "until", "why",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -12973,6 +12980,91 @@ export function run(argv: string[], ctx: Ctx): number {
       out(`reaped ${removed.length} of ${dead.length} dead lease(s)`);
       for (const f of failed) out(`  KEPT ${f.file}: ${f.reason}`);
       return failed.length ? 1 : 0;
+    }
+
+    case "events": {
+      // GH-2310 — phase C (board half) of the ledger deprecation path: a
+      // read-only cursor over the herdr ledger's sqlite sibling. ZERO
+      // GraphQL, zero gh — this verb must cost nothing and never touches the
+      // item cache. The db path is the plugin's own rule (ledger.sh's
+      // ralph_ledger_path): the root override, then the SAME owner/repo
+      // scope the board already resolves.
+      const sinceRaw = flags.since;
+      if (sinceRaw === undefined || sinceRaw === true || !/^\d+$/.test(String(sinceRaw)))
+        throw new UsageError(
+          "board events --since SEQ [--json] — --since is required and must be a " +
+            "non-negative integer (`--since 0` reads everything)",
+        );
+      const since = Number(sinceRaw);
+      const root = process.env.RALPH_HERDR_LEDGER_ROOT || join(homedir(), ".ralph");
+      const db = join(root, ctx.cfg.owner, ctx.cfg.repo, "ledger.sqlite");
+      if (!existsSync(db)) {
+        // An unconverted machine is a NORMAL state, not an error — exit 0
+        // with an empty result. But say so on stderr, or "not converted yet"
+        // renders exactly like "nothing happened".
+        process.stderr.write(`no ledger.sqlite for ${ctx.cfg.owner}/${ctx.cfg.repo} — run ledger-convert.sh\n`);
+        if (flags.json) json({ cursor: 0, facts: [] });
+        return 0;
+      }
+      const sq = process.env.RALPH_SQLITE3_BIN || "sqlite3";
+      const probe = ctx.exec([sq, "--version"]);
+      if (probe.code !== 0) {
+        process.stderr.write(
+          `board events: sqlite3 binary not runnable ('${sq}') — macOS ships /usr/bin/sqlite3; ` +
+            `otherwise install sqlite3 (e.g. \`brew install sqlite\`) or set RALPH_SQLITE3_BIN\n`,
+        );
+        return 69;
+      }
+      // Schema gate: refuse anything newer than v1 rather than guessing at
+      // its shape. An unreadable db is 69 too — NEVER an empty result:
+      // "could not read" must not render as "nothing happened".
+      const uvR = ctx.exec([sq, db, "PRAGMA user_version;"]);
+      const uv = uvR.code === 0 ? Number(uvR.stdout.trim()) : NaN;
+      if (uvR.code !== 0 || !Number.isInteger(uv)) {
+        process.stderr.write(
+          `board events: could not read ${db} — ${uvR.stderr.trim() || "unreadable user_version"}\n`,
+        );
+        return 69;
+      }
+      if (uv > 1) {
+        process.stderr.write(
+          `board events: ${db} has user_version=${uv}, newer than the v1 schema this verb reads — upgrade ralph\n`,
+        );
+        return 69;
+      }
+      // `since` is digits-only by the guard above, so inlining it is safe.
+      // -json output survives any payload bytes; the CLI prints NOTHING (not
+      // "[]") for an empty result set.
+      const q = ctx.exec([sq, "-json", db, `SELECT seq, payload FROM facts WHERE seq > ${since} ORDER BY seq;`]);
+      if (q.code !== 0) {
+        process.stderr.write(`board events: could not read ${db} — ${q.stderr.trim() || `sqlite3 exit ${q.code}`}\n`);
+        return 69;
+      }
+      let rows: { seq: number; payload: string }[];
+      try {
+        rows = q.stdout.trim() ? JSON.parse(q.stdout) : [];
+      } catch {
+        process.stderr.write(`board events: could not read ${db} — unparseable sqlite3 -json output\n`);
+        return 69;
+      }
+      if (flags.json) {
+        // The cursor never regresses: with nothing new it echoes --since, so
+        // a caller can always feed the cursor back verbatim.
+        const cursor = rows.length ? rows[rows.length - 1].seq : since;
+        const facts = rows.map((r) => {
+          try {
+            return { seq: r.seq, ...JSON.parse(r.payload) };
+          } catch {
+            // A payload we cannot parse is carried raw rather than dropped —
+            // a cursor read may not lose a fact it walked past.
+            return { seq: r.seq, payload: r.payload };
+          }
+        });
+        json({ cursor, facts });
+        return 0;
+      }
+      for (const r of rows) out(`${r.seq}\t${r.payload}`);
+      return 0;
     }
 
     case "bootstrap": {
