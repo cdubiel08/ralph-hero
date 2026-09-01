@@ -224,6 +224,16 @@ func readLedger(path string) Ledger {
 		if bin == "" {
 			bin = "sqlite3"
 		}
+		// Same schema gate as the shell readers: a user_version above 1 is a
+		// newer ralph's tape, and serving it as v1 would present
+		// misinterpreted data as read — degrade to "not read" instead.
+		uv, err := exec.Command(bin, db, "PRAGMA user_version;").Output()
+		if err != nil {
+			return l
+		}
+		if v := strings.TrimSpace(string(uv)); v != "0" && v != "1" {
+			return l
+		}
 		out, err := exec.Command(bin, db, "SELECT payload FROM facts ORDER BY seq;").Output()
 		if err != nil {
 			return l
@@ -240,9 +250,11 @@ func readLedger(path string) Ledger {
 	l.Read = true
 
 	sc := bufio.NewScanner(src)
-	// Lineage records carry a nested object; the default 64 KiB token is
-	// ample, but a single over-long line must skip rather than abort the scan.
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// Phase D lifted the 4096-byte event ceiling, so a single event can be
+	// large; the cap is generous accordingly, and a scan that still dies on
+	// an over-long token is reported as NOT read (below) rather than served
+	// as a silently truncated history.
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
@@ -279,6 +291,11 @@ func readLedger(path string) Ledger {
 				l.ByIssue[sp.Issue] = sp
 			}
 		}
+	}
+	if sc.Err() != nil {
+		// A scan aborted mid-stream saw a PREFIX of history; presenting it
+		// as read would hide every later spawn behind a healthy flag.
+		l.Read = false
 	}
 	return l
 }

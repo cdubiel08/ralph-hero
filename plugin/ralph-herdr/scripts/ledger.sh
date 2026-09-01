@@ -339,7 +339,7 @@ _ralph_ledger_sqlite_append() {
   # any line still beyond max is a reject the converter already sidecarred),
   # so the probe is one sed read per append and the convert runs at most
   # once.
-  if [ -z "$_RALPH_LEDGER_BACKFILL_DONE" ] && [ -s "$file" ]; then
+  if [ -s "$file" ] && ! printf '%s\n' "$_RALPH_LEDGER_BACKFILL_DONE" | grep -qFx -- "$file"; then
     seq=$("$sq" "$db" 'PRAGMA busy_timeout=2000; SELECT coalesce(max(seq), 0) FROM facts;' 2>/dev/null) || seq=""
     seq=${seq##*$'\n'}
     case "$seq" in
@@ -361,7 +361,14 @@ _ralph_ledger_sqlite_append() {
           seq=$("$sq" "$db" 'PRAGMA busy_timeout=2000; SELECT coalesce(max(seq), 0) FROM facts;' 2>/dev/null) || seq=""
           seq=${seq##*$'\n'}
           case "$seq" in
-            '' | *[!0-9]*) : ;;
+            '' | *[!0-9]*)
+              # The unlocked probe just proved the tape trailing; a re-read
+              # that cannot answer may not wave the append through — the
+              # insert would burn the very seq the backfill needs.
+              [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+              echo "ralph_ledger_append: cannot re-verify the trailing tape in $db — the fact was NOT recorded" >&2
+              return 1
+              ;;
             *)
               if [ -n "$(sed -n "$((seq + 1))p" "$file" 2>/dev/null)" ]; then
                 if ! out=$(ralph_lc_convert "$file" 2>&1 >/dev/null); then
@@ -373,7 +380,8 @@ _ralph_ledger_sqlite_append() {
               ;;
           esac
           [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
-          _RALPH_LEDGER_BACKFILL_DONE=1
+          _RALPH_LEDGER_BACKFILL_DONE="$_RALPH_LEDGER_BACKFILL_DONE
+$file"
         fi
         ;;
     esac
@@ -447,6 +455,10 @@ UPDATE facts SET phash='${out}' WHERE seq=$seq AND phash='$ph';" >/dev/null 2>&1
 }
 
 _RALPH_SESSION_KEY=""
+# Ledgers whose backfill probe has completed, one path per line — keyed per
+# FILE, never process-wide: watch-event and reconcile walk several ledgers in
+# one shell, and a process-wide flag would let the first trailing tape's
+# convert silence the second's.
 _RALPH_LEDGER_BACKFILL_DONE=""
 ralph_ledger_append() {
   local raw="${1-}" file line
