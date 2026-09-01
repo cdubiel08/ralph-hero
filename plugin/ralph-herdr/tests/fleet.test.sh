@@ -799,6 +799,14 @@ line_has "investigator: named in the investigation lane"  "$out" "agent: i700-"
 line_has "investigator: opens a TAB in the driver's tree, never a new worktree" \
   "$out" "tab create --cwd $TMP/tree-x"
 line_has "investigator: the harness carries the tool allowlist" "$out" "--tools"
+# GH-2266: no Bash in the allowlist → process containment is INAPPLICABLE,
+# recorded as such rather than claimed as applied.
+line_has "investigator: process containment is inapplicable for a Bash-less harness" \
+  "$out" "process containment: inapplicable"
+case "$out" in
+  *"--settings"*) not_ok "investigator: no sandbox profile for a harness with nothing to contain" ;;
+  *) ok "investigator: no sandbox profile for a harness with nothing to contain" ;;
+esac
 case "$out" in
   *"worktree create"*) not_ok "investigator: must not cut a second worktree" ;;
   *) ok "investigator: cuts no second worktree" ;;

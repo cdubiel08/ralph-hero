@@ -538,6 +538,27 @@ spawn_investigator() {
     return 1
   }
 
+  # Process containment (GH-2266) applies only when the harness grants Bash —
+  # a process sandbox contains Bash and its children, and with no Bash there
+  # is nothing for it to hold, so recording `applied` would claim a guarantee
+  # doing no work (the design record's own point; the outcome is
+  # `inapplicable`). DERIVED from the definition rather than assumed: the day
+  # the investigator gains Bash, the sandbox and its probe engage here with
+  # no edit.
+  local -a contain=()
+  local containment=inapplicable tools contain_out
+  tools=$(ralph_investigator_tools 2>/dev/null) || tools=""
+  case ",$tools," in
+    *,Bash,*)
+      contain_out=$(ralph_process_containment_args investigator "$checkout") || {
+        echo "spawn_investigator: process containment cannot be established for $checkout — refusing to spawn a Bash-capable investigator uncontained" >&2
+        return 1
+      }
+      while IFS= read -r out; do [ -n "$out" ] && contain+=("$out"); done <<<"$contain_out"
+      containment=pending
+      ;;
+  esac
+
   name=$(ralph_agent_name i "$issue" "$question" 2>/dev/null) ||
     name=$(ralph_agent_name i "$issue" investigate) || {
       echo "spawn_investigator: could not derive an agent name for GH-$issue" >&2
@@ -548,7 +569,8 @@ spawn_investigator() {
     echo "DRY RUN — would spawn investigator for GH-$issue:"
     echo "  agent: $name   parent: $parent   depth: $depth   cwd: $checkout"
     echo "  $HERDR tab create --cwd $checkout --no-focus --label \"GH-$issue investigator\""
-    echo "  $HERDR agent start $name --kind claude --pane <captured> -- ${harness[*]}"
+    echo "  $HERDR agent start $name --kind claude --pane <captured> -- ${harness[*]}${contain[*]:+ --settings <process containment: seatbelt denyWrite $checkout>}"
+    echo "  process containment: $containment${contain[*]:+ (in-pane probe after start; refuse unless applied)}"
     echo "  $HERDR agent prompt $name <question>"
     return 0
   fi
@@ -566,10 +588,18 @@ spawn_investigator() {
   pane=$(jq -r '.root_pane.pane_id // empty' <<<"$out")
   [ -n "$pane" ] || { echo "spawn_investigator: no pane id in the tab response" >&2; return 1; }
 
-  agent_start_when_ready "$name" "$pane" "${harness[@]}" || {
+  agent_start_when_ready "$name" "$pane" "${harness[@]}" ${contain+"${contain[@]}"} || {
     echo "spawn_investigator: agent start $name failed" >&2
     return 1
   }
+  if [ "$containment" = pending ]; then
+    containment=$(spawn_containment_probe "$name" "$pane" "$checkout" "close the tab and re-dispatch the question") || {
+      "$HERDR" pane close "$pane" >/dev/null 2>&1 || true
+      echo "spawn_investigator: process containment ${containment:-unverified} for $name — closed pane $pane rather than dispatch an uncontained investigator" >&2
+      return 1
+    }
+  fi
+  echo "process containment: $containment for $name"
 
   ts=$(date -u +%FT%TZ)
   if ref=$(ralph_agent_ref "$name" 2>/dev/null); then

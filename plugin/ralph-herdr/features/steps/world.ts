@@ -132,6 +132,26 @@ export class RalphWorld extends World {
       })}\n`,
     );
 
+    // The contained pane's side of the startup self-test (GH-2266): a live
+    // pane under an intact sandbox runs `touch <inside> <outside>`, the
+    // kernel refuses the inside operand and the outside marker lands. The
+    // replay world states that healthy answer once, the way the agent-wait
+    // fixture above states the healthy turn; a scenario about an inert
+    // sandbox would override the hook to touch both.
+    writeExecutable(
+      path.join(this.bin, 'containment-probe-hook'),
+      [
+        '#!/bin/bash',
+        '# $1 agent, $2 prompt text — touch only the OUTSIDE marker.',
+        'paths=$(printf \'%s\' "$2" | grep -o "touch \'[^\']*\' \'[^\']*\'" | head -1)',
+        '[ -n "$paths" ] || exit 0',
+        'outside=$(printf \'%s\' "$paths" | sed -n "s/^touch \'[^\']*\' \'\\([^\']*\\)\'$/\\1/p")',
+        '[ -n "$outside" ] && touch "$outside"',
+        'exit 0',
+        '',
+      ].join('\n'),
+    );
+
     this.installDefaultHerdrShim();
     // board + gh wrappers (not symlinks — the repo files' exec bits are never
     // load-bearing), exactly as the sh suites build them.
@@ -229,6 +249,12 @@ export class RalphWorld extends World {
       RALPH_HERDR_BOARD: path.join(this.bin, 'board'),
       RALPH_HERDR_SCRIPTS_DIR: SCRIPTS_DIR,
       RALPH_HOME: path.join(this.tmp, 'ralph-home'),
+      // Process containment (GH-2266) is measured on macOS/Seatbelt only and
+      // refuses elsewhere; the replay world pins the measured platform so the
+      // suite's verdict does not depend on the runner's kernel, and hands the
+      // fake herd the contained pane's healthy self-test answer.
+      RALPH_HERDR_UNAME: 'Darwin',
+      FAKE_HERDR_PROMPT_HOOK: path.join(this.bin, 'containment-probe-hook'),
       RALPH_RH_SERVER_ATTEMPTS: '3',
       RALPH_RH_SERVER_POLL_SEC: '0',
       NO_COLOR: '1',

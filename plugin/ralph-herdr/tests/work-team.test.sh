@@ -52,6 +52,18 @@ git clone -q "$ORIGIN" "$REPO_DIR"
 . "$SCRIPT_DIR/herd-fixture.sh"
 herd_fixture '[]' "$REPO_DIR"
 
+# GH-2266: the lead is a contained role. The fake's default `worktree list`
+# answers a deliberately nonexistent source checkout (so resolution cannot
+# pass by accident); the profile builder refuses a checkout it cannot
+# realpath, so point the source at the test repo. Platform pinned to the
+# measured one — CI runs this suite on Linux, where the honest answer is a
+# refusal (asserted below).
+printf '{"source":{"repo_key":"%s/.git","repo_name":"repo","repo_root":"%s","source_checkout_path":"%s","source_workspace_id":"w1"},"worktrees":[]}\n' \
+  "$REPO_DIR" "$REPO_DIR" "$REPO_DIR" >"$FAKE_HERDR_FIXTURES/worktree-list.json"
+export RALPH_HERDR_UNAME=Darwin
+export RALPH_HOME="$TMP/home"
+mkdir -p "$RALPH_HOME"
+
 n=0 pass=0 fail=0
 ok()     { n=$((n + 1)); pass=$((pass + 1)); echo "ok $n - $1"; }
 not_ok() { n=$((n + 1)); fail=$((fail + 1)); echo "not ok $n - $1"; }
@@ -115,6 +127,20 @@ line_has "team dry: the lead's own spawns will record invoked_by=agent" \
   "$OUT" "--env RALPH_HERDR_INVOKED_BY=agent"
 line_has "team dry: the editing tools are cut from the lead's harness (GH-2265, read from the role registry)" \
   "$OUT" "-- --disallowedTools Edit,Write,NotebookEdit"
+line_has "team dry: the sandbox profile rides the same argv as a SEPARATE flag (GH-2266)" \
+  "$OUT" "-- --disallowedTools Edit,Write,NotebookEdit --settings <process containment: seatbelt denyWrite $REPO_DIR>"
+line_has "team dry: the plan names the in-pane probe and its refusal" \
+  "$OUT" "containment probe: prompt <captured> to touch <inside $REPO_DIR>"
+
+# GH-2266: an unmeasured platform refuses the lead before any plan is printed
+RALPH_HERDR_UNAME=Linux run_wt 900
+if [ "$RC" -ne 0 ]; then ok "team linux: refuses the lead on an unmeasured platform"; else not_ok "team linux: must refuse (rc 0)"; fi
+line_has "team linux: the refusal names not_available" "$OUT" "not_available on Linux"
+case "$OUT" in
+  *"DRY RUN — would spawn the lead"*) not_ok "team linux: no plan may be printed for a refused spawn" ;;
+  *) ok "team linux: no plan printed for a refused spawn" ;;
+esac
+run_wt 900
 line_has "team dry: the prompt names the lead's own staffing path" \
   "$OUT" "work-fleet.sh --epic 900"
 line_has "team dry: the prompt names the self-dissolve final act (D3.3, GH-2215)" \

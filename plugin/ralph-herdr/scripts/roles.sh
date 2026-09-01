@@ -96,6 +96,181 @@ ralph_tool_binding_args() {
   printf '%s\n' "--disallowedTools" "Edit,Write,NotebookEdit"
 }
 
+# ── Process containment (GH-2266) — the OTHER half of the tree invariant ─────
+#
+# Tool binding (above) fails CLOSED and loudly: the model receives "No such
+# tool available". Process containment fails OPEN and SILENTLY: a sandbox that
+# was never applied produces no error and no signal — the process simply runs
+# unconfined. Re-measured on Claude Code 2.1.257 (Darwin 25.5.0): a
+# `denyWrite` given as a string instead of an array yields exit 0, a written
+# file, and no warning on either stream. That failure direction shapes
+# everything here:
+#
+#   * the settings document is BUILT by jq, never string-templated, and
+#     self-validated before it is handed out (a typo is the likely defect);
+#   * absence of an error is never evidence — the spawn path runs a POSITIVE
+#     self-test in the pane (spawn_containment_probe, lib.sh) and refuses on
+#     anything but an observed kernel denial;
+#   * the platform is named: measured on macOS/Seatbelt ONLY. Linux
+#     (bubblewrap/Landlock) is unmeasured and answers not_available, never
+#     "probably fine".
+#
+# The profile is what the roles' OWN tooling needs and nothing more, each
+# entry measured rather than assumed (research note:
+# thoughts/shared/research/2026-09-01-sandbox-profile-spike-claude-2-1-257.md):
+#   denyWrite  [<checkout realpath>]      the tree — the invariant itself
+#   allowWrite [$RALPH_HOME]              budget.jsonl, the ledger, the cache,
+#                                         the probe's outside marker; the
+#                                         sandbox default (cwd + session tmp)
+#                                         would deny all of them
+#   network.allowedDomains github hosts   the board CLI is gh underneath
+#   network.allowMachLookup trustd.agent  gh's Go TLS verifies through the
+#                                         trust daemon; without this lookup
+#                                         every gh call fails x509 (OSStatus
+#                                         -26276). The docs' remedy —
+#                                         excludedCommands ["gh *"] — is a
+#                                         HOLE: an excluded `gh … > <tree>/f`
+#                                         writes the tree (observed), so it is
+#                                         refused here and excludedCommands
+#                                         stays EMPTY by construction
+#   network.allowUnixSockets [herdr sock] herdr's CLI is a socket client; the
+#                                         top-level spelling does nothing
+# Deliberately NOT here: read confinement (~/.ssh, ~/.aws) — a separate
+# judgment the design record left open; and any `.git` allowance — allowWrite
+# cannot re-open a path under denyWrite (deny wins for writes, measured), and
+# herdr's SERVER provisions worktrees, so the lead's Bash never needs it.
+
+# ralph_role_process_containment ROLE — rc 0 when ROLE's registry row requires
+# process containment (contracts.ts ROLES[role].processContainment). Same
+# fail direction as ralph_role_tool_binding: an unknown role is contained.
+ralph_role_process_containment() {
+  [ "${1-}" != "driver" ]
+}
+
+# ralph_containment_outcomes — the achieved-value vocabulary, one per line;
+# mirror of contracts.ts CONTAINMENT_OUTCOMES (golden-table tested).
+ralph_containment_outcomes() {
+  printf '%s\n' applied not_applied not_available inapplicable unverified
+}
+
+# ralph_process_containment_platform — prints the kernel mechanism this
+# machine was MEASURED on (`seatbelt`), or rc 1 with a not_available reason.
+# $RALPH_HERDR_UNAME overrides uname for tests (CI runs the bash suites on
+# Linux, where the honest answer is a refusal).
+ralph_process_containment_platform() {
+  local os
+  os="${RALPH_HERDR_UNAME:-$(uname -s 2>/dev/null || true)}"
+  case "$os" in
+    Darwin)
+      echo seatbelt
+      return 0
+      ;;
+  esac
+  echo "process containment: not_available on ${os:-an unknown platform} — measured on macOS/Seatbelt only (GH-2266); Linux (bubblewrap/Landlock) is unmeasured and is refused rather than inherited" >&2
+  return 1
+}
+
+# _ralph_containment_gh_host CHECKOUT — the GitHub host the board client in
+# CHECKOUT will actually talk to, resolved from EXACTLY the two sources
+# board.ts loadConfig reads and in its order: `.ralph.json`'s `host` when that
+# file exists, else the tracked `.claude/settings.json` env block. Never the
+# process environment — board.ts does not read it either, so a stray
+# $RALPH_GH_HOST in the spawner's shell would widen the allow-list to a host
+# the client never contacts (PR #2337, second P1), while reading only the
+# environment would let a GHE repo whose host lives in `.ralph.json` pass the
+# tree probe and then have every board call denied at the proxy (the first
+# P1). The allow-list and the client key on the same fact, from the same
+# files. Prints nothing for github.com or when no host is configured.
+_ralph_containment_gh_host() {
+  local root="${1-}" host=""
+  if [ -n "$root" ] && [ -f "$root/.ralph.json" ]; then
+    host=$(jq -r '.host // empty' "$root/.ralph.json" 2>/dev/null) || host=""
+  elif [ -n "$root" ] && [ -f "$root/.claude/settings.json" ]; then
+    host=$(jq -r '.env.RALPH_GH_HOST // empty' "$root/.claude/settings.json" 2>/dev/null) || host=""
+  fi
+  case "$host" in "" | github.com) return 0 ;; esac
+  printf '%s\n' "$host"
+}
+
+# ralph_process_containment_settings CHECKOUT — the `--settings` document
+# (one compact JSON line) that contains Bash and every child process for a
+# pane whose working tree is CHECKOUT. rc 1, printing nothing, when the
+# document cannot be built or does not validate: a builder that hands out a
+# shape it could not check is the silent-open defect one level up.
+#
+# Posture, decided and written down (the spike's result depended on it):
+#   failIfUnavailable:true          a missing sandbox is a startup refusal,
+#                                   never a warning-and-run-unconfined
+#   allowUnsandboxedCommands:false  strict mode — the dangerouslyDisableSandbox
+#                                   retry is ignored, so a denied command
+#                                   cannot be re-run outside the sandbox
+#   autoAllowBashIfSandboxed:true   sandboxed commands run without prompts;
+#                                   the pane is unattended by design
+#   excludedCommands:[]             no per-command escape (see above)
+ralph_process_containment_settings() {
+  local checkout="${1-}" dir home sock host json
+  [ -n "$checkout" ] || { echo "ralph_process_containment_settings: no checkout given — refusing to build a profile that denies nothing" >&2; return 1; }
+  dir=$(cd "$checkout" 2>/dev/null && pwd -P) || { echo "ralph_process_containment_settings: $checkout is not a directory" >&2; return 1; }
+  # The realpath is load-bearing: /tmp is a symlink to /private/tmp on macOS,
+  # and a denyWrite spelled through the symlink denies nothing (the spike's
+  # first confound).
+  home="${RALPH_HOME:-$HOME/.ralph}"
+  [ -d "$home" ] && home=$(cd "$home" && pwd -P)
+  sock="${HERDR_SOCKET_PATH:-}"
+  host=$(_ralph_containment_gh_host "$dir")
+  json=$(jq -nc --arg dir "$dir" --arg home "$home" --arg sock "$sock" --arg host "$host" '
+    {sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      autoAllowBashIfSandboxed: true,
+      allowUnsandboxedCommands: false,
+      excludedCommands: [],
+      filesystem: {denyWrite: [$dir], allowWrite: [$home]},
+      network: {
+        allowedDomains: (["api.github.com", "github.com"] + (if $host != "" and $host != "github.com" then [$host] else [] end)),
+        allowMachLookup: ["com.apple.trustd.agent"],
+        allowUnixSockets: (if $sock != "" then [$sock] else [] end)
+      }
+    }}') || { echo "ralph_process_containment_settings: could not build the sandbox document (jq)" >&2; return 1; }
+  # Self-validate the SHAPE the spike showed degrading silently. The check
+  # reads the document back rather than trusting the builder that just wrote
+  # it — the same read-back discipline the board claim uses.
+  jq -e --arg dir "$dir" '
+    .sandbox.enabled == true
+    and .sandbox.failIfUnavailable == true
+    and .sandbox.allowUnsandboxedCommands == false
+    and (.sandbox.excludedCommands | type == "array" and length == 0)
+    and (.sandbox.filesystem.denyWrite | type == "array" and length == 1 and .[0] == $dir)
+    and (.sandbox.filesystem.denyWrite[0] | startswith("/"))
+    and (.sandbox.filesystem.allowWrite | type == "array")
+    and (.sandbox.network.allowedDomains | type == "array" and length >= 2)
+    and (.sandbox.network.allowUnixSockets | type == "array")' >/dev/null <<<"$json" 2>/dev/null || {
+    echo "ralph_process_containment_settings: the built sandbox document failed its shape check — refusing to hand out a profile that may deny nothing" >&2
+    return 1
+  }
+  printf '%s\n' "$json"
+}
+
+# ralph_process_containment_args ROLE CHECKOUT — the `claude` arguments that
+# contain ROLE's processes in CHECKOUT, one per line (empty output, rc 0, for
+# a role that may write — driver). rc 1 when the role requires containment
+# and it cannot be established: an unmeasured platform (not_available) or an
+# unbuildable document. There is no degraded mode, for the same reason
+# ralph_investigator_harness_args has none: a contained role that could not
+# be contained is a second writer in the tree.
+#
+# Callers read these into "$@" beside ralph_tool_binding_args. The two are
+# deliberately separate calls: they are separate mechanisms with opposite
+# failure directions (contracts.ts ROLE_DEFS), and a helper returning both at
+# once is the single-flag collapse the design record refuses.
+ralph_process_containment_args() {
+  local role="${1-}" checkout="${2-}" json
+  ralph_role_process_containment "$role" || return 0
+  ralph_process_containment_platform >/dev/null || return 1
+  json=$(ralph_process_containment_settings "$checkout") || return 1
+  printf '%s\n' "--settings" "$json"
+}
+
 # ralph_role_known ROLE — rc 0 when ROLE is in the registry.
 ralph_role_known() {
   case "${1-}" in

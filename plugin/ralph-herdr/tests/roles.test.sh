@@ -62,8 +62,8 @@ fails() {
 # the mirror against the definition rather than against a second hand-written
 # copy (which would only prove the copies agree with each other).
 registry=$(cd "$ROOT" && npx tsx -e '
-  import { ROLES, LANE_ROLES, HUMAN_SPAWNS, ROLE_NAMES } from "./ralph/scripts/contracts.ts";
-  console.log(JSON.stringify({ ROLES, LANE_ROLES, HUMAN_SPAWNS, ROLE_NAMES }));
+  import { ROLES, LANE_ROLES, HUMAN_SPAWNS, ROLE_NAMES, CONTAINMENT_OUTCOMES } from "./ralph/scripts/contracts.ts";
+  console.log(JSON.stringify({ ROLES, LANE_ROLES, HUMAN_SPAWNS, ROLE_NAMES, CONTAINMENT_OUTCOMES }));
 ' 2>/dev/null)
 
 if [ -z "$registry" ]; then
@@ -97,6 +97,16 @@ else
 
   # every edge in the registry, both directions
   edges_ok=1
+  # GH-2266: processContainment — the second mechanism, mirrored separately
+  is "every role but the driver is processContainment:true, per contracts.ts" \
+    "$(jq -r '[.ROLES | to_entries[] | select(.value.processContainment) | .key] | sort | join(" ")' <<<"$registry")" \
+    "$(for r in $(jq -r '.ROLES | keys[]' <<<"$registry"); do
+         ralph_role_process_containment "$r" && echo "$r"
+       done | sort | tr '\n' ' ' | sed 's/ $//')"
+  is "containment outcomes: the bash vocabulary equals contracts.ts CONTAINMENT_OUTCOMES" \
+    "$(jq -r '.CONTAINMENT_OUTCOMES | join(" ")' <<<"$registry")" \
+    "$(ralph_containment_outcomes | tr '\n' ' ' | sed 's/ $//')"
+
   for parent in $(jq -r '.ROLES | keys[]' <<<"$registry") human; do
     if [ "$parent" = "human" ]; then
       allowed=$(jq -r '.HUMAN_SPAWNS | join(" ")' <<<"$registry")
@@ -230,6 +240,172 @@ printf -- '---\nname: investigator\ndescription: d\n---\n\nbody\n' >"$TMP/no-too
 RALPH_INVESTIGATOR_AGENT="$TMP/no-tools.md" \
   fails "investigator: a definition naming no tools refuses (no unrestricted fallback)" \
   ralph_investigator_tools
+
+# ── 6. process containment (GH-2266) — the OTHER half, with the OPPOSITE
+#      failure direction: the profile is built and read back, the platform is
+#      named, and the spawn-time probe refuses on anything but an observed
+#      denial.
+fails  "containment: the driver is NOT contained (may write its tree)" \
+  ralph_role_process_containment driver
+succeeds "containment: an orchestrator IS contained" ralph_role_process_containment orchestrator
+succeeds "containment: a tender IS contained"        ralph_role_process_containment tender
+succeeds "containment: an investigator IS contained (registry row; inapplicable at spawn until it has Bash)" \
+  ralph_role_process_containment investigator
+succeeds "containment: an unknown role fails CLOSED (contained, not waved through)" \
+  ralph_role_process_containment mystery
+
+mkdir -p "$TMP/tree-real" "$TMP/home"
+ln -s "$TMP/tree-real" "$TMP/tree-link"
+REAL_TREE=$(cd "$TMP/tree-real" && pwd -P)
+
+is "containment args: the driver gets no --settings" "" \
+  "$(RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" ralph_process_containment_args driver "$TMP/tree-real")"
+args=$(RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" HERDR_SOCKET_PATH="$TMP/herdr.sock" \
+  ralph_process_containment_args tender "$TMP/tree-link")
+is "containment args: a contained role gets --settings + one JSON line" "--settings" \
+  "$(printf '%s\n' "$args" | sed -n 1p)"
+json=$(printf '%s\n' "$args" | sed -n 2p)
+is "containment args: exactly two lines (flag, document)" "2" "$(printf '%s\n' "$args" | wc -l | tr -d ' ')"
+is "containment: denyWrite is the checkout REALPATH, symlink resolved (the /tmp -> /private/tmp confound)" \
+  "[\"$REAL_TREE\"]" "$(jq -c .sandbox.filesystem.denyWrite <<<"$json")"
+is "containment: failIfUnavailable is true (a missing sandbox is a startup refusal)" "true" \
+  "$(jq -r .sandbox.failIfUnavailable <<<"$json")"
+is "containment: allowUnsandboxedCommands is false (strict — no dangerouslyDisableSandbox retry)" "false" \
+  "$(jq -r .sandbox.allowUnsandboxedCommands <<<"$json")"
+is "containment: excludedCommands is EMPTY (an excluded gh … > file writes the tree — measured)" "[]" \
+  "$(jq -c .sandbox.excludedCommands <<<"$json")"
+is "containment: RALPH_HOME is the one allowWrite (budget, ledger, cache, probe marker)" \
+  "[\"$(cd "$TMP/home" && pwd -P)\"]" "$(jq -c .sandbox.filesystem.allowWrite <<<"$json")"
+is "containment: the herdr socket rides network.allowUnixSockets (the top-level spelling is inert)" \
+  "[\"$TMP/herdr.sock\"]" "$(jq -c .sandbox.network.allowUnixSockets <<<"$json")"
+is "containment: gh's trust lookup is the ONE mach service allowed" \
+  '["com.apple.trustd.agent"]' "$(jq -c .sandbox.network.allowMachLookup <<<"$json")"
+is "containment: GitHub is reachable (the board CLI is gh underneath)" \
+  '["api.github.com","github.com"]' "$(jq -c .sandbox.network.allowedDomains <<<"$json")"
+is "containment: no socket in the env means an empty socket list, never a guessed path" "[]" \
+  "$(env -u HERDR_SOCKET_PATH RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" bash -c '. "'"$SCRIPT_DIR"'/../scripts/roles.sh"; ralph_process_containment_settings "'"$TMP/tree-real"'"' | jq -c .sandbox.network.allowUnixSockets)"
+# The host is read from exactly the files board.ts reads (PR #2337, both
+# P1s): `.ralph.json` first, then the tracked settings env block — never the
+# process env, which board.ts ignores too. A stray RALPH_GH_HOST in the
+# spawner's shell must not widen the allow-list to a host the client never
+# contacts; an in-tree GHE host must be allow-listed with nothing exported.
+is "containment: a process-env RALPH_GH_HOST with no in-tree config widens NOTHING (board.ts ignores it too)" \
+  '["api.github.com","github.com"]' \
+  "$(RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" RALPH_GH_HOST=ghe.example ralph_process_containment_settings "$TMP/tree-real" | jq -c .sandbox.network.allowedDomains)"
+mkdir -p "$TMP/tree-ghe/.claude" "$TMP/tree-ghe2/.claude"
+printf '{"owner":"o","repo":"r","projectNumber":1,"host":"ghe.in-tree"}\n' >"$TMP/tree-ghe/.ralph.json"
+is "containment: .ralph.json's host is allow-listed with no env exported" \
+  '["api.github.com","github.com","ghe.in-tree"]' \
+  "$(env -u RALPH_GH_HOST RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" bash -c '. "'"$SCRIPT_DIR"'/../scripts/roles.sh"; ralph_process_containment_settings "'"$TMP/tree-ghe"'"' | jq -c .sandbox.network.allowedDomains)"
+is "containment: .ralph.json's host is used, and a process-env host is still ignored beside it" \
+  '["api.github.com","github.com","ghe.in-tree"]' \
+  "$(RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" RALPH_GH_HOST=ghe.env ralph_process_containment_settings "$TMP/tree-ghe" | jq -c .sandbox.network.allowedDomains)"
+printf '{"env":{"RALPH_GH_OWNER":"o","RALPH_GH_REPO":"r","RALPH_GH_HOST":"ghe.settings"}}\n' >"$TMP/tree-ghe2/.claude/settings.json"
+is "containment: the tracked settings env block is the second source" \
+  '["api.github.com","github.com","ghe.settings"]' \
+  "$(env -u RALPH_GH_HOST RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" bash -c '. "'"$SCRIPT_DIR"'/../scripts/roles.sh"; ralph_process_containment_settings "'"$TMP/tree-ghe2"'"' | jq -c .sandbox.network.allowedDomains)"
+printf '{"owner":"o","repo":"r","projectNumber":1,"host":"github.com"}\n' >"$TMP/tree-ghe/.ralph.json"
+is "containment: an explicit github.com host adds no duplicate" '["api.github.com","github.com"]' \
+  "$(RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" ralph_process_containment_settings "$TMP/tree-ghe" | jq -c .sandbox.network.allowedDomains)"
+
+out=$(RALPH_HERDR_UNAME=Linux RALPH_HOME="$TMP/home" ralph_process_containment_args tender "$TMP/tree-real" 2>&1); rc=$?
+is "containment: an unmeasured platform REFUSES (rc 1) rather than inheriting the claim" "1" "$rc"
+case "$out" in
+  *not_available*) ok "containment: the refusal names not_available and the measured platform" ;;
+  *) not_ok "containment: the refusal must say not_available — got '$out'" ;;
+esac
+case "$out" in
+  *--settings*) not_ok "containment: a refusal must print NO --settings (a half-profile is the silent-open case)" ;;
+  *) ok "containment: a refusal prints no --settings" ;;
+esac
+is "containment: platform on Darwin is seatbelt" "seatbelt" "$(RALPH_HERDR_UNAME=Darwin ralph_process_containment_platform)"
+RALPH_HERDR_UNAME=Darwin fails "containment: a checkout that is not a directory refuses (nothing to deny)" \
+  ralph_process_containment_settings "$TMP/does-not-exist"
+RALPH_HERDR_UNAME=Darwin fails "containment: an empty checkout refuses" ralph_process_containment_settings ""
+
+# The in-pane probe, against the fake herd. The hook plays the pane: it
+# receives the prompt and touches whatever an obedient pane under each
+# sandbox state would have produced.
+cat >"$TMP/probe-hook.sh" <<'HOOK'
+#!/usr/bin/env bash
+# $1 agent, $2 prompt text. Touch per $FAKE_PROBE_MODE: applied (outside only),
+# inert (both — an unsandboxed pane), silent (nothing).
+paths=$(printf '%s' "$2" | grep -o "touch '[^']*' '[^']*'" | head -1)
+inside=$(printf '%s' "$paths" | sed -n "s/^touch '\([^']*\)' '.*$/\1/p")
+outside=$(printf '%s' "$paths" | sed -n "s/^touch '[^']*' '\([^']*\)'$/\1/p")
+case "${FAKE_PROBE_MODE:-applied}" in
+  applied) touch "$outside" ;;
+  inert) touch "$inside" "$outside" ;;
+  silent) : ;;
+esac
+HOOK
+chmod +x "$TMP/probe-hook.sh"
+export FAKE_HERDR_PROMPT_HOOK="$TMP/probe-hook.sh"
+printf '{"agent":{"name":"t-probe","agent_status":"working","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":2}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait-until.t-probe.json"
+
+out=$(FAKE_PROBE_MODE=applied RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" 2>"$TMP/probe.err"); rc=$?
+is "probe: an outside marker with NO inside marker is applied (rc 0)" "0" "$rc"
+is "probe: prints the one outcome word" "applied" "$out"
+[ -e "$TMP/home/containment-probes/t-probe.$$" ] && not_ok "probe: the outside marker is cleaned up" || ok "probe: the outside marker is cleaned up"
+[ -e "$TMP/tree-real/.ralph-containment-probe-t-probe" ] && not_ok "probe: no inside marker left behind" || ok "probe: no inside marker left behind"
+case "$(cat "$TMP/probe.err")" in
+  "") ok "probe: applied is silent on stderr" ;;
+  *) not_ok "probe: applied should be silent on stderr — got '$(cat "$TMP/probe.err")'" ;;
+esac
+
+out=$(FAKE_PROBE_MODE=inert RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" 2>"$TMP/probe.err"); rc=$?
+is "probe: an INSIDE marker is not_applied (rc 1) — the sandbox was inert" "1" "$rc"
+is "probe: not_applied is the word printed" "not_applied" "$out"
+case "$(cat "$TMP/probe.err")" in
+  *"WROTE INSIDE"*) ok "probe: not_applied names the write inside the tree" ;;
+  *) not_ok "probe: not_applied must say the pane wrote inside — got '$(cat "$TMP/probe.err")'" ;;
+esac
+[ -e "$TMP/tree-real/.ralph-containment-probe-t-probe" ] && not_ok "probe: the inside marker an inert pane wrote is removed" || ok "probe: the inside marker an inert pane wrote is removed"
+
+out=$(FAKE_PROBE_MODE=silent RALPH_HERDR_CONTAINMENT_PROBE_SEC=1 RALPH_HOME="$TMP/home" \
+  spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" 2>"$TMP/probe.err"); rc=$?
+is "probe: no marker at all is unverified (rc 1) — distinct from not_applied" "1" "$rc"
+is "probe: unverified is the word printed" "unverified" "$out"
+case "$(cat "$TMP/probe.err")" in
+  *"neither marker"*) ok "probe: unverified says neither marker appeared" ;;
+  *) not_ok "probe: unverified must say neither marker appeared — got '$(cat "$TMP/probe.err")'" ;;
+esac
+
+# PR #2337 P1: a target this process cannot write outside the sandbox proves
+# nothing — the probe must refuse as unverified, never read the (inevitable)
+# missing inside marker as a denial.
+export FAKE_HERDR_LOG="$TMP/herdr.log"
+mkdir -p "$TMP/tree-ro" && chmod 555 "$TMP/tree-ro"
+if [ "$(id -u)" -eq 0 ] || { : >"$TMP/tree-ro/.w"; } 2>/dev/null; then
+  rm -f "$TMP/tree-ro/.w" 2>/dev/null; ok "probe: (skipped — this user can write a 555 directory) unwritable-root case"
+  ok "probe: (skipped) unwritable-root names the pre-check"
+  ok "probe: (skipped) unwritable-root sends no prompt"
+else
+  : >"$FAKE_HERDR_LOG"
+  out=$(FAKE_PROBE_MODE=applied RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-ro" "re-spawn" 2>"$TMP/probe.err"); rc=$?
+  is "probe: an inside target unwritable OUTSIDE the sandbox is unverified (rc 1), never applied" "1 unverified" "$rc $out"
+  case "$(cat "$TMP/probe.err")" in
+    *"not writable even OUTSIDE the sandbox"*) ok "probe: unwritable-root names the pre-check, not a denial" ;;
+    *) not_ok "probe: unwritable-root must name the pre-check — got '$(cat "$TMP/probe.err")'" ;;
+  esac
+  if grep -q 'agent prompt' "$FAKE_HERDR_LOG"; then not_ok "probe: unwritable-root must not prompt the pane at all"; else ok "probe: unwritable-root sends no prompt"; fi
+fi
+chmod 755 "$TMP/tree-ro"
+
+# The prompt itself: inside operand FIRST (an inert sandbox writes it before
+# the outside marker lands), both quoted, one command.
+export FAKE_HERDR_LOG="$TMP/herdr.log"
+: >"$FAKE_HERDR_LOG"
+FAKE_PROBE_MODE=applied RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "x" >/dev/null 2>&1
+# The fake logs argv joined by spaces, so the two-line prompt lands as two
+# log lines; the command line is the second.
+if grep -qF -- "touch '$REAL_TREE/.ralph-containment-probe-t-probe' '$TMP/home/containment-probes/t-probe." "$FAKE_HERDR_LOG"; then
+  ok "probe: the prompt touches inside-then-outside in ONE command"
+else
+  not_ok "probe: prompt shape — got '$(grep -A1 'agent prompt t-probe' "$FAKE_HERDR_LOG" | cut -c1-200)'"
+fi
+unset FAKE_HERDR_PROMPT_HOOK
 
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
