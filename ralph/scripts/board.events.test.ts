@@ -218,11 +218,11 @@ describe("board events --since", () => {
     expect(v.cursor).toBe(1);
   });
 
-  it("an explicit RALPH_HERDR_LEDGER wins: the sqlite sibling beside it is read", () => {
+  it("an explicit RALPH_HERDR_LEDGER wins, sibling derived by extension swap (audit.jsonl → audit.sqlite)", () => {
     const custom = join(root, "elsewhere");
     mkdirSync(custom, { recursive: true });
-    buildDbAt(join(custom, "ledger.sqlite"), ['{"kind":"custom"}']);
-    process.env.RALPH_HERDR_LEDGER = join(custom, "ledger.jsonl");
+    buildDbAt(join(custom, "audit.sqlite"), ['{"kind":"custom"}']);
+    process.env.RALPH_HERDR_LEDGER = join(custom, "audit.jsonl");
     const c = capture();
     try {
       expect(run(["events", "--since", "0"], ctx())).toBe(0);

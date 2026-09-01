@@ -13002,12 +13002,14 @@ export function run(argv: string[], ctx: Ctx): number {
       if (!Number.isSafeInteger(since))
         throw new UsageError(`--since ${sinceRaw} is beyond the integer range a cursor can hold (max ${Number.MAX_SAFE_INTEGER})`);
       // The plugin's path rule in FULL (ledger.sh): an explicit
-      // RALPH_HERDR_LEDGER names the JSONL file and wins — the sqlite
-      // sibling sits beside it (ledger-convert.sh builds it there).
+      // RALPH_HERDR_LEDGER names the JSONL file and wins — its sibling is
+      // ralph_lc_db_path's rule (ledger-convert.sh): swap a .jsonl extension
+      // for .sqlite, else append .sqlite. NOT a fixed "ledger.sqlite" beside
+      // it — /tmp/audit.jsonl converts to /tmp/audit.sqlite.
       const explicit = process.env.RALPH_HERDR_LEDGER;
       const root = process.env.RALPH_HERDR_LEDGER_ROOT || join(homedir(), ".ralph");
       const db = explicit
-        ? join(dirname(explicit), "ledger.sqlite")
+        ? (explicit.endsWith(".jsonl") ? explicit.slice(0, -".jsonl".length) : explicit) + ".sqlite"
         : join(root, ctx.cfg.owner, ctx.cfg.repo, "ledger.sqlite");
       // Absence is ENOENT and nothing else: existsSync collapses EACCES into
       // false, which would render an access failure as "no events" — the
