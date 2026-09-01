@@ -386,7 +386,7 @@ def synthesize_candidates(
 
             with httpx.Client(timeout=timeout_s) as client:
                 resp = client.post(url, json=body)
-            status, payload = resp.status_code, resp.json()
+            status = resp.status_code
         else:
             status, payload = http_post(url, body, timeout_s)
     except Exception as exc:  # noqa: BLE001
@@ -397,6 +397,17 @@ def synthesize_candidates(
             detail = f"LLM call to {url} failed: {exc} ({shape})"
         log.warning("meta-reflect %s", detail)
         return SynthesisResult([], failure, detail)
+    if http_post is None:
+        # Decoded OUTSIDE the transport try (greptile P1 on #2344): a 200
+        # whose body is not JSON — a truncated stream, an HTML error page —
+        # is a payload fault, and letting it raise into the handler above
+        # would type it ``unreachable`` and send the reader to the network.
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            detail = f"LLM at {url} returned status {status} with a non-JSON body: {exc} ({shape})"
+            log.warning("meta-reflect %s", detail)
+            return SynthesisResult([], "payload-shape", detail)
     if status != 200:
         detail = f"LLM at {url} returned status {status} ({shape})"
         log.warning("meta-reflect %s", detail)

@@ -285,6 +285,43 @@ class TestSynthesisIsBounded:
             monkeypatch.delenv("RALPH_DREAM_LLM_TIMEOUT_S", raising=False)
             importlib.reload(meta_reflect)
 
+    def test_non_json_200_body_is_payload_shape_not_unreachable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """greptile P1 on #2344: ``resp.json()`` raised inside the transport
+        handler and a truncated body was typed ``unreachable``. Drives the
+        REAL httpx path through a fake module — the ``http_post`` seam hands
+        back a parsed payload and cannot reach this branch."""
+        import sys
+        import types
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        class _Client:
+            def __init__(self, timeout):  # noqa: ANN001
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):  # noqa: ANN002
+                return False
+
+            def post(self, url, json):  # noqa: ANN001, ARG002
+                return _Resp()
+
+        monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(Client=_Client))
+        r = meta_reflect.synthesize_candidates(
+            [{"id": "r0", "content": "x", "date": ""}], "http://gate", "m"
+        )
+        assert r.candidates == []
+        assert r.failure == "payload-shape"
+        assert "non-JSON body" in r.detail and "status 200" in r.detail
+
     @pytest.mark.parametrize(
         ("post", "failure", "needle"),
         [
