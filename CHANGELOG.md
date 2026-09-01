@@ -50,7 +50,7 @@ to a version heading when that artifact next releases. Full tag history:
   its loop, usually to print nothing; but every spawn takes the risk, so
   every spawn is still told.
 
-  Ships as ralph-herdr **0.37.0**; `ralph/scripts/herdr-plugin-version` moves
+  Ships as ralph-herdr **0.38.0**; `ralph/scripts/herdr-plugin-version` moves
   with it (the two stamps are enforced equal by `herdr-setup.test.sh`, not
   floor-and-version), so doctor reports the cockpit stale on this machine
   until the plugin is reinstalled — the honest state, and the swap stays the
