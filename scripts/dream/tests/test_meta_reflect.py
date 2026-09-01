@@ -884,6 +884,41 @@ class TestNearMissInstrumentation:
         )
         assert "ZERO churn recorded" in meta_reflect.format_near_miss_report(after)
 
+    def test_zero_from_scans_that_compared_nothing_is_not_certified(self, tmp_path: Path) -> None:
+        """GH-2283: the first live fire wrote one scan with candidates: 0.
+
+        That scan is proof the instrument ran, never proof of zero churn, and
+        the report must not lend #1965's deferral a "trigger has not fired".
+        """
+        wiki = self._wiki(tmp_path, promoted=["Attention is sacred"])
+        meta_reflect.record_near_misses([], wiki, now=NOW)
+        summary = meta_reflect.near_miss_summary(wiki)
+        assert summary["instrumented"] is True
+        assert summary["runs"] == 1
+        assert summary["near_misses"] == 0
+        assert summary["candidates_scanned"] == 0
+        assert summary["evidence_scans"] == 0
+        report = meta_reflect.format_near_miss_report(summary)
+        assert "NOT CERTIFIABLE" in report
+        assert "trigger has not fired" not in report
+        assert "0 of 1 scan(s)" in report
+
+        meta_reflect.record_near_misses([{"axiom": "Unrelated claim about locks"}], wiki, now=NOW)
+        summary = meta_reflect.near_miss_summary(wiki)
+        assert summary["candidates_scanned"] == 1
+        assert summary["evidence_scans"] == 1
+        report = meta_reflect.format_near_miss_report(summary)
+        assert "ZERO churn recorded" in report
+        assert "1 of 2 scan(s)" in report
+
+    def test_zero_against_an_empty_corpus_is_not_certified(self, tmp_path: Path) -> None:
+        wiki = tmp_path / "wiki"
+        meta_reflect.record_near_misses([{"axiom": "Anything at all"}], wiki, now=NOW)
+        summary = meta_reflect.near_miss_summary(wiki)
+        assert summary["candidates_scanned"] == 1
+        assert summary["evidence_scans"] == 0
+        assert "NOT CERTIFIABLE" in meta_reflect.format_near_miss_report(summary)
+
     def test_scan_records_the_comparison_set_size(self, tmp_path: Path) -> None:
         """Zero near-misses against zero known axioms is arithmetic, not evidence."""
         wiki = tmp_path / "wiki"

@@ -394,6 +394,14 @@ Four properties carry it:
   recorded; withholding them would lose real evidence. A scan record with no
   flag at all (written before this existed) counts as incomplete, since it
   cannot vouch for its corpus either.
+- **A zero from scans that compared nothing is not certified either.** The
+  `candidates: 0` scans above prove the instrument *ran*; they cannot prove
+  the corpus has no churn, and the first live fire (GH-2283, 2026-08-30: LLM
+  timed out, zero candidates, one scan) was exactly that shape. The summary
+  counts `evidence_scans` — scans that compared at least one candidate
+  against at least one known axiom — and `--near-miss-report` refuses the
+  "trigger has not fired" wording until there is one; the same NOT
+  CERTIFIABLE reading as the incomplete-corpus case.
 - **The metric is named in the record.** `token-jaccard-v1` is lexical bag-of-
   words overlap, deliberately not embedding cosine — an unlabelled `0.42`
   would invite exactly the confusion a #1965 calibration pass must avoid. The
