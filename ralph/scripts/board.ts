@@ -10148,7 +10148,16 @@ export function stateGuardVerdict(args: {
   const bad = concluded.filter((r) => r.conclusion !== "success");
   const newest = bad[0];
   if (!newest) return { level: "ok", detail: `last ${concluded.length} runs green` };
-  const greenSince = concluded.filter((r) => r.conclusion === "success" && at(r) > at(newest)).length;
+  const greens = concluded.filter((r) => r.conclusion === "success" && at(r) > at(newest));
+  const greenSince = greens.length;
+  // A green run on ANY lane proves the shared token's budget is back (the
+  // 2026-08-29 incident healed on two issue-lane runs), but it does not prove
+  // the failed lane has fired since — say so rather than let a cross-lane
+  // green read as a completed reconcile sweep.
+  const sameLaneNote =
+    greenSince > 0 && newest.event && !greens.some((r) => r.event === newest.event)
+      ? ` (none on the ${newest.event} lane yet)`
+      : "";
   const lanes = bad.map((r) => `${r.event ?? "?"}@${stateGuardMinute(r.updatedAt)}`).join(", ");
   const window = `${bad.length}/${concluded.length} in window: ${lanes}`;
   const ref = newest.url ?? (newest.databaseId ? `run ${newest.databaseId}` : "run id unknown");
@@ -10156,7 +10165,8 @@ export function stateGuardVerdict(args: {
   const t = stateGuardMinute(newest.updatedAt);
   const failLevel: DoctorLevel = args.selfRun ? "warn" : "fail";
   const selfNote = args.selfRun ? " (self-run: warn, letting this run go green so the window can heal)" : "";
-  const since = greenSince === 0 ? "no green run since" : `${greenSince} green run${greenSince === 1 ? "" : "s"} since`;
+  const since =
+    greenSince === 0 ? "no green run since" : `${greenSince} green run${greenSince === 1 ? "" : "s"} since${sameLaneNote}`;
 
   const log = args.readFailedLog(newest);
   const cls = log === null ? { cause: "other" as const, evidence: null } : classifyStateGuardLog(log);

@@ -1761,7 +1761,8 @@ describe("doctor (legacy states, archived items)", () => {
       const check = report.checks.find((c) => c.name === "state-guard");
       expect(check?.level).toBe("info");
       expect(check?.detail).toMatch(/^rate-limited, self-healed — no action/);
-      expect(check?.detail).toMatch(/2 green runs since/);
+      // both greens are issue-lane runs: the budget is proven back, the cron lane is not
+      expect(check?.detail).toMatch(/2 green runs since \(none on the schedule lane yet\)/);
       expect(check?.detail).toMatch(/schedule run at 2026-08-29T00:30Z/);
       expect(check?.detail).toMatch(/actions\/runs\/33223698651/);
       expect(check?.detail).not.toMatch(/^auth|rotate ROUTING_PAT/);
@@ -1846,7 +1847,7 @@ describe("doctor (legacy states, archived items)", () => {
       expect(c?.level).toBe("fail");
       expect(c?.detail).toMatch(/^other — debug https:\/\/x\/runs\/1/);
       expect(c?.detail).toMatch(/failure log unreadable/);
-      expect(c?.detail).toMatch(/1 green run since/);
+      expect(c?.detail).toMatch(/1 green run since\. /); // same lane: no lane note
       expect(c?.detail).not.toMatch(/rate-limited|rotate/);
     } finally {
       if (prev === undefined) delete process.env.GITHUB_WORKFLOW;
