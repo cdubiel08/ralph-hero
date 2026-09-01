@@ -7,12 +7,16 @@
 # pass's attention surface.
 #
 # ONE TAB PER LANE (GH-2317): lane-open.sh placed this launcher pane as a
-# tab in the repo's MAIN workspace, so this pane IS the lane tab's
-# script-log pane — the agent gets a split beside it, and the tab is named
-# from the LANE (the word the skill already spells: /ralph:tend), never a
-# third vocabulary. Run from a bare shell instead (no HERDR_PANE_ID to
-# split), the pre-GH-2317 shape survives: a fresh lane tab whose root pane
-# hosts the agent, this terminal the watcher.
+# tab in the repo's MAIN workspace — marked RALPH_HERDR_LANE_TAB=1, the
+# opener's assertion that the tab is its own artifact — so this pane IS the
+# lane tab's script-log pane: the agent gets a split beside it, and the tab
+# is named from the LANE (the word the skill already spells: /ralph:tend),
+# never a third vocabulary. Without the marker the pre-GH-2317 shape
+# survives — a fresh lane tab whose root pane hosts the agent, this
+# terminal the watcher — because a pane WITHOUT it sits in a tab someone
+# else owns (a bare shell, invoke.sh's default split placement, a
+# hand-opened plugin pane) and renaming or splitting that tab would disrupt
+# surfaces this lane never created.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,7 +44,7 @@ while IFS= read -r out; do tool_args+=("$out"); done < <(ralph_tool_binding_args
 if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "DRY RUN — would spawn $lane pass (queue head #$next):"
   echo "  agent: $agent"
-  if [ -n "${HERDR_PANE_ID:-}" ]; then
+  if [ "${RALPH_HERDR_LANE_TAB:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
     echo "  $HERDR tab rename <own tab> $lane"
     echo "  $HERDR pane split $HERDR_PANE_ID --direction down --cwd $REPO --no-focus"
   else
@@ -51,10 +55,11 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   exit 0
 fi
 
-if [ -n "${HERDR_PANE_ID:-}" ]; then
-  # In-tab shape: rename our tab from the lane (best-effort — the label is
-  # chrome and a failed rename may not cost the pass), then split the agent
-  # pane below. Full width for both surfaces; the logs stay on top.
+if [ "${RALPH_HERDR_LANE_TAB:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
+  # In-tab shape — only under the opener's own-tab marker: rename our tab
+  # from the lane (best-effort — the label is chrome and a failed rename may
+  # not cost the pass), then split the agent pane below. Full width for both
+  # surfaces; the logs stay on top.
   tab=$(ralph_herdr_call pane_info pane get "$HERDR_PANE_ID" 2>/dev/null \
     | jq -r '.pane.tab_id // empty' 2>/dev/null) || tab=""
   if [ -n "$tab" ]; then

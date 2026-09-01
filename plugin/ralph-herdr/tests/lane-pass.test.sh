@@ -84,14 +84,14 @@ run_lane() { # LANE [env VAR=…] — run the copied pass script </dev/null
 # ── 1. empty queue spawns nothing ────────────────────────────────────────────
 reset
 rm -f "$FAKE_BOARD_FIXTURES/deliver-queue.json"
-out=$(HERDR_PANE_ID="w1:p9" run_lane deliver)
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
 has "deliver: empty queue says so" "$out" "deliver queue empty"
 log_hasnt "deliver: empty queue makes no herdr call" "pane split"
 printf '{"next":{"number":42},"queue":[{"number":42}]}\n' >"$FAKE_BOARD_FIXTURES/deliver-queue.json"
 
 # ── 2. in-tab shape: rename own tab from the lane, split the agent pane ──────
 reset
-out=$(HERDR_PANE_ID="w1:p9" run_lane deliver)
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
 log_has "deliver: own tab renamed from the LANE" "tab rename w1:t1 deliver"
 log_has "deliver: agent pane is a split of the launcher pane" "pane split w1:p9 --direction down --cwd $REPO_DIR --no-focus"
 log_has "deliver: agent starts in the SPLIT pane" "agent start ralph-deliver --kind claude --pane pS1"
@@ -108,12 +108,22 @@ log_hasnt "deliver fallback: no split without a pane to split" "pane split"
 log_has "deliver fallback: agent starts in the tab's root pane" "agent start ralph-deliver --kind claude --pane pTF"
 has "deliver fallback: the watcher still takes over" "$out" "notify-watch ralph-deliver"
 
+# ── 3b. a pane WITHOUT the lane-tab marker keeps the fallback shape ──────────
+# invoke.sh's default split placement (and any hand-opened plugin pane) has an
+# HERDR_PANE_ID but sits in a tab someone else owns — the lane may not rename
+# or split it (PR #2326 P2).
+reset
+out=$(env -u RALPH_HERDR_LANE_TAB bash -c "cd '$REPO_DIR' && HERDR_PANE_ID=w1:p9 bash '$SCRIPTS/deliver-pass.sh' </dev/null 2>&1")
+log_hasnt "deliver unmarked pane: never renames the host tab" "tab rename"
+log_hasnt "deliver unmarked pane: never splits the host tab" "pane split"
+log_has "deliver unmarked pane: falls back to its own lane tab" "tab create --cwd $REPO_DIR --label deliver --no-focus"
+
 # ── 4. refused agent start cleans up exactly what this run created ───────────
 reset
 printf '{"error":{"code":"agent_name_taken","message":"an agent named ralph-deliver is already running"}}\n' \
   >"$FAKE_HERDR_FIXTURES/agent-start.json"
 printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-start.rc"
-out=$(HERDR_PANE_ID="w1:p9" run_lane deliver)
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
 rc=$?
 if [ "$rc" -ne 0 ]; then ok "deliver: a refused start fails the pass"; else not_ok "deliver: a refused start fails the pass (rc 0)"; fi
 log_has "deliver: in-tab cleanup closes the empty SPLIT pane" "pane close pS1"
@@ -130,7 +140,7 @@ log_hasnt "deliver fallback: cleanup closes no pane" "pane close"
 
 # ── 5. tend rides the same shape, tool binding intact (GH-2265) ──────────────
 reset
-out=$(HERDR_PANE_ID="w1:p9" run_lane tend)
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
 log_has "tend: own tab renamed from the LANE" "tab rename w1:t1 tend"
 log_has "tend: agent pane is a split of the launcher pane" "pane split w1:p9 --direction down"
 log_has "tend: the tender's registry tool binding survives the reshape" "agent start ralph-tend --kind claude --pane pS1 -- --disallowedTools"
@@ -138,7 +148,7 @@ has "tend: the watcher takes over" "$out" "notify-watch ralph-tend"
 
 # ── 6. dry run narrates the in-tab plan and mutates nothing ──────────────────
 reset
-out=$(HERDR_PANE_ID="w1:p9" RALPH_HERDR_DRY_RUN=true run_lane deliver)
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" RALPH_HERDR_DRY_RUN=true run_lane deliver)
 has "deliver dry run: narrates the rename" "$out" "tab rename <own tab> deliver"
 has "deliver dry run: narrates the split" "$out" "pane split w1:p9 --direction down"
 log_hasnt "deliver dry run: mutates nothing" "pane split"
@@ -156,7 +166,7 @@ out=$(cd "$REPO_DIR" && bash "$SCRIPTS/lane-open.sh" deliver </dev/null 2>&1)
 rc=$?
 if [ "$rc" -eq 0 ]; then ok "lane-open: a resolvable main workspace exits 0"; else not_ok "lane-open: a resolvable main workspace exits 0 (rc $rc): $out"; fi
 log_has "lane-open: the launcher pane opens AS A TAB in the main workspace" \
-  "plugin pane open --plugin ralph-herdr --entrypoint deliver-pass --workspace wM --placement tab --cwd /tmp/fake-herdr-parent --focus"
+  "plugin pane open --plugin ralph-herdr --entrypoint deliver-pass --workspace wM --placement tab --cwd /tmp/fake-herdr-parent --env RALPH_HERDR_LANE_TAB=1 --focus"
 
 # The label-fallback half of the GH-2246 rule: a main workspace this plugin
 # itself created reports no worktree object, only the checkout's basename.

@@ -46,7 +46,12 @@ fi
 
 # --focus is deliberate (the actions' own rule): the human clicked the lane,
 # so its tab may take focus. The launcher pane IS the new tab's root pane;
-# the pane entrypoint keeps the `<lane>-pass` id.
+# the pane entrypoint keeps the `<lane>-pass` id. RALPH_HERDR_LANE_TAB marks
+# the tab as THIS opener's own artifact — the pass script renames its tab and
+# splits beside itself only under that marker, because a generic pane also
+# has an HERDR_PANE_ID (invoke.sh's default split placement, a hand-opened
+# plugin pane) and renaming a tab the operator owns is not this lane's call.
 exec "$HERDR" plugin pane open \
   --plugin "${HERDR_PLUGIN_ID:-ralph-herdr}" --entrypoint "$lane-pass" \
-  ${ws_args+"${ws_args[@]}"} --placement tab --cwd "$src" --focus
+  ${ws_args+"${ws_args[@]}"} --placement tab --cwd "$src" \
+  --env RALPH_HERDR_LANE_TAB=1 --focus
