@@ -483,19 +483,15 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		line1 = pad(line1, inner-lipgloss.Width(chip)) + chip
 	}
 
-	// ── line 2: title. The derived herd address IS the title where a session
-	// carried one (GH-2210/D6.2, display rule GH-2235): the cockpit is
-	// repo-scoped, so the repo segment duplicates what the surface already
-	// establishes and its width cost came straight out of the distinguishing
-	// tail — the display drops it, then middle-truncates only what remains.
-	// Every other card keeps its issue title, since no address exists for it
-	// by construction.
-	var line2 string
-	if addr := m.cardAddress(card.Number); addr != "" {
-		line2 = textStyle.Render(trimMiddle(addressDisplay(addr), inner))
-	} else {
-		line2 = textStyle.Render(trimTo(card.Title, inner))
-	}
+	// ── line 2: the issue title. GH-2210/D6.2 put the herd address here and
+	// GH-2235 shortened it to the display suffix — which at card width is
+	// `w2260-the-cockpit` directly under `feat/2260-the-cockpit`: the same
+	// number and slug twice, and the one line that said what the unit is
+	// ABOUT gone (GH-2320). Everything the address carried is already on the
+	// card — line 1 names the unit, line 3's epic chip names the team — and
+	// the full address is one keypress away in the topology view, so the card
+	// is the surface where D6.2 yields to the title.
+	line2 := textStyle.Render(trimTo(card.Title, inner))
 
 	// ── line 3: priority · estimate · epic · agent age (right-justified).
 	var line3 string
@@ -1317,46 +1313,6 @@ func trimTo(s string, n int) string {
 		r = r[:n-1]
 	}
 	return string(r) + "…"
-}
-
-// addressDisplay is the display spelling of a herd address on a repo-scoped
-// surface (GH-2235): the leading repo segment is dropped — the surface
-// already establishes it, and its width cost came out of the distinguishing
-// tail. A segment-free string (no `/`) passes through: there is nothing
-// redundant to drop. Mirrors ralph_address_display in scripts/naming.sh for
-// the segments this surface renders.
-func addressDisplay(s string) string {
-	if i := strings.IndexByte(s, '/'); i >= 0 && i+1 < len(s) {
-		return s[i+1:]
-	}
-	return s
-}
-
-// trimMiddle clips a herd address to n cells by eliding the MIDDLE
-// (GH-2210/D6.2, amended GH-2235): the first-segment prefix and the tail
-// survive, because `t2208-…/w2210-slug`'s tail still names the unit while a
-// plain right-truncation cuts exactly the distinguishing end. Callers on a
-// repo-scoped surface strip the repo segment first (addressDisplay), so the
-// prefix kept here is the first segment of what REMAINS. When even prefix +
-// ellipsis + one tail rune cannot fit, it degrades to trimTo.
-func trimMiddle(s string, n int) string {
-	if n <= 1 || lipgloss.Width(s) <= n {
-		return s
-	}
-	r := []rune(s)
-	slash := -1
-	for i, c := range r {
-		if c == '/' {
-			slash = i
-			break
-		}
-	}
-	// prefix = "repo/", budget for the tail after "…"
-	tail := n - (slash + 1) - 1
-	if slash < 0 || tail < 1 {
-		return trimTo(s, n)
-	}
-	return string(r[:slash+1]) + "…" + string(r[len(r)-tail:])
 }
 
 func max(a, b int) int {

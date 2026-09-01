@@ -611,23 +611,6 @@ func (m Model) cardBranch(issue int) string {
 	return ""
 }
 
-// cardAddress is the derived herd address for the card's unit (GH-2210/D6.2
-// — the address is the title where one exists). The live agent's own token is
-// preferred; the ledger's newest spawn answers for a session that has since
-// exited, the same split cardBranch uses. Empty means no session ever carried
-// one — the card keeps its issue title, since no address exists to show.
-func (m Model) cardAddress(issue int) string {
-	for _, a := range m.agents[issue] {
-		if a.Address != "" {
-			return a.Address
-		}
-	}
-	if sp, ok := m.ledger.ByIssue[issue]; ok {
-		return sp.Address
-	}
-	return ""
-}
-
 // cardDiff is the worktree measurement for a live agent's checkout. Two
 // distinct falses: no live agent with a recorded checkout (live=false — there
 // is nothing to measure, so nothing is drawn), and a measurement that failed
