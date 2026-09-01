@@ -48,6 +48,11 @@
 #   reconcile) serialize through ralph_ledger_lock/unlock — appends alone
 #   need no lock.
 #
+#   DUAL WRITE (GH-2306, phase B): after the JSONL line lands, the same event
+#   is inserted into the sibling ledger.sqlite (schema v1, GH-2305) when that
+#   file exists. JSONL is the truth — a sqlite failure warns and never fails
+#   an append, and any gap self-heals at the next ledger-convert.sh run.
+#
 # LEDGER SELECTION
 #   Every function operates on "the current ledger": $RALPH_HERDR_LEDGER when
 #   set (the watcher iterates ~/.ralph/*/*/ledger.jsonl this way; tests point it
@@ -60,6 +65,20 @@
 #
 # Pure functions + file appends only — no top-level side effects, no set/shopt
 # (callers own their shell options). bash 3.2 compatible. Needs jq.
+
+# The sqlite sibling's rules — db path, phash, user_version, typed projection
+# — have ONE definition, ledger-convert.sh (the GH-1843 shape); the dual-write
+# sink below only calls them. Guarded twice: skipped when already defined (the
+# converter executable sources ledger.sh back, and re-sourcing it here would
+# loop), and skipped when the file is absent (a stripped tree — cockpit tests
+# copy ledger.sh alone; the sink then no-ops via its own command -v probe).
+if ! command -v ralph_lc_db_path >/dev/null 2>&1; then
+  _RALPH_LEDGER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$_RALPH_LEDGER_DIR/ledger-convert.sh" ]; then
+    # shellcheck source=ledger-convert.sh
+    . "$_RALPH_LEDGER_DIR/ledger-convert.sh"
+  fi
+fi
 
 # _ralph_ledger_slug STR — path-safe component: any char outside
 # [A-Za-z0-9._-] becomes '-', and the two traversal names "." and ".." get a
@@ -192,6 +211,105 @@ ralph_session_key() {
 # while it lives, but the record outlives it. A caller that already supplied
 # `.session` keeps it — replay and migration paths must be able to preserve the
 # original writer.
+# _ralph_ledger_sqlite_insert FILE LINE — the sqlite half of the dual write
+# (GH-2306, phase B): mirror the line JUST appended to FILE into the sibling
+# ledger.sqlite (schema v1, GH-2305). ALWAYS returns 0 — JSONL is the truth,
+# and this sink may never block or fail a spawn/exit record: every failure
+# (locked, corrupt, missing sqlite3, a newer schema, a lost race on seq)
+# WARNS on stderr and proceeds. The cost of any skipped insert is a parity
+# gap the next ledger-convert.sh run backfills (phash-keyed) — never data.
+_ralph_ledger_sqlite_insert() {
+  local file="${1-}" line="${2-}" db sq uv seq at ph proj q out
+  local f_ts f_ev f_agent f_unit f_reason f_pane
+  # A tree without ledger-convert.sh has no converter, so no sqlite ledger to
+  # keep current — nothing to do (the guarded source above already skipped).
+  command -v ralph_lc_db_path >/dev/null 2>&1 || return 0
+  db=$(ralph_lc_db_path "$file") || return 0
+  # Absent ledger.sqlite = a not-yet-converted machine: skip SILENTLY and do
+  # NOT create the db — phase A's converter is the adoption path, and a
+  # half-adopted machine must read as "not converted" in doctor, never as a
+  # mystery partial db.
+  [ -f "$db" ] || return 0
+  sq="${RALPH_SQLITE3_BIN:-sqlite3}"
+  if ! command -v "$sq" >/dev/null 2>&1; then
+    echo "ralph_ledger_append: sqlite sink skipped — no sqlite3 ('$sq'); JSONL holds the record, ledger-convert.sh backfills" >&2
+    return 0
+  fi
+  uv=$(ralph_lc_user_version "$db") || uv=""
+  case "$uv" in
+    0 | 1) : ;;
+    *)
+      echo "ralph_ledger_append: sqlite sink skipped — $db user_version='${uv:-?}' (unreadable, or a schema newer than v1); JSONL holds the record" >&2
+      return 0
+      ;;
+  esac
+  # seq must be the JSONL line number of the line just appended — it is the
+  # salt in schema v1's phash — so a wrong seq is a row the converter will
+  # disagree with FOREVER (INSERT OR IGNORE never overwrites). Appends alone
+  # take no lock (this file's own rule), so a concurrent append can land
+  # between our write and this count: read the counted line back, and on any
+  # mismatch SKIP — a missing row self-heals at the next convert, a wrong row
+  # is a permanent parity GAP. The file is append-only, so a pair verified
+  # here is stable: line N never changes after it is read back.
+  seq=$(grep -c '' <"$file" 2>/dev/null) || seq=""
+  case "$seq" in
+    '' | *[!0-9]* | 0)
+      echo "ralph_ledger_append: sqlite sink skipped — cannot count $file; ledger-convert.sh backfills" >&2
+      return 0
+      ;;
+  esac
+  at=$(sed -n "${seq}p" "$file" 2>/dev/null) || at=""
+  if [ "$at" != "$line" ]; then
+    echo "ralph_ledger_append: sqlite sink skipped — a concurrent append moved the tail of $file; ledger-convert.sh backfills" >&2
+    return 0
+  fi
+  ph=$(ralph_lc_hash_line "$seq" "$line") || {
+    echo "ralph_ledger_append: sqlite sink skipped — no sha256 tool; ledger-convert.sh backfills" >&2
+    return 0
+  }
+  proj=$(ralph_lc_project_line "$line") || proj=""
+  if [ -z "$proj" ]; then
+    echo "ralph_ledger_append: sqlite sink skipped — typed projection failed; ledger-convert.sh backfills" >&2
+    return 0
+  fi
+  IFS=$'\037' read -r f_ts f_ev f_agent f_unit f_reason f_pane <<<"$proj"
+  # SQL string literals: double every single quote — the one metacharacter in
+  # a quoted sqlite literal. The projection already flattened control chars,
+  # and the payload is single-line JSON by the append's own validation.
+  q="'"
+  f_ts=${f_ts//$q/$q$q}; f_ev=${f_ev//$q/$q$q}; f_agent=${f_agent//$q/$q$q}
+  f_unit=${f_unit//$q/$q$q}; f_reason=${f_reason//$q/$q$q}; f_pane=${f_pane//$q/$q$q}
+  line=${line//$q/$q$q}
+  # INSERT OR IGNORE: a retry, or a line the converter already imported, is a
+  # no-op — the converter's own idempotence rule. busy_timeout bounds a
+  # writer collision on the WAL db at 2s; past it the warn below answers,
+  # never a blocked append. The trailing SELECT reads back what the insert
+  # did: an ignored insert whose standing row carries a DIFFERENT phash means
+  # the two files diverged before this append — a state neither this sink nor
+  # the converter may overwrite (fail-closed, phase A's rule) and one the
+  # parity check's count+last-phash shape can miss mid-file, so it is warned
+  # HERE, at the one moment the divergent row is actually touched.
+  out=$("$sq" "$db" "PRAGMA busy_timeout=2000;
+INSERT OR IGNORE INTO facts(seq, ts, kind, agent, unit, reason, pane, payload, phash)
+  VALUES ($seq, '$f_ts', '$f_ev', nullif('$f_agent',''),
+          CAST(nullif('$f_unit','') AS INTEGER), nullif('$f_reason',''),
+          nullif('$f_pane',''), '$line', '$ph');
+SELECT changes() || '|' || coalesce((SELECT phash FROM facts WHERE seq=$seq), '');" 2>&1) || {
+    echo "ralph_ledger_append: sqlite sink failed on $db (${out:0:160}) — JSONL holds the record, ledger-convert.sh backfills" >&2
+    return 0
+  }
+  # The PRAGMA echoes its value on a line of its own — the read-back is the
+  # LAST line of the invocation's output.
+  out=${out##*$'\n'}
+  case "$out" in
+    0\|"$ph") : ;; # standing identical row — the converter imported it first
+    0\|*)
+      echo "ralph_ledger_append: sqlite sink — $db already holds a DIFFERENT fact at seq $seq (the files diverged before this append; nothing here overwrites): inspect with doctor-parity.sh before trusting either sink" >&2
+      ;;
+  esac
+  return 0
+}
+
 _RALPH_SESSION_KEY=""
 ralph_ledger_append() {
   local raw="${1-}" file line bytes
@@ -213,7 +331,17 @@ ralph_ledger_append() {
     echo "ralph_ledger_append: refusing oversize line ($bytes bytes + newline >= 4096 — appends must stay atomic)" >&2
     return 1
   fi
-  env printf '%s\n' "$line" >>"$file"
+  env printf '%s\n' "$line" >>"$file" || return 1
+  # Dual write (GH-2306): mirror the line into the sibling ledger.sqlite.
+  # JSONL stays the truth — the sink warns and proceeds on ANY failure, so
+  # this function's rc never depends on sqlite. Both sinks run under whatever
+  # serialization the caller already holds (read-decide-append writers hold
+  # ralph_ledger_lock; bare appends are atomic on their own) — deliberately
+  # no second lock, which preserves cross-sink ordering wherever the caller
+  # locked. The 4096-byte guard above still governs: the JSONL sink rules
+  # while it is a sink (lifting it is phase D).
+  _ralph_ledger_sqlite_insert "$file" "$line"
+  return 0
 }
 
 # ── read-decide-append serialization ─────────────────────────────────────────

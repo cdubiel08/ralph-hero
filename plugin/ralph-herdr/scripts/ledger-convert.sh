@@ -126,24 +126,39 @@ _ralph_lc_check_version() {
   esac
 }
 
+# Shared jq fragments — ONE definition of the typed-column projection (the
+# GH-1843 shape): _ralph_lc_classify applies it per file line, and the
+# dual-write sink (ledger.sh, GH-2306) applies it to the one line it just
+# appended, via ralph_lc_project_line. $j is the parsed event object; column
+# order is ts, ev, agent, unit, reason, pane.
+_RALPH_LC_JQ_COL='def col: (. // "") | tostring | gsub("[\u001f\t\r\n]"; " ");'
+_RALPH_LC_JQ_PROJ='[ ($j.ts | col), ($j.ev | col), ($j.agent_ref | col),
+  ((($j.agent_ref // "") | tostring
+    | (try capture("^[a-z](?<u>[0-9]+)-") catch null) | (.u // "")) | col),
+  ($j.reason | col), ($j.pane_id | col) ]'
+
 # _ralph_lc_classify FILE — one jq pass over the JSONL: each line becomes a
 # US-separated record, "F"-tagged (seq, sanitized typed fields, raw payload
 # LAST so an embedded escape cannot shift a column) or "R"-tagged (seq, raw).
 # A line is a fact iff it parses as a JSON object; anything else is a reject.
 _ralph_lc_classify() {
   jq -R -r '
-    def col: (. // "") | tostring | gsub("[\u001f\t\r\n]"; " ");
+    '"$_RALPH_LC_JQ_COL"'
     (input_line_number | tostring) as $n
     | . as $raw
     | (try fromjson catch null) as $j
     | if ($j | type) == "object" then
-        [ "F", $n,
-          ($j.ts | col), ($j.ev | col), ($j.agent_ref | col),
-          ((($j.agent_ref // "") | tostring
-            | (try capture("^[a-z](?<u>[0-9]+)-") catch null) | (.u // "")) | col),
-          ($j.reason | col), ($j.pane_id | col),
-          $raw ] | join("\u001f")
+        (["F", $n] + '"$_RALPH_LC_JQ_PROJ"' + [$raw]) | join("\u001f")
       else "R\u001f\($n)\u001f\($raw)" end' <"${1-}"
+}
+
+# ralph_lc_project_line LINE — the typed columns of ONE valid event line,
+# US-joined (ts ev agent unit reason pane), the same projection classify
+# applies. Empty output / rc when the line is not a JSON object.
+ralph_lc_project_line() {
+  jq -r '
+    '"$_RALPH_LC_JQ_COL"'
+    . as $j | '"$_RALPH_LC_JQ_PROJ"' | join("\u001f")' <<<"${1-}" 2>/dev/null
 }
 
 # ralph_lc_convert LEDGER — build/update LEDGER's sibling sqlite. Prints a
