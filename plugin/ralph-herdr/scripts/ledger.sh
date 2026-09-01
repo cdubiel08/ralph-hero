@@ -343,7 +343,14 @@ _ralph_ledger_sqlite_append() {
     seq=$("$sq" "$db" 'PRAGMA busy_timeout=2000; SELECT coalesce(max(seq), 0) FROM facts;' 2>/dev/null) || seq=""
     seq=${seq##*$'\n'}
     case "$seq" in
-      '' | *[!0-9]*) : ;; # unreadable here — the insert below will answer
+      '' | *[!0-9]*)
+        # While a legacy JSONL exists, "is the tape trailing?" is the
+        # question that decides whether this insert would burn a historical
+        # line's seq — an unanswerable probe may not wave it through
+        # (the inner re-read refuses on the same principle).
+        echo "ralph_ledger_append: cannot probe $db against the legacy JSONL — the fact was NOT recorded" >&2
+        return 1
+        ;;
       *)
         if [ -n "$(sed -n "$((seq + 1))p" "$file" 2>/dev/null)" ]; then
           # The convert must not race a peer's append: an insert allocating
