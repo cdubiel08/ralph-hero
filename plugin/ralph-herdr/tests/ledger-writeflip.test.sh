@@ -118,6 +118,34 @@ ralph_ledger_append '{"ts":"a6","ev":"state","agent_ref":"w1-a#e1","state":"work
 is "duplicate events stored as their own rows" "7" "$(sqlite3 "$DB" 'SELECT count(*) FROM facts;')"
 is "duplicate rows carry distinct phashes" "7" "$(sqlite3 "$DB" 'SELECT count(DISTINCT phash) FROM facts;')"
 
+# ── a tape TRAILING its legacy jsonl is backfilled before the append ─────────
+# (A phase-B sink skip never healed: appending at max(seq)+1 would occupy the
+# seq the converter needs for the jsonl's own line there, and INSERT OR
+# IGNORE could never heal it — the divergence would be permanent.)
+rm -f "$DB" "$DB"-wal "$DB"-shm
+printf '%s\n' \
+  '{"ts":"b1","ev":"spawn","agent_ref":"w7-t#e7","session":"s7"}' \
+  '{"ts":"b2","ev":"state","agent_ref":"w7-t#e7","state":"working","session":"s7"}' \
+  '{"ts":"b3","ev":"state","agent_ref":"w7-t#e7","state":"blocked","session":"s7"}' >"$L"
+bash "$CONVERT" "$L" >/dev/null 2>&1
+sqlite3 "$DB" 'DELETE FROM facts WHERE seq=3;' # simulate the un-healed sink skip
+OUT=$(bash -c ". '$SCRIPTS/ledger.sh'; ralph_ledger_append '{\"ts\":\"b4\",\"ev\":\"exit\",\"agent_ref\":\"w7-t#e7\",\"reason\":\"finished\"}'" 2>&1); RC=$?
+is "append onto a trailing tape exits 0" "0" "$RC"
+is "the jsonl's missing fact was backfilled at ITS seq" \
+  "$(sed -n 3p "$L")" "$(sqlite3 "$DB" 'SELECT payload FROM facts WHERE seq=3;')"
+is "the new fact landed AFTER the backfill" "4|exit" \
+  "$(sqlite3 "$DB" 'SELECT seq||"|"||kind FROM facts WHERE seq=4;')"
+rm -f "$DB" "$DB"-wal "$DB"-shm
+printf '%s\n' \
+  '{"ts":"a1","ev":"spawn","agent_ref":"w1-a#e1","session":"s1"}' \
+  '{"ts":"a2","ev":"state","agent_ref":"w1-a#e1","state":"working","session":"s1"}' >"$L"
+bash "$CONVERT" "$L" >/dev/null 2>&1
+for ev in exit state state state state state; do
+  ralph_ledger_append "{\"ts\":\"r\",\"ev\":\"$ev\",\"agent_ref\":\"w1-a#e1\",\"state\":\"x\"}" 2>/dev/null
+done
+# (restore the pre-existing 7-fact shape the assertions below expect: 2 seeded + 6 appends = 8)
+sqlite3 "$DB" 'DELETE FROM facts WHERE seq=8;'
+
 # ── parity: healthy post-D shape (tape ahead of the frozen jsonl) ────────────
 OUT=$(bash "$PARITY" 2>&1); RC=$?
 is "parity passes on the healthy post-D shape" "0" "$RC"

@@ -311,6 +311,33 @@ _ralph_ledger_sqlite_append() {
       return 1
       ;;
   esac
+  # A dual-write-era tape can TRAIL its legacy JSONL (a sink insert skipped
+  # at phase B and never healed): appending at max(seq)+1 would occupy the
+  # seq the converter's backfill needs for the JSONL's own line there, and
+  # INSERT OR IGNORE never overwrites — the heal would become permanently
+  # impossible. So when the JSONL still has a line beyond the tape's max
+  # seq, adopt it FIRST; a failed adoption refuses the append rather than
+  # burning the seq. One successful convert per process is enough (after it,
+  # any line still beyond max is a reject the converter already sidecarred),
+  # so the probe is one sed read per append and the convert runs at most
+  # once.
+  if [ -z "$_RALPH_LEDGER_BACKFILL_DONE" ] && [ -s "$file" ]; then
+    seq=$("$sq" "$db" 'PRAGMA busy_timeout=2000; SELECT coalesce(max(seq), 0) FROM facts;' 2>/dev/null) || seq=""
+    seq=${seq##*$'\n'}
+    case "$seq" in
+      '' | *[!0-9]*) : ;; # unreadable here — the insert below will answer
+      *)
+        if [ -n "$(sed -n "$((seq + 1))p" "$file" 2>/dev/null)" ]; then
+          if ralph_lc_convert "$file" >/dev/null; then
+            _RALPH_LEDGER_BACKFILL_DONE=1
+          else
+            echo "ralph_ledger_append: the tape trails the legacy JSONL and the backfill failed — the fact was NOT recorded (run ledger-convert.sh $file)" >&2
+            return 1
+          fi
+        fi
+        ;;
+    esac
+  fi
   # Typed columns are best-effort (the converter's own rule: payload is the
   # guarantee, the projection is recomputable) — an empty projection stores
   # empty typed columns, never drops the fact.
@@ -380,6 +407,7 @@ UPDATE facts SET phash='${out}' WHERE seq=$seq AND phash='$ph';" >/dev/null 2>&1
 }
 
 _RALPH_SESSION_KEY=""
+_RALPH_LEDGER_BACKFILL_DONE=""
 ralph_ledger_append() {
   local raw="${1-}" file line
   file=$(ralph_ledger_path) || return 1
