@@ -4,7 +4,14 @@
 # appends the spawn record through it).
 #
 # THE LEDGER
-#   One JSONL file per board scope: ~/.ralph/<owner>/<repo>/ledger.jsonl —
+#   One SQLite tape per board scope: ~/.ralph/<owner>/<repo>/ledger.sqlite
+#   (schema v1, GH-2305; the truth since phase D / GH-2311), addressed
+#   everywhere by its LOCATOR — the sibling ledger.jsonl path, which is what
+#   $RALPH_HERDR_LEDGER and every consumer pass around, whether or not that
+#   file still exists. A present ledger.jsonl is FROZEN (export-only; the
+#   sanctioned regeneration is `ledger-convert.sh --export`); on a machine
+#   never converted, the legacy JSONL still serves reads until ralph 1.0.0,
+#   behind a one-line stderr deprecation courtesy. The ledger lives
 #   deliberately OUTSIDE any repo (worktree-per-job would make an in-repo
 #   ledger a merge hazard). owner and repo are separate path components
 #   (slugged separately): a joined "<owner>-<repo>" would collide distinct
@@ -52,22 +59,16 @@
 #   ralph_ledger_reason_canon (the ONE alias mapping — lost → swept-unknown,
 #   underscore spellings → their hyphenated enum forms), never per consumer.
 #
-#   Appends are single-line `>>` writes (O_APPEND) issued as ONE write(2):
-#   the line goes through an EXTERNAL printf, whose fresh stdio buffer holds
-#   a full 4KB line and flushes it in one call. bash's BUILTIN printf flushes
-#   in ~1KB chunks on Darwin and provably tears concurrent appends over that
-#   size — never "fix" the `env printf` below back to the builtin.
-#   ralph_ledger_append REFUSES lines whose write (line + newline) would
-#   reach 4096 bytes rather than risk a torn write. Readers are pure jq
-#   reductions over the whole file, so duplicate events are tolerated by
-#   construction; writers that must read-decide-append (the watcher hooks,
-#   reconcile) serialize through ralph_ledger_lock/unlock — appends alone
-#   need no lock.
-#
-#   DUAL WRITE (GH-2306, phase B): after the JSONL line lands, the same event
-#   is inserted into the sibling ledger.sqlite (schema v1, GH-2305) when that
-#   file exists. JSONL is the truth — a sqlite failure warns and never fails
-#   an append, and any gap self-heals at the next ledger-convert.sh run.
+#   Appends are sqlite INSERTs (phase D, GH-2311): WAL + busy_timeout carry
+#   concurrent-append safety, and the seq race between two writers settles at
+#   the PRIMARY KEY with a bounded retry — both land, distinct seq. The old
+#   4096-byte line ceiling is GONE: it protected the JSONL sink's single
+#   write(2) append atomicity, a budget sqlite rows do not have. Readers are
+#   pure jq reductions over the whole event stream, so duplicate events are
+#   tolerated by construction; writers that must read-decide-append (the
+#   watcher hooks, reconcile) still serialize through
+#   ralph_ledger_lock/unlock — appends alone need no lock (see the
+#   serialization argument at _ralph_ledger_sqlite_append).
 #
 # LEDGER SELECTION
 #   Every function operates on "the current ledger": $RALPH_HERDR_LEDGER when
@@ -82,12 +83,13 @@
 # Pure functions + file appends only — no top-level side effects, no set/shopt
 # (callers own their shell options). bash 3.2 compatible. Needs jq.
 
-# The sqlite sibling's rules — db path, phash, user_version, typed projection
-# — have ONE definition, ledger-convert.sh (the GH-1843 shape); the dual-write
-# sink below only calls them. Guarded twice: skipped when already defined (the
-# converter executable sources ledger.sh back, and re-sourcing it here would
-# loop), and skipped when the file is absent (a stripped tree — cockpit tests
-# copy ledger.sh alone; the sink then no-ops via its own command -v probe).
+# The sqlite tape's rules — db path, phash, DDL, user_version, typed
+# projection — have ONE definition, ledger-convert.sh (the GH-1843 shape);
+# the writer and readers below only call them. Guarded twice: skipped when
+# already defined (the converter executable sources ledger.sh back, and
+# re-sourcing it here would loop), and skipped when the file is absent (a
+# stripped tree — cockpit tests copy ledger.sh alone for its path helpers;
+# reads there fall to the extension-swap mirror, and appends refuse loudly).
 if ! command -v ralph_lc_db_path >/dev/null 2>&1; then
   _RALPH_LEDGER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   if [ -f "$_RALPH_LEDGER_DIR/ledger-convert.sh" ]; then
@@ -207,18 +209,13 @@ ralph_session_key() {
   fi
 }
 
-# ralph_ledger_append JSON — validate and append ONE event as one line.
+# ralph_ledger_append JSON — validate and append ONE event to the tape.
 # Refuses: invalid JSON, anything that compacts to more than one line
-# (multiple documents), and lines whose write (line + newline) would reach
-# 4096 bytes (the atomic-append budget).
-#
-# The write MUST go through an external printf: a fresh process's stdio
-# buffer holds the whole line and flushes it as ONE write(2) to the O_APPEND
-# fd. bash's BUILTIN printf flushes in ~1KB chunks (measured on Darwin
-# /bin/bash 3.2: 200 concurrent 4KB appends produced merged 7-10KB lines and
-# sub-line remnants; the identical run through `env printf` produced zero
-# tears), so the builtin would tear exactly the concurrent hook appends this
-# budget exists to protect.
+# (multiple documents), and any sqlite failure — since phase D (GH-2311) the
+# sqlite IS the only sink, so a failed insert is a refused append (rc 1, the
+# reason on stderr), never a silently dropped fact. The 4096-byte ceiling is
+# GONE: it protected the JSONL sink's single-write(2) append atomicity, a
+# budget sqlite rows do not have.
 #
 # Every record carries `.session`, the ralph_session_key of the server that
 # wrote it (GH-1933). It is stamped HERE rather than at each of the ~dozen call
@@ -227,108 +224,267 @@ ralph_session_key() {
 # while it lives, but the record outlives it. A caller that already supplied
 # `.session` keeps it — replay and migration paths must be able to preserve the
 # original writer.
-# _ralph_ledger_sqlite_insert FILE LINE — the sqlite half of the dual write
-# (GH-2306, phase B): mirror the line JUST appended to FILE into the sibling
-# ledger.sqlite (schema v1, GH-2305). ALWAYS returns 0 — JSONL is the truth,
-# and this sink may never block or fail a spawn/exit record: every failure
-# (locked, corrupt, missing sqlite3, a newer schema, a lost race on seq)
-# WARNS on stderr and proceeds. The cost of any skipped insert is a parity
-# gap the next ledger-convert.sh run backfills (phash-keyed) — never data.
-_ralph_ledger_sqlite_insert() {
-  local file="${1-}" line="${2-}" db sq uv seq at ph proj q out
-  local f_ts f_ev f_agent f_unit f_reason f_pane
-  # A tree without ledger-convert.sh has no converter, so no sqlite ledger to
-  # keep current — nothing to do (the guarded source above already skipped).
-  command -v ralph_lc_db_path >/dev/null 2>&1 || return 0
-  db=$(ralph_lc_db_path "$file") || return 0
-  # Absent ledger.sqlite = a not-yet-converted machine: skip SILENTLY and do
-  # NOT create the db — phase A's converter is the adoption path, and a
-  # half-adopted machine must read as "not converted" in doctor, never as a
-  # mystery partial db.
-  [ -f "$db" ] || return 0
+# _ralph_ledger_sqlite_append FILE LINE — insert LINE as the next fact in
+# FILE's sibling ledger.sqlite (schema v1, GH-2305), creating the tape when
+# absent. rc 1 with the reason on stderr on ANY failure — never a silent drop.
+#
+# Absent DB: a legacy JSONL beside it is converted INTO the fresh tape first
+# (full history, then this append at N+1). Creating an empty tape instead
+# would (a) blind every reader to the whole history the moment the tape
+# appears — a present tape is served, full stop, phase D's own read rule —
+# and (b) burn seqs 1..k that the converter's seq-salted phash needs for the
+# JSONL's lines, making the promised later backfill silently impossible
+# (INSERT OR IGNORE never overwrites). No JSONL at all = a fresh machine,
+# fresh tape at seq 1. The creation step is serialized under the ledger
+# mutex (re-entrancy-aware: a caller already inside a locked section keeps
+# its lock), so two first-appends cannot each build a tape and rename over
+# the other's first fact.
+#
+# Serialization argument (the flock question, stated per phase D's ask): the
+# mkdir mutex (ralph_ledger_lock) STAYS for read-decide-append sections — its
+# job was never write atomicity but decision atomicity, and that is
+# unchanged. The append itself takes NO lock: WAL + busy_timeout=2000
+# serializes the writes themselves, and the seq race between two concurrent
+# appenders settles at the PRIMARY KEY with the bounded retry below — the
+# loser re-reads max(seq) and lands at the next slot, so both land, distinct
+# seq (behavior-equivalent to the old O_APPEND serialization). It also
+# CANNOT take the mutex: appends run inside sections that already hold it
+# (watch-event's exit sweep), and the mkdir lock is not re-entrant — a second
+# acquisition would deadlock, then break its own caller's lock at ~15s.
+_ralph_ledger_sqlite_append() {
+  local file="${1-}" line="${2-}" db sq uv seq ph proj q out line_sql attempt jl
+  local f_ts f_ev f_agent f_unit f_reason f_pane had_lock
+  # The sqlite rules — db path, phash, DDL, projection — live in
+  # ledger-convert.sh (ONE definition, GH-1843). A stripped tree without the
+  # converter cannot append: refusing is the only honest answer once there is
+  # no JSONL sink to fall back on (nothing real appends from a stripped tree
+  # — the cockpit copies ledger.sh for its path helpers alone).
+  if ! command -v ralph_lc_db_path >/dev/null 2>&1; then
+    echo "ralph_ledger_append: cannot append — ledger-convert.sh unavailable (stripped tree has no sqlite rules); the fact was NOT recorded" >&2
+    return 1
+  fi
+  db=$(ralph_lc_db_path "$file") || return 1
   sq="${RALPH_SQLITE3_BIN:-sqlite3}"
   if ! command -v "$sq" >/dev/null 2>&1; then
-    echo "ralph_ledger_append: sqlite sink skipped — no sqlite3 ('$sq'); JSONL holds the record, ledger-convert.sh backfills" >&2
-    return 0
+    echo "ralph_ledger_append: cannot append — no sqlite3 ('$sq'); install it: brew install sqlite (macOS) / apt-get install sqlite3 (debian); the fact was NOT recorded" >&2
+    return 1
   fi
-  uv=$(ralph_lc_user_version "$db") || uv=""
+  if [ ! -f "$db" ]; then
+    had_lock="$_RALPH_LEDGER_LOCK_HELD"
+    [ -n "$had_lock" ] || ralph_ledger_lock "$file"
+    if [ ! -f "$db" ]; then # re-check inside the mutex
+      if [ -s "$file" ]; then
+        out=$(ralph_lc_convert "$file" 2>&1 >/dev/null) || {
+          [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+          echo "ralph_ledger_append: cannot adopt the legacy JSONL into a fresh $db (${out:0:120}) — the fact was NOT recorded; run ledger-convert.sh and retry" >&2
+          return 1
+        }
+      else
+        out=$(ralph_lc_init_db "$db" 2>&1) || {
+          [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+          echo "ralph_ledger_append: cannot create $db (${out:0:120}) — the fact was NOT recorded" >&2
+          return 1
+        }
+      fi
+    fi
+    [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+  fi
+  # busy_timeout on EVERY invocation here, gate reads included: even WAL
+  # reads can see transient SQLITE_BUSY (a peer mid-checkpoint or building
+  # the -shm), and a gate read that refuses on BUSY is a lost fact — the one
+  # outcome this function exists to rule out. The PRAGMA echoes its value, so
+  # answers are parsed from the LAST output line.
+  uv=$("$sq" "$db" 'PRAGMA busy_timeout=2000; PRAGMA user_version;' 2>/dev/null) || uv=""
+  uv=${uv##*$'\n'}
   case "$uv" in
-    0 | 1) : ;;
+    0)
+      # uv=0 is either a crash mid-create (the DDL is IF NOT EXISTS
+      # throughout, so re-running init completes it) or — the racy reading —
+      # a PEER's init in flight right now: the db file exists from the
+      # moment sqlite opens it, so a second appender can arrive here before
+      # the creator's uv=1 lands, and an unserialized init would then step
+      # into the creator's DDL ("database is locked", raw on stderr, fact
+      # lost — measured on CI's 8-way first-append race). Same remedy as
+      # the creation path: enter the mutex, RE-READ inside it — the common
+      # case finds uv=1 (the creator finished) and inits nothing.
+      had_lock="$_RALPH_LEDGER_LOCK_HELD"
+      [ -n "$had_lock" ] || ralph_ledger_lock "$file"
+      uv=$("$sq" "$db" 'PRAGMA busy_timeout=2000; PRAGMA user_version;' 2>/dev/null) || uv=""
+      uv=${uv##*$'\n'}
+      if [ "$uv" = "0" ]; then
+        out=$(ralph_lc_init_db "$db" 2>&1) || {
+          [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+          echo "ralph_ledger_append: cannot complete half-created $db (${out:0:120}) — the fact was NOT recorded" >&2
+          return 1
+        }
+        uv=1
+      fi
+      [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+      ;;
+  esac
+  case "$uv" in
+    1) : ;;
     *)
-      echo "ralph_ledger_append: sqlite sink skipped — $db user_version='${uv:-?}' (unreadable, or a schema newer than v1); JSONL holds the record" >&2
-      return 0
+      echo "ralph_ledger_append: refusing $db — user_version='${uv:-?}' (unreadable, or a schema newer than v1); the fact was NOT recorded" >&2
+      return 1
       ;;
   esac
-  # seq must be the JSONL line number of the line just appended — it is the
-  # salt in schema v1's phash — so a wrong seq is a row the converter will
-  # disagree with FOREVER (INSERT OR IGNORE never overwrites). Appends alone
-  # take no lock (this file's own rule), so a concurrent append can land
-  # between our write and this count: read the counted line back, and on any
-  # mismatch SKIP — a missing row self-heals at the next convert, a wrong row
-  # is a permanent parity GAP. The file is append-only, so a pair verified
-  # here is stable: line N never changes after it is read back.
-  seq=$(grep -c '' <"$file" 2>/dev/null) || seq=""
-  case "$seq" in
-    '' | *[!0-9]* | 0)
-      echo "ralph_ledger_append: sqlite sink skipped — cannot count $file; ledger-convert.sh backfills" >&2
-      return 0
-      ;;
-  esac
-  at=$(sed -n "${seq}p" "$file" 2>/dev/null) || at=""
-  if [ "$at" != "$line" ]; then
-    echo "ralph_ledger_append: sqlite sink skipped — a concurrent append moved the tail of $file; ledger-convert.sh backfills" >&2
-    return 0
+  # A dual-write-era tape can TRAIL its legacy JSONL (a sink insert skipped
+  # at phase B and never healed): appending at max(seq)+1 would occupy the
+  # seq the converter's backfill needs for the JSONL's own line there, and
+  # INSERT OR IGNORE never overwrites — the heal would become permanently
+  # impossible. So when the JSONL still has a line beyond the tape's max
+  # seq, adopt it FIRST; a failed adoption refuses the append rather than
+  # burning the seq. One successful convert per process is enough (after it,
+  # any line still beyond max is a reject the converter already sidecarred),
+  # so the probe is one sed read per append and the convert runs at most
+  # once.
+  if [ -s "$file" ] && ! printf '%s\n' "$_RALPH_LEDGER_BACKFILL_DONE" | grep -qFx -- "$file"; then
+    seq=$("$sq" "$db" 'PRAGMA busy_timeout=2000; SELECT coalesce(max(seq), 0) FROM facts;' 2>/dev/null) || seq=""
+    seq=${seq##*$'\n'}
+    case "$seq" in
+      '' | *[!0-9]*)
+        # While a legacy JSONL exists, "is the tape trailing?" is the
+        # question that decides whether this insert would burn a historical
+        # line's seq — an unanswerable probe may not wave it through
+        # (the inner re-read refuses on the same principle).
+        echo "ralph_ledger_append: cannot probe $db against the legacy JSONL — the fact was NOT recorded" >&2
+        return 1
+        ;;
+      *)
+        if [ -n "$(sed -n "$((seq + 1))p" "$file" 2>/dev/null)" ]; then
+          # The convert must not race a peer's append: an insert allocating
+          # max(seq)+1 mid-backfill would burn a historical line's seq
+          # after all. Serialize under the ledger mutex (re-entrancy-aware,
+          # like the creation path) and RE-CHECK inside it — a peer that
+          # held the mutex first has usually converted already, making this
+          # a no-op. The peer's own insert cannot slip past the mutex
+          # unserialized: every appender in a trailing-tape state lands in
+          # this same branch before its insert (the pre-check above is run
+          # by each fresh process), and one whose pre-check reads clean is
+          # only reachable after a completed convert.
+          had_lock="$_RALPH_LEDGER_LOCK_HELD"
+          [ -n "$had_lock" ] || ralph_ledger_lock "$file"
+          seq=$("$sq" "$db" 'PRAGMA busy_timeout=2000; SELECT coalesce(max(seq), 0) FROM facts;' 2>/dev/null) || seq=""
+          seq=${seq##*$'\n'}
+          case "$seq" in
+            '' | *[!0-9]*)
+              # The unlocked probe just proved the tape trailing; a re-read
+              # that cannot answer may not wave the append through — the
+              # insert would burn the very seq the backfill needs.
+              [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+              echo "ralph_ledger_append: cannot re-verify the trailing tape in $db — the fact was NOT recorded" >&2
+              return 1
+              ;;
+            *)
+              if [ -n "$(sed -n "$((seq + 1))p" "$file" 2>/dev/null)" ]; then
+                if ! out=$(ralph_lc_convert "$file" 2>&1 >/dev/null); then
+                  [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+                  echo "ralph_ledger_append: the tape trails the legacy JSONL and the backfill failed (${out:0:120}) — the fact was NOT recorded (run ledger-convert.sh $file)" >&2
+                  return 1
+                fi
+              fi
+              ;;
+          esac
+          [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+          _RALPH_LEDGER_BACKFILL_DONE="$_RALPH_LEDGER_BACKFILL_DONE
+$file"
+        fi
+        ;;
+    esac
   fi
-  ph=$(ralph_lc_hash_line "$seq" "$line") || {
-    echo "ralph_ledger_append: sqlite sink skipped — no sha256 tool; ledger-convert.sh backfills" >&2
-    return 0
-  }
+  # Typed columns are best-effort (the converter's own rule: payload is the
+  # guarantee, the projection is recomputable) — an empty projection stores
+  # empty typed columns, never drops the fact.
   proj=$(ralph_lc_project_line "$line") || proj=""
-  if [ -z "$proj" ]; then
-    echo "ralph_ledger_append: sqlite sink skipped — typed projection failed; ledger-convert.sh backfills" >&2
-    return 0
-  fi
   IFS=$'\037' read -r f_ts f_ev f_agent f_unit f_reason f_pane <<<"$proj"
   # SQL string literals: double every single quote — the one metacharacter in
   # a quoted sqlite literal. The projection already flattened control chars,
-  # and the payload is single-line JSON by the append's own validation.
+  # and the payload is single-line JSON by the append's own validation. The
+  # phash is computed over the RAW line; only the SQL copy is escaped.
   q="'"
   f_ts=${f_ts//$q/$q$q}; f_ev=${f_ev//$q/$q$q}; f_agent=${f_agent//$q/$q$q}
   f_unit=${f_unit//$q/$q$q}; f_reason=${f_reason//$q/$q$q}; f_pane=${f_pane//$q/$q$q}
-  line=${line//$q/$q$q}
-  # INSERT OR IGNORE: a retry, or a line the converter already imported, is a
-  # no-op — the converter's own idempotence rule. busy_timeout bounds a
-  # writer collision on the WAL db at 2s; past it the warn below answers,
-  # never a blocked append. The trailing SELECT reads back what the insert
-  # did: an ignored insert whose standing row carries a DIFFERENT phash means
-  # the two files diverged before this append — a state neither this sink nor
-  # the converter may overwrite (fail-closed, phase A's rule) and one the
-  # parity check's count+last-phash shape can miss mid-file, so it is warned
-  # HERE, at the one moment the divergent row is actually touched.
-  out=$("$sq" "$db" "PRAGMA busy_timeout=2000;
-INSERT OR IGNORE INTO facts(seq, ts, kind, agent, unit, reason, pane, payload, phash)
-  VALUES ($seq, '$f_ts', '$f_ev', nullif('$f_agent',''),
-          CAST(nullif('$f_unit','') AS INTEGER), nullif('$f_reason',''),
-          nullif('$f_pane',''), '$line', '$ph');
-SELECT changes() || '|' || coalesce((SELECT phash FROM facts WHERE seq=$seq), '');" 2>&1) || {
-    echo "ralph_ledger_append: sqlite sink failed on $db (${out:0:160}) — JSONL holds the record, ledger-convert.sh backfills" >&2
-    return 0
-  }
-  # The PRAGMA echoes its value on a line of its own — the read-back is the
-  # LAST line of the invocation's output.
-  out=${out##*$'\n'}
-  case "$out" in
-    0\|"$ph") : ;; # standing identical row — the converter imported it first
-    0\|*)
-      echo "ralph_ledger_append: sqlite sink — $db already holds a DIFFERENT fact at seq $seq (the files diverged before this append; nothing here overwrites): inspect with doctor-parity.sh before trusting either sink" >&2
+  line_sql=${line//$q/$q$q}
+  # seq is allocated ATOMICALLY by the insert itself (SELECT max(seq)+1
+  # inside the one INSERT statement, which holds the write lock for its
+  # whole evaluation) — a read-then-insert retry loop provably starves under
+  # contention (measured: 15 of 21 simultaneous appenders exhausted 5
+  # retries), while here busy_timeout simply queues the writers. The
+  # seq-salted phash cannot be known before the seq is, so the row lands
+  # with a unique provisional phash and a follow-up UPDATE stamps the real
+  # one; a crash between the two leaves the provisional value — the payload
+  # (the guarantee) is already durable, and nothing derives history from an
+  # appended row's phash (the converter's phash rule exists for JSONL
+  # import idempotence, and a frozen JSONL never re-imports these rows).
+  # While a frozen/legacy JSONL exists, its ENTIRE line range is reserved
+  # for the converter — rejected lines included, whose repair "converts into
+  # its own slot" by the converter's contract. Appends allocate above it, so
+  # no new fact can ever occupy a line's seq. The count is one grep per
+  # append and static (the JSONL never grows post-D); an uncountable file
+  # refuses, per the probe rule above.
+  jl=0
+  if [ -s "$file" ]; then
+    jl=$(grep -c '' <"$file" 2>/dev/null) || jl=""
+    case "$jl" in
+      '' | *[!0-9]*)
+        echo "ralph_ledger_append: cannot count the legacy JSONL's reserved range — the fact was NOT recorded" >&2
+        return 1
+        ;;
+    esac
+  fi
+  ph="provisional:$$:${RANDOM-0}${RANDOM-0}:$(date +%s 2>/dev/null || true)"
+  # busy_timeout waits out ordinary write contention, but a peer converting
+  # the db to WAL holds an EXCLUSIVE lock that can outlive it on a slow
+  # machine — the insert then fails at PREPARE with "database is locked"
+  # (measured on CI under an 8-way first-append race). A locked/busy failure
+  # is retried a bounded few times; anything else refuses immediately.
+  attempt=0
+  while :; do
+    if out=$("$sq" "$db" "PRAGMA busy_timeout=2000;
+INSERT INTO facts(seq, ts, kind, agent, unit, reason, pane, payload, phash)
+  SELECT max(coalesce(max(seq), 0), $jl) + 1, '$f_ts', '$f_ev', nullif('$f_agent',''),
+         CAST(nullif('$f_unit','') AS INTEGER), nullif('$f_reason',''),
+         nullif('$f_pane',''), '$line_sql', '$ph'
+  FROM facts;
+SELECT last_insert_rowid();" 2>&1); then
+      break
+    fi
+    attempt=$((attempt + 1))
+    case "$out" in
+      *"database is locked"* | *"database table is locked"* | *"database is busy"*)
+        if [ "$attempt" -lt 8 ]; then
+          sleep 0.25
+          continue
+        fi
+        ;;
+    esac
+    echo "ralph_ledger_append: sqlite insert failed on $db (${out:0:160}) — the fact was NOT recorded" >&2
+    return 1
+  done
+  seq=${out##*$'\n'}
+  case "$seq" in
+    '' | *[!0-9]* | 0)
+      echo "ralph_ledger_append: insert landed but $db returned no seq (${out:0:120}) — inspect with doctor-parity" >&2
+      return 1
       ;;
   esac
+  if out=$(ralph_lc_hash_line "$seq" "$line" 2>/dev/null); then
+    "$sq" "$db" "PRAGMA busy_timeout=2000;
+UPDATE facts SET phash='${out}' WHERE seq=$seq AND phash='$ph';" >/dev/null 2>&1 ||
+      echo "ralph_ledger_append: fact $seq recorded, but its phash stays provisional (update failed)" >&2
+  fi
   return 0
 }
 
 _RALPH_SESSION_KEY=""
+# Ledgers whose backfill probe has completed, one path per line — keyed per
+# FILE, never process-wide: watch-event and reconcile walk several ledgers in
+# one shell, and a process-wide flag would let the first trailing tape's
+# convert silence the second's.
+_RALPH_LEDGER_BACKFILL_DONE=""
 ralph_ledger_append() {
-  local raw="${1-}" file line bytes
+  local raw="${1-}" file line
   file=$(ralph_ledger_path) || return 1
   [ -n "$_RALPH_SESSION_KEY" ] || _RALPH_SESSION_KEY=$(ralph_session_key)
   line=$(jq -ec --arg s "$_RALPH_SESSION_KEY" \
@@ -342,22 +498,7 @@ ralph_ledger_append() {
       return 1
       ;;
   esac
-  bytes=$(printf '%s' "$line" | wc -c)
-  if [ "$bytes" -ge 4095 ]; then
-    echo "ralph_ledger_append: refusing oversize line ($bytes bytes + newline >= 4096 — appends must stay atomic)" >&2
-    return 1
-  fi
-  env printf '%s\n' "$line" >>"$file" || return 1
-  # Dual write (GH-2306): mirror the line into the sibling ledger.sqlite.
-  # JSONL stays the truth — the sink warns and proceeds on ANY failure, so
-  # this function's rc never depends on sqlite. Both sinks run under whatever
-  # serialization the caller already holds (read-decide-append writers hold
-  # ralph_ledger_lock; bare appends are atomic on their own) — deliberately
-  # no second lock, which preserves cross-sink ordering wherever the caller
-  # locked. The 4096-byte guard above still governs: the JSONL sink rules
-  # while it is a sink (lifting it is phase D).
-  _ralph_ledger_sqlite_insert "$file" "$line"
-  return 0
+  _ralph_ledger_sqlite_append "$file" "$line"
 }
 
 # ── read-decide-append serialization ─────────────────────────────────────────
@@ -416,37 +557,30 @@ ralph_ledger_unlock_held() {
   return 0
 }
 
-# ── the read flip (GH-2309, phase C) ─────────────────────────────────────────
-# Every read helper below consumes the ledger through _ralph_ledger_events,
-# which serves the SAME event lines from the sibling ledger.sqlite when it is
-# provably current, and from the JSONL exactly as before otherwise. Serving
-# payload verbatim through the same jq reductions is what makes the flip
-# byte/shape-compatible BY CONSTRUCTION — the helpers feed jq across ~20
-# scripts, so compatibility is not a property to approximate per helper.
+# ── the read path (flipped in GH-2309 phase C; truth since GH-2311 phase D) ──
+# Every read helper below consumes the ledger through _ralph_ledger_events.
+# Since phase D the rule is: a PRESENT ledger.sqlite is served, full stop —
+# the JSONL beside it is a frozen export-only projection, and serving it
+# would serve stale facts. An unreadable present tape is an ERROR (stamped
+# for doctor + one stderr line, empty output, rc 1), never a reason to read
+# the frozen JSONL. Only a machine with NO sqlite at all still reads the
+# legacy JSONL — that path works until ralph 1.0.0 and prints ONE stderr
+# deprecation line per process naming ledger-convert.sh (courtesy, the hooks
+# rule: never enforcement; exit codes unchanged).
 #
-# Eligibility (ALL must hold, per read): ledger.sqlite exists beside the
-# JSONL, its `PRAGMA user_version` is exactly 1, and a cheap parity probe
-# passes — the last JSONL line's phash (the converter's seq-salted rule) must
-# exist in facts.phash, one indexed lookup against the UNIQUE index, never a
-# full count. ANY other answer — missing file, unreadable, future schema,
-# probe miss, no sqlite3, a stripped tree with no converter — falls back to
-# the JSONL path exactly as today.
-#
-# Fallback is observable, never silent — and never loud to callers: the read
-# helpers run inside jq pipelines everywhere, so stderr stays clean and the
-# record is a stamp file beside the ledger, ledger-fallback.last ({ts, why},
-# overwritten each time). doctor-parity.sh renders it (age + why) under the
-# usual advisory rules.
-#
-# Honest limit: the probe proves the TAIL converted, not every row — a
-# dual-write insert the sink skipped mid-file (each skip warned at append
-# time) leaves a gap the probe cannot see until the next ledger-convert.sh
-# run backfills it. That is the probe the design chose: one lookup, fail
-# toward the JSONL on every readable signal of trouble.
+# Serving payload verbatim through the same jq reductions is what keeps the
+# two paths byte/shape-compatible BY CONSTRUCTION — the helpers feed jq
+# across ~20 scripts, so compatibility is not a property to approximate per
+# helper. Phase C's tail parity probe is GONE: it asked whether the sqlite
+# had caught up to the JSONL, a question with no meaning now that the sqlite
+# is where appends land and the JSONL never grows.
 
 # _ralph_ledger_fallback_stamp FILE WHY — overwrite FILE's sibling
 # ledger-fallback.last with {ts, why}. Best-effort and silent: the stamp is
-# observability, and a stamp failure may not fail (or narrate into) a read.
+# observability (doctor-parity renders it), and a stamp failure may not fail
+# a read for a second reason. Since phase D it records read ERRORS on a
+# present tape (there is no fallback to record); the filename stays, because
+# doctor already reads it and a rename would orphan the trail.
 _ralph_ledger_fallback_stamp() {
   local file="${1-}" why="${2-}"
   [ -n "$file" ] || return 0
@@ -455,79 +589,105 @@ _ralph_ledger_fallback_stamp() {
   return 0
 }
 
-# _ralph_ledger_sqlite_eligible FILE — print the sibling db path when the
-# sqlite ledger may serve reads for FILE; otherwise stamp the fallback and
-# rc 1. Never writes to stderr.
-_ralph_ledger_sqlite_eligible() {
-  local file="${1-}" db sq uv seq last ph hit out
-  if ! command -v ralph_lc_db_path >/dev/null 2>&1; then
-    _ralph_ledger_fallback_stamp "$file" "converter helpers unavailable (stripped tree)"
-    return 1
+# _ralph_ledger_db_path FILE — the sibling tape path. Extension swap when the
+# converter is stripped from the tree, mirroring ralph_lc_db_path (the
+# GH-2310 shape: the rule is trivial enough that a stripped tree may not lose
+# its reads over it).
+_ralph_ledger_db_path() {
+  if command -v ralph_lc_db_path >/dev/null 2>&1; then
+    ralph_lc_db_path "${1-}"
+  else
+    case "${1-}" in
+      *.jsonl) printf '%s.sqlite\n' "${1%.jsonl}" ;;
+      *) printf '%s.sqlite\n' "${1-}" ;;
+    esac
   fi
-  db=$(ralph_lc_db_path "$file") || {
-    _ralph_ledger_fallback_stamp "$file" "no sibling db path"
-    return 1
-  }
-  if [ ! -f "$db" ]; then
-    _ralph_ledger_fallback_stamp "$file" "ledger.sqlite absent (not converted yet)"
-    return 1
-  fi
-  sq="${RALPH_SQLITE3_BIN:-sqlite3}"
-  if ! command -v "$sq" >/dev/null 2>&1; then
-    _ralph_ledger_fallback_stamp "$file" "no sqlite3 ('$sq')"
-    return 1
-  fi
-  # Parity probe inputs: the last JSONL line, hashed under the converter's
-  # seq-salted rule. grep -c counts the trailing-newline-terminated lines the
-  # appender writes — the same count the dual-write sink uses for seq, so the
-  # two sides of the probe share one line-number rule; tail reads the last
-  # line without a second full-file scan.
-  seq=$(grep -c '' <"$file" 2>/dev/null) || seq=""
-  case "$seq" in
-    '' | *[!0-9]* | 0)
-      _ralph_ledger_fallback_stamp "$file" "cannot count jsonl lines"
-      return 1
-      ;;
-  esac
-  last=$(tail -n 1 "$file" 2>/dev/null) || last=""
-  ph=$(ralph_lc_hash_line "$seq" "$last" 2>/dev/null) || ph=""
-  if [ -z "$ph" ]; then
-    _ralph_ledger_fallback_stamp "$file" "no sha256 tool for the parity probe"
-    return 1
-  fi
-  # ONE sqlite invocation answers both questions — user_version, then the
-  # indexed phash lookup (readers run per (ref, field) in some callers, so a
-  # saved fork per read is worth the two-line parse).
-  out=$("$sq" "$db" "PRAGMA user_version;
-SELECT count(1) FROM facts WHERE phash='$ph';" 2>/dev/null) || out=""
-  uv=${out%%$'\n'*}
-  hit=${out##*$'\n'}
-  if [ "$uv" != "1" ]; then
-    _ralph_ledger_fallback_stamp "$file" "user_version='${uv:-unreadable}' (need 1)"
-    return 1
-  fi
-  if [ "$hit" != "1" ]; then
-    _ralph_ledger_fallback_stamp "$file" "parity probe miss (jsonl line $seq not in sqlite)"
-    return 1
-  fi
-  printf '%s\n' "$db"
 }
 
+_RALPH_LEDGER_DEPR_WARNED=""
+# _ralph_ledger_present FILE — is there a ledger at FILE's scope: a sqlite
+# tape in any state, or a non-empty legacy/frozen JSONL. The read helpers
+# gate on this rather than `-s FILE` — post phase D a fresh machine has ONLY
+# ledger.sqlite, and "the locator file is missing" must not read as "the
+# ledger is empty".
+#
+# The legacy-read deprecation line is printed HERE, not in
+# _ralph_ledger_events: the events reader runs inside a pipeline (a subshell,
+# where the once-per-process guard variable cannot persist), while this probe
+# runs in each helper's own shell — so one process's helpers warn once, per
+# the courtesy's contract, instead of once per pipeline.
+_ralph_ledger_present() {
+  local file="${1-}" db
+  db=$(_ralph_ledger_db_path "$file") || db=""
+  if [ -n "$db" ] && [ -f "$db" ]; then
+    return 0
+  fi
+  [ -s "$file" ] || return 1
+  if [ -z "$_RALPH_LEDGER_DEPR_WARNED" ]; then
+    _RALPH_LEDGER_DEPR_WARNED=1
+    echo "ralph ledger: JSONL-only read (deprecated — the tape is SQLite since phase D; legacy reads end at ralph 1.0.0): convert with ledger-convert.sh $file" >&2
+  fi
+  return 0
+}
 # _ralph_ledger_events FILE — the ledger's event lines on stdout: payload
-# rows from the eligible sqlite (seq order — the converter's byte-identity
-# guarantee), else the JSONL verbatim. The sqlite read is CAPTURED before a
-# byte is emitted, so a failed read falls back cleanly instead of emitting a
-# torn prefix; WAL readers don't block on writers, so no busy_timeout.
+# rows from a present tape (seq order — the converter's byte-identity
+# guarantee), else the legacy JSONL verbatim. The sqlite read is CAPTURED
+# before a byte is emitted, so a failed read emits nothing rather than a torn
+# prefix; WAL readers don't block on writers, so no busy_timeout.
 _ralph_ledger_events() {
-  local file="${1-}" db out
-  if db=$(_ralph_ledger_sqlite_eligible "$file"); then
-    if out=$("${RALPH_SQLITE3_BIN:-sqlite3}" "$db" 'SELECT payload FROM facts ORDER BY seq;' 2>/dev/null); then
+  local file="${1-}" db sq uv out
+  db=$(_ralph_ledger_db_path "$file") || db=""
+  if [ -n "$db" ] && [ -f "$db" ]; then
+    sq="${RALPH_SQLITE3_BIN:-sqlite3}"
+    if ! command -v "$sq" >/dev/null 2>&1; then
+      _ralph_ledger_fallback_stamp "$file" "read error: no sqlite3 ('$sq') for a present $db"
+      echo "ralph ledger: cannot read present $db — no sqlite3 ('$sq'); NOT serving the frozen JSONL" >&2
+      return 1
+    fi
+    uv=$("$sq" "$db" 'PRAGMA user_version;' 2>/dev/null) || uv=""
+    case "$uv" in
+      0 | 1) : ;;
+      *)
+        _ralph_ledger_fallback_stamp "$file" "read error: user_version='${uv:-unreadable}' on present $db"
+        echo "ralph ledger: refusing present $db — user_version='${uv:-unreadable}' (unreadable, or a schema newer than v1); NOT serving the frozen JSONL" >&2
+        return 1
+        ;;
+    esac
+    if out=$("$sq" "$db" 'SELECT payload FROM facts ORDER BY seq;' 2>/dev/null); then
       printf '%s\n' "$out"
       return 0
     fi
-    _ralph_ledger_fallback_stamp "$file" "sqlite read failed"
+    _ralph_ledger_fallback_stamp "$file" "read error: sqlite read failed on present $db"
+    echo "ralph ledger: cannot read present $db — NOT serving the frozen JSONL; see doctor-parity" >&2
+    return 1
   fi
-  cat "$file"
+  # No tape at all: the legacy JSONL path, deprecated since phase D (the
+  # one-line courtesy is printed by _ralph_ledger_present, which runs in the
+  # caller's own shell — this function runs inside pipelines).
+  if [ -f "$file" ]; then
+    cat "$file"
+    return 0
+  fi
+  return 0
+}
+
+# ralph_ledger_enum — every ledger under the root, one LOCATOR per line (the
+# jsonl-form path, whether or not that file exists — post phase D a fresh
+# machine has only ledger.sqlite, and the locator is the identity every
+# consumer already passes around as RALPH_HERDR_LEDGER). Deliberately does
+# NOT honor a pre-set $RALPH_HERDR_LEDGER: the fleet-wide walkers
+# (watch-event, reconcile) export it per iteration, and honoring a leftover
+# value would silently shrink their world to one ledger.
+ralph_ledger_enum() {
+  local f loc
+  for f in "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"/*/*/ledger.jsonl \
+    "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"/*/*/ledger.sqlite; do
+    [ -f "$f" ] || continue
+    loc="${f%.sqlite}"
+    loc="${loc%.jsonl}"
+    printf '%s.jsonl\n' "$loc"
+  done | sort -u
+  return 0
 }
 
 # ralph_ledger_reason_canon REASON — the ONE legacy-alias mapping for the
@@ -553,7 +713,7 @@ ralph_ledger_reason_canon() {
 ralph_ledger_open_agents() {
   local file
   file=$(ralph_ledger_path "$@") || return 1
-  [ -s "$file" ] || return 0
+  _ralph_ledger_present "$file" || return 0
   _ralph_ledger_events "$file" | jq -rs '
     reduce .[] as $e ({};
       if ($e.agent_ref // "") == "" then .
@@ -597,7 +757,7 @@ ralph_ledger_last() {
   local ref="${1-}" file out
   [ -n "$ref" ] || return 1
   file=$(ralph_ledger_path) || return 1
-  [ -s "$file" ] || return 1
+  _ralph_ledger_present "$file" || return 1
   out=$(_ralph_ledger_events "$file" | jq -c --arg ref "$ref" -s 'map(select(.agent_ref == $ref)) | last // empty')
   [ -n "$out" ] || return 1
   printf '%s\n' "$out"
@@ -615,7 +775,7 @@ ralph_ledger_open_for_pane() {
   local pane="${1-}" file
   [ -n "$pane" ] || return 1
   file=$(ralph_ledger_path) || return 1
-  [ -s "$file" ] || return 0
+  _ralph_ledger_present "$file" || return 0
   _ralph_ledger_events "$file" | jq -rs --arg p "$pane" '
     reduce .[] as $e ({open: {}, pane: {}};
       if ($e.agent_ref // "") == "" then .
@@ -641,7 +801,7 @@ _ralph_ledger_latest() {
   local expr="${1-}" ref="${2-}" file out
   [ -n "$ref" ] || return 1
   file=$(ralph_ledger_path) || return 1
-  [ -s "$file" ] || return 1
+  _ralph_ledger_present "$file" || return 1
   out=$(_ralph_ledger_events "$file" | jq -r --arg ref "$ref" -s "
     [ .[]
       | select(.agent_ref == \$ref)
@@ -699,7 +859,7 @@ _ralph_ledger_latest() {
 ralph_ledger_open_rows() {
   local file
   file=$(ralph_ledger_path "$@") || return 1
-  [ -s "$file" ] || return 0
+  _ralph_ledger_present "$file" || return 0
   _ralph_ledger_events "$file" | jq -rs '
     def keep($cur; $new): if ($new == null or $new == "") then $cur else $new end;
     def col: (. // "") | tostring | gsub("[\u001f\t\r\n]"; " ");
@@ -750,7 +910,7 @@ ralph_ledger_open_rows() {
 ralph_ledger_open_sessions() {
   local file
   file=$(ralph_ledger_path "$@") || return 1
-  [ -s "$file" ] || return 0
+  _ralph_ledger_present "$file" || return 0
   _ralph_ledger_events "$file" | jq -rs '
     reduce .[] as $e ({open: {}, s: {}};
       (($e.agent_ref // "")) as $ref
@@ -816,7 +976,7 @@ ralph_ledger_children() {
   local ref="${1-}" file
   [ -n "$ref" ] || return 1
   file=$(ralph_ledger_path) || return 1
-  [ -s "$file" ] || return 0
+  _ralph_ledger_present "$file" || return 0
   _ralph_ledger_events "$file" | jq -rs --arg ref "$ref" '
     reduce .[] as $e ({open: {}, par: {}};
       if ($e.agent_ref // "") == "" then .

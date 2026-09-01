@@ -69,8 +69,14 @@ fails() {
   out=$("$@" 2>/dev/null) || rc=$?
   if [ "$rc" -ne 0 ]; then ok "$desc"; else not_ok "$desc — expected failure, got rc 0 ('$out')"; fi
 }
-# lcount FILE JQ_BOOL_EXPR — number of ledger records matching the expression
-lcount() { jq -rs "[.[] | select($2)] | length" <"$1"; }
+# lcount FILE JQ_BOOL_EXPR — number of ledger records matching the expression.
+# Reads through _ralph_ledger_events: since phase D (GH-2311) appends land in
+# the sqlite tape, and the raw jsonl no longer carries them.
+lcount() { _ralph_ledger_events "$1" 2>/dev/null | jq -rs "[.[] | select($2)] | length"; }
+# levents FILE — the ledger's event stream (either tape form)
+levents() { _ralph_ledger_events "$1" 2>/dev/null; }
+# ecount FILE — total events on the tape (0 when no ledger exists yet)
+ecount() { _ralph_ledger_events "$1" 2>/dev/null | grep -c . | tr -d " "; }
 # log_count REGEX / log_fcount FIXED_STRING — matching lines in the herdr log
 log_count()  { grep -c -- "$1" "$FAKE_HERDR_LOG" || true; }
 log_fcount() { grep -cF -- "$1" "$FAKE_HERDR_LOG" || true; }
@@ -99,29 +105,30 @@ RALPH_HERDR_LEDGER="$TMP/unit/ledger.jsonl"
 
 rc=0; ralph_ledger_append '{"ts": "2026-08-11T00:00:00Z", "ev": "spawn", "agent_ref": "w1-a#0001"}' || rc=$?
 is "append: valid JSON lands (rc 0)" "0" "$rc"
-is "append: stored compact, one line" \
+is "append: stored compact, one event" \
   "{\"ts\":\"2026-08-11T00:00:00Z\",\"ev\":\"spawn\",\"agent_ref\":\"w1-a#0001\",\"session\":\"$(ralph_session_key)\"}" \
-  "$(cat "$RALPH_HERDR_LEDGER")"
+  "$(levents "$RALPH_HERDR_LEDGER")"
+[ -f "$RALPH_HERDR_LEDGER" ] && not_ok "append: no jsonl is written (the tape is sqlite, phase D)" || ok "append: no jsonl is written (the tape is sqlite, phase D)"
 
 fails "append: refuses non-JSON" ralph_ledger_append 'not json'
 fails "append: refuses two documents on one line" ralph_ledger_append '{"a":1} {"b":2}'
 fails "append: refuses two documents split by a newline" ralph_ledger_append '{"a":1}
 {"b":2}'
 big=$(printf '%4200s' '' | tr ' ' 'x')
-fails "append: refuses an oversize line (>= 4096B breaks O_APPEND atomicity)" \
-  ralph_ledger_append "{\"pad\":\"$big\"}"
+rc=0; ralph_ledger_append "{\"pad\":\"$big\"}" 2>/dev/null || rc=$?
+is "append: the 4096-byte ceiling is LIFTED (phase D — it protected JSONL O_APPEND atomicity)" "0" "$rc"
 
 rc=0; ralph_ledger_append '{"ev":"state","agent_ref":"w1-a#0001","note":"line1\nline2"}' || rc=$?
 is "append: an ESCAPED newline in a value is fine (rc 0)" "0" "$rc"
-is "append: refused writes never touched the file (2 lines)" "2" \
-  "$(wc -l <"$RALPH_HERDR_LEDGER" | tr -d ' ')"
+is "append: refused writes never touched the tape (3 events)" "3" \
+  "$(ecount "$RALPH_HERDR_LEDGER")"
 
 # GH-1933: the writer's session key rides on EVERY record, stamped by append so
 # no call site can forget it. It is what proves a ledger ours once its last
 # pane is gone.
 ralph_ledger_append '{"ts":"t","ev":"spawn","agent_ref":"w2-b#0002","session":"theirs"}'
 is "append: a caller-supplied session is preserved, not overwritten" "theirs" \
-  "$(jq -r 'select(.agent_ref=="w2-b#0002") | .session' <"$RALPH_HERDR_LEDGER")"
+  "$(levents "$RALPH_HERDR_LEDGER" | jq -r 'select(.agent_ref=="w2-b#0002") | .session')"
 is "append: open sessions are the OPENING records' writers" "$(ralph_session_key) theirs" \
   "$(ralph_ledger_open_sessions | sort | tr '\n' ' ' | sed 's/ *$//')"
 # An exit written by a DIFFERENT server must not hand that server ownership of
@@ -228,6 +235,7 @@ RALPH_HERDR_LEDGER="$_saved_ledger"
 WROOT="$TMP/wroot"
 WLEDGER="$WROOT/acme/demo/ledger.jsonl"
 mkdir -p "$WROOT/acme/demo"
+rm -f "${WLEDGER%.jsonl}.sqlite" "${WLEDGER%.jsonl}.sqlite-wal" "${WLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$WLEDGER" <<'EOF'
 {"ts":"2026-08-11T00:00:00Z","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"role":"w","issue":"123","slug":"fix","root":"w123-fix#aaaa","depth":"0","state":"spawned","branch":"feature/GH-123","harness":"claude","spawn_epoch":"aaaa"}}
 EOF
@@ -352,6 +360,7 @@ is "hint: and clears the dirty mark afterwards" "0" \
 AROOT="$TMP/aroot"
 ALEDGER="$AROOT/acme/demo/ledger.jsonl"
 mkdir -p "$AROOT/acme/demo"
+rm -f "${ALEDGER%.jsonl}.sqlite" "${ALEDGER%.jsonl}.sqlite-wal" "${ALEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$ALEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"s0-root#0001","pane_id":"p0","tokens":{"role":"s","issue":"0","slug":"root","depth":"0","state":"spawned","root":"s0-root#0001"}}
 {"ts":"t1","ev":"spawn","agent_ref":"o10-orch#0002","pane_id":"p10","tokens":{"role":"o","issue":"10","slug":"orch","depth":"1","state":"spawned","parent":"s0-root#0001","root":"s0-root#0001"}}
@@ -382,6 +391,7 @@ is "adopt: dead parent closed, gp+child stay open" "s0-root#0001 w11-child#0003"
 OROOT="$TMP/oroot"
 OLEDGER="$OROOT/acme/demo/ledger.jsonl"
 mkdir -p "$OROOT/acme/demo"
+rm -f "${OLEDGER%.jsonl}.sqlite" "${OLEDGER%.jsonl}.sqlite-wal" "${OLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$OLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"o20-solo#0004","pane_id":"p20","tokens":{"role":"o","issue":"20","slug":"solo","depth":"0","state":"spawned","root":"o20-solo#0004"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w21-kid#0005","pane_id":"p21","tokens":{"role":"w","issue":"21","slug":"kid","depth":"1","state":"spawned","parent":"o20-solo#0004","root":"o20-solo#0004"}}
@@ -420,6 +430,7 @@ is "orphan re-pass: no duplicate notification" "0" "$(log_count '^notification s
 GROOT="$TMP/groot"
 GLEDGER="$GROOT/acme/demo/ledger.jsonl"
 mkdir -p "$GROOT/acme/demo"
+rm -f "${GLEDGER%.jsonl}.sqlite" "${GLEDGER%.jsonl}.sqlite-wal" "${GLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$GLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"o30-solo#0006","pane_id":"p30","tokens":{"role":"o","issue":"30","slug":"solo","depth":"0","state":"spawned","root":"o30-solo#0006"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w31-kid#0007","pane_id":"p31","tokens":{"role":"w","issue":"31","slug":"kid","depth":"1","state":"spawned","parent":"o30-solo#0006","root":"o30-solo#0006"}}
@@ -444,6 +455,7 @@ is "recycled parent: the live generation did not adopt it" "0" \
 CROOT="$TMP/croot"
 CLEDGER="$CROOT/acme/demo/ledger.jsonl"
 mkdir -p "$CROOT/acme/demo"
+rm -f "${CLEDGER%.jsonl}.sqlite" "${CLEDGER%.jsonl}.sqlite-wal" "${CLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$CLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"o30-dual#0006","pane_id":"p30","tokens":{"role":"o","issue":"30","slug":"dual","depth":"0","state":"spawned","root":"o30-dual#0006"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w31-baby#0007","pane_id":"p31","tokens":{"role":"w","issue":"31","slug":"baby","depth":"1","state":"spawned","parent":"o30-dual#0006","root":"o30-dual#0006"}}
@@ -490,6 +502,7 @@ export HEAL_STUB_LOG="$TMP/heal-stub.log"
 HROOT="$TMP/hroot"
 HLEDGER="$HROOT/acme/demo/ledger.jsonl"
 mkdir -p "$HROOT/acme/demo"
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$HLEDGER" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"o40-heal#0001","pane_id":"p40","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"40","slug":"heal","depth":"0","state":"spawned","root":"o40-heal#0001"}}
 EOF
@@ -516,6 +529,7 @@ is "heal: heartbeat names its writer" "watch-event" \
 
 # Exit 4 from work-team.sh is the CLEAN refusal — the epic is complete, the
 # self-dissolve backstop is working: log only, never a notification.
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$HLEDGER" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"o41-done#0001","pane_id":"p41","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"41","slug":"done","depth":"0","state":"spawned","root":"o41-done#0001"}}
 EOF
@@ -532,6 +546,7 @@ esac
 
 # Any other nonzero rc is a FAILED respawn: the lead is dead and the healer
 # could not stand a new one up — that is attention, so it notifies.
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$HLEDGER" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"o42-sick#0001","pane_id":"p42","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"42","slug":"sick","depth":"0","state":"spawned","root":"o42-sick#0001"}}
 EOF
@@ -543,6 +558,7 @@ is "heal failed-respawn: notification raised" "1" "$(log_fcount 'died — respaw
 
 # A record with no usable checkout cannot ground a respawn — inventing a cwd
 # is the cross-scope write the pane proof forbids. No delegation; attention.
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$HLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"o43-bare#0001","pane_id":"p43","tokens":{"role":"orchestrator","issue":"43","slug":"bare","depth":"0","state":"spawned","root":"o43-bare#0001"}}
 EOF
@@ -566,6 +582,7 @@ printf '{"owner":"acme","repo":"demo"}\n' >"$TMP/repo/.ralph.json"
 # by a current ralph looks like — and since GH-1944 that stamp is what makes
 # w9-gone sweepable. It used to inherit the verdict from its live sibling; a
 # record now answers for itself.
+rm -f "${RLEDGER%.jsonl}.sqlite" "${RLEDGER%.jsonl}.sqlite-wal" "${RLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$RLEDGER" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","session":"$(ralph_session_key)","tokens":{"role":"w","issue":"123","slug":"fix","root":"w123-fix#aaaa","depth":"0","state":"spawned","branch":"feature/GH-123","harness":"claude","spawn_epoch":"aaaa"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w9-gone#ffff","pane_id":"p9","session":"$(ralph_session_key)","tokens":{"role":"w","issue":"9","slug":"gone","depth":"0","state":"spawned"}}
@@ -586,11 +603,11 @@ is "reconcile: open agent with no live counterpart marked lost" "1" \
 is "reconcile: unledgered live agent discovered (fresh ref + tokens)" "1" \
   "$(lcount "$RLEDGER" '.ev=="discover" and (.agent_ref | test("^w5-alpha#[0-9a-f]{8}$")) and .pane_id=="p5" and .via=="reconcile" and .tokens.role=="driver" and .tokens.issue=="5" and .tokens.slug=="alpha"')"
 is "reconcile: discovery retains its proven checkout" "$REPO_DIR" \
-  "$(jq -r 'select(.ev=="discover" and (.agent_ref | startswith("w5-alpha#"))) | .checkout // empty' "$RLEDGER")"
+  "$(levents "$RLEDGER" | jq -r 'select(.ev=="discover" and (.agent_ref | startswith("w5-alpha#"))) | .checkout // empty')"
 is "reconcile: legacy singleton never ledgered" "0" \
-  "$(grep -c 'ralph-deliver' "$RLEDGER" || true)"
+  "$(levents "$RLEDGER" | grep -c 'ralph-deliver' || true)"
 is "reconcile: non-ralph agent never ledgered" "0" \
-  "$(grep -c 'random-agent' "$RLEDGER" || true)"
+  "$(levents "$RLEDGER" | grep -c 'random-agent' || true)"
 
 p1line=$(grep '^pane report-metadata p1 ' "$FAKE_HERDR_LOG" || true)
 is "re-push: exactly one push for the live pane p1" "1" "$(log_count '^pane report-metadata p1 ')"
@@ -632,6 +649,7 @@ FROOT="$TMP/froot"
 FLEDGER="$FROOT/acme/demo/ledger.jsonl"
 mkdir -p "$FROOT/acme/demo"
 foreign_ledger() {
+  rm -f "${FLEDGER%.jsonl}.sqlite" "${FLEDGER%.jsonl}.sqlite-wal" "${FLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
   cat >"$FLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"role":"w","issue":"123","slug":"fix","depth":"0","state":"spawned"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w9-gone#ffff","pane_id":"p9","tokens":{"role":"w","issue":"9","slug":"gone","depth":"0","state":"spawned"}}
@@ -688,6 +706,7 @@ esac
 MROOT="$TMP/mroot"
 MLEDGER="$MROOT/acme/demo/ledger.jsonl"
 mkdir -p "$MROOT/acme/demo"
+rm -f "${MLEDGER%.jsonl}.sqlite" "${MLEDGER%.jsonl}.sqlite-wal" "${MLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$MLEDGER" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"w1-ours#aaaa","pane_id":"p1","session":"$(ralph_session_key)","tokens":{"role":"w","issue":"1","slug":"ours","depth":"0","state":"spawned"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w2-theirs#bbbb","pane_id":"pX","session":"another-server","tokens":{"role":"w","issue":"2","slug":"theirs","depth":"0","state":"spawned"}}
@@ -705,6 +724,7 @@ is "shared ledger: our own live worker is untouched too" "0" \
 
 # and the other half of the same verdict: OUR retired record in that shared
 # ledger is still swept. Per-record ownership must not cost us our own sweep.
+rm -f "${MLEDGER%.jsonl}.sqlite" "${MLEDGER%.jsonl}.sqlite-wal" "${MLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$MLEDGER" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"w1-ours#aaaa","pane_id":"p1","session":"$(ralph_session_key)","tokens":{"role":"w","issue":"1","slug":"ours","depth":"0","state":"spawned"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w2-theirs#bbbb","pane_id":"pX","session":"another-server","tokens":{"role":"w","issue":"2","slug":"theirs","depth":"0","state":"spawned"}}
@@ -726,6 +746,7 @@ QLEDGER="$QROOT/acme/quiet/ledger.jsonl"
 mkdir -p "$QROOT/acme/quiet"
 quiesced_ledger() {
   local sess="${1:?}"
+  rm -f "${QLEDGER%.jsonl}.sqlite" "${QLEDGER%.jsonl}.sqlite-wal" "${QLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
   cat >"$QLEDGER" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"w9-gone#ffff","pane_id":"p9","session":"$sess","tokens":{"role":"w","issue":"9","slug":"gone","depth":"0","state":"spawned"}}
 EOF
@@ -774,9 +795,11 @@ A1="$AROOT/acme/one/ledger.jsonl"
 A2="$AROOT/acme/two/ledger.jsonl"
 mkdir -p "$AROOT/acme/one" "$AROOT/acme/two"
 adopt_ledgers() {
+  rm -f "${A1%.jsonl}.sqlite" "${A1%.jsonl}.sqlite-wal" "${A1%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape (phase D)
   cat >"$A1" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"w1-one#aaaa","pane_id":"p1","tokens":{"role":"w","issue":"1","slug":"one","depth":"0","state":"spawned"}}
 EOF
+  rm -f "${A2%.jsonl}.sqlite" "${A2%.jsonl}.sqlite-wal" "${A2%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape (phase D)
   cat >"$A2" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"w2-two#bbbb","pane_id":"p2","tokens":{"role":"w","issue":"2","slug":"two","depth":"0","state":"spawned"}}
 EOF
@@ -853,6 +876,7 @@ is "unknown flag: refused, not silently ignored" "2" "$RC"
 # ═══ 7. depth guard: refusal at depth 2 ══════════════════════════════════════
 DLEDGER="$TMP/depth/ledger.jsonl"
 mkdir -p "$TMP/depth"
+rm -f "${DLEDGER%.jsonl}.sqlite" "${DLEDGER%.jsonl}.sqlite-wal" "${DLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$DLEDGER" <<'EOF'
 {"ts":"t0","ev":"spawn","agent_ref":"w11-child#bbbb","tokens":{"role":"w","issue":"11","slug":"child","depth":"1","state":"spawned"}}
 {"ts":"t1","ev":"spawn","agent_ref":"w12-grand#cccc","tokens":{"role":"w","issue":"12","slug":"grand","depth":"2","state":"spawned"}}
@@ -900,6 +924,7 @@ mkdir -p "$CFOREIGN"
 printf '{"owner":"other","repo":"elsewhere","projectNumber":9}\n' >"$CFOREIGN/.ralph.json"
 git -C "$CFOREIGN" init -q 2>/dev/null
 
+rm -f "${CLEDGER%.jsonl}.sqlite" "${CLEDGER%.jsonl}.sqlite-wal" "${CLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$CLEDGER" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"w201-restart#a1","pane_id":"pR","shell_pid":"5001","checkout":"$CREPO","tokens":{"role":"w","issue":"201","harness":"claude","state":"spawned"}}
 {"ts":"t0","ev":"spawn","agent_ref":"w202-crash#a2","pane_id":"pC","shell_pid":"5002","checkout":"$CREPO","tokens":{"role":"w","issue":"202","harness":"claude","state":"spawned"}}
@@ -968,6 +993,7 @@ esac
 # `release` is neither legal nor wanted there.
 CROOT2="$TMP/croot2"
 mkdir -p "$CROOT2/acme/demo"
+rm -f "$CROOT2/acme/demo/ledger.sqlite" "$CROOT2/acme/demo/ledger.sqlite-wal" "$CROOT2/acme/demo/ledger.sqlite-shm" # fixture rewrite: drop the tape (phase D)
 cat >"$CROOT2/acme/demo/ledger.jsonl" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"w206-inreview#a6","pane_id":"pC","shell_pid":"5002","checkout":"$CREPO","tokens":{"role":"w","issue":"206","harness":"claude","state":"spawned"}}
 EOF
@@ -984,6 +1010,7 @@ is "In Review: the board was still consulted" "1" "$(grep -c '^get 206 ' "$FAKE_
 # never worked around — there is no --force anywhere in this system.
 CROOT3="$TMP/croot3"
 mkdir -p "$CROOT3/acme/demo"
+rm -f "$CROOT3/acme/demo/ledger.sqlite" "$CROOT3/acme/demo/ledger.sqlite-wal" "$CROOT3/acme/demo/ledger.sqlite-shm" # fixture rewrite: drop the tape (phase D)
 cat >"$CROOT3/acme/demo/ledger.jsonl" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"w207-refused#a7","pane_id":"pC","shell_pid":"5002","checkout":"$CREPO","tokens":{"role":"w","issue":"207","harness":"claude","state":"spawned"}}
 EOF
@@ -1013,6 +1040,7 @@ esac
 # board call, from either phase.
 CROOT4="$TMP/croot4"
 mkdir -p "$CROOT4/acme/demo"
+rm -f "$CROOT4/acme/demo/ledger.sqlite" "$CROOT4/acme/demo/ledger.sqlite-wal" "$CROOT4/acme/demo/ledger.sqlite-shm" # fixture rewrite: drop the tape (phase D)
 cat >"$CROOT4/acme/demo/ledger.jsonl" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"w208-live#a8","pane_id":"pGONE","shell_pid":"5008","checkout":"$CREPO","tokens":{"role":"w","issue":"208","harness":"claude","state":"spawned"}}
 {"ts":"t0","ev":"spawn","agent_ref":"w209-legacy#a9","pane_id":"pC","checkout":"$CREPO","tokens":{"role":"w","issue":"209","harness":"claude","state":"spawned"}}
@@ -1344,6 +1372,7 @@ line_has "outcome: and says the workspace may not be retired on it" \
 OROOT="$TMP/oroot"
 OLEDG="$OROOT/acme/demo/ledger.jsonl"
 mkdir -p "$(dirname "$OLEDG")"
+rm -f "${OLEDG%.jsonl}.sqlite" "${OLEDG%.jsonl}.sqlite-wal" "${OLEDG%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape (phase D)
 cat >"$OLEDG" <<'EOF'
 {"ts":"2026-08-14T00:00:00Z","ev":"spawn","agent_ref":"w1863-sweep#bbbb","pane_id":"p0","tokens":{"role":"w","issue":"1863","slug":"sweep","root":"w1863-sweep#bbbb","depth":"0","state":"spawned","branch":"feature/GH-1863","harness":"claude","spawn_epoch":"bbbb"}}
 EOF

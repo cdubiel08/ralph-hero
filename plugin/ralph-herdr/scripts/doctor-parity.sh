@@ -1,30 +1,31 @@
 #!/usr/bin/env bash
-# doctor-parity.sh — ledger JSONL↔SQLite parity check (GH-2305, phase A).
+# doctor-parity.sh — ledger tape health check (GH-2305 phase A; re-scoped by
+# GH-2311 phase D, where the sqlite became the tape and the JSONL froze).
 #
-# For every ledger.jsonl with a converted sibling ledger.sqlite: fact-count
-# and last-phash agreement. READ-ONLY, like its doctor-*.sh siblings — the
-# remedy is always `ledger-convert.sh`, never a write from here.
+# READ-ONLY, like its doctor-*.sh siblings — the remedy is always
+# `ledger-convert.sh`, never a write from here. Since phase D the line's
+# meaning CHANGED and says so in its own wording: with a frozen JSONL beside
+# a tape it reports "jsonl frozen at N facts (export-only since <version>)"
+# instead of comparing counts that now diverge by design (the tape grows,
+# the JSONL never does). What is still compared is the one direction that
+# stays actionable: a tape holding FEWER facts than the frozen JSONL means
+# the adoption never finished — ledger-convert.sh backfills it.
 #
-# Three verdict shapes, deliberately not two:
-#   ok    counts equal and the last fact's phash matches — in parity.
-#   note  sqlite is BEHIND the jsonl and the overlap is intact (the phash at
-#         sqlite's last seq matches the jsonl line there). That is the normal
-#         state between appends and converts, not a finding — flagging it
-#         would cry wolf on every ledger the moment the watcher appends.
-#   GAP   anything else: same count with a different last phash, sqlite ahead
-#         of the jsonl, or a mismatched overlap — the two files disagree
-#         about history, which re-running the converter will NOT reconcile
-#         (INSERT OR IGNORE never overwrites); a human looks first.
+# Verdict shapes:
+#   ok    tape present and readable, holding at least the frozen JSONL's
+#         facts (or sqlite-only — a post-D fresh machine, jsonl via --export)
+#   note  not converted yet (legacy JSONL, phase-A opt-in wording), tape
+#         behind the frozen JSONL (backfill), or not evaluated (unreadable
+#         paths never read as ok, and never as a GAP)
+#   GAP   the tape holds fewer VALID facts than the frozen JSONL after a
+#         backfill would have been expected — reserved for divergence a
+#         re-convert cannot fix (INSERT OR IGNORE never overwrites)
 #
-# An absent sqlite file is "not converted yet" — info, never a failure (the
-# converter is opt-in in phase A). Any unreadable path — db, jsonl, a schema
-# newer than v1 — reads `not evaluated`, never ok and never a GAP.
-#
-# Each ledger also renders its read-fallback stamp (GH-2309, phase C): the
-# read flip in ledger.sh stamps ledger-fallback.last ({ts, why}, overwritten)
-# whenever a read fell back to the JSONL, keeping stderr clean on the read
-# path — this line is where that record becomes visible. Age + why when
-# present, "no fallback recorded" otherwise; advisory like everything here.
+# Each ledger also renders its read stamp (ledger-fallback.last, {ts, why},
+# overwritten): phase C wrote fallbacks there; since phase D it records read
+# ERRORS on a present tape (an unreadable present DB is surfaced HERE, not a
+# reason to serve stale JSONL). Age + why when present, "no fallback
+# recorded" otherwise; advisory like everything here.
 #
 # Counts compare VALID lines only (a JSON object per line): the converter
 # routes malformed lines to the .rejects sidecar, so they exist on neither
@@ -34,21 +35,27 @@
 # ralph/scripts/herdr-setup.sh relays the verdict NOTE-level into `board
 # doctor`'s herdr-cockpit line — never strict-escalated, never --fixed.
 #
-# Exit codes: 0 in parity (or nothing to check) · 1 divergence(s) · 2 not
+# Exit codes: 0 healthy (or nothing to check) · 1 divergence(s) · 2 not
 # evaluable (no sqlite3) · 64 bad invocation.
 #
 # Knobs:
 #   RALPH_HERDR_LEDGER        check exactly this ledger file (tests; default:
-#                             scan every ~/.ralph/<owner>/<repo>/ledger.jsonl)
+#                             scan every ~/.ralph/<owner>/<repo>/ledger.*)
 #   RALPH_HERDR_LEDGER_ROOT   ledger root dir (default ~/.ralph)
 #   RALPH_SQLITE3_BIN         sqlite3 binary (default: `sqlite3` on PATH)
 set -euo pipefail
 
+# The version at which the JSONL became export-only (phase D) — rendered in
+# the frozen line's wording so a reader knows which release changed the
+# meaning under them.
+EXPORT_ONLY_SINCE="0.33.0"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# ONE definition of the phash rule and the sibling-path rule (the GH-1843
-# shape): the converter owns both; this check only calls them.
-# shellcheck source=ledger-convert.sh
-. "$SCRIPT_DIR/ledger-convert.sh"
+# ONE definition of the phash/sibling-path/enumeration rules (the GH-1843
+# shape): ledger.sh + ledger-convert.sh own them; this check only calls them.
+# (ledger.sh sources ledger-convert.sh itself.)
+# shellcheck source=ledger.sh
+. "$SCRIPT_DIR/ledger.sh"
 
 [ "$#" -eq 0 ] || { echo "doctor-parity.sh: takes no arguments" >&2; exit 64; }
 
@@ -65,14 +72,14 @@ fi
 
 ledger_files() {
   if [ -n "${RALPH_HERDR_LEDGER:-}" ]; then
-    [ -f "$RALPH_HERDR_LEDGER" ] && printf '%s\n' "$RALPH_HERDR_LEDGER"
+    # Presence includes the sqlite sibling — post phase D a fresh machine
+    # has no jsonl at all (2>/dev/null: the probe's deprecation courtesy
+    # belongs to reads, not to this enumeration).
+    _ralph_ledger_present "$RALPH_HERDR_LEDGER" 2>/dev/null &&
+      printf '%s\n' "$RALPH_HERDR_LEDGER"
     return 0
   fi
-  local f
-  for f in "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"/*/*/ledger.jsonl; do
-    [ -f "$f" ] && printf '%s\n' "$f"
-  done
-  return 0
+  ralph_ledger_enum
 }
 
 # ledger_scope_tail FILE — the "owner/repo" a ledger path encodes (the check
@@ -147,8 +154,15 @@ while IFS= read -r f; do
     continue
   fi
 
-  # jsonl side: valid-line count, last valid line's number and bytes, in one
-  # jq pass. Same `not evaluated` rule on failure.
+  # A tape with no jsonl beside it is a post-D fresh machine: nothing to
+  # compare, and that is the healthy shape, not a finding.
+  if [ ! -f "$f" ]; then
+    pass "parity-$scope" "sqlite-only ($dcount fact(s); jsonl export via ledger-convert.sh --export)"
+    continue
+  fi
+
+  # frozen jsonl side: valid-line count, last valid line's number and bytes,
+  # in one jq pass. Same `not evaluated` rule on failure.
   jstats=$(jq -Rrn '
     [inputs] | to_entries
     | map(select((.value | try fromjson catch null | type) == "object"))
@@ -160,20 +174,26 @@ while IFS= read -r f; do
   fi
   IFS=$'\037' read -r jcount jlastseq jlastline <<<"$jstats"
 
-  if [ "$dcount" = "$jcount" ]; then
-    if [ "$jcount" = "0" ]; then
-      pass "parity-$scope" "in parity (0 facts)"
-      continue
-    fi
+  # The counts diverge BY DESIGN now (the tape grows, the frozen jsonl never
+  # does), so equality is not the question anymore. What is checked instead:
+  # the frozen jsonl must be an intact PREFIX of the tape — its last valid
+  # line's seq-salted phash standing at that seq. Ahead-or-equal with an
+  # intact prefix is the healthy post-D shape; behind means the adoption
+  # never finished (backfill); a broken overlap is the one state re-running
+  # the converter cannot fix (INSERT OR IGNORE never overwrites).
+  if [ "$jcount" = "0" ]; then
+    pass "parity-$scope" "tape holds $dcount fact(s); jsonl frozen at 0 facts (export-only since $EXPORT_ONLY_SINCE)"
+  elif [ "$dcount" -ge "$jcount" ] 2>/dev/null; then
     jh=$(ralph_lc_hash_line "$jlastseq" "$jlastline") || jh=""
-    if [ "$dmax" = "$jlastseq" ] && [ -n "$jh" ] && [ "$jh" = "$dhash" ]; then
-      pass "parity-$scope" "in parity ($jcount facts, last phash agrees)"
+    oph=$("$SQ" "$db" "SELECT phash FROM facts WHERE seq=$jlastseq;" 2>/dev/null) || oph=""
+    if [ -n "$jh" ] && [ "$jh" = "$oph" ]; then
+      pass "parity-$scope" "tape holds $dcount fact(s); jsonl frozen at $jcount facts (export-only since $EXPORT_ONLY_SINCE)"
     else
-      gap "parity-$scope" "same fact count ($jcount) but the last fact disagrees (jsonl line $jlastseq vs sqlite seq $dmax) — the files diverged; re-converting will not reconcile this, inspect before trusting either"
+      gap "parity-$scope" "the tape's fact at seq $jlastseq does not match the frozen jsonl's last line — the histories diverged; re-converting cannot reconcile this, inspect before trusting either"
     fi
-  elif [ "$dcount" -lt "$jcount" ] 2>/dev/null; then
-    # Behind is only benign while the overlap is intact: the phash at
-    # sqlite's last seq must match the jsonl's line there.
+  else
+    # Behind is only curable while the overlap is intact: the phash at the
+    # tape's last seq must match the jsonl's line there.
     ok_prefix=""
     if [ "$dmax" = "0" ]; then
       ok_prefix=1
@@ -183,19 +203,17 @@ while IFS= read -r f; do
       [ -n "$oh" ] && [ "$oh" = "$dhash" ] && ok_prefix=1
     fi
     if [ -n "$ok_prefix" ]; then
-      note "parity-$scope" "sqlite behind by $((jcount - dcount)) fact(s) ($dcount of $jcount) — bash $SCRIPT_DIR/ledger-convert.sh $f"
+      note "parity-$scope" "tape behind the frozen jsonl by $((jcount - dcount)) fact(s) ($dcount of $jcount) — the adoption never finished; bash $SCRIPT_DIR/ledger-convert.sh $f backfills"
     else
-      gap "parity-$scope" "sqlite is behind AND its last fact (seq $dmax) does not match the jsonl line there — the jsonl was rewritten; inspect before trusting either"
+      gap "parity-$scope" "tape is behind AND its last fact (seq $dmax) does not match the jsonl line there — the histories diverged; re-converting cannot reconcile this, inspect before trusting either"
     fi
-  else
-    gap "parity-$scope" "sqlite holds $dcount fact(s) but the jsonl only $jcount — the jsonl was truncated or rewritten; the sqlite side is the recovery copy (--export), inspect before touching either"
   fi
 done < <(ledger_files)
 
 tail_note=""
 [ "$unconverted" -gt 0 ] && tail_note="; $unconverted not converted yet"
 if [ "$FINDINGS" -eq 0 ]; then
-  pass "ledger-parity" "in parity ($checked converted ledger(s) checked$tail_note)"
+  pass "ledger-parity" "in parity ($checked tape(s) checked$tail_note)"
   exit 0
 fi
 echo "  $FINDINGS parity divergence(s) of $checked checked$tail_note"

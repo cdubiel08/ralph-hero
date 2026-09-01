@@ -40,17 +40,17 @@ run
 is "unconverted ledger exits 0" "0" "$RC"
 has_line "unconverted is a note" '^  note parity-.*not converted yet'
 
-# ── in parity ────────────────────────────────────────────────────────────────
+# ── healthy post-D shape: tape holds the frozen jsonl's facts ────────────────
 bash "$CONVERT" "$L" >/dev/null 2>&1
 run
-is "in parity exits 0" "0" "$RC"
-has_line "parity is ok" '^  ok   parity-.*in parity (2 facts'
+is "frozen shape exits 0" "0" "$RC"
+has_line "frozen jsonl reads as ok with the new wording" '^  ok   parity-.*jsonl frozen at 2 facts (export-only since'
 
-# ── behind with intact overlap: a note, not a finding ────────────────────────
+# ── behind with intact overlap: a note naming the backfill ───────────────────
 echo '{"ts":"2026-08-30T03:00:00Z","ev":"discover","agent_ref":"w9-q#bb"}' >>"$L"
 run
 is "behind exits 0" "0" "$RC"
-has_line "behind is a note naming the converter" '^  note parity-.*behind by 1 fact.*ledger-convert.sh'
+has_line "behind is a note naming the converter" '^  note parity-.*behind the frozen jsonl by 1 fact.*ledger-convert.sh'
 
 # ── behind with a rewritten overlap: a GAP ───────────────────────────────────
 sqlite3 "$DB" 'UPDATE facts SET phash="0000" WHERE seq=(SELECT max(seq) FROM facts);'
@@ -58,22 +58,30 @@ run
 is "rewritten overlap exits 1" "1" "$RC"
 has_line "rewritten overlap is a GAP" '^  GAP  parity-.*does not match the jsonl line there'
 
-# ── same count, different last fact: a GAP ───────────────────────────────────
-bash "$CONVERT" "$L" >/dev/null 2>&1 # heal the tamper is impossible (OR IGNORE); rebuild clean
+# ── frozen-boundary divergence: a GAP ────────────────────────────────────────
 rm -f "$DB"
 bash "$CONVERT" "$L" >/dev/null 2>&1
 sqlite3 "$DB" 'UPDATE facts SET phash="1111" WHERE seq=(SELECT max(seq) FROM facts);'
 run
-is "same-count divergence exits 1" "1" "$RC"
-has_line "same-count divergence is a GAP" '^  GAP  parity-.*last fact disagrees'
+is "frozen-boundary divergence exits 1" "1" "$RC"
+has_line "frozen-boundary divergence is a GAP" '^  GAP  parity-.*does not match the frozen jsonl'
 
-# ── sqlite ahead of the jsonl (truncated source): a GAP ──────────────────────
+# ── tape ahead with an intact frozen prefix: the HEALTHY post-D shape ────────
+# (Pre-D this was 'jsonl truncated' and a GAP; since the flip the tape grows
+# past the frozen jsonl by design, and only a broken prefix is a finding.)
 rm -f "$DB"
 bash "$CONVERT" "$L" >/dev/null 2>&1
 head -1 "$L" >"$L.tmp" && mv "$L.tmp" "$L"
 run
-is "truncated jsonl exits 1" "1" "$RC"
-has_line "truncated jsonl is a GAP naming --export" '^  GAP  parity-.*truncated or rewritten'
+is "tape ahead of an intact prefix exits 0" "0" "$RC"
+has_line "tape ahead reads as the frozen shape" '^  ok   parity-.*jsonl frozen at 1 facts (export-only since'
+
+# ── sqlite-only (no jsonl at all): a post-D fresh machine, ok ────────────────
+mv "$L" "$L.away"
+run
+is "sqlite-only exits 0" "0" "$RC"
+has_line "sqlite-only reads as ok naming --export" '^  ok   parity-.*sqlite-only.*--export'
+mv "$L.away" "$L"
 
 # ── future user_version: not evaluated, never ok and never a GAP ─────────────
 sqlite3 "$DB" 'PRAGMA user_version=3;'

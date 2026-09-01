@@ -314,10 +314,12 @@ dead_names="" # phase E's proven-gone worker names (capacity input for phase F)
 # pass could discover an agent it had already declined to sweep. One list means
 # every phase reconciles the same world.
 ledgers=()
-for f in "$(ledger_root)"/*/*/ledger.jsonl; do
-  [ -f "$f" ] || continue
+# Locator enumeration (ralph_ledger_enum), never a *.jsonl glob: post phase D
+# a fresh machine's ledger is sqlite-only, invisible to the frozen extension.
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
   ledgers+=("$f")
-done
+done < <(RALPH_HERDR_LEDGER_ROOT="$(ledger_root)" ralph_ledger_enum)
 # bash 3.2 + `set -u`: an empty array is an unbound expansion, so every walk
 # below goes through this guard rather than "${ledgers[@]}" directly.
 walk_ledgers() { printf '%s\n' ${ledgers[@]+"${ledgers[@]}"}; }
@@ -334,10 +336,24 @@ walk_ledgers() { printf '%s\n' ${ledgers[@]+"${ledgers[@]}"}; }
 # turn a typo, a stale root, or an unresolvable symlink into a silent no-op
 # that reads exactly like a successful adoption.
 if [ -n "$ADOPT_LEDGER" ]; then
+  # The walk emits LOCATOR paths (jsonl-form), which post phase D may not
+  # exist as files (a sqlite-only ledger) — `-ef` needs both sides to exist,
+  # so identity degrades to: same DIRECTORY (-ef, symlink-honest — the dir
+  # always exists) + a ledger-file basename on the operator's side (either
+  # extension; naming the .sqlite names the same ledger).
+  adopt_base=$(basename "$ADOPT_LEDGER")
+  case "$adopt_base" in
+    ledger.jsonl | ledger.sqlite) : ;;
+    *) adopt_base="" ;;
+  esac
   adopt_match=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     if [ "$f" -ef "$ADOPT_LEDGER" ]; then
+      adopt_match="$f"
+      break
+    fi
+    if [ -n "$adopt_base" ] && [ "$(dirname "$f")" -ef "$(dirname "$ADOPT_LEDGER")" ]; then
       adopt_match="$f"
       break
     fi

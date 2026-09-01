@@ -533,9 +533,14 @@ Then("each survivor's spawn tokens were re-pushed onto its pane", function (this
 // ── Thens: lineage survives restart ──────────────────────────────────────────
 
 Then('the pre-restart ledger lines are still byte-identical on disk', function (this: RalphWorld) {
-  const now = fs.readFileSync(this.scopedLedger, 'utf8');
-  assert.ok(
-    now.startsWith(this.seededLedger),
+  // Phase D (GH-2311): appends land in the sqlite tape, so the history the
+  // restart must preserve is the event stream's PREFIX — byte-identical to
+  // the seeded lines — wherever the tape serves it from.
+  const seeded = this.seededLedger.split('\n').filter((l) => l.trim() !== '');
+  const now = this.ledgerEventLines();
+  assert.deepStrictEqual(
+    now.slice(0, seeded.length),
+    seeded,
     'the append-only prefix changed — pre-restart lines were rewritten',
   );
 });
@@ -591,7 +596,11 @@ Then('reconcile declines the pass loudly', function (this: RalphWorld) {
 });
 
 Then('the ledger is untouched', function (this: RalphWorld) {
-  assert.strictEqual(fs.readFileSync(this.scopedLedger, 'utf8'), this.seededLedger);
+  // Untouched = no event beyond the seeded ones, on whichever tape serves.
+  assert.deepStrictEqual(
+    this.ledgerEventLines(),
+    this.seededLedger.split('\n').filter((l) => l.trim() !== ''),
+  );
 });
 
 // ── Thens: answer comment-first ──────────────────────────────────────────────

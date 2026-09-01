@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -265,5 +266,53 @@ func TestFormatAgeIsMinutePrecision(t *testing.T) {
 		if got := formatAge(tc.d); got != tc.want {
 			t.Errorf("formatAge(%v) = %q, want %q", tc.d, got, tc.want)
 		}
+	}
+}
+
+// A present sqlite tape is served, full stop (GH-2311 phase D): the frozen
+// JSONL beside it must never answer, or every spawn after the flip renders
+// invisible to the cockpit.
+func TestReadLedgerPrefersPresentSqliteTape(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not on PATH")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.jsonl")
+	// The frozen JSONL names ONLY a stale spawn; the tape carries the fixture.
+	stale := `{"ts":"2026-08-01T00:00:00Z","ev":"spawn","agent_ref":"w1-stale#zzz","lineage":{"issue":1,"spawned_at":"2026-08-01T00:00:00Z"}}` + "\n"
+	if err := os.WriteFile(path, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(dir, "ledger.sqlite")
+	ddl := `CREATE TABLE facts(seq INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT NULL, agent TEXT, unit INTEGER, reason TEXT, pane TEXT, payload TEXT NOT NULL, phash TEXT NOT NULL UNIQUE); PRAGMA user_version=1;`
+	if out, err := exec.Command("sqlite3", db, ddl).CombinedOutput(); err != nil {
+		t.Fatalf("ddl: %v %s", err, out)
+	}
+	row := `{"ts":"2026-08-17T04:05:14Z","ev":"spawn","agent_ref":"w2061-cockpit#aaa","lineage":{"issue":2061,"spawned_at":"2026-08-17T04:00:00Z"},"tokens":{"branch":"feat/2061-cockpit"}}`
+	ins := `INSERT INTO facts(seq, ts, kind, agent, payload, phash) VALUES (1, 't', 'spawn', 'w2061-cockpit#aaa', '` + row + `', 'ph1');`
+	if out, err := exec.Command("sqlite3", db, ins).CombinedOutput(); err != nil {
+		t.Fatalf("insert: %v %s", err, out)
+	}
+	l := readLedger(path)
+	if !l.Read {
+		t.Fatal("a readable tape must report Read")
+	}
+	if _, ok := l.ByRef["w2061-cockpit#aaa"]; !ok {
+		t.Error("the tape row must be served")
+	}
+	if _, ok := l.ByRef["w1-stale#zzz"]; ok {
+		t.Error("the frozen JSONL must not be served while a tape is present")
+	}
+
+	// An unreadable present tape is "not read" — never the frozen JSONL.
+	if err := os.WriteFile(db, []byte("not a database"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l = readLedger(path)
+	if l.Read {
+		t.Error("an unreadable present tape must not report Read")
+	}
+	if len(l.ByRef) != 0 {
+		t.Error("an unreadable present tape must serve nothing, least of all the frozen JSONL")
 	}
 }

@@ -173,6 +173,7 @@ cleanup() {
   trap - EXIT INT TERM
   # evidence first: the temp ledger + claim survive into OUT before scratch dies
   cp "$SCRATCH/ledger/ledger.jsonl" "$OUT/evidence-ledger.jsonl" 2>/dev/null || true
+  cp "$SCRATCH/ledger/ledger.sqlite" "$OUT/evidence-ledger.sqlite" 2>/dev/null || true
   cp "$SCRATCH/claim.json" "$OUT/evidence-claim.json" 2>/dev/null || true
   tail -5 "$SCRATCH/marker.beat" >"$OUT/evidence-marker-beat.tail" 2>/dev/null || true
   [ -n "$WAITER_PID" ] && kill "$WAITER_PID" 2>/dev/null
@@ -577,7 +578,9 @@ fi
 
 # temp ledger + claim survival (they are plain files — recorded as evidence)
 LEDGER_OK=no
-[ -s "$RALPH_HERDR_LEDGER" ] && jq -e . "$RALPH_HERDR_LEDGER" >/dev/null 2>&1 && LEDGER_OK=yes
+# Post phase D the probe's appends land in the sqlite tape; the events
+# helper serves either form, so validate whatever the tape actually is.
+_ralph_ledger_events "$RALPH_HERDR_LEDGER" 2>/dev/null | jq -es 'length > 0' >/dev/null 2>&1 && LEDGER_OK=yes
 CLAIM_OK=no
 [ -s "$SCRATCH/claim.json" ] && jq -e . "$SCRATCH/claim.json" >/dev/null 2>&1 && CLAIM_OK=yes
 

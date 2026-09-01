@@ -385,7 +385,7 @@ SHIM
   is "race: exactly one OPEN spawn record — the invariant" "1" \
     "$(RALPH_HERDR_LEDGER="$RACE_LEDGER" ralph_ledger_open_agents | grep -c . | tr -d ' ')"
   is "race: the loser's provisional record is closed never_started" "1" \
-    "$(jq -s '[.[] | select(.ev == "exit" and .reason == "never_started" and .via == "spawn")] | length' <"$RACE_LEDGER" 2>/dev/null)"
+    "$(_ralph_ledger_events "$RACE_LEDGER" 2>/dev/null | jq -s '[.[] | select(.ev == "exit" and .reason == "never_started" and .via == "spawn")] | length')"
 
   # The pre-check catches the ordinary (non-racing) case earlier and cheaper:
   # B arrives after A is visible, so it never touches the server at all.
