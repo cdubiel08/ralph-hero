@@ -60,6 +60,8 @@
 #                                 apart from the bare wait)
 #   tab create …                  tab-create.json         payload {tab,root_pane}
 #   tab close <ID>                tab-close.json
+#   tab rename <ID> <LABEL>       tab-rename.json
+#   pane close <ID>               pane-close.json
 #   agent read <NAME> …           agent-read.<NAME>.txt, then agent-read.txt —
 #                                 RAW pane text, not a JSON envelope (default:
 #                                 empty output, the blank-tail degradation)
@@ -333,6 +335,12 @@ case "$key" in
     ;;
   tab-close)
     respond "cli:tab:close" "ok" '{}' tab-close
+    ;;
+  tab-rename)
+    respond "cli:tab:rename" "ok" '{}' tab-rename
+    ;;
+  pane-close)
+    respond "cli:pane:close" "ok" '{}' pane-close
     ;;
   agent-read)
     # RAW pane text (what --source recent-unwrapped prints), never a JSON

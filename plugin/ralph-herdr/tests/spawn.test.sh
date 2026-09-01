@@ -765,7 +765,9 @@ for _lane in tend deliver; do
   _raw=$(grep -v '^[[:space:]]*echo ' "$SCRIPT_DIR/../scripts/$_lane-pass.sh" \
     | grep -c 'HERDR" agent prompt')
   is "$_lane-pass: no raw agent prompt outside the adapter" "0" "$_raw"
-  if grep -q "ralph_herdr_agent_prompt ralph-$_lane" "$SCRIPT_DIR/../scripts/$_lane-pass.sh"; then
+  # The agent name rides the $agent variable (agent=ralph-<lane>, GH-2317).
+  if grep -q 'ralph_herdr_agent_prompt "$agent"' "$SCRIPT_DIR/../scripts/$_lane-pass.sh" \
+    && grep -q "agent=ralph-$_lane" "$SCRIPT_DIR/../scripts/$_lane-pass.sh"; then
     ok "$_lane-pass: the prompt goes through the validating adapter"
   else
     not_ok "$_lane-pass: the prompt goes through the validating adapter"

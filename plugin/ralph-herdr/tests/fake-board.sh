@@ -16,6 +16,8 @@
 #                        which is exactly what the frontier→next fallback
 #                        probe needs to see
 #   next --json          next.json, else an empty {next, queue} envelope
+#   deliver-queue --json deliver-queue.json, else an empty {next, queue}
+#   tend-queue --json    tend-queue.json, else an empty {next, queue}
 #   claim show …         claim-show.json, else an In Progress ClaimShow view
 #                        (the join-wait poll's happy path; a Backlog fixture
 #                        models the timeout path)
@@ -123,6 +125,14 @@ case "${1-} ${2-}" in
   "next --json")
     emit_fixture next || echo '{"next":null,"queue":[]}'
     key="next"
+    ;;
+  "deliver-queue --json")
+    emit_fixture deliver-queue || echo '{"next":null,"queue":[]}'
+    key="deliver-queue"
+    ;;
+  "tend-queue --json")
+    emit_fixture tend-queue || echo '{"next":null,"queue":[]}'
+    key="tend-queue"
     ;;
   "claim show")
     emit_fixture claim-show ||

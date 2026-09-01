@@ -254,6 +254,11 @@ ralph_herdr_tab_create() {
 #   RALPH_HERDR_START_TRIES   attempts, 1s apart (default 15)
 agent_start_when_ready() {
   local name="$1" pane="$2" tries="${RALPH_HERDR_START_TRIES:-15}" n=0 out rc code
+  # How a failure failed, for callers that clean up a surface they created:
+  # "refused" is herdr's own well-formed no — nothing started, cleanup is
+  # safe; "uncertain" is a transport failure or silence — the start MAY have
+  # landed, and closing the pane could kill a live agent (PR #2326 P1).
+  RALPH_HERDR_START_OUTCOME=""
   shift 2
   case "$tries" in '' | *[!0-9]* | 0) die "RALPH_HERDR_START_TRIES must be a positive integer (got '$tries')" ;; esac
   # Frozen once, because the retry loop re-sends the identical argv and "$@"
@@ -281,7 +286,12 @@ agent_start_when_ready() {
     # with two sessions. The code comes from the parsed envelope, never from
     # matching prose — error text is terminal-derived and not a contract.
     if [ "$rc" -ne 2 ] || [ "$code" != "agent_pane_busy" ] || [ "$n" -ge "$tries" ]; then
-      [ "$rc" -eq 2 ] && echo "agent start $name refused: $code $(ralph_herdr_err_message "$out")" >&2
+      if [ "$rc" -eq 2 ]; then
+        RALPH_HERDR_START_OUTCOME="refused"
+        echo "agent start $name refused: $code $(ralph_herdr_err_message "$out")" >&2
+      else
+        RALPH_HERDR_START_OUTCOME="uncertain"
+      fi
       return 1
     fi
     [ "$n" -eq 1 ] && echo "waiting for the pane's shell to reach its prompt…"
@@ -536,6 +546,35 @@ ralph_worktree_source_dir() {
   else
     printf '%s' "$dir"
   fi
+}
+
+# ralph_main_ws_from_list WS_JSON SRC — resolve the repo's MAIN workspace id
+# from a `workspace list` body (the GH-2246 rule, one definition — dispatch-up
+# and the lane openers both read it). Primary key: the non-linked worktree
+# binding on the source checkout — that binding is what makes the sidebar nest
+# the fleet's worktrees underneath. Fallback: a workspace labeled with the
+# checkout's basename and carrying no worktree object — the shape a main
+# workspace this plugin itself created (dispatch-up's `workspace create`)
+# reports. Prints the id, or nothing when no workspace matches; the CALLER
+# owns the workspace-list read and its failure direction, because those
+# directions legitimately differ (dispatch-up fails closed — it would create
+# a duplicate; a lane opener falls back to the invoking workspace).
+ralph_main_ws_from_list() {
+  local ws_out="$1" src="$2" ws_id
+  ws_id=$(jq -r --arg src "$src" \
+    '[.workspaces[] | select(((.worktree.is_linked_worktree // false) | not) and ((.worktree.checkout_path // "") == $src))][0].workspace_id // empty' \
+    <<<"$ws_out" 2>/dev/null) || ws_id=""
+  if [ -z "$ws_id" ]; then
+    # The label match must be UNIQUE: two repos can share a checkout basename,
+    # and a label-only workspace carries nothing else to tell them apart — a
+    # first-match pick would silently adopt another repo's space. Ambiguity
+    # returns no id, so each caller lands on its own stated fallback (lane
+    # openers use the invoking workspace; dispatch-up creates the space).
+    ws_id=$(jq -r --arg l "$(basename "$src")" \
+      '[.workspaces[] | select((.label == $l) and ((.worktree.is_linked_worktree // false) | not) and ((.worktree.checkout_path // "") == ""))] | if length == 1 then .[0].workspace_id else empty end' \
+      <<<"$ws_out" 2>/dev/null) || ws_id=""
+  fi
+  printf '%s' "$ws_id"
 }
 
 # spawn_work_session N [QUEUE_JSON] — spawn one /ralph:work session for issue N.
