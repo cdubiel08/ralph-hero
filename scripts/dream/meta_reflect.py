@@ -397,6 +397,12 @@ def synthesize_candidates(
             detail = f"LLM call to {url} failed: {exc} ({shape})"
         log.warning("meta-reflect %s", detail)
         return SynthesisResult([], failure, detail)
+    if status != 200:
+        # Status BEFORE decode (greptile, #2344): a 503 with an HTML body is
+        # an HTTP failure, and decoding first would type it payload-shape.
+        detail = f"LLM at {url} returned status {status} ({shape})"
+        log.warning("meta-reflect %s", detail)
+        return SynthesisResult([], "http-status", detail)
     if http_post is None:
         # Decoded OUTSIDE the transport try (greptile P1 on #2344): a 200
         # whose body is not JSON — a truncated stream, an HTML error page —
@@ -408,10 +414,6 @@ def synthesize_candidates(
             detail = f"LLM at {url} returned status {status} with a non-JSON body: {exc} ({shape})"
             log.warning("meta-reflect %s", detail)
             return SynthesisResult([], "payload-shape", detail)
-    if status != 200:
-        detail = f"LLM at {url} returned status {status} ({shape})"
-        log.warning("meta-reflect %s", detail)
-        return SynthesisResult([], "http-status", detail)
     try:
         content = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:

@@ -322,6 +322,15 @@ class TestSynthesisIsBounded:
         assert r.failure == "payload-shape"
         assert "non-JSON body" in r.detail and "status 200" in r.detail
 
+        # Second greptile finding: a NON-200 with the same body is an HTTP
+        # failure and must keep its status — checked before any decode.
+        _Resp.status_code = 503
+        r = meta_reflect.synthesize_candidates(
+            [{"id": "r0", "content": "x", "date": ""}], "http://gate", "m"
+        )
+        assert r.failure == "http-status"
+        assert "status 503" in r.detail
+
     @pytest.mark.parametrize(
         ("post", "failure", "needle"),
         [
