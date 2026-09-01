@@ -336,20 +336,37 @@ export class RalphWorld extends World {
     fs.writeFileSync(path.join(this.boardFixtures, name), content);
   }
 
-  /** Seed the scoped ledger with exact lines (kept for byte-identity asserts). */
+  /** Seed the scoped ledger with exact lines (kept for byte-identity asserts).
+   *  Drops any tape sibling from an earlier phase: a stale ledger.sqlite
+   *  would (rightly) shadow the reseeded jsonl under phase D's read rule. */
   seedLedger(lines: string[]): void {
     fs.mkdirSync(path.dirname(this.scopedLedger), { recursive: true });
+    const db = this.scopedLedger.replace(/\.jsonl$/, '.sqlite');
+    for (const f of [db, `${db}-wal`, `${db}-shm`]) fs.rmSync(f, { force: true });
     this.seededLedger = lines.map((l) => `${l}\n`).join('');
     fs.writeFileSync(this.scopedLedger, this.seededLedger);
   }
 
-  ledgerRecords(): Array<Record<string, any>> {
+  /** The ledger's event lines: the sqlite tape when present (phase D,
+   *  GH-2311 — appends land there and the jsonl is frozen), else the legacy
+   *  JSONL — the same rule ledger.sh's _ralph_ledger_events applies. */
+  ledgerEventLines(): string[] {
+    const db = this.scopedLedger.replace(/\.jsonl$/, '.sqlite');
+    if (fs.existsSync(db)) {
+      const out = execFileSync('sqlite3', [db, 'SELECT payload FROM facts ORDER BY seq;'], {
+        encoding: 'utf8',
+      });
+      return out.split('\n').filter((l) => l.trim() !== '');
+    }
     if (!fs.existsSync(this.scopedLedger)) return [];
     return fs
       .readFileSync(this.scopedLedger, 'utf8')
       .split('\n')
-      .filter((l) => l.trim() !== '')
-      .map((l) => JSON.parse(l));
+      .filter((l) => l.trim() !== '');
+  }
+
+  ledgerRecords(): Array<Record<string, any>> {
+    return this.ledgerEventLines().map((l) => JSON.parse(l));
   }
 
   /** Open agent refs — the same spawn/discover-minus-exit reduce ledger.sh runs. */
