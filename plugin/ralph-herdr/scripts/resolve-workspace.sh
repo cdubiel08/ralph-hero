@@ -85,5 +85,22 @@ if ! scope=$(_ralph_ledger_scope "$root" 2>/dev/null); then
   exit 1
 fi
 
+# Completeness, beside the scope read rather than inside it (GH-2336):
+# _ralph_ledger_scope answers "which ledger file", and owner/repo IS the
+# right key for that — but board.ts:1032 also demands projectNumber, so a
+# file that passes the scope read and lacks it still dies in board init. The
+# coercion mirrors board.ts's `Number(x ?? 0)` + falsy test: absent, null,
+# 0, or a non-numeric string all refuse; a numeric string passes.
+if [ "$cfg" = "$root/.ralph.json" ]; then
+  pn_filter='.projectNumber'; pn_name="'projectNumber'"
+else
+  pn_filter='.env.RALPH_GH_PROJECT_NUMBER'; pn_name="env.RALPH_GH_PROJECT_NUMBER"
+fi
+if ! jq -e "(($pn_filter | tonumber?) // 0) != 0" "$cfg" >/dev/null 2>&1; then
+  echo "resolve-workspace: focused workspace '$cwd' has $cfg with owner/repo but its config is incomplete: missing projectNumber ($cfg needs $pn_name) — refusing to spawn here; board init would refuse the same way." >&2
+  echo "resolve-workspace: this is NOT a focus problem — the right repo is focused and its config is incomplete. Fix $cfg, then retry." >&2
+  exit 1
+fi
+
 echo "resolve-workspace: focused workspace '$cwd' -> board scope ${scope%% *}/${scope#* }" >&2
 printf '%s\n' "$cwd"
