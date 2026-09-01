@@ -138,6 +138,20 @@ out=$(env -u HERDR_PANE_ID bash -c "cd '$REPO_DIR' && bash '$SCRIPTS/deliver-pas
 log_has "deliver fallback: cleanup closes the tab this run created" "tab close w1:tF"
 log_hasnt "deliver fallback: cleanup closes no pane" "pane close"
 
+# ── 4b. an UNCERTAIN start (silence, transport failure) closes nothing ───────
+# The start may have landed — closing the pane could kill a live agent
+# (PR #2326 P1). The surface is left up and the message says why.
+reset
+: >"$FAKE_HERDR_FIXTURES/agent-start.raw"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-start.rc"
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+rc=$?
+rm -f "$FAKE_HERDR_FIXTURES/agent-start.raw" "$FAKE_HERDR_FIXTURES/agent-start.rc"
+if [ "$rc" -ne 0 ]; then ok "deliver: an unanswered start fails the pass"; else not_ok "deliver: an unanswered start fails the pass (rc 0)"; fi
+log_hasnt "deliver: an unanswered start closes NO pane" "pane close"
+log_hasnt "deliver: an unanswered start closes NO tab" "tab close"
+has "deliver: the unanswered start says the pane is left up" "$out" "MAY have landed"
+
 # ── 5. tend rides the same shape, tool binding intact (GH-2265) ──────────────
 reset
 out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
@@ -176,6 +190,16 @@ printf '{"workspaces":[{"workspace_id":"wC","label":"fake-herdr-parent","number"
 out=$(cd "$REPO_DIR" && bash "$SCRIPTS/lane-open.sh" tend </dev/null 2>&1)
 log_has "lane-open: the label fallback resolves a created main workspace" \
   "plugin pane open --plugin ralph-herdr --entrypoint tend-pass --workspace wC --placement tab"
+
+# ── 7b. an AMBIGUOUS label-only match resolves nothing (PR #2326 P2) ─────────
+# Two repos can share a checkout basename; a label-only workspace carries
+# nothing else to tell them apart, so the fallback must refuse to pick.
+reset
+printf '{"workspaces":[{"workspace_id":"wC1","label":"fake-herdr-parent","number":3,"pane_count":1,"tab_count":1,"active_tab_id":"wC1:t1","agent_status":"idle","focused":false},{"workspace_id":"wC2","label":"fake-herdr-parent","number":4,"pane_count":1,"tab_count":1,"active_tab_id":"wC2:t1","agent_status":"idle","focused":false}]}\n' \
+  >"$FAKE_HERDR_FIXTURES/workspace-list.json"
+out=$(cd "$REPO_DIR" && bash "$SCRIPTS/lane-open.sh" deliver </dev/null 2>&1)
+has "lane-open: an ambiguous label match falls back, noted" "$out" "could not resolve the repo's main workspace"
+log_hasnt "lane-open: an ambiguous label match picks NO workspace" "--workspace"
 
 # ── 8. lane-open.sh fails OPEN: unresolvable main workspace still opens ──────
 reset

@@ -79,13 +79,18 @@ else
 fi
 
 # One live pass per lane: the unique agent name is the interlock. A
-# name-taken refusal means a pass is already live — die, never suffix. The
-# pane just created for the agent holds only an idle shell at this point
-# (start failed), so closing it is cleanup, not killing an agent.
+# name-taken refusal means a pass is already live — die, never suffix. On a
+# REFUSED start the pane just created holds only an idle shell, so closing
+# it is cleanup, not killing an agent — but an UNCERTAIN failure (transport
+# error, silence) means the start may have LANDED, and the surface is left
+# up rather than closed over a possibly-live agent (PR #2326 P1).
 if ! agent_start_when_ready "$agent" "$pane"; then
-  [ -n "$cleanup_pane" ] && "$HERDR" pane close "$cleanup_pane" >/dev/null 2>&1 || true
-  [ -n "$cleanup_tab" ] && "$HERDR" tab close "$cleanup_tab" >/dev/null 2>&1 || true
-  die "agent start $agent failed — see the herdr error above (a live $lane pass owning the name is the common cause, but exhausted startup retries land here too); cleaned up the empty agent pane"
+  if [ "${RALPH_HERDR_START_OUTCOME:-uncertain}" = "refused" ]; then
+    [ -n "$cleanup_pane" ] && "$HERDR" pane close "$cleanup_pane" >/dev/null 2>&1 || true
+    [ -n "$cleanup_tab" ] && "$HERDR" tab close "$cleanup_tab" >/dev/null 2>&1 || true
+    die "agent start $agent refused — see the herdr error above (a live $lane pass owning the name is the common cause, but exhausted startup retries land here too); cleaned up the empty agent pane"
+  fi
+  die "agent start $agent did not answer — the start MAY have landed, so the agent pane is left up rather than closed over a possibly-live agent; check it (herdr agent list) before retrying"
 fi
 # Past this point the agent is LIVE — a prompt failure must not strand it
 # silently, and hold_pane must not claim "no session spawned" about it.
