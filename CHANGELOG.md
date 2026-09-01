@@ -17,6 +17,25 @@ to a version heading when that artifact next releases. Full tag history:
 
 ## [Unreleased]
 
+### Fixed
+
+- **The lane budget pre-flight and `gb_snapshot` read GraphQL's own
+  `rateLimit` field; they had never been able to fire (GH-2278).** Both read
+  REST `rate_limit`'s `graphql` sub-bucket, which mirrors `core`: measured
+  five times first-hand during and after a real 5024-point exhaustion, it
+  reported `5000/5000 used 0` byte-identical to `core` at the instant
+  GraphQL's counter said `0/5000`. `board next|frontier|deliver-queue|
+  tend-queue|dep-candidates|brief|inbox` now probe `{ rateLimit { remaining
+  limit resetAt } }` (exempt, 0 points — two consecutive probes leave
+  `remaining` unchanged) and defer under `RALPH_GH_BUDGET_FLOOR` on
+  `remaining`, never on "the call came back" (the exempt probe answers at
+  zero). A probe GitHub refuses on budget is authoritative and defers;
+  `gb_snapshot` returns a distinct exit 4 for it and `gb_backoff_seconds`
+  naps a bounded 60 s rather than printing 0. Fail-open on an unreadable
+  budget (exit 3, transport flaps) is unchanged. `gb_snapshot core` and every
+  other resource stay on REST, where they are reported correctly.
+  `TransientError` carries a typed `reason` (`rate-limited` | `transport`).
+
 ### Changed
 
 - **`board answer` no longer claims the unit to the answerer — the resume

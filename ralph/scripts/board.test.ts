@@ -8719,11 +8719,53 @@ describe("typed transport handling", () => {
 
   it("lane pre-flight defers under the floor (exit 75) and fails OPEN on an unreadable budget", () => {
     gh.issues.set(1, { number: 1, state: "Backlog" });
-    const starved: Ctx = {
+    const err: string[] = [];
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+      err.push(String(s));
+      return true;
+    });
+    try {
+      const old = process.env.RALPH_GH_BUDGET_FLOOR;
+      process.env.RALPH_GH_BUDGET_FLOOR = "500";
+      try {
+        gh.rateLimitRemaining = 3;
+        expect(run(["next"], ctx)).toBe(75);
+        expect(err.some((l) => l.includes("BUDGET-DEFER graphql remaining=3 < floor=500") && l.includes("resetAt=2026-09-01T21:06:40Z"))).toBe(true);
+        // Unreadable budget (the fake answers code 1, no signature): proceeds.
+        gh.rateLimitRemaining = null;
+        expect(run(["next"], ctx)).toBe(0);
+        // A transport flap on the probe is ALSO unreadable, not starvation.
+        gh.rateLimitRemaining = "transport";
+        expect(run(["next"], ctx)).toBe(0);
+        // Healthy: proceeds, silently.
+        err.length = 0;
+        gh.rateLimitRemaining = 4000;
+        expect(run(["next"], ctx)).toBe(0);
+        expect(err.some((l) => l.includes("BUDGET-DEFER"))).toBe(false);
+      } finally {
+        if (old === undefined) delete process.env.RALPH_GH_BUDGET_FLOOR;
+        else process.env.RALPH_GH_BUDGET_FLOOR = old;
+      }
+    } finally {
+      gh.rateLimitRemaining = null;
+      errSpy.mockRestore();
+    }
+  });
+
+  it("the pre-flight reads GraphQL's own rateLimit and never REST rate_limit — whose graphql key mirrors core (GH-2278)", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    // THE measured shape: REST claims a full graphql budget (byte-identical to
+    // core) while GraphQL's own counter is at zero. The old pre-flight read
+    // 5000 here and proceeded; it could not fire.
+    let restReads = 0;
+    const mirrored: Ctx = {
       ...ctx,
       exec: (argv, stdin) => {
-        if (argv.join(" ") === `gh api --hostname github.com rate_limit`)
-          return { code: 0, stdout: JSON.stringify({ resources: { graphql: { remaining: 3, reset: 1755600000 } } }), stderr: "" };
+        if (argv.join(" ") === `gh api --hostname github.com rate_limit`) {
+          restReads++;
+          const bucket = { limit: 5000, remaining: 5000, used: 0, reset: 1788299373 };
+          return { code: 0, stdout: JSON.stringify({ resources: { core: bucket, graphql: bucket } }), stderr: "" };
+        }
         return ctx.exec(argv, stdin);
       },
     };
@@ -8732,28 +8774,30 @@ describe("typed transport handling", () => {
       const old = process.env.RALPH_GH_BUDGET_FLOOR;
       process.env.RALPH_GH_BUDGET_FLOOR = "500";
       try {
-        expect(run(["next"], starved)).toBe(75);
-        // Unreadable budget (FakeGh answers code 1 for rate_limit): proceeds.
-        expect(run(["next"], ctx)).toBe(0);
+        // Acceptance 4: the exempt probe RETURNS (exit 0, well-formed) at zero.
+        // "The call came back" is not health; `remaining` is.
+        gh.rateLimitRemaining = 0;
+        expect(run(["next"], mirrored)).toBe(75);
+        expect(restReads).toBe(0);
+        // Acceptance 2: GitHub refusing the probe itself is authoritative —
+        // it is not "unreadable", and it defers.
+        gh.rateLimitRemaining = "refused";
+        expect(run(["next"], mirrored)).toBe(75);
+        expect(restReads).toBe(0);
       } finally {
         if (old === undefined) delete process.env.RALPH_GH_BUDGET_FLOOR;
         else process.env.RALPH_GH_BUDGET_FLOOR = old;
       }
     } finally {
+      gh.rateLimitRemaining = null;
       errSpy.mockRestore();
     }
   });
 
   it("a typo'd RALPH_GH_BUDGET_FLOOR warns and keeps the pre-flight ARMED at the default; explicit 0 disables it quietly (GH-2256)", () => {
     gh.issues.set(1, { number: 1, state: "Backlog" });
-    const starved: Ctx = {
-      ...ctx,
-      exec: (argv, stdin) => {
-        if (argv.join(" ") === `gh api --hostname github.com rate_limit`)
-          return { code: 0, stdout: JSON.stringify({ resources: { graphql: { remaining: 3, reset: 1755600000 } } }), stderr: "" };
-        return ctx.exec(argv, stdin);
-      },
-    };
+    gh.rateLimitRemaining = 3;
+    const starved = ctx;
     const err: string[] = [];
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
       err.push(String(s));
@@ -8784,6 +8828,7 @@ describe("typed transport handling", () => {
         else process.env.RALPH_GH_BUDGET_FLOOR = old;
       }
     } finally {
+      gh.rateLimitRemaining = null;
       errSpy.mockRestore();
     }
   });

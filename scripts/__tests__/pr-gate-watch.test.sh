@@ -80,6 +80,14 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "api graphql")
+    # GH-2278: gh-budget.sh's gb_snapshot reads GraphQL's own `rateLimit`
+    # field here (REST rate_limit's graphql key mirrors core). Healthy by
+    # default so every test that never drops a rate_limit_gql.json fixture
+    # sees the same fails-open behavior it saw before.
+    if [[ " $* " == *rateLimit* ]]; then
+      serve rate_limit_gql.json '{"data":{"rateLimit":{"remaining":5000,"limit":5000,"resetAt":"2286-11-20T17:46:39Z"}}}'
+      exit 0
+    fi
     # Findings mode: codex-review-evidence.sh reads review THREADS here
     # (resolution state is GraphQL-only). Absent fixture = no threads.
     if [[ -f "$GH_STUB_DIR/review_threads.json" ]]; then
@@ -118,10 +126,11 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "api rate_limit")
-    # GH-2276: gh-budget.sh's gb_snapshot reads this. Healthy by default so
-    # every test that never drops a rate_limit.json fixture sees the same
-    # fails-open behavior it saw before this endpoint had a stub case at all.
-    serve rate_limit.json '{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":9999999999}}}'
+    # REST rate_limit: since GH-2278 gb_snapshot reads it only for NON-graphql
+    # resources, which this script never asks for. Served with the measured
+    # mirror shape (graphql == core == healthy) so a read that regressed to
+    # this endpoint would see a healthy number on exactly the exhausted case.
+    serve rate_limit.json '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":9999999999},"graphql":{"remaining":5000,"limit":5000,"reset":9999999999}}}'
     ;;
   *) echo "stub: unhandled gh $*" >&2; exit 64 ;;
 esac
@@ -2505,8 +2514,8 @@ fi
 D="$TMP_ROOT/exhausted-number-no-signature-still-gives-up"
 mkdir -p "$D"
 touch "$D/fail_view"
-cat >"$D/rate_limit.json" <<EOF
-{"resources":{"graphql":{"remaining":0,"limit":5000,"reset":$(( $(date +%s) + 3600 ))}}}
+cat >"$D/rate_limit_gql.json" <<EOF
+{"data":{"rateLimit":{"remaining":0,"limit":5000,"resetAt":"$(jq -rn --argjson e "$(( $(date +%s) + 3600 ))" '$e | todateiso8601')"}}}
 EOF
 set +e
 out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \
@@ -2520,17 +2529,18 @@ else
   fail "exhausted-number-no-signature-still-gives-up (rc=$rc out=${out:0:200})"
 fi
 
-# GH-2278: `gh api rate_limit`'s graphql bucket can mirror `core` and read
-# fully healthy while GraphQL is genuinely exhausted — so the fix cannot
-# depend on that number. This scenario pairs an OBSERVED rate-limit error on
-# the failing read with a rate_limit.json that claims a healthy budget, the
-# exact shape GH-2278 measured. If the give-up path fired here, the fix would
-# be inert on the case it exists for.
+# GH-2278: `gh api rate_limit`'s graphql bucket mirrors `core` and reads
+# fully healthy while GraphQL is genuinely exhausted — so the observed-error
+# path cannot depend on any number. This scenario pairs an OBSERVED
+# rate-limit error on the failing read with a budget NUMBER that claims a
+# healthy budget (both the REST mirror and, here, a stale-but-healthy
+# authority read), the shape GH-2278 measured. If the give-up path fired
+# here, the fix would be inert on the case it exists for.
 D="$TMP_ROOT/ratelimited-signature-healthy-number"
 mkdir -p "$D"
 touch "$D/fail_view_ratelimited"
-cat >"$D/rate_limit.json" <<EOF
-{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":$(( $(date +%s) + 3600 ))}}}
+cat >"$D/rate_limit_gql.json" <<EOF
+{"data":{"rateLimit":{"remaining":5000,"limit":5000,"resetAt":"$(jq -rn --argjson e "$(( $(date +%s) + 3600 ))" '$e | todateiso8601')"}}}
 EOF
 set +e
 out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$D" RALPH_MERGE_POLICY_FILE="$POLICY_REVIEW" \

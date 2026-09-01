@@ -130,6 +130,16 @@ export class FakeGh {
   queries: string[] = [];
   comments: Array<{ body: string }> = [];
   issues = new Map<number, FakeIssue>();
+  /** Budget pre-flight answer (GH-2278): GraphQL's own `rateLimit.remaining`.
+   *  null = the probe is unhandled (code 1, no signature) — unreadable, which
+   *  the pre-flight must read as "proceed". `"refused"` = GitHub's own
+   *  RATE_LIMITED error body, which must read as "defer". */
+  rateLimitRemaining: number | null | "refused" | "transport" = null;
+  /** Budget probes sent (GH-2278). Counted APART from `graphqlCalls`: that
+   *  metric is the paid walk the bounded reads reduce, and the probe is exempt
+   *  from the budget it reads (0 points, a fixed +1 per lane invocation). It
+   *  is still a round trip, which is why it is counted at all. */
+  budgetProbes = 0;
   failNextStateWrite = false; // transport-failure injection
   /** Item numbers whose field writes fail — breaker tests (GH-2130). */
   failFieldWrites = new Set<number>();
@@ -512,8 +522,28 @@ export class FakeGh {
   }
 
   private graphql(payload: { query: string; variables: any }): ExecResult {
-    this.graphqlCalls++;
     const { query, variables } = payload;
+
+    // GH-2278: the lane budget pre-flight. Matched on the probe's exact
+    // selection — every instrumented query also carries an aliased
+    // `rateLimit`, so a looser match would answer them all.
+    if (query.includes("rateLimit { remaining limit resetAt }")) {
+      this.budgetProbes++;
+      if (this.rateLimitRemaining === null) return { code: 1, stdout: "", stderr: `unhandled query: ${query.slice(0, 120)}` };
+      if (this.rateLimitRemaining === "transport") return { code: 1, stdout: "", stderr: 'Post "https://api.github.com/graphql": i/o timeout' };
+      if (this.rateLimitRemaining === "refused")
+        return {
+          code: 0,
+          stdout: JSON.stringify({ errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded for user ID 1" }] }),
+          stderr: "",
+        };
+      return {
+        code: 0,
+        stdout: JSON.stringify({ data: { rateLimit: { remaining: this.rateLimitRemaining, limit: 5000, resetAt: "2026-09-01T21:06:40Z" } } }),
+        stderr: "",
+      };
+    }
+    this.graphqlCalls++;
     this.queries.push(query);
 
     // GH-1973: the create-dedupe twin search. Keyed on `viewer` — no other

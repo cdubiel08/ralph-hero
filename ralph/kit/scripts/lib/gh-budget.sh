@@ -25,9 +25,21 @@
 #       block work — that would convert a transient outage into a full stop,
 #       and the check is an optimization, never a gate.
 #
-# The `rate_limit` endpoint does not itself count against any rate limit
-# (documented GitHub behaviour), so (B) is genuinely cost-neutral rather than
-# cheap. It is read through REST; the budget it reports on is GraphQL's.
+# The budget (B) reads is GraphQL's, and the authority for it is GraphQL's
+# OWN `rateLimit` field, never REST `rate_limit`'s `graphql` sub-bucket
+# (GH-2278). That sub-bucket MIRRORS `core`: measured five times first-hand
+# during and after a real exhaustion, it reported `remaining 5000 used 0`
+# byte-identical to `core` — reset epoch included, and that epoch slid with
+# the clock the way `core`'s rolling window does — at the same instant
+# GraphQL's own counter said `remaining 0, used 5024`. A guard reading that
+# key could not fire; it never had. `core` is reported correctly by the same
+# call, so the defect is one sub-bucket and the fix is per-resource: the
+# graphql resource is read from the authority, anything else stays on REST.
+# The `rateLimit` field is exempt from the budget it reports on (two
+# consecutive probes leave `remaining` unchanged, though `cost` prints 1), so
+# (B) is still cost-neutral — and it ANSWERS AT ZERO, which is the honest
+# limit: a probe that returns is not a probe that answers, so recovery is
+# read from `remaining`, never from "the call did not throw".
 #
 # Source it as:  . "$(dirname "$0")/lib/gh-budget.sh"
 
@@ -107,9 +119,34 @@ gb_gh() {
 # Print "remaining limit reset_epoch" for the named resource (default graphql).
 # Exit 3 when the budget cannot be read — never a guess, and never a zero: an
 # unreadable budget and an exhausted one must not read alike, which is the same
-# defect in miniature.
+# defect in miniature. Exit 4 when the probe ITSELF came back with GitHub's
+# rate-limit signature (GH-2278 acceptance 2): an observed refusal is
+# authoritative over any counter, and it is not "unreadable" — GitHub answered,
+# and the answer was "no". The two exits are distinct because their remedies
+# are: 3 means proceed (fail open), 4 means back off.
+#
+# The graphql resource is read from GraphQL's own `rateLimit` field; every
+# other resource from REST `rate_limit`, where `core` is reported correctly.
+# The reset is normalised to an epoch either way so callers do arithmetic on
+# one shape.
 gb_snapshot() {
-  local res="${1:-graphql}" json
+  local res="${1:-graphql}" json err
+  if [ "$res" = "graphql" ]; then
+    err=$(mktemp) || return 3
+    _gb_noerrexit
+    json=$(gh api graphql -f query='{rateLimit{remaining limit resetAt}}' 2>"$err")
+    _gb_errexit_restore
+    if gb_looks_rate_limited "$json$(cat "$err")"; then rm -f "$err"; return 4; fi
+    rm -f "$err"
+    [ -z "$json" ] && return 3
+    printf '%s' "$json" | jq -e -r '
+      .data.rateLimit // empty
+      | select((.remaining|type) == "number" and (.resetAt|type) == "string")
+      | [(.remaining|tostring), (.limit|tostring), (.resetAt|fromdateiso8601|tostring)]
+      | join(" ")
+    ' 2>/dev/null || return 3
+    return 0
+  fi
   _gb_noerrexit
   json=$(gh api rate_limit 2>/dev/null)
   _gb_errexit_restore
@@ -121,6 +158,11 @@ gb_snapshot() {
   ' 2>/dev/null || return 3
 }
 
+# When the probe itself is refused there is no reset to nap toward, and 0
+# would render "GitHub said no" as "healthy" — the inversion this file exists
+# to remove. A short fixed nap keeps the caller interruptible and re-probing.
+GB_REFUSED_BACKOFF_SEC=60
+
 # gb_backoff_seconds [floor]
 #
 # How long a polling loop should wait before spending again. Prints 0 when the
@@ -128,8 +170,10 @@ gb_snapshot() {
 # seconds until reset, so a starved loop sleeps through the window instead of
 # hammering it. Always exits 0: this is advice, not a verdict.
 gb_backoff_seconds() {
-  local floor="${1:-$RALPH_GH_BUDGET_FLOOR}" snap remaining reset now
-  if ! snap=$(gb_snapshot graphql); then echo 0; return 0; fi
+  local floor="${1:-$RALPH_GH_BUDGET_FLOOR}" snap remaining reset now rc=0
+  snap=$(gb_snapshot graphql) || rc=$?
+  if [ "$rc" -eq 4 ]; then echo "$GB_REFUSED_BACKOFF_SEC"; return 0; fi
+  if [ "$rc" -ne 0 ]; then echo 0; return 0; fi
   read -r remaining _ reset <<<"$snap"
   case "$remaining$reset" in *[!0-9]*|"") echo 0; return 0 ;; esac
   [ "$remaining" -ge "$floor" ] && { echo 0; return 0; }
@@ -146,8 +190,13 @@ gb_backoff_seconds() {
 # read must never render as a normal one, and a backoff nobody can see is
 # exactly that.
 gb_report_low() {
-  local floor="${1:-$RALPH_GH_BUDGET_FLOOR}" snap remaining limit reset
-  snap=$(gb_snapshot graphql) || return 0
+  local floor="${1:-$RALPH_GH_BUDGET_FLOOR}" snap remaining limit reset rc=0
+  snap=$(gb_snapshot graphql) || rc=$?
+  if [ "$rc" -eq 4 ]; then
+    echo "gh-budget: GraphQL budget exhausted — GitHub refused the budget probe itself (rate limited)" >&2
+    return 0
+  fi
+  [ "$rc" -ne 0 ] && return 0
   read -r remaining limit reset <<<"$snap"
   case "$remaining" in *[!0-9]*|"") return 0 ;; esac
   [ "$remaining" -ge "$floor" ] && return 0

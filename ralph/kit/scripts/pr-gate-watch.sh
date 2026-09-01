@@ -668,14 +668,13 @@ gather() {
   #
   # GH-2276: stderr is captured (not just discarded to /dev/null) so a
   # GraphQL rate-limit failure can be told apart from real unreachability.
-  # This is deliberately NOT keyed on gb_backoff_seconds/gb_snapshot — GH-2278
-  # established that `gh api rate_limit`'s `.resources.graphql` mirrors
-  # `.resources.core` and can read a fully healthy budget while GraphQL is at
-  # zero, which would make that signal say "healthy" on exactly the failure
-  # this exists to catch. GitHub's own error text on the failing call is the
-  # signal that is actually true at the moment of failure, and costs no extra
-  # read — reusing gb_looks_rate_limited (GH-1817), the same text match the
-  # write-side guard already trusts.
+  # This is deliberately NOT keyed on gb_backoff_seconds/gb_snapshot: a
+  # pre-spend NUMBER is a prediction, and a budget can run out between the
+  # probe and the read (GH-2278's honest limit — the guard sees a current
+  # exhaustion, never a coming one). GitHub's own error text on the failing
+  # call is the signal that is actually true at the moment of failure, and
+  # costs no extra read — reusing gb_looks_rate_limited (GH-1817), the same
+  # text match the write-side guard already trusts.
   pr_err_file=$(mktemp) || return 1
   pr_json=$(gh pr view "$PR" \
     --json state,reviewDecision,headRefOid,baseRefName,author,mergeable 2>"$pr_err_file") || pr_rc=$?
@@ -1158,16 +1157,17 @@ while :; do
     # GH-2276: gather() observed GitHub's own GraphQL rate-limit error text
     # directly on the failing read (gb_looks_rate_limited, GH-1817's write-side
     # guard reused for a read). That is trustworthy at the moment it happens —
-    # unlike the pre-spend budget NUMBER below, which GH-2278 found reads a
-    # fully healthy `.resources.graphql` while GraphQL is genuinely at zero,
-    # because that REST field mirrors `.resources.core`. This is not a `fails`
-    # increment: the read didn't fail to reach GitHub, GitHub told us why.
+    # the pre-spend budget NUMBER below is a prediction made before the read,
+    # and until GH-2278 it was not even that: REST's `.resources.graphql`
+    # mirrors `.resources.core`, so it read fully healthy while GraphQL was at
+    # zero. This is not a `fails` increment: the read didn't fail to reach
+    # GitHub, GitHub told us why.
     #
-    # Deliberately not computing a reset deadline to sleep to: GH-2278 also
-    # measured that endpoint's `reset` epoch rolling forward with the clock
-    # rather than holding still, so it is not a trustworthy wake time either.
-    # Re-probing at the normal poll cadence is enough — a rejected call costs
-    # no extra budget, so there is nothing to back off FROM.
+    # Deliberately not computing a reset deadline to sleep to. Re-probing at
+    # the normal poll cadence is enough — a rejected call costs no extra
+    # budget, so there is nothing to back off FROM — and the pre-spend check
+    # below now reads GraphQL's own `resetAt`, so a still-starved budget naps
+    # toward the real reset on the next iteration.
     wait_line="GATE-WAIT budget: GraphQL rate limit hit on the last read — retrying"
     if [ "$wait_line" != "$last" ]; then
       printf '%s\n' "$wait_line"
