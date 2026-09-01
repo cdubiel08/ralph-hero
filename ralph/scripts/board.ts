@@ -1573,11 +1573,19 @@ export function ghGraphQL<T = any>(
   ctx: Ctx,
   query: string,
   variables: Record<string, unknown>,
+  opts: {
+    /** Send the document as written, with no cost alias and no ledger
+     *  entry. For the one query that is EXEMPT from the budget (GH-2278's
+     *  `rateLimit` probe): GitHub prints `cost: 1` for it while `remaining`
+     *  does not move, so counting it would charge every lane a phantom point
+     *  and log a BUDGET-DEFER invocation as spend. */
+    uninstrumented?: boolean;
+  } = {},
 ): T {
   // Instrumentation is on by default (measured cost-neutral, GH-1801):
   // the per-invocation ledger below needs the numbers even when nobody is
   // watching stderr. RALPH_GQL_COST=0 disables; =1 additionally narrates.
-  const measuring = process.env.RALPH_GQL_COST !== "0";
+  const measuring = process.env.RALPH_GQL_COST !== "0" && !opts.uninstrumented;
   const narrate = process.env.RALPH_GQL_COST === "1";
   const sent = measuring ? instrumentQuery(query) : { query, instrumented: false };
   // Read-your-writes, half one (GH-1806): mark BEFORE the wire, because a
@@ -12587,7 +12595,9 @@ export function run(argv: string[], ctx: Ctx): number {
     const floor = parseGhBudgetFloor(process.env.RALPH_GH_BUDGET_FLOOR);
     if (floor > 0) {
       try {
-        const d: any = ghGraphQL(ctx, BUDGET_PROBE_QUERY, {});
+        // Uninstrumented: the probe is exempt, and a ledger line saying a
+        // deferred invocation spent a point would be the ledger lying.
+        const d: any = ghGraphQL(ctx, BUDGET_PROBE_QUERY, {}, { uninstrumented: true });
         const g = d?.rateLimit;
         if (g && typeof g.remaining === "number" && g.remaining < floor) {
           process.stderr.write(

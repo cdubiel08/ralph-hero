@@ -140,6 +140,9 @@ export class FakeGh {
    *  from the budget it reads (0 points, a fixed +1 per lane invocation). It
    *  is still a round trip, which is why it is counted at all. */
   budgetProbes = 0;
+  /** The probe documents as sent, verbatim — so a test can assert the cost
+   *  alias was NOT spliced in (the probe rides uninstrumented). */
+  probeQueries: string[] = [];
   failNextStateWrite = false; // transport-failure injection
   /** Item numbers whose field writes fail — breaker tests (GH-2130). */
   failFieldWrites = new Set<number>();
@@ -529,6 +532,7 @@ export class FakeGh {
     // `rateLimit`, so a looser match would answer them all.
     if (query.includes("rateLimit { remaining limit resetAt }")) {
       this.budgetProbes++;
+      this.probeQueries.push(query);
       if (this.rateLimitRemaining === null) return { code: 1, stdout: "", stderr: `unhandled query: ${query.slice(0, 120)}` };
       if (this.rateLimitRemaining === "transport") return { code: 1, stdout: "", stderr: 'Post "https://api.github.com/graphql": i/o timeout' };
       if (this.rateLimitRemaining === "refused")

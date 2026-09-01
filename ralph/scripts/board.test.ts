@@ -8774,6 +8774,13 @@ describe("typed transport handling", () => {
       const old = process.env.RALPH_GH_BUDGET_FLOOR;
       process.env.RALPH_GH_BUDGET_FLOOR = "500";
       try {
+        // The probe rides UNINSTRUMENTED: no cost alias spliced in, so the
+        // exempt query's phantom `cost: 1` never reaches the ledger.
+        gh.rateLimitRemaining = 4000;
+        gh.probeQueries.length = 0;
+        expect(run(["next"], mirrored)).toBe(0);
+        expect(gh.probeQueries).toHaveLength(1);
+        expect(gh.probeQueries[0]).not.toContain(COST_ALIAS);
         // Acceptance 4: the exempt probe RETURNS (exit 0, well-formed) at zero.
         // "The call came back" is not health; `remaining` is.
         gh.rateLimitRemaining = 0;
