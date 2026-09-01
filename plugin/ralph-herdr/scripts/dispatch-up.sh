@@ -150,6 +150,7 @@ if [ "$n_match" -gt 1 ]; then
 fi
 
 space_state="standing"
+created_tab=""
 if [ -z "$ws_id" ]; then
   # No worktree, no branch: dispatch reads the board and writes nothing, so
   # the space sits on the source checkout (the lead's own precedent,
@@ -162,6 +163,11 @@ if [ -z "$ws_id" ]; then
     die "workspace create failed for $src ($(ralph_herdr_err_code "${out:-}" || true)) — see the diagnostic above"
   ws_id=$(jq -r '.workspace.workspace_id // empty' <<<"$out")
   [ -n "$ws_id" ] || die "no workspace id in the create response for $src"
+  # The fresh space arrives with a default root tab (herdr labels it '1').
+  # Its id is remembered so the hero-open below can absorb it (GH-2316): the
+  # "existing panes are the operator's own" rationale does not cover a tab
+  # this script itself just created.
+  created_tab=$(jq -r '.tab.tab_id // empty' <<<"$out") || created_tab=""
   space_state="created"
 fi
 
@@ -215,6 +221,19 @@ if [ -z "$hero_pane" ]; then
   # Probed on 0.8.x: the opened pane rides .plugin_pane.pane.pane_id.
   hero_pane=$(jq -r '.plugin_pane.pane.pane_id // empty' <<<"$out")
   hero_state="opened"
+  # Absorb the fresh space's default root tab (GH-2316). Only when this run
+  # created the space (the tab is the script's own artifact, never an
+  # operator pane) and the hero verifiably landed in a DIFFERENT tab. The
+  # guard fails toward LEAVING the tab — inverted from the hero reads'
+  # fail-open, because here the failure cost inverts too: a stray empty tab
+  # is cosmetic, closing a tab on an unreadable id is not. Best-effort close,
+  # the deliver-pass.sh precedent.
+  if [ "$space_state" = "created" ] && [ -n "$created_tab" ]; then
+    hero_tab=$(jq -r '.plugin_pane.pane.tab_id // empty' <<<"$out" 2>/dev/null) || hero_tab=""
+    if [ -n "$hero_tab" ] && [ "$hero_tab" != "$created_tab" ]; then
+      "$HERDR" tab close "$created_tab" >/dev/null 2>&1 || true
+    fi
+  fi
 fi
 
 # The default contract is ensure-only. The attended day path opts into one

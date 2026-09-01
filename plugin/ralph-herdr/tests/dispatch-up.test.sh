@@ -75,6 +75,7 @@ reset() {
   : >"$FAKE_BOARD_LOG"
   rm -f "$FAKE_HERDR_FIXTURES"/workspace-list.json "$FAKE_HERDR_FIXTURES"/workspace-list.rc \
     "$FAKE_HERDR_FIXTURES"/pane-list.json "$FAKE_HERDR_FIXTURES"/api-snapshot.json \
+    "$FAKE_HERDR_FIXTURES"/plugin-pane.json \
     "$FAKE_BOARD_FIXTURES"/name.dispatch.rc "$FAKE_BOARD_FIXTURES"/roster.rc \
     "$RALPH_HERDR_LEDGER_ROOT/fake/fake/hero.pane.json" \
     "$RALPH_HERDR_LEDGER_ROOT/fake/fake/dispatch-heartbeat" 2>/dev/null || true
@@ -100,6 +101,7 @@ hasnt "never creates an address-labeled sibling (GH-2246)" "$(cat "$FAKE_HERDR_L
 has "opens the hero pane into the created space" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open --plugin ralph-herdr --entrypoint hero --workspace wT --placement tab"
 has "ensure-only leaves the new hero unfocused" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --no-focus"
 has "summary names created + opened" "$out" "workspace wT (created), hero pane pP1 (opened)"
+has "absorbs the fresh space's default root tab (GH-2316)" "$(cat "$FAKE_HERDR_LOG")" "tab close wT:t1"
 has "summary still carries the dispatch address" "$out" "dispatch up: fake/dispatch"
 has "prints the roster" "$out" "ROSTER (fake)"
 has "roster was asked of the board" "$(cat "$FAKE_BOARD_LOG")" "^roster"
@@ -116,6 +118,19 @@ rc=$?
 hasnt "standing main workspace is not recreated" "$(cat "$FAKE_HERDR_LOG")" "workspace create"
 has "hero pane opened into the standing main workspace" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --workspace wM"
 has "summary names standing + opened" "$out" "workspace wM (standing), hero pane pP1 (opened)"
+hasnt "a standing space's tabs are never closed (GH-2316 is created-only)" "$(cat "$FAKE_HERDR_LOG")" "tab close"
+
+# ── 2b. GH-2316 guard: hero lands in the SAME tab as the default — no close ─
+# The absorb is destructive, so its guard fails toward leaving the tab: a
+# plugin-pane response placing the hero in the create response's own tab
+# (wT:t1) must suppress the close, whatever the reason it happened.
+reset
+printf '{"plugin_pane":{"entrypoint":"hero","plugin_id":"ralph-herdr","pane":{"pane_id":"pP1","workspace_id":"wT","tab_id":"wT:t1","terminal_id":"term_fake","focused":true,"agent_status":"unknown","revision":0}}}\n' \
+  >"$FAKE_HERDR_FIXTURES/plugin-pane.json"
+out=$(run_up)
+rc=$?
+[ "$rc" = 0 ] && ok "same-tab hero run exits 0" || not_ok "same-tab hero run exits 0 — rc $rc: $out"
+hasnt "hero in the default tab suppresses the close" "$(cat "$FAKE_HERDR_LOG")" "tab close"
 
 # ── 3. idempotent: main stands, hero LIVE in it — touch nothing ─────────────
 reset
