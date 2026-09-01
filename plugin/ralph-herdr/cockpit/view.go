@@ -21,7 +21,8 @@ const (
 	// 3 content lines + 1 separator rule.
 	cardRows        = 4
 	colHeaderRows   = 2 // column title + rule
-	statusRows      = 2 // legend + status line
+	statusRows      = 2 // input line pair (reply/answer) — the browse footer is legendRows+1
+	maxLegendRows   = 4 // a legend wrapped past this is clipped, not allowed to eat the body
 	narrowThreshold = 90
 )
 
@@ -173,8 +174,10 @@ func viewModel(m Model) string {
 	case ModeReply, ModeAnswer:
 		b.WriteString(renderInput(m))
 	default:
-		b.WriteString(truncate(styleDim.Render(legend(m)), m.width))
-		b.WriteString("\n")
+		for _, line := range legendLines(m) {
+			b.WriteString(truncate(styleDim.Render(line), m.width))
+			b.WriteString("\n")
+		}
 		b.WriteString(truncate(m.status, m.width))
 	}
 	return b.String()
@@ -190,23 +193,92 @@ func legend(m Model) string {
 	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · T topology · i inbox · d diff · D done⇄human · I inbox⇄human · g browser · q quit"
 }
 
+// legendSep is the separator legend() joins its hints with; legendLines wraps
+// at it and nowhere else, so a hint like "h/l col" or "D done⇄human" is never
+// split across two rows.
+const legendSep = " · "
+
+// legendLines wraps the legend to the pane width, one whole hint at a time,
+// so a narrow pane shows every verb on a second (third…) row instead of
+// cutting the line at whatever hint happened to land on the edge. Capped at
+// maxLegendRows — the last row is then clipped by the caller's truncate — so
+// a pane too narrow for even the wrapped form still leaves room for a body.
+func legendLines(m Model) []string {
+	s := legend(m)
+	if m.width < 1 || lipgloss.Width(s) <= m.width {
+		return []string{s}
+	}
+	var out []string
+	cur := ""
+	for _, hint := range strings.Split(s, legendSep) {
+		switch {
+		case cur == "":
+			cur = hint
+		case lipgloss.Width(cur+legendSep+hint) <= m.width:
+			cur += legendSep + hint
+		default:
+			out = append(out, cur)
+			cur = hint
+		}
+	}
+	out = append(out, cur)
+	if len(out) > maxLegendRows {
+		// Dropped hints must not vanish silently: the last kept row says so.
+		out = out[:maxLegendRows]
+		last := out[maxLegendRows-1]
+		if lipgloss.Width(last)+2 > m.width {
+			last = truncate(last, m.width-2)
+		}
+		out[maxLegendRows-1] = last + " …"
+	}
+	return out
+}
+
+// footerRowsOf is how many rows the footer takes below the body: the input
+// pair in reply/answer, else the (possibly wrapped) legend plus the status
+// line. Shared by bodyHeightOf so the body shrinks exactly as the legend grows.
+func footerRowsOf(m Model) int {
+	if m.mode == ModeReply || m.mode == ModeAnswer {
+		return statusRows
+	}
+	return len(legendLines(m)) + 1
+}
+
 // bodyHeightOf mirrors viewModel's body sizing — shared with hitTest so the
 // scroll window can never drift between rendering and mouse mapping.
 func bodyHeightOf(m Model) int {
-	h := m.height - headerRows - statusRows
-	if h < cardRows+colHeaderRows {
-		h = cardRows + colHeaderRows
+	h := m.height - headerRows - footerRowsOf(m)
+	if h < cardRows+colHeaderRows+bodyOverheadRows {
+		h = cardRows + colHeaderRows + bodyOverheadRows
 	}
 	return h
 }
 
+// bodyOverheadRows are the rows a column body spends OUTSIDE the card stride:
+// the "↑N above · +N more" line renderColumn writes when the window hides
+// cards, and the blank separator viewModel writes between body and footer.
+// Both are reserved up front (GH-2319/#2329): budgeting only the cards let
+// them ride the rounding slack of the division below, so the frame fit or
+// overran the terminal by two rows depending on the terminal's height parity.
+const bodyOverheadRows = 2
+
 // visibleCards is how many full cards fit in a column body.
 func visibleCards(bodyHeight int) int {
-	v := (bodyHeight - colHeaderRows) / cardRows
+	v := (bodyHeight - colHeaderRows - bodyOverheadRows) / cardRows
 	if v < 1 {
 		v = 1
 	}
 	return v
+}
+
+// withheldRows is the one extra row the In Review column spends on its
+// "withheld: …" footer while the inbox view holds rows back; every column
+// pays it, since JoinHorizontal levels the three to the tallest.
+func withheldRows(m Model) int {
+	if m.showInbox && m.inboxOK && m.inboxWithheld != "" {
+		return 1
+	}
+	return 0
 }
 
 // colWindow is the half-open rendered range [start, end) of column idx's
@@ -215,7 +287,7 @@ func visibleCards(bodyHeight int) int {
 // and stays at the top elsewhere. Shared by renderColumn and hitTest.
 func colWindow(m Model, idx, bodyHeight int) (start, end int) {
 	cards := m.columnCards(idx)
-	visible := visibleCards(bodyHeight)
+	visible := visibleCards(bodyHeight - withheldRows(m))
 	if idx == m.col && m.row >= visible {
 		start = m.row - visible + 1
 	}
