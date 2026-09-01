@@ -815,6 +815,25 @@ rm -f "$FAKE_BOARD_FIXTURES/name.504.json"
 
 REPO="$ROOT"
 
+# ── GH-2324: the herd-fixture scrub covers every var the spawn path injects ──
+# Derived from the injection sites, never restated: a pane var added to
+# lib.sh's _pane_env/_plan_env or work-team.sh's --env list without a matching
+# entry in HERD_PANE_ENV fails here, in CI, before it can leak into a suite
+# run from a cockpit-hosted session.
+injected=$(grep -hE '_(pane|plan)_env=|--env ' "$SCRIPT_DIR"/../scripts/*.sh \
+  | grep -vE '^[[:space:]]*#' \
+  | grep -oE '(RALPH_HERDR_[A-Z_]+|WHO_[A-Z_]+)=' | tr -d = | sort -u)
+is "scrub: the spawn path injects at least the known pane vars" "true" \
+  "$( [ "$(printf '%s\n' "$injected" | grep -c .)" -ge 8 ] && echo true || echo false )"
+missing=""
+for v in $injected; do
+  case " $HERD_PANE_ENV " in *" $v "*) ;; *) missing="$missing $v" ;; esac
+done
+is "scrub: every injected pane var is in HERD_PANE_ENV (missing:$missing)" "" "$missing"
+for v in $HERD_PANE_ENV; do
+  is "scrub: $v is unset for the suite" "unset" "${!v-unset}"
+done
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
