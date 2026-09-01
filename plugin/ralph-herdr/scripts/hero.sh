@@ -44,6 +44,7 @@ trap hold_pane EXIT
 # The session this pane starts bills like any spawned one; same guard, same
 # explicit opt-in (RALPH_ALLOW_API_BILLING=true) as every sibling action.
 billing_guard
+ralph_plugin_freshness_notice
 
 # Panes inherit the SERVER's environment (lib.sh's BOARD resolution note), so
 # the harness may be missing from a PATH that a login shell would have. Probe

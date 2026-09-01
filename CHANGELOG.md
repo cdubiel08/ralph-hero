@@ -17,6 +17,45 @@ to a version heading when that artifact next releases. Full tag history:
 
 ## [Unreleased]
 
+### Added
+
+- **Plugin staleness is announced at spawn time, not only in a doctor sweep
+  (GH-2260)**. `herdr` has no auto-update, so the installed ralph-herdr tree
+  drifts from the checkout silently — measured here at 0.14.0 against an
+  expected 0.23.0 with 48 commits of divergence, latent on exactly the lanes
+  that execute the installed copy (`herdr plugin action invoke`, the fleet
+  lane, the dispatch seat). `ralph_plugin_freshness_notice` now runs beside
+  `billing_guard` at every spawn entry point (`work-fleet`, `work-next`,
+  `work-team`, `hero`, `dispatch-up`, `fork`, `deliver-pass`, `tend-pass`,
+  and the cockpit's fzf rung), so the drift is stated where the risk is
+  taken. It is **advisory and returns 0 on every path**: the remedy swaps
+  code under live panes, so the moment of the swap stays the operator's with
+  the fleet quiesced, and a spawn refused over a stale plugin is strictly
+  worse than a spawn on one. The subject is anchored at `$REPO` and it runs
+  the **source** copy of `herdr-plugin-sync.sh --check`, never the one beside
+  `lib.sh` — when herdr executes the installed plugin those are the same
+  directory, so a check hashing its own tree would let every stale cockpit
+  certify itself fresh. Reusing that script rather than re-implementing its
+  hash keeps the behavior surface at two mirrored definitions instead of
+  three (GH-1843). Four outcomes, none conflated: a repo with no
+  `plugin/ralph-herdr` source tree is **silent** (not applicable — no subject
+  and no remedy, so a permanent line would be the GH-2052 trap), in-sync is
+  silent, an unreadable input reads `NOT CHECKED` with its reason (GH-1971 —
+  a failed measurement may not render like a clean one), and a divergence is
+  loud with the sync command. The **measurement** is memoized per process
+  (keyed on the resolved script path, so a different `$REPO` is re-measured
+  rather than answered from another checkout's cache) while the **message**
+  is re-rendered per call — hashing both trees forks `shasum` per file at
+  ~1.1s, which the cockpit's fzf rung would otherwise pay on every spawn in
+  its loop, usually to print nothing; but every spawn takes the risk, so
+  every spawn is still told.
+
+  Ships as ralph-herdr **0.38.0**; `ralph/scripts/herdr-plugin-version` moves
+  with it (the two stamps are enforced equal by `herdr-setup.test.sh`, not
+  floor-and-version), so doctor reports the cockpit stale on this machine
+  until the plugin is reinstalled — the honest state, and the swap stays the
+  operator's.
+
 ### Fixed
 
 - **The lane budget pre-flight and `gb_snapshot` read GraphQL's own
@@ -46,6 +85,18 @@ to a version heading when that artifact next releases. Full tag history:
   `rate-limited — wait` (names the reset), `auth — rotate ROUTING_PAT` (quotes
   the evidence), `other — debug <run URL>` (incl. an unreadable log). Per-run
   `event` (cron vs event lane) rides the existing list call.
+
+- **Doctor's `ralph-herdr-content` / `ralph-herdr-version` lines stay `i`
+  (GH-2260, decided explicitly)**. The case for escalating them is that their
+  subject is the machinery the board's own automation runs on. It does not
+  carry: the remedy is unautomatable by construction (`--fix` may not swap
+  code under live panes), so a strict-failing check whose only remedy is a
+  human's fleet-quiescing act is the GH-2052 unsatisfiable-remedy trap — and
+  in CI, where no herdr install exists, the check reads `not evaluated`, so
+  escalation would be either permanently inert there or permanently red on
+  the one machine with a cockpit. The real complaint — that a human has to
+  run doctor to see it — is answered by putting the observation at the spawn
+  path (above), not by making doctor's exit code angrier.
 - **`board answer` no longer claims the unit to the answerer — the resume
   edge belongs to the resuming agent (GH-2204)**. The verb's default is now
   comment-only: the **Answer** comment lands (timestamped by a

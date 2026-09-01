@@ -17,6 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 trap hold_pane EXIT
 
 billing_guard
+ralph_plugin_freshness_notice
 
 QUEUE_JSON=$("$BOARD" next --json)
 N=$(jq -r '.next.number // empty' <<<"$QUEUE_JSON")

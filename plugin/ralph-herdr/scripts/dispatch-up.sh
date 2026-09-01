@@ -114,6 +114,7 @@ fi
 # The hero session this stands up bills like any spawned one — refuse before
 # creating anything, so a billing refusal leaves no half-built space.
 billing_guard
+ralph_plugin_freshness_notice
 
 # 1. The seat's ADDRESS, minted by the board (GH-2209 — no second grammar).
 # Placement no longer uses it (GH-2246), but the roster identity, the legacy

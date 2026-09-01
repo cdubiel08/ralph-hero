@@ -277,6 +277,7 @@ run_verb() {
         hold
         return 0
       fi
+      ralph_plugin_freshness_notice
       rc=0
       spawn_work_session "$n" || rc=$?
       [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ] && echo "spawn failed (rc $rc) — see above"
