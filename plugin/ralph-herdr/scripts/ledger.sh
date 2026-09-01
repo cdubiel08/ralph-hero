@@ -328,12 +328,34 @@ _ralph_ledger_sqlite_append() {
       '' | *[!0-9]*) : ;; # unreadable here — the insert below will answer
       *)
         if [ -n "$(sed -n "$((seq + 1))p" "$file" 2>/dev/null)" ]; then
-          if ralph_lc_convert "$file" >/dev/null; then
-            _RALPH_LEDGER_BACKFILL_DONE=1
-          else
-            echo "ralph_ledger_append: the tape trails the legacy JSONL and the backfill failed — the fact was NOT recorded (run ledger-convert.sh $file)" >&2
-            return 1
-          fi
+          # The convert must not race a peer's append: an insert allocating
+          # max(seq)+1 mid-backfill would burn a historical line's seq
+          # after all. Serialize under the ledger mutex (re-entrancy-aware,
+          # like the creation path) and RE-CHECK inside it — a peer that
+          # held the mutex first has usually converted already, making this
+          # a no-op. The peer's own insert cannot slip past the mutex
+          # unserialized: every appender in a trailing-tape state lands in
+          # this same branch before its insert (the pre-check above is run
+          # by each fresh process), and one whose pre-check reads clean is
+          # only reachable after a completed convert.
+          had_lock="$_RALPH_LEDGER_LOCK_HELD"
+          [ -n "$had_lock" ] || ralph_ledger_lock "$file"
+          seq=$("$sq" "$db" 'PRAGMA busy_timeout=2000; SELECT coalesce(max(seq), 0) FROM facts;' 2>/dev/null) || seq=""
+          seq=${seq##*$'\n'}
+          case "$seq" in
+            '' | *[!0-9]*) : ;;
+            *)
+              if [ -n "$(sed -n "$((seq + 1))p" "$file" 2>/dev/null)" ]; then
+                if ! ralph_lc_convert "$file" >/dev/null; then
+                  [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+                  echo "ralph_ledger_append: the tape trails the legacy JSONL and the backfill failed — the fact was NOT recorded (run ledger-convert.sh $file)" >&2
+                  return 1
+                fi
+              fi
+              ;;
+          esac
+          [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+          _RALPH_LEDGER_BACKFILL_DONE=1
         fi
         ;;
     esac
