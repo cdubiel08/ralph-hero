@@ -774,6 +774,12 @@ def record_near_misses(
     return len(hits)
 
 
+def _nonneg_int(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(value, 0)
+
+
 def near_miss_summary(wiki_dir: Path) -> dict[str, Any]:
     """Read back what ``record_near_misses`` accumulated.
 
@@ -793,6 +799,8 @@ def near_miss_summary(wiki_dir: Path) -> dict[str, Any]:
         "max_similarity": None,
         "first_scan_at": None,
         "last_scan_at": None,
+        "candidates_scanned": 0,
+        "evidence_scans": 0,
         "metric": NEAR_MISS_METRIC,
     }
     if not path.exists():
@@ -823,6 +831,15 @@ def near_miss_summary(wiki_dir: Path) -> dict[str, Any]:
             # incomplete rather than as complete.
             if rec.get("corpus_complete") is not True:
                 out["incomplete_scans"] += 1
+            # A scan that compared nothing against nothing (the `failed` /
+            # `empty` runs deliberately still write one) is instrumentation
+            # evidence, never churn evidence: the first live fire (GH-2283)
+            # was exactly that, and the verdict below may not certify it.
+            n_cand = _nonneg_int(rec.get("candidates"))
+            n_corpus = _nonneg_int(rec.get("compared_against"))
+            out["candidates_scanned"] += n_cand
+            if n_cand > 0 and n_corpus > 0:
+                out["evidence_scans"] += 1
             at = rec.get("recorded_at")
             if isinstance(at, str):
                 if out["first_scan_at"] is None:
@@ -865,6 +882,9 @@ def format_near_miss_report(summary: dict[str, Any]) -> str:
         ),
         f"  near misses: {summary['near_misses']} "
         f"({summary['distinct_candidates']} distinct candidate(s))",
+        f"  evidence:    {summary['evidence_scans']} of {summary['runs']} scan(s) "
+        f"compared >=1 candidate against >=1 known axiom "
+        f"({summary['candidates_scanned']} candidate(s) scanned in total)",
     ]
     if summary["by_source"]:
         by = ", ".join(f"{k}={v}" for k, v in sorted(summary["by_source"].items()))
@@ -883,6 +903,15 @@ def format_near_miss_report(summary: dict[str, Any]) -> str:
             "matching a skipped entry would have gone uncounted. This says "
             "nothing either way about #1965's trigger; fix the unreadable "
             "entries named in the scan records and re-run."
+        )
+    elif summary["near_misses"] == 0 and summary["evidence_scans"] == 0:
+        lines.append(
+            "  verdict:     zero recorded, but NOT CERTIFIABLE — no scan above "
+            "compared a candidate against a known axiom (every run synthesized "
+            "nothing to scan, or had no corpus to scan it against). Zero against "
+            "nothing is arithmetic, not evidence, and says nothing either way "
+            "about #1965's trigger; the instrument is live, the corpus is not "
+            "yet measured."
         )
     elif summary["near_misses"] == 0:
         lines.append(
