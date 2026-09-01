@@ -963,6 +963,40 @@ else
   esac
 fi
 
+# ── ledger JSONL↔SQLite parity (advisory — GH-2305, doctor-parity.sh) ────────
+# Same NOTE-level contract as the three relays above: parity is telemetry
+# about a derived artifact (the sqlite copy the converter maintains), never a
+# cockpit wiring gap, so it must move neither the exit code nor the --oneline
+# gap count. Unlike its siblings it needs no server — it reads files — so it
+# is not gated on SERVER_UP.
+parity_sh="${RALPH_HERDR_PARITY_SH:-}"
+if [ -z "$parity_sh" ]; then
+  parity_sh="$SCRIPT_DIR/../../plugin/ralph-herdr/scripts/doctor-parity.sh"
+  [ -n "$PLUGIN_ROOT" ] && [ -f "$PLUGIN_ROOT/scripts/doctor-parity.sh" ] &&
+    parity_sh="$PLUGIN_ROOT/scripts/doctor-parity.sh"
+fi
+if [ ! -f "$parity_sh" ]; then
+  note "ledger-parity" "not evaluated (doctor-parity.sh not found — it ships inside the ralph-herdr herdr plugin)"
+else
+  parity_rc=0
+  parity_out=$(bash "$parity_sh" 2>/dev/null) || parity_rc=$?
+  case "$parity_rc" in
+    0)
+      parity_line=$(grep '^  ok   ledger-parity ' <<<"$parity_out" | sed 's/^  ok   ledger-parity — //' || true)
+      note "ledger-parity" "${parity_line:-in parity}"
+      ;;
+    1)
+      parity_gaps=$(grep -c '^  GAP ' <<<"$parity_out" || true)
+      note "ledger-parity" "${parity_gaps:-some} parity divergence(s) — bash $parity_sh for detail"
+      if [ -z "$ONELINE" ]; then
+        grep '^  GAP ' <<<"$parity_out" | sed 's/^  GAP  /       · /' || true
+      fi
+      ;;
+    2) note "ledger-parity" "not evaluable (sqlite3 not installed)" ;;
+    *) note "ledger-parity" "not evaluated (doctor-parity.sh exited $parity_rc)" ;;
+  esac
+fi
+
 # ── worktree pile size (GH-2105) ─────────────────────────────────────────────
 # The sweep verb (GH-2103) prints the pile's size on every dry run — but only
 # when someone runs it, and the 2026-08-20 pile reached ~60 dead worktrees
