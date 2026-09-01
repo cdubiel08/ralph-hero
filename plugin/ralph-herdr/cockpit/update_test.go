@@ -774,6 +774,32 @@ func TestInteractionAndOwnWritesSnapToFloor(t *testing.T) {
 	}
 }
 
+func TestSpawnStatusCarriesTheFreshnessNotice(t *testing.T) {
+	// A spawn on a stale plugin took the risk whether it spawned or was
+	// skipped, so the verdict rides the status line on both outcomes; an
+	// in-sync spawn adds nothing (GH-2340).
+	cases := []struct {
+		name string
+		msg  spawnDoneMsg
+		want string
+	}{
+		{"spawned on a stale plugin", spawnDoneMsg{issue: 11, rc: 0, detail: "w11-eleven", notice: "plugin STALE — sync with the fleet quiesced"},
+			"spawn #11: w11-eleven · plugin STALE — sync with the fleet quiesced"},
+		{"skipped, freshness unchecked", spawnDoneMsg{issue: 11, rc: 2, detail: "already owned", notice: "plugin freshness NOT CHECKED"},
+			"spawn #11 skipped — already owned · plugin freshness NOT CHECKED"},
+		{"in sync says only the spawn", spawnDoneMsg{issue: 11, rc: 0, detail: "w11-eleven"},
+			"spawn #11: w11-eleven"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m, _ := updateModel(testModel(&fakeRunner{}), c.msg)
+			if m.status != c.want {
+				t.Fatalf("status %q, want %q", m.status, c.want)
+			}
+		})
+	}
+}
+
 func TestSkippedSpawnDoesNotSnap(t *testing.T) {
 	// rc 2 = already owned: nothing was started, so nothing is about to write.
 	m := settle(testModel(&fakeRunner{}), 6)

@@ -521,7 +521,7 @@ herdr agent explain <agent> --json          # WHY herdr believes the state — e
                                             # detection rule with evidence
 herdr plugin log list --plugin ralph-herdr  # what the actions actually ran
 herdr plugin install cdubiel08/ralph-hero/plugin/ralph-herdr --yes   # update (replaces pin)
-bash plugin/ralph-herdr/scripts/herdr-plugin-sync.sh [--check]
+bash plugin/ralph-herdr/scripts/herdr-plugin-sync.sh [--check] [--source DIR]
                                             # is the INSTALLED plugin this tree's
                                             # code? Content hash, never version
                                             # strings (versions were measured equal

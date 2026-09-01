@@ -58,6 +58,33 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Fixed
 
+- **The freshness notice announced on nine spawn paths, missed three, and
+  executed the checkout's sync script (GH-2340)**. `billing_guard` had
+  twelve call sites and `ralph_plugin_freshness_notice` nine: `refill.sh`,
+  the `link-offer` card's `[s]`, and the cockpit's `s` all spawned without
+  it — and the cockpit's was worse than missing, since `spawnCmd` discards
+  stderr on a successful spawn, so a notice wired there would have been
+  announced to nobody. All three announce now; the cockpit lifts the verdict
+  off stderr and appends `plugin STALE — sync with the fleet quiesced` /
+  `plugin freshness NOT CHECKED` to the spawn status line, and the spawn
+  suite pins the invariant as a set equality — every script that runs
+  `billing_guard` runs the notice — rather than a list that has to be
+  extended by hand. The second defect was the shape of the anchor itself:
+  to avoid hashing the installed tree against itself, the notice ran
+  `$REPO/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh` — the INSTALLED
+  plugin executing whatever script the worktree it was pointed at happened
+  to carry, on any branch, with the cockpit's env, across a version boundary
+  where `--check` and the exit codes belong to the other side. It now runs
+  its **own sibling** and hands the checkout over as a `--source DIR` tree
+  to hash: the checkout is a subject to be measured, never a program to be
+  trusted, and a caller and callee from one tree cannot disagree about the
+  flag contract. The GH-2260 anchor property is unchanged — the subject is
+  still the checkout, so a stale installed copy cannot certify itself — and
+  the test fixture now proves both halves at once with a tripwire: the
+  checkout's copy would answer "in sync" if executed, so a drift that still
+  speaks is the proof it was not. A missing sibling reads `NOT CHECKED`
+  naming the install, never clean. Ships as ralph-herdr **0.39.0**.
+
 - **The lane budget pre-flight and `gb_snapshot` read GraphQL's own
   `rateLimit` field; they had never been able to fire (GH-2278).** Both read
   REST `rate_limit`'s `graphql` sub-bucket, which mirrors `core`: measured

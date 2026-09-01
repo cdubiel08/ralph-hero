@@ -25,10 +25,15 @@
 #      UNRELEASED changes will legitimately keep differing — the remedy is
 #      `herdr plugin link <this tree>` for development, or merging first.
 #
-#   --check   hash and report only (steps 1 and 3's comparison), no mutation
+#   --check        hash and report only (steps 1 and 3's comparison), no mutation
+#   --source DIR   hash DIR as the source tree instead of the tree this script
+#                  sits in. The tree is READ, never executed — this is how the
+#                  installed copy measures a checkout without running that
+#                  checkout's code (GH-2340)
 #
 # Exit: 0 in sync (or brought into sync) · 1 still different / failed ·
-#       2 not evaluable (no herdr, no registry entry, unreadable tree).
+#       2 not evaluable (no herdr, no registry entry, unreadable tree) ·
+#       64 usage.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,12 +42,18 @@ HERDR="${HERDR_BIN_PATH:-herdr}"
 PLUGINS_JSON="${RALPH_HERDR_PLUGINS_JSON:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins.json}"
 
 CHECK_ONLY=""
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --check) CHECK_ONLY=1 ;;
-    -h | --help) sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "herdr-plugin-sync.sh: unknown argument '$arg' (accepts --check)" >&2; exit 64 ;;
+    --source)
+      [ $# -ge 2 ] && [ -n "$2" ] || { echo "herdr-plugin-sync.sh: --source needs a directory" >&2; exit 64; }
+      SRC_TREE="$(cd "$2" 2>/dev/null && pwd)" || { echo "herdr-plugin-sync.sh: --source '$2' is not a directory" >&2; exit 2; }
+      shift
+      ;;
+    -h | --help) sed -n '2,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "herdr-plugin-sync.sh: unknown argument '$1' (accepts --check, --source DIR)" >&2; exit 64 ;;
   esac
+  shift
 done
 
 _sha256() {

@@ -90,6 +90,11 @@ func TestSpawnScriptIsConstant(t *testing.T) {
 	if strings.Contains(spawnScript, "%s") || strings.Contains(spawnScript, "%d") {
 		t.Fatalf("spawnScript looks templated — it must be constant: %q", spawnScript)
 	}
+	// Every spawn entry point announces plugin staleness (GH-2260); the
+	// cockpit's `s` is one of them (GH-2340), beside the billing guard.
+	if !strings.Contains(spawnScript, "billing_guard\nralph_plugin_freshness_notice\n") {
+		t.Fatalf("spawnScript must run ralph_plugin_freshness_notice beside billing_guard: %q", spawnScript)
+	}
 	// forkScript: same contract — the pane id is positional, never interpolated,
 	// and the session read stays in fork.sh (GH-1957).
 	if !strings.Contains(forkScript, `RALPH_FORK_PANE="$2"`) || !strings.Contains(forkScript, `"$1/fork.sh"`) {
@@ -1064,5 +1069,27 @@ func TestParseEscalationsKeepsMalformedApartFromEmpty(t *testing.T) {
 	escs, err := parseEscalations(`{"escalations": []}`)
 	if err != nil || len(escs) != 0 {
 		t.Fatalf("a genuinely empty queue must parse clean: %v %+v", err, escs)
+	}
+}
+
+func TestFreshnessNoticeReadsLibShVerdictOffStderr(t *testing.T) {
+	// lib.sh prints the notice to stderr and spawnCmd drops stderr on a
+	// successful spawn — so the verdict must be lifted off it explicitly, and
+	// the three shapes must not collapse (GH-1971): stale, unchecked, silent.
+	stale := "work-next.sh: the INSTALLED ralph-herdr differs from /r/plugin/ralph-herdr — the cockpit's own lanes execute that installed copy.\nwork-next.sh: spawning anyway — this is advisory, never a gate.\n"
+	unchecked := "work-next.sh: ralph-herdr freshness NOT CHECKED — herdr-plugin-sync: could not hash the installed tree\n"
+	cases := []struct{ name, stderr, want string }{
+		{"stale", stale, "plugin STALE — sync with the fleet quiesced"},
+		{"not checked", unchecked, "plugin freshness NOT CHECKED"},
+		{"in sync is silent", "", ""},
+		{"unrelated stderr is silent", "spawn: some other warning\n", ""},
+		{"stale outranks unchecked when both print", unchecked + stale, "plugin STALE — sync with the fleet quiesced"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := freshnessNotice(c.stderr); got != c.want {
+				t.Fatalf("freshnessNotice(%q) = %q, want %q", c.stderr, got, c.want)
+			}
+		})
 	}
 }
