@@ -17,6 +17,22 @@
 # join out by hand at twenty call sites would be noise, and worse, each site
 # would be free to get it subtly wrong.
 
+# ── chain-of-command scrub (GH-2324) ────────────────────────────────────────
+# The spawn path exports these into every pane it opens (lib.sh's _pane_env /
+# _plan_env, work-team.sh's --env list), so a suite run FROM a cockpit-hosted
+# session inherits the live lead/address/role and the code under test prefers
+# that env over the fixture: fleet.test.sh's brief-reply case read the
+# session's real lead instead of s0-watch, spawn.test.sh's lineage record
+# read invoked_by=agent, work-team.test.sh's lead spawn tripped the edge guard
+# as orchestrator→orchestrator. CI never saw it — its runner carries none of
+# these — so the suites were unrunnable by exactly the fleet workers they
+# test. Scrubbed here, once, because every herd suite sources this file;
+# spawn.test.sh pins the list against the injection sites so a new pane var
+# cannot leak without a test naming it.
+HERD_PANE_ENV="RALPH_HERDR_LEAD RALPH_HERDR_TEAM_LEAD RALPH_HERDR_TEAM_LEAD_REF RALPH_HERDR_ADDRESS WHO_LEAD WHO_DISPATCH RALPH_HERDR_SPAWNER_ROLE RALPH_HERDR_INVOKED_BY RALPH_HERDR_LANE_TAB RALPH_HERDR_LINK_ISSUE RALPH_HERDR_LINK_KIND RALPH_HERDR_LINK_URL"
+# shellcheck disable=SC2086
+unset $HERD_PANE_ENV 2>/dev/null || true
+
 # herd_fixture AGENTS_JSON [REPO_ROOT] — write the api-snapshot fixture for a
 # herd of AGENTS_JSON (a JSON array of partial agents: name, agent_status, and
 # optionally pane_id / workspace_id).
