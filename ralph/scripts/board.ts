@@ -1413,6 +1413,10 @@ export class TransientError extends Error {
   constructor(
     message: string,
     public readonly resetAt: string | null = null,
+    /** `rate-limited` is GitHub refusing on budget; `transport` is the wire.
+     *  Same exit (75) either way, but the budget pre-flight must tell them
+     *  apart: a refusal is exhaustion evidence, a flap is not (GH-2278). */
+    public readonly reason: "rate-limited" | "transport" = "transport",
   ) {
     super(message);
   }
@@ -1569,11 +1573,19 @@ export function ghGraphQL<T = any>(
   ctx: Ctx,
   query: string,
   variables: Record<string, unknown>,
+  opts: {
+    /** Send the document as written, with no cost alias and no ledger
+     *  entry. For the one query that is EXEMPT from the budget (GH-2278's
+     *  `rateLimit` probe): GitHub prints `cost: 1` for it while `remaining`
+     *  does not move, so counting it would charge every lane a phantom point
+     *  and log a BUDGET-DEFER invocation as spend. */
+    uninstrumented?: boolean;
+  } = {},
 ): T {
   // Instrumentation is on by default (measured cost-neutral, GH-1801):
   // the per-invocation ledger below needs the numbers even when nobody is
   // watching stderr. RALPH_GQL_COST=0 disables; =1 additionally narrates.
-  const measuring = process.env.RALPH_GQL_COST !== "0";
+  const measuring = process.env.RALPH_GQL_COST !== "0" && !opts.uninstrumented;
   const narrate = process.env.RALPH_GQL_COST === "1";
   const sent = measuring ? instrumentQuery(query) : { query, instrumented: false };
   // Read-your-writes, half one (GH-1806): mark BEFORE the wire, because a
@@ -1602,7 +1614,7 @@ export function ghGraphQL<T = any>(
     // gh already failed on the limit: still typed 4→75, not passed through —
     // "wait for the reset" and "this request is malformed" are different
     // remedies (the gh-budget.sh rule).
-    if (/rate limit/i.test(said)) throw new TransientError(`gh api graphql rate limited: ${said}`);
+    if (/rate limit/i.test(said)) throw new TransientError(`gh api graphql rate limited: ${said}`, null, "rate-limited");
     if (TRANSPORT_RE.test(said) && !mutating)
       throw new TransientError(`gh api graphql transport failure (retried): ${said}`);
     throw new Error(`gh api graphql failed (exit ${r.code}): ${said}`);
@@ -1620,6 +1632,7 @@ export function ghGraphQL<T = any>(
       throw new TransientError(
         `GraphQL rate limited${reset ? ` (resets ${reset})` : ""}: ${body.errors.map((e: any) => e.message).join("; ")}`,
         reset,
+        "rate-limited",
       );
     }
     throw new GraphQLError(
@@ -12623,6 +12636,11 @@ const MUTATING = new Set([
 
 export const GH_BUDGET_FLOOR_DEFAULT = 500;
 
+/** The pre-flight's document. Exported so the test fake answers exactly this
+ *  and nothing else — a fake matching any `rateLimit` selection would also
+ *  answer the cost alias ghGraphQL splices into every query. */
+export const BUDGET_PROBE_QUERY = "{ rateLimit { remaining limit resetAt } }";
+
 /** RALPH_GH_BUDGET_FLOOR — the lane budget pre-flight's GraphQL-remaining
  *  floor (audit B2). An explicit `0` is a deliberate "disable the pre-flight"
  *  assertion and stays silent. Anything else that is not a positive finite
@@ -12680,25 +12698,44 @@ export function run(argv: string[], ctx: Ctx): number {
   // Lane budget pre-flight (audit B2): the ranking/selector lanes are the
   // repo's recurring GraphQL spenders, and a pass that starts under an
   // exhausted budget half-completes and loses its markers. Checked BEFORE any
-  // read; REST /rate_limit is free and its budget is measurably independent
-  // of the GraphQL one (GH-1804's measurement). Fails OPEN on an unreadable
-  // budget — a transient outage must never read as starvation (GH-1817).
+  // read. Fails OPEN on an unreadable budget — a transient outage must never
+  // read as starvation (GH-1817) — and that direction is unchanged here.
+  //
+  // The authority is GraphQL's OWN `rateLimit` field (GH-2278). The first
+  // version read REST `rate_limit`'s `graphql` sub-bucket, which MIRRORS
+  // `core`: measured five times first-hand, it reported 5000/5000 used 0 —
+  // reset epoch included — at the instant GraphQL's counter said 0/5000 used
+  // 5024. So the guard could not fire and never had. The field is exempt from
+  // the budget it reports (two consecutive probes leave `remaining`
+  // unchanged), so this still costs nothing; and it ANSWERS AT ZERO, which is
+  // why the verdict is read from `remaining` and never from "the call came
+  // back". A probe GitHub itself refuses on budget is the recover-after half:
+  // an observed RATE_LIMITED is authoritative over any counter and defers.
+  // Honest limit: this sees a CURRENT exhaustion, never a coming one — a long
+  // pass can still be starved after it starts, which is what ghGraphQL's own
+  // RATE_LIMITED → exit 75 is for.
   if (["next", "frontier", "deliver-queue", "tend-queue", "dep-candidates", "brief", "inbox"].includes(cmd)) {
     const floor = parseGhBudgetFloor(process.env.RALPH_GH_BUDGET_FLOOR);
     if (floor > 0) {
-      const r = ctx.exec(["gh", "api", "--hostname", ctx.cfg.host, "rate_limit"]);
-      if (r.code === 0) {
-        try {
-          const g = JSON.parse(r.stdout)?.resources?.graphql;
-          if (g && typeof g.remaining === "number" && g.remaining < floor) {
-            process.stderr.write(
-              `BUDGET-DEFER graphql remaining=${g.remaining} < floor=${floor} (RALPH_GH_BUDGET_FLOOR) reset=${g.reset}\n`,
-            );
-            return 75;
-          }
-        } catch {
-          /* unreadable budget: proceed — see fail-open note above */
+      try {
+        // Uninstrumented: the probe is exempt, and a ledger line saying a
+        // deferred invocation spent a point would be the ledger lying.
+        const d: any = ghGraphQL(ctx, BUDGET_PROBE_QUERY, {}, { uninstrumented: true });
+        const g = d?.rateLimit;
+        if (g && typeof g.remaining === "number" && g.remaining < floor) {
+          process.stderr.write(
+            `BUDGET-DEFER graphql remaining=${g.remaining} < floor=${floor} (RALPH_GH_BUDGET_FLOOR) resetAt=${g.resetAt ?? "?"}\n`,
+          );
+          return 75;
         }
+      } catch (e) {
+        if (e instanceof TransientError && e.reason === "rate-limited") {
+          process.stderr.write(
+            `BUDGET-DEFER graphql refused the budget probe itself (rate limited) resetAt=${e.resetAt ?? "?"}\n`,
+          );
+          return 75;
+        }
+        /* unreadable budget (transport, malformed body, unhandled): proceed — see fail-open note above */
       }
     }
   }

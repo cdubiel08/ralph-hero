@@ -27,9 +27,25 @@ mkdir -p "$STUB_DIR"
 cat >"$STUB_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 set -uo pipefail
+# GH-2278: the graphql budget is read from GraphQL's own `rateLimit` field.
+# The exempt probe ANSWERS AT ZERO with exit 0 — so a stub that simply
+# succeeds is the shape acceptance 4 pins against.
+if [[ "${1:-} ${2:-}" == "api graphql" && " $* " == *rateLimit* ]]; then
+  [[ -f "$STUB_DIR/rl_unreadable" ]] && exit 1
+  if [[ -f "$STUB_DIR/rl_refused" ]]; then
+    echo "GraphQL: API rate limit exceeded for user ID 12345678" >&2; exit 1
+  fi
+  cat "$STUB_DIR/rate_limit_gql.json"
+  exit 0
+fi
+# REST rate_limit: still the reader for every NON-graphql resource. Served
+# healthy-by-default so a graphql test that accidentally fell through to it
+# would read a healthy number — the GH-2278 mirror shape — and fail loudly.
 if [[ "${1:-} ${2:-}" == "api rate_limit" ]]; then
   [[ -f "$STUB_DIR/rl_unreadable" ]] && exit 1
-  cat "$STUB_DIR/rate_limit.json"
+  if [[ -f "$STUB_DIR/rate_limit.json" ]]; then cat "$STUB_DIR/rate_limit.json"; else
+    echo '{"resources":{"core":{"limit":5000,"remaining":5000,"used":0,"reset":9999999999},"graphql":{"limit":5000,"remaining":5000,"used":0,"reset":9999999999}}}'
+  fi
   exit 0
 fi
 # Any other invocation is the "write" under test.
@@ -46,9 +62,16 @@ reset_stubs() { rm -f "$STUB_DIR"/*; }
 # shellcheck source=../lib/gh-budget.sh
 . "$LIB"
 
-mk_rl() { # remaining reset_epoch
-  printf '{"resources":{"graphql":{"limit":5000,"remaining":%s,"used":0,"reset":%s}}}\n' \
-    "$1" "$2" >"$STUB_DIR/rate_limit.json"
+mk_rl() { # remaining reset_epoch — GraphQL's own rateLimit (the authority)
+  printf '{"data":{"rateLimit":{"limit":5000,"remaining":%s,"used":%s,"resetAt":"%s"}}}\n' \
+    "$1" "$((5000 - $1))" "$(iso_utc "$2")" >"$STUB_DIR/rate_limit_gql.json"
+}
+mk_rest() { # remaining reset_epoch — REST rate_limit, graphql AND core (the mirror)
+  printf '{"resources":{"core":{"limit":5000,"remaining":%s,"used":0,"reset":%s},"graphql":{"limit":5000,"remaining":%s,"used":0,"reset":%s}}}\n' \
+    "$1" "$2" "$1" "$2" >"$STUB_DIR/rate_limit.json"
+}
+iso_utc() { # epoch -> ISO-8601 Z, portably (jq, not date -r/-d)
+  jq -rn --argjson e "$1" '$e | todateiso8601'
 }
 
 echo "=== gb_looks_rate_limited: the signature ==="
@@ -189,6 +212,91 @@ if [[ "$(gb_backoff_seconds)" == "0" ]]; then
   pass "an elapsed reset asks for no backoff"
 else
   fail "an elapsed reset asks for no backoff"
+fi
+
+echo "=== gb_snapshot: the authority is GraphQL's own rateLimit, not REST's graphql key (GH-2278) ==="
+
+reset_stubs
+# THE GH-2278 shape, exactly as measured: REST's graphql sub-bucket mirrors
+# core and claims a full budget while GraphQL's own counter is at zero. The
+# guard must see the zero.
+mk_rest 5000 "$(( $(date +%s) + 600 ))"
+mk_rl 0 "$(( $(date +%s) + 600 ))"
+b=$(gb_backoff_seconds)
+if [[ "$b" -gt 500 && "$b" -le 600 ]]; then
+  pass "an exhausted GraphQL budget is seen even when REST's graphql key claims 5000/5000"
+else
+  fail "an exhausted GraphQL budget is seen even when REST's graphql key claims 5000/5000 (got $b)"
+fi
+
+reset_stubs
+mk_rl 2769 "$(( $(date +%s) + 600 ))"
+snap=$(gb_snapshot)
+if [[ "$snap" == "2769 5000 "* ]]; then
+  pass "gb_snapshot graphql reports remaining/limit from the rateLimit field"
+else
+  fail "gb_snapshot graphql reports remaining/limit from the rateLimit field (got '$snap')"
+fi
+want=$(( $(date +%s) + 600 ))
+read -r _ _ got <<<"$snap"
+if [[ "$got" -ge $((want - 2)) && "$got" -le $((want + 2)) ]]; then
+  pass "resetAt is normalised to an epoch"
+else
+  fail "resetAt is normalised to an epoch (want ~$want got $got)"
+fi
+
+reset_stubs
+# Per-resource: core is reported correctly by REST and stays there.
+mk_rest 123 4102444800
+if [[ "$(gb_snapshot core)" == "123 5000 4102444800" ]]; then
+  pass "gb_snapshot core still reads REST rate_limit"
+else
+  fail "gb_snapshot core still reads REST rate_limit (got '$(gb_snapshot core)')"
+fi
+
+reset_stubs
+# Acceptance 4: the exempt probe RETURNS (exit 0, well-formed body) while the
+# budget is 0. "The call did not throw" is not health; `remaining` is.
+mk_rl 0 "$(( $(date +%s) + 300 ))"
+rc=0; snap=$(gb_snapshot) || rc=$?
+if [[ $rc -eq 0 && "$snap" == "0 5000 "* && "$(gb_backoff_seconds)" -gt 0 ]]; then
+  pass "a probe that returns exit 0 with remaining 0 is read as exhausted, not healthy"
+else
+  fail "a probe that returns exit 0 with remaining 0 is read as exhausted, not healthy (rc=$rc snap='$snap')"
+fi
+
+reset_stubs
+# A rateLimit body missing the fields is unreadable (3), never a number.
+printf '{"data":{"rateLimit":null}}\n' >"$STUB_DIR/rate_limit_gql.json"
+rc=0; gb_snapshot >/dev/null || rc=$?
+if [[ $rc -eq 3 ]]; then
+  pass "a malformed rateLimit body is exit 3 (unreadable), never a guess"
+else
+  fail "a malformed rateLimit body is exit 3 (unreadable), never a guess (got $rc)"
+fi
+
+echo "=== gb_snapshot: an observed refusal is authoritative over any counter ==="
+
+reset_stubs
+# Acceptance 2: GitHub refusing the probe itself is not "unreadable" — it is
+# the strongest exhaustion evidence there is, and it gets its own exit.
+: >"$STUB_DIR/rl_refused"
+rc=0; gb_snapshot >/dev/null 2>&1 || rc=$?
+if [[ $rc -eq 4 ]]; then
+  pass "a rate-limited probe is exit 4, distinct from unreadable's 3"
+else
+  fail "a rate-limited probe is exit 4, distinct from unreadable's 3 (got $rc)"
+fi
+b=$(gb_backoff_seconds)
+if [[ "$b" -eq "$GB_REFUSED_BACKOFF_SEC" && "$b" -gt 0 ]]; then
+  pass "a refused probe asks for a bounded backoff, never 0"
+else
+  fail "a refused probe asks for a bounded backoff, never 0 (got $b)"
+fi
+if gb_report_low 2>&1 >/dev/null | grep -q "refused the budget probe"; then
+  pass "a refused probe is narrated as exhausted"
+else
+  fail "a refused probe is narrated as exhausted"
 fi
 
 echo "=== gb_report_low: a backoff is never silent ==="

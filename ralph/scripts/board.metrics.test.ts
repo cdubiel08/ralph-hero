@@ -14,18 +14,28 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { refreshCache, run, type Ctx } from "./board.js";
+import {
+  BUDGET_PROBE_QUERY, refreshCache, run, type Ctx } from "./board.js";
 import { FakeGh, makeCtx, NOW } from "./board.testkit.js";
 
 /** Counting overlay on the exec seam: graphql round trips, mutation round
  *  trips, and query bytes. Reset by re-reading the fields. */
 function meter(ctx: Ctx) {
-  const m = { graphql: 0, mutations: 0, queryBytes: 0 };
+  const m = { graphql: 0, mutations: 0, queryBytes: 0, probes: 0 };
   const inner = ctx.exec;
   ctx.exec = (argv, stdin) => {
     if (argv[0] === "gh" && argv[1] === "api" && argv[2] === "graphql") {
-      m.graphql++;
       const q = stdin ? (JSON.parse(stdin).query as string) : "";
+      // The budget pre-flight (GH-2278) is a round trip the walk pins must
+      // not absorb: it is exempt from the budget it reads (0 points) and a
+      // fixed +1 per lane invocation, so it gets its own meter. Matched on
+      // the selection, not the whole document: the cost alias is spliced in
+      // after the opening brace of every instrumented query, this one too.
+      if (q.includes(BUDGET_PROBE_QUERY.slice(1, -1).trim())) {
+        m.probes++;
+        return inner(argv, stdin);
+      }
+      m.graphql++;
       m.queryBytes += q.length;
       if (/^\s*mutation/.test(q)) m.mutations++;
     }
@@ -35,12 +45,13 @@ function meter(ctx: Ctx) {
     m.graphql = 0;
     m.mutations = 0;
     m.queryBytes = 0;
+    m.probes = 0;
   };
   return { m, reset };
 }
 
 /** Warm ctx: field cache populated so pins measure the command, not the miss. */
-function warmCtx(gh: FakeGh): { ctx: Ctx; m: { graphql: number; mutations: number; queryBytes: number }; reset: () => void } {
+function warmCtx(gh: FakeGh): { ctx: Ctx; m: { graphql: number; mutations: number; queryBytes: number; probes: number }; reset: () => void } {
   const ctx = makeCtx(gh);
   refreshCache(ctx);
   const { m, reset } = meter(ctx);
@@ -109,6 +120,12 @@ describe("metrics: read round trips", () => {
     const { ctx, m } = warmCtx(gh);
     const { out } = runQuiet(["next", "--json"], ctx);
     expect(m.graphql).toBe(2);
+    // Plus exactly ONE budget probe per lane invocation (GH-2278): a round
+    // trip, exempt from the budget it reads, counted apart from the walk so
+    // the walk's number stays the walk's — and a non-lane read sends none.
+    expect(m.probes).toBe(1);
+    runQuiet(["get", "1"], ctx);
+    expect(m.probes).toBe(1);
     expect(JSON.parse(out).queue).toHaveLength(150); // pagination loses nothing
   });
 
