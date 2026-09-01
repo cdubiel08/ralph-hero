@@ -248,19 +248,37 @@ func footerRowsOf(m Model) int {
 // scroll window can never drift between rendering and mouse mapping.
 func bodyHeightOf(m Model) int {
 	h := m.height - headerRows - footerRowsOf(m)
-	if h < cardRows+colHeaderRows {
-		h = cardRows + colHeaderRows
+	if h < cardRows+colHeaderRows+bodyOverheadRows {
+		h = cardRows + colHeaderRows + bodyOverheadRows
 	}
 	return h
 }
 
+// bodyOverheadRows are the rows a column body spends OUTSIDE the card stride:
+// the "↑N above · +N more" line renderColumn writes when the window hides
+// cards, and the blank separator viewModel writes between body and footer.
+// Both are reserved up front (GH-2319/#2329): budgeting only the cards let
+// them ride the rounding slack of the division below, so the frame fit or
+// overran the terminal by two rows depending on the terminal's height parity.
+const bodyOverheadRows = 2
+
 // visibleCards is how many full cards fit in a column body.
 func visibleCards(bodyHeight int) int {
-	v := (bodyHeight - colHeaderRows) / cardRows
+	v := (bodyHeight - colHeaderRows - bodyOverheadRows) / cardRows
 	if v < 1 {
 		v = 1
 	}
 	return v
+}
+
+// withheldRows is the one extra row the In Review column spends on its
+// "withheld: …" footer while the inbox view holds rows back; every column
+// pays it, since JoinHorizontal levels the three to the tallest.
+func withheldRows(m Model) int {
+	if m.showInbox && m.inboxOK && m.inboxWithheld != "" {
+		return 1
+	}
+	return 0
 }
 
 // colWindow is the half-open rendered range [start, end) of column idx's
@@ -269,7 +287,7 @@ func visibleCards(bodyHeight int) int {
 // and stays at the top elsewhere. Shared by renderColumn and hitTest.
 func colWindow(m Model, idx, bodyHeight int) (start, end int) {
 	cards := m.columnCards(idx)
-	visible := visibleCards(bodyHeight)
+	visible := visibleCards(bodyHeight - withheldRows(m))
 	if idx == m.col && m.row >= visible {
 		start = m.row - visible + 1
 	}
