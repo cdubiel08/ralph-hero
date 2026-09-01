@@ -170,6 +170,26 @@ ralph_process_containment_platform() {
   return 1
 }
 
+# _ralph_containment_gh_host CHECKOUT — the GitHub host the board client in
+# CHECKOUT will actually talk to, resolved in board.ts loadConfig's own
+# order: `.ralph.json`'s `host` when that file exists, else the tracked
+# `.claude/settings.json` env block, else the process environment. Reading
+# only $RALPH_GH_HOST would let a GHE repo whose host lives in `.ralph.json`
+# pass the tree probe and then have every board call denied at the proxy —
+# the allow-list and the client must key on the same fact (PR #2337 P1).
+# Prints nothing for github.com or when no host is configured.
+_ralph_containment_gh_host() {
+  local root="${1-}" host=""
+  if [ -n "$root" ] && [ -f "$root/.ralph.json" ]; then
+    host=$(jq -r '.host // empty' "$root/.ralph.json" 2>/dev/null) || host=""
+  elif [ -n "$root" ] && [ -f "$root/.claude/settings.json" ]; then
+    host=$(jq -r '.env.RALPH_GH_HOST // empty' "$root/.claude/settings.json" 2>/dev/null) || host=""
+  fi
+  [ -n "$host" ] || host="${RALPH_GH_HOST:-}"
+  case "$host" in "" | github.com) return 0 ;; esac
+  printf '%s\n' "$host"
+}
+
 # ralph_process_containment_settings CHECKOUT — the `--settings` document
 # (one compact JSON line) that contains Bash and every child process for a
 # pane whose working tree is CHECKOUT. rc 1, printing nothing, when the
@@ -195,7 +215,7 @@ ralph_process_containment_settings() {
   home="${RALPH_HOME:-$HOME/.ralph}"
   [ -d "$home" ] && home=$(cd "$home" && pwd -P)
   sock="${HERDR_SOCKET_PATH:-}"
-  host="${RALPH_GH_HOST:-}"
+  host=$(_ralph_containment_gh_host "$dir")
   json=$(jq -nc --arg dir "$dir" --arg home "$home" --arg sock "$sock" --arg host "$host" '
     {sandbox: {
       enabled: true,

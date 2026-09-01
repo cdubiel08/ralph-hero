@@ -286,6 +286,24 @@ is "containment: no socket in the env means an empty socket list, never a guesse
   "$(env -u HERDR_SOCKET_PATH RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" bash -c '. "'"$SCRIPT_DIR"'/../scripts/roles.sh"; ralph_process_containment_settings "'"$TMP/tree-real"'"' | jq -c .sandbox.network.allowUnixSockets)"
 is "containment: a GHE host joins the domain list" '["api.github.com","github.com","ghe.example"]' \
   "$(RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" RALPH_GH_HOST=ghe.example ralph_process_containment_settings "$TMP/tree-real" | jq -c .sandbox.network.allowedDomains)"
+# The host is read the way board.ts reads it (PR #2337 P1): `.ralph.json`
+# first, then the tracked settings env block, then the process env — so a
+# GHE repo configured in-tree is allow-listed with nothing exported.
+mkdir -p "$TMP/tree-ghe/.claude" "$TMP/tree-ghe2/.claude"
+printf '{"owner":"o","repo":"r","projectNumber":1,"host":"ghe.in-tree"}\n' >"$TMP/tree-ghe/.ralph.json"
+is "containment: .ralph.json's host is allow-listed with no env exported" \
+  '["api.github.com","github.com","ghe.in-tree"]' \
+  "$(env -u RALPH_GH_HOST RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" bash -c '. "'"$SCRIPT_DIR"'/../scripts/roles.sh"; ralph_process_containment_settings "'"$TMP/tree-ghe"'"' | jq -c .sandbox.network.allowedDomains)"
+is "containment: .ralph.json's host outranks the process env (board.ts precedence)" \
+  '["api.github.com","github.com","ghe.in-tree"]' \
+  "$(RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" RALPH_GH_HOST=ghe.env ralph_process_containment_settings "$TMP/tree-ghe" | jq -c .sandbox.network.allowedDomains)"
+printf '{"env":{"RALPH_GH_OWNER":"o","RALPH_GH_REPO":"r","RALPH_GH_HOST":"ghe.settings"}}\n' >"$TMP/tree-ghe2/.claude/settings.json"
+is "containment: the tracked settings env block is the second source" \
+  '["api.github.com","github.com","ghe.settings"]' \
+  "$(env -u RALPH_GH_HOST RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" bash -c '. "'"$SCRIPT_DIR"'/../scripts/roles.sh"; ralph_process_containment_settings "'"$TMP/tree-ghe2"'"' | jq -c .sandbox.network.allowedDomains)"
+printf '{"owner":"o","repo":"r","projectNumber":1,"host":"github.com"}\n' >"$TMP/tree-ghe/.ralph.json"
+is "containment: an explicit github.com host adds no duplicate" '["api.github.com","github.com"]' \
+  "$(RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" ralph_process_containment_settings "$TMP/tree-ghe" | jq -c .sandbox.network.allowedDomains)"
 
 out=$(RALPH_HERDR_UNAME=Linux RALPH_HOME="$TMP/home" ralph_process_containment_args tender "$TMP/tree-real" 2>&1); rc=$?
 is "containment: an unmeasured platform REFUSES (rc 1) rather than inheriting the claim" "1" "$rc"
