@@ -252,7 +252,7 @@ ralph_session_key() {
 # (watch-event's exit sweep), and the mkdir lock is not re-entrant — a second
 # acquisition would deadlock, then break its own caller's lock at ~15s.
 _ralph_ledger_sqlite_append() {
-  local file="${1-}" line="${2-}" db sq uv seq ph proj q out line_sql
+  local file="${1-}" line="${2-}" db sq uv seq ph proj q out line_sql attempt
   local f_ts f_ev f_agent f_unit f_reason f_pane had_lock
   # The sqlite rules — db path, phash, DDL, projection — live in
   # ledger-convert.sh (ONE definition, GH-1843). A stripped tree without the
@@ -336,16 +336,34 @@ _ralph_ledger_sqlite_append() {
   # appended row's phash (the converter's phash rule exists for JSONL
   # import idempotence, and a frozen JSONL never re-imports these rows).
   ph="provisional:$$:${RANDOM-0}${RANDOM-0}:$(date +%s 2>/dev/null || true)"
-  out=$("$sq" "$db" "PRAGMA busy_timeout=2000;
+  # busy_timeout waits out ordinary write contention, but a peer converting
+  # the db to WAL holds an EXCLUSIVE lock that can outlive it on a slow
+  # machine — the insert then fails at PREPARE with "database is locked"
+  # (measured on CI under an 8-way first-append race). A locked/busy failure
+  # is retried a bounded few times; anything else refuses immediately.
+  attempt=0
+  while :; do
+    if out=$("$sq" "$db" "PRAGMA busy_timeout=2000;
 INSERT INTO facts(seq, ts, kind, agent, unit, reason, pane, payload, phash)
   SELECT coalesce(max(seq), 0) + 1, '$f_ts', '$f_ev', nullif('$f_agent',''),
          CAST(nullif('$f_unit','') AS INTEGER), nullif('$f_reason',''),
          nullif('$f_pane',''), '$line_sql', '$ph'
   FROM facts;
-SELECT last_insert_rowid();" 2>&1) || {
+SELECT last_insert_rowid();" 2>&1); then
+      break
+    fi
+    attempt=$((attempt + 1))
+    case "$out" in
+      *"database is locked"* | *"database table is locked"* | *"database is busy"*)
+        if [ "$attempt" -lt 8 ]; then
+          sleep 0.25
+          continue
+        fi
+        ;;
+    esac
     echo "ralph_ledger_append: sqlite insert failed on $db (${out:0:160}) — the fact was NOT recorded" >&2
     return 1
-  }
+  done
   seq=${out##*$'\n'}
   case "$seq" in
     '' | *[!0-9]* | 0)
