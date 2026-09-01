@@ -192,6 +192,8 @@ export class FakeGh {
   }
   linkedRepos = ["cdubiel08/ralph-hero"]; // projectV2 → repositories linkage
   runListJson = "[]"; // gh run list payload for doctor's state-guard check
+  runViewLog: string | null = null; // gh run view --log-failed payload; null = unreadable
+  runViewCalls: string[][] = [];
   dropPageInfo = false; // corrupt-read injection: connection returns no pageInfo
   dropEndCursor = false; // corrupt-read injection: hasNextPage true, cursor absent
   cursorDrops = new Set<number>(); // GH-1896: issue numbers the project cursor skips while totalCount still counts them
@@ -255,6 +257,10 @@ export class FakeGh {
       return ok(this.dirtyWorktrees.has(dir) ? " M file.ts\n" : "");
     }
     if (cmd.startsWith("gh run list")) return ok(this.runListJson);
+    if (cmd.startsWith("gh run view")) {
+      this.runViewCalls.push(argv);
+      return this.runViewLog === null ? { code: 1, stdout: "", stderr: "log unavailable" } : ok(this.runViewLog);
+    }
     return { code: 1, stdout: "", stderr: `unexpected: ${cmd}` };
   };
 
