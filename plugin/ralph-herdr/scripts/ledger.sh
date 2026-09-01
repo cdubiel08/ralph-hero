@@ -274,15 +274,15 @@ _ralph_ledger_sqlite_append() {
     [ -n "$had_lock" ] || ralph_ledger_lock "$file"
     if [ ! -f "$db" ]; then # re-check inside the mutex
       if [ -s "$file" ]; then
-        ralph_lc_convert "$file" >/dev/null || {
+        out=$(ralph_lc_convert "$file" 2>&1 >/dev/null) || {
           [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
-          echo "ralph_ledger_append: cannot adopt the legacy JSONL into a fresh $db — the fact was NOT recorded; run ledger-convert.sh and retry" >&2
+          echo "ralph_ledger_append: cannot adopt the legacy JSONL into a fresh $db (${out:0:120}) — the fact was NOT recorded; run ledger-convert.sh and retry" >&2
           return 1
         }
       else
-        ralph_lc_init_db "$db" || {
+        out=$(ralph_lc_init_db "$db" 2>&1) || {
           [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
-          echo "ralph_ledger_append: cannot create $db — the fact was NOT recorded" >&2
+          echo "ralph_ledger_append: cannot create $db (${out:0:120}) — the fact was NOT recorded" >&2
           return 1
         }
       fi
@@ -298,13 +298,31 @@ _ralph_ledger_sqlite_append() {
   uv=${uv##*$'\n'}
   case "$uv" in
     0)
-      # A crash mid-create: the DDL is IF NOT EXISTS throughout, so
-      # re-running init completes the half-made tape.
-      ralph_lc_init_db "$db" || {
-        echo "ralph_ledger_append: cannot complete half-created $db — the fact was NOT recorded" >&2
-        return 1
-      }
+      # uv=0 is either a crash mid-create (the DDL is IF NOT EXISTS
+      # throughout, so re-running init completes it) or — the racy reading —
+      # a PEER's init in flight right now: the db file exists from the
+      # moment sqlite opens it, so a second appender can arrive here before
+      # the creator's uv=1 lands, and an unserialized init would then step
+      # into the creator's DDL ("database is locked", raw on stderr, fact
+      # lost — measured on CI's 8-way first-append race). Same remedy as
+      # the creation path: enter the mutex, RE-READ inside it — the common
+      # case finds uv=1 (the creator finished) and inits nothing.
+      had_lock="$_RALPH_LEDGER_LOCK_HELD"
+      [ -n "$had_lock" ] || ralph_ledger_lock "$file"
+      uv=$("$sq" "$db" 'PRAGMA busy_timeout=2000; PRAGMA user_version;' 2>/dev/null) || uv=""
+      uv=${uv##*$'\n'}
+      if [ "$uv" = "0" ]; then
+        out=$(ralph_lc_init_db "$db" 2>&1) || {
+          [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
+          echo "ralph_ledger_append: cannot complete half-created $db (${out:0:120}) — the fact was NOT recorded" >&2
+          return 1
+        }
+        uv=1
+      fi
+      [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
       ;;
+  esac
+  case "$uv" in
     1) : ;;
     *)
       echo "ralph_ledger_append: refusing $db — user_version='${uv:-?}' (unreadable, or a schema newer than v1); the fact was NOT recorded" >&2
@@ -346,9 +364,9 @@ _ralph_ledger_sqlite_append() {
             '' | *[!0-9]*) : ;;
             *)
               if [ -n "$(sed -n "$((seq + 1))p" "$file" 2>/dev/null)" ]; then
-                if ! ralph_lc_convert "$file" >/dev/null; then
+                if ! out=$(ralph_lc_convert "$file" 2>&1 >/dev/null); then
                   [ -n "$had_lock" ] || ralph_ledger_unlock "$file"
-                  echo "ralph_ledger_append: the tape trails the legacy JSONL and the backfill failed — the fact was NOT recorded (run ledger-convert.sh $file)" >&2
+                  echo "ralph_ledger_append: the tape trails the legacy JSONL and the backfill failed (${out:0:120}) — the fact was NOT recorded (run ledger-convert.sh $file)" >&2
                   return 1
                 fi
               fi
