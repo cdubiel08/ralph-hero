@@ -171,13 +171,16 @@ ralph_process_containment_platform() {
 }
 
 # _ralph_containment_gh_host CHECKOUT — the GitHub host the board client in
-# CHECKOUT will actually talk to, resolved in board.ts loadConfig's own
-# order: `.ralph.json`'s `host` when that file exists, else the tracked
-# `.claude/settings.json` env block, else the process environment. Reading
-# only $RALPH_GH_HOST would let a GHE repo whose host lives in `.ralph.json`
-# pass the tree probe and then have every board call denied at the proxy —
-# the allow-list and the client must key on the same fact (PR #2337 P1).
-# Prints nothing for github.com or when no host is configured.
+# CHECKOUT will actually talk to, resolved from EXACTLY the two sources
+# board.ts loadConfig reads and in its order: `.ralph.json`'s `host` when that
+# file exists, else the tracked `.claude/settings.json` env block. Never the
+# process environment — board.ts does not read it either, so a stray
+# $RALPH_GH_HOST in the spawner's shell would widen the allow-list to a host
+# the client never contacts (PR #2337, second P1), while reading only the
+# environment would let a GHE repo whose host lives in `.ralph.json` pass the
+# tree probe and then have every board call denied at the proxy (the first
+# P1). The allow-list and the client key on the same fact, from the same
+# files. Prints nothing for github.com or when no host is configured.
 _ralph_containment_gh_host() {
   local root="${1-}" host=""
   if [ -n "$root" ] && [ -f "$root/.ralph.json" ]; then
@@ -185,7 +188,6 @@ _ralph_containment_gh_host() {
   elif [ -n "$root" ] && [ -f "$root/.claude/settings.json" ]; then
     host=$(jq -r '.env.RALPH_GH_HOST // empty' "$root/.claude/settings.json" 2>/dev/null) || host=""
   fi
-  [ -n "$host" ] || host="${RALPH_GH_HOST:-}"
   case "$host" in "" | github.com) return 0 ;; esac
   printf '%s\n' "$host"
 }

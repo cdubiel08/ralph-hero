@@ -284,17 +284,20 @@ is "containment: GitHub is reachable (the board CLI is gh underneath)" \
   '["api.github.com","github.com"]' "$(jq -c .sandbox.network.allowedDomains <<<"$json")"
 is "containment: no socket in the env means an empty socket list, never a guessed path" "[]" \
   "$(env -u HERDR_SOCKET_PATH RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" bash -c '. "'"$SCRIPT_DIR"'/../scripts/roles.sh"; ralph_process_containment_settings "'"$TMP/tree-real"'"' | jq -c .sandbox.network.allowUnixSockets)"
-is "containment: a GHE host joins the domain list" '["api.github.com","github.com","ghe.example"]' \
+# The host is read from exactly the files board.ts reads (PR #2337, both
+# P1s): `.ralph.json` first, then the tracked settings env block — never the
+# process env, which board.ts ignores too. A stray RALPH_GH_HOST in the
+# spawner's shell must not widen the allow-list to a host the client never
+# contacts; an in-tree GHE host must be allow-listed with nothing exported.
+is "containment: a process-env RALPH_GH_HOST with no in-tree config widens NOTHING (board.ts ignores it too)" \
+  '["api.github.com","github.com"]' \
   "$(RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" RALPH_GH_HOST=ghe.example ralph_process_containment_settings "$TMP/tree-real" | jq -c .sandbox.network.allowedDomains)"
-# The host is read the way board.ts reads it (PR #2337 P1): `.ralph.json`
-# first, then the tracked settings env block, then the process env — so a
-# GHE repo configured in-tree is allow-listed with nothing exported.
 mkdir -p "$TMP/tree-ghe/.claude" "$TMP/tree-ghe2/.claude"
 printf '{"owner":"o","repo":"r","projectNumber":1,"host":"ghe.in-tree"}\n' >"$TMP/tree-ghe/.ralph.json"
 is "containment: .ralph.json's host is allow-listed with no env exported" \
   '["api.github.com","github.com","ghe.in-tree"]' \
   "$(env -u RALPH_GH_HOST RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" bash -c '. "'"$SCRIPT_DIR"'/../scripts/roles.sh"; ralph_process_containment_settings "'"$TMP/tree-ghe"'"' | jq -c .sandbox.network.allowedDomains)"
-is "containment: .ralph.json's host outranks the process env (board.ts precedence)" \
+is "containment: .ralph.json's host is used, and a process-env host is still ignored beside it" \
   '["api.github.com","github.com","ghe.in-tree"]' \
   "$(RALPH_HERDR_UNAME=Darwin RALPH_HOME="$TMP/home" RALPH_GH_HOST=ghe.env ralph_process_containment_settings "$TMP/tree-ghe" | jq -c .sandbox.network.allowedDomains)"
 printf '{"env":{"RALPH_GH_OWNER":"o","RALPH_GH_REPO":"r","RALPH_GH_HOST":"ghe.settings"}}\n' >"$TMP/tree-ghe2/.claude/settings.json"
