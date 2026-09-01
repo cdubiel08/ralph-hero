@@ -216,17 +216,22 @@ func TestCardTitleIsIssueTitleEvenWithAddress(t *testing.T) {
 		{Name: "w10-ten", Status: "working", Pane: "p1", Issue: 10, Lane: "w",
 			Address: "repo/t9-epic/w10-ten"},
 	})
-	out := viewModel(m)
 	// GH-2320: the address suffix duplicated the branch line and displaced
 	// the title; the card keeps the title whether or not an address exists.
-	if !strings.Contains(out, "Ten") {
-		t.Error("card with a known agent address must still render its issue title")
+	// Asserted on the card's own second line, not the whole view, so a title
+	// or address rendered elsewhere can neither mask nor fake the result.
+	line2 := func(card Card) string {
+		lines := strings.Split(renderCard(m, 0, 0, card, 40), "\n")
+		if len(lines) < 2 {
+			t.Fatalf("card #%d rendered %d lines", card.Number, len(lines))
+		}
+		return lines[1]
 	}
-	if strings.Contains(out, "t9-epic/w10-ten") {
-		t.Error("card must not render the address suffix as its title (GH-2320)")
+	if got := line2(m.cols[0][0]); !strings.Contains(got, "Ten") || strings.Contains(got, "w10-ten") {
+		t.Errorf("card with a known agent address: line 2 = %q, want the issue title and no address suffix (GH-2320)", got)
 	}
-	if !strings.Contains(out, "Eleven") {
-		t.Error("card without an address must keep its issue title")
+	if got := line2(m.cols[0][1]); !strings.Contains(got, "Eleven") {
+		t.Errorf("card without an address: line 2 = %q, want the issue title", got)
 	}
 }
 func TestViewTinySizeDoesNotPanic(t *testing.T) {
