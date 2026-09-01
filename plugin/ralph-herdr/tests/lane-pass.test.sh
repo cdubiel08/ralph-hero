@@ -50,6 +50,35 @@ mkdir -p "$REPO_DIR"
 printf '{"owner":"fake","repo":"fake","projectNumber":1}\n' >"$REPO_DIR/.ralph.json"
 export RALPH_HERDR_REPO="$REPO_DIR"
 
+# Process containment (GH-2266): the tender is a contained role, so the live
+# tend path runs the in-pane probe. The platform is pinned to the measured one
+# (CI runs this suite on Linux, where the honest answer is a refusal — tested
+# below on purpose), RALPH_HOME keeps the outside marker inside $TMP, the
+# `agent wait` fixture lets the turn-confirmation return at once, and the hook
+# plays the pane: it touches what an obedient pane under each sandbox state
+# would produce.
+export RALPH_HERDR_UNAME=Darwin
+export RALPH_HOME="$TMP/home"
+mkdir -p "$RALPH_HOME"
+printf '{"agent":{"name":"ralph-tend","agent_status":"working","pane_id":"pS1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":2}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait-until.ralph-tend.json"
+cat >"$TMP/probe-hook.sh" <<'HOOK'
+#!/usr/bin/env bash
+paths=$(printf '%s' "$2" | grep -o "touch '[^']*' '[^']*'" | head -1)
+[ -n "$paths" ] || exit 0
+inside=$(printf '%s' "$paths" | sed -n "s/^touch '\([^']*\)' '.*$/\1/p")
+outside=$(printf '%s' "$paths" | sed -n "s/^touch '[^']*' '\([^']*\)'$/\1/p")
+case "${FAKE_PROBE_MODE:-applied}" in
+  applied) touch "$outside" ;;
+  inert) touch "$inside" "$outside" ;;
+  silent) : ;;
+esac
+HOOK
+chmod +x "$TMP/probe-hook.sh"
+export FAKE_HERDR_PROMPT_HOOK="$TMP/probe-hook.sh"
+export FAKE_PROBE_MODE=applied
+REPO_REAL=$(cd "$REPO_DIR" && pwd -P)
+
 # A non-empty queue head for both lanes; the empty default models the
 # spawn-nothing contract.
 printf '{"next":{"number":42},"queue":[{"number":42}]}\n' >"$FAKE_BOARD_FIXTURES/deliver-queue.json"
@@ -159,6 +188,50 @@ log_has "tend: own tab renamed from the LANE" "tab rename w1:t1 tend"
 log_has "tend: agent pane is a split of the launcher pane" "pane split w1:p9 --direction down"
 log_has "tend: the tender's registry tool binding survives the reshape" "agent start ralph-tend --kind claude --pane pS1 -- --disallowedTools"
 has "tend: the watcher takes over" "$out" "notify-watch ralph-tend"
+# GH-2266: process containment rides the same argv, as a SEPARATE flag
+log_has "tend: the sandbox profile reaches the harness argv beside tool binding" \
+  "agent start ralph-tend --kind claude --pane pS1 -- --disallowedTools Edit,Write,NotebookEdit --settings {\"sandbox\":{\"enabled\":true,\"failIfUnavailable\":true"
+log_has "tend: the profile denies the checkout by REALPATH" "\"denyWrite\":\[\"$REPO_REAL\"\]"
+log_has "tend: the probe prompt reaches the pane BEFORE the pass prompt" "agent prompt ralph-tend Containment self-test"
+has "tend: the pass reports the observed outcome" "$out" "process containment: applied for ralph-tend"
+case "$(grep 'agent prompt ralph-tend' "$FAKE_HERDR_LOG" | head -2 | tail -1)" in
+  *"/ralph:tend"*) ok "tend: the real prompt is delivered only AFTER the probe" ;;
+  *) not_ok "tend: prompt order — got: $(grep 'agent prompt ralph-tend' "$FAKE_HERDR_LOG" | cut -c1-80)" ;;
+esac
+
+# ── 5b. an INERT sandbox (pane wrote inside the tree) refuses and closes ─────
+# The criterion this unit exists for: a malformed profile produces no error
+# and a writable pane; the probe is what turns that into a refusal.
+reset
+out=$(FAKE_PROBE_MODE=inert RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "tend inert: an uncontained pane FAILS the pass"; else not_ok "tend inert: an uncontained pane must fail the pass (rc 0)"; fi
+has "tend inert: the failure names not_applied" "$out" "process containment not_applied for ralph-tend"
+log_has "tend inert: the split pane this run created is closed" "pane close pS1"
+log_hasnt "tend inert: the real prompt is NEVER delivered to an uncontained pane" "agent prompt ralph-tend /ralph:tend"
+case "$out" in
+  *"notify-watch"*) not_ok "tend inert: the watcher must not take over a refused pass" ;;
+  *) ok "tend inert: no watcher hand-off on refusal" ;;
+esac
+[ -e "$REPO_DIR/.ralph-containment-probe-ralph-tend" ] && not_ok "tend inert: the marker the inert pane wrote is cleaned up" || ok "tend inert: the marker the inert pane wrote is cleaned up"
+
+# ── 5c. a pane that produces NO marker is unverified — refused, distinctly ──
+reset
+out=$(FAKE_PROBE_MODE=silent RALPH_HERDR_CONTAINMENT_PROBE_SEC=1 RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "tend silent: an unverifiable pane FAILS the pass"; else not_ok "tend silent: an unverifiable pane must fail the pass (rc 0)"; fi
+has "tend silent: the failure names unverified, not not_applied" "$out" "process containment unverified for ralph-tend"
+log_has "tend silent: the pane is closed" "pane close pS1"
+log_hasnt "tend silent: no real prompt" "agent prompt ralph-tend /ralph:tend"
+
+# ── 5d. an unmeasured platform refuses BEFORE any surface exists ─────────────
+reset
+out=$(RALPH_HERDR_UNAME=Linux RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "tend linux: refuses"; else not_ok "tend linux: must refuse (rc 0)"; fi
+has "tend linux: the refusal names not_available" "$out" "not_available on Linux"
+log_hasnt "tend linux: no pane was split for a spawn that refused" "pane split"
+log_hasnt "tend linux: no agent was started" "agent start"
 
 # ── 6. dry run narrates the in-tab plan and mutates nothing ──────────────────
 reset
@@ -221,5 +294,14 @@ if [ "$rc" -ne 0 ]; then ok "lane-open: an unknown lane is a usage refusal"; els
 has "lane-open: the refusal names the accepted lanes" "$out" "deliver|tend"
 
 echo
+# ── GH-2266: the dry run narrates the containment plan and mutates nothing ───
+reset
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" RALPH_HERDR_DRY_RUN=true run_lane tend)
+has "tend dry: the plan shows the sandbox beside tool binding" "$out" \
+  "-- --disallowedTools Edit,Write,NotebookEdit --settings <process containment: seatbelt denyWrite $REPO_DIR>"
+has "tend dry: the plan names the probe and its refusal" "$out" "containment probe: prompt <captured> to touch"
+log_hasnt "tend dry: no agent started" "agent start"
+log_hasnt "tend dry: no prompt sent" "agent prompt"
+
 echo "$pass passed, $fail failed ($n total)"
 [ "$fail" -eq 0 ]

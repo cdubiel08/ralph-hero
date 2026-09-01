@@ -221,6 +221,15 @@ src=$(ralph_worktree_source_dir)
 # claim and at spawn).
 lead_tools=()
 while IFS= read -r out; do lead_tools+=("$out"); done < <(ralph_tool_binding_args orchestrator)
+# Process containment (GH-2266) — the second mechanism, same registry row,
+# separate call by design. The lead sits in the SOURCE checkout, so that is
+# the tree denied. Refuses before any surface exists when it cannot be
+# established (unmeasured platform, unbuildable profile).
+lead_contain_out=$(ralph_process_containment_args orchestrator "$src") ||
+  die "process containment cannot be established for GH-$EPIC's lead (see the reason above) — not spawning an uncontained lead"
+lead_contain=()
+while IFS= read -r out; do [ -n "$out" ] && lead_contain+=("$out"); done <<<"$lead_contain_out"
+lead_harness=("${lead_tools[@]}" "${lead_contain[@]}")
 
 # The durable ref, minted BEFORE the workspace so it can ride the env: the
 # workers the lead spawns record it as their lineage parent/root, and `--env`
@@ -259,7 +268,9 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "DRY RUN — would spawn the lead for GH-$EPIC:"
   echo "  agent: $LEAD   workspace label: $team_label   cwd: $src"
   echo "  $HERDR workspace create --cwd $src --label \"$team_label\" --env RALPH_HERDR_LEAD=$LEAD --env RALPH_HERDR_TEAM_LEAD=$LEAD${ref:+ --env RALPH_HERDR_TEAM_LEAD_REF=$ref}${DISPATCH_ADDR:+ --env WHO_DISPATCH=$DISPATCH_ADDR} --env RALPH_HERDR_SPAWNER_ROLE=orchestrator --env RALPH_HERDR_INVOKED_BY=agent --no-focus"
-  echo "  $HERDR agent start $LEAD --kind claude --pane <captured>${lead_tools[*]:+ -- ${lead_tools[*]}}"
+  echo "  $HERDR agent start $LEAD --kind claude --pane <captured>${lead_tools[*]:+ -- ${lead_tools[*]}}${lead_contain[*]:+ --settings <process containment: seatbelt denyWrite $src>}"
+  [ "${#lead_contain[@]}" -gt 0 ] &&
+    echo "  containment probe: prompt <captured> to touch <inside $src> <outside \$RALPH_HOME/containment-probes>; refuse unless applied"
   echo "  $HERDR agent prompt $LEAD \"<lead brief: rehydrate GH-$EPIC from board state; staff via work-fleet.sh --epic $EPIC; on epic Done, self-dissolve via workspace close (D3.3)>\""
   if [ -n "$ref" ]; then
     record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "" "$(date -u +%FT%TZ)" "" "" orchestrator "" "" "" "$lead_addr") || record=""
@@ -307,7 +318,7 @@ if [ -n "$ref" ]; then
   fi
 fi
 
-if ! agent_start_when_ready "$LEAD" "$pane" "${lead_tools[@]}"; then
+if ! agent_start_when_ready "$LEAD" "$pane" "${lead_harness[@]}"; then
   if printf '%s\n' "$(ralph_agents_json 2>/dev/null)" | jq -e --arg name "$LEAD" \
     'select(.name == $name)' >/dev/null 2>&1; then
     _ralph_spawn_close "$ref" "$ledger" never_started
@@ -317,6 +328,23 @@ if ! agent_start_when_ready "$LEAD" "$pane" "${lead_tools[@]}"; then
   die "agent start $LEAD failed — see the herdr error above; not spawning"
 fi
 export RALPH_HERDR_AGENT_LIVE=1
+
+# The positive self-test (GH-2266), before the brief: a lead whose sandbox is
+# inert is a second writer in the source checkout. Anything but `applied`
+# closes the team space (nothing on disk is touched — the lead's workspace
+# carries no worktree), closes the provisional record with the outcome, and
+# fails naming it.
+if [ "${#lead_contain[@]}" -gt 0 ]; then
+  outcome=$(spawn_containment_probe "$LEAD" "$pane" "$src" \
+    "close the team space (herdr workspace close ${lead_ws:-<workspace-id>}) and re-run work-team.sh $EPIC") || {
+    _ralph_spawn_close "$ref" "$ledger" "containment_${outcome:-unverified}"
+    [ -n "$lead_ws" ] && "$HERDR" workspace close "$lead_ws" >/dev/null 2>&1 || true
+    RALPH_HERDR_AGENT_LIVE=""
+    die "process containment ${outcome:-unverified} for $LEAD (pane $pane) — an uncontained lead must not receive its brief; closed the team space (the probe's reason is above)"
+  }
+  echo "process containment: $outcome for $LEAD (a Bash write inside $src was refused by the kernel)"
+fi
+
 if [ -n "$record" ]; then
   set --
   while IFS= read -r kv; do

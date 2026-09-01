@@ -37,6 +37,9 @@
 #   FAKE_HERDR_FIXTURES  dir of canned responses (unset = built-in defaults)
 #   FAKE_HERDR_LOG       invocation log — one line per call, argv joined by
 #                        spaces (unset = no logging)
+#   FAKE_HERDR_PROMPT_HOOK  executable run as HOOK NAME TEXT on `agent prompt`
+#                        (unset = none) — how a test plays the pane's side of
+#                        a prompt that has a filesystem effect
 #
 # Fixture files, first match wins (all under $FAKE_HERDR_FIXTURES):
 #   status server --json          no fixture: reads FAKE_HERDR_SERVER_STATE;
@@ -279,6 +282,12 @@ case "$key" in
       "agent-start.${3-}" agent-start
     ;;
   agent-prompt)
+    # FAKE_HERDR_PROMPT_HOOK: a script run with (NAME, TEXT) on every prompt,
+    # so a test can act the way a live pane would on receiving it — the
+    # containment probe's touch differential (GH-2266) is the one consumer.
+    if [ -n "${FAKE_HERDR_PROMPT_HOOK:-}" ] && [ -x "$FAKE_HERDR_PROMPT_HOOK" ]; then
+      "$FAKE_HERDR_PROMPT_HOOK" "${3-}" "${4-}" || true
+    fi
     respond "cli:agent:prompt" "agent_prompted" \
       "$(printf '{"agent":{"name":"%s","agent_status":"working","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":2}}' "${3-}")" \
       agent-prompt

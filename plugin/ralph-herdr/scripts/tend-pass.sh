@@ -41,6 +41,18 @@ fi
 tool_args=()
 while IFS= read -r out; do tool_args+=("$out"); done < <(ralph_tool_binding_args tender)
 
+# Process containment (GH-2266) — the OTHER mechanism on the same registry
+# row, deliberately a separate call (opposite failure direction; see
+# roles.sh). Resolved BEFORE any surface exists: a platform this was never
+# measured on, or an unbuildable profile, refuses here at zero cost. The
+# exit status is read off the helper directly — a `while read … < <(cmd)`
+# loop reports the last `read`, never the producer.
+contain_out=$(ralph_process_containment_args tender "$REPO") ||
+  die "process containment cannot be established for the tender (see the reason above) — not spawning an uncontained $lane pane"
+contain_args=()
+while IFS= read -r out; do [ -n "$out" ] && contain_args+=("$out"); done <<<"$contain_out"
+harness_args=("${tool_args[@]}" "${contain_args[@]}")
+
 if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "DRY RUN — would spawn $lane pass (queue head #$next):"
   echo "  agent: $agent"
@@ -50,7 +62,9 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   else
     echo "  $HERDR tab create --cwd $REPO --label \"$lane\" --no-focus"
   fi
-  echo "  $HERDR agent start $agent --kind claude --pane <captured>${tool_args[*]:+ -- ${tool_args[*]}}"
+  echo "  $HERDR agent start $agent --kind claude --pane <captured>${tool_args[*]:+ -- ${tool_args[*]}}${contain_args[*]:+ --settings <process containment: seatbelt denyWrite $REPO>}"
+  [ "${#contain_args[@]}" -gt 0 ] &&
+    echo "  containment probe: prompt <captured> to touch <inside $REPO> <outside \$RALPH_HOME/containment-probes>; refuse unless applied"
   echo "  $HERDR agent prompt $agent \"/ralph:$lane\""
   exit 0
 fi
@@ -89,7 +103,7 @@ fi
 # it is cleanup, not killing an agent — but an UNCERTAIN failure (transport
 # error, silence) means the start may have LANDED, and the surface is left
 # up rather than closed over a possibly-live agent (PR #2326 P1).
-if ! agent_start_when_ready "$agent" "$pane" "${tool_args[@]}"; then
+if ! agent_start_when_ready "$agent" "$pane" "${harness_args[@]}"; then
   if [ "${RALPH_HERDR_START_OUTCOME:-uncertain}" = "refused" ]; then
     [ -n "$cleanup_pane" ] && "$HERDR" pane close "$cleanup_pane" >/dev/null 2>&1 || true
     [ -n "$cleanup_tab" ] && "$HERDR" tab close "$cleanup_tab" >/dev/null 2>&1 || true
@@ -100,6 +114,21 @@ fi
 # Past this point the agent is LIVE — a prompt failure must not strand it
 # silently, and hold_pane must not claim "no session spawned" about it.
 export RALPH_HERDR_AGENT_LIVE=1
+
+# The positive self-test (GH-2266): a live pane is not a contained pane until
+# the kernel has been SEEN to refuse it. Anything but `applied` closes the
+# surface this run created — the agent has taken no pass yet, so nothing is
+# lost — and the pass fails naming the outcome.
+if [ "${#contain_args[@]}" -gt 0 ]; then
+  outcome=$(spawn_containment_probe "$agent" "$pane" "$REPO" "re-run the $lane pass") || {
+    [ -n "$cleanup_pane" ] && "$HERDR" pane close "$cleanup_pane" >/dev/null 2>&1 || true
+    [ -n "$cleanup_tab" ] && "$HERDR" tab close "$cleanup_tab" >/dev/null 2>&1 || true
+    RALPH_HERDR_AGENT_LIVE=""
+    die "process containment ${outcome:-unverified} for $agent (pane $pane) — an uncontained $lane pane must not receive its prompt; closed the surface this run created (the probe's reason is above)"
+  }
+  echo "process containment: $outcome for $agent (a Bash write inside $REPO was refused by the kernel; tool binding is the separate GH-2265 mechanism)"
+fi
+
 ralph_herdr_agent_prompt "$agent" "/ralph:$lane" >/dev/null \
   || die "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:$lane\""
 

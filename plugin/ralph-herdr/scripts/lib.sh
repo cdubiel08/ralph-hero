@@ -931,6 +931,114 @@ spawn_confirm_turn() {
   done
 }
 
+# spawn_containment_probe AGENT PANE CHECKOUT RESPAWN — the positive self-test
+# for process containment (GH-2266), run IN THE PANE after `agent start` and
+# BEFORE the real prompt. Prints ONE outcome word from contracts.ts
+# CONTAINMENT_OUTCOMES on stdout (also left in RALPH_HERDR_CONTAINMENT_OUTCOME)
+# and returns 0 only for `applied`; every other outcome is a refusal and the
+# caller closes the pane it just opened — an uncontained pane must never
+# receive its prompt.
+#
+# WHY A PROBE AT ALL: the sandbox fails OPEN and SILENTLY. A malformed block
+# yields exit 0, a written file and no warning (measured, twice: 2.1.233 and
+# 2.1.257). "Nothing went wrong" is exactly what an inert sandbox produces, so
+# acceptance is an OBSERVED kernel denial or nothing.
+#
+# WHY IN THE PANE, not a sibling `claude -p` with the same settings: the pane
+# is the exact process that will do the work, so its denial is the fact
+# wanted, not a proxy for it; and a spawner that is itself contained (a lead
+# staffing investigators) cannot run a nested `claude -p` at all — its Bash
+# has no route to the model API — and a nested probe would read the OUTER
+# sandbox's denial as the inner settings' success.
+#
+# WHY THE FILESYSTEM, not the model's reply: the pane is asked to run ONE
+# command — `touch <inside> <outside>` — and the verdict is read from which
+# marker exists. `touch` continues past a failed operand, so both are always
+# attempted from one command; the inside operand comes first, so an inert
+# sandbox writes it before the outside one lands. The differential is what
+# makes absence evidence: the outside marker proves the command RAN, the
+# inside marker's absence proves the tree denial HELD. Neither present is
+# `unverified` — the pane took no turn or wrote nothing — distinct from
+# `not_applied`, because "could not check" may not render as "checked".
+#
+# Prompt delivery rides spawn_confirm_turn (GH-2223): the modal probe, the
+# undelivered-vs-unsubmitted split and the one redelivery are all reused
+# rather than restated.
+#
+#   RALPH_HERDR_CONTAINMENT_PROBE_SEC  seconds to wait for a marker once the
+#                                       turn has started (default 30)
+spawn_containment_probe() {
+  local agent="${1-}" pane="${2-}" checkout="${3-}" respawn="${4:-re-spawn it}"
+  local dir home inside outside prompt secs waited=0 outcome
+  RALPH_HERDR_CONTAINMENT_OUTCOME=""
+  _spawn_containment_verdict() {
+    RALPH_HERDR_CONTAINMENT_OUTCOME="$1"
+    rm -f "$inside" "$outside" 2>/dev/null || true
+    printf '%s\n' "$1"
+    [ "$1" = applied ]
+  }
+  { [ -n "$agent" ] && [ -n "$pane" ] && [ -n "$checkout" ]; } || {
+    echo "containment probe: agent, pane and checkout are all required" >&2
+    inside="" outside=""
+    _spawn_containment_verdict unverified
+    return 1
+  }
+  dir=$(cd "$checkout" 2>/dev/null && pwd -P) || {
+    echo "containment probe: $checkout is not a directory" >&2
+    inside="" outside=""
+    _spawn_containment_verdict unverified
+    return 1
+  }
+  home="${RALPH_HOME:-$HOME/.ralph}/containment-probes"
+  mkdir -p "$home" 2>/dev/null || {
+    echo "containment probe: cannot create $home for the outside marker" >&2
+    inside="" outside=""
+    _spawn_containment_verdict unverified
+    return 1
+  }
+  inside="$dir/.ralph-containment-probe-$agent"
+  outside="$home/$agent.$$"
+  rm -f "$inside" "$outside" 2>/dev/null || true
+  prompt="Containment self-test (automatic, at startup — GH-2266). Run exactly this one Bash command, then reply with only its output. Do not retry it, do not run anything else, and do not investigate the result:
+touch '$inside' '$outside'; echo PROBE_RC=\$?"
+  ralph_herdr_agent_prompt "$agent" "$prompt" >/dev/null || {
+    echo "containment probe: prompt delivery to $agent failed" >&2
+    _spawn_containment_verdict unverified
+    return 1
+  }
+  spawn_confirm_turn "$agent" "$pane" "$prompt" "$agent's containment probe" "$respawn" || {
+    _spawn_containment_verdict unverified
+    return 1
+  }
+  secs="${RALPH_HERDR_CONTAINMENT_PROBE_SEC:-30}"
+  case "$secs" in '' | *[!0-9]* | 0) secs=30 ;; esac
+  while :; do
+    if [ -e "$inside" ]; then
+      echo "containment probe: $agent WROTE INSIDE $dir — the sandbox is inert (not_applied); refusing to hand an uncontained pane its prompt" >&2
+      _spawn_containment_verdict not_applied
+      return 1
+    fi
+    if [ -e "$outside" ]; then
+      # One more look at the inside marker AFTER the outside one landed: the
+      # command touches inside first, so this is the ordering that makes an
+      # absent inside marker mean "denied" rather than "not yet".
+      if [ -e "$inside" ]; then
+        echo "containment probe: $agent WROTE INSIDE $dir — the sandbox is inert (not_applied)" >&2
+        _spawn_containment_verdict not_applied
+        return 1
+      fi
+      _spawn_containment_verdict applied
+      return 0
+    fi
+    [ "$waited" -lt "$secs" ] || break
+    sleep 1
+    waited=$((waited + 1))
+  done
+  echo "containment probe: $agent took a turn but neither marker appeared within ${secs}s (unverified) — the pane could not be proved contained; $respawn" >&2
+  _spawn_containment_verdict unverified
+  return 1
+}
+
 # _ralph_spawn_close REF LEDGER REASON — close a provisional spawn record for
 # a worker that never started (audit D2b). Best-effort: a failed append warns
 # and leaves the row open, which reconcile's pane-proved phase E then closes.

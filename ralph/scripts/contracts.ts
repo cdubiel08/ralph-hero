@@ -183,6 +183,24 @@ export const ROLES = Object.fromEntries(
 export type Role = keyof typeof ROLES;
 export const ROLE_NAMES = Object.keys(ROLES) as Role[];
 
+/** What a spawn ACHIEVED for process containment — the achieved value, never
+ *  the requested one (GH-2266; the ledger half is #2267). The mechanism fails
+ *  OPEN and SILENTLY (a malformed sandbox block yields exit 0 and a written
+ *  file), so "requested" and "achieved" must be two facts with two renderings:
+ *    applied        the in-pane self-test observed the kernel denial
+ *    not_applied    the self-test wrote INSIDE the denied tree — the sandbox
+ *                   was inert; the spawn refuses and closes the pane
+ *    not_available  the platform is not the one measured (macOS/Seatbelt);
+ *                   the spawn refuses rather than inherit an untested claim
+ *    inapplicable   the harness grants no Bash, so there is nothing for a
+ *                   process sandbox to contain (today's investigator)
+ *    unverified     the self-test could not be read to a verdict (no turn, no
+ *                   marker) — refused, distinctly from not_applied, because
+ *                   "could not check" may never render as "checked and held"
+ *  roles.sh mirrors this list under the golden-table test. */
+export const CONTAINMENT_OUTCOMES = ["applied", "not_applied", "not_available", "inapplicable", "unverified"] as const;
+export type ContainmentOutcome = (typeof CONTAINMENT_OUTCOMES)[number];
+
 /** What a human may spawn directly. A human is not a role — it is the only
  *  spawner with no record of its own — so it is named here rather than given
  *  a row in ROLES it could never satisfy (`writesTree` is meaningless for it). */
