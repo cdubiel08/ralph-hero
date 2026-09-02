@@ -1148,8 +1148,7 @@ func headerStats(m Model, now time.Time) []string {
 	if len(fleet) > 0 {
 		out = append(out, strings.Join(fleet, "  "))
 	}
-	if len(m.usage) > 0 {
-		today, tokens, hour := m.fleetSpend(now)
+	if today, tokens, hour, ok := m.fleetSpend(now); ok {
 		out = append(out,
 			styleCost.Render(fmt.Sprintf("%s%.2f today", g.usd, today)),
 			styleToken.Render(g.token+" "+formatTokens(tokens)),

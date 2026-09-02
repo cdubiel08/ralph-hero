@@ -741,6 +741,12 @@ func (m Model) cardUsage(issue int) (SessionUsage, int) {
 		return SessionUsage{}, costNone
 	}
 	if e, ok := m.usage[sid]; ok && e.Usage.Read {
+		if !e.Usage.priced() {
+			// The transcript was read but a model in it has no price row:
+			// a partial number would read as complete, so the chip says
+			// unread and the totals skip it (bump usagePrices to fix).
+			return SessionUsage{}, costUnread
+		}
 		return e.Usage, costMeasured
 	}
 	for _, a := range m.agents[issue] {
@@ -853,23 +859,51 @@ type fleetCount struct {
 
 // fleetSpend is the header's three clock numbers over every session on
 // screen: spend and tokens since the local midnight, and spend in the
-// trailing hour. Sessions whose transcript was not read contribute nothing —
-// the `$—` on their card carries that fact, the header does not repeat it.
-func (m Model) fleetSpend(now time.Time) (todayUSD float64, todayTokens int, hourUSD float64) {
+// trailing hour. Sessions whose transcript was not read (or not fully
+// priced) contribute nothing — the `$—` on their card carries that fact,
+// the header does not repeat it — and ok=false when NO session priced, so
+// a fleet of unreadable transcripts draws no `$0.00 today`.
+func (m Model) fleetSpend(now time.Time) (todayUSD float64, todayTokens int, hourUSD float64, ok bool) {
 	y, mo, d := now.Date()
 	midnight := time.Date(y, mo, d, 0, 0, 0, 0, now.Location())
 	hourAgo := now.Add(-time.Hour)
 	for _, e := range m.usage {
-		if !e.Usage.Read {
+		if !e.Usage.priced() {
 			continue
 		}
+		ok = true
 		usd, tok := e.Usage.since(midnight)
 		todayUSD += usd
 		todayTokens += tok
 		h, _ := e.Usage.since(hourAgo)
 		hourUSD += h
 	}
-	return todayUSD, todayTokens, hourUSD
+	return todayUSD, todayTokens, hourUSD, ok
+}
+
+// mergeUsage folds one pass's results into the map and drops every session
+// no card on screen names any more. Merge, not replace: the agents, board
+// and Done handlers each dispatch a pass over THEIR target set, and two can
+// be in flight at once — a whole-map replace would let the one that lands
+// last erase what the other priced. The prune against the CURRENT targets is
+// what keeps an exited session from drawing a number for a transcript nobody
+// is writing.
+func (m *Model) mergeUsage(fresh map[string]usageEntry) {
+	if m.usage == nil {
+		m.usage = map[string]usageEntry{}
+	}
+	for sid, e := range fresh {
+		m.usage[sid] = e
+	}
+	keep := map[string]bool{}
+	for _, t := range m.usageTargets() {
+		keep[t.Session] = true
+	}
+	for sid := range m.usage {
+		if !keep[sid] {
+			delete(m.usage, sid)
+		}
+	}
 }
 
 // columnSpend sums the measured chips in one column; ok=false when no card

@@ -595,6 +595,12 @@ type SessionUsage struct {
 	Calls       []CallUsage
 }
 
+// priced reports a reduction that is complete: read, and every call had a
+// price row. A session with an unpriced call is NOT a measured session —
+// its number would read complete while understating the spend (the
+// ledger.sh contract: unpriced is counted, never folded into a total).
+func (u SessionUsage) priced() bool { return u.Read && u.Unpriced == 0 }
+
 // since sums the calls at or after t. A call with no timestamp is counted in
 // no window — it cannot be placed on the clock.
 func (u SessionUsage) since(t time.Time) (usd float64, tokens int) {

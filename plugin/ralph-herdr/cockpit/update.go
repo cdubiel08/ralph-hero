@@ -268,10 +268,9 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case usageMsg:
-		// REPLACE, never merge — the diffs rule: a stale entry for a session
-		// that has since exited would keep pricing a transcript nobody is
-		// writing, and the cache rides inside the entries themselves.
-		m.usage = msg.usage
+		// Merged, then pruned to the sessions on screen (mergeUsage) — see
+		// there for why this is not the diffs pass's whole-map replace.
+		m.mergeUsage(msg.usage)
 		m.gql, m.gqlOK = msg.gql, msg.gqlOK
 		return m, nil
 

@@ -223,6 +223,16 @@ func TestCostChipTrioAndTheSessionJoin(t *testing.T) {
 	if got := costChip(m, Card{Number: 11}, g); !strings.Contains(got, "$—") {
 		t.Errorf("unread = %q, want $—", got)
 	}
+	// A transcript that READ but carries a call with no price row is not
+	// measured: `$—`, and it counts for nothing in the column total.
+	m.usage["sid-10"] = usageEntry{Usage: SessionUsage{Read: true, USD: 2.414, Unpriced: 1}}
+	if got := costChip(m, Card{Number: 10}, g); !strings.Contains(got, "$—") {
+		t.Errorf("unpriced model = %q, want $—", got)
+	}
+	if _, ok := m.columnSpend([]Card{{Number: 10}}); ok {
+		t.Error("an unpriced session contributed to a column total")
+	}
+	m.usage["sid-10"] = usageEntry{Usage: SessionUsage{Read: true, USD: 2.414, LastContext: 98_000}}
 	if got := costChip(m, Card{Number: 12}, g); got != "" {
 		t.Errorf("no session = %q, want nothing", got)
 	}
@@ -380,8 +390,40 @@ func TestHeaderStatsCutFromTheRight(t *testing.T) {
 	if line = headerLine(m, "t", now); strings.Contains(line, "today") {
 		t.Errorf("no usage rendered dollars: %q", line)
 	}
+	m.usage = map[string]usageEntry{"a": {}, "b": {Usage: SessionUsage{Read: true, Unpriced: 2, USD: 1}}}
+	if line = headerLine(m, "t", now); strings.Contains(line, "today") {
+		t.Errorf("all-unreadable usage rendered dollars as $0.00: %q", line)
+	}
 	if groupThousands(0) != "0" || groupThousands(999) != "999" || groupThousands(1000) != "1,000" || groupThousands(1234567) != "1,234,567" {
 		t.Errorf("groupThousands: %s %s %s", groupThousands(999), groupThousands(1000), groupThousands(1234567))
+	}
+}
+
+// Two passes in flight over different target sets: the one landing last
+// must not erase what the other priced, and a session no card names any
+// more is dropped.
+func TestUsagePassesMergeAndPruneRatherThanReplace(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.agents = setAgents([]Agent{
+		{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Session: "s10"},
+		{Name: "w11-x", Status: "working", Issue: 11, Lane: "w", Session: "s11"},
+	})
+	priced := func(usd float64) usageEntry { return usageEntry{Usage: SessionUsage{Read: true, USD: usd}} }
+	// The agents pass priced both; a board pass dispatched for #11 alone
+	// lands after it.
+	m.mergeUsage(map[string]usageEntry{"s10": priced(1), "s11": priced(2)})
+	m.mergeUsage(map[string]usageEntry{"s11": priced(2.5), "s99": priced(9)})
+	if m.usage["s10"].Usage.USD != 1 || m.usage["s11"].Usage.USD != 2.5 {
+		t.Errorf("merge lost a session: %+v", m.usage)
+	}
+	if _, stale := m.usage["s99"]; stale {
+		t.Error("a session no card names survived the prune")
+	}
+	// #11's agent exits: its entry goes on the next merge, whatever landed.
+	m.agents = setAgents([]Agent{{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Session: "s10"}})
+	m.mergeUsage(map[string]usageEntry{})
+	if _, stale := m.usage["s11"]; stale || m.usage["s10"].Usage.USD != 1 {
+		t.Errorf("exited session kept pricing: %+v", m.usage)
 	}
 }
 
