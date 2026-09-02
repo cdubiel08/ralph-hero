@@ -37,6 +37,37 @@
 #   running session's context. If the source is actually gone, `--steal` says
 #   so; otherwise the record ages out on the claim TTL.
 #
+# WHY A CONTAINED SOURCE IS REFUSED (GH-2359)
+#   The header above is about a fork of a DRIVER: one writer's context, in the
+#   writer's own tree, guarded by the worktree lock. A lead or a tender is
+#   different in kind. Their spawn paths (work-team.sh, tend-pass.sh) hand the
+#   harness two mechanisms — tool binding (--disallowedTools, GH-2265) and
+#   process containment (--settings sandbox, GH-2266) — probe the pane for an
+#   observed kernel denial, and record both achieved words on the ledger row.
+#   `--resume <id> --fork-session` carries NONE of that: a fork of a contained
+#   pane is a full-tool, unsandboxed session in the same checkout, which is
+#   exactly the second writer GH-2255 exists to prevent, and it leaves no
+#   ledger trace of either mechanism having been dropped.
+#
+#   So the source's fleet ROLE is read and a role whose registry row requires
+#   either mechanism is refused by name. Refused, not re-applied: re-applying
+#   would need the in-pane probe turn (which consumes the fork's first turn
+#   before the human gets it) and a ledger row to record the outcome on — the
+#   row this script deliberately does not write (below). And the case
+#   re-applying is meant to serve, a crashed tender, cannot reach this path:
+#   a fork resumes a LIVE claude (`pane get` must report a session id), and a
+#   dead tender's remedy is its own lane script, which contains and records.
+#
+#   Where the role comes from, in order — never assumed from the fork's own
+#   lane: the source agent's OPEN ledger row (`tokens.role`, the spawner's
+#   stated truth); failing that, the pane's `role` token (a registry role, or
+#   a lane letter mapped through ralph_role_for_lane — reconcile's own
+#   discover default); failing both, the pane is not a ralph spawn (a
+#   hand-started claude) and forks as it always did, saying so. An unknown
+#   non-empty role refuses (roles.sh's direction: what cannot be classified
+#   is not known to be safe), and a ledger that is present but unreadable
+#   refuses too — "could not read the role" may not render as "driver".
+#
 # WHY THE NAME CARRIES ISSUE 0
 #   Every issue join in this plugin keys on the issue in an agent's name:
 #   refill.sh counts `^w[0-9]+-` for fleet capacity, spawn_work_session skips
@@ -143,6 +174,50 @@ fi
 # somewhere else would hold a transcript about files it cannot see.
 [ -n "$src_cwd" ] || src_cwd="$REPO"
 
+# ── The source's role ────────────────────────────────────────────────────────
+# The herd is read once, here, and reused by the name collision check below.
+# A read failure fails CLOSED for both questions it answers: an unknown herd
+# can neither name the source agent nor prove a fork name is free.
+herd=$(ralph_agents_json 2>/dev/null) || die "cannot read the herd — refusing to fork without proving the source's role and a free name"
+src_agent_name=$(printf '%s\n' "$herd" | jq -r --arg p "$SRC_PANE" 'select(.pane == $p) | .name' 2>/dev/null | head -n 1) || src_agent_name=""
+
+src_role="" src_role_from=""
+if [ -n "$src_agent_name" ]; then
+  # The ledger is resolved from $REPO (the source's cwd), never from this
+  # action process's own $PWD, which is wherever herdr launched it.
+  ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
+  if [ -n "$ledger" ] && _ralph_ledger_present "$ledger" 2>/dev/null; then
+    _ralph_ledger_events "$ledger" >/dev/null 2>&1 ||
+      die "the ledger at $ledger is present but unreadable — refusing to fork pane $SRC_PANE without proving $src_agent_name's role (an unread row may name a contained role)"
+    src_ref=$(RALPH_HERDR_LEDGER="$ledger" ralph_ledger_open_ref "$src_agent_name" 2>/dev/null) || src_ref=""
+    if [ -n "$src_ref" ]; then
+      src_role=$(RALPH_HERDR_LEDGER="$ledger" _ralph_ledger_latest_role "$src_ref" 2>/dev/null) || src_role=""
+      [ -n "$src_role" ] && src_role_from="ledger row $src_ref"
+    fi
+  fi
+fi
+if [ -z "$src_role" ]; then
+  src_role_token=$(jq -r '.pane.tokens.role // empty' <<<"$src")
+  if [ -n "$src_role_token" ]; then
+    if ralph_role_known "$src_role_token"; then
+      src_role="$src_role_token"
+    else
+      src_role=$(ralph_role_for_lane "$src_role_token" 2>/dev/null) || src_role="$src_role_token"
+    fi
+    src_role_from="pane token role=$src_role_token"
+  fi
+fi
+if [ -n "$src_role" ]; then
+  needs=""
+  ralph_role_tool_binding "$src_role" && needs="tool binding"
+  ralph_role_process_containment "$src_role" && needs="${needs:+$needs and }process containment"
+  if [ -n "$needs" ]; then
+    die "pane $SRC_PANE runs ${src_agent_name:-a claude} in role '$src_role' ($src_role_from), which requires $needs — a fork would resume that session as an UNCONTAINED harness in the same checkout ($src_cwd): a second writer beside the one GH-2255 exists to prevent, with no ledger trace of either mechanism. Forks are for driver panes; read a $src_role's context from its own pane, or re-spawn it through its lane script"
+  fi
+else
+  echo "fork.sh: pane $SRC_PANE has no ledger row and no role token — not a ralph spawn; forking it as the uncontained hand-started session it is" >&2
+fi
+
 # ── Name the fork ────────────────────────────────────────────────────────────
 # Slug from the source's own slug token when it has one (a ralph-spawned
 # worker), else from the pane id — a hand-started `claude` in a plain pane is a
@@ -155,10 +230,8 @@ fi
 name=$(ralph_agent_name d 0 "$base") || die "could not derive a name for a fork of pane $SRC_PANE"
 
 # Generation suffix on collision. Names are unique among LIVE agents only, so
-# this asks the herd rather than a registry. A read failure fails CLOSED: an
-# unknown herd cannot prove the name is free, and `agent start` on a taken name
-# is a refusal, not a silent overwrite.
-herd=$(ralph_agents_json 2>/dev/null) || die "cannot read the herd — refusing to fork without proving the name '$name' is free"
+# this asks the herd (read above) rather than a registry; `agent start` on a
+# taken name is a refusal, not a silent overwrite.
 gen=2
 while printf '%s\n' "$herd" | jq -e --arg n "$name" 'select(.name == $n)' >/dev/null 2>&1; do
   if [ "$gen" -gt 9 ]; then
@@ -182,6 +255,7 @@ depth=$((src_depth + 1))
 if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "DRY RUN — would fork pane $SRC_PANE ($PLACEMENT):"
   echo "  session: $sess_id   agent: $name   cwd: $src_cwd"
+  echo "  source role: ${src_role:-none (not a ralph spawn)}${src_role_from:+ — $src_role_from}"
   case "$PLACEMENT" in
     tab) echo "  $HERDR tab create --workspace $src_ws --cwd $src_cwd --label \"$name\" --no-focus" ;;
     *) echo "  $HERDR pane split $SRC_PANE --direction $PLACEMENT --cwd $src_cwd --focus" ;;
@@ -237,5 +311,5 @@ fi
 ralph_tokens_push "$pane" "role=d" "issue=0" "parent=${src_name:-$SRC_PANE}" \
   "root=$src_root" "depth=$depth" "harness=claude"
 
-echo "forked pane $SRC_PANE -> $pane ($PLACEMENT), agent $name, resuming session $sess_id"
+echo "forked pane $SRC_PANE -> $pane ($PLACEMENT), agent $name, resuming session $sess_id (source role: ${src_role:-none}${src_role_from:+ — $src_role_from})"
 notify "$name" "ralph: forked a session" "$name holds ${src_name:-pane $SRC_PANE}'s context in $src_cwd — same worktree, so do not drive it as a second writer"

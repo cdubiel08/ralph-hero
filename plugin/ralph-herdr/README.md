@@ -85,7 +85,7 @@ herdr's shapes map onto ralph's without translation:
 | `attend` | none | no pane, no loop: finds the highest-priority `blocked` ralph agent (issue sessions — `gh-N` / w-lane — before every other lane; within a group, oldest blocked-since first from the ledger's state-record timestamps, agent-list order when the ledger can't say), `herdr agent focus` jumps you to it, and the notification **carries the question**: the pane's last non-empty tail lines (`agent read --source recent-unwrapped`), flattened to one ≤240-char line, with `#N` in the title when the name resolves to an issue. Nothing blocked → "herd calm". Safe to bind to a key |
 | `answer` | popup | walk Human Needed and answer ONE item, **comment-first**: `board list --state "Human Needed" --json` → pick → the issue's latest comments (bounded `gh issue view --comments` tail) → type the answer mail(1)-style (end with a lone `.` line) → `board answer N -m` posts the **Answer** issue comment; the item STAYS Human Needed and the resuming session takes the edge itself with `board claim N` (GH-2204 — the claim guards bind on the actual driver, and if the pane or herdr vanishes mid-answer, the decision is already on the record). Only then, if a live session owns N, a `herdr agent prompt … --wait` nudge telling it to claim-and-resume — delivery reported honestly, never assumed. A board CLI predating the verb falls back to `gh issue comment` + `board move`, the old comment-then-move ordering |
 | `link-open` | none* | the `[[link_handlers]]` target — click a `github.com/<owner>/<repo>/issues\|pull/N` URL in any pane: in-scope URL with a live session for N → `agent focus`; in-scope with no session → the `link-offer` popup (board state + `[s]` spawn via the same sanctioned `spawn_work_session` path / `[o]` browser / `[q]` close); out-of-scope or unresolvable scope → OS browser. The manifest pattern is generic on purpose; the script owns the scope judgment. *Also listed as a plain action; invoked without a clicked URL it says so in the plugin log and exits |
-| `fork-right` / `fork-down` / `fork-tab` | none* | **pane-context** actions (GH-1892): open a pane already holding the FOCUSED pane's session context. `herdr pane get` reports the live Claude session id, and the new pane starts `claude --resume <id> --fork-session` — a NEW session that begins knowing everything the source knew, rather than a second process appending to one transcript. Placement is the only difference between the three. The fork is named `d0-fork-<source slug>` — lane `d`, issue 0 — and carries `parent=<source>` / `depth=<source+1>` pane tokens. *No plugin pane: the fork's output IS a real pane. See [Forking a session](#forking-a-session-gh-1892) for what a fork is not |
+| `fork-right` / `fork-down` / `fork-tab` | none* | **pane-context** actions (GH-1892): open a pane already holding the FOCUSED pane's session context. `herdr pane get` reports the live Claude session id, and the new pane starts `claude --resume <id> --fork-session` — a NEW session that begins knowing everything the source knew, rather than a second process appending to one transcript. Placement is the only difference between the three. The fork is named `d0-fork-<source slug>` — lane `d`, issue 0 — and carries `parent=<source>` / `depth=<source+1>` pane tokens. A source whose role requires containment (lead, tender, investigator — GH-2359) is refused by name. *No plugin pane: the fork's output IS a real pane. See [Forking a session](#forking-a-session-gh-1892) for what a fork is not |
 | `deliver-pass` | split (down) | `board deliver-queue` → empty means spawn nothing (the lane contract). Otherwise a new tab hosts agent `r0-deliver` running `/ralph:deliver`; cockpit pane watches. Ledgered like every spawn (GH-2342): a provisional C7 row at pane creation, `exit never_started` on a refused start; the row carries `tool_binding` / `process_containment` = `not_requested`, read off the empty argv — the deliverer is a writer |
 | `tend-pass` | split (down) | same shape over `board tend-queue` → agent `t0-tend` running `/ralph:tend`, under the tender's tool binding (GH-2265) and sandbox (GH-2266). Its row gets a `containment` event after the in-pane probe — on success (`accepted` / `applied`) AND on refusal, which also closes the row `exit containment_<outcome>` (GH-2267/GH-2342) |
 | `doctor` | popup | runs `board doctor` once, holds the popup open until Enter |
@@ -606,6 +606,25 @@ It works on any claude pane, not only ones this plugin spawned; a
 hand-started `claude` simply gets its pane id in the fork's name instead of a
 slug. Other harnesses are refused by name — `--resume`/`--fork-session` is
 claude's grammar, and each harness needs its own.
+
+**A contained source is refused (GH-2359).** A lead, a tender or an
+investigator runs under [tool binding and process
+containment](#the-one-writer-invariant-and-the-role-model-gh-1808) — `--disallowedTools` and a `--settings`
+sandbox, probed in the pane and recorded on its ledger row. `--resume
+--fork-session` carries neither, so a fork of one would be a full-tool,
+unsandboxed session in the same checkout: the second writer that epic exists
+to prevent, with no ledger trace of either mechanism having been dropped.
+`fork.sh` reads the source's fleet role — its open ledger row's `role` first,
+its pane token second (a lane letter maps through the same default
+reconcile's discover path uses) — and refuses by name when the registry row
+requires either mechanism. Refused rather than re-applied: re-applying would
+spend the fork's first turn on the containment probe and need a ledger row
+to record the verdict on, and the case it would serve — a crashed tender —
+cannot reach this path anyway, since a fork resumes a *live* claude; a dead
+tender's remedy is its lane script. A pane with no row and no role token is
+not a ralph spawn and forks as before, saying so. A ledger that is present
+but unreadable refuses too: "could not read the role" may not render as
+"driver".
 
 **A fork is not a second driver.** It shares the source pane's *worktree*, and
 that is the hazard [sibling fleets](#sibling-fleets-shared-claims--removed)

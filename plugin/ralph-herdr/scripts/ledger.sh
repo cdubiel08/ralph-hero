@@ -948,6 +948,16 @@ _ralph_ledger_latest_state() {
 _ralph_ledger_latest_tokens() {
   _ralph_ledger_latest '((try .tokens catch null) | if . == null then "" else tojson end)' "$@"
 }
+# The FLEET role (GH-1808): stated by the spawner on the spawn record, or
+# lane-defaulted by reconcile on a discover record. Read here rather than off
+# a pane token because the token is display chrome a launcher may never have
+# pushed (killed between `agent start` and the push), while the provisional
+# row already carries it — and fork.sh (GH-2359) decides on this whether a
+# source may be resumed uncontained. Empty means the record predates the
+# role model; never "driver".
+_ralph_ledger_latest_role() {
+  _ralph_ledger_latest '((try .tokens.role catch null) // "")' "$@"
+}
 # The herd address (GH-2210): stamped by the spawner as tokens.address on the
 # spawn record (GH-2209/D0.4). Last-non-empty like its siblings, so state
 # events that carry no tokens never blank it; empty means the record predates
