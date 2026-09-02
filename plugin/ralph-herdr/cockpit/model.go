@@ -881,6 +881,19 @@ func (m Model) fleetSpend(now time.Time) (todayUSD float64, todayTokens int, hou
 	return todayUSD, todayTokens, hourUSD, ok
 }
 
+// newerUsage reports whether e should replace cur. Equal file state (or
+// equal stamps) lets the incoming entry land, so one pass's own result is
+// never refused.
+func newerUsage(e, cur usageEntry) bool {
+	if e.Usage.Read && cur.Usage.Read {
+		if !e.MTime.Equal(cur.MTime) {
+			return e.MTime.After(cur.MTime)
+		}
+		return e.Size >= cur.Size
+	}
+	return !e.At.Before(cur.At)
+}
+
 // usageSnapshot copies the map for a pass about to run on another
 // goroutine — the entries are values, so a shallow copy is a full one for
 // the cache's purposes. The live map stays Update's alone.
@@ -904,10 +917,12 @@ func (m *Model) mergeUsage(fresh map[string]usageEntry) {
 		m.usage = map[string]usageEntry{}
 	}
 	for sid, e := range fresh {
-		// Landing order is not read order: a pass dispatched earlier that
-		// finishes later must not roll a newer reduction back to an older
-		// size, cost and context. Equal stamps (one pass) always land.
-		if cur, ok := m.usage[sid]; ok && e.At.Before(cur.At) {
+		// Neither landing order nor dispatch order says which pass saw the
+		// newer transcript — an earlier-dispatched pass can stat the file
+		// later. The file's own (mtime, size) is the fact, so between two
+		// READ entries the one that saw the newer file wins; the dispatch
+		// stamp only orders the cases where a side did not read the file.
+		if cur, ok := m.usage[sid]; ok && !newerUsage(e, cur) {
 			continue
 		}
 		m.usage[sid] = e

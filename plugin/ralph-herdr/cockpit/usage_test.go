@@ -423,12 +423,30 @@ func TestUsagePassesMergeAndPruneRatherThanReplace(t *testing.T) {
 	if _, stale := m.usage["s99"]; stale {
 		t.Error("a session no card names survived the prune")
 	}
-	// A pass dispatched BEFORE the one that already landed finishes late:
-	// its older reduction must not roll #11 back.
-	m.mergeUsage(map[string]usageEntry{"s11": at(2.2, t0.Add(-time.Second))})
+	// Two READ entries are ordered by the transcript's own state, not by
+	// dispatch: a pass dispatched earlier that stat'd the file LATER (a
+	// newer mtime) wins, and one that saw an older file loses even if it
+	// was dispatched later.
+	m.usage["s11"] = usageEntry{Usage: SessionUsage{Read: true, USD: 2.5}, At: t0, MTime: t0, Size: 100}
+	m.mergeUsage(map[string]usageEntry{"s11": {Usage: SessionUsage{Read: true, USD: 2.2}, At: t0.Add(-time.Second), MTime: t0, Size: 90}})
 	if m.usage["s11"].Usage.USD != 2.5 {
-		t.Errorf("an older pass landing last regressed the entry: %+v", m.usage["s11"])
+		t.Errorf("an older file state replaced a newer one: %+v", m.usage["s11"])
 	}
+	m.mergeUsage(map[string]usageEntry{"s11": {Usage: SessionUsage{Read: true, USD: 2.7}, At: t0.Add(-time.Second), MTime: t0.Add(time.Second), Size: 120}})
+	if m.usage["s11"].Usage.USD != 2.7 {
+		t.Errorf("the pass that saw the newer file lost to dispatch order: %+v", m.usage["s11"])
+	}
+	// An unread result is ordered by dispatch: an older unread never
+	// erases a newer read, a newer unread (the file went away) does.
+	m.mergeUsage(map[string]usageEntry{"s11": {At: t0.Add(-time.Minute)}})
+	if !m.usage["s11"].Usage.Read {
+		t.Error("an older unread pass erased a read entry")
+	}
+	m.mergeUsage(map[string]usageEntry{"s11": {At: t0.Add(time.Minute)}})
+	if m.usage["s11"].Usage.Read {
+		t.Error("a newer unread pass did not land")
+	}
+	m.usage["s11"] = usageEntry{Usage: SessionUsage{Read: true, USD: 2.5}, At: t0.Add(time.Second)}
 	// The snapshot handed to a pass is a copy — mutating the live map
 	// after dispatch cannot race the goroutine reading it.
 	snap := m.usageSnapshot()
