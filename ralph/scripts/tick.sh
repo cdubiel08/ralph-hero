@@ -32,7 +32,8 @@ MODEL=""
 if [ -z "${RALPH_TICK_RUNNER:-}" ]; then
   MODEL="${RALPH_MODEL_DRIVER:-}"
   if [ -z "$MODEL" ] && [ -f "$REPO_ROOT/.ralph.json" ]; then
-    MODEL=$(jq -rn 'input | .models as $m | if $m == null then empty
+    MODEL=$(jq -rn 'input | if type != "object" then error("expected a JSON object at the top level") else . end
+        | .models as $m | if $m == null then empty
         elif ($m | type) != "object" then error("models must be an object")
         elif $m.driver == null then empty
         elif ($m.driver | type) != "string" then error("models.driver must be a string")
@@ -40,7 +41,8 @@ if [ -z "${RALPH_TICK_RUNNER:-}" ]; then
       echo "tick: cannot read $REPO_ROOT/.ralph.json models.driver — $MODEL" >&2; exit 64; }
   fi
   if [ -z "$MODEL" ] && [ -f "$REPO_ROOT/.claude/settings.json" ]; then
-    MODEL=$(jq -rn 'input | .env as $e | if $e == null then empty
+    MODEL=$(jq -rn 'input | if type != "object" then error("expected a JSON object at the top level") else . end
+        | .env as $e | if $e == null then empty
         elif ($e | type) != "object" then error("env must be an object")
         elif $e.RALPH_MODEL_DRIVER == null then empty
         elif ($e.RALPH_MODEL_DRIVER | type) != "string" then error("env.RALPH_MODEL_DRIVER must be a string")

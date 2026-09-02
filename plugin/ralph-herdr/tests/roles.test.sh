@@ -628,6 +628,16 @@ printf '  \n' >"$MROOT/i/.ralph.json"
 fails "model: an empty settings.json refuses rather than reading as inherit" ralph_lane_model driver "$MROOT/h"
 fails "model: a whitespace-only .ralph.json refuses" ralph_lane_model driver "$MROOT/i"
 is "model: the lane the well-formed .ralph.json names never reaches the empty settings file" "opus" "$(ralph_lane_model lead "$MROOT/h")"
+# A top-level value that is not an object (null, array, scalar) is refused
+# too — loadConfig's own "expected a JSON object" rule, restated here because
+# board.ts never reads settings.json when .ralph.json exists, so this reader
+# is the only thing that would ever look at that file.
+mkdir -p "$MROOT/k/.claude" "$MROOT/l"
+printf '{"models":{"lead":"opus"}}\n' >"$MROOT/k/.ralph.json"
+printf 'null\n' >"$MROOT/k/.claude/settings.json"
+printf '[]\n' >"$MROOT/l/.ralph.json"
+fails "model: a top-level null settings.json refuses" ralph_lane_model driver "$MROOT/k"
+fails "model: a top-level array .ralph.json refuses" ralph_lane_model driver "$MROOT/l"
 # An empty STRING is not a model and not an error: it names nothing, like
 # an absent key — the shell convention this repo already uses for its env
 # knobs (RALPH_CLAIM_MAX_ESTIMATE: empty = off), so it falls through.

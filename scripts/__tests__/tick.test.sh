@@ -235,6 +235,9 @@ expect_contains "a bracketed model reaches the runner as ONE literal word, never
 run_tick_model empty-settings '{"models":{"lead":"opus"}}' " "
 [ "$TICK_RC" -eq 64 ] && pass "an empty settings.json is a usage error, not a silent sonnet (exit 64)" || fail "empty settings: expected exit 64, got $TICK_RC"
 
+run_tick_model null-settings '{"models":{"lead":"opus"}}' "null"
+[ "$TICK_RC" -eq 64 ] && pass "a top-level null settings.json is a usage error (exit 64)" || fail "null settings: expected exit 64, got $TICK_RC"
+
 run_tick_model bad "" "" "RALPH_MODEL_DRIVER=bad value"
 [ "$TICK_RC" -eq 64 ] && pass "an unridable driver model is a usage error (exit 64)" || fail "bad model: expected exit 64, got $TICK_RC"
 expect_contains "the refusal names the value" "$TICK_OUT" "driver model 'bad value' is not a model name"
