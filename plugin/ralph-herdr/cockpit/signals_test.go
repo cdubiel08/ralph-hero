@@ -316,3 +316,39 @@ func TestReadLedgerPrefersPresentSqliteTape(t *testing.T) {
 		t.Error("an unreadable present tape must serve nothing, least of all the frozen JSONL")
 	}
 }
+
+func TestReadLedgerKeepsTheLatestUsageFactPerRef(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.jsonl")
+	fixture := `{"ts":"2026-09-01T00:00:00Z","ev":"spawn","agent_ref":"w2347-usage#u1","lineage":{"issue":2347,"spawned_at":"2026-09-01T00:00:00Z"}}
+{"ts":"2026-09-01T00:10:00Z","ev":"usage","agent_ref":"w2347-usage#u1","via":"event","usage":{"model":"claude-fable-5-1","calls":10,"list_usd":1.5,"max_context":100000}}
+{"ts":"2026-09-01T00:20:00Z","ev":"usage","agent_ref":"w2347-usage#u1","via":"event","usage":{"model":"claude-fable-5-1","calls":37,"list_usd":7.999,"max_context":274076}}
+{"ts":"2026-09-01T00:21:00Z","ev":"usage","agent_ref":"w9-nofact#u2","via":"event"}
+{"ts":"not a time","ev":"usage","agent_ref":"w8-badts#u3","via":"event","usage":{"model":"x","calls":1,"list_usd":1,"max_context":1}}
+`
+	if err := os.WriteFile(path, []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l := readLedger(path)
+	if !l.Read {
+		t.Fatal("a readable ledger must report Read")
+	}
+	u, ok := l.Usage["w2347-usage#u1"]
+	if !ok {
+		t.Fatal("the usage fact must be served by agent_ref")
+	}
+	// Latest wins, never summed: each fact is the whole transcript re-read.
+	if u.ListUSD != 7.999 || u.MaxContext != 274076 || u.Calls != 37 || u.Model != "claude-fable-5-1" {
+		t.Errorf("usage = %+v, want the second (latest) fact", u)
+	}
+	if _, ok := l.Usage["w9-nofact#u2"]; ok {
+		t.Error("a usage row with no usage object must not be served as a free session")
+	}
+	if _, ok := l.Usage["w8-badts#u3"]; ok {
+		t.Error("a usage row with an unparseable stamp must be skipped")
+	}
+	// The spawn row still lands beside it — the usage arm must not eat spawns.
+	if _, ok := l.ByRef["w2347-usage#u1"]; !ok {
+		t.Error("the spawn row must still be served")
+	}
+}

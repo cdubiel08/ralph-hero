@@ -95,6 +95,20 @@ type LedgerSpawn struct {
 	Address   string
 }
 
+// LedgerUsage is one `ev:usage` record (GH-2347): what the worker's Claude
+// session had consumed when the fact was written — the latest per ref wins,
+// since every fact is the whole transcript re-read, never a delta. ListUSD is
+// a list-price equivalent (rate-limit weight, not a bill); MaxContext is the
+// largest single prompt in tokens.
+type LedgerUsage struct {
+	Ref        string
+	At         time.Time
+	Model      string
+	Calls      int
+	ListUSD    float64
+	MaxContext int
+}
+
 // Ledger is the parsed spawn history for one board scope.
 //
 // ByRef is the EXACT join: the snapshot's `tokens.root` is the same
@@ -110,6 +124,10 @@ type LedgerSpawn struct {
 type Ledger struct {
 	ByRef   map[string]LedgerSpawn
 	ByIssue map[int]LedgerSpawn
+	// Usage is the latest usage fact per agent_ref (GH-2347) — the same
+	// exact join as ByRef, for the same reason: a respawned unit's cost is
+	// the session on screen, not its dead predecessor's.
+	Usage map[string]LedgerUsage
 	// Read is false when the ledger could not be read at all. The renderer
 	// needs it: no ledger and an agent with no record both produce a dash, but
 	// only the second is a fact about that agent.
@@ -197,6 +215,12 @@ type ledgerRow struct {
 		SpawnedAt string `json:"spawned_at"`
 	} `json:"lineage"`
 	Tokens map[string]string `json:"tokens"`
+	Usage  *struct {
+		Model      string  `json:"model"`
+		Calls      int     `json:"calls"`
+		ListUSD    float64 `json:"list_usd"`
+		MaxContext int     `json:"max_context"`
+	} `json:"usage"`
 }
 
 // readLedger parses the spawn history. Malformed lines are skipped — the
@@ -213,7 +237,7 @@ type ledgerRow struct {
 // shape); the read shells out to sqlite3 rather than linking a driver, the
 // same dependency every shell reader already carries.
 func readLedger(path string) Ledger {
-	l := Ledger{ByRef: map[string]LedgerSpawn{}, ByIssue: map[int]LedgerSpawn{}}
+	l := Ledger{ByRef: map[string]LedgerSpawn{}, ByIssue: map[int]LedgerSpawn{}, Usage: map[string]LedgerUsage{}}
 	if path == "" {
 		return l
 	}
@@ -261,7 +285,26 @@ func readLedger(path string) Ledger {
 			continue
 		}
 		var row ledgerRow
-		if json.Unmarshal([]byte(line), &row) != nil || row.Ev != "spawn" || row.AgentRef == "" {
+		if json.Unmarshal([]byte(line), &row) != nil || row.AgentRef == "" {
+			continue
+		}
+		if row.Ev == "usage" {
+			// Latest wins by tape order; a fact with no usage object or an
+			// unparseable stamp is skipped rather than served as free.
+			if row.Usage == nil {
+				continue
+			}
+			at, err := time.Parse(time.RFC3339, row.TS)
+			if err != nil {
+				continue
+			}
+			l.Usage[row.AgentRef] = LedgerUsage{
+				Ref: row.AgentRef, At: at, Model: row.Usage.Model, Calls: row.Usage.Calls,
+				ListUSD: row.Usage.ListUSD, MaxContext: row.Usage.MaxContext,
+			}
+			continue
+		}
+		if row.Ev != "spawn" {
 			continue
 		}
 		// lineage.spawned_at is the spawner's own stamp; ts is the ledger

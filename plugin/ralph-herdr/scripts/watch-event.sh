@@ -143,7 +143,7 @@ live_names() {
 handle_status() {
   local agent status pane parsed legacy entry file ref ts cwd repo_root
   local lane issue slug gen title labels body snapshot confirmed
-  local prior checkout verdict addr
+  local prior checkout verdict addr csid
   agent=$(pfield '.agent // .data.agent // empty')
   status=$(pfield '.agent_status // .data.agent_status // empty')
   pane=$(pfield '.pane_id // .data.pane_id // empty')
@@ -203,9 +203,15 @@ handle_status() {
           'select(.name == $n and .pane == $p)' 2>/dev/null | head -1) || confirmed=""
     fi
   fi
+  csid=""
   if [ -n "$confirmed" ]; then
     status=$(printf '%s' "$confirmed" | jq -r '.status // empty')
     pane=$(printf '%s' "$confirmed" | jq -r '.pane // empty')
+    # The worker's Claude session id (GH-2347), read off the same confirmed
+    # row: herdr describes a claude pane by it once the conversation has
+    # started. It rides the state event so the usage facts can find the
+    # transcript — the spawn record was written before any session existed.
+    csid=$(printf '%s' "$confirmed" | jq -r '.agent_session // empty' 2>/dev/null) || csid=""
     [ -n "$status" ] || exit 0
   else
     log "$agent not confirmed in a live snapshot — treating the event as a hint only, no durable write"
@@ -279,10 +285,19 @@ handle_status() {
     if ralph_ledger_open_agents 2>/dev/null |
       awk -F'#' -v r="$ref" '$0 == r { found = 1 } END { exit !found }'; then
       ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg st "$status" --arg p "$pane" \
-        --arg v "$verdict" \
+        --arg v "$verdict" --arg sid "$csid" \
         '{ts: $ts, ev: "state", agent_ref: $ref, agent_status: $st, pane_id: $p, via: "event"}
+         + (if $sid == "" then {} else {claude_session: $sid} end)
          + (if $v == "" or $v == "finished" then {} else {state: $v} end)')" ||
         log "state append failed for $ref"
+      # Live cost (GH-2347): `done` is a turn boundary — the transcript is
+      # quiescent and complete up to here — so it is where the usage fact is
+      # re-read while the worker is still running. A worker that never
+      # reaches one still gets the exit-time fact below. Best-effort: the
+      # helper's own stderr line names why nothing was measured.
+      if [ "$status" = "done" ]; then
+        ralph_ledger_usage_append "$ref" event >/dev/null 2>&1 || true
+      fi
     else
       log "$ref is no longer open — dropping a late state event rather than reopening it"
     fi
@@ -430,6 +445,11 @@ handle_gone() {
         '{ts: $ts, ev: "exit", agent_ref: $ref, reason: $r, pane_id: $p}')" ||
         log "exit append failed for $ref"
       log "exit $ref (reason $reason, pane $pane)"
+      # The final usage fact (GH-2347): the pane is gone but the transcript
+      # is on disk. Appended after the exit so a reader that stops at the
+      # exit still finds the last heartbeat; a worker whose session was
+      # never confirmed logs why and records nothing.
+      ralph_ledger_usage_append "$ref" event 2>&1 | while IFS= read -r l; do log "$l"; done || true
       ralph_ledger_orphan_pass "$ref" "$live"
       # w-lane (grammar-B w<N>-* or legacy gh-N) exits free fleet capacity;
       # o-lane exits are dead LEADS, the event-healing case (GH-2212).
