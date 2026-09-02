@@ -313,6 +313,7 @@ type peekMsg struct {
 // slow read for an epic the operator has moved off is dropped, not shown.
 type epicMsg struct {
 	issue int
+	gen   int // the Model's epicGen at dispatch — any other generation is stale
 	view  EpicView
 	ok    bool
 	err   string
@@ -1316,7 +1317,7 @@ func repoFromIssueURL(u string) string {
 // fetchEpicCmd reads the popover's epic. Dispatched by the `e` press and, while
 // the overlay is up, on the signal cadence — one issue fetch, the children
 // riding it (no new GraphQL shape, spec §11).
-func fetchEpicCmd(cfg Config, r Runner, issue int) tea.Cmd {
+func fetchEpicCmd(cfg Config, r Runner, issue, gen int) tea.Cmd {
 	return func() tea.Msg {
 		deadline := boardDeadline(cfg)
 		probe := &rateProbe{cfg: cfg, r: r}
@@ -1325,13 +1326,13 @@ func fetchEpicCmd(cfg Config, r Runner, issue int) tea.Cmd {
 		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		if err != nil {
-			return epicMsg{issue: issue, err: explainReadFailure(probe, deadline, timedOut, stderr+out, err)}
+			return epicMsg{issue: issue, gen: gen, err: explainReadFailure(probe, deadline, timedOut, stderr+out, err)}
 		}
 		view, perr := parseEpic(out)
 		if perr != nil {
-			return epicMsg{issue: issue, err: perr.Error()}
+			return epicMsg{issue: issue, gen: gen, err: perr.Error()}
 		}
-		return epicMsg{issue: issue, view: view, ok: true}
+		return epicMsg{issue: issue, gen: gen, view: view, ok: true}
 	}
 }
 

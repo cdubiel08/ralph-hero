@@ -225,7 +225,7 @@ func TestEpicReadLandingAfterTheCursorLeftTheEpicNudgesInsteadOfOpening(t *testi
 	m.epicFor = 2376
 	m.epicInFlight = true
 	m.row = 1 // #11 — no parent: the operator moved off the epic's card
-	m, _ = updateModel(m, epicMsg{issue: 2376, view: v, ok: true})
+	m, _ = updateModel(m, epicMsg{issue: 2376, gen: m.epicGen, view: v, ok: true})
 	if m.mode != ModeBrowse || m.statusKind != statusNudge || !strings.Contains(m.status, "epic #2376 read landed after the selection moved") {
 		t.Errorf("a read for an epic the cursor has left must nudge, never open: mode=%v status=%q", m.mode, m.status)
 	}
@@ -234,7 +234,7 @@ func TestEpicReadLandingAfterTheCursorLeftTheEpicNudgesInsteadOfOpening(t *testi
 	}
 	// A sibling card of the SAME epic is still "where they pressed e".
 	m.cols[0][1].ParentNumber = 2376
-	m, _ = updateModel(m, epicMsg{issue: 2376, view: v, ok: true})
+	m, _ = updateModel(m, epicMsg{issue: 2376, gen: m.epicGen, view: v, ok: true})
 	if m.mode != ModeEpic {
 		t.Errorf("a sibling card of the same epic opens it: mode=%v", m.mode)
 	}
@@ -242,15 +242,16 @@ func TestEpicReadLandingAfterTheCursorLeftTheEpicNudgesInsteadOfOpening(t *testi
 
 func TestEpicRefreshLandingAfterCloseNeverReopensTheOverlay(t *testing.T) {
 	m := openEpic(t, epicModel(&fakeRunner{}))
-	m.epicInFlight = true // a cadence refresh is out
+	m.epicInFlight = true // a cadence refresh is out, under this generation
+	gen := m.epicGen
 	m, _ = updateModel(m, keyMsg("esc"))
 	if m.mode != ModeBrowse || m.epicFor != 0 {
 		t.Fatalf("close: mode=%v epicFor=%d", m.mode, m.epicFor)
 	}
 	v, _ := parseEpic(epicJSON)
-	m, cmd := updateModel(m, epicMsg{issue: 2376, view: v, ok: true})
-	if m.mode != ModeBrowse || cmd != nil || m.epicInFlight {
-		t.Errorf("the refresh must be dropped on arrival: mode=%v cmd=%v inFlight=%v", m.mode, cmd != nil, m.epicInFlight)
+	m, cmd := updateModel(m, epicMsg{issue: 2376, gen: gen, view: v, ok: true})
+	if m.mode != ModeBrowse || cmd != nil {
+		t.Errorf("the refresh must be dropped on arrival: mode=%v cmd=%v", m.mode, cmd != nil)
 	}
 	if m.epicDue(time.Now().Add(time.Hour)) {
 		t.Error("nothing is due for a closed overlay")
@@ -262,13 +263,37 @@ func TestEpicRefreshLandingAfterCloseNeverReopensTheOverlay(t *testing.T) {
 	}
 }
 
+func TestEpicStaleGenerationNeverLandsOverAReopen(t *testing.T) {
+	// Close while a refresh is out, reopen the SAME epic before it returns:
+	// the old read matches epicFor but not the generation. It must neither
+	// show its (older) children nor clear the flag under the newer read.
+	m := openEpic(t, epicModel(&fakeRunner{}))
+	m.epicInFlight = true
+	oldGen := m.epicGen
+	m, _ = updateModel(m, keyMsg("esc"))
+	m, cmd := updateModel(m, keyMsg("e"))
+	if cmd == nil || !m.epicInFlight || m.epicGen == oldGen {
+		t.Fatalf("reopen must dispatch a new generation: cmd=%v inFlight=%v gen %d→%d", cmd != nil, m.epicInFlight, oldGen, m.epicGen)
+	}
+	stale, _ := parseEpic(epicJSON)
+	stale.Title = "STALE"
+	m, _ = updateModel(m, epicMsg{issue: 2376, gen: oldGen, view: stale, ok: true})
+	if m.mode != ModeBrowse || !m.epicInFlight || m.epic.Title == "STALE" {
+		t.Errorf("stale generation landed: mode=%v inFlight=%v title=%q", m.mode, m.epicInFlight, m.epic.Title)
+	}
+	m, _ = updateModel(m, cmd())
+	if m.mode != ModeEpic || m.epicInFlight || m.epic.Title == "STALE" {
+		t.Errorf("the current generation opens: mode=%v inFlight=%v title=%q", m.mode, m.epicInFlight, m.epic.Title)
+	}
+}
+
 func TestEpicReadNeverHijacksAndDropsAReadForAnotherEpic(t *testing.T) {
 	m := epicModel(&fakeRunner{})
 	v, _ := parseEpic(epicJSON)
 	m.epicFor = 2376
 	m.mode = ModeReply
 	m.input = "typing"
-	m, _ = updateModel(m, epicMsg{issue: 2376, view: v, ok: true})
+	m, _ = updateModel(m, epicMsg{issue: 2376, gen: m.epicGen, view: v, ok: true})
 	if m.mode != ModeReply || m.input != "typing" {
 		t.Errorf("a read landing mid-reply must not flip the mode: mode=%v input=%q", m.mode, m.input)
 	}
@@ -285,12 +310,12 @@ func TestEpicReadNeverHijacksAndDropsAReadForAnotherEpic(t *testing.T) {
 func TestEpicFailedOpenRefusesAndFailedRefreshKeepsTheChildrenUnderAStaleBanner(t *testing.T) {
 	m := epicModel(&fakeRunner{})
 	m.epicFor = 2376
-	m, _ = updateModel(m, epicMsg{issue: 2376, err: "boom"})
+	m, _ = updateModel(m, epicMsg{issue: 2376, gen: m.epicGen, err: "boom"})
 	if m.mode != ModeBrowse || m.statusKind != statusRefuse || !strings.Contains(m.status, "epic #2376 read failed: boom") {
 		t.Errorf("failed open: mode=%v status=%q", m.mode, m.status)
 	}
 	m = openEpic(t, m)
-	m, _ = updateModel(m, epicMsg{issue: 2376, err: "flap"})
+	m, _ = updateModel(m, epicMsg{issue: 2376, gen: m.epicGen, err: "flap"})
 	if m.mode != ModeEpic || len(m.epic.Children) != 7 {
 		t.Fatalf("a failed refresh must keep the last good view: mode=%v n=%d", m.mode, len(m.epic.Children))
 	}

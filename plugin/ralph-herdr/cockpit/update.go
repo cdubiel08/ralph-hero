@@ -85,7 +85,8 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		}
 		if m.epicDue(time.Time(msg)) {
 			m.epicInFlight = true
-			cmds = append(cmds, fetchEpicCmd(m.cfg, m.runner, m.epicFor))
+			m.epicGen++
+			cmds = append(cmds, fetchEpicCmd(m.cfg, m.runner, m.epicFor, m.epicGen))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -304,11 +305,15 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case epicMsg:
+		if msg.gen != m.epicGen || msg.issue != m.epicFor {
+			// A read from an earlier dispatch — the operator moved off the
+			// epic, closed it, or closed and reopened it — is stale whatever
+			// it says, and it says nothing about the read still out: the
+			// in-flight flag belongs to the CURRENT generation.
+			return m, nil
+		}
 		m.epicInFlight = false
 		m.lastEpic = time.Now()
-		if msg.issue != m.epicFor {
-			return m, nil // a read for an epic the operator has since moved off, or closed
-		}
 		if msg.err != "" {
 			// A failed OPEN is a refusal on the status line; a failed REFRESH
 			// keeps the last good view under the stale banner (viewModel) —
@@ -704,8 +709,9 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		m.epicFor = card.ParentNumber
 		m.epicInFlight = true
+		m.epicGen++
 		m.say(statusFlight, fmt.Sprintf("reading epic #%d…", card.ParentNumber))
-		return m, fetchEpicCmd(m.cfg, m.runner, card.ParentNumber)
+		return m, fetchEpicCmd(m.cfg, m.runner, card.ParentNumber, m.epicGen)
 
 	case "g":
 		card, ok := m.selectedCard()

@@ -480,8 +480,15 @@ type Model struct {
 	// "no children", and a failed REFRESH keeps the last good view under a
 	// stale banner. epicRow is the selected child. peekReturn is where a
 	// peek's esc lands — the overlay when the peek was opened from it.
-	epic         EpicView
-	epicFor      int
+	epic    EpicView
+	epicFor int
+	// epicGen is bumped on EVERY dispatch (the press and each cadence
+	// refresh) and stamped on the read; a result carrying any other
+	// generation is dropped. This is what makes close-then-reopen safe: an
+	// older refresh landing after a newer press matches epicFor but not the
+	// generation, so it can neither show stale children nor clear the
+	// in-flight flag under the read that is still out.
+	epicGen      int
 	epicOK       bool
 	epicErr      string
 	epicRow      int
