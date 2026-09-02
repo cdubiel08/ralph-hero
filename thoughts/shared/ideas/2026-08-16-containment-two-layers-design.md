@@ -198,7 +198,7 @@ another, which was the epic's one cross-cutting acceptance criterion.
 | Decided | Unit | Where it lives |
 |---|---|---|
 | 1 — two properties on a role | #2264 (PR #2290) | `ROLE_DEFS` in `ralph/scripts/contracts.ts`: `toolBinding` and `processContainment` are both required fields, so tsc refuses a half-specified row; `writesTree` is DERIVED (`!(toolBinding && processContainment)`), never authored. `roles.sh` mirrors it under the golden-table test. |
-| 2 — refuse per layer | #2265 (PR #2295), #2266 (PR #2337) | `ralph_tool_binding_args` and `ralph_process_containment_args` in `plugin/ralph-herdr/scripts/roles.sh` — two functions, read into `"$@"` side by side, each returning nothing for a role that does not require its mechanism. Every non-`applied` outcome refuses the spawn and closes the pane; there is no degraded mode. |
+| 2 — refuse per layer | #2265 (PR #2295), #2266 (PR #2337) | `ralph_tool_binding_args` and `ralph_process_containment_args` in `plugin/ralph-herdr/scripts/roles.sh` — two functions, read into `"$@"` side by side, each returning nothing for a role that does not require its mechanism. Each layer has ONE success word — `accepted` for tool binding (its ceiling: `applied` is unreachable, see row 4) and `applied` for process containment (a real kernel denial) — and any other word on a required layer refuses the spawn and closes the pane; there is no degraded mode. |
 | 3 — both recorded in the ledger | #2267 (PR #2343), #2342 (PR #2354) | `tool_binding` and `process_containment` are two top-level fields per spawn record (or a `containment` event on a provisional team-lead / lane-pass row), one `CONTAINMENT_OUTCOMES` word each. The `containment` event refuses one word without the other (`lib.sh` `_ralph_spawn_containment`); a direct spawn record carries whichever its caller passes, and every caller today passes both or neither — mirroring the refusal into `_ralph_spawn_record` is a filed follow-up. Values are read off the argv actually passed and the probe actually observed — never off the role row. |
 | 4 — positive self-test per layer | #2266 (PR #2337), #2341 (PR #2346) | `spawn_containment_probe` in `lib.sh` runs IN the pane before its real prompt: a Bash `touch` inside the tree (must be denied), a Write-tool attempt (must be refused, and must not raise a permission dialog), and a Bash control touch outside (must land, or the run is `unverified`). Stdout carries both words; the spawner records them. **Honest asymmetry:** the tool-not-available error is not harness-observable from outside the pane, so tool binding's `applied` is unreachable by construction — the probe can *refute* binding (`not_applied`) and the ceiling is `accepted`, read off the argv. Process containment's `applied` is a real kernel denial. |
 
@@ -236,7 +236,11 @@ Research trail: `thoughts/shared/research/2026-09-01-sandbox-profile-spike-claud
 (the shipped profile and every rejected carve-out),
 `thoughts/shared/research/2026-09-01-GH-2267-containment-ledger-proof.md`.
 
-## Open — needs decision, not research
+## Open — as written 2026-08-16 (historical; every item is dispositioned under "Implemented" above)
+
+> Preserved as the pre-implementation record. Item 1 is answered (the tender is
+> that role), item 3 is answered (`contracts.ts`, mirrored by `roles.sh`); only
+> item 2, read confinement, is still open.
 
 1. **Is the Bash-capable read-only role worth creating?** It is the only role for
    which layer 2 is load-bearing. Creating it is a `ROLES` change plus an
@@ -250,7 +254,11 @@ Research trail: `thoughts/shared/research/2026-09-01-sandbox-profile-spike-claud
    fragments are shell-consumed (`roles.sh`). GH-1843's lesson applies — one
    definition, two surfaces, never two copies.
 
-## Honest limits
+## Honest limits — as written 2026-08-16 (historical; see "Limits superseded by measurement" above)
+
+> Preserved as the pre-implementation record. The interactive-mode and
+> permission-dialog questions were measured by #2266 and #2341; "nothing here
+> is built" is no longer true.
 
 - Measured on macOS/Seatbelt only. Linux behaviour untested.
 - Only the tool-wide `Edit` deny was tested; the path-scoped form
