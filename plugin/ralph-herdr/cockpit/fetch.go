@@ -338,7 +338,20 @@ type forkDoneMsg struct {
 	detail string
 }
 
-type statusMsg string
+// statusMsg is a typed status-line result (spec §10): the kind picks the
+// leading glyph, the text is the message verbatim.
+type statusMsg struct {
+	kind statusKind
+	text string
+}
+
+func refused(format string, a ...any) statusMsg {
+	return statusMsg{kind: statusRefuse, text: fmt.Sprintf(format, a...)}
+}
+
+func landed(format string, a ...any) statusMsg {
+	return statusMsg{kind: statusOK, text: fmt.Sprintf(format, a...)}
+}
 
 // ── parsers ─────────────────────────────────────────────────────────────────
 
@@ -1273,9 +1286,9 @@ func focusCmd(cfg Config, r Runner, who string) tea.Cmd {
 		_, stderr, err := r.Run(ctx, cfg.Herdr, argsAgentFocus(who)...)
 		cancel()
 		if err != nil {
-			return statusMsg(fmt.Sprintf("focus %s failed: %s", who, firstLine(stderr, err)))
+			return refused("focus %s failed: %s", who, firstLine(stderr, err))
 		}
-		return statusMsg(fmt.Sprintf("observing %s (herdr focus)", who))
+		return landed("observing %s (herdr focus)", who)
 	}
 }
 
@@ -1567,33 +1580,33 @@ func prDiffCmd(cfg Config, r Runner, issue int) tea.Cmd {
 		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		if err != nil {
-			return statusMsg(fmt.Sprintf("board get %d failed: %s", issue,
-				explainReadFailure(&rateProbe{cfg: cfg, r: r}, deadline, timedOut, stderr+out, err)))
+			return refused("board get %d failed: %s", issue,
+				explainReadFailure(&rateProbe{cfg: cfg, r: r}, deadline, timedOut, stderr+out, err))
 		}
 		pr, ok := pickPR(out)
 		if !ok {
-			return statusMsg(fmt.Sprintf("#%d has no PR yet", issue))
+			return statusMsg{kind: statusNudge, text: fmt.Sprintf("#%d has no PR yet", issue)}
 		}
 		if cfg.Herdr == "" {
-			return statusMsg(fmt.Sprintf("no multiplexer — by hand: gh pr diff %d", pr))
+			return refused("no multiplexer — by hand: gh pr diff %d", pr)
 		}
 		ctx2, cancel2 := context.WithTimeout(context.Background(), herdrTimeout)
 		sout, sstderr, serr := r.Run(ctx2, cfg.Herdr, argsPaneSplit()...)
 		cancel2()
 		if serr != nil {
-			return statusMsg(fmt.Sprintf("pane split failed (%s) — by hand: gh pr diff %d", firstLine(sstderr, serr), pr))
+			return refused("pane split failed (%s) — by hand: gh pr diff %d", firstLine(sstderr, serr), pr)
 		}
 		paneID := panePaneID(sout)
 		if paneID == "" {
-			return statusMsg(fmt.Sprintf("pane split gave no pane id — by hand: gh pr diff %d", pr))
+			return refused("pane split gave no pane id — by hand: gh pr diff %d", pr)
 		}
 		ctx3, cancel3 := context.WithTimeout(context.Background(), herdrTimeout)
 		_, rstderr, rerr := r.Run(ctx3, cfg.Herdr, argsPaneRun(paneID, pr)...)
 		cancel3()
 		if rerr != nil {
-			return statusMsg(fmt.Sprintf("pane run failed (%s) — by hand: gh pr diff %d", firstLine(rstderr, rerr), pr))
+			return refused("pane run failed (%s) — by hand: gh pr diff %d", firstLine(rstderr, rerr), pr)
 		}
-		return statusMsg(fmt.Sprintf("PR #%d diff open in pane %s", pr, paneID))
+		return landed("PR #%d diff open in pane %s", pr, paneID)
 	}
 }
 
@@ -1608,9 +1621,9 @@ func openBrowserCmd(card Card) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := exec.CommandContext(ctx, opener, url).Run(); err != nil {
-			return statusMsg(fmt.Sprintf("browser open failed — %s", url))
+			return refused("browser open failed — %s", url)
 		}
-		return statusMsg(fmt.Sprintf("opened %s", url))
+		return landed("opened %s", url)
 	}
 }
 

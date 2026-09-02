@@ -101,6 +101,29 @@ var (
 	}
 	styleColHead    = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 	styleColHeadSel = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+
+	// Liveness (spec §6) and the in-flight column headers (§10): the spinner
+	// is green while polls land, amber `stale Nm` when they do not. The
+	// column spinner is meta-grey — a read being out is not an alert.
+	styleLive      = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+	styleStale     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	styleColFlight = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	// Status line (spec §10) — one glyph ink per kind.
+	statusInk = map[statusKind]lipgloss.Style{
+		statusFlight: lipgloss.NewStyle().Foreground(lipgloss.Color("11")),
+		statusOK:     lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
+		statusRefuse: lipgloss.NewStyle().Foreground(lipgloss.Color("203")),
+		statusNudge:  lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
+		statusView:   lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+	}
+	styleViewText = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+
+	// Legend (spec §9): keys bold white; the primary verb's label bold white
+	// too, the rest 250; the separator and the `on #N` subject in meta grey.
+	styleKey      = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	styleVerbPrim = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	styleVerb     = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 )
 
 func viewModel(m Model) string {
@@ -111,14 +134,7 @@ func viewModel(m Model) string {
 	if m.cfg.Repo != "" {
 		title += " — " + baseName(m.cfg.Repo)
 	}
-	if !m.lastPoll.IsZero() {
-		// The cadence is shown beside the timestamp because it is adaptive: on a
-		// quiet board the gap grows to minutes, and an operator who cannot see
-		// the current cadence reads that silence as a hung cockpit.
-		title += styleDim.Render(fmt.Sprintf("  polled %s · every %s",
-			m.lastPoll.Format("15:04:05"), m.pollEvery.Round(time.Second)))
-	}
-	b.WriteString(truncate(styleTitle.Render(title), m.width))
+	b.WriteString(truncate(styleTitle.Render(title)+"  "+liveness(m, time.Now()), m.width))
 	b.WriteString("\n")
 	// Both facts must survive on the one banner line: a board read failure
 	// is NEVER shadowed by the no-multiplexer banner (on a herdr-less host a
@@ -155,6 +171,7 @@ func viewModel(m Model) string {
 
 	// Body: overlay modes replace the columns; browse/input modes show them.
 	bodyHeight := bodyHeightOf(m)
+	var body string
 	switch m.mode {
 	case ModePeek:
 		// The C8 lineage rides the header (GH-2217): who spawned this session
@@ -163,20 +180,29 @@ func viewModel(m Model) string {
 		if lin := m.agentLineage(m.peekWho); lin != "" {
 			peekTitle += "  (" + lin + ")"
 		}
-		b.WriteString(renderOverlay(m, peekTitle+"  (tail, no focus steal)", m.peekText, bodyHeight))
+		body = renderOverlay(m, peekTitle+"  (tail, no focus steal)", m.peekText, bodyHeight)
 	case ModeDag:
-		b.WriteString(renderOverlay(m, "frontier DAG — eligible & blocked", m.dagText, bodyHeight))
+		body = renderOverlay(m, "frontier DAG — eligible & blocked", m.dagText, bodyHeight)
 	case ModeTopology:
-		b.WriteString(renderTopology(m, bodyHeight))
+		body = renderTopology(m, bodyHeight)
 	default:
 		if m.inboxViewUp() {
 			// The inbox view stays behind the answer input it launched, so
 			// the human types against the decision text they are answering.
-			b.WriteString(renderInbox(m, bodyHeight))
+			body = renderInbox(m, bodyHeight)
 		} else {
-			b.WriteString(renderColumns(m, bodyHeight))
+			body = renderColumns(m, bodyHeight)
 		}
 	}
+	// The footer is PINNED to the last rows of the pane (spec §9): the body
+	// is padded to exactly its budget, so a short column never lets the
+	// legend float up under it. Padding only — the budget is the body's to
+	// keep, and an overrun stays visible rather than silently clipped.
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	for len(lines) < bodyHeight {
+		lines = append(lines, "")
+	}
+	b.WriteString(strings.Join(lines, "\n"))
 	b.WriteString("\n")
 
 	// Input line (reply/answer) or the legend+status pair.
@@ -185,53 +211,183 @@ func viewModel(m Model) string {
 		b.WriteString(renderInput(m))
 	default:
 		for _, line := range legendLines(m) {
-			b.WriteString(truncate(styleDim.Render(line), m.width))
+			b.WriteString(truncate(line, m.width))
 			b.WriteString("\n")
 		}
-		b.WriteString(truncate(m.status, m.width))
+		b.WriteString(truncate(statusLine(m), m.width))
 	}
 	return b.String()
 }
 
-func legend(m Model) string {
-	if m.mode == ModePeek || m.mode == ModeDag || m.mode == ModeTopology {
-		return "esc close"
+// liveness is the header's "is it alive" signal (spec §6): the spinner
+// while polls land on cadence, amber `stale Nm` — the age of the last whole
+// poll — once one fails or falls overdue. It replaces the cadence text; the
+// poll time and the current gap are not shown because neither says whether
+// the NEXT poll is coming, which is the only question the operator has.
+func liveness(m Model, now time.Time) string {
+	g := m.glyphSet()
+	stale, age, known := m.pollStale(now)
+	if !stale {
+		return styleLive.Render(m.spinner())
 	}
-	if m.mode == ModeInbox {
-		return "j/k row · a/⏎ answer decision · g browser · i/esc close"
+	if !known {
+		return styleStale.Render(g.stalled + " stale · no poll has landed")
 	}
-	return "h/l col · j/k card · ⏎ observe · ␣/o peek · r reply · a answer · s spawn · f fork · v dag · T topology · i inbox · d diff · D done⇄human · I inbox⇄human · g browser · q quit"
+	return styleStale.Render(g.stalled + " stale " + formatAge(age))
 }
 
-// legendSep is the separator legend() joins its hints with; legendLines wraps
-// at it and nowhere else, so a hint like "h/l col" or "D done⇄human" is never
-// split across two rows.
-const legendSep = " · "
-
-// legendLines wraps the legend to the pane width, one whole hint at a time,
-// so a narrow pane shows every verb on a second (third…) row instead of
-// cutting the line at whatever hint happened to land on the edge. Capped at
-// maxLegendRows — the last row is then clipped by the caller's truncate — so
-// a pane too narrow for even the wrapped form still leaves room for a body.
-func legendLines(m Model) []string {
-	s := legend(m)
-	if m.width < 1 || lipgloss.Width(s) <= m.width {
-		return []string{s}
+// statusLine renders the typed status (spec §10): a leading glyph says what
+// the message is before it is read. An untyped status (the initial empty
+// line) renders bare.
+func statusLine(m Model) string {
+	if m.statusKind == statusNone {
+		return m.status
 	}
-	var out []string
-	cur := ""
-	for _, hint := range strings.Split(s, legendSep) {
-		switch {
-		case cur == "":
-			cur = hint
-		case lipgloss.Width(cur+legendSep+hint) <= m.width:
-			cur += legendSep + hint
-		default:
-			out = append(out, cur)
-			cur = hint
+	g := m.glyphSet()
+	var glyph string
+	switch m.statusKind {
+	case statusFlight:
+		glyph = m.spinner()
+	case statusOK:
+		glyph = g.ok
+	case statusRefuse:
+		glyph = g.err
+	case statusNudge:
+		glyph = glyphDotFilled
+	case statusView:
+		glyph = "·"
+	}
+	text := m.status
+	if m.statusKind == statusView {
+		text = styleViewText.Render(text)
+	}
+	return statusInk[m.statusKind].Render(glyph) + " " + text
+}
+
+// verbHint is one legend entry: the key and what it does.
+type verbHint struct{ key, label string }
+
+// navHints is legend row 2 — constant in browse (spec §9).
+var navHints = []verbHint{{"h/l j/k", "move"}, {"v", "dag"}, {"T", "topology"}, {"i", "inbox"}, {"D", "done"}, {"I", "inbox-col"}, {"q", "quit"}}
+
+// legendTable is the spec §9 table: the verbs a selection OFFERS, in the
+// order the spec lists them, keyed on the card's state and its live-agent
+// count. It is the curation; cardVerbs filters it through the verbs' own
+// predicates, so a row can only ever be a subset of what is listed here.
+func legendTable(m Model, card Card) []verbHint {
+	live := len(m.agents[card.Number])
+	switch {
+	case card.State == inboxState && card.Queue == "decision":
+		return []verbHint{{"a", "answer"}, {"g", "browser"}}
+	case card.State == inboxState:
+		return []verbHint{{"g", "browser"}}
+	case card.State == doneState:
+		return []verbHint{{"g", "browser"}, {"d", "diff"}, {"D", "back to Human Needed"}}
+	case card.State == columnStates[2] && live > 0:
+		return []verbHint{{"a", "answer"}, {"r", "reply"}, {"⏎", "observe"}, {"␣", "peek"}, {"g", "browser"}}
+	case card.State == columnStates[2]:
+		return []verbHint{{"a", "answer"}, {"g", "browser"}}
+	case live >= 2:
+		return []verbHint{{"⏎", "observe w-lane"}, {"␣", "peek"}, {"r", "reply"}, {"d", "diff"}, {"g", "browser"}}
+	case live == 1:
+		return []verbHint{{"⏎", "observe"}, {"␣", "peek"}, {"r", "reply"}, {"f", "fork"}, {"d", "diff"}, {"g", "browser"}}
+	case card.State == columnStates[1]:
+		return []verbHint{{"d", "diff"}, {"s", "spawn"}, {"g", "browser"}}
+	}
+	return []verbHint{{"s", "spawn"}, {"d", "diff"}, {"g", "browser"}}
+}
+
+// cardVerbs is legend row 1 for the selected card: the spec table, minus
+// every verb whose own predicate would refuse it (option A — hidden, never
+// struck through). `d`, `g` and `D` need only a card. Unavailable is decided
+// by the SAME function the keypress runs, which is what makes the legend
+// unable to disagree with the refusal it would otherwise promise past.
+func cardVerbs(m Model, card Card) []verbHint {
+	var out []verbHint
+	for _, h := range legendTable(m, card) {
+		kind := statusNone
+		switch h.key {
+		case "⏎":
+			kind, _ = refuseObserve(m, card)
+		case "␣":
+			kind, _ = refusePeek(m, card)
+		case "r":
+			kind, _ = refuseReply(m, card)
+		case "f":
+			kind, _ = refuseFork(m, card)
+		case "s":
+			kind, _ = refuseSpawn(m, card)
+		case "a":
+			kind, _ = refuseAnswer(card)
+		}
+		if kind == statusNone {
+			out = append(out, h)
 		}
 	}
-	out = append(out, cur)
+	return out
+}
+
+// legendRows are the footer's legend rows before wrapping, each a list of
+// already-styled hints joined by legendSep. Overlays and the inbox view keep
+// their one-row legends; browse gets the contextual row 1 over the constant
+// navigation row 2 (spec §9).
+func legendRows(m Model) [][]string {
+	switch m.mode {
+	case ModePeek, ModeDag, ModeTopology:
+		return [][]string{{styleDim.Render("esc close")}}
+	case ModeInbox:
+		return [][]string{dimHints("j/k row", "a/⏎ answer decision", "g browser", "i/esc close")}
+	}
+	row1 := []string{}
+	card, ok := m.selectedCard()
+	if !ok {
+		row1 = append(row1, styleMeta.Render("(no card — views only)"))
+	} else {
+		subject := styleMeta.Render(fmt.Sprintf("on #%d", card.Number))
+		for i, h := range cardVerbs(m, card) {
+			label := styleVerb.Render(h.label)
+			if i == 0 {
+				label = styleVerbPrim.Render(h.label)
+			}
+			hint := styleKey.Render(h.key) + " " + label
+			if i == 0 {
+				hint = subject + "  " + hint
+			}
+			row1 = append(row1, hint)
+		}
+		if len(row1) == 0 {
+			row1 = append(row1, subject+"  "+styleMeta.Render("(no verbs here)"))
+		}
+	}
+	row2 := make([]string, 0, len(navHints))
+	for _, h := range navHints {
+		row2 = append(row2, styleDim.Render(h.key+" "+h.label))
+	}
+	return [][]string{row1, row2}
+}
+
+func dimHints(hints ...string) []string {
+	out := make([]string, 0, len(hints))
+	for _, h := range hints {
+		out = append(out, styleDim.Render(h))
+	}
+	return out
+}
+
+// legendSep separates hints; legendLines wraps at hint boundaries and
+// nowhere else, so a hint like "h/l j/k move" is never split across rows.
+const legendSep = " · "
+
+// legendLines wraps each legend row to the pane width, one whole hint at a
+// time, so a narrow pane shows every verb on a further row instead of
+// cutting the line at whatever hint happened to land on the edge. Capped at
+// maxLegendRows in total — the last row is then marked — so a pane too
+// narrow for even the wrapped form still leaves room for a body.
+func legendLines(m Model) []string {
+	var out []string
+	for _, row := range legendRows(m) {
+		out = append(out, wrapHints(row, m.width)...)
+	}
 	if len(out) > maxLegendRows {
 		// Dropped hints must not vanish silently: the last kept row says so.
 		out = out[:maxLegendRows]
@@ -242,6 +398,24 @@ func legendLines(m Model) []string {
 		out[maxLegendRows-1] = last + " …"
 	}
 	return out
+}
+
+func wrapHints(hints []string, width int) []string {
+	sep := styleMeta.Render(legendSep)
+	var out []string
+	cur := ""
+	for _, hint := range hints {
+		switch {
+		case cur == "":
+			cur = hint
+		case width < 1 || lipgloss.Width(cur+legendSep+hint) <= width:
+			cur += sep + hint
+		default:
+			out = append(out, cur)
+			cur = hint
+		}
+	}
+	return append(out, cur)
 }
 
 // footerRowsOf is how many rows the footer takes below the body: the input
@@ -348,12 +522,19 @@ func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
 		nameStyle = styleColHeadSel
 	}
 	count := fmt.Sprintf("%d", len(cards))
-	pad := width - lipgloss.Width(name) - lipgloss.Width(count) - 2
+	// Left of the count (spec §10): a spinner while this column's read is
+	// out, amber `stale Nm` when its last read failed and the cards shown
+	// are the last good ones.
+	right := colCount[idx].Render(count)
+	if note := columnFlight(m, idx, time.Now()); note != "" {
+		right = note + "  " + right
+	}
+	pad := width - lipgloss.Width(name) - lipgloss.Width(right) - 2
 	if pad < 1 {
 		pad = 1
 	}
 	var b strings.Builder
-	b.WriteString(truncate(nameStyle.Render(name)+strings.Repeat(" ", pad)+colCount[idx].Render(count), width))
+	b.WriteString(truncate(nameStyle.Render(name)+strings.Repeat(" ", pad)+right, width))
 	b.WriteString("\n")
 	b.WriteString(truncate(styleRule.Render(strings.Repeat("━", max(1, min(width-2, 60)))), width))
 	b.WriteString("\n")
@@ -420,6 +601,29 @@ func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
 		b.WriteString(truncate(styleDim.Render("  withheld: "+m.inboxWithheld+" (self-clearing)"), width))
 	}
 	return lipgloss.NewStyle().Width(width).Render(b.String())
+}
+
+// columnFlight is column idx's own read state for its header: the spinner
+// while a read is out (a read being out outranks a stale verdict — the cure
+// is in flight), `stale Nm` once the last read failed, "" when the cards are
+// current. The third column answers for whichever read it is showing.
+func columnFlight(m Model, idx int, now time.Time) string {
+	inFlight, failed, goodAt := m.pollInFlight, m.colFailed[idx], m.colGoodAt[idx]
+	switch {
+	case idx == 2 && m.showInbox:
+		inFlight, failed, goodAt = m.inboxInFlight, !m.inboxOK && m.inboxErr != "", m.inboxGoodAt
+	case idx == 2 && m.showDone:
+		inFlight, failed, goodAt = m.doneInFlight, !m.doneOK && m.doneErr != "", m.doneGoodAt
+	}
+	switch {
+	case inFlight:
+		return styleColFlight.Render(m.spinner())
+	case failed && goodAt.IsZero():
+		return styleStale.Render("stale")
+	case failed:
+		return styleStale.Render("stale " + formatAge(now.Sub(goodAt)))
+	}
+	return ""
 }
 
 // renderCard emits exactly cardRows lines — three content lines under a

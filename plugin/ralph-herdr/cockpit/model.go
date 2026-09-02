@@ -453,16 +453,77 @@ type Model struct {
 	topoEscs       []TopoEsc
 	topoEscErr     string
 
-	// Chrome.
+	// Chrome. status is plain text; statusKind types it (spec §10) and the
+	// renderer supplies the glyph, so the text never carries a tier glyph
+	// baked in at write time.
 	status       string
+	statusKind   statusKind
 	width        int
 	height       int
 	pollInFlight bool
+
+	// Liveness (spec §6). spinFrame advances once per poll that landed
+	// whole; lastGoodPoll is the newest such poll (lastPoll counts failures
+	// too). Per column: colFailed marks the last read as failed — the cards
+	// shown are the last good ones, stamped colGoodAt — and the Done/Inbox
+	// views carry the same pair for the third column's other reads.
+	spinFrame    int
+	lastGoodPoll time.Time
+	colFailed    [3]bool
+	colGoodAt    [3]time.Time
+	doneGoodAt   time.Time
+	inboxGoodAt  time.Time
 
 	// Mouse: double-click = observe.
 	lastClickAt  time.Time
 	lastClickCol int
 	lastClickRow int
+}
+
+// statusKind types the status line (spec §10): a leading glyph says what
+// the message IS before it is read.
+type statusKind int
+
+const (
+	statusNone   statusKind = iota
+	statusFlight            // a command is out — spinner, yellow
+	statusOK                // it landed — ✓ green
+	statusRefuse            // refused or failed, reason verbatim — ✗ red
+	statusNudge             // nothing wrong, something to do — ● amber
+	statusView              // a view changed — · dim
+)
+
+// say sets the status line with its kind.
+func (m *Model) say(kind statusKind, text string) {
+	m.status, m.statusKind = text, kind
+}
+
+// pollStale is the header's liveness verdict: true when the last poll failed
+// (any column) or when the last whole poll is older than the cadence plus
+// one tick — the honest bound pollDue states, since the walk is only ever
+// decided ON a tick. age is since the last whole poll; known is false when
+// there has never been one.
+func (m Model) pollStale(now time.Time) (stale bool, age time.Duration, known bool) {
+	known = !m.lastGoodPoll.IsZero()
+	if known {
+		age = now.Sub(m.lastGoodPoll)
+	}
+	if m.boardErr != "" || m.colFailed != [3]bool{} {
+		return true, age, known
+	}
+	if !known {
+		return false, 0, false // first poll still out: alive, not stale
+	}
+	return age > m.pollEvery+m.cfg.Interval, age, known
+}
+
+// spinner is the current liveness frame in the active tier.
+func (m Model) spinner() string {
+	frames := []rune(m.glyphSet().spin)
+	if len(frames) == 0 {
+		return ""
+	}
+	return string(frames[m.spinFrame%len(frames)])
 }
 
 // newModel builds the initial model. The overlay starts off until the first

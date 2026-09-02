@@ -113,17 +113,30 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 
 	case boardMsg:
 		m.pollInFlight = false
-		m.lastPoll = time.Now()
+		now := time.Now()
+		m.lastPoll = now
 		m.boardErr = msg.err
 		// Per-column merge: a FAILED column read keeps its last good cards
 		// (a failed read and an empty column are different facts — matching
 		// fetch.go's "reports as an error, never as empty" and the fzf
 		// rung's whole-render refusal); a successful read replaces, empty
-		// included.
+		// included. The column header says which it got (colFailed).
+		whole := msg.err == ""
 		for i := range msg.cols {
-			if !msg.failed[i] {
-				m.cols[i] = msg.cols[i]
+			m.colFailed[i] = msg.failed[i]
+			if msg.failed[i] {
+				whole = false
+				continue
 			}
+			m.cols[i] = msg.cols[i]
+			m.colGoodAt[i] = now
+		}
+		// The liveness spinner turns only on a poll that landed whole; a
+		// failed one stops it, and the header goes stale on the age of the
+		// last whole poll (spec §6).
+		if whole {
+			m.lastGoodPoll = now
+			m.spinFrame++
 		}
 		m.clampCursor()
 		// Cadence, measured on the MERGED columns: a failed read keeps its last
@@ -173,6 +186,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m.doneOK = true
+		m.doneGoodAt = m.lastDone
 		m.doneCards = msg.cards
 		if msg.windowDays > 0 {
 			m.doneWindowDays = msg.windowDays
@@ -199,6 +213,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			return m, owed
 		}
 		m.inboxOK = true
+		m.inboxGoodAt = m.lastInbox
 		m.inboxCards = msg.cards
 		m.inboxWithheld = msg.withheld
 		m.inboxLeads = msg.leads
@@ -249,7 +264,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != "" {
-			m.status = fmt.Sprintf("peek %s failed: %s", msg.who, msg.err)
+			m.say(statusRefuse, fmt.Sprintf("peek %s failed: %s", msg.who, msg.err))
 			return m, nil
 		}
 		m.mode = ModePeek
@@ -262,7 +277,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil // stale result — same never-hijack rule as peekMsg
 		}
 		if msg.err != "" {
-			m.status = "frontier read failed: " + msg.err
+			m.say(statusRefuse, "frontier read failed: "+msg.err)
 			return m, nil
 		}
 		m.mode = ModeDag
@@ -274,7 +289,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil // stale result — same never-hijack rule as peekMsg
 		}
 		if msg.err != "" {
-			m.status = "roster read failed: " + msg.err
+			m.say(statusRefuse, "roster read failed: "+msg.err)
 			return m, nil
 		}
 		m.mode = ModeTopology
@@ -293,7 +308,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			m.mode = ModeBrowse
 			m.input = ""
 			m.inputErr = ""
-			m.status = fmt.Sprintf("✓ delivered to %s", msg.who)
+			m.say(statusOK, fmt.Sprintf("delivered to %s", msg.who))
 			return m, nil
 		}
 		// Failure: typed text is PRESERVED in the input line; the error is
@@ -313,7 +328,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 				m.mode = m.answerReturnMode()
 				m.input = ""
 				m.inputErr = ""
-				m.status = fmt.Sprintf("#%d: the Answer comment IS on the record — only the move failed; retry the MOVE (board claim %d), never re-answer", msg.issue, msg.issue)
+				m.say(statusRefuse, fmt.Sprintf("#%d: the Answer comment IS on the record — only the move failed; retry the MOVE (board claim %d), never re-answer", msg.issue, msg.issue))
 				refresh := m.inboxRefreshAfterAnswer()
 				return m, refresh
 			}
@@ -336,7 +351,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 				agent = fmt.Sprintf("agent: ✗ %s (answer IS on the issue)", msg.agentDetail)
 			}
 		}
-		m.status = board + " · " + agent
+		m.say(statusOK, board+" · "+agent)
 		// The item just moved Human Needed → In Progress: re-poll now. Our own
 		// write, so the cadence returns to the floor too — more is coming.
 		m.pollInFlight = true
@@ -350,11 +365,11 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			// A spawned session claims the issue within seconds — a board write
 			// we caused. Be at the floor when it lands.
 			m.snapToFloor()
-			m.status = fmt.Sprintf("spawn #%d: %s", msg.issue, msg.detail)
+			m.say(statusOK, fmt.Sprintf("spawn #%d: %s", msg.issue, msg.detail))
 		case 2:
-			m.status = fmt.Sprintf("spawn #%d skipped — %s", msg.issue, msg.detail)
+			m.say(statusNudge, fmt.Sprintf("spawn #%d skipped — %s", msg.issue, msg.detail))
 		default:
-			m.status = fmt.Sprintf("spawn #%d failed (rc %d): %s", msg.issue, msg.rc, msg.detail)
+			m.say(statusRefuse, fmt.Sprintf("spawn #%d failed (rc %d): %s", msg.issue, msg.rc, msg.detail))
 		}
 		// The freshness verdict rides every outcome: a spawn that ran on a
 		// stale plugin took the risk whether or not it succeeded (GH-2340).
@@ -365,14 +380,14 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 
 	case forkDoneMsg:
 		if msg.rc == 0 {
-			m.status = fmt.Sprintf("fork #%d: %s", msg.issue, msg.detail)
+			m.say(statusOK, fmt.Sprintf("fork #%d: %s", msg.issue, msg.detail))
 		} else {
-			m.status = fmt.Sprintf("fork #%d failed (rc %d): %s", msg.issue, msg.rc, msg.detail)
+			m.say(statusRefuse, fmt.Sprintf("fork #%d failed (rc %d): %s", msg.issue, msg.rc, msg.detail))
 		}
 		return m, fetchAgentsCmd(m.cfg, m.runner)
 
 	case statusMsg:
-		m.status = string(msg)
+		m.say(msg.kind, msg.text)
 		return m, nil
 
 	case tea.FocusMsg:
@@ -480,23 +495,23 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		return verbFork(m)
 
 	case "v":
-		m.status = "reading frontier…"
+		m.say(statusFlight, "reading frontier…")
 		return m, dagCmd(m.cfg, m.runner)
 
 	case "T":
 		// The topology tree (GH-2219, D6.1) — on its own letter, NOT on D
 		// (operator note): D swaps a column, T replaces the body. Upper-case
 		// because a slip from `t` should do nothing rather than change a view.
-		m.status = "reading roster…"
+		m.say(statusFlight, "reading roster…")
 		return m, topologyCmd(m.cfg, m.runner)
 
 	case "d":
 		card, ok := m.selectedCard()
 		if !ok {
-			m.status = "no card selected"
+			m.say(statusNudge, "no card selected")
 			return m, nil
 		}
-		m.status = fmt.Sprintf("looking up #%d's PR…", card.Number)
+		m.say(statusFlight, fmt.Sprintf("looking up #%d's PR…", card.Number))
 		return m, prDiffCmd(m.cfg, m.runner, card.Number)
 
 	case "D":
@@ -516,14 +531,14 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		m.clampCursor()
 		if !m.showDone {
-			m.status = "third column: Human Needed"
+			m.say(statusView, "third column: Human Needed")
 			return m, nil
 		}
 		// Fetch NOW rather than at the next tick: `D` is the whole signal that
 		// anyone wants this column, and waiting up to SignalInterval to fill it
 		// would make the key feel broken. Subsequent refreshes ride the second
 		// cadence while the column stays up.
-		m.status = m.doneTitle() + " — a WINDOW, not all history; D returns to Human Needed"
+		m.say(statusView, m.doneTitle()+" — a WINDOW, not all history; D returns to Human Needed")
 		if m.doneInFlight || !m.lastDone.IsZero() {
 			return m, nil
 		}
@@ -542,13 +557,13 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		m.clampCursor()
 		if !m.showInbox {
-			m.status = "third column: Human Needed"
+			m.say(statusView, "third column: Human Needed")
 			return m, nil
 		}
 		// Fetch NOW rather than at the next tick — `I` is the whole signal
 		// that anyone wants this view. Refreshes ride the second cadence
 		// while the column stays up.
-		m.status = "Inbox — Tier 1 decisions, each with its disposition verb; I returns to Human Needed"
+		m.say(statusView, "Inbox — Tier 1 decisions, each with its disposition verb; I returns to Human Needed")
 		if m.inboxInFlight || !m.lastInbox.IsZero() {
 			return m, nil
 		}
@@ -561,7 +576,7 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "g":
 		card, ok := m.selectedCard()
 		if !ok {
-			m.status = "no card selected"
+			m.say(statusNudge, "no card selected")
 			return m, nil
 		}
 		return m, openBrowserCmd(card)
@@ -579,7 +594,7 @@ func openInboxView(m Model) (Model, tea.Cmd) {
 	m.mode = ModeInbox
 	m.inboxReturn = false
 	m.clampInboxRow()
-	m.status = "Inbox — Tier 1, oldest first; a/⏎ answers a decision row; i or esc returns"
+	m.say(statusView, "Inbox — Tier 1, oldest first; a/⏎ answers a decision row; i or esc returns")
 	if m.inboxInFlight {
 		return m, nil
 	}
@@ -605,7 +620,7 @@ func updateInboxKey(m Model, key string) (Model, tea.Cmd) {
 	case "a", "enter":
 		card, ok := m.selectedInboxCard()
 		if !ok {
-			m.status = "inbox: no row selected"
+			m.say(statusNudge, "inbox: no row selected")
 			return m, nil
 		}
 		next, cmd := verbAnswerCard(m, card)
@@ -616,7 +631,7 @@ func updateInboxKey(m Model, key string) (Model, tea.Cmd) {
 	case "g":
 		card, ok := m.selectedInboxCard()
 		if !ok {
-			m.status = "inbox: no row selected"
+			m.say(statusNudge, "inbox: no row selected")
 			return m, nil
 		}
 		return m, openBrowserCmd(card)
@@ -672,58 +687,150 @@ func updateInputKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 
 // ── browse verbs ────────────────────────────────────────────────────────────
 
+// ── verb predicates ─────────────────────────────────────────────────────────
+//
+// Each verb's refusal is ONE function that the verb runs and the legend
+// reads (spec §9): a verb the legend lists is a verb that would proceed, by
+// construction — there is no second predicate to drift. kind == statusNone
+// means the verb may proceed; otherwise the pair is the status line verbatim.
+
+func refuseObserve(m Model, card Card) (statusKind, string) {
+	if !m.herdrOK {
+		return statusRefuse, fmt.Sprintf("%s — by hand: board get %d", noMuxBanner, card.Number)
+	}
+	if _, ok := m.agentFor(card.Number); !ok {
+		return statusNudge, fmt.Sprintf("no live agent for #%d — s spawns one", card.Number)
+	}
+	return statusNone, ""
+}
+
+func refusePeek(m Model, card Card) (statusKind, string) {
+	if !m.herdrOK {
+		return statusRefuse, fmt.Sprintf("%s — by hand: board get %d", noMuxBanner, card.Number)
+	}
+	if _, ok := m.agentFor(card.Number); !ok {
+		return statusNudge, fmt.Sprintf("no live agent for #%d — nothing to peek", card.Number)
+	}
+	return statusNone, ""
+}
+
+func refuseReply(m Model, card Card) (statusKind, string) {
+	if !m.herdrOK {
+		return statusRefuse, fmt.Sprintf("%s — by hand: herdr agent prompt w%d-… \"…\"", noMuxBanner, card.Number)
+	}
+	if _, ok := m.agentFor(card.Number); !ok {
+		return statusNudge, fmt.Sprintf("no live agent for #%d — a answers the board, s spawns", card.Number)
+	}
+	return statusNone, ""
+}
+
+// refuseAnswer: two shapes qualify — a Human Needed card, and an inbox
+// DECISION row, which IS a Human Needed item seen through the queue (the
+// CHEATSHEET's "a answers it in place"; the card carries inboxState, so a
+// state-only test refused exactly the row it promised). Every other inbox
+// row has a disposition verb that is not `answer`, and the cockpit names it
+// rather than running it: it is a viewer.
+func refuseAnswer(card Card) (statusKind, string) {
+	switch {
+	case card.State == "Human Needed":
+	case card.State == inboxState && card.Queue == "decision":
+	case card.State == inboxState:
+		return statusRefuse, fmt.Sprintf("#%d is an inbox %s, not a decision — dispose it by hand: %s", card.Number, card.Queue, card.Verb)
+	default:
+		return statusRefuse, fmt.Sprintf("#%d is %q — a answers Human Needed cards", card.Number, card.State)
+	}
+	return statusNone, ""
+}
+
+func refuseSpawn(m Model, card Card) (statusKind, string) {
+	if card.State == doneState {
+		// A Done card is a closed issue from the window read, not work. The
+		// spawn path would take a claim on it; refuse here so the reason is
+		// legible instead of arriving as a board refusal two layers down.
+		return statusRefuse, fmt.Sprintf("#%d is closed (%s) — nothing to spawn; D returns to Human Needed", card.Number, m.doneTitle())
+	}
+	if card.State == inboxState {
+		// An inbox row is a decision waiting on the HUMAN — spawning a worker
+		// at it inverts the queue's whole point (and the claim would be
+		// refused by the machine anyway: Intake is unclaimable, Human Needed
+		// is a pause). The row's own verb is the way out.
+		return statusRefuse, fmt.Sprintf("#%d is an inbox %s — dispose it: %s", card.Number, card.Queue, card.Verb)
+	}
+	if !m.herdrOK {
+		return statusRefuse, fmt.Sprintf("%s — by hand: /ralph:work %d in a session", noMuxBanner, card.Number)
+	}
+	return statusNone, ""
+}
+
+// refuseFork (GH-1957): the row is an ISSUE, so the fork source is only
+// unambiguous when the issue has exactly one live agent: two agents get a
+// named refusal rather than a silent pick, since the pane actions
+// (fork-right/down/tab) already say "beside THIS pane" and are the right
+// surface for that case.
+func refuseFork(m Model, card Card) (statusKind, string) {
+	if !m.herdrOK {
+		return statusRefuse, noMuxBanner + " — a fork needs a live pane to fork from"
+	}
+	as := m.agents[card.Number]
+	switch {
+	case len(as) == 0:
+		return statusNudge, fmt.Sprintf("no live session for #%d — nothing to fork (s spawns one)", card.Number)
+	case len(as) > 1:
+		names := make([]string, 0, len(as))
+		for _, a := range as {
+			names = append(names, a.Name)
+		}
+		return statusRefuse, fmt.Sprintf("#%d has %d live sessions (%s) — fork from the pane itself (herdr's fork-right/down/tab actions)",
+			card.Number, len(as), strings.Join(names, ", "))
+	}
+	if as[0].Pane == "" {
+		return statusRefuse, fmt.Sprintf("herdr reports no pane for %s — nothing to fork", as[0].Name)
+	}
+	return statusNone, ""
+}
+
+// ── verbs ───────────────────────────────────────────────────────────────────
+
 func verbObserve(m Model) (Model, tea.Cmd) {
 	card, ok := m.selectedCard()
 	if !ok {
-		m.status = "no card selected"
+		m.say(statusNudge, "no card selected")
 		return m, nil
 	}
-	if !m.herdrOK {
-		m.status = fmt.Sprintf("%s — by hand: board get %d", noMuxBanner, card.Number)
+	if kind, why := refuseObserve(m, card); kind != statusNone {
+		m.say(kind, why)
 		return m, nil
 	}
-	agent, ok := m.agentFor(card.Number)
-	if !ok {
-		m.status = fmt.Sprintf("no live agent for #%d — s spawns one", card.Number)
-		return m, nil
-	}
+	agent, _ := m.agentFor(card.Number)
 	return m, focusCmd(m.cfg, m.runner, agent.Name)
 }
 
 func verbPeek(m Model) (Model, tea.Cmd) {
 	card, ok := m.selectedCard()
 	if !ok {
-		m.status = "no card selected"
+		m.say(statusNudge, "no card selected")
 		return m, nil
 	}
-	if !m.herdrOK {
-		m.status = fmt.Sprintf("%s — by hand: board get %d", noMuxBanner, card.Number)
+	if kind, why := refusePeek(m, card); kind != statusNone {
+		m.say(kind, why)
 		return m, nil
 	}
-	agent, ok := m.agentFor(card.Number)
-	if !ok {
-		m.status = fmt.Sprintf("no live agent for #%d — nothing to peek", card.Number)
-		return m, nil
-	}
-	m.status = fmt.Sprintf("reading %s…", agent.Name)
+	agent, _ := m.agentFor(card.Number)
+	m.say(statusFlight, fmt.Sprintf("reading %s…", agent.Name))
 	return m, peekCmd(m.cfg, m.runner, agent.Name)
 }
 
 func verbReply(m Model) (Model, tea.Cmd) {
 	card, ok := m.selectedCard()
 	if !ok {
-		m.status = "no card selected"
+		m.say(statusNudge, "no card selected")
 		return m, nil
 	}
-	if !m.herdrOK {
-		m.status = fmt.Sprintf("%s — by hand: herdr agent prompt w%d-… \"…\"", noMuxBanner, card.Number)
+	if kind, why := refuseReply(m, card); kind != statusNone {
+		m.say(kind, why)
 		return m, nil
 	}
-	agent, ok := m.agentFor(card.Number)
-	if !ok {
-		m.status = fmt.Sprintf("no live agent for #%d — a answers the board, s spawns", card.Number)
-		return m, nil
-	}
+	agent, _ := m.agentFor(card.Number)
 	// Fresh target resets a stale buffer; same target keeps preserved text.
 	if m.inputFor != card.Number || m.inputWho != agent.Name {
 		m.input = ""
@@ -738,28 +845,17 @@ func verbReply(m Model) (Model, tea.Cmd) {
 func verbAnswer(m Model) (Model, tea.Cmd) {
 	card, ok := m.selectedCard()
 	if !ok {
-		m.status = "no card selected"
+		m.say(statusNudge, "no card selected")
 		return m, nil
 	}
 	m.inboxReturn = false
 	return verbAnswerCard(m, card)
 }
 
-// verbAnswerCard opens the answer input on one card. Two shapes qualify: a
-// Human Needed card, and an inbox DECISION row — which IS a Human Needed item
-// seen through the queue (the CHEATSHEET's "a answers it in place"; the card
-// carries inboxState, so a state-only test refused exactly the row it
-// promised). Every other inbox row has a disposition verb that is not
-// `answer`, and the cockpit names it rather than running it: it is a viewer.
+// verbAnswerCard opens the answer input on one card (refuseAnswer says which).
 func verbAnswerCard(m Model, card Card) (Model, tea.Cmd) {
-	switch {
-	case card.State == "Human Needed":
-	case card.State == inboxState && card.Queue == "decision":
-	case card.State == inboxState:
-		m.status = fmt.Sprintf("#%d is an inbox %s, not a decision — dispose it by hand: %s", card.Number, card.Queue, card.Verb)
-		return m, nil
-	default:
-		m.status = fmt.Sprintf("#%d is %q — a answers Human Needed cards", card.Number, card.State)
+	if kind, why := refuseAnswer(card); kind != statusNone {
+		m.say(kind, why)
 		return m, nil
 	}
 	if m.inputFor != card.Number || m.inputWho != "" {
@@ -803,66 +899,30 @@ func (m *Model) inboxRefreshAfterAnswer() tea.Cmd {
 func verbSpawn(m Model) (Model, tea.Cmd) {
 	card, ok := m.selectedCard()
 	if !ok {
-		m.status = "no card selected"
+		m.say(statusNudge, "no card selected")
 		return m, nil
 	}
-	if card.State == doneState {
-		// A Done card is a closed issue from the window read, not work. The
-		// spawn path would take a claim on it; refuse here so the reason is
-		// legible instead of arriving as a board refusal two layers down.
-		m.status = fmt.Sprintf("#%d is closed (%s) — nothing to spawn; D returns to Human Needed", card.Number, m.doneTitle())
+	if kind, why := refuseSpawn(m, card); kind != statusNone {
+		m.say(kind, why)
 		return m, nil
 	}
-	if card.State == inboxState {
-		// An inbox row is a decision waiting on the HUMAN — spawning a worker
-		// at it inverts the queue's whole point (and the claim would be
-		// refused by the machine anyway: Intake is unclaimable, Human Needed
-		// is a pause). The row's own verb is the way out.
-		m.status = fmt.Sprintf("#%d is an inbox %s — dispose it: %s", card.Number, card.Queue, card.Verb)
-		return m, nil
-	}
-	if !m.herdrOK {
-		m.status = fmt.Sprintf("%s — by hand: /ralph:work %d in a session", noMuxBanner, card.Number)
-		return m, nil
-	}
-	m.status = fmt.Sprintf("spawning a work session for #%d…", card.Number)
+	m.say(statusFlight, fmt.Sprintf("spawning a work session for #%d…", card.Number))
 	return m, spawnCmd(m.cfg, m.runner, card.Number)
 }
 
-// verbFork forks the selected issue's live session (GH-1957). The row is an
-// ISSUE, so the fork source is only unambiguous when the issue has exactly one
-// live agent: two agents get a named refusal rather than a silent pick, since
-// the pane actions (fork-right/down/tab) already say "beside THIS pane" and
-// are the right surface for that case.
+// verbFork forks the selected issue's live session (refuseFork says when).
 func verbFork(m Model) (Model, tea.Cmd) {
 	card, ok := m.selectedCard()
 	if !ok {
-		m.status = "no card selected"
+		m.say(statusNudge, "no card selected")
 		return m, nil
 	}
-	if !m.herdrOK {
-		m.status = noMuxBanner + " — a fork needs a live pane to fork from"
+	if kind, why := refuseFork(m, card); kind != statusNone {
+		m.say(kind, why)
 		return m, nil
 	}
 	as := m.agents[card.Number]
-	switch {
-	case len(as) == 0:
-		m.status = fmt.Sprintf("no live session for #%d — nothing to fork (s spawns one)", card.Number)
-		return m, nil
-	case len(as) > 1:
-		names := make([]string, 0, len(as))
-		for _, a := range as {
-			names = append(names, a.Name)
-		}
-		m.status = fmt.Sprintf("#%d has %d live sessions (%s) — fork from the pane itself (herdr's fork-right/down/tab actions)",
-			card.Number, len(as), strings.Join(names, ", "))
-		return m, nil
-	}
-	if as[0].Pane == "" {
-		m.status = fmt.Sprintf("herdr reports no pane for %s — nothing to fork", as[0].Name)
-		return m, nil
-	}
-	m.status = fmt.Sprintf("forking %s…", as[0].Name)
+	m.say(statusFlight, fmt.Sprintf("forking %s…", as[0].Name))
 	return m, forkCmd(m.cfg, m.runner, card.Number, as[0].Pane)
 }
 

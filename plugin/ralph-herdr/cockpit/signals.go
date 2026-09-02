@@ -53,6 +53,9 @@ type glyphSet struct {
 	ok      string
 	err     string
 	stalled string
+	// spin is the liveness spinner's frame set, one rune per frame; the
+	// header and the in-flight column headers index it by poll count.
+	spin string
 }
 
 // Every codepoint here was verified present in JetBrainsMono Nerd Font (cmap
@@ -71,6 +74,7 @@ var nerdGlyphs = glyphSet{
 	ok:      "\uF00C", // nf-fa-check
 	err:     "\uF00D", // nf-fa-close
 	stalled: "\uF071", // nf-fa-warning
+	spin:    "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏",
 }
 
 var unicodeGlyphs = glyphSet{
@@ -87,6 +91,7 @@ var unicodeGlyphs = glyphSet{
 	ok:      "✓",
 	err:     "✗",
 	stalled: "◍",
+	spin:    "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏",
 }
 
 var asciiGlyphs = glyphSet{
@@ -103,6 +108,7 @@ var asciiGlyphs = glyphSet{
 	ok:      "ok",
 	err:     "!!",
 	stalled: "x",
+	spin:    `|/-\`,
 }
 
 // The state vocabulary's glyphs — the same in every tier (see above). Filled
