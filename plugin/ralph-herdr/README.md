@@ -67,7 +67,7 @@ herdr's shapes map onto ralph's without translation:
   the repo workspace — exactly as children group under an epic on the board. When an issue has a board parent, the
   worktree carries a `--label "GH-N via GH-parent"` so the grouping reads the same
   in herdr as it does on the board.
-- **tabs = lanes.** A lane pass (`ralph-deliver` / `ralph-tend`) gets a tab of its
+- **tabs = lanes.** A lane pass (`r0-deliver` / `t0-tend`) gets a tab of its
   own; one live pass per lane, by name.
 - **panes = sessions.** One agent per pane; the pane outliving the session is the
   point (transcript stays for review).
@@ -86,8 +86,8 @@ herdr's shapes map onto ralph's without translation:
 | `answer` | popup | walk Human Needed and answer ONE item, **comment-first**: `board list --state "Human Needed" --json` → pick → the issue's latest comments (bounded `gh issue view --comments` tail) → type the answer mail(1)-style (end with a lone `.` line) → `board answer N -m` posts the **Answer** issue comment; the item STAYS Human Needed and the resuming session takes the edge itself with `board claim N` (GH-2204 — the claim guards bind on the actual driver, and if the pane or herdr vanishes mid-answer, the decision is already on the record). Only then, if a live session owns N, a `herdr agent prompt … --wait` nudge telling it to claim-and-resume — delivery reported honestly, never assumed. A board CLI predating the verb falls back to `gh issue comment` + `board move`, the old comment-then-move ordering |
 | `link-open` | none* | the `[[link_handlers]]` target — click a `github.com/<owner>/<repo>/issues\|pull/N` URL in any pane: in-scope URL with a live session for N → `agent focus`; in-scope with no session → the `link-offer` popup (board state + `[s]` spawn via the same sanctioned `spawn_work_session` path / `[o]` browser / `[q]` close); out-of-scope or unresolvable scope → OS browser. The manifest pattern is generic on purpose; the script owns the scope judgment. *Also listed as a plain action; invoked without a clicked URL it says so in the plugin log and exits |
 | `fork-right` / `fork-down` / `fork-tab` | none* | **pane-context** actions (GH-1892): open a pane already holding the FOCUSED pane's session context. `herdr pane get` reports the live Claude session id, and the new pane starts `claude --resume <id> --fork-session` — a NEW session that begins knowing everything the source knew, rather than a second process appending to one transcript. Placement is the only difference between the three. The fork is named `d0-fork-<source slug>` — lane `d`, issue 0 — and carries `parent=<source>` / `depth=<source+1>` pane tokens. *No plugin pane: the fork's output IS a real pane. See [Forking a session](#forking-a-session-gh-1892) for what a fork is not |
-| `deliver-pass` | split (down) | `board deliver-queue` → empty means spawn nothing (the lane contract). Otherwise a new tab hosts agent `ralph-deliver` running `/ralph:deliver`; cockpit pane watches |
-| `tend-pass` | split (down) | same shape over `board tend-queue` → agent `ralph-tend` running `/ralph:tend` |
+| `deliver-pass` | split (down) | `board deliver-queue` → empty means spawn nothing (the lane contract). Otherwise a new tab hosts agent `r0-deliver` running `/ralph:deliver`; cockpit pane watches. Ledgered like every spawn (GH-2342): a provisional C7 row at pane creation, `exit never_started` on a refused start; the row carries `tool_binding` / `process_containment` = `not_requested`, read off the empty argv — the deliverer is a writer |
+| `tend-pass` | split (down) | same shape over `board tend-queue` → agent `t0-tend` running `/ralph:tend`, under the tender's tool binding (GH-2265) and sandbox (GH-2266). Its row gets a `containment` event after the in-pane probe — on success (`accepted` / `applied`) AND on refusal, which also closes the row `exit containment_<outcome>` (GH-2267/GH-2342) |
 | `doctor` | popup | runs `board doctor` once, holds the popup open until Enter |
 | `reconcile` | none | runs `reconcile.sh` by hand — the identical single pass the `[[startup]]` hook runs after a herdr server (re)start: pane-proved claim recovery (releasing the board claim of a worker whose pane proves it gone — the ONE board write in the file, GH-1809), exit-lost ledger closes for agents this server owns, discovery of live ralph agents no ledger holds open, token re-push, the orphan-adoption pass, and refill re-arm for an ARMED run whose workers a restart killed (GH-1862). One pass, then exit — no daemon, no sleep loop; the `[[events]]` hooks own steady-state (see [Event-driven healing](#event-driven-healing-gh-2212)) |
 | `cockpit` | split (right) | **focus-or-open** (GH-2074): `scripts/cockpit-open.sh` focuses this board's live cockpit when there is one, else opens the pane. `rh day` uses its non-focusing attended mode: a live cockpit in the focused hero's tab is reused; otherwise a new right split is targeted at the focused hero. The pane runs the degradation ladder (`scripts/cockpit-launch.sh`): the built Go TUI when present, the verb-complete fzf fallback when not, the read-only dashboard when neither — the pane's first line names the rung it took and why. See [The cockpit](#the-cockpit-phase-5-and-its-degradation-ladder) |
@@ -146,10 +146,16 @@ Work sessions are named `<lane><issue>-<slug>[--<gen>]` (≤32 chars) —
 table pins both). `--2`..`--9` generations belong to sibling issue fleets
 only; the spawn path never improvises one on a collision — a live session
 owning the issue is a skip. The durable identity is the ref `name#epoch` in
-the ledger; pane ids are server-scoped and never durable. Lane passes keep
-their fixed names `ralph-deliver` / `ralph-tend` — one live pass per lane; a
+the ledger; pane ids are server-scoped and never durable. Lane passes are
+named `r0-deliver` / `t0-tend` (GH-2342) — grammar B at issue 0, the
+"belongs to no unit" convention `s0-watch` / `x0-relay` / `d0-fork-…` already
+use, so they mint a ref and write a ledger row like every other spawn. The
+name is still FIXED (no epoch, no generation): one live pass per lane; a
 taken name dies loudly ("a pass is already live") and never kills the live
-agent. Legacy `gh-N` names stay first-class through the transition. The full
+agent. Legacy `gh-N` names stay first-class through the transition, and
+`ralph-deliver` / `ralph-tend` — the pre-0.42 lane-pass names — are still
+recognised as legacy singletons (watched, never ledgered) wherever a pane
+from an older plugin is still live. The full
 agent-facing reference (lane table, tokens, self-report, fleet claims) is
 `ralph/skills/work/references/herdr-api.md` in the ralph Claude Code plugin.
 

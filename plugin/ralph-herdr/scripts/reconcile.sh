@@ -516,6 +516,14 @@ recover_claim() {
       log "claim not evaluated for $ref — the ledger binds it to no issue"
       return 0
       ;;
+    0)
+      # Issue 0 is the grammar's "belongs to no unit" (s0-watch, x0-relay,
+      # d0-fork, and the t0-tend / r0-deliver lane passes — GH-2342). It is a
+      # digit string, so the check above admitted it and aimed `board get 0`
+      # at every dead issue-0 row; there is no claim to release.
+      log "claim not evaluated for $ref — issue 0 binds it to no unit (an infra or lane-pass agent holds no claim)"
+      return 0
+      ;;
   esac
   if [ -z "$root" ] || [ ! -d "$root" ]; then
     root=$(pane_cwd "$pane")
@@ -728,8 +736,10 @@ while IFS=$'\037' read -r name _status pane agent_scope cwd; do
   fi
   case " $open_all " in *" $agent_key|$name "*) continue ;; esac
   if ! parsed=$(ralph_agent_parse "$name"); then
-    # ralph-deliver / ralph-tend: legacy singleton lanes with no parseable
-    # identity — watched live (lib.sh regex) but never ledgered.
+    # ralph-deliver / ralph-tend: the pre-GH-2342 lane-pass names, with no
+    # parseable identity — watched live (scope.sh RALPH_NAME_RE) but never
+    # ledgered. Panes spawned by a plugin from 0.41 on are t0-tend /
+    # r0-deliver and take the grammar-B path like every other agent.
     log "skip $name (legacy singleton, no ledger identity)"
     continue
   fi

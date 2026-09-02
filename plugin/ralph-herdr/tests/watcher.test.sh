@@ -931,10 +931,11 @@ cat >"$CLEDGER" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"w203-alive#a3","pane_id":"pA","shell_pid":"5003","checkout":"$CREPO","tokens":{"role":"w","issue":"203","harness":"claude","state":"spawned"}}
 {"ts":"t0","ev":"spawn","agent_ref":"w204-unknown#a4","pane_id":"pU","shell_pid":"5004","checkout":"$CREPO","tokens":{"role":"w","issue":"204","harness":"claude","state":"spawned"}}
 {"ts":"t0","ev":"spawn","agent_ref":"w205-foreign#a5","pane_id":"pF","shell_pid":"5005","checkout":"$CFOREIGN","tokens":{"role":"w","issue":"205","harness":"claude","state":"spawned"}}
+{"ts":"t0","ev":"spawn","agent_ref":"t0-tend#a6","pane_id":"pT","shell_pid":"5006","checkout":"$CREPO","tokens":{"role":"tender","issue":"0","harness":"claude","state":"spawned"}}
 EOF
 # Every record's agent is LIVE in the herd — the point of the phase: after a
 # restart the names are all still there, and only the pane tells the truth.
-herd_fixture '[{"name":"w201-restart","agent_status":"idle","pane_id":"pR"},{"name":"w202-crash","agent_status":"idle","pane_id":"pC"},{"name":"w203-alive","agent_status":"working","pane_id":"pA"},{"name":"w204-unknown","agent_status":"idle","pane_id":"pU"},{"name":"w205-foreign","agent_status":"idle","pane_id":"pF"}]' "$CREPO"
+herd_fixture '[{"name":"w201-restart","agent_status":"idle","pane_id":"pR"},{"name":"w202-crash","agent_status":"idle","pane_id":"pC"},{"name":"w203-alive","agent_status":"working","pane_id":"pA"},{"name":"w204-unknown","agent_status":"idle","pane_id":"pU"},{"name":"w205-foreign","agent_status":"idle","pane_id":"pF"},{"name":"t0-tend","agent_status":"idle","pane_id":"pT"}]' "$CREPO"
 
 # pR: the pane was REBUILT — a different shell, and a `claude --resume` already
 # relaunched into it. The live process is exactly the trap: a presence check
@@ -952,6 +953,11 @@ printf 'not json at all\n' >"$FAKE_HERDR_FIXTURES/pane-process-info.pU.raw"
 # pF: dead pane, but its checkout belongs to another board.
 printf '{"process_info":{"pane_id":"pF","shell_pid":9999,"foreground_processes":[]}}\n' \
   >"$FAKE_HERDR_FIXTURES/pane-process-info.pF.json"
+# pT: a dead lane pass (GH-2342) — same shell, nothing running. Issue 0 is a
+# digit string, so the no-issue check used to admit it and aim `board get 0`
+# at the row; a pass holds no claim, so the board must never be asked.
+printf '{"process_info":{"pane_id":"pT","shell_pid":5006,"foreground_processes":[]}}\n' \
+  >"$FAKE_HERDR_FIXTURES/pane-process-info.pT.json"
 
 for _i in 201 202 205; do
   printf '{"number":%s,"state":"In Progress","claim":{"holders":["t@h"],"since":"2026-08-13T00:00:00Z"}}\n' "$_i" \
@@ -987,6 +993,14 @@ is "cross-repo: another board is never written" "0" \
 case "$OUT" in
   *"refusing to write another board"*) ok "cross-repo: the refusal says why" ;;
   *) not_ok "cross-repo: the refusal says why — got '$OUT'" ;;
+esac
+is "lane pass (issue 0): dead pass's record still closed as crashed" "1" \
+  "$(lcount "$CLEDGER" '.ev=="exit" and .agent_ref=="t0-tend#a6" and .reason=="crashed"')"
+is "lane pass (issue 0): the board is never asked about GH-0" "0" \
+  "$(grep -c '^\(get\|release\) 0 ' "$FAKE_BOARD_LOG" || true)"
+case "$OUT" in
+  *"issue 0 binds it to no unit"*) ok "lane pass (issue 0): the skip names why" ;;
+  *) not_ok "lane pass (issue 0): the skip names why — got '$OUT'" ;;
 esac
 
 # The state gate: a worker that got its PR up before dying is In Review, and

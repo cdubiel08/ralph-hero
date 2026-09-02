@@ -12,7 +12,8 @@
 #
 # Ordering among blocked agents:
 #   1. issue sessions first — legacy gh-N and grammar-B w-lane — before every
-#      other lane (r/o/d, the s0/x0 infra lanes, legacy ralph-deliver/tend);
+#      other lane (r/o/d/i/t, the issue-0 infra and lane-pass agents,
+#      legacy ralph-deliver/tend);
 #   2. within a group, oldest blocked-since first, read from this scope's
 #      ledger state records (the state-token timestamp trail watch-event.sh
 #      appends). The longest-waiting question gets attended first. An

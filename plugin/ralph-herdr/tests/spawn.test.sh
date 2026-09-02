@@ -783,15 +783,17 @@ for _lane in tend deliver; do
   _raw=$(grep -v '^[[:space:]]*echo ' "$SCRIPT_DIR/../scripts/$_lane-pass.sh" \
     | grep -c 'HERDR" agent prompt')
   is "$_lane-pass: no raw agent prompt outside the adapter" "0" "$_raw"
-  # The agent name rides the $agent variable (agent=ralph-<lane>, GH-2317).
+  # The agent name rides the $agent variable (GH-2317) — the grammar-B lane
+  # pass name since GH-2342: t0-tend / r0-deliver.
+  case "$_lane" in tend) _name=t0-tend ;; deliver) _name=r0-deliver ;; esac
   if grep -q 'ralph_herdr_agent_prompt "$agent"' "$SCRIPT_DIR/../scripts/$_lane-pass.sh" \
-    && grep -q "agent=ralph-$_lane" "$SCRIPT_DIR/../scripts/$_lane-pass.sh"; then
+    && grep -q "agent=$_name" "$SCRIPT_DIR/../scripts/$_lane-pass.sh"; then
     ok "$_lane-pass: the prompt goes through the validating adapter"
   else
     not_ok "$_lane-pass: the prompt goes through the validating adapter"
   fi
 done
-unset _lane _raw
+unset _lane _raw _name
 
 # ── ralph_branch_for_issue: the GH-1807 grammar, and the legacy resume ───────
 # A throwaway git repo so the ref probes see exactly the branches this block

@@ -17,6 +17,19 @@
 # else owns (a bare shell, invoke.sh's default split placement, a
 # hand-opened plugin pane) and renaming or splitting that tab would disrupt
 # surfaces this lane never created.
+#
+# LEDGERED (GH-2342). The pass is a spawn like every other: named `t0-tend`
+# (grammar B — lane t is the tender role's own letter, issue 0 is the
+# "belongs to no unit" convention s0-watch / x0-relay / d0-fork already use),
+# so it mints a durable ref and writes the same provisional C7 row every
+# spawn path writes, and the GH-2267 outcomes — tool binding, process
+# containment — land on the ledger as a `containment` event instead of only
+# in this pane's log. Before this the fixed name `ralph-tend` parsed in no
+# grammar, so no ref could be minted and a reader who was not present could
+# not tell a contained tender pane from an inert one off the ledger. The name
+# is still FIXED — no epoch, no generation suffix — so the one-live-pass-per-
+# lane interlock below (name taken → die) is unchanged. `ralph-tend` panes
+# from an older plugin stay recognised as legacy singletons by every reader.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,13 +42,28 @@ billing_guard
 ralph_plugin_freshness_notice
 
 lane=tend
-agent=ralph-tend
+agent=t0-tend
 
 next=$("$BOARD" tend-queue --json | jq -r '.next.number // empty')
 if [ -z "$next" ]; then
   echo "$lane queue empty — nothing to spawn"
   exit 0
 fi
+
+# ONE LIVE PASS PER LANE also holds across the rename (PR #2354 P1): a pane
+# spawned by a pre-0.42 plugin is still live under the OLD fixed name, and the
+# `agent start` name interlock below keys on the new one only — so the legacy
+# name is checked here, by hand, before any surface exists. Fails CLOSED on
+# an unreadable herd (PR #2354 P1): the start's own name-taken refusal guards
+# the NEW name only, so "could not read" may not render as "no legacy pass" —
+# and a herdr that cannot answer a snapshot would refuse the split and the
+# start that follow anyway, so the refusal costs nothing the lane would have
+# had. An empty herd is a successful read; only a failed one refuses.
+herd=$(ralph_agents_json 2>/dev/null) ||
+  die "cannot read the herd, so a live pre-0.42 $lane pass (ralph-$lane) cannot be ruled out — one live pass per lane; not spawning $agent until herdr answers"
+legacy_live=$(jq -r --arg n "ralph-$lane" 'select(.name == $n) | .name' <<<"$herd" 2>/dev/null | head -1) || legacy_live=""
+[ -z "$legacy_live" ] ||
+  die "a $lane pass is already live under its pre-0.42 name ($legacy_live) — one live pass per lane; let it finish (or close its pane) before starting $agent"
 
 # The tender role does not write a tree (roles.sh/contracts.ts ROLES). GH-2265:
 # read the tool-binding rule from the registry rather than restate it here.
@@ -54,9 +82,9 @@ contain_args=()
 while IFS= read -r out; do [ -n "$out" ] && contain_args+=("$out"); done <<<"$contain_out"
 harness_args=("${tool_args[@]}" "${contain_args[@]}")
 # GH-2267: the tool-binding outcome, read off the argv the pane will be
-# handed. Lane passes are unledgered by construction (README: fixed names,
-# no durable ref), so the achieved values are printed here, not recorded —
-# a writing tool left enabled still refuses.
+# handed — never off the registry row. It is recorded on the `containment`
+# event beside the probe's verdict once both are known (GH-2342); a writing
+# tool left enabled refuses here, before any surface exists.
 tool_binding=$(ralph_tool_binding_observed "${harness_args[@]}")
 [ "$tool_binding" != not_applied ] ||
   die "tool binding not_applied for the tender (a writing tool is left enabled by: ${harness_args[*]}) — not spawning a writer into $REPO"
@@ -73,8 +101,17 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "  $HERDR agent start $agent --kind claude --pane <captured>${tool_args[*]:+ -- ${tool_args[*]}}${contain_args[*]:+ --settings <process containment: seatbelt denyWrite $REPO>}"
   [ "${#contain_args[@]}" -gt 0 ] &&
     echo "  containment probe: prompt <captured> to touch <inside $REPO> <outside \$RALPH_HOME/containment-probes>; refuse unless applied; then Write <inside $REPO> and a control touch — refuse on tool binding not_applied (GH-2341)"
-  echo "  tool binding: $tool_binding (read off the argv above — GH-2267; lane passes are unledgered, so this is printed, not recorded)"
+  echo "  tool binding: $tool_binding (read off the argv above — GH-2267; recorded on the containment event beside the probe verdict, after the in-pane Write step has had its say)"
   echo "  $HERDR agent prompt $agent \"/ralph:$lane\""
+  # The exact spawn record the live path would append (pane_id omitted — pane
+  # ids are captured live, never predicted) and the containment event that
+  # follows the probe. Printed, never written: dry-run stops before ANY
+  # mutation, ledger appends included.
+  if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
+    record=$(_ralph_spawn_record "$ref" 0 "" "" "" "" "$(date -u +%FT%TZ)" "" "$REPO" tender) || record=""
+    echo "  ledger append (spawn): ${record:-<could not build the record>}"
+    echo "  ledger append (containment, after the probe): {ev: \"containment\", agent_ref: \"$ref\", tool_binding: \"$tool_binding\", process_containment: <probe verdict>, via: \"spawn\"}"
+  fi
   exit 0
 fi
 
@@ -106,19 +143,53 @@ else
   cleanup_pane="" cleanup_tab=$(jq -r '.tab.tab_id // empty' <<<"$t")
 fi
 
+# Provisional C7 record at pane creation (audit D2b parity with
+# spawn_work_session and work-team.sh): a launcher killed between the split
+# and `agent start` leaves a sweepable row instead of nothing. role=tender,
+# issue 0, checkout = the tree the sandbox denies. Both containment fields
+# are left EMPTY here — neither outcome exists until the probe has run — and
+# land as their own `containment` event below (GH-2267), on success and on
+# refusal alike. A ref that cannot be minted degrades exactly as every other
+# spawn path does: unledgered, and reconcile phase B discovers the live pane.
+ts=$(date -u +%FT%TZ)
+shell_pid=$(ralph_herdr_call pane_process_info pane process-info --pane "$pane" 2>/dev/null |
+  jq -r '.process_info.shell_pid // empty' 2>/dev/null) || shell_pid=""
+case "$shell_pid" in '' | *[!0-9]*) shell_pid="" ;; esac
+record="" ledger=""
+ref=$(ralph_agent_ref "$agent" 2>/dev/null) || ref=""
+if [ -n "$ref" ]; then
+  record=$(_ralph_spawn_record "$ref" 0 "" "" "" "$pane" "$ts" "$shell_pid" "$REPO" tender) || record=""
+  ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
+  if [ -n "$record" ] && [ -n "$ledger" ]; then
+    RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" || {
+      echo "spawn ledger append failed for $ref — reconcile will discover it" >&2
+      record=""
+    }
+  else
+    echo "spawn ledger: ${ledger:+record build failed}${ledger:-no board scope discoverable from $REPO} — reconcile will discover $ref" >&2
+    record=""
+  fi
+else
+  echo "no durable ref derivable for $agent — spawning unledgered (reconcile will discover it)" >&2
+fi
+
 # One live pass per lane: the unique agent name is the interlock. A
 # name-taken refusal means a pass is already live — die, never suffix. On a
 # REFUSED start the pane just created holds only an idle shell, so closing
 # it is cleanup, not killing an agent — but an UNCERTAIN failure (transport
 # error, silence) means the start may have LANDED, and the surface is left
 # up rather than closed over a possibly-live agent (PR #2326 P1).
+# The provisional row follows the same split: a REFUSED start proved no
+# worker ever existed, so the row closes here (never_started); an UNCERTAIN
+# one stays open for reconcile to prove, like the pane it describes.
 if ! agent_start_when_ready "$agent" "$pane" "${harness_args[@]}"; then
   if [ "${RALPH_HERDR_START_OUTCOME:-uncertain}" = "refused" ]; then
+    _ralph_spawn_close "$ref" "$ledger" never_started
     [ -n "$cleanup_pane" ] && "$HERDR" pane close "$cleanup_pane" >/dev/null 2>&1 || true
     [ -n "$cleanup_tab" ] && "$HERDR" tab close "$cleanup_tab" >/dev/null 2>&1 || true
     die "agent start $agent refused — see the herdr error above (a live $lane pass owning the name is the common cause, but exhausted startup retries land here too); cleaned up the empty agent pane"
   fi
-  die "agent start $agent did not answer — the start MAY have landed, so the agent pane is left up rather than closed over a possibly-live agent; check it (herdr agent list) before retrying"
+  die "agent start $agent did not answer — the start MAY have landed, so the agent pane is left up rather than closed over a possibly-live agent, and its ledger row stays open for reconcile to prove; check it (herdr agent list) before retrying"
 fi
 # Past this point the agent is LIVE — a prompt failure must not strand it
 # silently, and hold_pane must not claim "no session spawned" about it.
@@ -133,6 +204,16 @@ if [ "${#contain_args[@]}" -gt 0 ]; then
   # which the probe's Write step can only REFUTE, never promote.
   probe_out=$(spawn_containment_probe "$agent" "$pane" "$REPO" "re-run the $lane pass" "$tool_binding") || {
     read -r outcome tool_binding <<<"${probe_out:-unverified $tool_binding}"
+    # The refusal is recorded as the two achieved values BEFORE the row is
+    # closed (GH-2267): a reader who was not present must be able to tell
+    # this pane from a contained one off the ledger alone. The close reason
+    # names the mechanism that refused (work-team.sh parity).
+    _ralph_spawn_containment_event "$ref" "$ledger" "$tool_binding" "${outcome:-unverified}"
+    if [ "$tool_binding" = not_applied ]; then
+      _ralph_spawn_close "$ref" "$ledger" "tool_binding_not_applied"
+    else
+      _ralph_spawn_close "$ref" "$ledger" "containment_${outcome:-unverified}"
+    fi
     [ -n "$cleanup_pane" ] && "$HERDR" pane close "$cleanup_pane" >/dev/null 2>&1 || true
     [ -n "$cleanup_tab" ] && "$HERDR" tab close "$cleanup_tab" >/dev/null 2>&1 || true
     RALPH_HERDR_AGENT_LIVE=""
@@ -140,8 +221,25 @@ if [ "${#contain_args[@]}" -gt 0 ]; then
   }
   read -r outcome tool_binding <<<"$probe_out"
   echo "process containment: $outcome for $agent (a Bash write inside $REPO was refused by the kernel; tool binding is the separate GH-2265 mechanism)"
+else
+  outcome=not_requested
 fi
 echo "tool binding: $tool_binding for $agent (the harness accepted the flags at start${contain_args[*]:+ and the in-pane Write step wrote nothing in $REPO}; applied is reserved for an observed refusal — GH-2341)"
+# The provisional record predates both outcomes, so they land as their own
+# event now that they are known (GH-2342 — the row is what outlives this log).
+_ralph_spawn_containment_event "$ref" "$ledger" "$tool_binding" "$outcome"
+
+# Spawn-time tokens onto the pane, derived from the record (role, issue,
+# root, depth, state …) — the same push every spawn path makes, after the
+# agent is live so a lost start race never stamps over a winner.
+if [ -n "$record" ]; then
+  set --
+  while IFS= read -r kv; do
+    [ -n "$kv" ] || continue
+    set -- "$@" "$kv"
+  done < <(jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' <<<"$record" 2>/dev/null || true)
+  [ "$#" -ge 1 ] && ralph_tokens_push "$pane" "$@"
+fi
 
 ralph_herdr_agent_prompt "$agent" "/ralph:$lane" >/dev/null \
   || die "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:$lane\""

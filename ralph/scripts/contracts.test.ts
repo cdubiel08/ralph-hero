@@ -154,6 +154,24 @@ describe("example corpus", () => {
     });
   }
 
+  it("C7 admits issue 0 — an agent that belongs to no unit (GH-2342) — and no other contract does", () => {
+    // The lane passes (t0-tend, r0-deliver) and the infra pair (s0-watch,
+    // x0-relay) write a lineage row at issue 0; a positive-only `issue` is
+    // why fork.sh chose no record at all. parent_issue stays positive.
+    const v = loadExample("good", "ralph.lineage") as Record<string, unknown>;
+    v.agent_ref = "t0-tend#a3f2";
+    v.issue = 0;
+    delete v.parent_issue;
+    v.role = "tender";
+    const strict = validateContract("ralph.lineage", v);
+    expect(strict.success, issuesOf(strict)).toBe(true);
+    expect(validateContract("ralph.lineage", { ...v, parent_issue: 0 }).success).toBe(false);
+    expect(validateContract("ralph.lineage", { ...v, issue: -1 }).success).toBe(false);
+    const s = loadExample("good", "ralph.spawn_request") as Record<string, unknown>;
+    s.issue = 0;
+    expect(validateContract("ralph.spawn_request", s).success).toBe(false);
+  });
+
   it("unknown keys: the producer refuses, the consumer rides along (additive-only evolution)", () => {
     const v = loadExample("good", "ralph.spawn_request") as Record<string, unknown>;
     v.future_field = "added in some v1.1";
@@ -1238,6 +1256,13 @@ describe("live lints (deps-injected)", () => {
     expect(lintL3CommitInRepo({ outcome: "blocked" }, gitSaying(0))).toMatchObject({
       rule: "L3",
       skipped: expect.stringContaining("not applicable"),
+    });
+  });
+
+  it("L5: issue 0 (no unit — GH-2342) is skipped, never read back as a missing issue", () => {
+    expect(lintL5ClaimReadback({ agent_ref: "t0-tend#a3f2", issue: 0 }, board({}))).toEqual({
+      rule: "L5",
+      skipped: "issue 0 belongs to no unit — no claim to read back",
     });
   });
 

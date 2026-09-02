@@ -86,7 +86,9 @@ function loadZod(): void {
 // ---------------------------------------------------------------------------
 
 /** Lane registry — the single char that opens every agent name. Issue 0 is
- *  reserved for infra agents (s0-watch, x0-relay). */
+ *  reserved for agents that belong to no unit: the infra pair (s0-watch,
+ *  x0-relay), forks (d0-fork-…), and the lane passes (t0-tend, r0-deliver —
+ *  GH-2342). */
 export const LANES = {
   w: "work",
   r: "review",
@@ -1265,7 +1267,12 @@ function buildLineageRecord(mode: Mode) {
     contract: z.literal("ralph.lineage"),
     contract_version: z.literal(1),
     agent_ref: zAgentRef,
-    issue: zIssue,
+    /** GH-2342 — 0 is admitted HERE and in no other contract: issue 0 is the
+     *  naming grammar's "belongs to no unit" (s0-watch, x0-relay, t0-tend,
+     *  r0-deliver), and those spawns write a lineage row like every other —
+     *  the lane passes carry the GH-2267 containment outcomes on theirs.
+     *  parent_issue stays positive: nothing is parented to "no unit". */
+    issue: z.number().int().nonnegative(),
     parent_issue: zIssue.optional(),
     /** GH-1808 — required of a PRODUCER (strict), optional for a CONSUMER
      *  (loose), because every record written before this field existed is
@@ -1607,6 +1614,10 @@ export function lintL5ClaimReadback(payload: unknown, deps?: LiveLintDeps): Lint
   const agent = agentNameOf(payload);
   if (agent === null || typeof payload.issue !== "number")
     return notApplicable(rule, "no agent + issue");
+  // GH-2342: issue 0 is the grammar's "belongs to no unit" (s0-watch, x0-relay,
+  // t0-tend, r0-deliver). There is no board item and no claim by construction,
+  // so a read-back has nothing to read — not a finding, a non-question.
+  if (payload.issue === 0) return { rule, skipped: "issue 0 belongs to no unit — no claim to read back" };
   const item = readBoardItem(payload.issue);
   if (item === null)
     return { rule, ok: false, message: `issue #${payload.issue} does not exist — no claim to read back` };

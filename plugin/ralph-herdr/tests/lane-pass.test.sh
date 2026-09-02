@@ -60,8 +60,8 @@ export RALPH_HERDR_REPO="$REPO_DIR"
 export RALPH_HERDR_UNAME=Darwin
 export RALPH_HOME="$TMP/home"
 mkdir -p "$RALPH_HOME"
-printf '{"agent":{"name":"ralph-tend","agent_status":"working","pane_id":"pS1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":2}}\n' \
-  >"$FAKE_HERDR_FIXTURES/agent-wait-until.ralph-tend.json"
+printf '{"agent":{"name":"t0-tend","agent_status":"working","pane_id":"pS1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":2}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-wait-until.t0-tend.json"
 cat >"$TMP/probe-hook.sh" <<'HOOK'
 #!/usr/bin/env bash
 paths=$(printf '%s' "$2" | grep -o "touch '[^']*' '[^']*'" | head -1)
@@ -100,7 +100,23 @@ log_hasnt() {
   if grep -q -- "$2" "$FAKE_HERDR_LOG" 2>/dev/null; then not_ok "$1 — found '$2' in herdr log"; else ok "$1"; fi
 }
 
+LEDGER_DB="$RALPH_HERDR_LEDGER_ROOT/fake/fake/ledger.sqlite"
+# ledger_events — every fact's payload, one JSON object per line (empty when
+# no tape exists — a dry run must leave none).
+ledger_events() {
+  [ -f "$LEDGER_DB" ] || return 0
+  sqlite3 "$LEDGER_DB" 'SELECT payload FROM facts ORDER BY seq;' 2>/dev/null
+}
+# ledger_count JQ_FILTER — how many events satisfy the filter.
+ledger_count() {
+  ledger_events | jq -c "select($1)" 2>/dev/null | grep -c . || true
+}
+is() { # NAME EXPECTED ACTUAL
+  if [ "$2" = "$3" ]; then ok "$1"; else not_ok "$1 — expected '$2', got '$3'"; fi
+}
+
 reset() {
+  rm -rf "$RALPH_HERDR_LEDGER_ROOT"
   : >"$FAKE_HERDR_LOG"
   : >"$FAKE_BOARD_LOG"
   rm -f "$FAKE_HERDR_FIXTURES"/agent-start.json "$FAKE_HERDR_FIXTURES"/agent-start.rc \
@@ -126,19 +142,33 @@ reset
 out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
 log_has "deliver: own tab renamed from the LANE" "tab rename w1:t1 deliver"
 log_has "deliver: agent pane is a split of the launcher pane" "pane split w1:p9 --direction down --cwd $REPO_DIR --no-focus"
-log_has "deliver: agent starts in the SPLIT pane" "agent start ralph-deliver --kind claude --pane pS1"
+log_has "deliver: agent starts in the SPLIT pane" "agent start r0-deliver --kind claude --pane pS1"
 log_hasnt "deliver: in-tab shape creates NO second tab" "tab create"
-log_has "deliver: the pass prompt goes to the agent" "agent prompt ralph-deliver /ralph:deliver"
-has "deliver: the watcher takes over the launcher pane" "$out" "notify-watch ralph-deliver"
+log_has "deliver: the pass prompt goes to the agent" "agent prompt r0-deliver /ralph:deliver"
+has "deliver: the watcher takes over the launcher pane" "$out" "notify-watch r0-deliver"
 has "deliver: the spawn line names the queue head" "$out" "queue head #42"
+# GH-2342: the pass is ledgered — one spawn row, grammar-B ref, role driver,
+# both GH-2267 outcomes `not_requested` ON the row (known at record time:
+# the deliverer is handed no harness argument), the pane and the checkout.
+is "deliver: exactly one spawn row for the pass" "1" \
+  "$(ledger_count '.ev=="spawn" and (.agent_ref | test("^r0-deliver#[0-9a-f]{8}$"))')"
+is "deliver: the row is a driver at issue 0 with both outcomes not_requested" "1" \
+  "$(ledger_count '.ev=="spawn" and .tokens.role=="driver" and .tokens.issue=="0" and .tool_binding=="not_requested" and .process_containment=="not_requested" and .lineage.issue==0 and .lineage.role=="driver"')"
+is "deliver: the row binds the pane and the checkout" "1" \
+  "$(ledger_count '.ev=="spawn" and .pane_id=="pS1" and .checkout=="'"$REPO_DIR"'"')"
+is "deliver: no containment event — both outcomes already ride the row" "0" \
+  "$(ledger_count '.ev=="containment"')"
+is "deliver: the row stays OPEN — a live pass is what an open row means" "0" \
+  "$(ledger_count '.ev=="exit"')"
+log_has "deliver: spawn tokens pushed onto the agent pane" "pane report-metadata pS1 .*--token role=driver"
 
 # ── 3. bare-shell fallback: a fresh lane tab, labeled from the lane ──────────
 reset
 out=$(env -u HERDR_PANE_ID bash -c "cd '$REPO_DIR' && bash '$SCRIPTS/deliver-pass.sh' </dev/null 2>&1")
 log_has "deliver fallback: tab created with the LANE label" "tab create --cwd $REPO_DIR --label deliver --no-focus"
 log_hasnt "deliver fallback: no split without a pane to split" "pane split"
-log_has "deliver fallback: agent starts in the tab's root pane" "agent start ralph-deliver --kind claude --pane pTF"
-has "deliver fallback: the watcher still takes over" "$out" "notify-watch ralph-deliver"
+log_has "deliver fallback: agent starts in the tab's root pane" "agent start r0-deliver --kind claude --pane pTF"
+has "deliver fallback: the watcher still takes over" "$out" "notify-watch r0-deliver"
 
 # ── 3b. a pane WITHOUT the lane-tab marker keeps the fallback shape ──────────
 # invoke.sh's default split placement (and any hand-opened plugin pane) has an
@@ -152,7 +182,7 @@ log_has "deliver unmarked pane: falls back to its own lane tab" "tab create --cw
 
 # ── 4. refused agent start cleans up exactly what this run created ───────────
 reset
-printf '{"error":{"code":"agent_name_taken","message":"an agent named ralph-deliver is already running"}}\n' \
+printf '{"error":{"code":"agent_name_taken","message":"an agent named r0-deliver is already running"}}\n' \
   >"$FAKE_HERDR_FIXTURES/agent-start.json"
 printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-start.rc"
 out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
@@ -161,14 +191,62 @@ if [ "$rc" -ne 0 ]; then ok "deliver: a refused start fails the pass"; else not_
 log_has "deliver: in-tab cleanup closes the empty SPLIT pane" "pane close pS1"
 log_hasnt "deliver: in-tab cleanup never closes a tab" "tab close"
 has "deliver: the refusal names the taken name as the common cause" "$out" "live deliver pass owning the name"
+# GH-2342: a REFUSED start proved no worker ever existed — the provisional
+# row is closed by the spawn path itself, not left for a sweep.
+is "deliver refused: the provisional row was written" "1" "$(ledger_count '.ev=="spawn"')"
+is "deliver refused: …and closed never_started by the spawn path" "1" \
+  "$(ledger_count '.ev=="exit" and .reason=="never_started" and .via=="spawn" and (.agent_ref | startswith("r0-deliver#"))')"
 
 reset
-printf '{"error":{"code":"agent_name_taken","message":"an agent named ralph-deliver is already running"}}\n' \
+printf '{"error":{"code":"agent_name_taken","message":"an agent named r0-deliver is already running"}}\n' \
   >"$FAKE_HERDR_FIXTURES/agent-start.json"
 printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-start.rc"
 out=$(env -u HERDR_PANE_ID bash -c "cd '$REPO_DIR' && bash '$SCRIPTS/deliver-pass.sh' </dev/null 2>&1")
 log_has "deliver fallback: cleanup closes the tab this run created" "tab close w1:tF"
 log_hasnt "deliver fallback: cleanup closes no pane" "pane close"
+
+# ── 4a. a live pass under the PRE-0.41 name is still a live pass (PR #2354 P1)
+# The `agent start` interlock keys on the new name; a `ralph-deliver` pane
+# from an older plugin survives an upgrade and must still count. Refused
+# before any surface exists.
+reset
+. "$SCRIPT_DIR/herd-fixture.sh"
+herd_fixture '[{"name":"ralph-deliver","agent_status":"working","pane_id":"pL"}]' "$REPO_DIR"
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "deliver legacy-live: a live ralph-deliver refuses the pass"; else not_ok "deliver legacy-live: a live ralph-deliver must refuse (rc 0)"; fi
+has "deliver legacy-live: the refusal names the legacy pane" "$out" "already live under its pre-0.42 name (ralph-deliver)"
+log_hasnt "deliver legacy-live: no pane was split" "pane split"
+log_hasnt "deliver legacy-live: no agent was started" "agent start"
+is "deliver legacy-live: no ledger row for a spawn that never began" "0" "$(ledger_count 'true')"
+herd_fixture '[{"name":"ralph-tend","agent_status":"working","pane_id":"pL"}]' "$REPO_DIR"
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "tend legacy-live: a live ralph-tend refuses the pass"; else not_ok "tend legacy-live: a live ralph-tend must refuse (rc 0)"; fi
+log_hasnt "tend legacy-live: no agent was started" "agent start"
+# A live pass in the OTHER lane is not a collision.
+reset
+herd_fixture '[{"name":"ralph-tend","agent_status":"working","pane_id":"pL"}]' "$REPO_DIR"
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+log_has "deliver with a live legacy TEND: still spawns" "agent start r0-deliver"
+# An UNREADABLE herd is not an empty one (PR #2354 P1): the legacy pass
+# cannot be ruled out, so the lane refuses before any surface exists.
+reset
+printf '{"error":{"code":"server_unavailable","message":"no server"}}\n' >"$FAKE_HERDR_FIXTURES/api-snapshot.json"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/api-snapshot.rc"
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+rc=$?
+rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.rc"
+if [ "$rc" -ne 0 ]; then ok "deliver unreadable herd: refuses (a legacy pass cannot be ruled out)"; else not_ok "deliver unreadable herd: must refuse (rc 0)"; fi
+has "deliver unreadable herd: the refusal says the herd could not be read, not that a pass is live" "$out" "cannot read the herd"
+log_hasnt "deliver unreadable herd: no pane was split" "pane split"
+log_hasnt "deliver unreadable herd: no agent was started" "agent start"
+is "deliver unreadable herd: no ledger row" "0" "$(ledger_count 'true')"
+herd_fixture '[]' "$REPO_DIR"
+# …and an EMPTY herd (a successful read with no agents) still spawns.
+reset
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+log_has "deliver empty herd: a successful empty read spawns" "agent start r0-deliver"
 
 # ── 4b. an UNCERTAIN start (silence, transport failure) closes nothing ───────
 # The start may have landed — closing the pane could kill a live agent
@@ -183,25 +261,42 @@ if [ "$rc" -ne 0 ]; then ok "deliver: an unanswered start fails the pass"; else 
 log_hasnt "deliver: an unanswered start closes NO pane" "pane close"
 log_hasnt "deliver: an unanswered start closes NO tab" "tab close"
 has "deliver: the unanswered start says the pane is left up" "$out" "MAY have landed"
+is "deliver uncertain: the row stays OPEN for reconcile to prove (the start may have landed)" "0" \
+  "$(ledger_count '.ev=="exit"')"
 
 # ── 5. tend rides the same shape, tool binding intact (GH-2265) ──────────────
 reset
 out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
 log_has "tend: own tab renamed from the LANE" "tab rename w1:t1 tend"
 log_has "tend: agent pane is a split of the launcher pane" "pane split w1:p9 --direction down"
-log_has "tend: the tender's registry tool binding survives the reshape" "agent start ralph-tend --kind claude --pane pS1 -- --disallowedTools"
-has "tend: the watcher takes over" "$out" "notify-watch ralph-tend"
+log_has "tend: the tender's registry tool binding survives the reshape" "agent start t0-tend --kind claude --pane pS1 -- --disallowedTools"
+has "tend: the watcher takes over" "$out" "notify-watch t0-tend"
 # GH-2266: process containment rides the same argv, as a SEPARATE flag
 log_has "tend: the sandbox profile reaches the harness argv beside tool binding" \
-  "agent start ralph-tend --kind claude --pane pS1 -- --disallowedTools Edit,Write,NotebookEdit --settings {\"sandbox\":{\"enabled\":true,\"failIfUnavailable\":true"
+  "agent start t0-tend --kind claude --pane pS1 -- --disallowedTools Edit,Write,NotebookEdit --settings {\"sandbox\":{\"enabled\":true,\"failIfUnavailable\":true"
 log_has "tend: the profile denies the checkout by REALPATH" "\"denyWrite\":\[\"$REPO_REAL\"\]"
-log_has "tend: the probe prompt reaches the pane BEFORE the pass prompt" "agent prompt ralph-tend Containment self-test"
-has "tend: the pass reports the observed outcome" "$out" "process containment: applied for ralph-tend"
-has "tend: tool binding is reported beside it as its own line (GH-2267)" "$out" "tool binding: accepted for ralph-tend"
-case "$(grep 'agent prompt ralph-tend' "$FAKE_HERDR_LOG" | head -2 | tail -1)" in
+log_has "tend: the probe prompt reaches the pane BEFORE the pass prompt" "agent prompt t0-tend Containment self-test"
+has "tend: the pass reports the observed outcome" "$out" "process containment: applied for t0-tend"
+has "tend: tool binding is reported beside it as its own line (GH-2267)" "$out" "tool binding: accepted for t0-tend"
+case "$(grep 'agent prompt t0-tend' "$FAKE_HERDR_LOG" | head -2 | tail -1)" in
   *"/ralph:tend"*) ok "tend: the real prompt is delivered only AFTER the probe" ;;
-  *) not_ok "tend: prompt order — got: $(grep 'agent prompt ralph-tend' "$FAKE_HERDR_LOG" | cut -c1-80)" ;;
+  *) not_ok "tend: prompt order — got: $(grep 'agent prompt t0-tend' "$FAKE_HERDR_LOG" | cut -c1-80)" ;;
 esac
+# GH-2342: the criterion this unit exists for — the achieved outcomes are
+# RECORDED, not only printed. The spawn row is provisional (no containment
+# fields — neither existed when it was written) and the `containment` event
+# carries both, separately, once the probe has answered.
+is "tend: exactly one spawn row, role tender, issue 0" "1" \
+  "$(ledger_count '.ev=="spawn" and (.agent_ref | test("^t0-tend#[0-9a-f]{8}$")) and .tokens.role=="tender" and .tokens.issue=="0" and .lineage.role=="tender" and .lineage.issue==0')"
+is "tend: the provisional row carries NEITHER outcome (unknown when written)" "1" \
+  "$(ledger_count '.ev=="spawn" and (has("tool_binding") | not) and (has("process_containment") | not)')"
+is "tend: the containment event records BOTH achieved values, separately" "1" \
+  "$(ledger_count '.ev=="containment" and .via=="spawn" and .tool_binding=="accepted" and .process_containment=="applied" and (.agent_ref | startswith("t0-tend#"))')"
+is "tend: the containment event names the SAME ref as the spawn row" \
+  "$(ledger_events | jq -r 'select(.ev=="spawn") | .agent_ref')" \
+  "$(ledger_events | jq -r 'select(.ev=="containment") | .agent_ref')"
+is "tend: the row stays OPEN — the pass is live" "0" "$(ledger_count '.ev=="exit"')"
+log_has "tend: spawn tokens pushed onto the agent pane" "pane report-metadata pS1 .*--token role=tender"
 
 # ── 5b. an INERT sandbox (pane wrote inside the tree) refuses and closes ─────
 # The criterion this unit exists for: a malformed profile produces no error
@@ -210,23 +305,34 @@ reset
 out=$(FAKE_PROBE_MODE=inert RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
 rc=$?
 if [ "$rc" -ne 0 ]; then ok "tend inert: an uncontained pane FAILS the pass"; else not_ok "tend inert: an uncontained pane must fail the pass (rc 0)"; fi
-has "tend inert: the failure names not_applied" "$out" "process containment not_applied for ralph-tend"
+has "tend inert: the failure names not_applied" "$out" "process containment not_applied for t0-tend"
 log_has "tend inert: the split pane this run created is closed" "pane close pS1"
-log_hasnt "tend inert: the real prompt is NEVER delivered to an uncontained pane" "agent prompt ralph-tend /ralph:tend"
+log_hasnt "tend inert: the real prompt is NEVER delivered to an uncontained pane" "agent prompt t0-tend /ralph:tend"
 case "$out" in
   *"notify-watch"*) not_ok "tend inert: the watcher must not take over a refused pass" ;;
   *) ok "tend inert: no watcher hand-off on refusal" ;;
 esac
-[ -e "$REPO_DIR/.ralph-containment-probe-ralph-tend" ] && not_ok "tend inert: the marker the inert pane wrote is cleaned up" || ok "tend inert: the marker the inert pane wrote is cleaned up"
+[ -e "$REPO_DIR/.ralph-containment-probe-t0-tend" ] && not_ok "tend inert: the marker the inert pane wrote is cleaned up" || ok "tend inert: the marker the inert pane wrote is cleaned up"
+# GH-2342: the REFUSAL is the fact this line of work exists to keep — a
+# `not_applied` that lived only in a stderr line was the paperwork nobody
+# could re-read. Recorded as the two values, then the row closes naming it.
+is "tend inert: the containment event records the refusal (accepted / not_applied)" "1" \
+  "$(ledger_count '.ev=="containment" and .tool_binding=="accepted" and .process_containment=="not_applied"')"
+is "tend inert: the row is closed with the outcome as its reason" "1" \
+  "$(ledger_count '.ev=="exit" and .reason=="containment_not_applied" and .via=="spawn"')"
 
 # ── 5c. a pane that produces NO marker is unverified — refused, distinctly ──
 reset
 out=$(FAKE_PROBE_MODE=silent RALPH_HERDR_CONTAINMENT_PROBE_SEC=1 RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
 rc=$?
 if [ "$rc" -ne 0 ]; then ok "tend silent: an unverifiable pane FAILS the pass"; else not_ok "tend silent: an unverifiable pane must fail the pass (rc 0)"; fi
-has "tend silent: the failure names unverified, not not_applied" "$out" "process containment unverified for ralph-tend"
+has "tend silent: the failure names unverified, not not_applied" "$out" "process containment unverified for t0-tend"
 log_has "tend silent: the pane is closed" "pane close pS1"
-log_hasnt "tend silent: no real prompt" "agent prompt ralph-tend /ralph:tend"
+log_hasnt "tend silent: no real prompt" "agent prompt t0-tend /ralph:tend"
+is "tend silent: unverified is recorded as unverified — never as not_applied, never as applied" "1" \
+  "$(ledger_count '.ev=="containment" and .process_containment=="unverified"')"
+is "tend silent: the row closes containment_unverified" "1" \
+  "$(ledger_count '.ev=="exit" and .reason=="containment_unverified"')"
 
 # ── 5d. GH-2341: an UNBOUND Write tool writes inside the tree — refused ──────
 # The harness accepted --disallowedTools at start (argv: accepted), and the
@@ -236,10 +342,16 @@ reset
 out=$(FAKE_PROBE_MODE=tool-writer RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
 rc=$?
 if [ "$rc" -ne 0 ]; then ok "tend tool-writer: a pane whose Write tool wrote the tree FAILS the pass"; else not_ok "tend tool-writer: must fail the pass (rc 0)"; fi
-has "tend tool-writer: the failure names process applied AND tool binding not_applied" "$out" "process containment applied for ralph-tend, tool binding not_applied"
+has "tend tool-writer: the failure names process applied AND tool binding not_applied" "$out" "process containment applied for t0-tend, tool binding not_applied"
 log_has "tend tool-writer: the pane is closed" "pane close pS1"
-log_hasnt "tend tool-writer: no real prompt to a writer" "agent prompt ralph-tend /ralph:tend"
-[ -e "$REPO_DIR/.ralph-tool-probe-ralph-tend" ] && not_ok "tend tool-writer: the tool marker is cleaned up" || ok "tend tool-writer: the tool marker is cleaned up"
+log_hasnt "tend tool-writer: no real prompt to a writer" "agent prompt t0-tend /ralph:tend"
+[ -e "$REPO_DIR/.ralph-tool-probe-t0-tend" ] && not_ok "tend tool-writer: the tool marker is cleaned up" || ok "tend tool-writer: the tool marker is cleaned up"
+# GH-2342: the refuted binding is RECORDED — process applied beside tool
+# binding not_applied, two fields, and the close reason names the mechanism.
+is "tend tool-writer: the containment event records applied / not_applied, separately" "1" \
+  "$(ledger_count '.ev=="containment" and .process_containment=="applied" and .tool_binding=="not_applied"')"
+is "tend tool-writer: the row closes tool_binding_not_applied" "1" \
+  "$(ledger_count '.ev=="exit" and .reason=="tool_binding_not_applied" and .via=="spawn"')"
 
 # ── 5d. an unmeasured platform refuses BEFORE any surface exists ─────────────
 reset
@@ -249,6 +361,7 @@ if [ "$rc" -ne 0 ]; then ok "tend linux: refuses"; else not_ok "tend linux: must
 has "tend linux: the refusal names not_available" "$out" "not_available on Linux"
 log_hasnt "tend linux: no pane was split for a spawn that refused" "pane split"
 log_hasnt "tend linux: no agent was started" "agent start"
+is "tend linux: a refusal before any surface exists writes NO ledger row" "0" "$(ledger_count 'true')"
 
 # ── 6. dry run narrates the in-tab plan and mutates nothing ──────────────────
 reset
@@ -256,6 +369,9 @@ out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" RALPH_HERDR_DRY_RUN=true run_
 has "deliver dry run: narrates the rename" "$out" "tab rename <own tab> deliver"
 has "deliver dry run: narrates the split" "$out" "pane split w1:p9 --direction down"
 log_hasnt "deliver dry run: mutates nothing" "pane split"
+has "deliver dry run: the plan prints the spawn record it would append" "$out" 'ledger append (spawn): {"ts":'
+has "deliver dry run: …with both outcomes not_requested on the row" "$out" '"tool_binding":"not_requested","process_containment":"not_requested"'
+is "deliver dry run: the ledger is untouched" "0" "$(ledger_count 'true')"
 reset
 out=$(env -u HERDR_PANE_ID bash -c "cd '$REPO_DIR' && RALPH_HERDR_DRY_RUN=true bash '$SCRIPTS/deliver-pass.sh' </dev/null 2>&1")
 has "deliver dry run (bare shell): narrates the lane-labeled tab" "$out" 'tab create --cwd .* --label "deliver" --no-focus'
@@ -318,8 +434,11 @@ has "tend dry: the plan shows the sandbox beside tool binding" "$out" \
   "-- --disallowedTools Edit,Write,NotebookEdit --settings <process containment: seatbelt denyWrite $REPO_DIR>"
 has "tend dry: the plan names the probe and its refusal" "$out" "containment probe: prompt <captured> to touch"
 has "tend dry: the plan reports tool binding off the argv, separately (GH-2267)" "$out" "tool binding: accepted (read off the argv"
+has "tend dry: the plan prints the provisional spawn record (role tender)" "$out" 'ledger append (spawn): {"ts":.*"role":"tender"'
+has "tend dry: the plan names the containment event that follows the probe" "$out" 'ledger append (containment, after the probe): {ev: "containment", agent_ref: "t0-tend#'
 log_hasnt "tend dry: no agent started" "agent start"
 log_hasnt "tend dry: no prompt sent" "agent prompt"
+is "tend dry: the ledger is untouched" "0" "$(ledger_count 'true')"
 
 echo "$pass passed, $fail failed ($n total)"
 [ "$fail" -eq 0 ]

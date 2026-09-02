@@ -275,11 +275,14 @@ copy and own (`~/Library/LaunchAgents/dev.herdr.ralph-cockpit.plist`):
 
 Sessions the cockpit spawns are named `<lane><issue>-<slug>[--<gen>]`, ≤32
 chars: `w1743-fix-claim-race` is a work session on #1743. Lanes: `w`=work,
-`r`=review, `o`=orchestrator, `d`=disposable, `s`=watcher, `x`=relay (issue 0
-is infra: `s0-watch`). `--2`..`--9` are sibling generations — issue fleets
+`r`=review, `o`=orchestrator, `d`=disposable, `s`=watcher, `x`=relay,
+`i`=investigation, `t`=tending (issue 0 = belongs to no unit: `s0-watch`,
+`x0-relay`, the `d0-fork-…` forks, and the lane passes `t0-tend` /
+`r0-deliver`). `--2`..`--9` are sibling generations — issue fleets
 only, never improvised on a collision. The durable handle in the ledger is
 `name#epoch` (4-8 hex); pane ids are server-scoped and die with it. Legacy
-`gh-N` / `ralph-deliver` / `ralph-tend` names still parse everywhere. Names
+`gh-N` names still parse everywhere; `ralph-deliver` / `ralph-tend` (the
+pre-0.42 lane-pass names) are recognised as legacy singletons. Names
 are derived from the issue title (`scripts/naming.sh`, mirroring
 `ralph/scripts/contracts.ts` — a shared golden table pins both); read them
 back from `herdr agent list`, never guess a slug.

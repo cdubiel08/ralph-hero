@@ -174,7 +174,8 @@ ralph_scoped_agents() {
 }
 
 # RALPH_NAME_RE — the display convention for a Ralph-owned agent: the legacy
-# grammar (gh-N, ralph-deliver/tend) or grammar B (<lane><issue>-…). Named
+# grammar (gh-N, and the pre-GH-2342 lane-pass names ralph-deliver/tend) or
+# grammar B (<lane><issue>-…, which the current t0-tend / r0-deliver are). Named
 # rather than inlined because it is read from BOTH sides now — `grep -E` below
 # and jq's `test()` in ralph_herd_by_scope — and two spellings of the same
 # convention is exactly how a filter starts disagreeing with itself. The syntax
