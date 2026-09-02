@@ -198,6 +198,11 @@ type Agent struct {
 	// Address is tokens.address — the derived herd address the spawner
 	// stamped (GH-2209/D0.4). Empty for a pre-grammar spawn.
 	Address string
+	// Session is agent_session.value — the Claude session id herdr observed
+	// for the pane, which names the transcript the cost chip reads
+	// (GH-2378). Empty until the harness has registered; a hand-started
+	// session has one, a pane with no agent has none.
+	Session string
 }
 
 // TopoRow is one `board roster --json` row — the derived topology view
@@ -374,6 +379,15 @@ type Model struct {
 	ledger Ledger              // spawn history — agent age, and branch off a dead session
 	diffs  map[string]DiffStat // agent_ref → worktree diff, In Progress only
 	glyphs glyphSet
+	// usage is the transcript join (GH-2378): Claude session id → the
+	// session's priced reduction, replaced whole on every pass like diffs.
+	// An entry whose Usage.Read is false is a session we KNOW about and
+	// could not read — the `$—` chip — distinct from a session absent here.
+	usage map[string]usageEntry
+	// gql is the trailing hour's GraphQL spend from board.ts's own log;
+	// gqlOK=false is an unreadable log and draws nothing, never 0.
+	gql   int
+	gqlOK bool
 
 	// Board-sourced card markings (GH-2062) — the second cadence. Both maps
 	// are per-issue authoritative WITHIN a successful pass: an issue present
@@ -685,20 +699,190 @@ func (m Model) cardAge(issue int, now time.Time) (time.Duration, bool) {
 	return 0, false
 }
 
-// cardCost is the LIVE agent's latest usage fact (GH-2347), resolved through
-// the same exact agent_ref join as cardAge. ok=false = no fact yet for the
-// session on screen: rendered as nothing, never as $0 — a worker between
-// spawn and its first done turn has a cost, just not a recorded one.
-func (m Model) cardCost(issue int) (LedgerUsage, bool) {
+// Cost chip states (GH-2378). The trio must stay distinct on the card: no
+// session at all draws nothing, a session whose transcript could not be read
+// draws `$—`, and a measured one draws the number.
+const (
+	costNone     = iota // no Claude session known for this unit
+	costUnread          // session known, transcript unreadable or not yet read
+	costMeasured        // a priced reduction
+)
+
+// cardSession is the Claude session id the cost chip joins on: the live
+// agent's own agent_session first, else the ledger's durable copy for the
+// unit's newest spawn — which is how a Done card, whose session has exited,
+// still prices. The checkout rides along to name the transcript directory.
+func (m Model) cardSession(issue int) (sid, checkout string) {
 	for _, a := range m.agents[issue] {
-		if a.Root == "" {
+		if a.Session == "" {
 			continue
 		}
-		if u, ok := m.ledger.Usage[a.Root]; ok {
-			return u, true
+		if sp, ok := m.ledger.ByRef[a.Root]; ok {
+			return a.Session, sp.Checkout
+		}
+		return a.Session, ""
+	}
+	if sp, ok := m.ledger.ByIssue[issue]; ok {
+		if sid := m.ledger.Sessions[sp.Ref]; sid != "" {
+			return sid, sp.Checkout
 		}
 	}
-	return LedgerUsage{}, false
+	return "", ""
+}
+
+// cardUsage resolves the chip: the transcript join first (live, per call),
+// then the ledger's usage fact (GH-2347) when the transcript is gone — the
+// durable record, written at done turns and exit, so it is a floor rather
+// than the current meter. The ledger fact carries no last-call context, so
+// a card priced from it never draws the context alert.
+func (m Model) cardUsage(issue int) (SessionUsage, int) {
+	sid, _ := m.cardSession(issue)
+	if sid == "" {
+		return SessionUsage{}, costNone
+	}
+	if e, ok := m.usage[sid]; ok && e.Usage.Read {
+		return e.Usage, costMeasured
+	}
+	for _, a := range m.agents[issue] {
+		if u, ok := m.ledger.Usage[a.Root]; ok && a.Root != "" {
+			return SessionUsage{Read: true, USD: u.ListUSD}, costMeasured
+		}
+	}
+	if sp, ok := m.ledger.ByIssue[issue]; ok {
+		if u, ok := m.ledger.Usage[sp.Ref]; ok {
+			return SessionUsage{Read: true, USD: u.ListUSD}, costMeasured
+		}
+	}
+	return SessionUsage{}, costUnread
+}
+
+// usageTargets lists every session the screen can price: every live agent's
+// own session FIRST — the overlay lands before the board on a cold start, so
+// this is what makes the first agents pass a priced pass — then the exited
+// sessions the ledger names for cards on screen, and the Done window's while
+// it is up. Bounded like the diff pass — each is a file stat, and a parse
+// only when the file moved, but a column of hundreds would still put that on
+// the overlay tick.
+func (m Model) usageTargets() []usageTarget {
+	var out []usageTarget
+	seen := map[string]bool{}
+	add := func(sid, checkout string) bool {
+		if sid == "" || seen[sid] {
+			return true
+		}
+		seen[sid] = true
+		out = append(out, usageTarget{Session: sid, Checkout: checkout})
+		return len(out) < maxUsageReads
+	}
+	for _, issue := range sortedIssues(m.agents) {
+		for _, a := range m.agents[issue] {
+			checkout := ""
+			if sp, ok := m.ledger.ByRef[a.Root]; ok {
+				checkout = sp.Checkout
+			}
+			if !add(a.Session, checkout) {
+				return out
+			}
+		}
+	}
+	for i := range m.cols {
+		for _, c := range m.cols[i] {
+			if !add(m.cardSession(c.Number)) {
+				return out
+			}
+		}
+	}
+	if m.showDone {
+		for _, c := range m.doneCards {
+			if !add(m.cardSession(c.Number)) {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+// usageMissing reports a session on screen the last pass did not cover —
+// the board landing after the overlay, or the Done window opening. The
+// board handler asks this before spending a pass, so a board that changed
+// nothing about who is priced costs no file reads.
+func (m Model) usageMissing() bool {
+	for _, t := range m.usageTargets() {
+		if _, ok := m.usage[t.Session]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedIssues(agents map[int][]Agent) []int {
+	out := make([]int, 0, len(agents))
+	for n := range agents {
+		out = append(out, n)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// maxUsageReads bounds one pass. Beyond it the chip stays `$—` rather than
+// silently reading as measured.
+const maxUsageReads = 24
+
+// fleetTally counts live agents by joined state, in the strip's own rank
+// order, for the header. Only states with a member are returned.
+func (m Model) fleetTally() []fleetCount {
+	counts := map[string]int{}
+	for _, as := range m.agents {
+		for _, a := range as {
+			counts[joinAgentState(a.Status, a.TokenState)]++
+		}
+	}
+	var out []fleetCount
+	for _, st := range []string{stateWorking, stateReporting, stateBlocked, stateStarting, stateIdle, stateDone} {
+		if n := counts[st]; n > 0 {
+			out = append(out, fleetCount{State: st, N: n})
+		}
+	}
+	return out
+}
+
+type fleetCount struct {
+	State string
+	N     int
+}
+
+// fleetSpend is the header's three clock numbers over every session on
+// screen: spend and tokens since the local midnight, and spend in the
+// trailing hour. Sessions whose transcript was not read contribute nothing —
+// the `$—` on their card carries that fact, the header does not repeat it.
+func (m Model) fleetSpend(now time.Time) (todayUSD float64, todayTokens int, hourUSD float64) {
+	y, mo, d := now.Date()
+	midnight := time.Date(y, mo, d, 0, 0, 0, 0, now.Location())
+	hourAgo := now.Add(-time.Hour)
+	for _, e := range m.usage {
+		if !e.Usage.Read {
+			continue
+		}
+		usd, tok := e.Usage.since(midnight)
+		todayUSD += usd
+		todayTokens += tok
+		h, _ := e.Usage.since(hourAgo)
+		hourUSD += h
+	}
+	return todayUSD, todayTokens, hourUSD
+}
+
+// columnSpend sums the measured chips in one column; ok=false when no card
+// priced, so an unpriced column draws no total rather than $0.00.
+func (m Model) columnSpend(cards []Card) (float64, bool) {
+	total, any := 0.0, false
+	for _, c := range cards {
+		if u, st := m.cardUsage(c.Number); st == costMeasured {
+			total += u.USD
+			any = true
+		}
+	}
+	return total, any
 }
 
 // cardBranch is the checkout the work is on. The live agent's own token is

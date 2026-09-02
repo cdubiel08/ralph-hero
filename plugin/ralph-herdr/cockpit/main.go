@@ -34,6 +34,11 @@
 //	RALPH_HERDR_LEDGER      pin the spawn ledger file (default: the board
 //	                        scope's ~/.ralph/<owner>/<repo>/ledger.jsonl)
 //	RALPH_HERDR_LEDGER_ROOT ledger root dir (default ~/.ralph)
+//	CLAUDE_CONFIG_DIR       where the harness keeps projects/<slug>/<id>.jsonl
+//	                        (default ~/.claude) — the cost chip's transcript
+//	                        join (GH-2378)
+//	RALPH_HOME              ~/.ralph override: the budget.jsonl spend log the
+//	                        header's `gql N` reads, and the marks glob
 package main
 
 import (
@@ -139,6 +144,8 @@ func resolveConfig(args []string, getenv func(string) string) (Config, error) {
 	// no discoverable board scope costs the age chip, and an unset glyph knob
 	// takes the ASCII set.
 	cfg.LedgerPath = ledgerPath(cfg.Repo, getenv)
+	cfg.TranscriptRoot = transcriptRoot(getenv)
+	cfg.BudgetPath = budgetPath(getenv)
 	cfg.Glyphs = resolveGlyphs(getenv("RALPH_COCKPIT_GLYPHS"))
 	cfg.Truecolor = resolveTruecolor(getenv("COLORTERM"))
 	// The local write stamp watch (audit A6) and the liveness heartbeat

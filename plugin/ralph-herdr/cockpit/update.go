@@ -153,11 +153,18 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		// nothing to mark (signalsWanted is false on an empty board). Asking
 		// here rather than waiting for the next tick is what makes the first
 		// board a marked board.
+		var cmds []tea.Cmd
 		if m.signalsDue(time.Now()) {
 			m.signalsInFlight = true
-			return m, fetchSignalsCmd(m.cfg, m.runner)
+			cmds = append(cmds, fetchSignalsCmd(m.cfg, m.runner))
 		}
-		return m, nil
+		// A card whose session the last transcript pass never saw — the
+		// board landing after the overlay on a cold start — is priced now
+		// rather than at the next agents poll, and only then.
+		if m.usageMissing() {
+			cmds = append(cmds, fetchUsageCmd(m.cfg, m.usage, m.usageTargets(), time.Now()))
+		}
+		return m, tea.Batch(cmds...)
 
 	case signalsMsg:
 		m.signalsInFlight = false
@@ -194,6 +201,11 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		// The Done list just changed length under a cursor that may be parked
 		// past its end — the same clamp the `D` swap itself performs.
 		m.clampCursor()
+		// Closed units price from their exited sessions (the ledger's
+		// claude_session): a window that brought new cards is priced now.
+		if m.usageMissing() {
+			return m, fetchUsageCmd(m.cfg, m.usage, m.usageTargets(), time.Now())
+		}
 		return m, nil
 
 	case inboxMsg:
@@ -245,9 +257,22 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		// The diff pass runs off the joined state, so it is dispatched here
 		// rather than on the tick: before this message there is no agent_ref
 		// to measure against, and after it the target list is exact.
+		// The transcript join rides the same joined state: the session id
+		// arrives in this snapshot, so this is the first moment there is a
+		// transcript to name. Always dispatched — a fleet of zero still
+		// carries the header's spend log read.
+		cmds := []tea.Cmd{fetchUsageCmd(m.cfg, m.usage, m.usageTargets(), time.Now())}
 		if targets := m.diffTargets(); len(targets) > 0 {
-			return m, fetchDiffsCmd(m.runner, targets)
+			cmds = append(cmds, fetchDiffsCmd(m.runner, targets))
 		}
+		return m, tea.Batch(cmds...)
+
+	case usageMsg:
+		// REPLACE, never merge — the diffs rule: a stale entry for a session
+		// that has since exited would keep pricing a transcript nobody is
+		// writing, and the cache rides inside the entries themselves.
+		m.usage = msg.usage
+		m.gql, m.gqlOK = msg.gql, msg.gqlOK
 		return m, nil
 
 	case diffsMsg:

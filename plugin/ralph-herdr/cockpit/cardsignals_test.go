@@ -649,7 +649,7 @@ func TestParseInboxCountsRowsStillWithTheirLeads(t *testing.T) {
 	}
 }
 
-func TestCostChipIsTheLiveSessionsMeterNeverZero(t *testing.T) {
+func TestCostChipFallsBackToTheLedgerFactWhenTheTranscriptIsGone(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	m.ledger = Ledger{Read: true, ByRef: map[string]LedgerSpawn{
 		"w10-ten#a":   {Ref: "w10-ten#a", Issue: 10, SpawnedAt: time.Now().Add(-5 * time.Minute)},
@@ -658,32 +658,41 @@ func TestCostChipIsTheLiveSessionsMeterNeverZero(t *testing.T) {
 		"w10-ten#a":   {Ref: "w10-ten#a", ListUSD: 7.999, MaxContext: 274076, Calls: 37, Model: "claude-fable-5-1"},
 		"w10-ten#old": {Ref: "w10-ten#old", ListUSD: 44.1, MaxContext: 444000},
 		"w11-nol#b":   {Ref: "w11-nol#b", ListUSD: 3, MaxContext: 1000},
-	}}
+	}, Sessions: map[string]string{}}
 	m.agents = setAgents([]Agent{
-		{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Root: "w10-ten#a"},
-		{Name: "w12-fresh", Status: "working", Issue: 12, Lane: "w", Root: "w12-fresh#c"},
+		{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Root: "w10-ten#a", Session: "sid-10"},
+		{Name: "w12-fresh", Status: "working", Issue: 12, Lane: "w", Root: "w12-fresh#c", Session: "sid-12"},
 	})
-	// The session ON SCREEN, not the dead predecessor that shares its name.
-	if got := costChip(m, Card{Number: 10}); !strings.Contains(got, "$8.00 274k") || strings.Contains(got, "44.10") {
-		t.Errorf("cost chip = %q, want the live session's $8.00 274k", got)
+	g := m.glyphSet()
+	// No transcript read yet, but the ledger holds a fact for the session
+	// ON SCREEN — the durable record prices the card, not the dead
+	// predecessor that shares its name, and the ledger's MaxContext is not a
+	// last-call context, so no alert is drawn from it.
+	if got := costChip(m, Card{Number: 10}, g); !strings.Contains(got, "$8.00") || strings.Contains(got, "44.10") || strings.Contains(got, "274k") {
+		t.Errorf("cost chip = %q, want the live session's $8.00 and nothing else", got)
 	}
-	// A live session with no fact yet renders NOTHING — unmeasured is not free.
-	if got := costChip(m, Card{Number: 12}); got != "" {
-		t.Errorf("an unmeasured live session = %q, want nothing", got)
+	if got := ctxChip(m, Card{Number: 10}, g); got != "" {
+		t.Errorf("ctx chip off a ledger fact = %q, want nothing", got)
 	}
-	// No live agent at all: nothing, even though the ledger holds a fact.
-	if got := costChip(m, Card{Number: 11}); got != "" {
-		t.Errorf("a unit with no live agent = %q, want nothing", got)
+	// A live session with no fact and no transcript is UNREAD — `$—`, never
+	// nothing and never $0.
+	if got := costChip(m, Card{Number: 12}, g); !strings.Contains(got, "$—") {
+		t.Errorf("an unmeasured live session = %q, want $—", got)
+	}
+	// No session at all: nothing, even though the ledger holds a fact under
+	// a ref no card resolves to.
+	if got := costChip(m, Card{Number: 11}, g); got != "" {
+		t.Errorf("a unit with no session = %q, want nothing", got)
 	}
 	// The chip rides line 3 beside the timer and survives every width.
 	card := Card{Number: 10, State: "In Progress", Title: "t", Priority: "P1", Estimate: "M"}
 	for _, width := range []int{40, 60, 120} {
 		line3 := strings.Split(renderCard(m, 1, 1, card, width), "\n")[2]
-		if !strings.Contains(line3, "$8.00 274k") {
+		if !strings.Contains(line3, "$8.00") {
 			t.Errorf("w=%d: line 3 = %q, want the cost chip", width, line3)
 		}
 	}
-	if formatTokens(999) != "999" || formatTokens(1499) != "1k" || formatTokens(274076) != "274k" {
-		t.Errorf("formatTokens: %s %s %s", formatTokens(999), formatTokens(1499), formatTokens(274076))
+	if formatTokens(999) != "999" || formatTokens(1499) != "1k" || formatTokens(274076) != "274k" || formatTokens(3_140_000) != "3.1M" {
+		t.Errorf("formatTokens: %s %s %s %s", formatTokens(999), formatTokens(1499), formatTokens(274076), formatTokens(3_140_000))
 	}
 }

@@ -196,6 +196,12 @@ type Ledger struct {
 	// exact join as ByRef, for the same reason: a respawned unit's cost is
 	// the session on screen, not its dead predecessor's.
 	Usage map[string]LedgerUsage
+	// Sessions is the Claude session id per agent_ref (GH-2347's
+	// claude_session, last-non-empty across the ref's state/discover records
+	// — the spawn record predates the conversation). It is the transcript
+	// join for a unit whose session has EXITED: a Done card has no live
+	// agent to read agent_session from, and this is the durable copy.
+	Sessions map[string]string
 	// Read is false when the ledger could not be read at all. The renderer
 	// needs it: no ledger and an agent with no record both produce a dash, but
 	// only the second is a fact about that agent.
@@ -282,8 +288,9 @@ type ledgerRow struct {
 		Issue     int    `json:"issue"`
 		SpawnedAt string `json:"spawned_at"`
 	} `json:"lineage"`
-	Tokens map[string]string `json:"tokens"`
-	Usage  *struct {
+	Tokens  map[string]string `json:"tokens"`
+	Session string            `json:"claude_session"`
+	Usage   *struct {
 		Model      string  `json:"model"`
 		Calls      int     `json:"calls"`
 		ListUSD    float64 `json:"list_usd"`
@@ -305,7 +312,7 @@ type ledgerRow struct {
 // shape); the read shells out to sqlite3 rather than linking a driver, the
 // same dependency every shell reader already carries.
 func readLedger(path string) Ledger {
-	l := Ledger{ByRef: map[string]LedgerSpawn{}, ByIssue: map[int]LedgerSpawn{}, Usage: map[string]LedgerUsage{}}
+	l := Ledger{ByRef: map[string]LedgerSpawn{}, ByIssue: map[int]LedgerSpawn{}, Usage: map[string]LedgerUsage{}, Sessions: map[string]string{}}
 	if path == "" {
 		return l
 	}
@@ -355,6 +362,9 @@ func readLedger(path string) Ledger {
 		var row ledgerRow
 		if json.Unmarshal([]byte(line), &row) != nil || row.AgentRef == "" {
 			continue
+		}
+		if row.Session != "" {
+			l.Sessions[row.AgentRef] = row.Session
 		}
 		if row.Ev == "usage" {
 			// Latest wins by tape order; a fact with no usage object or an
@@ -511,4 +521,354 @@ func formatAge(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dm", m)
 	}
+}
+
+// ── the transcript join (GH-2378) ───────────────────────────────────────────
+//
+// Per-session cost and context come from the worker's own Claude transcript:
+// herdr's snapshot carries `agent_session.value`, the Claude session id, and
+// the harness writes $CLAUDE_CONFIG_DIR/projects/<slug(cwd)>/<id>.jsonl with a
+// `usage` block on every assistant row. Machine-local, zero API calls. The
+// reduction mirrors ralph_usage_from_transcript (ledger.sh, GH-2347) — dedupe
+// by message.id taking the max per field, price at list rates under the
+// 1-hour cache TTL Claude Code uses — so the chip and the ledger fact agree
+// about the same transcript. Dollars are rate-limit weight, not a bill.
+
+// usagePriceTable stamps which rates priced a number; bump it with the rows.
+// The rows are the SAME table ledger.sh carries (`_RALPH_USAGE_PRICES`), and
+// usage_test.go asserts byte-for-byte parity so the two cannot drift.
+const usagePriceTable = "2026-09-01"
+
+// priceRow is USD per million tokens: input, cache write (5m), cache write
+// (1h), cache read, output.
+type priceRow struct{ in, w5, w1, read, out float64 }
+
+var usagePrices = map[string]priceRow{
+	"claude-fable-5-1":  {10, 12.5, 20, 0.25, 50},
+	"claude-mythos-5-1": {10, 12.5, 20, 0.25, 50},
+	"claude-fable-5":    {10, 12.5, 20, 1.0, 50},
+	"claude-opus-5":     {5, 6.25, 10, 0.5, 25},
+	"claude-opus-4-8":   {5, 6.25, 10, 0.5, 25},
+	"claude-opus-4-7":   {5, 6.25, 10, 0.5, 25},
+	"claude-opus-4-6":   {5, 6.25, 10, 0.5, 25},
+	"claude-opus-4-5":   {5, 6.25, 10, 0.5, 25},
+	"claude-sonnet-5":   {2, 2.5, 4, 0.2, 10},
+	"claude-sonnet-4-6": {3, 3.75, 6, 0.3, 15},
+	"claude-sonnet-4-5": {3, 3.75, 6, 0.3, 15},
+	"claude-haiku-4-5":  {1, 1.25, 2, 0.1, 5},
+}
+
+// priceFor matches a model id by PREFIX, longest row wins — a dated snapshot
+// like claude-haiku-4-5-20251001 shares its family's row, and claude-fable-5
+// must not swallow claude-fable-5-1.
+func priceFor(model string) (priceRow, bool) {
+	best, ok, n := priceRow{}, false, -1
+	for k, p := range usagePrices {
+		if strings.HasPrefix(model, k) && len(k) > n {
+			best, ok, n = p, true, len(k)
+		}
+	}
+	return best, ok
+}
+
+// CallUsage is one model call after dedupe: when it happened, what it cost,
+// and how large its prompt was.
+type CallUsage struct {
+	At      time.Time // zero when the row carried no parseable timestamp
+	USD     float64
+	Tokens  int // input + cache write + cache read + output
+	Context int // input + cache read + cache write — the prompt the call carried
+	Priced  bool
+}
+
+// SessionUsage is one transcript reduced. Read=false is a transcript that
+// could not be read or held no model call, and it must never render as $0:
+// an unmeasured session is not a free one. The per-call slice is kept so the
+// header's clock windows ("today", "/h") can be cut at render time against
+// the CURRENT clock rather than the clock at read time.
+type SessionUsage struct {
+	Read        bool
+	USD         float64
+	Tokens      int
+	LastContext int
+	Unpriced    int
+	Calls       []CallUsage
+}
+
+// since sums the calls at or after t. A call with no timestamp is counted in
+// no window — it cannot be placed on the clock.
+func (u SessionUsage) since(t time.Time) (usd float64, tokens int) {
+	for _, c := range u.Calls {
+		if !c.At.IsZero() && !c.At.Before(t) {
+			usd += c.USD
+			tokens += c.Tokens
+		}
+	}
+	return usd, tokens
+}
+
+type transcriptRow struct {
+	Type      string `json:"type"`
+	Timestamp string `json:"timestamp"`
+	Message   *struct {
+		ID    string `json:"id"`
+		Model string `json:"model"`
+		Usage *struct {
+			Input     *int `json:"input_tokens"`
+			CacheW    *int `json:"cache_creation_input_tokens"`
+			CacheRead *int `json:"cache_read_input_tokens"`
+			Output    *int `json:"output_tokens"`
+			Creation  *struct {
+				M5 *int `json:"ephemeral_5m_input_tokens"`
+				H1 *int `json:"ephemeral_1h_input_tokens"`
+			} `json:"cache_creation"`
+		} `json:"usage"`
+	} `json:"message"`
+}
+
+// rawCall is the per-message-id accumulator: a streamed message lands as
+// several rows whose input-side counts agree and whose output grows, so the
+// max per field is the message's real usage.
+type rawCall struct {
+	model                            string
+	at                               time.Time
+	input, w5, w1, wtotal, read, out int
+}
+
+func deref(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// readTranscriptUsage reduces one transcript. Torn or foreign lines are
+// skipped, never fatal — the last line of a live transcript is routinely
+// mid-write — and lines are read without a length ceiling, because a tool
+// result can be megabytes and a scanner that dies on it would serve a PREFIX
+// of the session as the whole.
+func readTranscriptUsage(path string) SessionUsage {
+	f, err := os.Open(path)
+	if err != nil {
+		return SessionUsage{}
+	}
+	defer f.Close()
+	byID := map[string]*rawCall{}
+	var order []string
+	rd := bufio.NewReaderSize(f, 256*1024)
+	assistant := []byte(`"assistant"`)
+	for {
+		line, err := rd.ReadBytes('\n')
+		if len(line) > 0 && bytes.Contains(line, assistant) {
+			var row transcriptRow
+			if json.Unmarshal(line, &row) == nil && row.Type == "assistant" &&
+				row.Message != nil && row.Message.Usage != nil && row.Message.ID != "" {
+				u := row.Message.Usage
+				rc, seen := byID[row.Message.ID]
+				if !seen {
+					rc = &rawCall{model: row.Message.Model}
+					byID[row.Message.ID] = rc
+					order = append(order, row.Message.ID)
+				}
+				if rc.model == "" {
+					rc.model = row.Message.Model
+				}
+				if at, perr := time.Parse(time.RFC3339Nano, row.Timestamp); perr == nil && (rc.at.IsZero() || at.Before(rc.at)) {
+					rc.at = at
+				}
+				rc.input = max(rc.input, deref(u.Input))
+				rc.wtotal = max(rc.wtotal, deref(u.CacheW))
+				rc.read = max(rc.read, deref(u.CacheRead))
+				rc.out = max(rc.out, deref(u.Output))
+				if u.Creation != nil {
+					rc.w5 = max(rc.w5, deref(u.Creation.M5))
+					rc.w1 = max(rc.w1, deref(u.Creation.H1))
+				}
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	if len(order) == 0 {
+		return SessionUsage{}
+	}
+	out := SessionUsage{Read: true, Calls: make([]CallUsage, 0, len(order))}
+	for _, id := range order {
+		rc := byID[id]
+		w5, w1 := rc.w5, rc.w1
+		if w5+w1 == 0 && rc.wtotal > 0 {
+			// A pre-TTL-split usage block reports only the total; charge it
+			// at the 1h rate (what Claude Code uses) rather than as free.
+			w1 = rc.wtotal
+		}
+		c := CallUsage{
+			At:      rc.at,
+			Tokens:  rc.input + w5 + w1 + rc.read + rc.out,
+			Context: rc.input + rc.read + w5 + w1,
+		}
+		if p, ok := priceFor(rc.model); ok {
+			c.Priced = true
+			c.USD = (float64(rc.input)*p.in + float64(w5)*p.w5 + float64(w1)*p.w1 +
+				float64(rc.read)*p.read + float64(rc.out)*p.out) / 1e6
+		} else {
+			out.Unpriced++
+		}
+		out.USD += c.USD
+		out.Tokens += c.Tokens
+		out.LastContext = c.Context
+		out.Calls = append(out.Calls, c)
+	}
+	return out
+}
+
+// transcriptRoot is $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects —
+// the harness's own rule (ralph_usage_transcript in ledger.sh). "" = no home,
+// which costs the cost chip and nothing else.
+func transcriptRoot(getenv func(string) string) string {
+	if d := getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		return filepath.Join(d, "projects")
+	}
+	home := getenv("HOME")
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".claude", "projects")
+}
+
+var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+
+// transcriptPath locates a session's transcript. The harness slugs the cwd
+// with every char outside [A-Za-z0-9] → '-'; that derived path is tried
+// first, then a glob over every project dir — a session id is a UUID, so the
+// glob cannot collide, and it covers a checkout the ledger recorded
+// differently from the pane's cwd. "" = not found (or an id that is not a
+// session id, which must never reach a glob).
+func transcriptPath(root, checkout, sid string) string {
+	if root == "" || sid == "" || !sessionIDRe.MatchString(sid) {
+		return ""
+	}
+	if checkout != "" {
+		p := filepath.Join(root, transcriptSlug(checkout), sid+".jsonl")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	matches, err := filepath.Glob(filepath.Join(root, "*", sid+".jsonl"))
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
+}
+
+func transcriptSlug(p string) string {
+	b := []byte(p)
+	for i, c := range b {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9') {
+			b[i] = '-'
+		}
+	}
+	return string(b)
+}
+
+// usageEntry is one session's cached reduction, keyed on the transcript's
+// size+mtime so an unchanged file is not re-parsed every tick — a live
+// transcript is tens of megabytes and a fleet has several.
+type usageEntry struct {
+	Path  string
+	Size  int64
+	MTime time.Time
+	Usage SessionUsage
+}
+
+// readSessionUsage resolves and reduces one session, reusing prev when the
+// file has not moved. A session whose transcript cannot be found or read
+// yields Read=false — the "unread" chip — never a stale prev, which would
+// keep drawing a number for a transcript that has since gone.
+func readSessionUsage(root, checkout, sid string, prev map[string]usageEntry) usageEntry {
+	path := transcriptPath(root, checkout, sid)
+	if path == "" {
+		return usageEntry{}
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return usageEntry{}
+	}
+	if p, ok := prev[sid]; ok && p.Path == path && p.Size == st.Size() && p.MTime.Equal(st.ModTime()) && p.Usage.Read {
+		return p
+	}
+	return usageEntry{Path: path, Size: st.Size(), MTime: st.ModTime(), Usage: readTranscriptUsage(path)}
+}
+
+// ── the GraphQL spend log ───────────────────────────────────────────────────
+
+// budgetPath is ~/.ralph/budget.jsonl (RALPH_HOME honoured) — the spend line
+// board.ts appends on every invocation (GH-2278). Reading it is how the header
+// knows the fleet's GraphQL weight with zero API calls; the number is points
+// SPENT in the trailing hour, which is the rolling window GitHub bills on.
+func budgetPath(getenv func(string) string) string {
+	root := getenv("RALPH_HOME")
+	if root == "" {
+		home := getenv("HOME")
+		if home == "" {
+			return ""
+		}
+		root = filepath.Join(home, ".ralph")
+	}
+	return filepath.Join(root, "budget.jsonl")
+}
+
+// budgetTail bounds the read: the log is append-only and the window is one
+// hour, so only the tail can matter. A window that outgrows the tail is
+// under-counted, which the caller cannot distinguish from a quiet hour — the
+// bound is generous for that reason (a busy fleet writes ~200 lines/hour).
+const budgetTail = 512 * 1024
+
+// readBudgetSpend sums the points spent at or after since. ok=false is a log
+// that could not be read — rendered as nothing, never as 0.
+func readBudgetSpend(path string, since time.Time) (points int, ok bool) {
+	if path == "" {
+		return 0, false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return 0, false
+	}
+	var src io.Reader = f
+	if st.Size() > budgetTail {
+		if _, err := f.Seek(st.Size()-budgetTail, io.SeekStart); err != nil {
+			return 0, false
+		}
+		src = f
+	}
+	sc := bufio.NewScanner(src)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	first := st.Size() > budgetTail // a mid-line seek: drop the torn head
+	for sc.Scan() {
+		if first {
+			first = false
+			continue
+		}
+		var row struct {
+			At     string `json:"at"`
+			Points int    `json:"points"`
+		}
+		if json.Unmarshal(sc.Bytes(), &row) != nil {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, row.At)
+		if err != nil || at.Before(since) {
+			continue
+		}
+		points += row.Points
+	}
+	if sc.Err() != nil {
+		return 0, false
+	}
+	return points, true
 }
