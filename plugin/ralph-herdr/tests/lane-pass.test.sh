@@ -205,6 +205,32 @@ out=$(env -u HERDR_PANE_ID bash -c "cd '$REPO_DIR' && bash '$SCRIPTS/deliver-pas
 log_has "deliver fallback: cleanup closes the tab this run created" "tab close w1:tF"
 log_hasnt "deliver fallback: cleanup closes no pane" "pane close"
 
+# ── 4a. a live pass under the PRE-0.41 name is still a live pass (PR #2354 P1)
+# The `agent start` interlock keys on the new name; a `ralph-deliver` pane
+# from an older plugin survives an upgrade and must still count. Refused
+# before any surface exists.
+reset
+. "$SCRIPT_DIR/herd-fixture.sh"
+herd_fixture '[{"name":"ralph-deliver","agent_status":"working","pane_id":"pL"}]' "$REPO_DIR"
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "deliver legacy-live: a live ralph-deliver refuses the pass"; else not_ok "deliver legacy-live: a live ralph-deliver must refuse (rc 0)"; fi
+has "deliver legacy-live: the refusal names the legacy pane" "$out" "already live under its pre-0.41 name (ralph-deliver)"
+log_hasnt "deliver legacy-live: no pane was split" "pane split"
+log_hasnt "deliver legacy-live: no agent was started" "agent start"
+is "deliver legacy-live: no ledger row for a spawn that never began" "0" "$(ledger_count 'true')"
+herd_fixture '[{"name":"ralph-tend","agent_status":"working","pane_id":"pL"}]' "$REPO_DIR"
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "tend legacy-live: a live ralph-tend refuses the pass"; else not_ok "tend legacy-live: a live ralph-tend must refuse (rc 0)"; fi
+log_hasnt "tend legacy-live: no agent was started" "agent start"
+# A live pass in the OTHER lane is not a collision.
+reset
+herd_fixture '[{"name":"ralph-tend","agent_status":"working","pane_id":"pL"}]' "$REPO_DIR"
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+log_has "deliver with a live legacy TEND: still spawns" "agent start r0-deliver"
+herd_fixture '[]' "$REPO_DIR"
+
 # ── 4b. an UNCERTAIN start (silence, transport failure) closes nothing ───────
 # The start may have landed — closing the pane could kill a live agent
 # (PR #2326 P1). The surface is left up and the message says why.
