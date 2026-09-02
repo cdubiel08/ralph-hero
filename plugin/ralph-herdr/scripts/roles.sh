@@ -115,11 +115,15 @@ ralph_tool_binding_args() {
 # without a turn is that the flags were handed over and the start succeeded.
 # That is a real observation of the harness, one level short of a kernel
 # denial, and it gets its own word so a reader never mistakes it for one.
-# No in-pane Write-tool self-test runs yet, deliberately: in an interactive
-# pane whose Write tool is NOT bound, a Write outside cwd may raise a
-# permission dialog instead of a file, and a probe reading "no file" as
-# `applied` would pass exactly the case it exists to catch. That behaviour
-# is unmeasured; measuring it is a follow-up, not an assumption made here.
+# The in-pane self-test (spawn_containment_probe, lib.sh — GH-2341) can
+# REFUTE this word but never promote it: measured on 2.1.258, an unbound
+# Write tool writes its file with no prompt under `defaultMode: auto` and
+# raises a permission dialog under `default` — both read as `not_applied`
+# (a file inside the denied tree, or a pane blocked on the Write step) —
+# while a BOUND harness renders no refusal at all when the model declines a
+# tool it does not have, and an auto-mode classifier denial of an available
+# Write looks the same. "No file" is therefore not an observed refusal, and
+# `applied` stays reserved.
 ralph_tool_binding_observed() {
   local a tools="" deny="" have_tools=0 have_deny=0 t enabled
   while [ "$#" -gt 0 ]; do

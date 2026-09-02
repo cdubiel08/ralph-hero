@@ -68,10 +68,13 @@ paths=$(printf '%s' "$2" | grep -o "touch '[^']*' '[^']*'" | head -1)
 [ -n "$paths" ] || exit 0
 inside=$(printf '%s' "$paths" | sed -n "s/^touch '\([^']*\)' '.*$/\1/p")
 outside=$(printf '%s' "$paths" | sed -n "s/^touch '[^']*' '\([^']*\)'$/\1/p")
+tool=$(printf '%s' "$2" | sed -n "s/^.*create the file '\([^']*\)' with the content.*$/\1/p" | head -1)
+control=$(printf '%s' "$2" | sed -n "s/^touch '\([^']*\)'; echo CONTROL_RC.*$/\1/p" | head -1)
 case "${FAKE_PROBE_MODE:-applied}" in
-  applied) touch "$outside" ;;
-  inert) touch "$inside" "$outside" ;;
+  applied) touch "$outside"; [ -n "$control" ] && touch "$control" ;;
+  inert) touch "$inside" "$outside"; [ -n "$control" ] && touch "$control" ;;
   silent) : ;;
+  tool-writer) touch "$outside"; [ -n "$tool" ] && touch "$tool"; [ -n "$control" ] && touch "$control" ;;
 esac
 HOOK
 chmod +x "$TMP/probe-hook.sh"
@@ -224,6 +227,19 @@ if [ "$rc" -ne 0 ]; then ok "tend silent: an unverifiable pane FAILS the pass"; 
 has "tend silent: the failure names unverified, not not_applied" "$out" "process containment unverified for ralph-tend"
 log_has "tend silent: the pane is closed" "pane close pS1"
 log_hasnt "tend silent: no real prompt" "agent prompt ralph-tend /ralph:tend"
+
+# ── 5d. GH-2341: an UNBOUND Write tool writes inside the tree — refused ──────
+# The harness accepted --disallowedTools at start (argv: accepted), and the
+# pane's Write step landed a file inside the denied tree anyway: the binding
+# is not applied, the pass fails naming it, and the surface closes.
+reset
+out=$(FAKE_PROBE_MODE=tool-writer RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "tend tool-writer: a pane whose Write tool wrote the tree FAILS the pass"; else not_ok "tend tool-writer: must fail the pass (rc 0)"; fi
+has "tend tool-writer: the failure names process applied AND tool binding not_applied" "$out" "process containment applied for ralph-tend, tool binding not_applied"
+log_has "tend tool-writer: the pane is closed" "pane close pS1"
+log_hasnt "tend tool-writer: no real prompt to a writer" "agent prompt ralph-tend /ralph:tend"
+[ -e "$REPO_DIR/.ralph-tool-probe-ralph-tend" ] && not_ok "tend tool-writer: the tool marker is cleaned up" || ok "tend tool-writer: the tool marker is cleaned up"
 
 # ── 5d. an unmeasured platform refuses BEFORE any surface exists ─────────────
 reset

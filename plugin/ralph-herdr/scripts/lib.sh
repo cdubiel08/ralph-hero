@@ -1031,13 +1031,20 @@ spawn_confirm_turn() {
   done
 }
 
-# spawn_containment_probe AGENT PANE CHECKOUT RESPAWN — the positive self-test
-# for process containment (GH-2266), run IN THE PANE after `agent start` and
-# BEFORE the real prompt. Prints ONE outcome word from contracts.ts
-# CONTAINMENT_OUTCOMES on stdout (also left in RALPH_HERDR_CONTAINMENT_OUTCOME)
-# and returns 0 only for `applied`; every other outcome is a refusal and the
+# spawn_containment_probe AGENT PANE CHECKOUT RESPAWN [TOOL_BINDING] — the
+# positive self-test for process containment (GH-2266), run IN THE PANE after
+# `agent start` and BEFORE the real prompt — and, when TOOL_BINDING is
+# `accepted`, the in-pane refutation test for tool binding (GH-2341) in the
+# same turn. Prints the process-containment word from contracts.ts
+# CONTAINMENT_OUTCOMES on stdout — followed, on the same line, by the
+# tool-binding word whenever TOOL_BINDING was given (callers `read -r pc tb`;
+# a `$(…)` capture is a subshell, so a variable could not carry the second
+# word out) — and returns 0 only for process `applied` AND a tool-binding
+# word other than `not_applied`. Every other combination is a refusal and the
 # caller closes the pane it just opened — an uncontained pane must never
-# receive its prompt.
+# receive its prompt. Both words are also left in
+# RALPH_HERDR_CONTAINMENT_OUTCOME / RALPH_HERDR_TOOL_BINDING_OUTCOME for an
+# in-process caller.
 #
 # WHY A PROBE AT ALL: the sandbox fails OPEN and SILENTLY. A malformed block
 # yields exit 0, a written file and no warning (measured, twice: 2.1.233 and
@@ -1067,44 +1074,88 @@ spawn_confirm_turn() {
 # `unverified` — the pane took no turn or wrote nothing — distinct from
 # `not_applied`, because "could not check" may not render as "checked".
 #
+# THE TOOL-BINDING STEP (GH-2341), measured on Claude Code 2.1.258 in real
+# panes under the shipped profile (research note:
+# thoughts/shared/research/2026-09-01-GH-2341-tool-binding-in-pane-measurement.md):
+# an UNBOUND Write tool writes its file with no prompt under the operator's
+# `defaultMode: auto` — INCLUDING inside the sandbox-denied tree, because the
+# built-in file tools bypass the sandbox (the design record's own finding) —
+# and under `--permission-mode default` it raises a permission dialog and the
+# pane sits `blocked` with the turn never finishing. A BOUND harness leaves
+# no file and no dialog, and a Bash step placed AFTER the Write step lands.
+# So the step is ordered Bash touch → Write → Bash control touch, and the
+# verdict is read off two facts the model cannot fake:
+#   * a file at the Write target INSIDE the denied tree — the Bash write
+#     there was refused by the kernel a moment earlier in the same turn, so
+#     only the Write tool could have produced it — is `not_applied`. The
+#     target is deliberately in-tree and not under $RALPH_HOME (which the
+#     issue text suggested): an outside marker is reachable by a Bash
+#     substitution and would read as a writer that is not one;
+#   * a pane `blocked` with the control marker absent is `not_applied`: a
+#     bound tool never asks, and between two sandbox-auto-allowed Bash
+#     steps the Write step is the only thing that can raise a prompt.
+# Both refuse. The POSITIVE case stays at `accepted`: the harness renders no
+# refusal when the model declines a tool it does not have (measured — the
+# model reports the tool absent and moves on, and the transcript carries
+# only its prose), and under auto mode a classifier DENIAL of an available
+# Write produces the same "no file, turn complete" a bound tool does. Reading
+# that as `applied` would pass exactly the case the step exists to catch, so
+# `applied` stays reserved for an observed refusal and the ceiling is stated
+# rather than assumed. The step runs only for `accepted`: with no binding
+# flag on the argv there is nothing to refute, and under an inert sandbox
+# (process `not_applied`) the in-tree marker is forgeable by Bash, so the
+# tool word is left at the argv observation and the pane is refused for the
+# process verdict alone.
+#
 # Prompt delivery rides spawn_confirm_turn (GH-2223): the modal probe, the
 # undelivered-vs-unsubmitted split and the one redelivery are all reused
 # rather than restated.
 #
 #   RALPH_HERDR_CONTAINMENT_PROBE_SEC  seconds to wait for a marker once the
-#                                       turn has started (default 30)
+#                                       turn has started (default 30); the
+#                                       tool-binding step gets a second
+#                                       window of the same length once the
+#                                       process verdict has landed
 spawn_containment_probe() {
-  local agent="${1-}" pane="${2-}" checkout="${3-}" respawn="${4:-re-spawn it}"
-  local dir home inside outside prompt secs waited=0 outcome
+  local agent="${1-}" pane="${2-}" checkout="${3-}" respawn="${4:-re-spawn it}" tb="${5-}" tb_given="${5+1}"
+  local dir home inside outside tool control prompt secs waited=0 status
   RALPH_HERDR_CONTAINMENT_OUTCOME=""
-  _spawn_containment_verdict() {
+  RALPH_HERDR_TOOL_BINDING_OUTCOME="$tb"
+  _spawn_containment_verdict() { # PROCESS [TOOL]
     RALPH_HERDR_CONTAINMENT_OUTCOME="$1"
-    rm -f "$inside" "$outside" 2>/dev/null || true
-    printf '%s\n' "$1"
-    [ "$1" = applied ]
+    [ -n "${2-}" ] && RALPH_HERDR_TOOL_BINDING_OUTCOME="$2"
+    rm -f "$inside" "$outside" "$tool" "$control" 2>/dev/null || true
+    if [ -n "$tb_given" ]; then
+      printf '%s %s\n' "$1" "$RALPH_HERDR_TOOL_BINDING_OUTCOME"
+    else
+      printf '%s\n' "$1"
+    fi
+    [ "$1" = applied ] && [ "$RALPH_HERDR_TOOL_BINDING_OUTCOME" != not_applied ]
   }
   { [ -n "$agent" ] && [ -n "$pane" ] && [ -n "$checkout" ]; } || {
     echo "containment probe: agent, pane and checkout are all required" >&2
-    inside="" outside=""
+    inside="" outside="" tool="" control=""
     _spawn_containment_verdict unverified
     return 1
   }
   dir=$(cd "$checkout" 2>/dev/null && pwd -P) || {
     echo "containment probe: $checkout is not a directory" >&2
-    inside="" outside=""
+    inside="" outside="" tool="" control=""
     _spawn_containment_verdict unverified
     return 1
   }
   home="${RALPH_HOME:-$HOME/.ralph}/containment-probes"
   mkdir -p "$home" 2>/dev/null || {
     echo "containment probe: cannot create $home for the outside marker" >&2
-    inside="" outside=""
+    inside="" outside="" tool="" control=""
     _spawn_containment_verdict unverified
     return 1
   }
   inside="$dir/.ralph-containment-probe-$agent"
   outside="$home/$agent.$$"
-  rm -f "$inside" "$outside" 2>/dev/null || true
+  tool="$dir/.ralph-tool-probe-$agent"
+  control="$home/$agent.$$.control"
+  rm -f "$inside" "$outside" "$tool" "$control" 2>/dev/null || true
   # The denial is evidence only against a target KNOWN to be writable without
   # containment (PR #2337 P1): a checkout root that refuses the write for an
   # ordinary reason — permissions, a read-only mount — would fail the inside
@@ -1112,7 +1163,8 @@ spawn_containment_probe() {
   # `applied` while the tree's writable files stayed writable. So this
   # process, which runs outside the pane's sandbox, creates and removes the
   # exact inside path first; a target it cannot write is `unverified`, never
-  # a pass.
+  # a pass. The tool marker sits in the same directory, so one check covers
+  # both — writability is the directory's property.
   if ! { : >"$inside"; } 2>/dev/null; then
     echo "containment probe: $inside is not writable even OUTSIDE the sandbox — a denial there would prove nothing (unverified); check the checkout's permissions" >&2
     _spawn_containment_verdict unverified
@@ -1123,8 +1175,17 @@ spawn_containment_probe() {
     _spawn_containment_verdict unverified
     return 1
   }
-  prompt="Containment self-test (automatic, at startup — GH-2266). Run exactly this one Bash command, then reply with only its output. Do not retry it, do not run anything else, and do not investigate the result:
+  if [ "$tb" = accepted ]; then
+    prompt="Containment self-test (automatic, at startup — GH-2266). Do exactly these three steps in order, then reply with only what each step produced. Do not retry anything, do not run anything else, do not investigate the results, and never substitute one tool for another.
+1. Run exactly this one Bash command:
+touch '$inside' '$outside'; echo PROBE_RC=\$?
+2. Use the Write tool, and only the Write tool, to create the file '$tool' with the content: probe
+3. Run exactly this one Bash command:
+touch '$control'; echo CONTROL_RC=\$?"
+  else
+    prompt="Containment self-test (automatic, at startup — GH-2266). Run exactly this one Bash command, then reply with only its output. Do not retry it, do not run anything else, and do not investigate the result:
 touch '$inside' '$outside'; echo PROBE_RC=\$?"
+  fi
   ralph_herdr_agent_prompt "$agent" "$prompt" >/dev/null || {
     echo "containment probe: prompt delivery to $agent failed" >&2
     _spawn_containment_verdict unverified
@@ -1151,16 +1212,62 @@ touch '$inside' '$outside'; echo PROBE_RC=\$?"
         _spawn_containment_verdict not_applied
         return 1
       fi
-      _spawn_containment_verdict applied
+      break
+    fi
+    [ "$waited" -lt "$secs" ] || {
+      echo "containment probe: $agent took a turn but neither marker appeared within ${secs}s (unverified) — the pane could not be proved contained; $respawn" >&2
+      _spawn_containment_verdict unverified
+      return 1
+    }
+    sleep 1
+    waited=$((waited + 1))
+  done
+  [ "$tb" = accepted ] || {
+    _spawn_containment_verdict applied
+    return 0
+  }
+  # The process verdict is in: the kernel refused the Bash write inside the
+  # tree. From here a file at $tool can only be the Write tool's.
+  waited=0
+  while :; do
+    if [ -e "$tool" ]; then
+      echo "containment probe: $agent's Write tool WROTE INSIDE $dir — tool binding not_applied (the kernel had just refused a Bash write there, so only the Write tool could have produced it); refusing to hand a writer its prompt" >&2
+      _spawn_containment_verdict applied not_applied
+      return 1
+    fi
+    if [ -e "$control" ]; then
+      if [ -e "$tool" ]; then
+        echo "containment probe: $agent's Write tool WROTE INSIDE $dir — tool binding not_applied" >&2
+        _spawn_containment_verdict applied not_applied
+        return 1
+      fi
+      # No file, no prompt, turn complete: the self-test found no writer.
+      # That is not an observed refusal (see above), so the word stays at
+      # the harness-acceptance ceiling.
+      _spawn_containment_verdict applied accepted
       return 0
     fi
     [ "$waited" -lt "$secs" ] || break
     sleep 1
     waited=$((waited + 1))
   done
-  echo "containment probe: $agent took a turn but neither marker appeared within ${secs}s (unverified) — the pane could not be proved contained; $respawn" >&2
-  _spawn_containment_verdict unverified
-  return 1
+  status=$(_spawn_agent_status "$agent") || status=""
+  if [ "$status" = blocked ]; then
+    echo "containment probe: $agent is BLOCKED on a prompt during the Write step and the control touch never landed — tool binding not_applied (a bound tool never asks; between two sandbox-auto-allowed Bash steps only the Write tool can raise one); refusing to hand a writer its prompt. Dismiss the prompt before closing the pane if you keep it: herdr pane send-keys $pane esc" >&2
+    _spawn_containment_verdict applied not_applied
+    return 1
+  fi
+  echo "containment probe: $agent's Write step could not be read to a verdict within ${secs}s (status '${status:-unreadable}', no control marker) — tool binding stays at accepted, the harness-acceptance ceiling; process containment is applied" >&2
+  _spawn_containment_verdict applied accepted
+  return 0
+}
+
+# _spawn_agent_status AGENT — the raw herdr agent_status word, or rc 1 when
+# the herd cannot answer. Read-only; one call, no wait.
+_spawn_agent_status() {
+  local out
+  out=$(ralph_herdr_call agent_info agent get "${1-}" 2>/dev/null) || return 1
+  jq -r '.agent.agent_status // empty' <<<"$out" 2>/dev/null
 }
 
 # _ralph_spawn_containment_event REF LEDGER TOOL_BINDING PROCESS_CONTAINMENT

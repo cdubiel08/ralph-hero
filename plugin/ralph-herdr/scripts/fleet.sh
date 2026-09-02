@@ -546,7 +546,7 @@ spawn_investigator() {
   # the investigator gains Bash, the sandbox and its probe engage here with
   # no edit.
   local -a contain=()
-  local containment=inapplicable tools contain_out tool_binding
+  local containment=inapplicable tools contain_out tool_binding probe_out
   # GH-2267: the tool-binding outcome is read off the argv that will actually
   # be handed to `agent start`, never off the role row. The definition is the
   # one declaration of what an investigator may do, so a definition that
@@ -581,7 +581,7 @@ spawn_investigator() {
     echo "  $HERDR tab create --cwd $checkout --no-focus --label \"GH-$issue investigator\""
     echo "  $HERDR agent start $name --kind claude --pane <captured> -- ${harness[*]}${contain[*]:+ --settings <process containment: seatbelt denyWrite $checkout>}"
     echo "  process containment: $containment${contain[*]:+ (in-pane probe after start; refuse unless applied)}"
-    echo "  tool binding: $tool_binding (read off the argv above; recorded beside process containment, separately — GH-2267)"
+    echo "  tool binding: $tool_binding (read off the argv above; recorded beside process containment, separately — GH-2267${contain[*]:+; the probe adds a Write step into $checkout and refuses on not_applied — GH-2341})"
     echo "  $HERDR agent prompt $name <question>"
     return 0
   fi
@@ -604,11 +604,16 @@ spawn_investigator() {
     return 1
   }
   if [ "$containment" = pending ]; then
-    containment=$(spawn_containment_probe "$name" "$pane" "$checkout" "close the tab and re-dispatch the question") || {
+    # Two words come back (GH-2341): the process verdict and the tool-binding
+    # word, which the probe's Write step may only REFUTE — the recorded word
+    # is the probe's.
+    probe_out=$(spawn_containment_probe "$name" "$pane" "$checkout" "close the tab and re-dispatch the question" "$tool_binding") || {
+      read -r containment tool_binding <<<"${probe_out:-unverified $tool_binding}"
       "$HERDR" pane close "$pane" >/dev/null 2>&1 || true
-      echo "spawn_investigator: process containment ${containment:-unverified} for $name — closed pane $pane rather than dispatch an uncontained investigator" >&2
+      echo "spawn_investigator: process containment ${containment:-unverified}, tool binding $tool_binding for $name — closed pane $pane rather than dispatch an uncontained investigator" >&2
       return 1
     }
+    read -r containment tool_binding <<<"$probe_out"
   fi
   echo "process containment: $containment for $name"
   echo "tool binding: $tool_binding for $name"

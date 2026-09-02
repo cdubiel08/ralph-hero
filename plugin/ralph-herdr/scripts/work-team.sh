@@ -343,17 +343,25 @@ export RALPH_HERDR_AGENT_LIVE=1
 # carries no worktree), closes the provisional record with the outcome, and
 # fails naming it.
 if [ "${#lead_contain[@]}" -gt 0 ]; then
-  outcome=$(spawn_containment_probe "$LEAD" "$pane" "$src" \
-    "close the team space (herdr workspace close ${lead_ws:-<workspace-id>}) and re-run work-team.sh $EPIC") || {
+  # Two words (GH-2341): the process verdict, then the tool-binding word —
+  # which the probe's Write step can only REFUTE, never promote.
+  probe_out=$(spawn_containment_probe "$LEAD" "$pane" "$src" \
+    "close the team space (herdr workspace close ${lead_ws:-<workspace-id>}) and re-run work-team.sh $EPIC" "$lead_tb") || {
+    read -r outcome lead_tb <<<"${probe_out:-unverified $lead_tb}"
     # The refusal is recorded as the two achieved values BEFORE the row is
     # closed (GH-2267): a reader who was not present must be able to tell
     # this pane from a contained one off the ledger alone.
     _ralph_spawn_containment_event "$ref" "$ledger" "$lead_tb" "${outcome:-unverified}"
-    _ralph_spawn_close "$ref" "$ledger" "containment_${outcome:-unverified}"
+    if [ "$lead_tb" = not_applied ]; then
+      _ralph_spawn_close "$ref" "$ledger" "tool_binding_not_applied"
+    else
+      _ralph_spawn_close "$ref" "$ledger" "containment_${outcome:-unverified}"
+    fi
     [ -n "$lead_ws" ] && "$HERDR" workspace close "$lead_ws" >/dev/null 2>&1 || true
     RALPH_HERDR_AGENT_LIVE=""
-    die "process containment ${outcome:-unverified} for $LEAD (pane $pane) — an uncontained lead must not receive its brief; closed the team space (the probe's reason is above)"
+    die "process containment ${outcome:-unverified}, tool binding $lead_tb for $LEAD (pane $pane) — an uncontained lead must not receive its brief; closed the team space (the probe's reason is above)"
   }
+  read -r outcome lead_tb <<<"$probe_out"
   echo "process containment: $outcome for $LEAD (a Bash write inside $src was refused by the kernel)"
 else
   outcome=not_requested

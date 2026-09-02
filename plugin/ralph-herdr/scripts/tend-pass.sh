@@ -72,7 +72,7 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   fi
   echo "  $HERDR agent start $agent --kind claude --pane <captured>${tool_args[*]:+ -- ${tool_args[*]}}${contain_args[*]:+ --settings <process containment: seatbelt denyWrite $REPO>}"
   [ "${#contain_args[@]}" -gt 0 ] &&
-    echo "  containment probe: prompt <captured> to touch <inside $REPO> <outside \$RALPH_HOME/containment-probes>; refuse unless applied"
+    echo "  containment probe: prompt <captured> to touch <inside $REPO> <outside \$RALPH_HOME/containment-probes>; refuse unless applied; then Write <inside $REPO> and a control touch — refuse on tool binding not_applied (GH-2341)"
   echo "  tool binding: $tool_binding (read off the argv above — GH-2267; lane passes are unledgered, so this is printed, not recorded)"
   echo "  $HERDR agent prompt $agent \"/ralph:$lane\""
   exit 0
@@ -129,15 +129,19 @@ export RALPH_HERDR_AGENT_LIVE=1
 # surface this run created — the agent has taken no pass yet, so nothing is
 # lost — and the pass fails naming the outcome.
 if [ "${#contain_args[@]}" -gt 0 ]; then
-  outcome=$(spawn_containment_probe "$agent" "$pane" "$REPO" "re-run the $lane pass") || {
+  # Two words (GH-2341): the process verdict, then the tool-binding word —
+  # which the probe's Write step can only REFUTE, never promote.
+  probe_out=$(spawn_containment_probe "$agent" "$pane" "$REPO" "re-run the $lane pass" "$tool_binding") || {
+    read -r outcome tool_binding <<<"${probe_out:-unverified $tool_binding}"
     [ -n "$cleanup_pane" ] && "$HERDR" pane close "$cleanup_pane" >/dev/null 2>&1 || true
     [ -n "$cleanup_tab" ] && "$HERDR" tab close "$cleanup_tab" >/dev/null 2>&1 || true
     RALPH_HERDR_AGENT_LIVE=""
-    die "process containment ${outcome:-unverified} for $agent (pane $pane) — an uncontained $lane pane must not receive its prompt; closed the surface this run created (the probe's reason is above)"
+    die "process containment ${outcome:-unverified} for $agent, tool binding $tool_binding (pane $pane) — an uncontained $lane pane must not receive its prompt; closed the surface this run created (the probe's reason is above)"
   }
+  read -r outcome tool_binding <<<"$probe_out"
   echo "process containment: $outcome for $agent (a Bash write inside $REPO was refused by the kernel; tool binding is the separate GH-2265 mechanism)"
 fi
-echo "tool binding: $tool_binding for $agent (the harness accepted the flags at start; no in-pane observation — GH-2267)"
+echo "tool binding: $tool_binding for $agent (the harness accepted the flags at start${contain_args[*]:+ and the in-pane Write step wrote nothing in $REPO}; applied is reserved for an observed refusal — GH-2341)"
 
 ralph_herdr_agent_prompt "$agent" "/ralph:$lane" >/dev/null \
   || die "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:$lane\""
