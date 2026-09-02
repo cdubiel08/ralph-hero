@@ -217,6 +217,14 @@ expect_contains "RALPH_MODEL_DRIVER outranks .ralph.json" "$CLAUDE_LOG" "-p --mo
 run_tick_model settings "" '{"env":{"RALPH_MODEL_DRIVER":"claude-haiku-4-5"}}'
 expect_contains ".claude/settings.json env.RALPH_MODEL_DRIVER -> the runner asks for it" "$CLAUDE_LOG" "-p --model claude-haiku-4-5 --permission-mode acceptEdits /ralph:work 42"
 
+run_tick_model malformed 'not json' ""
+[ "$TICK_RC" -eq 64 ] && pass "a malformed .ralph.json is a usage error, never a silent sonnet (exit 64)" || fail "malformed: expected exit 64, got $TICK_RC"
+expect_not_contains "malformed: no runner spawn" "$CLAUDE_LOG" "ralph:work"
+run_tick_model nonstring '{"models":{"driver":5}}' ""
+[ "$TICK_RC" -eq 64 ] && pass "a non-string models.driver is a usage error (exit 64)" || fail "non-string: expected exit 64, got $TICK_RC"
+run_tick_model absent-lane '{"models":{"lead":"opus"}}' ""
+expect_contains "a well-formed models object without driver keeps the sonnet default" "$CLAUDE_LOG" "-p --model sonnet --permission-mode"
+
 run_tick_model bad "" "" "RALPH_MODEL_DRIVER=bad value"
 [ "$TICK_RC" -eq 64 ] && pass "an unridable driver model is a usage error (exit 64)" || fail "bad model: expected exit 64, got $TICK_RC"
 expect_contains "the refusal names the value" "$TICK_OUT" "driver model 'bad value' is not a model name"

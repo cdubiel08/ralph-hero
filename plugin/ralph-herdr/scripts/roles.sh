@@ -587,13 +587,40 @@ ralph_lane_model() {
   var="RALPH_MODEL_$(printf '%s' "$lane" | tr '[:lower:]' '[:upper:]')"
   model="${!var-}"
   src="\$$var"
+  # A file that cannot be READ is a refusal, never an empty answer: malformed
+  # JSON, a `models` that is not an object, or a value that is not a string
+  # would otherwise fall through to a lower-priority source or to inherit —
+  # "the knob is set" rendering as "the knob is ignored" (PR #2374 P1). The
+  # jq program errors on every such shape and is silent only on absence.
   if [ -z "$model" ] && [ -n "$root" ] && [ -f "$root/.ralph.json" ]; then
-    model=$(jq -r --arg l "$lane" '.models[$l] // empty' "$root/.ralph.json" 2>/dev/null) || model=""
     src="$root/.ralph.json models.$lane"
+    model=$(jq -r --arg l "$lane" '
+      .models as $m
+      | if $m == null then empty
+        elif ($m | type) != "object" then error("models must be an object, got \($m | type)")
+        else ($m[$l] as $v
+          | if $v == null then empty
+            elif ($v | type) != "string" then error("models.\($l) must be a string, got \($v | type)")
+            else $v end)
+        end' "$root/.ralph.json" 2>&1) || {
+      echo "ralph_lane_model: cannot read $src — ${model:-jq failed}; refusing rather than inheriting" >&2
+      return 1
+    }
   fi
   if [ -z "$model" ] && [ -n "$root" ] && [ -f "$root/.claude/settings.json" ]; then
-    model=$(jq -r --arg v "$var" '.env[$v] // empty' "$root/.claude/settings.json" 2>/dev/null) || model=""
     src="$root/.claude/settings.json env.$var"
+    model=$(jq -r --arg v "$var" '
+      .env as $e
+      | if $e == null then empty
+        elif ($e | type) != "object" then error("env must be an object, got \($e | type)")
+        else ($e[$v] as $x
+          | if $x == null then empty
+            elif ($x | type) != "string" then error("env.\($v) must be a string, got \($x | type)")
+            else $x end)
+        end' "$root/.claude/settings.json" 2>&1) || {
+      echo "ralph_lane_model: cannot read $src — ${model:-jq failed}; refusing rather than inheriting" >&2
+      return 1
+    }
   fi
   [ -n "$model" ] || return 0
   # Shape only: one argv word, no whitespace or shell metacharacters. The

@@ -602,6 +602,23 @@ is "model args: two argv words, --model then the value" "--model|claude-sonnet-5
 is "model args: nothing configured prints nothing" "" "$(ralph_model_args dispatch "$MROOT/c")"
 fails "model args: the resolver's refusal propagates" ralph_model_args tend "$MROOT/a"
 is "observed: --model is not a binding flag (GH-2267 reads it as not_requested)" "not_requested" "$(ralph_tool_binding_observed --model claude-sonnet-5)"
+# PR #2374 P1: an unreadable file is a refusal, never a fall-through — the
+# knob being set must not render as the knob being ignored.
+mkdir -p "$MROOT/d/.claude" "$MROOT/e" "$MROOT/f" "$MROOT/g/.claude"
+printf 'not json' >"$MROOT/d/.ralph.json"
+printf '{"env":{"RALPH_MODEL_DRIVER":"fable"}}\n' >"$MROOT/d/.claude/settings.json"
+printf '{"models":"claude-sonnet-5"}\n' >"$MROOT/e/.ralph.json"
+printf '{"models":{"driver":5}}\n' >"$MROOT/f/.ralph.json"
+printf '{"models":{"lead":"opus"}}\n' >"$MROOT/g/.ralph.json"
+printf '{"env":"nope"}\n' >"$MROOT/g/.claude/settings.json"
+fails "model: malformed .ralph.json refuses instead of falling through to the settings block" ralph_lane_model driver "$MROOT/d"
+out=$(ralph_lane_model driver "$MROOT/d" 2>&1 >/dev/null)
+case "$out" in *"cannot read"*".ralph.json"*) ok "model: the malformed-file refusal names the file" ;; *) not_ok "model: malformed-file refusal text — got '$out'" ;; esac
+fails "model: a models value that is not an object refuses" ralph_lane_model driver "$MROOT/e"
+fails "model: a non-string lane value refuses" ralph_lane_model driver "$MROOT/f"
+is "model: a lane absent from a well-formed models object still inherits" "" "$(ralph_lane_model driver "$MROOT/g")"
+fails "model: a settings env block that is not an object refuses" ralph_lane_model tend "$MROOT/g"
+is "model: the lane .ralph.json does name never reaches the broken settings block" "opus" "$(ralph_lane_model lead "$MROOT/g")"
 
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
