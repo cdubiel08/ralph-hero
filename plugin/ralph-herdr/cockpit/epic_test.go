@@ -100,10 +100,12 @@ func epicModel(f *fakeRunner) Model {
 	m.cols[0][0].ParentNumber = 2376
 	m.agents = setAgents([]Agent{
 		{Name: "w10-ten", Status: "working", Pane: "p1", Issue: 10, Lane: "w"},
-		{Name: "w2381-popover", Status: "working", Pane: "p3", Issue: 2381, Lane: "w", Root: "w2381-popover#r1", Branch: "feat/2381-popover"},
+		{Name: "w2381-popover", Status: "working", Pane: "p3", Issue: 2381, Lane: "w", Root: "w2381-popover#r1", Branch: "feat/2381-popover", Session: "sid-2381"},
 		{Name: "w2382-blocked", Status: "blocked", Pane: "p4", Issue: 2382, Lane: "w"},
 	})
-	m.ledger.Usage = map[string]LedgerUsage{"w2381-popover#r1": {ListUSD: 2.5, MaxContext: 120000}}
+	// The transcript join (GH-2378) prices #2381's session; the popover's
+	// total is columnSpend over the children, so the two cannot disagree.
+	m.usage = map[string]usageEntry{"sid-2381": {Usage: SessionUsage{Read: true, USD: 2.5}}}
 	m.ledger.ByIssue = map[int]LedgerSpawn{2380: {Issue: 2380, Branch: "feat/2380-wash"}}
 	f.respond = func(prog string, args []string) (string, string, error) {
 		if prog == "BOARD" && len(args) > 0 && args[0] == "get" {
@@ -409,10 +411,10 @@ func TestRenderEpicDoneChildTrimsTheClosedLabelWithAnEllipsis(t *testing.T) {
 
 func TestRenderEpicNarrowPaneDropsToOneColumnAndShedsChipsBeforeClipping(t *testing.T) {
 	m := openEpic(t, epicModel(&fakeRunner{}))
-	m.width, m.height = 32, 60 // innerW 26 → one column of 26, never two of 12
+	m.width, m.height = 26, 60 // innerW 20 (the floor) → one column of 20, never two of 9
 	m.doneCards = []Card{{Number: 2377, State: doneState, ClosedAt: time.Now().Add(-43 * time.Minute).UTC().Format(time.RFC3339), MergedPR: 9999, ClosingPRsRead: true}}
-	m.ledger.Usage["w2377-glyphs#r1"] = LedgerUsage{ListUSD: 1.4, MaxContext: 50000}
-	m.agents[2377] = []Agent{{Name: "w2377-glyphs", Status: "done", Issue: 2377, Lane: "w", Root: "w2377-glyphs#r1"}}
+	m.usage["sid-2377"] = usageEntry{Usage: SessionUsage{Read: true, USD: 1.4}}
+	m.agents[2377] = []Agent{{Name: "w2377-glyphs", Status: "done", Issue: 2377, Lane: "w", Session: "sid-2377"}}
 	out := stripANSI(viewModel(m))
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, "#2381") && strings.Contains(line, "#2378") {
@@ -424,7 +426,7 @@ func TestRenderEpicNarrowPaneDropsToOneColumnAndShedsChipsBeforeClipping(t *test
 		}
 	}
 	if !strings.Contains(out, "#9999") {
-		t.Errorf("at 26 cells the merge chip alone fits and must be drawn; got:\n%s", out)
+		t.Errorf("at the 20-cell floor the merge chip alone fits and must be drawn; got:\n%s", out)
 	}
 	if strings.Contains(out, "$1.40") {
 		t.Errorf("the cost is the first chip shed at this width; got:\n%s", out)
