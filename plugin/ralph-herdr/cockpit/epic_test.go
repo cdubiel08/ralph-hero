@@ -238,6 +238,28 @@ func TestEpicReadLandingAfterTheCursorLeftTheEpicNudgesInsteadOfOpening(t *testi
 	}
 }
 
+func TestEpicRefreshLandingAfterCloseNeverReopensTheOverlay(t *testing.T) {
+	m := openEpic(t, epicModel(&fakeRunner{}))
+	m.epicInFlight = true // a cadence refresh is out
+	m, _ = updateModel(m, keyMsg("esc"))
+	if m.mode != ModeBrowse || m.epicFor != 0 {
+		t.Fatalf("close: mode=%v epicFor=%d", m.mode, m.epicFor)
+	}
+	v, _ := parseEpic(epicJSON)
+	m, cmd := updateModel(m, epicMsg{issue: 2376, view: v, ok: true})
+	if m.mode != ModeBrowse || cmd != nil || m.epicInFlight {
+		t.Errorf("the refresh must be dropped on arrival: mode=%v cmd=%v inFlight=%v", m.mode, cmd != nil, m.epicInFlight)
+	}
+	if m.epicDue(time.Now().Add(time.Hour)) {
+		t.Error("nothing is due for a closed overlay")
+	}
+	// The next e is its own read and opens on its own landing.
+	m = openEpic(t, m)
+	if m.epicFor != 2376 {
+		t.Errorf("reopen: epicFor=%d", m.epicFor)
+	}
+}
+
 func TestEpicReadNeverHijacksAndDropsAReadForAnotherEpic(t *testing.T) {
 	m := epicModel(&fakeRunner{})
 	v, _ := parseEpic(epicJSON)

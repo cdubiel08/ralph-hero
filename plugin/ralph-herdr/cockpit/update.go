@@ -307,7 +307,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		m.epicInFlight = false
 		m.lastEpic = time.Now()
 		if msg.issue != m.epicFor {
-			return m, nil // a read for an epic the operator has since moved off
+			return m, nil // a read for an epic the operator has since moved off, or closed
 		}
 		if msg.err != "" {
 			// A failed OPEN is a refusal on the status line; a failed REFRESH
@@ -522,7 +522,13 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		// wherever it is pressed.
 		switch key {
 		case "esc", "q", "e":
+			// Closing forgets WHICH epic was asked for, so a cadence refresh
+			// still out when the overlay closed is dropped on arrival by the
+			// "not the epic asked for" rule above — never reopened over a
+			// board the operator explicitly returned to. The next `e`
+			// dispatches its own read.
 			m.mode = ModeBrowse
+			m.epicFor = 0
 			m.say(statusView, "board")
 		case "j", "down":
 			m.epicRow++
