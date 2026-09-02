@@ -169,7 +169,11 @@ run_with_timeout() {
 }
 
 RC=0
-(cd "$WT" && run_with_timeout $RUNNER "/ralph:work $NEXT") >> "$LOG" 2>&1 || RC=$?
+# $RUNNER is word-split on purpose (RALPH_TICK_RUNNER is a command line), but
+# never glob-expanded: a model such as claude-haiku-4-5[1m] is a bracket
+# expression to the shell, and a stray file in the worktree would rewrite
+# the argv (PR #2374 P2). set -f inside the subshell keeps it literal.
+(cd "$WT" && set -f && run_with_timeout $RUNNER "/ralph:work $NEXT") >> "$LOG" 2>&1 || RC=$?
 
 # Exit codes lie in both directions — the board is the truth. Any non-zero
 # exit means the session is gone, so decide the claim by board state, not by

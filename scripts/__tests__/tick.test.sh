@@ -186,6 +186,9 @@ run_tick_model() {
   repo="$scen/repo"; home="$scen/home"
   mkdir -p "$repo/ralph/scripts" "$repo/.claude/worktrees/feat-42-stub-unit" "$home" "$scen/bin"
   [ -n "$settings_json" ] && printf '%s\n' "$settings_json" > "$repo/.claude/settings.json"
+  # Glob bait: a worktree file the bracket expression claude-haiku-4-5[1m]
+  # would match, so an unquoted expansion rewrites the argv and the test sees it.
+  : > "$repo/.claude/worktrees/feat-42-stub-unit/claude-haiku-4-51"
   cp "$TICK_SRC" "$repo/ralph/scripts/tick.sh"
   echo "autopilot=true" > "$home/config"
   write_board_stub "$repo"
@@ -224,6 +227,9 @@ run_tick_model nonstring '{"models":{"driver":5}}' ""
 [ "$TICK_RC" -eq 64 ] && pass "a non-string models.driver is a usage error (exit 64)" || fail "non-string: expected exit 64, got $TICK_RC"
 run_tick_model absent-lane '{"models":{"lead":"opus"}}' ""
 expect_contains "a well-formed models object without driver keeps the sonnet default" "$CLAUDE_LOG" "-p --model sonnet --permission-mode"
+
+run_tick_model bracket '{"models":{"driver":"claude-haiku-4-5[1m]"}}' ""
+expect_contains "a bracketed model reaches the runner as ONE literal word, never glob-expanded" "$CLAUDE_LOG" "-p --model claude-haiku-4-5[1m] --permission-mode"
 
 run_tick_model bad "" "" "RALPH_MODEL_DRIVER=bad value"
 [ "$TICK_RC" -eq 64 ] && pass "an unridable driver model is a usage error (exit 64)" || fail "bad model: expected exit 64, got $TICK_RC"
