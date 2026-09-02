@@ -77,6 +77,19 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Fixed
 
+- **A self-closed unit left its worktree lock behind (GH-2367).**
+  `transition()` released the caller's own `~/.ralph/sessions/wt-*` lock on
+  exactly one edge — `In Progress → Backlog` (GH-2107) — so a session that
+  closed its own unit (`board move NNN done`, incl. `--decision` and
+  apply-evidence closes, or `move NNN canceled`) left a tombstone that
+  `reap-leases` can never see when the checkout is the main repo (#2242:
+  self-canceled 16 s after the lock was written, still present four days
+  later). Every move into Done or Canceled, from any source state, now
+  releases the lock under GH-2107's guard unchanged: own session only, after
+  the read-back verify, best-effort unlink. `In Progress → In Review` still
+  keeps it — deliver reads that lease for the unpushed-commits case
+  (GH-1929) — and a non-owning closer still deletes nothing. The merge-close
+  path (GitHub auto-close → `reconcile`) is the reaper's, not this edge's.
 - **The freshness notice announced on nine spawn paths, missed three, and
   executed the checkout's sync script (GH-2340)**. `billing_guard` had
   twelve call sites and `ralph_plugin_freshness_notice` nine: `refill.sh`,
