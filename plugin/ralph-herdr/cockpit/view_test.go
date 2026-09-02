@@ -101,16 +101,18 @@ func TestViewHumanNeededQuestionVerbatim(t *testing.T) {
 	}
 }
 
-func TestViewHeaderNamesTheLiveCadence(t *testing.T) {
-	// The cadence is adaptive, so the last-poll time alone is misleading: five
-	// quiet minutes must read as a quiet board, not a hung cockpit.
+func TestViewHeaderCarriesTheLivenessSpinnerNotTheCadenceText(t *testing.T) {
+	// Spec §6: the "is it alive" signal is the spinner, and the cadence text
+	// is gone — a poll time says nothing about whether the NEXT poll comes.
 	m := testModel(&fakeRunner{})
 	m.width = 220
-	m = settle(m, 8) // boardMsg stamps lastPoll itself, so fix the clock after
-	m.lastPoll = time.Date(2026, 8, 13, 14, 5, 9, 0, time.Local)
-	out := viewModel(m)
-	if !strings.Contains(out, "polled 14:05:09 · every 5m0s") {
-		t.Errorf("header must name the live cadence beside the poll time; got:\n%s", out)
+	m = settle(m, 8)
+	out := stripANSI(viewModel(m))
+	if strings.Contains(out, "polled ") || strings.Contains(out, "every ") {
+		t.Errorf("the cadence text must be gone; got:\n%s", out)
+	}
+	if !strings.Contains(strings.SplitN(out, "\n", 2)[0], "ralph cockpit — repo  "+m.spinner()) {
+		t.Errorf("header must carry the spinner after the title; got %q", strings.SplitN(out, "\n", 2)[0])
 	}
 }
 
@@ -280,9 +282,9 @@ func TestColWindowFollowsCursor(t *testing.T) {
 
 func TestViewScrollFollowKeepsSelectionVisible(t *testing.T) {
 	m := testModel(&fakeRunner{})
-	// Wide enough for the one-line legend (GH-2319 wraps it under ~165 cols,
-	// which would take a body row): bodyHeight 12 → visible = 2.
-	m.width, m.height = 200, 16
+	// Wide enough for the two-row legend (GH-2319 wraps it narrower, which
+	// would take a body row): bodyHeight 12 → visible = 2.
+	m.width, m.height = 200, 17
 	var cards []Card
 	for i := 0; i < 8; i++ {
 		cards = append(cards, card(200+i, "In Progress", fmt.Sprintf("Deep%d", i)))
@@ -303,7 +305,7 @@ func TestViewScrollFollowKeepsSelectionVisible(t *testing.T) {
 
 func TestHitTestScrolledWindow(t *testing.T) {
 	m := testModel(&fakeRunner{})
-	m.width, m.height = 200, 16 // one-line legend (see above); visible = 2
+	m.width, m.height = 200, 17 // two-row legend (see above); visible = 2
 	var cards []Card
 	for i := 0; i < 8; i++ {
 		cards = append(cards, card(200+i, "In Progress", fmt.Sprintf("Deep%d", i)))
@@ -946,13 +948,18 @@ func TestRenderTopologyHeadClips(t *testing.T) {
 
 func TestLegendNamesTopology(t *testing.T) {
 	m := testModel(&fakeRunner{})
-	if !strings.Contains(legend(m), "T topology") {
-		t.Errorf("browse legend must name the T toggle: %q", legend(m))
+	if l := legendText(m); !strings.Contains(l, "T topology") {
+		t.Errorf("browse legend must name the T toggle: %q", l)
 	}
 	m.mode = ModeTopology
-	if legend(m) != "esc close" {
-		t.Errorf("topology overlay legend must be esc close: %q", legend(m))
+	if l := legendText(m); l != "esc close" {
+		t.Errorf("topology overlay legend must be esc close: %q", l)
 	}
+}
+
+// legendText is the whole legend, unstyled, rows joined by legendSep.
+func legendText(m Model) string {
+	return stripANSI(strings.Join(legendLines(m), legendSep))
 }
 
 // ── inbox view (GH-2318) ────────────────────────────────────────────────────
@@ -1079,12 +1086,12 @@ func TestRenderInboxViewStaysBehindTheAnswerInput(t *testing.T) {
 
 func TestLegendNamesInboxView(t *testing.T) {
 	m := testModel(&fakeRunner{})
-	if !strings.Contains(legend(m), "i inbox") || !strings.Contains(legend(m), "I inbox⇄human") {
-		t.Errorf("browse legend must name both inbox keys: %q", legend(m))
+	if l := legendText(m); !strings.Contains(l, "i inbox") || !strings.Contains(l, "I inbox-col") {
+		t.Errorf("browse legend must name both inbox keys: %q", l)
 	}
 	m.mode = ModeInbox
-	if !strings.Contains(legend(m), "a/⏎ answer decision") || !strings.Contains(legend(m), "i/esc close") {
-		t.Errorf("inbox view legend must name answer and close: %q", legend(m))
+	if l := legendText(m); !strings.Contains(l, "a/⏎ answer decision") || !strings.Contains(l, "i/esc close") {
+		t.Errorf("inbox view legend must name answer and close: %q", l)
 	}
 }
 
@@ -1131,26 +1138,36 @@ func TestRenderInboxViewClipsAnOverTallSelectedRowToTheBody(t *testing.T) {
 // by exactly the rows the legend grew.
 func TestLegendWrapsWholeHintsWhenNarrow(t *testing.T) {
 	m := testModel(&fakeRunner{})
-	m.width, m.height = 60, 30
+	m.width, m.height = 40, 30
 	lines := legendLines(m)
-	if len(lines) < 2 {
-		t.Fatalf("a 60-col pane must wrap the browse legend; got %d line(s): %q", len(lines), lines)
+	if len(lines) < 3 {
+		t.Fatalf("a 40-col pane must wrap the two-row browse legend; got %d line(s): %q", len(lines), lines)
 	}
 	for _, l := range lines {
 		if lipgloss.Width(l) > m.width {
 			t.Errorf("legend row overflows %d cols: %q", m.width, l)
 		}
 	}
-	if got := strings.Join(lines, legendSep); got != legend(m) {
-		t.Errorf("wrapping must lose no hint and split none:\n got %q\nwant %q", got, legend(m))
+	wide := m
+	wide.width = 400
+	if got, want := legendText(m), legendText(wide); got != want {
+		t.Errorf("wrapping must lose no hint and split none:\n got %q\nwant %q", got, want)
 	}
 }
 
-func TestLegendStaysOneLineWhenWide(t *testing.T) {
+func TestLegendIsTwoRowsWhenWide(t *testing.T) {
+	// Spec §9: row 1 the card verbs, row 2 the navigation — never merged.
 	m := testModel(&fakeRunner{})
 	m.width, m.height = 220, 30
-	if lines := legendLines(m); len(lines) != 1 || lines[0] != legend(m) {
-		t.Errorf("a wide pane keeps the one-line legend; got %q", lines)
+	lines := legendLines(m)
+	if len(lines) != 2 {
+		t.Fatalf("a wide pane keeps the two-row legend; got %q", lines)
+	}
+	if got := stripANSI(lines[0]); !strings.HasPrefix(got, "on #10  ⏎ observe") {
+		t.Errorf("row 1 must lead with the subject and the primary verb; got %q", got)
+	}
+	if got := stripANSI(lines[1]); got != "h/l j/k move · v dag · T topology · i inbox · D done · I inbox-col · q quit" {
+		t.Errorf("row 2 must be the constant navigation row; got %q", got)
 	}
 }
 
@@ -1196,7 +1213,7 @@ func TestNarrowViewKeepsWrappedLegendInsideTerminalHeight(t *testing.T) {
 	if last := lines[len(lines)-1]; !strings.Contains(last, "status here") {
 		t.Errorf("status line must stay the last row; got %q", last)
 	}
-	if !strings.Contains(out, "q quit") || !strings.Contains(out, "h/l col") {
+	if plain := stripANSI(out); !strings.Contains(plain, "q quit") || !strings.Contains(plain, "h/l j/k move") {
 		t.Errorf("both ends of the legend must survive the wrap:\n%s", out)
 	}
 	// Body sizing and mouse mapping share footerRowsOf, so a click still lands

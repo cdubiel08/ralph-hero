@@ -288,8 +288,11 @@ func TestReplyPreservedOnFailure(t *testing.T) {
 	if m.mode != ModeBrowse || m.input != "" {
 		t.Errorf("delivery must clear the input, mode=%v input=%q", m.mode, m.input)
 	}
-	if !strings.Contains(m.status, "✓ delivered to w10-ten") {
-		t.Errorf("status = %q", m.status)
+	if m.statusKind != statusOK || m.status != "delivered to w10-ten" {
+		t.Errorf("status = %q (kind %d), want a typed success", m.status, m.statusKind)
+	}
+	if !strings.Contains(viewModel(m), "✓ delivered to w10-ten") {
+		t.Errorf("the rendered status must carry the delivered checkmark:\n%s", viewModel(m))
 	}
 }
 
@@ -305,7 +308,7 @@ func TestNoOptimisticCheckmarkWhileSending(t *testing.T) {
 	if !m.sending {
 		t.Fatal("sending must be marked in-flight")
 	}
-	if strings.Contains(m.status, "✓") || strings.Contains(viewModel(m), "✓ delivered") {
+	if m.statusKind == statusOK || strings.Contains(viewModel(m), "✓ delivered") {
 		t.Error("no delivered checkmark before herdr confirms")
 	}
 }
