@@ -18,9 +18,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync, existsSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  classifyClosedLeases,
   localSessionLease,
   partitionBriefLeases,
   readLocalLeases,
+  reapClosedLeases,
   reapDeadLeases,
   realExec,
   run,
@@ -72,8 +74,8 @@ function writeLock(issue: number, worktree: string, opts: { session?: string; ag
   return file;
 }
 
-function ctxFor(repoRoot: string, sessionId = "mine"): Ctx {
-  return makeCtx(new FakeGh(), "me@test", repoRoot, {
+function ctxFor(repoRoot: string, sessionId = "mine", gh = new FakeGh()): Ctx {
+  return makeCtx(gh, "me@test", repoRoot, {
     session: { id: sessionId, dir: sessions },
     now: () => NOW,
   } as never);
@@ -368,5 +370,133 @@ describe("board reap-leases — keyed on the missing checkout, never on age (GH-
     const j = JSON.parse(out);
     expect(j).toMatchObject({ evaluated: true, applied: true, removed: 1 });
     expect(j.dead).toHaveLength(1);
+  });
+});
+
+describe("board reap-leases --closed — the second key: the unit is CLOSED on GitHub (GH-2368)", () => {
+  /** A fake whose issue reads are counted, and can be made to fail. */
+  function ghWith(issues: Array<{ number: number; issueState: "OPEN" | "CLOSED" }>): FakeGh {
+    const gh = new FakeGh();
+    for (const i of issues) gh.issues.set(i.number, { number: i.number, issueState: i.issueState, state: "Done" });
+    return gh;
+  }
+  const issueReads = (gh: FakeGh) => gh.queries.filter((q) => q.includes("issue(number: $number)")).length;
+
+  it("without --closed the behaviour is byte-identical to today: a closed unit's lock is kept, zero API", () => {
+    const repo = gitRepo("repo-a");
+    const gh = ghWith([{ number: 81, issueState: "CLOSED" }]);
+    const kept = writeLock(81, repo, { ageMin: TTL * 10 });
+    const { code, out } = capture(() => run(["reap-leases", "--apply"], ctxFor(repo, "mine", gh)));
+    expect(code).toBe(0);
+    expect(out).toMatch(/nothing to reap/);
+    expect(out).not.toMatch(/closed/);
+    expect(existsSync(kept)).toBe(true);
+    expect(gh.graphqlCalls).toBe(0);
+  });
+
+  it("--closed --apply reaps a same-repo row whose issue is CLOSED, and keeps an OPEN one however old", () => {
+    const repo = gitRepo("repo-a");
+    const gh = ghWith([
+      { number: 82, issueState: "CLOSED" },
+      { number: 83, issueState: "OPEN" },
+    ]);
+    const closed = writeLock(82, repo);
+    const open = writeLock(83, repo, { ageMin: TTL * 10 });
+    const { code, out } = capture(() => run(["reap-leases", "--closed", "--apply"], ctxFor(repo, "mine", gh)));
+    expect(code).toBe(0);
+    expect(out).toMatch(/REAP: #82 .*unit closed on GitHub/);
+    expect(out).toMatch(/reaped 1 of 1 dead\/closed/);
+    expect(existsSync(closed)).toBe(false);
+    expect(existsSync(open)).toBe(true);
+  });
+
+  it("dry run by default: it names the closed rows and touches nothing", () => {
+    const repo = gitRepo("repo-a");
+    const gh = ghWith([{ number: 84, issueState: "CLOSED" }]);
+    const closed = writeLock(84, repo);
+    const { code, out } = capture(() => run(["reap-leases", "--closed"], ctxFor(repo, "mine", gh)));
+    expect(code).toBe(0);
+    expect(out).toMatch(/closed: #84 /);
+    expect(out).toMatch(/0 dead \+ 1 closed lease\(s\) of 1 — DRY RUN/);
+    expect(existsSync(closed)).toBe(true);
+  });
+
+  it("only same-repo rows are asked: another repo's #N is a different issue, and an unresolved repo is kept unasked", () => {
+    const mine = gitRepo("repo-a");
+    const other = gitRepo("repo-b");
+    const gh = ghWith([{ number: 85, issueState: "CLOSED" }]);
+    const foreign = writeLock(85, linkedWorktree(other, "feat-85-b"));
+    // A lease on a directory that is not a git checkout: present, repo unknown.
+    const plain = join(root, "plain-dir");
+    mkdirSync(plain);
+    const unknownRepo = writeLock(85, plain);
+    const rows = readLocalLeases(ctxFor(mine, "mine", gh))!;
+    expect(forIssue(rows.filter((r) => r.file === foreign), 85).sameRepo).toBe(false);
+    expect(forIssue(rows.filter((r) => r.file === unknownRepo), 85).sameRepo).toBe(null);
+    const { code, out } = capture(() => run(["reap-leases", "--closed", "--apply"], ctxFor(mine, "mine", gh)));
+    expect(code).toBe(0);
+    expect(out).toMatch(/nothing to reap/);
+    expect(existsSync(foreign)).toBe(true);
+    expect(existsSync(unknownRepo)).toBe(true);
+    expect(issueReads(gh)).toBe(0);
+  });
+
+  it("a unit reopened between the classification and the delete is KEPT", () => {
+    const repo = gitRepo("repo-a");
+    const file = writeLock(86, repo);
+    const rows = readLocalLeases(ctxFor(repo))!;
+    const { closed } = classifyClosedLeases(rows, () => "closed");
+    expect(closed).toHaveLength(1);
+    const res = reapClosedLeases(closed, () => "open");
+    expect(res.removed).toHaveLength(0);
+    expect(res.failed[0].reason).toMatch(/reopened/);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it("an unreadable issue is not evaluated and never reaped — a rate limit may not delete a lease", () => {
+    const repo = gitRepo("repo-a");
+    const gh = ghWith([{ number: 87, issueState: "CLOSED" }]);
+    const real = gh.exec.bind(gh);
+    gh.exec = (argv, stdin) => {
+      if ((stdin ?? "").includes("issue(number: $number)"))
+        return { code: 0, stdout: JSON.stringify({ errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] }), stderr: "" };
+      return real(argv, stdin);
+    };
+    const file = writeLock(87, repo);
+    const { code, out } = capture(() => run(["reap-leases", "--closed", "--apply"], ctxFor(repo, "mine", gh)));
+    expect(code).toBe(0);
+    expect(out).toMatch(/not evaluated: #87 /);
+    expect(out).not.toMatch(/REAP/);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it("a missing (dead) row is never asked GitHub anything: the first key already has it", () => {
+    const repo = gitRepo("repo-a");
+    const gh = ghWith([{ number: 88, issueState: "CLOSED" }]);
+    const dead = writeLock(88, join(root, "gone"));
+    const { out } = capture(() => run(["reap-leases", "--closed", "--apply"], ctxFor(repo, "mine", gh)));
+    expect(out).toMatch(/REAP: #88 .*worktree gone/);
+    expect(existsSync(dead)).toBe(false);
+    expect(issueReads(gh)).toBe(0);
+  });
+
+  it("--json reports both keys and the rows it could not evaluate", () => {
+    const repo = gitRepo("repo-a");
+    const gh = ghWith([{ number: 89, issueState: "CLOSED" }]);
+    writeLock(89, repo);
+    writeLock(90, join(root, "gone"));
+    const { out } = capture(() => run(["reap-leases", "--closed", "--apply", "--json"], ctxFor(repo, "mine", gh)));
+    const j = JSON.parse(out);
+    expect(j).toMatchObject({ evaluated: true, applied: true, closedKey: true, removed: 2 });
+    expect(j.dead).toHaveLength(1);
+    expect(j.closed).toHaveLength(1);
+    expect(j.unevaluated).toEqual([]);
+  });
+
+  it("who names --closed as the remedy for STALE rows; brief does the same for the stale rows it shows", () => {
+    const repo = gitRepo("repo-a");
+    writeLock(91, repo, { ageMin: TTL + 1 });
+    const who = capture(() => run(["who"], ctxFor(repo))).out;
+    expect(who).toMatch(/1 stale lease\(s\) — `board reap-leases --closed --apply`/);
   });
 });

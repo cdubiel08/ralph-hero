@@ -195,7 +195,11 @@ and shows only this repo's live leases (another checkout's `#76` names a
 it silently. `board reap-leases [--apply]` is the reaper, keyed on the **missing
 checkout and never on age** — a lease is deliver's `local-session-active` signal,
 so a clock may not be allowed to delete a live one; every read failure that is
-not ENOENT leaves the lock alone. **`board bootstrap`** is the
+not ENOENT leaves the lock alone. **`--closed` adds the second key (GH-2368): the
+unit is CLOSED on GitHub** — a closed unit has no lease consumer, so a lock its
+checkout never releases (main checkout, kept worktree) is reapable; one issue
+read per same-repo present row, `sameRepo !== true` and unreadable rows kept,
+re-read before each unlink. **`board bootstrap`** is the
 config-free first-run bring-up; **`board add <url>`** is the sanctioned
 cross-repo add behind `RALPH_ALLOW_FOREIGN_REPO_ITEMS`. Transport failures
 and rate limits are typed **exit 75** (EX_TEMPFAIL, reads retried bounded;

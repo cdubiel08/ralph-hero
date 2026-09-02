@@ -19,6 +19,21 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Added
 
+- **`board reap-leases --closed` — a second reaper key: the unit is CLOSED
+  on GitHub (GH-2368).** GH-2108 keyed the reaper on the missing checkout,
+  which assumes one throwaway worktree per unit; a unit driven from the main
+  checkout or a kept worktree merges, auto-closes, and `reconcile` moves it
+  Done, so no session-owned release ever runs and `who`/`brief` printed its
+  lock STALE forever (4 such locks on the reporting machine, the oldest 8 days).
+  A closed unit has no lease consumer — no MACHINE edge leaves Done/Canceled
+  but `reopen`, deliver-queue never selects it, the fleet never spawns it — so
+  the key keeps GH-2108's argument (never age, never a live unit). Behind a
+  flag because it costs one `fetchIssue` per same-repo present row (the
+  default path stays zero-API); only `sameRepo === true` rows are asked
+  (another repo's #N is a different issue; `null` is kept unasked); an
+  unreadable issue is listed `not evaluated` and kept; the issue is re-read
+  before each unlink, so a `reopen` between passes keeps the lock. `who` and
+  `brief` name the flag as the remedy beside their stale rows.
 - **Lane passes are ledgered (GH-2342).** `tend-pass` / `deliver-pass` spawn
   as `t0-tend` / `r0-deliver` — grammar B at issue 0, the "belongs to no
   unit" convention `s0-watch` / `x0-relay` / `d0-fork-…` already use — so each

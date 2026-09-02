@@ -3775,6 +3775,85 @@ export function reapDeadLeases(
   return { removed, failed };
 }
 
+/** The second reaper key (GH-2368): the UNIT is closed on GitHub. GH-2108's
+ *  key — the checkout is gone — assumes one throwaway worktree per unit, and
+ *  a unit driven from the main checkout or a kept worktree keeps its lock
+ *  forever: the unit merges, auto-closes, `reconcile` moves it Done, and no
+ *  session-owned release ever runs. A closed unit has NO lease consumer (no
+ *  MACHINE edge leaves Done/Canceled but `reopen`; deliver-queue never
+ *  selects it; the fleet never spawns it), which is a stronger fact than a
+ *  missing directory — so age stays the rejected predicate.
+ *
+ *  `unknown` is every read that did not answer CLOSED or OPEN: a rate limit,
+ *  a transport flap, an issue the repo does not have. All of them keep the
+ *  lock — a failed read may not delete a lease deliver-queue still reads. */
+export type ClosedProbe = (issue: number) => "closed" | "open" | "unknown";
+
+/** One `fetchIssue` per call — the reality lane's key (issue state on GitHub,
+ *  as `reconcile` reads it), never the board's Workflow State, which lags a
+ *  reconcile pass behind. */
+export function closedOnGitHub(ctx: Ctx): ClosedProbe {
+  return (issue) => {
+    try {
+      return fetchIssue(ctx, issue).issueState === "CLOSED" ? "closed" : "open";
+    } catch {
+      return "unknown";
+    }
+  };
+}
+
+/** Which rows the closed key may even ask about: a PRESENT checkout that
+ *  resolved to the configured repo. The sessions dir is machine-wide and
+ *  another repo's #N is a different issue, so `sameRepo === false` is skipped
+ *  and `null` is kept unasked (toward keeping the row, as `partitionBriefLeases`
+ *  does). `missing` rows are the first key's and never reach this one; an
+ *  `unknown` checkout has no repo to compare, so it is excluded by construction. */
+export function classifyClosedLeases(
+  rows: LeaseRow[],
+  probe: ClosedProbe,
+): { closed: LeaseRow[]; unevaluated: Array<{ row: LeaseRow; reason: string }> } {
+  const closed: LeaseRow[] = [];
+  const unevaluated: Array<{ row: LeaseRow; reason: string }> = [];
+  for (const l of rows) {
+    if (l.worktreeState !== "present" || l.sameRepo !== true) continue;
+    const v = probe(l.issue);
+    if (v === "closed") closed.push(l);
+    else if (v === "unknown") unevaluated.push({ row: l, reason: "issue unreadable (rate limit, transport, or not found) — left alone" });
+  }
+  return { closed, unevaluated };
+}
+
+/** Same shape as `reapDeadLeases`, same reason: the issue is RE-READ at the
+ *  moment of deletion. A `reopen` can land between the classification pass
+ *  and the unlink, and a reopened unit's lock is live again. */
+export function reapClosedLeases(
+  closed: LeaseRow[],
+  probe: ClosedProbe,
+): { removed: string[]; failed: { file: string; reason: string }[] } {
+  const removed: string[] = [];
+  const failed: { file: string; reason: string }[] = [];
+  for (const l of closed) {
+    const v = probe(l.issue);
+    if (v !== "closed") {
+      failed.push({
+        file: l.file,
+        reason:
+          v === "open"
+            ? "issue reopened between the read and the delete — left alone"
+            : "issue unreadable at the moment of deletion — left alone",
+      });
+      continue;
+    }
+    try {
+      unlinkSync(l.file);
+      removed.push(l.file);
+    } catch (e) {
+      failed.push({ file: l.file, reason: (e as Error).message });
+    }
+  }
+  return { removed, failed };
+}
+
 // ---------------------------------------------------------------------------
 // Herd roster — the derived topology view (GH-2211, topology C)
 //
@@ -12025,9 +12104,12 @@ reads
                               0 disables). herdr unreachable renders "not
                               evaluated", never an empty roster
   reap-leases [--apply]       remove local lock files whose worktree is gone
-              [--json]        (dry run by default). Keyed on the checkout being
-                              absent, never on age — a live lease may not be
-                              deletable by a clock. Zero API
+              [--closed]      (dry run by default). Keyed on the checkout being
+              [--json]        absent, never on age — a live lease may not be
+                              deletable by a clock. Zero API. --closed adds a
+                              second key: the unit is CLOSED on GitHub (one
+                              read per same-repo lease; other repos' rows and
+                              unreadable issues are left alone)
   events --since SEQ [--json] facts appended to this repo's ledger.sqlite
                               after cursor SEQ — one seq<TAB>payload line per
                               fact, or --json {cursor, facts}. Zero API.
@@ -12461,7 +12543,7 @@ export const VERB_HELP: Record<string, string> = {
   inbox:
     "board inbox [--json] [--digest [--mark]]\n  The human's single surface: Human Needed decisions, tend proposals, Intake approvals,\n  and human-clearable deliver-blocked rows, each with its literal disposition verb.\n  Lead-routed escalations inside their window are withheld as \"with leads\" (GH-2218) —\n  promotion or the TTL admits them; `board escalations` lists them.\n  --digest adds completions since the last mark + a pushWorthy verdict; --mark stamps the window.\n  example: board inbox --digest",
   who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  A lease whose worktree was deleted prints DEAD, not STALE: nothing can refresh it, so it is\n  not aging toward anything. `board reap-leases` clears those.\n  example: board who",
-  "reap-leases": "board reap-leases [--apply] [--json]\n  Remove local lock files whose worktree no longer exists. Dry run unless --apply. Zero API.\n  The predicate is the missing CHECKOUT, never the lock's age: a lease is what deliver-queue\n  reads for local-session-active, so a clock may not be allowed to delete a live one. Any read\n  failure that is not ENOENT leaves the lock alone.\n  example: board reap-leases --apply",
+  "reap-leases": "board reap-leases [--apply] [--closed] [--json]\n  Remove local lock files whose worktree no longer exists. Dry run unless --apply. Zero API.\n  The predicate is the missing CHECKOUT, never the lock's age: a lease is what deliver-queue\n  reads for local-session-active, so a clock may not be allowed to delete a live one. Any read\n  failure that is not ENOENT leaves the lock alone.\n  --closed adds a second key (GH-2368): the unit is CLOSED on GitHub. A closed unit has no\n  lease consumer, so a lock its checkout never releases (main checkout, kept worktree) is\n  reapable. Costs one issue read per same-repo lease — the default path stays zero-API.\n  Another repo's #N is a different issue, so only same-repo rows are asked; an unreadable\n  issue is listed as not evaluated and kept; the issue is re-read before each unlink.\n  example: board reap-leases --closed --apply",
   events:
     "board events --since SEQ [--json]\n  Read-only cursor over ~/.ralph/<owner>/<repo>/ledger.sqlite (GH-2310): every fact with\n  seq > SEQ, in order — one `seq<TAB>payload` line per fact, or --json {cursor, facts}.\n  Zero GraphQL, zero gh; RALPH_HERDR_LEDGER_ROOT overrides the root like ledger.sh.\n  Absent db = not converted yet: exit 0 and an empty result (run ledger-convert.sh).\n  An UNREADABLE db, a missing sqlite3, or a user_version above 1 is exit 69 — never empty.\n  example: board events --since 0 --json",
   list: "board list [--state <s>] [--json]\n  Items by state. Full-board scan — prefer next/brief for orientation.\n  example: board list --state human",
@@ -12511,7 +12593,7 @@ interface ParsedArgs {
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "resume", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
-  "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace", "all",
+  "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace", "all", "closed",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
@@ -12822,6 +12904,8 @@ export function run(argv: string[], ctx: Ctx): number {
         const { shown, dead, foreign } = partitionBriefLeases(who);
         if (shown.length === 0) out(`leases: none for this repo — no local session is driving a unit here`);
         else for (const l of shown) out(`  lease: #${l.issue} ${l.ours ? "(this session)" : l.session} in ${l.worktree}${l.stale ? " STALE" : ` until ${l.expiresAt}`}`);
+        const staleShown = shown.filter((l) => l.stale).length;
+        if (staleShown) out(`  ${staleShown} stale — \`board reap-leases --closed\` reaps those whose unit is closed on GitHub`);
         const withheld: string[] = [];
         if (foreign) withheld.push(`${foreign} on another repo's checkout`);
         if (dead) withheld.push(`${dead} dead (worktree deleted — \`board reap-leases\` clears them)`);
@@ -12992,6 +13076,10 @@ export function run(argv: string[], ctx: Ctx): number {
         }
         const dead = rows.filter((l) => l.worktreeState === "missing").length;
         if (dead) out(`${dead} dead lease(s) — \`board reap-leases --apply\` removes locks whose checkout is gone`);
+        // GH-2368: a STALE row whose checkout never goes away (the main
+        // checkout, a kept worktree) is reapable on the other key.
+        const stale = rows.filter((l) => l.worktreeState !== "missing" && l.stale).length;
+        if (stale) out(`${stale} stale lease(s) — \`board reap-leases --closed --apply\` removes those whose unit is closed on GitHub (one read per same-repo lease)`);
       }
       return 0;
     }
@@ -13138,23 +13226,51 @@ export function run(argv: string[], ctx: Ctx): number {
       }
       const dead = rows.filter((l) => l.worktreeState === "missing");
       const applying = !!flags.apply;
-      const { removed, failed } = applying
-        ? reapDeadLeases(dead)
-        : { removed: [] as string[], failed: [] as { file: string; reason: string }[] };
+      // GH-2368: the second key — the unit is CLOSED on GitHub — behind a
+      // flag because it breaks the zero-API property: one fetchIssue per
+      // same-repo present row, never a walk. Off, this verb is byte-identical
+      // to the GH-2108 shape.
+      const closedKey = !!flags.closed;
+      const probe = closedKey ? closedOnGitHub(ctx) : null;
+      const { closed, unevaluated } = probe ? classifyClosedLeases(rows, probe) : { closed: [], unevaluated: [] };
+      const emptyResult = { removed: [] as string[], failed: [] as { file: string; reason: string }[] };
+      const deadRes = applying ? reapDeadLeases(dead) : emptyResult;
+      const closedRes = applying && probe ? reapClosedLeases(closed, probe) : emptyResult;
+      const removed = [...deadRes.removed, ...closedRes.removed];
+      const failed = [...deadRes.failed, ...closedRes.failed];
       if (flags.json) {
-        json({ evaluated: true, applied: applying, dead, removed: removed.length, removedFiles: removed, failed });
+        json({
+          evaluated: true,
+          applied: applying,
+          closedKey,
+          dead,
+          closed,
+          unevaluated: unevaluated.map((u) => ({ ...u.row, reason: u.reason })),
+          removed: removed.length,
+          removedFiles: removed,
+          failed,
+        });
         return failed.length ? 1 : 0;
       }
-      if (dead.length === 0) {
-        out(`nothing to reap — every one of the ${rows.length} local lease(s) names a checkout that still exists`);
+      const candidates = dead.length + closed.length;
+      if (candidates === 0) {
+        if (closedKey)
+          out(`nothing to reap — every one of the ${rows.length} local lease(s) names a checkout that still exists and no same-repo unit is closed on GitHub`);
+        else out(`nothing to reap — every one of the ${rows.length} local lease(s) names a checkout that still exists`);
+        for (const u of unevaluated) out(`  not evaluated: #${u.row.issue} ${u.row.session} — ${u.reason}`);
         return 0;
       }
       for (const l of dead) out(`  ${applying ? "REAP" : "dead"}: #${l.issue} ${l.session} — worktree gone: ${l.worktree}`);
+      for (const l of closed) out(`  ${applying ? "REAP" : "closed"}: #${l.issue} ${l.session} — unit closed on GitHub: ${l.worktree}`);
+      for (const u of unevaluated) out(`  not evaluated: #${u.row.issue} ${u.row.session} — ${u.reason}`);
+      const summary = closedKey
+        ? `${dead.length} dead + ${closed.length} closed lease(s) of ${rows.length}`
+        : `${dead.length} dead lease(s) of ${rows.length}`;
       if (!applying) {
-        out(`${dead.length} dead lease(s) of ${rows.length} — DRY RUN, nothing was touched; re-run with --apply to remove them`);
+        out(`${summary} — DRY RUN, nothing was touched; re-run with --apply to remove them`);
         return 0;
       }
-      out(`reaped ${removed.length} of ${dead.length} dead lease(s)`);
+      out(`reaped ${removed.length} of ${candidates} ${closedKey ? "dead/closed" : "dead"} lease(s)`);
       for (const f of failed) out(`  KEPT ${f.file}: ${f.reason}`);
       return failed.length ? 1 : 0;
     }
