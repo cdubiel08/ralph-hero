@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 const (
@@ -765,10 +766,51 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 	}
 
 	rule := styleRule.Render("  " + strings.Repeat("─", max(1, width-4)))
-	return truncate(gutterTop+" "+line1, width) + "\n" +
-		truncate(gutterRest+" "+line2, width) + "\n" +
-		truncate(gutterRest+" "+line3, width) + "\n" +
-		truncate(rule, width) + "\n"
+	rows := [3]string{
+		truncate(gutterTop+" "+line1, width),
+		truncate(gutterRest+" "+line2, width),
+		truncate(gutterRest+" "+line3, width),
+	}
+	if selected && m.washEnabled() {
+		// The wash rides the three CONTENT rows only — the rule stays
+		// unpainted so the card's bottom edge reads as a gap, not a box.
+		for i := range rows {
+			rows[i] = washRow(rows[i], width)
+		}
+	}
+	return rows[0] + "\n" + rows[1] + "\n" + rows[2] + "\n" + truncate(rule, width) + "\n"
+}
+
+// selectionWash is the SGR that paints the selected card's background (spec
+// §7): #111629, the Tokyo Night Clear ground #0b1020 lifted +6 per channel —
+// a lift, not a colour, so it sits under any theme's ink without arguing
+// with the priority and state inks drawn over it. Emitted as a raw 24-bit
+// sequence rather than a lipgloss style because the wash has to be re-opened
+// after every reset the row's own styles emit, which a style wrapping the
+// row cannot do.
+const selectionWash = "\x1b[48;2;17;22;41m"
+
+// washEnabled is the true-colour gate: BOTH the terminal's own claim
+// (COLORTERM, read once at startup) and lipgloss's detected profile must say
+// 24-bit. Either alone is not enough — a profile forced up by CLICOLOR_FORCE
+// on a 256-colour terminal quantises #111629 to a grey slab on navy, and a
+// COLORTERM inherited into a pipe would paint sequences nobody renders. Below
+// the gate the selection is the bar and bold ink, exactly as before.
+func (m Model) washEnabled() bool {
+	return m.cfg.Truecolor && lipgloss.ColorProfile() == termenv.TrueColor
+}
+
+// washRow paints one already-truncated row edge to edge: pad to the card
+// width so the wash spans the whole row, then re-open the background after
+// every `ESC[0m` the row's foreground styles emit (the mock's reset-reopen
+// trick) so their inks survive intact and the wash never gaps mid-row. The
+// row's visible width is unchanged — padding to width is what the column's
+// own Width style would have done — and nothing about the card's geometry
+// moves, so hitTest is untouched.
+func washRow(row string, width int) string {
+	const reset = "\x1b[0m"
+	row = pad(row, width)
+	return selectionWash + strings.ReplaceAll(row, reset, reset+selectionWash) + reset
 }
 
 // statusDot renders the joined vocabulary (spec §2): yellow working, blue

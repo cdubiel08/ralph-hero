@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func manyCards() [3][]Card {
@@ -1254,5 +1255,145 @@ func TestViewFitsTerminalAtEveryHeight(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// ── GH-2380: the selection wash under a true-colour gate ───────────────────
+
+func TestResolveTruecolorReadsTheTerminalsOwnClaim(t *testing.T) {
+	for _, raw := range []string{"truecolor", "24bit", " TrueColor ", "24BIT"} {
+		if !resolveTruecolor(raw) {
+			t.Errorf("resolveTruecolor(%q) = false, want true", raw)
+		}
+	}
+	for _, raw := range []string{"", "yes", "256color", "xterm-256color", "true"} {
+		if resolveTruecolor(raw) {
+			t.Errorf("resolveTruecolor(%q) = true, want false", raw)
+		}
+	}
+}
+
+// withProfile pins lipgloss's global profile for one test and restores it,
+// because the detected profile in `go test` (no TTY) is Ascii — which is
+// exactly the below-gate case the wash must stay out of.
+func withProfile(t *testing.T, p termenv.Profile) {
+	t.Helper()
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(p)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+}
+
+func selectedCardLines(t *testing.T, m Model) []string {
+	t.Helper()
+	m.clampCursor()
+	out := renderCard(m, m.col, m.row, m.cols[m.col][m.row], 40)
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(lines) != cardRows {
+		t.Fatalf("card rendered %d rows, want %d", len(lines), cardRows)
+	}
+	return lines
+}
+
+func TestSelectionWashPresentUnderTruecolorOnly(t *testing.T) {
+	cases := []struct {
+		name      string
+		colorterm bool
+		profile   termenv.Profile
+		want      bool
+	}{
+		{"COLORTERM + TrueColor profile", true, termenv.TrueColor, true},
+		{"COLORTERM but 256-colour profile", true, termenv.ANSI256, false},
+		{"TrueColor profile without COLORTERM", false, termenv.TrueColor, false},
+		{"neither", false, termenv.Ascii, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withProfile(t, tc.profile)
+			m := testModel(&fakeRunner{})
+			m.cfg.Truecolor = tc.colorterm
+			lines := selectedCardLines(t, m)
+			for i := 0; i < 3; i++ {
+				if got := strings.Contains(lines[i], selectionWash); got != tc.want {
+					t.Errorf("row %d washed = %v, want %v: %q", i, got, tc.want, lines[i])
+				}
+			}
+			if strings.Contains(lines[3], "\x1b[48;") {
+				t.Errorf("the rule row must never be painted: %q", lines[3])
+			}
+		})
+	}
+}
+
+func TestSelectionWashLeavesGeometryAlone(t *testing.T) {
+	withProfile(t, termenv.TrueColor)
+	plain := testModel(&fakeRunner{})
+	plain.cfg.Truecolor = false
+	washed := plain
+	washed.cfg.Truecolor = true
+
+	before := selectedCardLines(t, plain)
+	after := selectedCardLines(t, washed)
+	for i := range before {
+		if lipgloss.Width(before[i]) > 40 || lipgloss.Width(after[i]) > 40 {
+			t.Errorf("row %d exceeds the card width: %d / %d", i, lipgloss.Width(before[i]), lipgloss.Width(after[i]))
+		}
+	}
+	// Foreground codes survive the wash: every SGR the plain row carried is
+	// still present, in order, in the washed row (the wash only ADDS).
+	for i := 0; i < 3; i++ {
+		if !strings.Contains(after[i], strings.TrimRight(before[i], " ")) &&
+			!strings.Contains(strings.ReplaceAll(after[i], selectionWash, ""), strings.TrimRight(before[i], " ")) {
+			t.Errorf("row %d lost its own styling under the wash:\n plain  %q\n washed %q", i, before[i], after[i])
+		}
+	}
+	// The unselected cards are untouched, and the column's rendered width is
+	// identical with and without the wash — the wash is ink, not layout.
+	for _, m := range []Model{plain, washed} {
+		m.clampCursor()
+		col := renderColumn(m, m.col, 40, 30, false)
+		for n, line := range strings.Split(col, "\n") {
+			if w := lipgloss.Width(line); w != 40 {
+				t.Errorf("wash=%v: column line %d width %d, want 40", m.cfg.Truecolor, n, w)
+			}
+		}
+		washedRows := 0
+		for _, line := range strings.Split(col, "\n") {
+			if strings.Contains(line, selectionWash) {
+				washedRows++
+			}
+		}
+		want := 0
+		if m.cfg.Truecolor {
+			want = 3
+		}
+		if washedRows != want {
+			t.Errorf("wash=%v: %d washed rows in the column, want %d", m.cfg.Truecolor, washedRows, want)
+		}
+	}
+	// Every rendered row of the card carries the wash edge to edge, not only
+	// as far as its text ran: a washed row ends in the reset, never in bare
+	// padding after it.
+	for i := 0; i < 3; i++ {
+		if !strings.HasSuffix(after[i], "\x1b[0m") {
+			t.Errorf("row %d does not close its wash: %q", i, after[i])
+		}
+	}
+}
+
+func TestSelectionWashNeverPaintsAnUnselectedCard(t *testing.T) {
+	withProfile(t, termenv.TrueColor)
+	m := testModel(&fakeRunner{})
+	m.cfg.Truecolor = true
+	m.clampCursor()
+	// The cursor's neighbour in the same column.
+	other := renderCard(m, m.col, m.row+1, m.cols[m.col][m.row+1], 40)
+	if strings.Contains(other, selectionWash) {
+		t.Errorf("unselected card carries the wash: %q", other)
+	}
+	// And the selected card in a mode where the strip has no cursor.
+	mm := m
+	mm.mode = ModePeek
+	if out := renderCard(mm, mm.col, mm.row, mm.cols[mm.col][mm.row], 40); strings.Contains(out, selectionWash) {
+		t.Errorf("selection wash drawn under a modal that hides the cursor: %q", out)
 	}
 }
