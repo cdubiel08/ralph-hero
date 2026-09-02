@@ -56,6 +56,13 @@ type Config struct {
 	// resolved once (ralph_ledger_path's rules). "" = no scope discoverable,
 	// which costs the age chip and nothing else.
 	LedgerPath string
+	// TranscriptRoot is $CLAUDE_CONFIG_DIR/projects (else ~/.claude/projects)
+	// — where the harness writes the per-session transcript the cost chip
+	// reads (GH-2378). "" = no home, which costs the chip and nothing else.
+	TranscriptRoot string
+	// BudgetPath is ~/.ralph/budget.jsonl, board.ts's own spend log; the
+	// header's `gql N` is the trailing hour of it. "" disables the read.
+	BudgetPath string
 	// MarksGlob matches board.ts's local write stamps (~/.ralph/cache/
 	// items-marks-*.json, GH-1806/audit A6): a newer mtime is evidence of a
 	// verified local write, and the board is refetched NOW instead of at the
@@ -250,6 +257,15 @@ type agentsMsg struct {
 // agent_ref. Absent from the map = not measured this pass, which the renderer
 // draws as ±? — never as a clean worktree.
 type diffsMsg struct{ diffs map[string]DiffStat }
+
+// usageMsg is the transcript-join pass (GH-2378): every live session's
+// reduction keyed on its Claude session id, plus the trailing-hour GraphQL
+// spend. gqlOK=false is a spend log that could not be read — not zero.
+type usageMsg struct {
+	usage map[string]usageEntry
+	gql   int
+	gqlOK bool
+}
 
 // signalsMsg carries one pass of the board-sourced card markings. `ok` is the
 // whole degradation contract: false means the read FAILED, and every In Review
@@ -655,6 +671,11 @@ func parseAgents(out, repoRoot string) ([]Agent, error) {
 					Workspace     string `json:"workspace_id"`
 					Cwd           string `json:"cwd"`
 					ForegroundCwd string `json:"foreground_cwd"`
+					// The harness session herdr observed (GH-2378): `value` is
+					// the Claude session id, the transcript join key. Typed
+					// loosely for the same reason the tokens are — a shape
+					// change here may cost the cost chip, never the overlay.
+					Session map[string]any `json:"agent_session"`
 					// The ralph C8 tokens the spawner stamps and the session
 					// refreshes (`herdr pane report-metadata --token …`).
 					// They arrive in THIS response — the status dot's second
@@ -774,6 +795,7 @@ func parseAgents(out, repoRoot string) ([]Agent, error) {
 			Branch:     tokenString(a.Tokens, "branch"),
 			TokenState: tokenString(a.Tokens, "state"),
 			Address:    tokenString(a.Tokens, "address"),
+			Session:    tokenString(a.Session, "value"),
 		})
 	}
 	return agents, nil
@@ -1271,6 +1293,40 @@ func fetchDiffsCmd(r Runner, targets []LedgerSpawn) tea.Cmd {
 			cancel()
 		}
 		return diffsMsg{diffs: out}
+	}
+}
+
+// usageTarget is one session to reduce: the Claude session id and the
+// checkout whose slug names its transcript directory first.
+type usageTarget struct {
+	Session  string
+	Checkout string
+}
+
+// fetchUsageCmd reduces each target's transcript (a local file read, cached on
+// size+mtime) and reads the spend log. Bounded by the caller
+// (Model.usageTargets); no deadline, because there is no process to wedge —
+// every read here is the local filesystem.
+//
+// prev must be a SNAPSHOT (Model.usageSnapshot), never the live map: this
+// runs on its own goroutine while Update keeps merging other passes into
+// m.usage, and a concurrent map read beside those writes is a runtime panic
+// that takes the cockpit down. Every entry returned is stamped with this
+// pass's dispatch time, cached ones included — a cache hit re-confirms the
+// file at `now`, and the stamp is what orders overlapping passes.
+func fetchUsageCmd(cfg Config, prev map[string]usageEntry, targets []usageTarget, now time.Time) tea.Cmd {
+	return func() tea.Msg {
+		out := make(map[string]usageEntry, len(targets))
+		for _, t := range targets {
+			if _, done := out[t.Session]; done {
+				continue
+			}
+			e := readSessionUsage(cfg.TranscriptRoot, t.Checkout, t.Session, prev)
+			e.At = now
+			out[t.Session] = e
+		}
+		gql, ok := readBudgetSpend(cfg.BudgetPath, now.Add(-time.Hour))
+		return usageMsg{usage: out, gql: gql, gqlOK: ok}
 	}
 }
 

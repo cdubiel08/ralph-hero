@@ -46,14 +46,23 @@ var (
 	styleQuestion = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("214"))
 	styleEpic     = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("60"))
 	// The age and the [est] are the two inks the v2 spec moved (244/240 →
-	// 246); everything else on the card keeps its ink. The cost chip keeps
-	// the timer's OLD grey until GH-2378 restyles it, so this unit's ink diff
-	// is exactly the two the spec names.
-	styleTimer   = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
-	styleEst     = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
-	styleCost    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	styleGutter  = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
-	styleGutterS = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	// 246); everything else on the card keeps its ink.
+	styleTimer  = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+	styleEst    = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+	styleGutter = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+	// Cost and context (spec §5, GH-2378). Cash is a faded green italic —
+	// the same ink on the card, the column header and the frame header, so
+	// one colour means "dollars" everywhere. `$—` (session known, transcript
+	// unreadable) takes the card's one unread grey. The context alert is
+	// amber to 160k and red past it; below 120k nothing is drawn. The coin
+	// (tokens) is a separate ink so a count never reads as money.
+	styleCost       = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("65"))
+	styleCostUnread = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	styleCtxWarn    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	styleCtxHot     = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	styleToken      = lipgloss.NewStyle().Foreground(lipgloss.Color("180"))
+	styleGql        = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	styleGutterS    = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 
 	// Status dot — herdr's own vocabulary, joined with the C8 state token.
 	dotWorking   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))  // yellow
@@ -135,7 +144,10 @@ func viewModel(m Model) string {
 	if m.cfg.Repo != "" {
 		title += " — " + baseName(m.cfg.Repo)
 	}
-	b.WriteString(truncate(styleTitle.Render(title)+"  "+liveness(m, time.Now()), m.width))
+	// The right-hand stats (spec §6) are laid out by headerLine, which cuts
+	// from the right; the liveness spinner is part of the title and never
+	// yields to a stat.
+	b.WriteString(headerLine(m, styleTitle.Render(title)+"  "+liveness(m, time.Now()), time.Now()))
 	b.WriteString("\n")
 	// Both facts must survive on the one banner line: a board read failure
 	// is NEVER shadowed by the no-multiplexer banner (on a herdr-less host a
@@ -523,10 +535,16 @@ func renderColumn(m Model, idx, width, bodyHeight int, narrow bool) string {
 		nameStyle = styleColHeadSel
 	}
 	count := fmt.Sprintf("%d", len(cards))
-	// Left of the count (spec §10): a spinner while this column's read is
-	// out, amber `stale Nm` when its last read failed and the cards shown
-	// are the last good ones.
 	right := colCount[idx].Render(count)
+	// The column's spend sits left of the count in the cash ink (spec §5):
+	// the sum of the MEASURED chips — an unpriced column draws no total,
+	// and a card's `$—` is where its own unread fact lives.
+	if total, ok := m.columnSpend(cards); ok {
+		right = styleCost.Render(fmt.Sprintf("%s%.2f", m.glyphSet().usd, total)) + "  " + right
+	}
+	// Left of both (spec §10): a spinner while this column's read is out,
+	// amber `stale Nm` when its last read failed and the cards shown are
+	// the last good ones.
 	if note := columnFlight(m, idx, time.Now()); note != "" {
 		right = note + "  " + right
 	}
@@ -675,6 +693,11 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		chip = prChip(m, card, g)
 	case doneState:
 		chip = mergeChip(card, g)
+	case "Human Needed":
+		// The question owns line 3 on a Human Needed card (the approved
+		// mock), so the cost rides the one slot the card leaves empty: line
+		// 1's right. Nothing else competes for it on this state.
+		chip = costChip(m, card, g)
 	case inboxState:
 		// The right slot's one fact for an inbox card is WHICH human queue
 		// admitted it — the section header the CLI prints, carried per card
@@ -720,6 +743,11 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		// would be a lie about a card nobody can fix. What a closed card has
 		// is when it closed.
 		line3 = styleMeta.Render(trimTo(closedLabel(card, time.Now()), inner))
+		// Right of the closed label, only when a transcript (or the ledger's
+		// usage fact) exists — an unsessioned close draws nothing.
+		if cost := costChip(m, card, g); cost != "" && lipgloss.Width(line3)+lipgloss.Width(cost)+2 <= inner {
+			line3 = pad(line3, inner-lipgloss.Width(cost)) + cost
+		}
 	case card.State == inboxState && card.Queue == "decision":
 		// A decision row IS a Human Needed item: same phone-answerable
 		// contract, same rendering — the why-line owns the row, because the
@@ -752,11 +780,14 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		// timer is right-justified by `pad`, which cannot push back, so an
 		// over-long epic name would simply run into it and both would be
 		// unreadable. Two spaces of separator on each side.
-		// The cost chip sits beside the timer on the right — both are the
-		// live session's meters, and both are fixed-width so the epic chip's
-		// budget can be computed before it is built.
+		// The cost chip and the context alert sit beside the timer on the
+		// right — cost, then alert, then age — all fixed-width, so the epic
+		// chip's budget can be computed before it is built.
 		timer := ageChip(m, card)
-		if cost := costChip(m, card); cost != "" {
+		if ctx := ctxChip(m, card, g); ctx != "" {
+			timer = ctx + "  " + timer
+		}
+		if cost := costChip(m, card, g); cost != "" {
 			timer = cost + "  " + timer
 		}
 		if epic := epicChip(m, card, g, inner-lipgloss.Width(lead)-lipgloss.Width(timer)-4); epic != "" {
@@ -1030,25 +1061,119 @@ func ageChip(m Model, card Card) string {
 	return styleTimer.Render(label)
 }
 
-// costChip — "$8.00 274k": the live session's list-equivalent spend and its
-// largest prompt so far, from the ledger's latest usage fact (GH-2347). Read
-// at each done turn and at exit, so it is a meter, not a bill. No fact yet
-// renders NOTHING rather than $0: an unmeasured session is not a free one.
-func costChip(m Model, card Card) string {
-	u, ok := m.cardCost(card.Number)
-	if !ok {
-		return ""
+// costChip — "$2.41": the session's list-equivalent spend from its own
+// transcript (GH-2378), a meter rather than a bill. Three renders that must
+// never look alike: no session draws NOTHING (there is nothing to price), a
+// session whose transcript could not be read draws `$—` in the unread grey,
+// and a measured one draws the number in cash green.
+func costChip(m Model, card Card, g glyphSet) string {
+	u, st := m.cardUsage(card.Number)
+	switch st {
+	case costMeasured:
+		return styleCost.Render(fmt.Sprintf("%s%.2f", g.usd, u.USD))
+	case costUnread:
+		return styleCostUnread.Render(g.usd + "—")
 	}
-	return styleCost.Render(fmt.Sprintf("$%.2f %s", u.ListUSD, formatTokens(u.MaxContext)))
+	return ""
 }
 
-// formatTokens — "274k" at thousand precision, the unit every cost surface
-// prints; below a thousand the bare count.
+// ctxAlertTokens is the gate below which the context chip is not drawn: a
+// healthy context is not a fact the operator acts on. ctxHotTokens is where
+// amber turns red.
+const (
+	ctxAlertTokens = 120_000
+	ctxHotTokens   = 160_000
+)
+
+// ctxChip — "⛶151k": the LAST call's prompt size, drawn only past the alert
+// gate. Unread context is deliberately not distinguishable from healthy —
+// the `$—` beside it carries the unread fact, and a second grey glyph on
+// every unread card would say the same thing twice.
+func ctxChip(m Model, card Card, g glyphSet) string {
+	u, st := m.cardUsage(card.Number)
+	if st != costMeasured || u.LastContext < ctxAlertTokens {
+		return ""
+	}
+	return ctxInk(u.LastContext).Render(g.ctx + formatTokens(u.LastContext))
+}
+
+// ctxInk — amber from the gate, red from the hot line.
+func ctxInk(n int) lipgloss.Style {
+	if n >= ctxHotTokens {
+		return styleCtxHot
+	}
+	return styleCtxWarn
+}
+
+// formatTokens — "274k" at thousand precision, "3.1M" past a million, the
+// unit every cost surface prints; below a thousand the bare count.
 func formatTokens(n int) string {
-	if n >= 1000 {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1000:
 		return fmt.Sprintf("%dk", (n+500)/1000)
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+// headerLine lays the frame header out (spec §6): the title left, and
+// right-justified the fleet by state in each state's ink, today's spend, the
+// token coin, the burn rate and the GraphQL weight. Width cuts from the
+// RIGHT — each stat is dropped whole, last first, until the row fits beside
+// the title, and the title itself is only ever truncated once every stat is
+// gone. A stat that cannot be read is absent, never 0.
+func headerLine(m Model, title string, now time.Time) string {
+	stats := headerStats(m, now)
+	for len(stats) > 0 {
+		right := strings.Join(stats, "  ")
+		if lipgloss.Width(title)+2+lipgloss.Width(right) <= m.width {
+			return pad(title, m.width-lipgloss.Width(right)) + right
+		}
+		stats = stats[:len(stats)-1]
+	}
+	return truncate(title, m.width)
+}
+
+// headerStats builds the right-hand run, in the order the width cuts it:
+// fleet dots first (the cheapest fact and the one that says who is alive),
+// then dollars, tokens, burn, GraphQL.
+func headerStats(m Model, now time.Time) []string {
+	g := m.glyphSet()
+	var out []string
+	var fleet []string
+	for _, fc := range m.fleetTally() {
+		fleet = append(fleet, dotFor(fc.State, g)+" "+fmt.Sprintf("%d", fc.N))
+	}
+	if len(fleet) > 0 {
+		out = append(out, strings.Join(fleet, "  "))
+	}
+	if today, tokens, hour, ok := m.fleetSpend(now); ok {
+		out = append(out,
+			styleCost.Render(fmt.Sprintf("%s%.2f today", g.usd, today)),
+			styleToken.Render(g.token+" "+formatTokens(tokens)),
+			styleCost.Render(fmt.Sprintf("%s%.2f/h", g.usd, hour)))
+	}
+	if m.gqlOK {
+		out = append(out, styleGql.Render("gql "+groupThousands(m.gql)))
+	}
+	return out
+}
+
+// groupThousands — "3,812", the header's GraphQL weight.
+func groupThousands(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if n < 0 {
+		return s
+	}
+	var b strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
 }
 
 // renderOverlay draws the peek/dag pane: bordered, clipped to the body area.
