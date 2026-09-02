@@ -134,19 +134,23 @@ export class RalphWorld extends World {
 
     // The contained pane's side of the startup self-test (GH-2266): a live
     // pane under an intact sandbox runs `touch <inside> <outside>`, the
-    // kernel refuses the inside operand and the outside marker lands. The
-    // replay world states that healthy answer once, the way the agent-wait
-    // fixture above states the healthy turn; a scenario about an inert
-    // sandbox would override the hook to touch both.
+    // kernel refuses the inside operand and the outside marker lands. When
+    // the prompt carries the GH-2341 Write step, a BOUND pane writes no tool
+    // marker and its Bash control touch after it lands. The replay world
+    // states that healthy answer once, the way the agent-wait fixture above
+    // states the healthy turn; a scenario about an inert sandbox or an
+    // unbound Write tool would override the hook.
     writeExecutable(
       path.join(this.bin, 'containment-probe-hook'),
       [
         '#!/bin/bash',
-        '# $1 agent, $2 prompt text — touch only the OUTSIDE marker.',
+        '# $1 agent, $2 prompt text — touch the OUTSIDE marker and, when asked, the control marker.',
         'paths=$(printf \'%s\' "$2" | grep -o "touch \'[^\']*\' \'[^\']*\'" | head -1)',
         '[ -n "$paths" ] || exit 0',
         'outside=$(printf \'%s\' "$paths" | sed -n "s/^touch \'[^\']*\' \'\\([^\']*\\)\'$/\\1/p")',
         '[ -n "$outside" ] && touch "$outside"',
+        'control=$(printf \'%s\' "$2" | sed -n "s/^touch \'\\([^\']*\\)\'; echo CONTROL_RC.*$/\\1/p" | head -1)',
+        '[ -n "$control" ] && touch "$control"',
         'exit 0',
         '',
       ].join('\n'),
