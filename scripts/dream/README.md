@@ -199,9 +199,9 @@ identically".
 | state file | `~/.ralph-hero/dream-state.json` | `~/.ralph-hero/dream-meta-state.json` |
 | override | `RALPH_DREAM_STATE_PATH` > config `state_path` | `RALPH_DREAM_META_STATE_PATH` > config `meta_state_path` |
 | `mode` | `nightly` / `backfill` | `weekly` |
-| counters | `candidates`, `clusters`, `written` | `reflections`, `candidates`, `staged` |
+| counters | `candidates`, `clusters`, `written` | `reflections`, `reflections_fed`, `candidates`, `staged` |
 | healthy zeroes | `empty`, `deferred` | `empty`, `deferred`, `suppressed` |
-| defect zero | `failed` — clusters attempted, 0 written | `failed` — reflections cleared the gate, 0 candidates synthesized |
+| defect zero | `failed` — clusters attempted, 0 written | `failed` — reflections cleared the gate, 0 candidates synthesized; `failure` names the cause |
 
 Every file carries `run_at`, `mode`, `outcome`, `exit_code`, its
 counters, and `reason`. `reflect.py --dry-run` writes nothing.
@@ -217,11 +217,15 @@ everything it said — every candidate restated a known axiom, or was
 already staged, promoted or rejected. That is a working pipeline over a
 backlog that is already known; alarming on it would fire on health and
 teach a reader to ignore the alarm. Only a run that cleared the
-`min_reflections` gate and got nothing parseable back is `failed`. That
-branch cannot name a cause: `synthesize_candidates` fails open on an
-unreachable endpoint, a non-200, an unexpected payload shape and an
-unparseable completion alike, so the alarm says what was observed and
-lists the causes rather than claiming one.
+`min_reflections` gate and got nothing back is `failed` — and since
+GH-2300 that branch **names its cause**. The first real alarm (#2300)
+listed three likely causes and the actual one, a timeout, was none of
+them; the human had to open the log. `synthesize_candidates` now returns
+a typed `failure` beside its (empty) list — `timeout`, `unreachable`,
+`http-status`, `payload-shape`, `unparseable`, or `model-empty` (a valid
+`{"candidates": []}` answer, still `failed` because 47 reflections with
+nothing durable in them is a claim worth a human's look) — and the state
+file's `failure` + `reason` and the alarm body carry it verbatim.
 
 Honest limit: a run that never fires at all — launchd silent non-fire,
 an `ingest &&` short-circuit, a crash before `main()` — writes no state
@@ -328,7 +332,27 @@ model cannot widen the bound, and since dedup only ever removes more, weekly
 growth stays ≤ N. Fail-open: if the local model is
 offline it stages nothing. Knobs: `RALPH_META_WINDOW_DAYS` (7),
 `RALPH_META_MIN_REFLECTIONS` (5), `RALPH_META_MAX_CANDIDATES` (3),
-`RALPH_META_DEDUP_MAX_EXISTING` (150).
+`RALPH_META_DEDUP_MAX_EXISTING` (150), `RALPH_META_MAX_REFLECTIONS` (60),
+`RALPH_META_LLM_TIMEOUT_S` (600).
+
+**The synthesis call is bounded on both sides (GH-2300).** It is ONE
+completion over the whole window, so its wall time grows with the week —
+and it ran under the nightly's `RALPH_DREAM_LLM_TIMEOUT_S` (180 s, sized
+for an 8-member cluster). Measured on qwen3.6-27b: 42 reflections took
+111 s, 45 took 119 s, and 47 timed out at 180 s (2026-08-30) — the
+budget was at ~65 % on the good weeks, and one busier week crossed it.
+Two bounds replace the shared constant: only the newest
+`RALPH_META_MAX_REFLECTIONS` (60; `--max-reflections`, 0 = uncapped)
+reach the prompt, so the input is a function of the cap rather than of
+the week, and the call gets its own `RALPH_META_LLM_TIMEOUT_S` (600;
+`--llm-timeout`) sized to that cap. The nightly's knob no longer governs
+this script. A capped run records both numbers — `reflections` is the
+window, `reflections_fed` is what the model saw — so a run that dropped
+the week's oldest 20 never reads like one that saw everything. Honest
+limit: the cap drops the OLDEST reflections first, a choice about
+recency rather than salience; a week whose durable pattern lives in its
+first days is under-served by it, and curate's human gate remains the
+backstop.
 
 **Every suppression leaves a record** (GH-2040). Both gates above used to drop
 a candidate silently, and `prune_candidates` then deleted the consumed entry —

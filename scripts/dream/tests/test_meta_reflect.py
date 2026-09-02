@@ -194,6 +194,165 @@ class TestRunMetaReflect:
         )
         # An offline model stages nothing AND says so: this is the defect zero.
         assert (r.staged, r.outcome) == (0, "failed")
+        assert r.failure == "unreachable"
+        assert "connection refused" in r.reason
+
+
+class TestSynthesisIsBounded:
+    """GH-2300: the weekly synthesis call timed out at 47 reflections under a
+    fixed 180 s budget it shared with the nightly's per-cluster call. The
+    prompt is now capped and the failure is typed."""
+
+    def _db(self, tmp_path: Path, n: int) -> Path:
+        db = tmp_path / "k.db"
+        _seed(db, [
+            {"id": f"r{i:03d}", "date": f"2026-06-{1 + i // 10:02d}T00:00:{i % 10:02d}+00:00",
+             "content": f"reflection {i}", "memory_tier": "reflection"}
+            for i in range(n)
+        ])
+        return db
+
+    def test_only_the_newest_max_reflections_reach_the_prompt(self, tmp_path: Path) -> None:
+        db = self._db(tmp_path, 12)
+        seen: list[str] = []
+
+        def post(url, body, timeout):  # noqa: ANN001, ARG001
+            seen.append(body["messages"][0]["content"])
+            return 200, {"choices": [{"message": {"content": json.dumps(
+                {"candidates": [{"axiom": "A", "rationale": "r", "source_reflection_ids": ["r011"]}]}
+            )}}]}
+
+        r = meta_reflect.run_meta_reflect(
+            db, tmp_path / "wiki", "u", "m", window_days=60, min_reflections=3,
+            max_reflections=5, now=NOW, http_post=post,
+        )
+        assert r.outcome == "wrote"
+        # The window count is the recorded fact; the cap is what was fed.
+        assert (r.reflections, r.reflections_fed) == (12, 5)
+        prompt = seen[0]
+        assert "[r011]" in prompt and "[r007]" in prompt
+        assert "[r006]" not in prompt and "[r000]" not in prompt
+
+    def test_zero_cap_means_uncapped(self, tmp_path: Path) -> None:
+        db = self._db(tmp_path, 8)
+        seen: list[str] = []
+
+        def post(url, body, timeout):  # noqa: ANN001, ARG001
+            seen.append(body["messages"][0]["content"])
+            return 200, {"choices": [{"message": {"content": '{"candidates":[{"axiom":"A"}]}'}}]}
+
+        r = meta_reflect.run_meta_reflect(
+            db, tmp_path / "wiki", "u", "m", window_days=60, min_reflections=3,
+            max_reflections=0, now=NOW, http_post=post,
+        )
+        assert (r.reflections, r.reflections_fed) == (8, 8)
+        assert all(f"[r{i:03d}]" in seen[0] for i in range(8))
+
+    def test_timeout_is_passed_to_the_call_and_typed_on_failure(self, tmp_path: Path) -> None:
+        db = self._db(tmp_path, 6)
+        budgets: list[int] = []
+
+        class ReadTimeout(Exception):
+            """Named like httpx's, which is what the classifier keys on."""
+
+        def slow(url, body, timeout):  # noqa: ANN001, ARG001
+            budgets.append(timeout)
+            raise ReadTimeout("timed out")
+
+        r = meta_reflect.run_meta_reflect(
+            db, tmp_path / "wiki", "u", "m", window_days=60, min_reflections=3,
+            llm_timeout_s=42, now=NOW, http_post=slow,
+        )
+        assert budgets == [42]
+        assert (r.outcome, r.failure) == ("failed", "timeout")
+        assert "timed out after 42s" in r.reason
+        assert "6 reflection(s)" in r.reason
+
+    def test_the_meta_budget_is_not_the_nightly_knob(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Sharing RALPH_DREAM_LLM_TIMEOUT_S is the coupling that produced the
+        failure: a budget sized for an 8-member cluster governed a call over
+        the whole week."""
+        import importlib
+        monkeypatch.setenv("RALPH_DREAM_LLM_TIMEOUT_S", "7")
+        monkeypatch.delenv("RALPH_META_LLM_TIMEOUT_S", raising=False)
+        mod = importlib.reload(meta_reflect)
+        try:
+            assert mod.DEFAULT_LLM_TIMEOUT_S == 600
+            monkeypatch.setenv("RALPH_META_LLM_TIMEOUT_S", "900")
+            assert importlib.reload(meta_reflect).DEFAULT_LLM_TIMEOUT_S == 900
+        finally:
+            monkeypatch.delenv("RALPH_META_LLM_TIMEOUT_S", raising=False)
+            monkeypatch.delenv("RALPH_DREAM_LLM_TIMEOUT_S", raising=False)
+            importlib.reload(meta_reflect)
+
+    def test_non_json_200_body_is_payload_shape_not_unreachable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """greptile P1 on #2344: ``resp.json()`` raised inside the transport
+        handler and a truncated body was typed ``unreachable``. Drives the
+        REAL httpx path through a fake module — the ``http_post`` seam hands
+        back a parsed payload and cannot reach this branch."""
+        import sys
+        import types
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        class _Client:
+            def __init__(self, timeout):  # noqa: ANN001
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):  # noqa: ANN002
+                return False
+
+            def post(self, url, json):  # noqa: ANN001, ARG002
+                return _Resp()
+
+        monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(Client=_Client))
+        r = meta_reflect.synthesize_candidates(
+            [{"id": "r0", "content": "x", "date": ""}], "http://gate", "m"
+        )
+        assert r.candidates == []
+        assert r.failure == "payload-shape"
+        assert "non-JSON body" in r.detail and "status 200" in r.detail
+
+        # Second greptile finding: a NON-200 with the same body is an HTTP
+        # failure and must keep its status — checked before any decode.
+        _Resp.status_code = 503
+        r = meta_reflect.synthesize_candidates(
+            [{"id": "r0", "content": "x", "date": ""}], "http://gate", "m"
+        )
+        assert r.failure == "http-status"
+        assert "status 503" in r.detail
+
+    @pytest.mark.parametrize(
+        ("post", "failure", "needle"),
+        [
+            (lambda u, b, t: (503, {}), "http-status", "status 503"),
+            (lambda u, b, t: (200, {"choices": []}), "payload-shape", "payload shape"),
+            (lambda u, b, t: (200, {"choices": [{"message": {"content": "no json here"}}]}),
+             "unparseable", "no readable candidates JSON"),
+            (lambda u, b, t: (200, {"choices": [{"message": {"content": '{"candidates": [{"rationale": "x"}]}'}}]}),
+             "unparseable", "none with an axiom"),
+            (lambda u, b, t: (200, {"choices": [{"message": {"content": '{"candidates": []}'}}]}),
+             "model-empty", "empty candidate list"),
+        ],
+        ids=["http-status", "payload-shape", "unparseable", "no-axiom", "model-empty"],
+    )
+    def test_every_empty_synthesis_names_its_cause(self, post, failure, needle) -> None:
+        r = meta_reflect.synthesize_candidates(
+            [{"id": "r0", "content": "x", "date": ""}], "u", "m", http_post=post
+        )
+        assert r.candidates == []
+        assert r.failure == failure
+        assert failure in meta_reflect.SYNTHESIS_FAILURES
+        assert needle in r.detail
 
 
 # ---------------------------------------------------------------------------
@@ -545,8 +704,14 @@ class TestWeeklyRunState:
     ) -> None:
         db = tmp_path / "k.db"
         _seed(db, _reflection_rows(5))
-        # Every fail-open branch of synthesize_candidates looks like this.
-        monkeypatch.setattr(meta_reflect, "synthesize_candidates", lambda *a, **k: [])
+        # Every fail-open branch of synthesize_candidates returns an empty
+        # SynthesisResult; since GH-2300 it carries the typed cause with it.
+        monkeypatch.setattr(
+            meta_reflect, "synthesize_candidates",
+            lambda *a, **k: meta_reflect.SynthesisResult(
+                [], "timeout", "LLM call timed out after 600s"
+            ),
+        )
 
         rc = _run_main(tmp_path, db)
 
@@ -556,9 +721,16 @@ class TestWeeklyRunState:
         assert state["mode"] == "weekly"
         assert state["exit_code"] == 1
         assert state["reflections"] == 5
+        assert state["reflections_fed"] == 5
         assert state["staged"] == 0
+        # GH-2300: the cause is a typed field in the state AND the reason,
+        # and it reaches the alarm — a reader of either never has to open the log.
+        assert state["failure"] == "timeout"
+        assert "timed out after 600s" in state["reason"]
         assert len(meta_state_isolation) == 1
         assert meta_state_isolation[0]["reflections"] == 5
+        assert meta_state_isolation[0]["failure"] == "timeout"
+        assert "timed out after 600s" in meta_state_isolation[0]["reason"]
 
     def test_empty_window_records_empty_no_alarm(
         self, tmp_path: Path, meta_state_isolation: list[dict]
@@ -603,7 +775,9 @@ class TestWeeklyRunState:
         _seed(db, _reflection_rows(5))
         monkeypatch.setattr(
             meta_reflect, "synthesize_candidates",
-            lambda *a, **k: [{"axiom": "a known one", "rationale": "x"}],
+            lambda *a, **k: meta_reflect.SynthesisResult(
+                [{"axiom": "a known one", "rationale": "x"}]
+            ),
         )
         monkeypatch.setattr(meta_reflect, "filter_paraphrases", lambda *a, **k: [])
 
@@ -626,7 +800,9 @@ class TestWeeklyRunState:
         _seed(db, _reflection_rows(5))
         monkeypatch.setattr(
             meta_reflect, "synthesize_candidates",
-            lambda *a, **k: [{"axiom": "Gates are run, not predicted"}],
+            lambda *a, **k: meta_reflect.SynthesisResult(
+                [{"axiom": "Gates are run, not predicted"}]
+            ),
         )
         monkeypatch.setattr(meta_reflect, "filter_paraphrases", lambda c, *a, **k: c)
 
@@ -647,7 +823,9 @@ class TestWeeklyRunState:
         _seed(db, _reflection_rows(5))
         monkeypatch.setattr(
             meta_reflect, "synthesize_candidates",
-            lambda *a, **k: [{"axiom": "Empty output is never evidence"}],
+            lambda *a, **k: meta_reflect.SynthesisResult(
+                [{"axiom": "Empty output is never evidence"}]
+            ),
         )
         monkeypatch.setattr(meta_reflect, "filter_paraphrases", lambda c, *a, **k: c)
 
@@ -770,9 +948,34 @@ class TestEmitMetaFailureIssue:
         body = create_cmd[create_cmd.index("--body") + 1]
         assert meta_reflect.META_FAILURE_MARKER in body
         assert "12 reflection(s)" in body
+        # GH-2300: no cause passed -> the body says so rather than guessing.
+        assert "Cause: not recorded" in body
+        assert "Likely causes" not in body
         assert create_cmd[create_cmd.index("--title") + 1] == (
             meta_reflect.META_FAILURE_ISSUE_TITLE
         )
+
+    def test_alarm_body_names_the_typed_cause(
+        self, monkeypatch: pytest.MonkeyPatch, real_emit_meta_failure_issue
+    ) -> None:
+        """The first real alarm (#2300) listed three likely causes and the
+        actual one — a timeout — was none of them."""
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):  # noqa: ANN001, ARG001
+            calls.append(cmd)
+            if "list" in cmd:
+                return self._result(0, stdout="[]")
+            return self._result(0, stdout="https://github.com/x/y/issues/2\n")
+
+        monkeypatch.setattr(meta_reflect.dream_health.subprocess, "run", fake_run)
+        real_emit_meta_failure_issue(
+            reflections=47, state_path="/tmp/s.json",
+            failure="timeout", reason="LLM call to u timed out after 600s (47 reflection(s), 33000-char prompt)",
+        )
+        body = calls[1][calls[1].index("--body") + 1]
+        assert "Cause: `timeout` — LLM call to u timed out after 600s" in body
+        assert "RALPH_META_LLM_TIMEOUT_S" in body
 
     def test_failed_dedup_read_warns_and_files(
         self,
