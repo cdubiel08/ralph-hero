@@ -881,6 +881,17 @@ func (m Model) fleetSpend(now time.Time) (todayUSD float64, todayTokens int, hou
 	return todayUSD, todayTokens, hourUSD, ok
 }
 
+// usageSnapshot copies the map for a pass about to run on another
+// goroutine — the entries are values, so a shallow copy is a full one for
+// the cache's purposes. The live map stays Update's alone.
+func (m Model) usageSnapshot() map[string]usageEntry {
+	out := make(map[string]usageEntry, len(m.usage))
+	for k, v := range m.usage {
+		out[k] = v
+	}
+	return out
+}
+
 // mergeUsage folds one pass's results into the map and drops every session
 // no card on screen names any more. Merge, not replace: the agents, board
 // and Done handlers each dispatch a pass over THEIR target set, and two can
@@ -893,6 +904,12 @@ func (m *Model) mergeUsage(fresh map[string]usageEntry) {
 		m.usage = map[string]usageEntry{}
 	}
 	for sid, e := range fresh {
+		// Landing order is not read order: a pass dispatched earlier that
+		// finishes later must not roll a newer reduction back to an older
+		// size, cost and context. Equal stamps (one pass) always land.
+		if cur, ok := m.usage[sid]; ok && e.At.Before(cur.At) {
+			continue
+		}
 		m.usage[sid] = e
 	}
 	keep := map[string]bool{}

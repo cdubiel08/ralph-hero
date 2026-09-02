@@ -162,7 +162,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		// board landing after the overlay on a cold start — is priced now
 		// rather than at the next agents poll, and only then.
 		if m.usageMissing() {
-			cmds = append(cmds, fetchUsageCmd(m.cfg, m.usage, m.usageTargets(), time.Now()))
+			cmds = append(cmds, fetchUsageCmd(m.cfg, m.usageSnapshot(), m.usageTargets(), time.Now()))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -204,7 +204,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		// Closed units price from their exited sessions (the ledger's
 		// claude_session): a window that brought new cards is priced now.
 		if m.usageMissing() {
-			return m, fetchUsageCmd(m.cfg, m.usage, m.usageTargets(), time.Now())
+			return m, fetchUsageCmd(m.cfg, m.usageSnapshot(), m.usageTargets(), time.Now())
 		}
 		return m, nil
 
@@ -261,7 +261,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		// arrives in this snapshot, so this is the first moment there is a
 		// transcript to name. Always dispatched — a fleet of zero still
 		// carries the header's spend log read.
-		cmds := []tea.Cmd{fetchUsageCmd(m.cfg, m.usage, m.usageTargets(), time.Now())}
+		cmds := []tea.Cmd{fetchUsageCmd(m.cfg, m.usageSnapshot(), m.usageTargets(), time.Now())}
 		if targets := m.diffTargets(); len(targets) > 0 {
 			cmds = append(cmds, fetchDiffsCmd(m.runner, targets))
 		}

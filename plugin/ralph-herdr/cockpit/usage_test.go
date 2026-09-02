@@ -408,21 +408,38 @@ func TestUsagePassesMergeAndPruneRatherThanReplace(t *testing.T) {
 		{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Session: "s10"},
 		{Name: "w11-x", Status: "working", Issue: 11, Lane: "w", Session: "s11"},
 	})
-	priced := func(usd float64) usageEntry { return usageEntry{Usage: SessionUsage{Read: true, USD: usd}} }
+	t0 := time.Date(2026, 9, 2, 15, 0, 0, 0, time.UTC)
+	at := func(usd float64, when time.Time) usageEntry {
+		return usageEntry{Usage: SessionUsage{Read: true, USD: usd}, At: when}
+	}
+	priced := func(usd float64) usageEntry { return at(usd, t0) }
 	// The agents pass priced both; a board pass dispatched for #11 alone
 	// lands after it.
 	m.mergeUsage(map[string]usageEntry{"s10": priced(1), "s11": priced(2)})
-	m.mergeUsage(map[string]usageEntry{"s11": priced(2.5), "s99": priced(9)})
+	m.mergeUsage(map[string]usageEntry{"s11": at(2.5, t0.Add(time.Second)), "s99": at(9, t0.Add(time.Second))})
 	if m.usage["s10"].Usage.USD != 1 || m.usage["s11"].Usage.USD != 2.5 {
 		t.Errorf("merge lost a session: %+v", m.usage)
 	}
 	if _, stale := m.usage["s99"]; stale {
 		t.Error("a session no card names survived the prune")
 	}
+	// A pass dispatched BEFORE the one that already landed finishes late:
+	// its older reduction must not roll #11 back.
+	m.mergeUsage(map[string]usageEntry{"s11": at(2.2, t0.Add(-time.Second))})
+	if m.usage["s11"].Usage.USD != 2.5 {
+		t.Errorf("an older pass landing last regressed the entry: %+v", m.usage["s11"])
+	}
+	// The snapshot handed to a pass is a copy — mutating the live map
+	// after dispatch cannot race the goroutine reading it.
+	snap := m.usageSnapshot()
+	m.mergeUsage(map[string]usageEntry{"s10": at(7, t0.Add(time.Minute))})
+	if snap["s10"].Usage.USD != 1 || m.usage["s10"].Usage.USD != 7 {
+		t.Errorf("snapshot shares the live map: snap=%v live=%v", snap["s10"].Usage.USD, m.usage["s10"].Usage.USD)
+	}
 	// #11's agent exits: its entry goes on the next merge, whatever landed.
 	m.agents = setAgents([]Agent{{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Session: "s10"}})
 	m.mergeUsage(map[string]usageEntry{})
-	if _, stale := m.usage["s11"]; stale || m.usage["s10"].Usage.USD != 1 {
+	if _, stale := m.usage["s11"]; stale || m.usage["s10"].Usage.USD != 7 {
 		t.Errorf("exited session kept pricing: %+v", m.usage)
 	}
 }

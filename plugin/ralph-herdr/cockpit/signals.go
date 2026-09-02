@@ -785,6 +785,10 @@ type usageEntry struct {
 	Size  int64
 	MTime time.Time
 	Usage SessionUsage
+	// At is the dispatch time of the pass that produced (or re-confirmed)
+	// this entry. Passes overlap, and the one that LANDS last is not the
+	// one that READ last: mergeUsage keeps the newer dispatch.
+	At time.Time
 }
 
 // readSessionUsage resolves and reduces one session, reusing prev when the

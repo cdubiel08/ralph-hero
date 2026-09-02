@@ -1307,6 +1307,13 @@ type usageTarget struct {
 // size+mtime) and reads the spend log. Bounded by the caller
 // (Model.usageTargets); no deadline, because there is no process to wedge —
 // every read here is the local filesystem.
+//
+// prev must be a SNAPSHOT (Model.usageSnapshot), never the live map: this
+// runs on its own goroutine while Update keeps merging other passes into
+// m.usage, and a concurrent map read beside those writes is a runtime panic
+// that takes the cockpit down. Every entry returned is stamped with this
+// pass's dispatch time, cached ones included — a cache hit re-confirms the
+// file at `now`, and the stamp is what orders overlapping passes.
 func fetchUsageCmd(cfg Config, prev map[string]usageEntry, targets []usageTarget, now time.Time) tea.Cmd {
 	return func() tea.Msg {
 		out := make(map[string]usageEntry, len(targets))
@@ -1314,7 +1321,9 @@ func fetchUsageCmd(cfg Config, prev map[string]usageEntry, targets []usageTarget
 			if _, done := out[t.Session]; done {
 				continue
 			}
-			out[t.Session] = readSessionUsage(cfg.TranscriptRoot, t.Checkout, t.Session, prev)
+			e := readSessionUsage(cfg.TranscriptRoot, t.Checkout, t.Session, prev)
+			e.At = now
+			out[t.Session] = e
 		}
 		gql, ok := readBudgetSpend(cfg.BudgetPath, now.Add(-time.Hour))
 		return usageMsg{usage: out, gql: gql, gqlOK: ok}
