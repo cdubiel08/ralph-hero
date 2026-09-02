@@ -1614,6 +1614,10 @@ export function lintL5ClaimReadback(payload: unknown, deps?: LiveLintDeps): Lint
   const agent = agentNameOf(payload);
   if (agent === null || typeof payload.issue !== "number")
     return notApplicable(rule, "no agent + issue");
+  // GH-2342: issue 0 is the grammar's "belongs to no unit" (s0-watch, x0-relay,
+  // t0-tend, r0-deliver). There is no board item and no claim by construction,
+  // so a read-back has nothing to read — not a finding, a non-question.
+  if (payload.issue === 0) return { rule, skipped: "issue 0 belongs to no unit — no claim to read back" };
   const item = readBoardItem(payload.issue);
   if (item === null)
     return { rule, ok: false, message: `issue #${payload.issue} does not exist — no claim to read back` };

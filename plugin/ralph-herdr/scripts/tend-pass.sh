@@ -53,10 +53,15 @@ fi
 # ONE LIVE PASS PER LANE also holds across the rename (PR #2354 P1): a pane
 # spawned by a pre-0.42 plugin is still live under the OLD fixed name, and the
 # `agent start` name interlock below keys on the new one only — so the legacy
-# name is checked here, by hand, before any surface exists. Fails OPEN on an
-# unreadable herd: the start's own name-taken refusal still guards the new
-# name, and a herd read that cannot answer may not block the lane.
-legacy_live=$(ralph_agents_json 2>/dev/null | jq -r --arg n "ralph-$lane" 'select(.name == $n) | .name' 2>/dev/null | head -1) || legacy_live=""
+# name is checked here, by hand, before any surface exists. Fails CLOSED on
+# an unreadable herd (PR #2354 P1): the start's own name-taken refusal guards
+# the NEW name only, so "could not read" may not render as "no legacy pass" —
+# and a herdr that cannot answer a snapshot would refuse the split and the
+# start that follow anyway, so the refusal costs nothing the lane would have
+# had. An empty herd is a successful read; only a failed one refuses.
+herd=$(ralph_agents_json 2>/dev/null) ||
+  die "cannot read the herd, so a live pre-0.42 $lane pass (ralph-$lane) cannot be ruled out — one live pass per lane; not spawning $agent until herdr answers"
+legacy_live=$(jq -r --arg n "ralph-$lane" 'select(.name == $n) | .name' <<<"$herd" 2>/dev/null | head -1) || legacy_live=""
 [ -z "$legacy_live" ] ||
   die "a $lane pass is already live under its pre-0.42 name ($legacy_live) — one live pass per lane; let it finish (or close its pane) before starting $agent"
 

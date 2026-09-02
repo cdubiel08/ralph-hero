@@ -229,7 +229,24 @@ reset
 herd_fixture '[{"name":"ralph-tend","agent_status":"working","pane_id":"pL"}]' "$REPO_DIR"
 out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
 log_has "deliver with a live legacy TEND: still spawns" "agent start r0-deliver"
+# An UNREADABLE herd is not an empty one (PR #2354 P1): the legacy pass
+# cannot be ruled out, so the lane refuses before any surface exists.
+reset
+printf '{"error":{"code":"server_unavailable","message":"no server"}}\n' >"$FAKE_HERDR_FIXTURES/api-snapshot.json"
+printf '1\n' >"$FAKE_HERDR_FIXTURES/api-snapshot.rc"
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+rc=$?
+rm -f "$FAKE_HERDR_FIXTURES/api-snapshot.rc"
+if [ "$rc" -ne 0 ]; then ok "deliver unreadable herd: refuses (a legacy pass cannot be ruled out)"; else not_ok "deliver unreadable herd: must refuse (rc 0)"; fi
+has "deliver unreadable herd: the refusal says the herd could not be read, not that a pass is live" "$out" "cannot read the herd"
+log_hasnt "deliver unreadable herd: no pane was split" "pane split"
+log_hasnt "deliver unreadable herd: no agent was started" "agent start"
+is "deliver unreadable herd: no ledger row" "0" "$(ledger_count 'true')"
 herd_fixture '[]' "$REPO_DIR"
+# …and an EMPTY herd (a successful read with no agents) still spawns.
+reset
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+log_has "deliver empty herd: a successful empty read spawns" "agent start r0-deliver"
 
 # ── 4b. an UNCERTAIN start (silence, transport failure) closes nothing ───────
 # The start may have landed — closing the pane could kill a live agent

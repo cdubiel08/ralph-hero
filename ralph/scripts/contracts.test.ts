@@ -1259,6 +1259,13 @@ describe("live lints (deps-injected)", () => {
     });
   });
 
+  it("L5: issue 0 (no unit — GH-2342) is skipped, never read back as a missing issue", () => {
+    expect(lintL5ClaimReadback({ agent_ref: "t0-tend#a3f2", issue: 0 }, board({}))).toEqual({
+      rule: "L5",
+      skipped: "issue 0 belongs to no unit — no claim to read back",
+    });
+  });
+
   it("L5: the agent must be a live claim holder — sole or fleet member", () => {
     const claim = { holders: ["w7-wire"], since: t0 };
     expect(lintL5ClaimReadback({ agent: "w7-wire", issue: 7 }, board({ 7: open(claim) }))).toEqual({ rule: "L5", ok: true });
