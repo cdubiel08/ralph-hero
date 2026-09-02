@@ -1040,8 +1040,9 @@ spawn_confirm_turn() {
 # tool-binding word whenever TOOL_BINDING was given (callers `read -r pc tb`;
 # a `$(…)` capture is a subshell, so a variable could not carry the second
 # word out) — and returns 0 only for process `applied` AND a tool-binding
-# word other than `not_applied`. Every other combination is a refusal and the
-# caller closes the pane it just opened — an uncontained pane must never
+# word that is neither `not_applied` nor `unverified`. Every other
+# combination is a refusal and the caller closes the pane it just opened —
+# an uncontained pane, or one that never finished its probe turn, must never
 # receive its prompt. Both words are also left in
 # RALPH_HERDR_CONTAINMENT_OUTCOME / RALPH_HERDR_TOOL_BINDING_OUTCOME for an
 # in-process caller.
@@ -1101,7 +1102,11 @@ spawn_confirm_turn() {
 # Write produces the same "no file, turn complete" a bound tool does. Reading
 # that as `applied` would pass exactly the case the step exists to catch, so
 # `applied` stays reserved for an observed refusal and the ceiling is stated
-# rather than assumed. The step runs only for `accepted`: with no binding
+# rather than assumed. A Write step that never completes — no control
+# marker — is refused as `unverified` even when the pane does not read
+# `blocked`: the status read can fail or lag a dialog that is already up
+# (PR #2346 P1), and a pane mid-turn cannot take its prompt either way.
+# The step runs only for `accepted`: with no binding
 # flag on the argv there is nothing to refute, and under an inert sandbox
 # (process `not_applied`) the in-tree marker is forgeable by Bash, so the
 # tool word is left at the argv observation and the pane is refused for the
@@ -1130,7 +1135,9 @@ spawn_containment_probe() {
     else
       printf '%s\n' "$1"
     fi
-    [ "$1" = applied ] && [ "$RALPH_HERDR_TOOL_BINDING_OUTCOME" != not_applied ]
+    [ "$1" = applied ] || return 1
+    case "$RALPH_HERDR_TOOL_BINDING_OUTCOME" in not_applied | unverified) return 1 ;; esac
+    return 0
   }
   { [ -n "$agent" ] && [ -n "$pane" ] && [ -n "$checkout" ]; } || {
     echo "containment probe: agent, pane and checkout are all required" >&2
@@ -1257,9 +1264,14 @@ touch '$inside' '$outside'; echo PROBE_RC=\$?"
     _spawn_containment_verdict applied not_applied
     return 1
   fi
-  echo "containment probe: $agent's Write step could not be read to a verdict within ${secs}s (status '${status:-unreadable}', no control marker) — tool binding stays at accepted, the harness-acceptance ceiling; process containment is applied" >&2
-  _spawn_containment_verdict applied accepted
-  return 0
+  # No control marker and no `blocked` read: the pane never finished its
+  # probe turn — it may be mid-dialog behind a stale or failed status read
+  # (PR #2346 P1), or still running. Either way it cannot take its prompt,
+  # so this refuses as `unverified`: distinct from not_applied (no writer
+  # was SEEN) and from accepted (the Write step was not read to a verdict).
+  echo "containment probe: $agent's Write step could not be read to a verdict within ${secs}s (status '${status:-unreadable}', no control marker) — tool binding unverified; a pane that never finished its probe turn must not receive its prompt. Look at it: a permission prompt means the Write tool is live (dismiss with herdr pane send-keys $pane esc); $respawn" >&2
+  _spawn_containment_verdict applied unverified
+  return 1
 }
 
 # _spawn_agent_status AGENT — the raw herdr agent_status word, or rc 1 when

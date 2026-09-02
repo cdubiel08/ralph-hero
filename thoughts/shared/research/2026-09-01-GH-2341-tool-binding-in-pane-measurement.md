@@ -34,7 +34,7 @@ The GH-2267 hazard is therefore real **and mode-dependent**: an unbound Write is
 | tool marker inside the tree | `not_applied` | 1 |
 | control absent after the window, agent `blocked` | `not_applied` | 1 |
 | control present, no tool marker | `accepted` (unchanged) | 0 |
-| control absent, agent not blocked | `accepted` (unchanged), stderr says the step could not be read | 0 |
+| control absent, agent not blocked (or status unreadable) | `unverified` — the pane never finished its probe turn and may be mid-dialog behind a stale read (PR #2346 P1) | 1 |
 | process `not_applied` / `unverified` (before the Write step is read) | the argv word, untouched | 1 |
 
 The three callers (`fleet.sh` `spawn_investigator`, `tend-pass.sh`, `work-team.sh`) hand the argv-observed word in and record the probe's word out; a refusal names both mechanisms. Run against the shipped function in real panes: bound → `applied accepted`, rc 0, silent; unbound under auto → `applied not_applied`, stderr *"Write tool WROTE INSIDE …"*; unbound under default → `applied not_applied`, stderr *"BLOCKED on a prompt during the Write step"*.
@@ -42,5 +42,5 @@ The three callers (`fleet.sh` `spawn_investigator`, `tend-pass.sh`, `work-team.s
 ## Honest limits
 
 - A model that disobeys the prompt — skips the Write step with the tool available — reads as `accepted`, which is the same word the argv already earned; the step can only ever tighten. A model that calls `AskUserQuestion` on the Write step blocks the pane and reads as `not_applied`: a false refusal, the safe direction.
-- The `blocked` read is herdr's status, one call, no wait; an unreadable herd leaves the word at `accepted` with the stderr note.
+- The `blocked` read is herdr's status, one call, no wait; an unreadable herd, or a status lagging a dialog already up, lands on `unverified` — refused, the same direction as `blocked`. Only a completed turn (control marker present) passes, and it passes at `accepted`.
 - macOS/Seatbelt, 2.1.258, herdr 0.8.2. The dialog text and the classifier's behaviour are the harness's and may change; the probe reads neither — it reads files and a status word.

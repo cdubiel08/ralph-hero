@@ -463,16 +463,21 @@ case "$(cat "$TMP/probe.err")" in
 esac
 rm -f "$FAKE_HERDR_FIXTURES/agent-get.t-probe.json"
 
-# The same silence from a pane that is NOT blocked (the default agent-get
-# answers idle) is inconclusive: the word stays at accepted, the pane is not
-# refused, and stderr says so — "could not read" is neither "checked" nor a
-# writer.
+# The same silence from a pane that does NOT read blocked (the default
+# agent-get answers idle) is unverified and REFUSED (PR #2346 P1): the
+# status read can fail or lag a dialog already up, and a pane that never
+# finished its probe turn cannot take its prompt — "could not read" is
+# neither "checked" nor a writer, and never a pass.
 FAKE_PROBE_MODE=tool-stall RALPH_HERDR_CONTAINMENT_PROBE_SEC=1 RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" accepted >"$TMP/probe.out" 2>"$TMP/probe.err"; rc=$?
-is "tool step: an unreadable Write step on an unblocked pane keeps accepted (rc 0) — never promoted, never refused" "0 applied accepted" "$rc $(cat "$TMP/probe.out")"
+is "tool step: an unreadable Write step on an unblocked pane is unverified (rc 1) — never promoted, never passed" "1 applied unverified" "$rc $(cat "$TMP/probe.out")"
 case "$(cat "$TMP/probe.err")" in
-  *"could not be read to a verdict"*) ok "tool step: the inconclusive case says so on stderr" ;;
-  *) not_ok "tool step: the inconclusive case must say it could not be read — got '$(cat "$TMP/probe.err")'" ;;
+  *"could not be read to a verdict"*) ok "tool step: the unverified case says the step could not be read" ;;
+  *) not_ok "tool step: the unverified case must say it could not be read — got '$(cat "$TMP/probe.err")'" ;;
 esac
+printf 'agent_get_failed\n' >"$FAKE_HERDR_FIXTURES/agent-get.t-probe.raw"; printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-get.t-probe.rc"
+FAKE_PROBE_MODE=tool-stall RALPH_HERDR_CONTAINMENT_PROBE_SEC=1 RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" accepted >"$TMP/probe.out" 2>"$TMP/probe.err"; rc=$?
+is "tool step: a FAILED status read with no control marker is unverified (rc 1), never a pass" "1 applied unverified" "$rc $(cat "$TMP/probe.out")"
+rm -f "$FAKE_HERDR_FIXTURES/agent-get.t-probe.raw" "$FAKE_HERDR_FIXTURES/agent-get.t-probe.rc"
 
 # An inert sandbox refuses on the PROCESS verdict and leaves the tool word at
 # the argv observation: with Bash able to write the tree, an in-tree tool

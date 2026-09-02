@@ -232,6 +232,11 @@ export const ROLE_NAMES = Object.keys(ROLES) as Role[];
  *                   could have produced it), or a pane BLOCKED on a
  *                   permission prompt during the Write step (a bound tool
  *                   never asks)
+ *    unverified     the probe's Write step never completed and the pane did
+ *                   not read `blocked` — no writer was seen, and the step
+ *                   was not read to a verdict; refused, because a pane that
+ *                   never finished its probe turn cannot take its prompt
+ *                   (and may be mid-dialog behind a stale status read)
  *    not_requested  no binding flag was passed at all (the driver). Beside
  *                   `role: tender` this is the flags-dropped defect, and it
  *                   reads as one, because the role is its own field
