@@ -83,6 +83,11 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			m.inboxInFlight = true
 			cmds = append(cmds, fetchInboxCmd(m.cfg, m.runner))
 		}
+		if m.epicDue(time.Time(msg)) {
+			m.epicInFlight = true
+			m.epicGen++
+			cmds = append(cmds, fetchEpicCmd(m.cfg, m.runner, m.epicFor, m.epicGen))
+		}
 		return m, tea.Batch(cmds...)
 
 	case marksMsg:
@@ -281,7 +286,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case peekMsg:
-		if m.mode != ModeBrowse {
+		if m.mode != ModeBrowse && m.mode != ModeEpic {
 			// A slow peek landing after the user moved on (started a reply,
 			// opened another overlay) must never hijack the mode — typed
 			// keystrokes would leak into overlay/browse verb handling.
@@ -291,9 +296,60 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			m.say(statusRefuse, fmt.Sprintf("peek %s failed: %s", msg.who, msg.err))
 			return m, nil
 		}
+		// The overlay a peek was opened FROM is where its esc lands (GH-2381):
+		// a peek on an epic child returns to the epic, not to the board.
+		m.peekReturn = m.mode
 		m.mode = ModePeek
 		m.peekWho = msg.who
 		m.peekText = msg.text
+		return m, nil
+
+	case epicMsg:
+		if msg.gen != m.epicGen || msg.issue != m.epicFor {
+			// A read from an earlier dispatch — the operator moved off the
+			// epic, closed it, or closed and reopened it — is stale whatever
+			// it says, and it says nothing about the read still out: the
+			// in-flight flag belongs to the CURRENT generation.
+			return m, nil
+		}
+		m.epicInFlight = false
+		m.lastEpic = time.Now()
+		if msg.err != "" {
+			// A failed OPEN is a refusal on the status line; a failed REFRESH
+			// keeps the last good view under the stale banner (viewModel) —
+			// the D column's own rule, so children never vanish on a flap.
+			m.epicOK, m.epicErr = false, msg.err
+			if m.mode != ModeEpic {
+				m.say(statusRefuse, fmt.Sprintf("epic #%d read failed: %s", msg.issue, msg.err))
+			}
+			return m, nil
+		}
+		m.epicOK, m.epicErr = true, ""
+		m.epic = msg.view
+		if m.mode == ModeBrowse {
+			// Never-hijack, same as peek: the overlay opens only if the
+			// operator is still where they pressed `e` — in browse AND on a
+			// card of the epic they asked for. A cursor that moved to another
+			// epic's card (or off every card) while the read was out keeps
+			// the data (the next `e` is instant) and gets a nudge, never an
+			// overlay over a context they have left.
+			if card, ok := m.selectedCard(); !ok || card.ParentNumber != msg.issue {
+				m.say(statusNudge, fmt.Sprintf("epic #%d read landed after the selection moved — e on one of its cards opens it", msg.issue))
+				return m, nil
+			}
+			m.mode = ModeEpic
+			m.epicRow = 0
+			m.say(statusView, fmt.Sprintf("epic #%d — %d children; esc closes", msg.view.Number, len(msg.view.Children)))
+		}
+		m.clampEpicRow()
+		// A Done child's closing PR is not on the issue fetch (a nested
+		// connection under subIssues is the GH-1811 shape); it is joined from
+		// the Done-window read the D column already makes, dispatched ONCE
+		// here when the window has never been read.
+		if m.mode == ModeEpic && m.epicHasDone() && m.lastDone.IsZero() && !m.doneInFlight {
+			m.doneInFlight = true
+			return m, fetchDoneCmd(m.cfg, m.runner)
+		}
 		return m, nil
 
 	case dagMsg:
@@ -459,8 +515,47 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	case ModePeek:
 		switch key {
 		case "esc", "q", " ", "o":
-			m.mode = ModeBrowse
+			m.mode = m.peekReturn
+			m.peekReturn = ModeBrowse
 			m.peekText = ""
+		}
+		return m, nil
+
+	case ModeEpic:
+		// The popover's verbs act on the selected CHILD through the same
+		// functions the board's keys use (GH-2381) — one refusal per verb,
+		// wherever it is pressed.
+		switch key {
+		case "esc", "q", "e":
+			// Closing forgets WHICH epic was asked for, so a cadence refresh
+			// still out when the overlay closed is dropped on arrival by the
+			// "not the epic asked for" rule above — never reopened over a
+			// board the operator explicitly returned to. The next `e`
+			// dispatches its own read.
+			m.mode = ModeBrowse
+			m.epicFor = 0
+			m.say(statusView, "board")
+		case "j", "down":
+			m.epicRow++
+			m.clampEpicRow()
+		case "k", "up":
+			m.epicRow--
+			m.clampEpicRow()
+		case "enter":
+			if child, ok := m.selectedEpicChild(); ok {
+				return verbObserveCard(m, child)
+			}
+			m.say(statusNudge, "no child selected")
+		case " ", "o":
+			if child, ok := m.selectedEpicChild(); ok {
+				return verbPeekCard(m, child)
+			}
+			m.say(statusNudge, "no child selected")
+		case "g":
+			if child, ok := m.selectedEpicChild(); ok {
+				return m, openBrowserCmd(child)
+			}
+			m.say(statusNudge, "no child selected")
 		}
 		return m, nil
 
@@ -596,6 +691,27 @@ func updateKey(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	case "i":
 		return openInboxView(m)
+
+	case "e":
+		// The epic popover (GH-2381, spec §11): one `board get` on the
+		// card's parent, dispatched NOW like D/I — the press is the whole
+		// signal — and opened when it lands. Always dispatched, even over an
+		// in-flight read for another epic: the result names its epic, and a
+		// read for one the operator moved off is dropped on arrival.
+		card, ok := m.selectedCard()
+		if !ok {
+			m.say(statusNudge, "no card selected")
+			return m, nil
+		}
+		if kind, why := refuseEpic(card); kind != statusNone {
+			m.say(kind, why)
+			return m, nil
+		}
+		m.epicFor = card.ParentNumber
+		m.epicInFlight = true
+		m.epicGen++
+		m.say(statusFlight, fmt.Sprintf("reading epic #%d…", card.ParentNumber))
+		return m, fetchEpicCmd(m.cfg, m.runner, card.ParentNumber, m.epicGen)
 
 	case "g":
 		card, ok := m.selectedCard()
@@ -766,6 +882,18 @@ func refuseAnswer(card Card) (statusKind, string) {
 	return statusNone, ""
 }
 
+// refuseEpic: `e` needs a parent to open. A Done card's parent is not read
+// by the closed window, so it is named as such rather than as parentless.
+func refuseEpic(card Card) (statusKind, string) {
+	if card.ParentNumber != 0 {
+		return statusNone, ""
+	}
+	if card.State == doneState {
+		return statusRefuse, fmt.Sprintf("#%d is closed — the Done window does not carry its parent; g opens it", card.Number)
+	}
+	return statusRefuse, fmt.Sprintf("#%d has no parent — e opens the epic a card belongs to", card.Number)
+}
+
 func refuseSpawn(m Model, card Card) (statusKind, string) {
 	if card.State == doneState {
 		// A Done card is a closed issue from the window read, not work. The
@@ -821,6 +949,12 @@ func verbObserve(m Model) (Model, tea.Cmd) {
 		m.say(statusNudge, "no card selected")
 		return m, nil
 	}
+	return verbObserveCard(m, card)
+}
+
+// verbObserveCard is observe on a named card — the board's selection or an
+// epic child (GH-2381); the refusal is the same either way.
+func verbObserveCard(m Model, card Card) (Model, tea.Cmd) {
 	if kind, why := refuseObserve(m, card); kind != statusNone {
 		m.say(kind, why)
 		return m, nil
@@ -835,6 +969,10 @@ func verbPeek(m Model) (Model, tea.Cmd) {
 		m.say(statusNudge, "no card selected")
 		return m, nil
 	}
+	return verbPeekCard(m, card)
+}
+
+func verbPeekCard(m Model, card Card) (Model, tea.Cmd) {
 	if kind, why := refusePeek(m, card); kind != statusNone {
 		m.say(kind, why)
 		return m, nil

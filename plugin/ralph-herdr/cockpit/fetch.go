@@ -307,6 +307,18 @@ type peekMsg struct {
 	err  string
 }
 
+// epicMsg carries one `board get <epic> --json` for the popover (GH-2381).
+// Same split as doneMsg: `ok` false is a failed read, which the overlay names
+// rather than drawing as a childless epic. issue is the epic asked for, so a
+// slow read for an epic the operator has moved off is dropped, not shown.
+type epicMsg struct {
+	issue int
+	gen   int // the Model's epicGen at dispatch — any other generation is stale
+	view  EpicView
+	ok    bool
+	err   string
+}
+
 type replyDoneMsg struct {
 	who    string
 	ok     bool
@@ -1232,6 +1244,95 @@ func fetchDoneCmd(cfg Config, r Runner) tea.Cmd {
 			return doneMsg{err: perr.Error()}
 		}
 		return doneMsg{cards: cards, windowDays: days, ok: true}
+	}
+}
+
+// parseEpic reads `board get --json` into the popover's view. `children` is
+// a POINTER for the reason every other array here is: a payload without it
+// is a FAILED read, never an epic with no children. Priority/estimate/closedAt
+// are pointers too — a board CLI predating GH-2381 omits them, and the card
+// then draws what it draws for an unset value, never a made-up one.
+func parseEpic(out string) (EpicView, error) {
+	var payload struct {
+		Number   int    `json:"number"`
+		Title    string `json:"title"`
+		URL      string `json:"url"`
+		Children *[]struct {
+			Number               int     `json:"number"`
+			Title                string  `json:"title"`
+			IssueState           string  `json:"issueState"`
+			State                *string `json:"state"`
+			Priority             *string `json:"priority"`
+			Estimate             *string `json:"estimate"`
+			ClosedAt             *string `json:"closedAt"`
+			FieldValuesTruncated bool    `json:"fieldValuesTruncated"`
+		} `json:"children"`
+		ChildrenTruncated bool `json:"childrenTruncated"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return EpicView{}, fmt.Errorf("get --json: %w", err)
+	}
+	if payload.Children == nil {
+		return EpicView{}, fmt.Errorf("get --json: payload carries no children array — a malformed read is not a childless epic")
+	}
+	v := EpicView{Number: payload.Number, Title: payload.Title, Repo: repoFromIssueURL(payload.URL), Truncated: payload.ChildrenTruncated}
+	for _, c := range *payload.Children {
+		k := Card{Number: c.Number, Repo: v.Repo, Title: c.Title, ParentNumber: payload.Number, StateUnread: c.FieldValuesTruncated}
+		if c.State != nil {
+			k.State = *c.State
+		}
+		if c.Priority != nil {
+			k.Priority = *c.Priority
+		}
+		if c.Estimate != nil {
+			k.Estimate = *c.Estimate
+		}
+		if c.ClosedAt != nil {
+			k.ClosedAt = *c.ClosedAt
+		}
+		if c.IssueState == "CLOSED" {
+			v.Closed++
+		}
+		v.Children = append(v.Children, k)
+	}
+	sort.SliceStable(v.Children, func(i, j int) bool {
+		return epicRank(v.Children[i].State) < epicRank(v.Children[j].State)
+	})
+	return v, nil
+}
+
+// repoFromIssueURL — "…/OWNER/REPO/issues/N" → "OWNER/REPO". The get's
+// children carry no repository (board.ts treats sub-issues as own-repo, the
+// same assumption parent-check makes), so the epic's own URL names theirs.
+func repoFromIssueURL(u string) string {
+	parts := strings.Split(u, "/")
+	for i := len(parts) - 1; i >= 2; i-- {
+		if parts[i] == "issues" {
+			return parts[i-2] + "/" + parts[i-1]
+		}
+	}
+	return ""
+}
+
+// fetchEpicCmd reads the popover's epic. Dispatched by the `e` press and, while
+// the overlay is up, on the signal cadence — one issue fetch, the children
+// riding it (no new GraphQL shape, spec §11).
+func fetchEpicCmd(cfg Config, r Runner, issue, gen int) tea.Cmd {
+	return func() tea.Msg {
+		deadline := boardDeadline(cfg)
+		probe := &rateProbe{cfg: cfg, r: r}
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
+		out, stderr, err := r.Run(ctx, cfg.Board, argsBoardGet(issue)...)
+		timedOut := ctx.Err() == context.DeadlineExceeded
+		cancel()
+		if err != nil {
+			return epicMsg{issue: issue, gen: gen, err: explainReadFailure(probe, deadline, timedOut, stderr+out, err)}
+		}
+		view, perr := parseEpic(out)
+		if perr != nil {
+			return epicMsg{issue: issue, gen: gen, err: perr.Error()}
+		}
+		return epicMsg{issue: issue, gen: gen, view: view, ok: true}
 	}
 }
 
