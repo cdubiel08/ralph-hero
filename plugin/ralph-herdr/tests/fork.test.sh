@@ -36,6 +36,11 @@ mkdir -p "$FAKE_BOARD_FIXTURES"
 
 # shellcheck source=herd-fixture.sh
 . "$SCRIPT_DIR/herd-fixture.sh"
+# lib.sh is sourced for ONE reason: seeding the source pane's ledger row
+# (ralph_ledger_append) in the GH-2359 cases below. fork.sh itself still runs
+# as a subprocess.
+# shellcheck source=../scripts/lib.sh
+. "$SCRIPT_DIR/../scripts/lib.sh"
 
 n=0 pass=0 fail=0 rc=0 out="" log="" LOG=""
 ok()     { n=$((n + 1)); pass=$((pass + 1)); echo "ok $n - $1"; }
@@ -216,6 +221,117 @@ is "bare pane: forks a hand-started claude" "0" "$rc"
 has "bare pane: falls back to the pane id for the name" "d0-fork-p1" "$log"
 has "bare pane: records the pane id as the parent" "parent=p1" "$log"
 has "bare pane: treats an untokened source as a root" "depth=1" "$log"
+
+has "bare pane: says the source is not a ralph spawn" "not a ralph spawn" "$out"
+
+# ── a contained source is refused (GH-2359) ──────────────────────────────────
+# A lead or a tender runs under tool binding and process containment; a
+# `--resume --fork-session` of it carries neither. The role is READ — from the
+# source's open ledger row first, its pane token second — and a role whose
+# registry row requires either mechanism refuses by name before any surface
+# is opened. A driver forks exactly as before.
+reset_ledger() { rm -rf "$TMP/ledger"; mkdir -p "$TMP/ledger"; }
+seed_row() { # REF ROLE — an open spawn row, the spawner's stated role
+  ralph_ledger_append "$(jq -nc --arg r "$1" --arg role "$2" \
+    '{ts: "2026-09-01T00:00:00Z", ev: "spawn", agent_ref: $r,
+      tokens: {role: $role, issue: "0", depth: "0", state: "spawned"}}')"
+}
+close_row() { # REF — the row's exit, as _ralph_spawn_close writes it
+  ralph_ledger_append "$(jq -nc --arg r "$1" \
+    '{ts: "2026-09-01T00:01:00Z", ev: "exit", agent_ref: $r, reason: "never_started", via: "spawn"}')"
+}
+# source_pane NAME TOKEN_ROLE — a live claude in p1 whose herd entry is NAME
+# and whose pane token says TOKEN_ROLE (empty = no token).
+source_pane() {
+  pane_fixture "$(jq -nc --arg s "$SESS" --arg n "$1" --arg role "$2" '{
+    agent: "claude",
+    agent_session: {agent: "claude", kind: "id", source: "herdr:claude", value: $s},
+    tokens: ({slug: ($n | sub("^[a-z][0-9]+-"; "")), depth: "0"}
+             + (if $role == "" then {} else {role: $role} end))}')"
+  herd_fixture "$(jq -nc --arg n "$1" '[{name: $n, agent_status: "working", pane_id: "p1"}]')"
+}
+refuses() { # LABEL ROLE — the common assertions for a refused fork
+  is "$1: refuses" "1" "$rc"
+  has "$1: names the role it read" "role '$2'" "$out"
+  has "$1: names both mechanisms" "tool binding and process containment" "$out"
+  has "$1: names the hazard" "UNCONTAINED harness in the same checkout" "$out"
+  hasnt "$1: opens no surface" "pane split" "$log"
+  hasnt "$1: starts nothing" "agent start" "$log"
+}
+
+# The ledger row is authoritative: the pane token says lane `w` (a driver by
+# default) and the row says tender — the row wins.
+reset_ledger
+source_pane t0-tend-pass w
+seed_row "t0-tend-pass#aaaaaaaa" tender
+run right
+refuses "tender by ledger row" tender
+has "tender by ledger row: says where the role came from" "ledger row t0-tend-pass#aaaaaaaa" "$out"
+run right RALPH_HERDR_DRY_RUN=true
+is "tender by ledger row: the dry run refuses too" "1" "$rc"
+hasnt "tender by ledger row: the dry run plans no split" "pane split" "$out"
+
+reset_ledger
+source_pane o77-epic-lead ""
+seed_row "o77-epic-lead#bbbbbbbb" orchestrator
+run right
+refuses "lead by ledger row" orchestrator
+
+reset_ledger
+source_pane i42-look-around ""
+seed_row "i42-look-around#cccccccc" investigator
+run right
+refuses "investigator by ledger row" investigator
+
+# A driver's row is what the fork verb exists for: the argv is the GH-1892
+# one, with neither containment flag on it — unchanged.
+reset_ledger
+source_pane w42-fix-the-thing ""
+seed_row "w42-fix-the-thing#dddddddd" driver
+run right
+is "driver by ledger row: forks" "0" "$rc"
+has "driver by ledger row: the argv is unchanged" "-- --resume $SESS --fork-session" "$log"
+hasnt "driver by ledger row: no sandbox document on the argv" "--settings" "$log"
+hasnt "driver by ledger row: no tool binding on the argv" "--disallowedTools" "$log"
+has "driver by ledger row: reports the role it read" "source role: driver" "$out"
+
+# A CLOSED row does not answer — a recycled name's dead tender generation must
+# not refuse a fork of the pane that now holds the name.
+reset_ledger
+source_pane t0-tend-pass w
+seed_row "t0-tend-pass#eeeeeeee" tender
+close_row "t0-tend-pass#eeeeeeee"
+run right
+is "closed tender row: does not refuse on a dead generation" "0" "$rc"
+has "closed tender row: falls through to the pane token" "pane token role=w" "$out"
+
+# No row: the pane token stands in — a registry role verbatim, a lane letter
+# through the same default reconcile's discover path uses.
+reset_ledger
+source_pane t0-tend-pass tender
+run right
+refuses "tender by pane token" tender
+has "tender by pane token: says where the role came from" "pane token role=tender" "$out"
+
+source_pane t0-tend-pass t
+run right
+refuses "tender by lane-letter token" tender
+
+# A role the registry does not know is not known to be safe — refused, the
+# direction roles.sh states for both mechanisms.
+source_pane q0-whatever garbage
+run right
+refuses "unknown role token" garbage
+
+# A ledger that is PRESENT but cannot be read may not render as "driver".
+reset_ledger
+source_pane t0-tend-pass w
+printf 'not a database\n' >"$TMP/ledger/ledger.sqlite"
+run right
+is "unreadable ledger: refuses" "1" "$rc"
+has "unreadable ledger: says why" "present but unreadable" "$out"
+hasnt "unreadable ledger: starts nothing" "agent start" "$log"
+reset_ledger
 
 echo "1..$n"
 [ "$fail" -eq 0 ] || { echo "# $fail of $n failed"; exit 1; }
