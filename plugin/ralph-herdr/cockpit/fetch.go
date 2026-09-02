@@ -150,9 +150,51 @@ func argsPaneRun(paneID string, pr int) []string {
 const spawnScript = `set -euo pipefail
 . "$1/lib.sh"
 billing_guard
+ralph_plugin_freshness_notice
 QUEUE_JSON=$("$BOARD" next --json 2>/dev/null) || QUEUE_JSON=""
 spawn_work_session "$2" "$QUEUE_JSON" || exit $?
 `
+
+// freshnessNotice reads lib.sh's ralph_plugin_freshness_notice verdict off the
+// spawn's stderr (GH-2340). The notice is advisory and prints to stderr, which
+// spawnCmd otherwise discards on a successful spawn — so a cockpit spawn on a
+// stale plugin would take the risk the notice exists to announce and announce
+// it to nobody. The two phrases are lib.sh's own, pinned by spawn.test.sh.
+// Silence is the in-sync (or not-applicable) case, so "" means nothing to say.
+func freshnessNotice(stderr string) string {
+	switch {
+	case strings.Contains(stderr, "INSTALLED ralph-herdr differs"):
+		return "plugin STALE — sync with the fleet quiesced"
+	case strings.Contains(stderr, "freshness NOT CHECKED"):
+		return "plugin freshness NOT CHECKED"
+	}
+	return ""
+}
+
+// freshnessPhrases are the lines lib.sh's notice prints — the two verdict
+// phrases above plus the "spawning anyway" line that follows a stale one.
+var freshnessPhrases = []string{"INSTALLED ralph-herdr differs", "freshness NOT CHECKED", "spawning anyway"}
+
+// stripFreshnessLines removes the notice from a spawn's stderr so a FAILED
+// spawn's detail is the spawn's own error, not the advisory that preceded
+// it: the notice prints first, so firstLine over the raw stderr would name
+// the staleness twice and the failure never (Codex P2 on #2345).
+func stripFreshnessLines(stderr string) string {
+	var kept []string
+	for _, l := range strings.Split(stderr, "\n") {
+		notice := false
+		for _, p := range freshnessPhrases {
+			if strings.Contains(l, p) {
+				notice = true
+				break
+			}
+		}
+		if !notice {
+			kept = append(kept, l)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
 
 func argsSpawn(scriptsDir string, n int) []string {
 	return []string{"-c", spawnScript, "ralph-cockpit", scriptsDir, strconv.Itoa(n)}
@@ -287,6 +329,7 @@ type spawnDoneMsg struct {
 	issue  int
 	rc     int // 0 spawned, 2 skipped (already owned), else failure
 	detail string
+	notice string // freshnessNotice verdict; "" when the plugin is in sync
 }
 
 type forkDoneMsg struct {
@@ -1468,9 +1511,9 @@ func spawnCmd(cfg Config, r Runner, issue int) tea.Cmd {
 		}
 		detail := lastNonEmptyLine(out)
 		if rc != 0 && rc != 2 {
-			detail = firstLine(stderr+out, err)
+			detail = firstLine(stripFreshnessLines(stderr)+out, err)
 		}
-		return spawnDoneMsg{issue: issue, rc: rc, detail: detail}
+		return spawnDoneMsg{issue: issue, rc: rc, detail: detail, notice: freshnessNotice(stderr)}
 	}
 }
 

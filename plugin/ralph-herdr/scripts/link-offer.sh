@@ -60,6 +60,7 @@ while :; do
   case "$key" in
     s | S)
       billing_guard
+      ralph_plugin_freshness_notice
       # Queue JSON only feeds the slug/label derivation — #N need not be in
       # it (the agent name then takes the "work" slug).
       QUEUE_JSON=$("$BOARD" next --json 2>/dev/null) || QUEUE_JSON=""

@@ -221,13 +221,21 @@ billing_guard() {
 # cockpit, so it is the operator's act with the fleet quiesced; refusing a
 # spawn over a stale plugin is strictly worse than spawning on one.
 #
-# The subject is anchored at $REPO — the checkout the spawn is cwd'd to — and
-# the SOURCE copy of herdr-plugin-sync.sh is the one run, never $SCRIPT_DIR's.
-# That anchor is the whole reason this detects anything: when herdr executes
-# the INSTALLED copy (`plugin action invoke`, the fleet lane, the dispatch
-# seat — the lanes that actually run stale code), the installed script's own
-# SRC_TREE *is* the installed tree, so it would hash a tree against itself and
-# every stale cockpit would certify itself fresh.
+# The SUBJECT is anchored at $REPO — the checkout the spawn is cwd'd to — and
+# is handed to the sync script as a `--source` tree to HASH. That anchor is
+# the whole reason this detects anything: when herdr executes the INSTALLED
+# copy (`plugin action invoke`, the fleet lane, the dispatch seat — the lanes
+# that actually run stale code), the sync script's own default SRC_TREE *is*
+# the installed tree, so without the argument it would hash a tree against
+# itself and every stale cockpit would certify itself fresh.
+#
+# The CODE that runs is this tree's own sibling, never the checkout's copy
+# (GH-2340). The first version ran `$REPO/.../herdr-plugin-sync.sh` — the
+# installed plugin executing whatever script the worktree it was pointed at
+# happened to carry, on any branch, with the cockpit's env, across a version
+# boundary where `--check` and the exit codes belong to the other side. A
+# checkout is a subject to be measured, not a program to be trusted; and a
+# caller and callee from one tree cannot disagree about the flag contract.
 #
 # Running that script rather than re-implementing its hash is deliberate: the
 # behavior surface already lives in two mirrored copies (it and
@@ -243,7 +251,7 @@ billing_guard() {
 #                            on every spawn stops being read (GH-2048).
 #   unreadable               NOT CHECKED, with the reason — a failed
 #                            measurement may not read like a clean one
-#                            (GH-1971).
+#                            (GH-1971). A missing sibling script is this case.
 #   different                the drift, loud, with the sync command.
 #
 # The MEASUREMENT is memoized per process, the MESSAGE is not. Hashing both
@@ -253,29 +261,38 @@ billing_guard() {
 # syncing the plugin under the very loop that is running, which is the act
 # this notice tells the operator to take with the fleet quiesced. Re-rendering
 # the message each call is deliberate and separate: every spawn takes the
-# risk, so every spawn is told. The memo is KEYED on the resolved script path,
-# never a bare "already ran" flag: $REPO is a variable, and a cache that
-# answered for one checkout while asked about another would report the wrong
-# tree with full confidence. Clearing _RALPH_FRESHNESS_KEY forces a re-measure.
+# risk, so every spawn is told. The memo is KEYED on the subject tree, never
+# a bare "already ran" flag: $REPO is a variable, and a cache that answered
+# for one checkout while asked about another would report the wrong tree with
+# full confidence. Clearing _RALPH_FRESHNESS_KEY forces a re-measure.
+#
+# The two phrases below — "INSTALLED ralph-herdr differs" and "freshness NOT
+# CHECKED" — are read by the cockpit (cockpit/fetch.go freshnessNotice), which
+# discards spawn stderr on success and would otherwise announce nothing.
 _RALPH_FRESHNESS_KEY=""
 _RALPH_FRESHNESS_RC=""
 _RALPH_FRESHNESS_TAIL=""
 ralph_plugin_freshness_notice() {
-  local sync="$REPO/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" out rc=0
-  [ -f "$sync" ] || return 0
-  if [ "$_RALPH_FRESHNESS_KEY" = "$sync" ]; then
+  local subject="$REPO/plugin/ralph-herdr" sync="$_RALPH_HERDR_LIB_DIR/herdr-plugin-sync.sh" out rc=0
+  [ -d "$subject/scripts" ] || return 0
+  if [ "$_RALPH_FRESHNESS_KEY" = "$subject" ]; then
     rc="$_RALPH_FRESHNESS_RC"
   else
-    out=$(bash "$sync" --check 2>&1) || rc=$?
-    _RALPH_FRESHNESS_KEY="$sync"
+    if [ -f "$sync" ]; then
+      out=$(bash "$sync" --check --source "$subject" 2>&1) || rc=$?
+    else
+      out="no herdr-plugin-sync.sh beside $_RALPH_HERDR_LIB_DIR/lib.sh"
+      rc=2
+    fi
+    _RALPH_FRESHNESS_KEY="$subject"
     _RALPH_FRESHNESS_RC="$rc"
     _RALPH_FRESHNESS_TAIL=$(printf '%s' "$out" | tail -1)
   fi
   case "$rc" in
     0) ;;
     1)
-      echo "${0##*/}: the INSTALLED ralph-herdr differs from $REPO/plugin/ralph-herdr — the cockpit's own lanes (plugin action invoke, the fleet, the dispatch seat) execute that installed copy, not this checkout." >&2
-      echo "${0##*/}: spawning anyway — this is advisory, never a gate. Sync with the fleet quiesced, since it swaps code under live panes: bash $sync" >&2
+      echo "${0##*/}: the INSTALLED ralph-herdr differs from $subject — the cockpit's own lanes (plugin action invoke, the fleet, the dispatch seat) execute that installed copy, not this checkout." >&2
+      echo "${0##*/}: spawning anyway — this is advisory, never a gate. Sync with the fleet quiesced, since it swaps code under live panes: bash $subject/scripts/herdr-plugin-sync.sh" >&2
       ;;
     *)
       echo "${0##*/}: ralph-herdr freshness NOT CHECKED — $_RALPH_FRESHNESS_TAIL" >&2

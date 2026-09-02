@@ -356,6 +356,11 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		default:
 			m.status = fmt.Sprintf("spawn #%d failed (rc %d): %s", msg.issue, msg.rc, msg.detail)
 		}
+		// The freshness verdict rides every outcome: a spawn that ran on a
+		// stale plugin took the risk whether or not it succeeded (GH-2340).
+		if msg.notice != "" {
+			m.status += " · " + msg.notice
+		}
 		return m, fetchAgentsCmd(m.cfg, m.runner)
 
 	case forkDoneMsg:

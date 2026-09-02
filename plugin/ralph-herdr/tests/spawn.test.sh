@@ -852,64 +852,80 @@ for v in $HERD_PANE_ENV; do
   is "scrub: $v is unset for the suite" "unset" "${!v-unset}"
 done
 
-# ── ralph_plugin_freshness_notice (GH-2260) ──────────────────────────────────
+# ── ralph_plugin_freshness_notice (GH-2260, GH-2340) ─────────────────────────
 # The spawn-time half of doctor's `ralph-herdr-content` line. Advisory by
 # construction, so every case asserts rc 0; what varies is what it SAYS.
+#
+# The fixture reproduces the real topology, because the load-bearing property
+# is WHICH tree runs and WHICH tree is measured: lib.sh placed in an INSTALLED
+# tree and executed from there, exactly as `herdr plugin action invoke` runs
+# it, with $REPO naming a SEPARATE source checkout. The installed tree's sync
+# script is a stub that records its argv and answers from a file; the
+# checkout's copy is a tripwire that would answer "in sync" if it were ever
+# executed. So a drift that still speaks proves both halves at once: the
+# sibling ran (GH-2340 — a checkout is measured, never executed), and it was
+# handed the checkout as its subject (GH-2260 — a stale installed copy may
+# not hash itself against itself).
 FTMP="$TMP/freshness"
-mkdir -p "$FTMP/repo/plugin/ralph-herdr/scripts" "$FTMP/other/scripts"
-
-# A stub standing in for herdr-plugin-sync.sh --check: the function's contract
-# with it is the exit code (0 in sync / 1 different / anything else not
-# evaluable), and driving the real hash would make this a test of shasum.
-_fresh_stub() {
-  # The memo is keyed on the script PATH, which does not change between these
-  # cases — so each restub clears it, or every case after the first would
-  # assert against the first case's answer.
-  _RALPH_FRESHNESS_KEY=""
-  cat >"$FTMP/repo/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" <<STUB
+INST="$FTMP/inst/plugin/ralph-herdr/scripts"
+SUBJ="$FTMP/repo/plugin/ralph-herdr"
+mkdir -p "$FTMP/inst/plugin/ralph-herdr" "$SUBJ/scripts" "$FTMP/other/scripts"
+cp -R "$SCRIPT_DIR/../scripts" "$INST"
+cat >"$INST/herdr-plugin-sync.sh" <<STUB
 #!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$FTMP/argv"
 echo "source    /src  aaaa"
 echo "installed /inst bbbb"
 echo "stub reason line" >&2
-exit $1
+exit "\$(cat "$FTMP/rc")"
 STUB
-}
+cat >"$SUBJ/scripts/herdr-plugin-sync.sh" <<TRIP
+#!/usr/bin/env bash
+echo ran >"$FTMP/ran-checkout"
+exit 0
+TRIP
+chmod +x "$INST/herdr-plugin-sync.sh" "$SUBJ/scripts/herdr-plugin-sync.sh"
 
-# rc must survive into the parent shell, so it is captured here rather than
-# inside a command substitution — a subshell's assignment would never return.
+# One fresh process per case (the memo is per process); $1 = the stub's exit
+# code, $2 = the checkout to point $REPO at, the rest = extra shell to run in
+# the same process after the first call (memo cases).
 _fresh_rc=0
 _fresh_run() {
-  local saved="$REPO"
-  REPO="$FTMP/repo"
-  ralph_plugin_freshness_notice >"$FTMP/out" 2>&1
+  local code="$1" repo="$2"; shift 2
+  echo "$code" >"$FTMP/rc"
+  rm -f "$FTMP/argv" "$FTMP/ran-checkout"
+  RALPH_HERDR_REPO="$repo" RALPH_HERDR_BOARD="$RALPH_HERDR_BOARD" \
+    bash -c ". '$INST/lib.sh'; ralph_plugin_freshness_notice; $*" >"$FTMP/out" 2>&1
   _fresh_rc=$?
-  REPO="$saved"
 }
-_fresh_out() { _fresh_run; cat "$FTMP/out"; }
+_fresh_out() { _fresh_run "$@"; cat "$FTMP/out"; }
 
-_fresh_stub 0
-is "freshness: an in-sync tree says nothing" "" "$(_fresh_out)"
+is "freshness: an in-sync tree says nothing" "" "$(_fresh_out 0 "$FTMP/repo")"
 is "freshness: in sync returns 0" "0" "$_fresh_rc"
 
-_fresh_stub 1
-out=$(_fresh_out)
+out=$(_fresh_out 1 "$FTMP/repo")
 is "freshness: a divergence still returns 0 — advisory, never a gate" "0" "$_fresh_rc"
 case "$out" in
   *"INSTALLED ralph-herdr differs"*) ok "freshness: a divergence names the drift" ;;
   *) not_ok "freshness: a divergence names the drift — got '$out'" ;;
 esac
 case "$out" in
-  *"herdr-plugin-sync.sh"*) ok "freshness: a divergence names the sync command" ;;
-  *) not_ok "freshness: a divergence names the sync command — got '$out'" ;;
+  *"bash $SUBJ/scripts/herdr-plugin-sync.sh"*) ok "freshness: a divergence names the checkout's sync command as the remedy" ;;
+  *) not_ok "freshness: a divergence names the checkout's sync command as the remedy — got '$out'" ;;
 esac
 case "$out" in
   *"never a gate"*) ok "freshness: a divergence says the spawn proceeds" ;;
   *) not_ok "freshness: a divergence says the spawn proceeds — got '$out'" ;;
 esac
+# GH-2340: the checkout is a SUBJECT, handed over as a tree to hash...
+is "freshness: the sibling sync script is handed the checkout as --source" \
+  "--check --source $SUBJ" "$(cat "$FTMP/argv" 2>/dev/null)"
+# ...and never a program. The tripwire would have gone silent (exit 0) and
+# left its marker; a spoken drift with no marker is the proof.
+is "freshness: the checkout's own sync script is never executed" "" "$(cat "$FTMP/ran-checkout" 2>/dev/null)"
 
 # An unreadable input may not render like a clean one (GH-1971).
-_fresh_stub 2
-out=$(_fresh_out)
+out=$(_fresh_out 2 "$FTMP/repo")
 is "freshness: an unevaluable check still returns 0" "0" "$_fresh_rc"
 case "$out" in
   *"NOT CHECKED"*) ok "freshness: unevaluable reads NOT CHECKED, not clean" ;;
@@ -921,105 +937,71 @@ case "$out" in
 esac
 
 # The measurement is memoized per process; the message is not. A second call
-# must still speak (every spawn takes the risk) while costing no second hash.
-_fresh_stub 1
-_fresh_run
-"$FTMP/repo/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" >/dev/null 2>&1 && :
-# Replace the stub with one that would answer "in sync" — a re-measure would
-# now go silent, so speech here proves the memo, not the stub.
-cat >"$FTMP/repo/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" <<'STUB'
-#!/usr/bin/env bash
-exit 0
-STUB
-out=$(_fresh_out)
+# must still speak (every spawn takes the risk) while costing no second hash:
+# the stub is flipped to "in sync" between the calls, so speech proves the
+# memo, and the argv log proves the single measurement.
+out=$(_fresh_out 1 "$FTMP/repo" "echo 0 >'$FTMP/rc'; ralph_plugin_freshness_notice")
 case "$out" in
-  *"INSTALLED ralph-herdr differs"*) ok "freshness: the memo answers a second call without re-hashing" ;;
-  *) not_ok "freshness: the memo answers a second call without re-hashing — got '$out'" ;;
+  *"INSTALLED ralph-herdr differs"*"INSTALLED ralph-herdr differs"*) ok "freshness: the memo answers a second call and still speaks" ;;
+  *) not_ok "freshness: the memo answers a second call and still speaks — got '$out'" ;;
 esac
+is "freshness: ...without re-hashing" "1" "$(wc -l <"$FTMP/argv" | tr -d ' ')"
 
-# ...but the memo is keyed on the resolved path, so a different $REPO is a
+# ...but the memo is keyed on the subject tree, so a different $REPO is a
 # different question and must be measured afresh rather than answered from
 # the previous checkout's cache.
 mkdir -p "$FTMP/repo2/plugin/ralph-herdr/scripts"
-cat >"$FTMP/repo2/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh" <<'STUB'
-#!/usr/bin/env bash
-exit 0
-STUB
-REPO_SAVED="$REPO"
-REPO="$FTMP/repo2"
-out=$(ralph_plugin_freshness_notice 2>&1)
-REPO="$REPO_SAVED"
-is "freshness: a different checkout is re-measured, not answered from cache" "" "$out"
-_RALPH_FRESHNESS_KEY=""
+: >"$FTMP/repo2/plugin/ralph-herdr/scripts/placeholder"
+out=$(_fresh_out 1 "$FTMP/repo" "echo 0 >'$FTMP/rc'; REPO='$FTMP/repo2'; ralph_plugin_freshness_notice; echo END")
+case "$out" in
+  *"INSTALLED ralph-herdr differs"*"never a gate"*END) ok "freshness: a different checkout is re-measured, not answered from cache" ;;
+  *) not_ok "freshness: a different checkout is re-measured, not answered from cache — got '$out'" ;;
+esac
+is "freshness: ...and the second checkout is the one measured" \
+  "--check --source $FTMP/repo2/plugin/ralph-herdr" "$(tail -1 "$FTMP/argv" 2>/dev/null)"
 
 # A host repo has no source tree to be stale against and no remedy to name:
 # NOT APPLICABLE is silence, not a permanent line nothing can clear (GH-2052).
-REPO_SAVED="$REPO"
-REPO="$FTMP/other"
-out=$(ralph_plugin_freshness_notice 2>&1); rc=$?
-REPO="$REPO_SAVED"
+# And it runs NOTHING — the "help host repos" fallback to the tree beside
+# lib.sh is, from the installed tree, self-certification.
+out=$(_fresh_out 1 "$FTMP/other")
 is "freshness: a repo with no ralph-herdr source tree is silent" "" "$out"
-is "freshness: not-applicable returns 0" "0" "$rc"
+is "freshness: not-applicable returns 0" "0" "$_fresh_rc"
+is "freshness: ...and measures nothing rather than falling back to its own tree" "" "$(cat "$FTMP/argv" 2>/dev/null)"
 
-# The anchor is the load-bearing part, and it is pinned BY CONSTRUCTION rather
-# than by grepping lib.sh for the line that spells it. A source-text assertion
-# is the weaker half of the pair in both directions: a behaviour-preserving
-# tidy-up (hoisting the path into a local) reddens it, while the edit that
-# would actually reintroduce the hole — falling back to $SCRIPT_DIR's own copy
-# when $REPO has none — leaves the grepped line intact.
-#
-# So the fixture reproduces the real topology: lib.sh placed in an INSTALLED
-# tree and executed from there, exactly as `herdr plugin action invoke` runs
-# it, with $REPO naming a SEPARATE source checkout. Each tree carries a sync
-# script that records which one ran. If the notice ever resolved the script
-# beside itself, the installed marker would be the one written — and every
-# stale cockpit would certify itself fresh.
-ANCHOR="$TMP/anchor"
-mkdir -p "$ANCHOR/inst/plugin/ralph-herdr" "$ANCHOR/src/plugin/ralph-herdr/scripts"
-cp -R "$SCRIPT_DIR/../scripts" "$ANCHOR/inst/plugin/ralph-herdr/scripts"
-for _who in inst src; do
-  case "$_who" in
-    inst) _dir="$ANCHOR/inst/plugin/ralph-herdr/scripts" ;;
-    src)  _dir="$ANCHOR/src/plugin/ralph-herdr/scripts" ;;
-  esac
-  cat >"$_dir/herdr-plugin-sync.sh" <<MARKER
-#!/usr/bin/env bash
-echo "$_who" >"$ANCHOR/ran"
-exit 1
-MARKER
-done
-
-rm -f "$ANCHOR/ran"
-anchor_out=$(RALPH_HERDR_REPO="$ANCHOR/src" RALPH_HERDR_BOARD="$RALPH_HERDR_BOARD" \
-  bash -c ". '$ANCHOR/inst/plugin/ralph-herdr/scripts/lib.sh'; ralph_plugin_freshness_notice" 2>&1)
-anchor_rc=$?
-is "freshness: the SOURCE copy of the sync script is what runs, not the one beside lib.sh" \
-  "src" "$(cat "$ANCHOR/ran" 2>/dev/null)"
-is "freshness: the anchor case still returns 0" "0" "$anchor_rc"
-case "$anchor_out" in
-  *"INSTALLED ralph-herdr differs"*) ok "freshness: an installed-copy run still reports the drift it found" ;;
-  *) not_ok "freshness: an installed-copy run still reports the drift it found — got '$anchor_out'" ;;
+# The sibling missing is an unreadable INSTALL, not a clean one.
+NOSIB="$FTMP/nosib/plugin/ralph-herdr/scripts"
+mkdir -p "$FTMP/nosib/plugin/ralph-herdr"
+cp -R "$SCRIPT_DIR/../scripts" "$NOSIB"
+rm -f "$NOSIB/herdr-plugin-sync.sh"
+out=$(RALPH_HERDR_REPO="$FTMP/repo" RALPH_HERDR_BOARD="$RALPH_HERDR_BOARD" \
+  bash -c ". '$NOSIB/lib.sh'; ralph_plugin_freshness_notice" 2>&1); rc=$?
+is "freshness: a missing sibling sync script returns 0" "0" "$rc"
+case "$out" in
+  *"NOT CHECKED"*"no herdr-plugin-sync.sh beside $(cd "$NOSIB" && pwd)/lib.sh"*) ok "freshness: a missing sibling reads NOT CHECKED and names the install" ;;
+  *) not_ok "freshness: a missing sibling reads NOT CHECKED and names the install — got '$out'" ;;
 esac
-
-# The regression this replaces the grep for: a "help host repos" fallback to
-# $SCRIPT_DIR's own copy. With $REPO naming a tree that has no sync script,
-# the notice must stay SILENT (not applicable) rather than reach for the one
-# beside itself — which, run from the installed tree, is self-certification.
-rm -f "$ANCHOR/ran"
-anchor_out=$(RALPH_HERDR_REPO="$ANCHOR/nosuch" RALPH_HERDR_BOARD="$RALPH_HERDR_BOARD" \
-  bash -c ". '$ANCHOR/inst/plugin/ralph-herdr/scripts/lib.sh'; ralph_plugin_freshness_notice" 2>&1)
-is "freshness: a \$REPO with no sync script runs nothing at all" "" "$(cat "$ANCHOR/ran" 2>/dev/null)"
-is "freshness: ...and says nothing rather than falling back to its own tree" "" "$anchor_out"
+is "freshness: ...and does not reach for the checkout's copy" "" "$(cat "$FTMP/ran-checkout" 2>/dev/null)"
 
 # Every spawn entry point carries it — a lane that spawns without the notice
-# is a lane where stale code runs unannounced.
-for _f in work-fleet.sh work-next.sh work-team.sh hero.sh dispatch-up.sh fork.sh deliver-pass.sh tend-pass.sh cockpit-fzf.sh; do
+# is a lane where stale code runs unannounced. Pinned as the set of
+# billing_guard callers (GH-2340 found the three that were missing by that
+# diff): every file that guards billing at spawn also announces staleness.
+for _f in work-fleet.sh work-next.sh work-team.sh hero.sh dispatch-up.sh fork.sh deliver-pass.sh tend-pass.sh cockpit-fzf.sh refill.sh link-offer.sh; do
   if grep -q '^ *ralph_plugin_freshness_notice$' "$SCRIPT_DIR/../scripts/$_f"; then
     ok "freshness: $_f announces plugin staleness at spawn"
   else
     not_ok "freshness: $_f announces plugin staleness at spawn"
   fi
 done
+_guarded=$(grep -l 'billing_guard' "$SCRIPT_DIR"/../scripts/*.sh | grep -v '/lib\.sh$' | sort)
+_noticed=$(grep -l '^ *ralph_plugin_freshness_notice$' "$SCRIPT_DIR"/../scripts/*.sh | sort)
+is "freshness: every script that runs billing_guard also runs the notice" "$_guarded" "$_noticed"
+if grep -q '^ralph_plugin_freshness_notice$' "$SCRIPT_DIR/../cockpit/fetch.go"; then
+  ok "freshness: the cockpit's spawn body announces plugin staleness"
+else
+  not_ok "freshness: the cockpit's spawn body announces plugin staleness"
+fi
 
 
 echo "1..$n"

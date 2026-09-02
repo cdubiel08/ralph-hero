@@ -170,6 +170,7 @@ refill_one() (
   # shellcheck source=lib.sh
   . "$SCRIPT_DIR/lib.sh"
   billing_guard
+  ralph_plugin_freshness_notice
   trap ralph_ledger_unlock_held EXIT
 
   # Pre-lock snapshots (see the header): fail CLOSED — the conservative

@@ -90,6 +90,11 @@ func TestSpawnScriptIsConstant(t *testing.T) {
 	if strings.Contains(spawnScript, "%s") || strings.Contains(spawnScript, "%d") {
 		t.Fatalf("spawnScript looks templated — it must be constant: %q", spawnScript)
 	}
+	// Every spawn entry point announces plugin staleness (GH-2260); the
+	// cockpit's `s` is one of them (GH-2340), beside the billing guard.
+	if !strings.Contains(spawnScript, "billing_guard\nralph_plugin_freshness_notice\n") {
+		t.Fatalf("spawnScript must run ralph_plugin_freshness_notice beside billing_guard: %q", spawnScript)
+	}
 	// forkScript: same contract — the pane id is positional, never interpolated,
 	// and the session read stays in fork.sh (GH-1957).
 	if !strings.Contains(forkScript, `RALPH_FORK_PANE="$2"`) || !strings.Contains(forkScript, `"$1/fork.sh"`) {
@@ -1064,5 +1069,55 @@ func TestParseEscalationsKeepsMalformedApartFromEmpty(t *testing.T) {
 	escs, err := parseEscalations(`{"escalations": []}`)
 	if err != nil || len(escs) != 0 {
 		t.Fatalf("a genuinely empty queue must parse clean: %v %+v", err, escs)
+	}
+}
+
+func TestFreshnessNoticeReadsLibShVerdictOffStderr(t *testing.T) {
+	// lib.sh prints the notice to stderr and spawnCmd drops stderr on a
+	// successful spawn — so the verdict must be lifted off it explicitly, and
+	// the three shapes must not collapse (GH-1971): stale, unchecked, silent.
+	stale := "work-next.sh: the INSTALLED ralph-herdr differs from /r/plugin/ralph-herdr — the cockpit's own lanes execute that installed copy.\nwork-next.sh: spawning anyway — this is advisory, never a gate.\n"
+	unchecked := "work-next.sh: ralph-herdr freshness NOT CHECKED — herdr-plugin-sync: could not hash the installed tree\n"
+	cases := []struct{ name, stderr, want string }{
+		{"stale", stale, "plugin STALE — sync with the fleet quiesced"},
+		{"not checked", unchecked, "plugin freshness NOT CHECKED"},
+		{"in sync is silent", "", ""},
+		{"unrelated stderr is silent", "spawn: some other warning\n", ""},
+		{"stale outranks unchecked when both print", unchecked + stale, "plugin STALE — sync with the fleet quiesced"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := freshnessNotice(c.stderr); got != c.want {
+				t.Fatalf("freshnessNotice(%q) = %q, want %q", c.stderr, got, c.want)
+			}
+		})
+	}
+}
+
+func TestStripFreshnessLinesKeepsTheSpawnsOwnError(t *testing.T) {
+	// A failed spawn on a stale plugin: the notice prints FIRST, so the
+	// detail derived from raw stderr would be the advisory, repeated on the
+	// status beside the notice, with the actual failure hidden.
+	stderr := "work-next.sh: the INSTALLED ralph-herdr differs from /r/plugin/ralph-herdr — the cockpit's own lanes execute that installed copy.\n" +
+		"work-next.sh: spawning anyway — this is advisory, never a gate. Sync with the fleet quiesced: bash /r/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh\n" +
+		"lib.sh: herdr tab create refused: workspace not found\n"
+	got := stripFreshnessLines(stderr)
+	if want := "lib.sh: herdr tab create refused: workspace not found\n"; got != want {
+		t.Fatalf("stripFreshnessLines = %q, want %q", got, want)
+	}
+	if d := firstLine(got, nil); d != "lib.sh: herdr tab create refused: workspace not found" {
+		t.Fatalf("detail = %q, want the spawn's own error", d)
+	}
+	// The verdict is still read off the UNstripped stderr.
+	if n := freshnessNotice(stderr); n != "plugin STALE — sync with the fleet quiesced" {
+		t.Fatalf("notice = %q", n)
+	}
+	// NOT CHECKED is a single line and strips the same way.
+	if got := stripFreshnessLines("x: ralph-herdr freshness NOT CHECKED — reason\nreal error\n"); got != "real error\n" {
+		t.Fatalf("NOT CHECKED not stripped: %q", got)
+	}
+	// Nothing to strip leaves stderr byte-identical.
+	if got := stripFreshnessLines("only error\n"); got != "only error\n" {
+		t.Fatalf("clean stderr altered: %q", got)
 	}
 }
