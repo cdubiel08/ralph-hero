@@ -138,6 +138,18 @@ func resolveGlyphs(raw string) glyphSet {
 	return unicodeGlyphs
 }
 
+// resolveTruecolor reads COLORTERM the way termenv does: exactly "truecolor"
+// or "24bit" (case-insensitive, trimmed) means the terminal advertised 24-bit
+// colour. Unset or anything else is false — the wash is opt-in by the
+// TERMINAL's own claim, never inferred from TERM or guessed.
+func resolveTruecolor(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "truecolor", "24bit":
+		return true
+	}
+	return false
+}
+
 // ── the spawn ledger ────────────────────────────────────────────────────────
 
 // LedgerSpawn is one `ev:spawn` record: when a session started, where its

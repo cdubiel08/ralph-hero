@@ -46,6 +46,12 @@ type Config struct {
 	// Interval: a marking cadence faster than the board it marks would read
 	// PR fates for cards the columns have not shown yet.
 	SignalInterval time.Duration
+	// Truecolor is whether the terminal ADVERTISED 24-bit colour (COLORTERM
+	// is truecolor/24bit). It gates the selection wash (spec §7) together
+	// with lipgloss's detected profile: a wash quantised to the 256 palette
+	// reads as a grey slab on a navy background, so below true colour the
+	// card draws no wash at all rather than a worse one.
+	Truecolor bool
 	// LedgerPath is ~/.ralph/<owner>/<repo>/ledger.jsonl for this board scope,
 	// resolved once (ralph_ledger_path's rules). "" = no scope discoverable,
 	// which costs the age chip and nothing else.

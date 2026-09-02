@@ -27,6 +27,10 @@
 //	                        else (default) uses ASCII — a host without the font
 //	                        renders tofu at the wrong width and shears the
 //	                        fixed-stride card grid the mouse maps through
+//	COLORTERM               "truecolor"/"24bit" (set by the terminal, not the
+//	                        operator) admits the selected card's background
+//	                        wash; anything else draws the selection as bar and
+//	                        bold ink only
 //	RALPH_HERDR_LEDGER      pin the spawn ledger file (default: the board
 //	                        scope's ~/.ralph/<owner>/<repo>/ledger.jsonl)
 //	RALPH_HERDR_LEDGER_ROOT ledger root dir (default ~/.ralph)
@@ -136,6 +140,7 @@ func resolveConfig(args []string, getenv func(string) string) (Config, error) {
 	// takes the ASCII set.
 	cfg.LedgerPath = ledgerPath(cfg.Repo, getenv)
 	cfg.Glyphs = resolveGlyphs(getenv("RALPH_COCKPIT_GLYPHS"))
+	cfg.Truecolor = resolveTruecolor(getenv("COLORTERM"))
 	// The local write stamp watch (audit A6) and the liveness heartbeat
 	// (audit D6d) — both machine-local, both optional, neither fails startup.
 	cfg.MarksGlob = marksGlob(getenv)
