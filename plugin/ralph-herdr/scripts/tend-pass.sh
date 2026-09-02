@@ -51,14 +51,14 @@ if [ -z "$next" ]; then
 fi
 
 # ONE LIVE PASS PER LANE also holds across the rename (PR #2354 P1): a pane
-# spawned by a pre-0.41 plugin is still live under the OLD fixed name, and the
+# spawned by a pre-0.42 plugin is still live under the OLD fixed name, and the
 # `agent start` name interlock below keys on the new one only — so the legacy
 # name is checked here, by hand, before any surface exists. Fails OPEN on an
 # unreadable herd: the start's own name-taken refusal still guards the new
 # name, and a herd read that cannot answer may not block the lane.
 legacy_live=$(ralph_agents_json 2>/dev/null | jq -r --arg n "ralph-$lane" 'select(.name == $n) | .name' 2>/dev/null | head -1) || legacy_live=""
 [ -z "$legacy_live" ] ||
-  die "a $lane pass is already live under its pre-0.41 name ($legacy_live) — one live pass per lane; let it finish (or close its pane) before starting $agent"
+  die "a $lane pass is already live under its pre-0.42 name ($legacy_live) — one live pass per lane; let it finish (or close its pane) before starting $agent"
 
 # The tender role does not write a tree (roles.sh/contracts.ts ROLES). GH-2265:
 # read the tool-binding rule from the registry rather than restate it here.

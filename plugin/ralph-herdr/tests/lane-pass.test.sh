@@ -215,7 +215,7 @@ herd_fixture '[{"name":"ralph-deliver","agent_status":"working","pane_id":"pL"}]
 out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
 rc=$?
 if [ "$rc" -ne 0 ]; then ok "deliver legacy-live: a live ralph-deliver refuses the pass"; else not_ok "deliver legacy-live: a live ralph-deliver must refuse (rc 0)"; fi
-has "deliver legacy-live: the refusal names the legacy pane" "$out" "already live under its pre-0.41 name (ralph-deliver)"
+has "deliver legacy-live: the refusal names the legacy pane" "$out" "already live under its pre-0.42 name (ralph-deliver)"
 log_hasnt "deliver legacy-live: no pane was split" "pane split"
 log_hasnt "deliver legacy-live: no agent was started" "agent start"
 is "deliver legacy-live: no ledger row for a spawn that never began" "0" "$(ledger_count 'true')"
@@ -325,10 +325,16 @@ reset
 out=$(FAKE_PROBE_MODE=tool-writer RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
 rc=$?
 if [ "$rc" -ne 0 ]; then ok "tend tool-writer: a pane whose Write tool wrote the tree FAILS the pass"; else not_ok "tend tool-writer: must fail the pass (rc 0)"; fi
-has "tend tool-writer: the failure names process applied AND tool binding not_applied" "$out" "process containment applied for ralph-tend, tool binding not_applied"
+has "tend tool-writer: the failure names process applied AND tool binding not_applied" "$out" "process containment applied for t0-tend, tool binding not_applied"
 log_has "tend tool-writer: the pane is closed" "pane close pS1"
-log_hasnt "tend tool-writer: no real prompt to a writer" "agent prompt ralph-tend /ralph:tend"
-[ -e "$REPO_DIR/.ralph-tool-probe-ralph-tend" ] && not_ok "tend tool-writer: the tool marker is cleaned up" || ok "tend tool-writer: the tool marker is cleaned up"
+log_hasnt "tend tool-writer: no real prompt to a writer" "agent prompt t0-tend /ralph:tend"
+[ -e "$REPO_DIR/.ralph-tool-probe-t0-tend" ] && not_ok "tend tool-writer: the tool marker is cleaned up" || ok "tend tool-writer: the tool marker is cleaned up"
+# GH-2342: the refuted binding is RECORDED — process applied beside tool
+# binding not_applied, two fields, and the close reason names the mechanism.
+is "tend tool-writer: the containment event records applied / not_applied, separately" "1" \
+  "$(ledger_count '.ev=="containment" and .process_containment=="applied" and .tool_binding=="not_applied"')"
+is "tend tool-writer: the row closes tool_binding_not_applied" "1" \
+  "$(ledger_count '.ev=="exit" and .reason=="tool_binding_not_applied" and .via=="spawn"')"
 
 # ── 5d. an unmeasured platform refuses BEFORE any surface exists ─────────────
 reset

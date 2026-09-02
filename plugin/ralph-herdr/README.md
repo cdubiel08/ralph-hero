@@ -153,7 +153,7 @@ use, so they mint a ref and write a ledger row like every other spawn. The
 name is still FIXED (no epoch, no generation): one live pass per lane; a
 taken name dies loudly ("a pass is already live") and never kills the live
 agent. Legacy `gh-N` names stay first-class through the transition, and
-`ralph-deliver` / `ralph-tend` — the pre-0.41 lane-pass names — are still
+`ralph-deliver` / `ralph-tend` — the pre-0.42 lane-pass names — are still
 recognised as legacy singletons (watched, never ledgered) wherever a pane
 from an older plugin is still live. The full
 agent-facing reference (lane table, tokens, self-report, fleet claims) is

@@ -34,7 +34,7 @@ Parse-back is guaranteed: lane = char 1, issue = leading digits, slug = the
 rest before any `--N`; `--` appears ONLY in the collision suffix (`--2`..`--9`).
 The harness (claude/codex/pi) is a metadata token, never part of the name.
 Legacy `gh-N` names stay parseable through the transition; `ralph-deliver` /
-`ralph-tend` (the pre-0.41 lane-pass names) are recognised as legacy
+`ralph-tend` (the pre-0.42 lane-pass names) are recognised as legacy
 singletons — watched, never ledgered.
 
 The durable identity is the ref `name#epoch` (epoch = 4-8 lowercase hex,
