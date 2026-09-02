@@ -894,7 +894,8 @@ export class FakeGh {
               ...(query.includes("closedByPullRequestsReferences")
                 ? {
                     closedByPullRequestsReferences: {
-                      nodes: (fi.prs ?? []).map((p) => ({ merged: p.merged })),
+                      pageInfo: { hasNextPage: this.truncateCardLinkage === "closing" },
+                      nodes: (fi.prs ?? []).map((p) => ({ number: p.number, merged: p.merged })),
                     },
                   }
                 : {}),

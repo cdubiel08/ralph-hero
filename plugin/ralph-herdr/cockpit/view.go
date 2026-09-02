@@ -44,24 +44,33 @@ var (
 	styleRule     = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
 	styleQuestion = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("214"))
 	styleEpic     = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("60"))
-	styleTimer    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	styleGutter   = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
-	styleGutterS  = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	// The age and the [est] are the two inks the v2 spec moved (244/240 →
+	// 246); everything else on the card keeps its ink. The cost chip keeps
+	// the timer's OLD grey until GH-2378 restyles it, so this unit's ink diff
+	// is exactly the two the spec names.
+	styleTimer   = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+	styleEst     = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+	styleCost    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	styleGutter  = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+	styleGutterS = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 
 	// Status dot — herdr's own vocabulary, joined with the C8 state token.
 	dotWorking   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))  // yellow
 	dotReporting = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))  // blue
 	dotBlocked   = lipgloss.NewStyle().Foreground(lipgloss.Color("203")) // red — needs a human
 	dotIdle      = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green, HOLLOW
-	dotStarting  = lipgloss.NewStyle().Foreground(lipgloss.Color("244")) // small grey
+	dotDone      = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green, FILLED — over, cleanly
+	dotStarting  = lipgloss.NewStyle().Foreground(lipgloss.Color("246")) // dotted grey
 	dotNone      = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 
-	// Priority. Colour is reserved for the two that mean "now": red alert at
-	// P0, yellow at P1. P2/P3 are plain white; an unset one shares P0's red,
-	// because a null priority is a defect the operator must fix now.
-	prioP0   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	prioFill = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	prioWhit = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	// Priority (spec §3). P0 is the bang glyph in bold red; P1 orange, P2
+	// yellow, P3 white. An unset one shares P0's red, because a null priority
+	// is a defect the operator must fix now.
+	prioP0    = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
+	prioUnset = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	prioP1    = lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
+	prioP2    = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	prioP3    = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 
 	// Worktree diff.
 	diffAdd    = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
@@ -79,8 +88,8 @@ var (
 	prClosed   = lipgloss.NewStyle().Foreground(lipgloss.Color("203")) // red — closed unmerged
 	prUnread   = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
 
-	// Epic rollup: the done/total takes the SAME purple merged PRs use —
-	// both mean "landed".
+	// Epic rollup: the caret and the done/total take the SAME purple merged
+	// PRs use — both mean "landed".
 	styleRollup = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
 
 	// Column headers: the count carries the column's colour, the NAME goes
@@ -459,6 +468,8 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		chip = diffChip(m, card)
 	case columnStates[1]:
 		chip = prChip(m, card, g)
+	case doneState:
+		chip = mergeChip(card, g)
 	case inboxState:
 		// The right slot's one fact for an inbox card is WHICH human queue
 		// admitted it — the section header the CLI prints, carried per card
@@ -527,9 +538,9 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		}
 		line3 = styleQuestion.Render(trimTo("? "+q, inner))
 	default:
-		lead := priorityGlyph(card.Priority)
+		lead := priorityGlyph(card.Priority, g)
 		if card.Estimate != "" {
-			lead += " " + styleMeta.Render("["+card.Estimate+"]")
+			lead += " " + styleEst.Render("["+card.Estimate+"]")
 		}
 		// The epic chip is the only variable-length thing on this row, so it —
 		// not the timer — absorbs the width. Budgeted BEFORE it is built: the
@@ -539,7 +550,7 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		// The cost chip sits beside the timer on the right — both are the
 		// live session's meters, and both are fixed-width so the epic chip's
 		// budget can be computed before it is built.
-		timer := ageChip(m, card, g)
+		timer := ageChip(m, card)
 		if cost := costChip(m, card); cost != "" {
 			timer = cost + "  " + timer
 		}
@@ -556,34 +567,46 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		truncate(rule, width) + "\n"
 }
 
-// statusDot renders the joined vocabulary: yellow working, blue reporting, red
-// blocked (a human is needed), green HOLLOW idle, small grey starting. Hollow
-// for idle because it is the one state that means "nothing is happening" — a
-// filled dot of any colour reads as activity across a column of them.
+// statusDot renders the joined vocabulary (spec §2): yellow working, blue
+// reporting, red blocked (a human is needed), green HOLLOW idle, green FILLED
+// done, dotted grey starting, small dark none. Hollow for idle because it is
+// the one state that means "nothing is happening"; done and working are both
+// filled and differ by colour only — deliberate.
+//
+// A Done-column card ALWAYS draws the done dot: the column is the fact, and a
+// live session still reporting on a closed unit is the exception the peek
+// view carries, not the gutter.
 func statusDot(m Model, card Card, g glyphSet) string {
+	if card.State == doneState {
+		return dotFor(stateDone, g)
+	}
 	state, ok := m.cardState(card.Number)
 	if !ok {
-		return dotNone.Render(g.dotSmall)
+		return dotNone.Render(glyphDotNone)
 	}
 	return dotFor(state, g)
 }
 
 // dotFor renders one joined state as its dot — the card strip and the
-// topology tree draw from the same vocabulary, so the inks cannot drift.
-func dotFor(state string, g glyphSet) string {
+// topology tree draw from the same vocabulary, so the inks cannot drift. The
+// glyphs are tier-independent (signals.go); the tier is taken so a future
+// tier-specific dot has one place to land.
+func dotFor(state string, _ glyphSet) string {
 	switch state {
 	case stateWorking:
-		return dotWorking.Render(g.dotFull)
+		return dotWorking.Render(glyphDotFilled)
 	case stateReporting:
-		return dotReporting.Render(g.dotFull)
+		return dotReporting.Render(glyphDotReporting)
 	case stateBlocked:
-		return dotBlocked.Render(g.dotFull)
+		return dotBlocked.Render(glyphDotFilled)
 	case stateIdle:
-		return dotIdle.Render(g.dotHollow)
+		return dotIdle.Render(glyphDotHollow)
+	case stateDone:
+		return dotDone.Render(glyphDotFilled)
 	case stateStarting:
-		return dotStarting.Render(g.dotSmall)
+		return dotStarting.Render(glyphDotStarting)
 	default:
-		return dotNone.Render(g.dotSmall)
+		return dotNone.Render(glyphDotNone)
 	}
 }
 
@@ -646,9 +669,31 @@ func prChip(m Model, card Card, g glyphSet) string {
 	return "" // PRFateNone — read, and there is genuinely no PR
 }
 
-// epicChip — the line-3 parent marking. Caret white, the parent's identity in
-// the comment ink and italic, the done/total in the purple merged PRs use
-// (both mean "landed").
+// mergeChip — the Done right slot (GH-2377, spec §8): the purple merge glyph
+// and the PR that closed the issue, from `closedByPullRequestsReferences` —
+// the field the Done gate and the tend audit read. Three outcomes, and the two
+// that show nothing green are deliberately different ink:
+//
+//   - UNREAD (the closed read carried no linkage for this row) → a grey `⌥?`,
+//     the same grey the PR and diff chips use for "we could not read this".
+//   - read, no merged closing PR → NOTHING. That is exactly the
+//     no-closing-keyword population the Done audit exists for, and a chip on
+//     every such card would be noise on a real, ordinary state.
+//   - a merged closing PR → `⌥#N` in the purple merged PRs already use.
+func mergeChip(card Card, g glyphSet) string {
+	label := strings.TrimSpace(g.merge + " ")
+	if !card.ClosingPRsRead {
+		return prUnread.Render(label + "?")
+	}
+	if card.MergedPR == 0 {
+		return ""
+	}
+	return prMerged.Render(fmt.Sprintf("%s#%d", label, card.MergedPR))
+}
+
+// epicChip — the line-3 parent marking. Caret and tally in the purple merged
+// PRs use (both mean "landed"), the parent's identity in the comment ink and
+// italic.
 //
 // Degrades one step at a time rather than all at once: with no rollup read it
 // is the bare `❯ #1994` the Model already held, which is strictly what GH-2061
@@ -657,14 +702,15 @@ func prChip(m Model, card Card, g glyphSet) string {
 //
 // `budget` is the cells this chip may occupy, and it is spent in order of what
 // the operator can act on: the parent NUMBER (which `v` and `g` resolve), then
-// the TALLY (the fact the rollup exists for), then the name, which is the only
-// part that trims. A budget too small even for the number drops the chip
-// entirely — the alternative is a fragment that reads as a different issue.
+// the TALLY (the fact the rollup exists for), then the name. The name is
+// ALL-OR-NOTHING (spec §4): drawn only when the whole title fits, never
+// trimmed — `worke…` reads as a different issue. A budget too small even for
+// the number drops the chip entirely, for the same reason.
 func epicChip(m Model, card Card, g glyphSet, budget int) string {
 	if card.ParentNumber == 0 {
 		return ""
 	}
-	head := styleCardText.Render(g.chevron) + " " +
+	head := styleRollup.Render(g.chevron) + " " +
 		styleEpic.Render(fmt.Sprintf("#%d", card.ParentNumber))
 	if lipgloss.Width(head) > budget {
 		return ""
@@ -681,8 +727,8 @@ func epicChip(m Model, card Card, g glyphSet, budget int) string {
 	if rest < 0 {
 		return head
 	}
-	if e.Title != "" && rest > 4 {
-		head += " " + styleEpic.Render(trimTo(e.Title, rest-1))
+	if e.Title != "" && lipgloss.Width(e.Title) <= rest-1 {
+		head += " " + styleEpic.Render(e.Title)
 	}
 	return head + " " + styleRollup.Render(tally)
 }
@@ -698,8 +744,9 @@ func closedLabel(card Card, now time.Time) string {
 	return "closed " + formatAge(now.Sub(at)) + " ago"
 }
 
-// priorityGlyph — the priority as its own two-letter name: red P0, yellow P1,
-// white P2/P3. The three-bar meter this replaced (GH-2321) was read by an
+// priorityGlyph — P0 as the tier's bang glyph in bold red, padded to the two
+// cells its siblings take; P1..P3 as their own two-letter names (orange,
+// yellow, white). The three-bar meter this replaced (GH-2321) was read by an
 // operator as a broken PR-state glyph beside the estimate: P2 and P3 differed
 // only in fill count and P1 only in colour, so it carried less than the two
 // characters it stood in for.
@@ -707,30 +754,34 @@ func closedLabel(card Card, now time.Time) string {
 // An UNSET priority renders as a red `P?` rather than as blank — a null
 // priority sinks an item below stale backlog in `board next`, so it is a real
 // defect and takes the alert ink P0 uses. Fixed width, so line 3 aligns.
-func priorityGlyph(p string) string {
+func priorityGlyph(p string, g glyphSet) string {
 	switch p {
 	case "P0":
-		return prioP0.Render("P0")
+		return pad(prioP0.Render(g.bang), 2)
 	case "P1":
-		return prioFill.Render("P1")
-	case "P2", "P3":
-		return prioWhit.Render(p)
+		return prioP1.Render("P1")
+	case "P2":
+		return prioP2.Render("P2")
+	case "P3":
+		return prioP3.Render("P3")
 	}
-	return prioP0.Render("P?")
+	return prioUnset.Render("P?")
 }
 
 // ageChip — the LIVE agent's age since spawn, at minute precision so the
-// existing adaptive poll can drive it without a 1 Hz repaint.
+// existing adaptive poll can drive it without a 1 Hz repaint. No clock glyph
+// in any tier (spec §1): a right-justified `1h 12m` on line 3 has meant "age"
+// since GH-2061.
 //
 // No ledger record is a dash, never 0m: an agent nobody spawned through the
 // sanctioned path, or one spawned on another host, is not an agent that is
 // zero minutes old.
-func ageChip(m Model, card Card, g glyphSet) string {
+func ageChip(m Model, card Card) string {
 	label := "—"
 	if age, ok := m.cardAge(card.Number, time.Now()); ok {
 		label = formatAge(age)
 	}
-	return styleTimer.Render(strings.TrimSpace(g.clock+" ") + label)
+	return styleTimer.Render(label)
 }
 
 // costChip — "$8.00 274k": the live session's list-equivalent spend and its
@@ -742,7 +793,7 @@ func costChip(m Model, card Card) string {
 	if !ok {
 		return ""
 	}
-	return styleTimer.Render(fmt.Sprintf("$%.2f %s", u.ListUSD, formatTokens(u.MaxContext)))
+	return styleCost.Render(fmt.Sprintf("$%.2f %s", u.ListUSD, formatTokens(u.MaxContext)))
 }
 
 // formatTokens — "274k" at thousand precision, the unit every cost surface
@@ -1112,7 +1163,7 @@ func inboxRowLines(m Model, c Card, selected bool, width int) []string {
 		head += "  " + styleMeta.Render(c.Queue)
 	}
 	if c.Priority != "" {
-		head += "  " + priorityGlyph(c.Priority)
+		head += "  " + priorityGlyph(c.Priority, m.glyphSet())
 	}
 	if c.Estimate != "" {
 		head += " " + styleMeta.Render("["+c.Estimate+"]")

@@ -63,6 +63,15 @@ type Card struct {
 	// for it, which is why line 3 must not fall through to the meter that
 	// renders an UNSET priority as a defect.
 	ClosedAt string
+	// MergedPR is the Done card's closing PR (GH-2377): the highest-numbered
+	// MERGED PR in GitHub's own `closedByPullRequestsReferences` — the field
+	// the Done gate and the tend audit read. 0 = none, which is exactly the
+	// no-closing-keyword population the audit exists for. ClosingPRsRead is
+	// false when the closed read did not carry the linkage at all (a board
+	// CLI that predates `closed --prs`, or a row with no array), so an unread
+	// chip never renders like "no PR".
+	MergedPR       int
+	ClosingPRsRead bool
 	// Queue and Verb are set only on Inbox cards: which human queue the row
 	// came from (decision/proposal/approval/deliver-blocked) and the literal
 	// disposition command — the invariant that admitted the row to Tier 1.
@@ -234,7 +243,11 @@ const (
 	stateWorking   = "working"
 	stateStarting  = "starting"
 	stateIdle      = "idle"
-	stateUnknown   = "unknown"
+	// stateDone is herdr's own `done` (and the GH-2348 `finished` exit): the
+	// session ended cleanly. It used to collapse into idle, and "over" and
+	// "waiting for input" are different facts about a card (GH-2377).
+	stateDone    = "done"
+	stateUnknown = "unknown"
 )
 
 var stateRank = map[string]int{
@@ -243,7 +256,8 @@ var stateRank = map[string]int{
 	stateWorking:   2,
 	stateStarting:  3,
 	stateIdle:      4,
-	stateUnknown:   5,
+	stateDone:      5,
+	stateUnknown:   6,
 }
 
 // joinAgentState merges herdr's live observation with the session's own last
@@ -280,8 +294,10 @@ func joinAgentState(status, token string) string {
 			return stateReporting
 		}
 		return stateWorking
-	case "idle", "done":
+	case "idle":
 		return stateIdle
+	case "done":
+		return stateDone
 	case "", "unknown":
 		// herdr has no observation — the pane exists but no agent session has
 		// registered yet. This IS the starting window, and it is the only
@@ -475,13 +491,13 @@ func newModel(cfg Config, r Runner) Model {
 	}
 }
 
-// glyphSet is the set the card strip draws from. A zero-valued set — a Config
-// built without resolveGlyphs — falls back to ASCII rather than rendering the
-// whole strip as empty strings: an unset knob must mean "the safe default",
-// never "no glyphs at all".
+// glyphSet is the tier the card strip draws from. A zero-valued set — a
+// Config built without resolveGlyphs — falls back to the unicode default
+// rather than rendering the whole strip as empty strings: an unset knob must
+// mean "the default", never "no glyphs at all".
 func (m Model) glyphSet() glyphSet {
-	if m.glyphs.dotFull == "" {
-		return asciiGlyphs
+	if m.glyphs.name == "" {
+		return unicodeGlyphs
 	}
 	return m.glyphs
 }
