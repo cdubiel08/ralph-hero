@@ -1093,3 +1093,31 @@ func TestFreshnessNoticeReadsLibShVerdictOffStderr(t *testing.T) {
 		})
 	}
 }
+
+func TestStripFreshnessLinesKeepsTheSpawnsOwnError(t *testing.T) {
+	// A failed spawn on a stale plugin: the notice prints FIRST, so the
+	// detail derived from raw stderr would be the advisory, repeated on the
+	// status beside the notice, with the actual failure hidden.
+	stderr := "work-next.sh: the INSTALLED ralph-herdr differs from /r/plugin/ralph-herdr — the cockpit's own lanes execute that installed copy.\n" +
+		"work-next.sh: spawning anyway — this is advisory, never a gate. Sync with the fleet quiesced: bash /r/plugin/ralph-herdr/scripts/herdr-plugin-sync.sh\n" +
+		"lib.sh: herdr tab create refused: workspace not found\n"
+	got := stripFreshnessLines(stderr)
+	if want := "lib.sh: herdr tab create refused: workspace not found\n"; got != want {
+		t.Fatalf("stripFreshnessLines = %q, want %q", got, want)
+	}
+	if d := firstLine(got, nil); d != "lib.sh: herdr tab create refused: workspace not found" {
+		t.Fatalf("detail = %q, want the spawn's own error", d)
+	}
+	// The verdict is still read off the UNstripped stderr.
+	if n := freshnessNotice(stderr); n != "plugin STALE — sync with the fleet quiesced" {
+		t.Fatalf("notice = %q", n)
+	}
+	// NOT CHECKED is a single line and strips the same way.
+	if got := stripFreshnessLines("x: ralph-herdr freshness NOT CHECKED — reason\nreal error\n"); got != "real error\n" {
+		t.Fatalf("NOT CHECKED not stripped: %q", got)
+	}
+	// Nothing to strip leaves stderr byte-identical.
+	if got := stripFreshnessLines("only error\n"); got != "only error\n" {
+		t.Fatalf("clean stderr altered: %q", got)
+	}
+}

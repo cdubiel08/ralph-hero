@@ -83,7 +83,7 @@ to a version heading when that artifact next releases. Full tag history:
   the test fixture now proves both halves at once with a tripwire: the
   checkout's copy would answer "in sync" if executed, so a drift that still
   speaks is the proof it was not. A missing sibling reads `NOT CHECKED`
-  naming the install, never clean. Ships as ralph-herdr **0.39.0**.
+  naming the install, never clean. Ships as ralph-herdr **0.40.0**.
 
 - **The lane budget pre-flight and `gb_snapshot` read GraphQL's own
   `rateLimit` field; they had never been able to fire (GH-2278).** Both read

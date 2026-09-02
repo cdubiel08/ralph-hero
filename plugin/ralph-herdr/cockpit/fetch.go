@@ -171,6 +171,31 @@ func freshnessNotice(stderr string) string {
 	return ""
 }
 
+// freshnessPhrases are the lines lib.sh's notice prints — the two verdict
+// phrases above plus the "spawning anyway" line that follows a stale one.
+var freshnessPhrases = []string{"INSTALLED ralph-herdr differs", "freshness NOT CHECKED", "spawning anyway"}
+
+// stripFreshnessLines removes the notice from a spawn's stderr so a FAILED
+// spawn's detail is the spawn's own error, not the advisory that preceded
+// it: the notice prints first, so firstLine over the raw stderr would name
+// the staleness twice and the failure never (Codex P2 on #2345).
+func stripFreshnessLines(stderr string) string {
+	var kept []string
+	for _, l := range strings.Split(stderr, "\n") {
+		notice := false
+		for _, p := range freshnessPhrases {
+			if strings.Contains(l, p) {
+				notice = true
+				break
+			}
+		}
+		if !notice {
+			kept = append(kept, l)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
 func argsSpawn(scriptsDir string, n int) []string {
 	return []string{"-c", spawnScript, "ralph-cockpit", scriptsDir, strconv.Itoa(n)}
 }
@@ -1486,7 +1511,7 @@ func spawnCmd(cfg Config, r Runner, issue int) tea.Cmd {
 		}
 		detail := lastNonEmptyLine(out)
 		if rc != 0 && rc != 2 {
-			detail = firstLine(stderr+out, err)
+			detail = firstLine(stripFreshnessLines(stderr)+out, err)
 		}
 		return spawnDoneMsg{issue: issue, rc: rc, detail: detail, notice: freshnessNotice(stderr)}
 	}
