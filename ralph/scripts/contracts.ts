@@ -212,16 +212,31 @@ export const ROLE_NAMES = Object.keys(ROLES) as Role[];
  *
  *  Tool binding (the harness's own refusal, which fails CLOSED and loudly —
  *  an unknown flag is a start failure, a bound tool is "No such tool
- *  available"). No in-pane self-test runs for it yet (see roles.sh
- *  ralph_tool_binding_observed for why), so the strongest observation the
- *  spawn path makes is what the harness ACCEPTED:
+ *  available"). The in-pane self-test (GH-2341) adds a Write step after the
+ *  Bash touch and can REFUTE the binding but not confirm it beyond what the
+ *  harness accepted — measured on 2.1.258: a bound harness renders no
+ *  refusal when the model declines a tool it does not have, and under auto
+ *  mode a classifier denial of an AVAILABLE Write produces the same "no
+ *  file, turn complete", so "no file" is not an observed refusal:
  *    accepted       every binding flag was handed to a harness that accepted
  *                   them at start — derived from the argv actually passed,
- *                   never from the registry row. Deliberately not `applied`:
- *                   that word is reserved for an observed refusal
+ *                   never from the registry row — and, where the probe ran,
+ *                   its Write step left nothing in the tree. Deliberately
+ *                   not `applied`: that word is reserved for an observed
+ *                   refusal, which no surface renders today
  *    not_applied    a binding flag was passed but leaves one of
  *                   Edit/Write/NotebookEdit enabled — a writer in the tree;
- *                   the spawn refuses
+ *                   the spawn refuses. Read off the argv, OR off the probe:
+ *                   a Write landing INSIDE the denied tree (the kernel had
+ *                   just refused a Bash write there, so only the Write tool
+ *                   could have produced it), or a pane BLOCKED on a
+ *                   permission prompt during the Write step (a bound tool
+ *                   never asks)
+ *    unverified     the probe's Write step never completed and the pane did
+ *                   not read `blocked` — no writer was seen, and the step
+ *                   was not read to a verdict; refused, because a pane that
+ *                   never finished its probe turn cannot take its prompt
+ *                   (and may be mid-dialog behind a stale status read)
  *    not_requested  no binding flag was passed at all (the driver). Beside
  *                   `role: tender` this is the flags-dropped defect, and it
  *                   reads as one, because the role is its own field

@@ -328,15 +328,23 @@ RALPH_HERDR_UNAME=Darwin fails "containment: an empty checkout refuses" ralph_pr
 # sandbox state would have produced.
 cat >"$TMP/probe-hook.sh" <<'HOOK'
 #!/usr/bin/env bash
-# $1 agent, $2 prompt text. Touch per $FAKE_PROBE_MODE: applied (outside only),
-# inert (both — an unsandboxed pane), silent (nothing).
+# $1 agent, $2 prompt text. Touch per $FAKE_PROBE_MODE what an obedient pane
+# under each state would produce: applied (outside, plus the control marker
+# when the prompt carries the GH-2341 Write step — a bound pane writes no tool
+# marker), inert (inside too — an unsandboxed pane), silent (nothing),
+# tool-writer (an UNBOUND Write tool: the in-tree tool marker lands),
+# tool-stall (the Write step never completes: no tool marker, no control).
 paths=$(printf '%s' "$2" | grep -o "touch '[^']*' '[^']*'" | head -1)
 inside=$(printf '%s' "$paths" | sed -n "s/^touch '\([^']*\)' '.*$/\1/p")
 outside=$(printf '%s' "$paths" | sed -n "s/^touch '[^']*' '\([^']*\)'$/\1/p")
+tool=$(printf '%s' "$2" | sed -n "s/^.*create the file '\([^']*\)' with the content.*$/\1/p" | head -1)
+control=$(printf '%s' "$2" | sed -n "s/^touch '\([^']*\)'; echo CONTROL_RC.*$/\1/p" | head -1)
 case "${FAKE_PROBE_MODE:-applied}" in
-  applied) touch "$outside" ;;
-  inert) touch "$inside" "$outside" ;;
+  applied) touch "$outside"; [ -n "$control" ] && touch "$control" ;;
+  inert) touch "$inside" "$outside"; [ -n "$control" ] && touch "$control" ;;
   silent) : ;;
+  tool-writer) touch "$outside"; [ -n "$tool" ] && touch "$tool"; [ -n "$control" ] && touch "$control" ;;
+  tool-stall) touch "$outside" ;;
 esac
 HOOK
 chmod +x "$TMP/probe-hook.sh"
@@ -405,6 +413,88 @@ if grep -qF -- "touch '$REAL_TREE/.ralph-containment-probe-t-probe' '$TMP/home/c
 else
   not_ok "probe: prompt shape — got '$(grep -A1 'agent prompt t-probe' "$FAKE_HERDR_LOG" | cut -c1-200)'"
 fi
+unset FAKE_HERDR_PROMPT_HOOK
+
+# ── GH-2341: the Write step rides the same turn, after the Bash touch ────────
+# The probe is called WITHOUT a subshell here so the env words can be read
+# too; stdout carries both words when a fifth argument is given.
+export FAKE_HERDR_PROMPT_HOOK="$TMP/probe-hook.sh"
+: >"$FAKE_HERDR_LOG"
+FAKE_PROBE_MODE=applied RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" accepted >"$TMP/probe.out" 2>"$TMP/probe.err"; rc=$?
+is "tool step: a bound pane (no tool marker, control landed) is rc 0 and prints BOTH words" "0 applied accepted" "$rc $(cat "$TMP/probe.out")"
+is "tool step: the tool word stays at accepted — no file is not an observed refusal" "accepted" "$RALPH_HERDR_TOOL_BINDING_OUTCOME"
+case "$(cat "$TMP/probe.err")" in
+  "") ok "tool step: the bound pane is silent on stderr" ;;
+  *) not_ok "tool step: the bound pane should be silent — got '$(cat "$TMP/probe.err")'" ;;
+esac
+[ -e "$TMP/home/containment-probes/t-probe.$$.control" ] && not_ok "tool step: the control marker is cleaned up" || ok "tool step: the control marker is cleaned up"
+if grep -qF "Use the Write tool, and only the Write tool, to create the file '$REAL_TREE/.ralph-tool-probe-t-probe'" "$FAKE_HERDR_LOG"; then
+  ok "tool step: the prompt asks for a Write INSIDE the denied tree (a Bash write there was just refused, so only the Write tool can land it)"
+else
+  not_ok "tool step: prompt must name an in-tree Write target — got '$(grep -A4 'agent prompt t-probe' "$FAKE_HERDR_LOG" | cut -c1-200)'"
+fi
+touch_line=$(grep -nF "touch '$REAL_TREE/.ralph-containment-probe-t-probe'" "$FAKE_HERDR_LOG" | head -1 | cut -d: -f1)
+write_line=$(grep -nF "Use the Write tool" "$FAKE_HERDR_LOG" | head -1 | cut -d: -f1)
+control_line=$(grep -nF "echo CONTROL_RC" "$FAKE_HERDR_LOG" | head -1 | cut -d: -f1)
+if [ -n "$touch_line" ] && [ -n "$write_line" ] && [ -n "$control_line" ] && [ "$touch_line" -lt "$write_line" ] && [ "$write_line" -lt "$control_line" ]; then
+  ok "tool step: ordered Bash touch → Write → Bash control, so the process verdict is never at risk"
+else
+  not_ok "tool step: order must be touch ($touch_line) < Write ($write_line) < control ($control_line)"
+fi
+
+FAKE_PROBE_MODE=tool-writer RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" accepted >"$TMP/probe.out" 2>"$TMP/probe.err"; rc=$?
+is "tool step: a Write landing INSIDE the tree is tool binding not_applied (rc 1) beside process applied" "1 applied not_applied" "$rc $(cat "$TMP/probe.out")"
+case "$(cat "$TMP/probe.err")" in
+  *"Write tool WROTE INSIDE"*) ok "tool step: not_applied names the Write tool's write inside the tree" ;;
+  *) not_ok "tool step: not_applied must name the Write tool — got '$(cat "$TMP/probe.err")'" ;;
+esac
+[ -e "$TMP/tree-real/.ralph-tool-probe-t-probe" ] && not_ok "tool step: the tool marker an unbound pane wrote is removed" || ok "tool step: the tool marker an unbound pane wrote is removed"
+
+# The permission-dialog case (measured under --permission-mode default): the
+# Write step blocks the pane, the control touch never lands, and herdr reads
+# the agent as `blocked`. A bound tool never asks, so this is not_applied.
+printf '{"agent":{"name":"t-probe","agent_status":"blocked","pane_id":"p1","workspace_id":"w1","tab_id":"w1:t1","terminal_id":"term_fake","focused":false,"revision":3}}\n' \
+  >"$FAKE_HERDR_FIXTURES/agent-get.t-probe.json"
+FAKE_PROBE_MODE=tool-stall RALPH_HERDR_CONTAINMENT_PROBE_SEC=1 RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" accepted >"$TMP/probe.out" 2>"$TMP/probe.err"; rc=$?
+is "tool step: a pane BLOCKED on the Write step with no control marker is not_applied (rc 1) — the dialog case refuses, never passes" "1 applied not_applied" "$rc $(cat "$TMP/probe.out")"
+case "$(cat "$TMP/probe.err")" in
+  *"BLOCKED on a prompt"*) ok "tool step: the dialog refusal names the blocked pane" ;;
+  *) not_ok "tool step: the dialog refusal must say BLOCKED — got '$(cat "$TMP/probe.err")'" ;;
+esac
+rm -f "$FAKE_HERDR_FIXTURES/agent-get.t-probe.json"
+
+# The same silence from a pane that does NOT read blocked (the default
+# agent-get answers idle) is unverified and REFUSED (PR #2346 P1): the
+# status read can fail or lag a dialog already up, and a pane that never
+# finished its probe turn cannot take its prompt — "could not read" is
+# neither "checked" nor a writer, and never a pass.
+FAKE_PROBE_MODE=tool-stall RALPH_HERDR_CONTAINMENT_PROBE_SEC=1 RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" accepted >"$TMP/probe.out" 2>"$TMP/probe.err"; rc=$?
+is "tool step: an unreadable Write step on an unblocked pane is unverified (rc 1) — never promoted, never passed" "1 applied unverified" "$rc $(cat "$TMP/probe.out")"
+case "$(cat "$TMP/probe.err")" in
+  *"could not be read to a verdict"*) ok "tool step: the unverified case says the step could not be read" ;;
+  *) not_ok "tool step: the unverified case must say it could not be read — got '$(cat "$TMP/probe.err")'" ;;
+esac
+printf 'agent_get_failed\n' >"$FAKE_HERDR_FIXTURES/agent-get.t-probe.raw"; printf '1\n' >"$FAKE_HERDR_FIXTURES/agent-get.t-probe.rc"
+FAKE_PROBE_MODE=tool-stall RALPH_HERDR_CONTAINMENT_PROBE_SEC=1 RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" accepted >"$TMP/probe.out" 2>"$TMP/probe.err"; rc=$?
+is "tool step: a FAILED status read with no control marker is unverified (rc 1), never a pass" "1 applied unverified" "$rc $(cat "$TMP/probe.out")"
+rm -f "$FAKE_HERDR_FIXTURES/agent-get.t-probe.raw" "$FAKE_HERDR_FIXTURES/agent-get.t-probe.rc"
+
+# An inert sandbox refuses on the PROCESS verdict and leaves the tool word at
+# the argv observation: with Bash able to write the tree, an in-tree tool
+# marker would be forgeable, so the Write step is not read at all.
+FAKE_PROBE_MODE=inert RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" accepted >"$TMP/probe.out" 2>"$TMP/probe.err"; rc=$?
+is "tool step: an inert sandbox is process not_applied with the tool word untouched" "1 not_applied accepted" "$rc $(cat "$TMP/probe.out")"
+
+# No binding on the argv → nothing to refute: the Write step is not sent, and
+# the four-argument form keeps its one-word stdout.
+: >"$FAKE_HERDR_LOG"
+FAKE_PROBE_MODE=applied RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" not_requested >"$TMP/probe.out" 2>/dev/null; rc=$?
+is "tool step: not_requested sends no Write step and echoes the word back" "0 applied not_requested" "$rc $(cat "$TMP/probe.out")"
+if grep -q "Use the Write tool" "$FAKE_HERDR_LOG"; then not_ok "tool step: not_requested must not prompt a Write"; else ok "tool step: not_requested prompts no Write"; fi
+: >"$FAKE_HERDR_LOG"
+FAKE_PROBE_MODE=applied RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" >"$TMP/probe.out" 2>/dev/null; rc=$?
+is "tool step: the four-argument form still prints one word" "0 applied" "$rc $(cat "$TMP/probe.out")"
+if grep -q "Use the Write tool" "$FAKE_HERDR_LOG"; then not_ok "tool step: the four-argument form must not prompt a Write"; else ok "tool step: the four-argument form prompts no Write"; fi
 unset FAKE_HERDR_PROMPT_HOOK
 
 # ── GH-2267: what a spawn ACHIEVED, per mechanism, in the ledger ─────────────
