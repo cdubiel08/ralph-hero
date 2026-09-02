@@ -3028,9 +3028,13 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       );
     }
     // The demotion edge returns the unit to the eligible pool, so the local
-    // lock must not outlive the claim there (GH-2107). After the verify, so a
-    // failed state write never disarms the guard on a unit still being driven.
-    if (from === "In Progress" && to === "Backlog") releaseWorktreeLock(ctx, issue.number);
+    // lock must not outlive the claim there (GH-2107); a terminal edge ends
+    // the unit, so nothing may read the lease after it (GH-2367). After the
+    // verify, so a failed state write never disarms the guard on a unit still
+    // being driven.
+    if ((from === "In Progress" && to === "Backlog") || to === "Done" || to === "Canceled") {
+      releaseWorktreeLock(ctx, issue.number);
+    }
 
     // Parent gate: a child reaching In Review/Done may advance the parent.
     if ((to === "In Review" || to === "Done") && after.parent) {
@@ -3433,10 +3437,14 @@ function takeWorktreeLock(ctx: Ctx, number: number, spoke: WorktreeLock | null):
 /** The release edge gives the unit back to the pool, so this session's lock
  *  goes with the claim (GH-2107): left behind, the board says Backlog while
  *  the fleet's lease probe says taken, and the unit is unspawnable for a full
- *  TTL. Own lock only — a fresh lock naming another session is a live driver
- *  this session may not disarm — and best-effort: a failed unlink restores the
- *  status quo (the TTL self-clear), never blocks the release. In Progress →
- *  In Review deliberately does NOT clear: deliver reads that lease for the
+ *  TTL. The terminal edges — Done and Canceled, from any source state — clear
+ *  it too (GH-2367): a closed unit has no driver and no deliver pass left to
+ *  read the lease, so a lock left there is a tombstone `reap-leases` can never
+ *  see when the checkout is the main repo (#2242 sat four days). Own lock only
+ *  — a fresh lock naming another session is a live driver this session may
+ *  not disarm — and best-effort: a failed unlink restores the status quo (the
+ *  TTL self-clear), never blocks the move. In Progress → In Review
+ *  deliberately does NOT clear: deliver reads that lease for the
  *  unpushed-commits case (GH-1929), so there the lock must outlive the claim. */
 function releaseWorktreeLock(ctx: Ctx, number: number): void {
   const path = worktreeLockPath(ctx, number);

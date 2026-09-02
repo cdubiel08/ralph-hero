@@ -658,3 +658,51 @@ describe("release clears the session's own worktree lock (GH-2107)", () => {
     expect(existsSync(worktreeLockPath(owner, 1)!)).toBe(true);
   });
 });
+
+describe("terminal edges clear the session's own worktree lock (GH-2367)", () => {
+  let gh: FakeGh;
+  let dir: string;
+  beforeEach(() => {
+    gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog", prs: [{ number: 101, merged: true }] });
+    dir = mkdtempSync(join(tmpdir(), "board-session-"));
+  });
+
+  const at = (id: string | null) => makeCtx(gh, "me@test", "/repo", { session: { id, dir } });
+
+  it("In Progress → Done deletes the lock — a closed unit leaves no tombstone", () => {
+    const ctx = at("driver");
+    transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(existsSync(worktreeLockPath(ctx, 1)!)).toBe(true);
+
+    transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(existsSync(worktreeLockPath(ctx, 1)!)).toBe(false);
+  });
+
+  it("In Progress → Canceled deletes the lock — the reproduced #2242 self-cancel", () => {
+    const ctx = at("driver");
+    transition(ctx, fetchIssue(ctx, 1), "In Progress");
+
+    transition(ctx, fetchIssue(ctx, 1), "Canceled", { why: "scope collapsed" });
+    expect(existsSync(worktreeLockPath(ctx, 1)!)).toBe(false);
+  });
+
+  it("In Review → Done deletes the lock — the lease deliver kept (GH-1929) ends with the unit", () => {
+    const ctx = at("driver");
+    transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    transition(ctx, fetchIssue(ctx, 1), "In Review");
+    expect(existsSync(worktreeLockPath(ctx, 1)!)).toBe(true);
+
+    transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(existsSync(worktreeLockPath(ctx, 1)!)).toBe(false);
+  });
+
+  it("never deletes a PEER's lock — another session closing the unit leaves the owner's guard armed", () => {
+    const driver = at("driver");
+    transition(driver, fetchIssue(driver, 1), "In Progress");
+
+    const other = at("other");
+    transition(other, fetchIssue(other, 1), "Done");
+    expect(JSON.parse(readFileSync(worktreeLockPath(driver, 1)!, "utf8")).session).toBe("driver");
+  });
+});
