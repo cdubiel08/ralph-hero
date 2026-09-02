@@ -25,25 +25,9 @@ fail() { echo "  FAIL: $1"; ((FAIL++)) || true; }
 
 SELF_HOLDER="tick@$(hostname -s)"
 
-# run_tick <name> <runner_rc> <state> <holder> <get_fail(0|1)> [layout]
-# layout: which worktree already exists — "legacy" (.claude/worktrees/GH-42,
-# the default: a checkout cut before GH-1807) or "new" (the derived leaf).
-# Either way NO git plumbing runs: tick only touches git when there is no
-# worktree to resume, which is what keeps this skeleton a plain directory.
-# -> sets TICK_RC, BOARD_LOG (stub invocations), TICKS_LOG, ISSUE_LOG
-run_tick() {
-  local name="$1" runner_rc="$2" state="$3" holder="$4" get_fail="$5" layout="${6:-legacy}"
-  local scen="$TMP_ROOT/$name" repo home wt
-  repo="$scen/repo"; home="$scen/home"
-  case "$layout" in
-    legacy) wt="GH-42" ;;
-    new) wt="feat-42-stub-unit" ;;
-    *) echo "run_tick: unknown layout '$layout'" >&2; exit 2 ;;
-  esac
-  mkdir -p "$repo/ralph/scripts" "$repo/.claude/worktrees/$wt" "$home"
-  cp "$TICK_SRC" "$repo/ralph/scripts/tick.sh"
-  echo "autopilot=true" > "$home/config"
-
+# write_board_stub <repo> — the canned board CLI every scenario runs against.
+write_board_stub() {
+  local repo="$1"
   cat > "$repo/ralph/scripts/board" <<'EOF'
 #!/usr/bin/env bash
 echo "BOARD $*" >> "$STUB_LOG"
@@ -64,6 +48,28 @@ case "${1:-}" in
 esac
 EOF
   chmod +x "$repo/ralph/scripts/board"
+}
+
+# run_tick <name> <runner_rc> <state> <holder> <get_fail(0|1)> [layout]
+# layout: which worktree already exists — "legacy" (.claude/worktrees/GH-42,
+# the default: a checkout cut before GH-1807) or "new" (the derived leaf).
+# Either way NO git plumbing runs: tick only touches git when there is no
+# worktree to resume, which is what keeps this skeleton a plain directory.
+# -> sets TICK_RC, BOARD_LOG (stub invocations), TICKS_LOG, ISSUE_LOG
+run_tick() {
+  local name="$1" runner_rc="$2" state="$3" holder="$4" get_fail="$5" layout="${6:-legacy}"
+  local scen="$TMP_ROOT/$name" repo home wt
+  repo="$scen/repo"; home="$scen/home"
+  case "$layout" in
+    legacy) wt="GH-42" ;;
+    new) wt="feat-42-stub-unit" ;;
+    *) echo "run_tick: unknown layout '$layout'" >&2; exit 2 ;;
+  esac
+  mkdir -p "$repo/ralph/scripts" "$repo/.claude/worktrees/$wt" "$home"
+  cp "$TICK_SRC" "$repo/ralph/scripts/tick.sh"
+  echo "autopilot=true" > "$home/config"
+
+  write_board_stub "$repo"
 
   printf '#!/usr/bin/env bash\nexit %s\n' "$runner_rc" > "$scen/runner.sh"
   chmod +x "$scen/runner.sh"
@@ -165,6 +171,86 @@ expect_not_contains "legacy worktree -> note does NOT name the derived branch" \
 # 10. New layout: no legacy checkout to resume, so the derived branch wins.
 run_tick s9 7 "In Progress" "$SELF_HOLDER" 0 new
 expect_contains "derived worktree -> note names the derived branch" "$BOARD_LOG" "feat/42-stub-unit"
+
+# ---------------------------------------------------------------------------
+echo
+echo "=== tick.sh driver model (GH-2350) ==="
+
+# run_tick_model <name> <ralph_json|""> <settings_json|""> [VAR=value...] — the DEFAULT runner
+# (no RALPH_TICK_RUNNER) against a stub `claude` that logs its argv, so the
+# --model the tick composes is observable. -> TICK_RC, CLAUDE_LOG, BOARD_LOG
+run_tick_model() {
+  local name="$1" ralph_json="$2" settings_json="$3"
+  shift 3
+  local scen="$TMP_ROOT/model-$name" repo home
+  repo="$scen/repo"; home="$scen/home"
+  mkdir -p "$repo/ralph/scripts" "$repo/.claude/worktrees/feat-42-stub-unit" "$home" "$scen/bin"
+  [ -n "$settings_json" ] && printf '%s\n' "$settings_json" > "$repo/.claude/settings.json"
+  # Glob bait: a worktree file the bracket expression claude-haiku-4-5[1m]
+  # would match, so an unquoted expansion rewrites the argv and the test sees it.
+  : > "$repo/.claude/worktrees/feat-42-stub-unit/claude-haiku-4-51"
+  cp "$TICK_SRC" "$repo/ralph/scripts/tick.sh"
+  echo "autopilot=true" > "$home/config"
+  write_board_stub "$repo"
+  [ -n "$ralph_json" ] && printf '%s\n' "$ralph_json" > "$repo/.ralph.json"
+  printf '#!/usr/bin/env bash\necho "$*" >> "$CLAUDE_LOG"\nexit 0\n' > "$scen/bin/claude"
+  chmod +x "$scen/bin/claude"
+  set +e
+  env -u ANTHROPIC_API_KEY -u RALPH_ALLOW_API_BILLING -u RALPH_TICK_RUNNER -u RALPH_MODEL_DRIVER \
+    PATH="$scen/bin:$PATH" CLAUDE_LOG="$scen/claude.log" \
+    RALPH_HOME="$home" RALPH_TICK_TIMEOUT_MIN=1 \
+    STUB_LOG="$scen/board.log" STUB_STATE="In Review" STUB_HOLDER="$SELF_HOLDER" STUB_GET_FAIL=0 \
+    "$@" bash "$repo/ralph/scripts/tick.sh" > "$scen/out" 2>&1
+  TICK_RC=$?
+  set -e
+  CLAUDE_LOG=$(cat "$scen/claude.log" 2>/dev/null || true)
+  BOARD_LOG=$(cat "$scen/board.log" 2>/dev/null || true)
+  TICK_OUT=$(cat "$scen/out" 2>/dev/null || true)
+}
+
+printf '#!/usr/bin/env bash\necho "CUSTOM $*" >> "%s"\nexit 0\n' "$TMP_ROOT/custom-runner.log" > "$TMP_ROOT/custom-runner.sh"
+run_tick_model default "" ""
+expect_contains "no config -> the runner keeps its sonnet default" "$CLAUDE_LOG" "-p --model sonnet --permission-mode acceptEdits /ralph:work 42"
+
+run_tick_model json '{"owner":"o","repo":"r","projectNumber":1,"models":{"driver":"claude-sonnet-5"}}' ""
+expect_contains ".ralph.json models.driver -> the runner asks for it" "$CLAUDE_LOG" "-p --model claude-sonnet-5 --permission-mode acceptEdits /ralph:work 42"
+
+run_tick_model env '{"owner":"o","repo":"r","projectNumber":1,"models":{"driver":"claude-sonnet-5"}}' "" RALPH_MODEL_DRIVER=fable
+expect_contains "RALPH_MODEL_DRIVER outranks .ralph.json" "$CLAUDE_LOG" "-p --model fable --permission-mode acceptEdits /ralph:work 42"
+
+run_tick_model settings "" '{"env":{"RALPH_MODEL_DRIVER":"claude-haiku-4-5"}}'
+expect_contains ".claude/settings.json env.RALPH_MODEL_DRIVER -> the runner asks for it" "$CLAUDE_LOG" "-p --model claude-haiku-4-5 --permission-mode acceptEdits /ralph:work 42"
+
+run_tick_model malformed 'not json' ""
+[ "$TICK_RC" -eq 64 ] && pass "a malformed .ralph.json is a usage error, never a silent sonnet (exit 64)" || fail "malformed: expected exit 64, got $TICK_RC"
+expect_not_contains "malformed: no runner spawn" "$CLAUDE_LOG" "ralph:work"
+run_tick_model nonstring '{"models":{"driver":5}}' ""
+[ "$TICK_RC" -eq 64 ] && pass "a non-string models.driver is a usage error (exit 64)" || fail "non-string: expected exit 64, got $TICK_RC"
+run_tick_model absent-lane '{"models":{"lead":"opus"}}' ""
+expect_contains "a well-formed models object without driver keeps the sonnet default" "$CLAUDE_LOG" "-p --model sonnet --permission-mode"
+
+run_tick_model bracket '{"models":{"driver":"claude-haiku-4-5[1m]"}}' ""
+expect_contains "a bracketed model reaches the runner as ONE literal word, never glob-expanded" "$CLAUDE_LOG" "-p --model claude-haiku-4-5[1m] --permission-mode"
+
+run_tick_model empty-settings '{"models":{"lead":"opus"}}' " "
+[ "$TICK_RC" -eq 64 ] && pass "an empty settings.json is a usage error, not a silent sonnet (exit 64)" || fail "empty settings: expected exit 64, got $TICK_RC"
+
+run_tick_model null-settings '{"models":{"lead":"opus"}}' "null"
+[ "$TICK_RC" -eq 64 ] && pass "a top-level null settings.json is a usage error (exit 64)" || fail "null settings: expected exit 64, got $TICK_RC"
+
+run_tick_model bad "" "" "RALPH_MODEL_DRIVER=bad value"
+[ "$TICK_RC" -eq 64 ] && pass "an unridable driver model is a usage error (exit 64)" || fail "bad model: expected exit 64, got $TICK_RC"
+expect_contains "the refusal names the value" "$TICK_OUT" "driver model 'bad value' is not a model name"
+expect_not_contains "the refusal happens before any board read" "$BOARD_LOG" "BOARD"
+expect_not_contains "the refusal happens before any runner spawn" "$CLAUDE_LOG" "ralph:work"
+
+# A custom RALPH_TICK_RUNNER never receives MODEL, so the knob is neither
+# read nor validated under it (PR #2374 P2): a transport that worked before
+# this knob existed keeps working over a models block it does not use.
+run_tick_model custom-runner 'not json' "" "RALPH_TICK_RUNNER=bash $TMP_ROOT/custom-runner.sh" "RALPH_MODEL_DRIVER=bad value"
+[ "$TICK_RC" -eq 0 ] && pass "a custom runner ignores a malformed models config and a bad RALPH_MODEL_DRIVER" || fail "custom runner: expected exit 0, got $TICK_RC ($TICK_OUT)"
+expect_contains "the custom runner still receives the work prompt" "$(cat "$TMP_ROOT/custom-runner.log" 2>/dev/null || true)" "CUSTOM /ralph:work 42"
+expect_not_contains "the custom runner never sees a --model" "$(cat "$TMP_ROOT/custom-runner.log" 2>/dev/null || true)" "--model"
 
 # ---------------------------------------------------------------------------
 echo

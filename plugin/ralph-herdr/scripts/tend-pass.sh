@@ -80,7 +80,12 @@ contain_out=$(ralph_process_containment_args tender "$REPO") ||
   die "process containment cannot be established for the tender (see the reason above) — not spawning an uncontained $lane pane"
 contain_args=()
 while IFS= read -r out; do [ -n "$out" ] && contain_args+=("$out"); done <<<"$contain_out"
+# The lane's model (GH-2350), appended LAST so the binding/containment argv
+# a reader already recognises keeps its shape; an unridable value refuses.
+model=$(ralph_lane_model "$lane" "$REPO") ||
+  die "the $lane model could not be resolved (see the reason above) — not spawning $agent"
 harness_args=("${tool_args[@]}" "${contain_args[@]}")
+[ -n "$model" ] && harness_args+=(--model "$model")
 # GH-2267: the tool-binding outcome, read off the argv the pane will be
 # handed — never off the registry row. It is recorded on the `containment`
 # event beside the probe's verdict once both are known (GH-2342); a writing
@@ -98,7 +103,7 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   else
     echo "  $HERDR tab create --cwd $REPO --label \"$lane\" --no-focus"
   fi
-  echo "  $HERDR agent start $agent --kind claude --pane <captured>${tool_args[*]:+ -- ${tool_args[*]}}${contain_args[*]:+ --settings <process containment: seatbelt denyWrite $REPO>}"
+  echo "  $HERDR agent start $agent --kind claude --pane <captured>${tool_args[*]:+ -- ${tool_args[*]}}${contain_args[*]:+ --settings <process containment: seatbelt denyWrite $REPO>}${model:+ --model $model}"
   [ "${#contain_args[@]}" -gt 0 ] &&
     echo "  containment probe: prompt <captured> to touch <inside $REPO> <outside \$RALPH_HOME/containment-probes>; refuse unless applied; then Write <inside $REPO> and a control touch — refuse on tool binding not_applied (GH-2341)"
   echo "  tool binding: $tool_binding (read off the argv above — GH-2267; recorded on the containment event beside the probe verdict, after the in-pane Write step has had its say)"
@@ -108,7 +113,7 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   # follows the probe. Printed, never written: dry-run stops before ANY
   # mutation, ledger appends included.
   if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
-    record=$(_ralph_spawn_record "$ref" 0 "" "" "" "" "$(date -u +%FT%TZ)" "" "$REPO" tender) || record=""
+    record=$(_ralph_spawn_record "$ref" 0 "" "" "" "" "$(date -u +%FT%TZ)" "" "$REPO" tender "" "" "" "" "" "" "$model") || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"
     echo "  ledger append (containment, after the probe): {ev: \"containment\", agent_ref: \"$ref\", tool_binding: \"$tool_binding\", process_containment: <probe verdict>, via: \"spawn\"}"
   fi
@@ -158,7 +163,7 @@ case "$shell_pid" in '' | *[!0-9]*) shell_pid="" ;; esac
 record="" ledger=""
 ref=$(ralph_agent_ref "$agent" 2>/dev/null) || ref=""
 if [ -n "$ref" ]; then
-  record=$(_ralph_spawn_record "$ref" 0 "" "" "" "$pane" "$ts" "$shell_pid" "$REPO" tender) || record=""
+  record=$(_ralph_spawn_record "$ref" 0 "" "" "" "$pane" "$ts" "$shell_pid" "$REPO" tender "" "" "" "" "" "" "$model") || record=""
   ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
   if [ -n "$record" ] && [ -n "$ledger" ]; then
     RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" || {

@@ -1006,6 +1006,38 @@ else
 fi
 
 
+# ── per-lane model (GH-2350): the driver's knob rides the argv and the row ───
+# Env outranks both config files, so the assertions below cannot be moved by
+# whatever this checkout's own settings block comes to say.
+mrec=$(_ralph_spawn_record "w123-x#ab12cd34" 123 "" "" "" "p2" "2026-09-01T00:00:00Z" "" "$TMP" driver "" "" "" "" not_requested not_requested claude-sonnet-5)
+is "record: positional 17 lands as model_requested" "claude-sonnet-5" "$(jq -r '.model_requested' <<<"$mrec")"
+is "record: model_requested sits outside the strict C7 lineage" "false" "$(jq -r '.lineage | has("model_requested")' <<<"$mrec")"
+is "record: model_requested is not a chrome token" "false" "$(jq -r '.tokens | has("model_requested") or has("model")' <<<"$mrec")"
+is "record: an empty model omits the field — nothing asked reads like nothing asked" "false" "$(jq -r 'has("model_requested")' <<<"$prov")"
+out=$(RALPH_MODEL_DRIVER=claude-sonnet-5 RALPH_HERDR_DRY_RUN=true spawn_work_session 123 "$QUEUE" 2>&1)
+rc=$?
+is "dry-run (model): spawn plan exits 0" "0" "$rc"
+case "$out" in
+  *"agent start "*" --kind claude --pane <captured> -- --model claude-sonnet-5"*) ok "dry-run (model): --model is the driver's one harness argument" ;;
+  *) not_ok "dry-run (model): agent start argv — got: $(printf '%s\n' "$out" | grep 'agent start')" ;;
+esac
+mrec=$(printf '%s\n' "$out" | sed -n 's/^  ledger append (spawn): //p')
+is "dry-run (model): the record's model_requested is the argv's --model" "claude-sonnet-5" "$(jq -r '.model_requested' <<<"$mrec" 2>/dev/null)"
+is "dry-run (model): both containment outcomes still read not_requested off that argv" "not_requested|not_requested" \
+  "$(jq -r '"\(.tool_binding)|\(.process_containment)"' <<<"$mrec" 2>/dev/null)"
+out=$(RALPH_MODEL_DRIVER='bad value' RALPH_HERDR_DRY_RUN=true spawn_work_session 123 "$QUEUE" 2>&1)
+rc=$?
+is "dry-run (bad model): an unridable driver model refuses the spawn (rc 1)" "1" "$rc"
+case "$out" in
+  *"RALPH_MODEL_DRIVER"*) ok "dry-run (bad model): the refusal names the source" ;;
+  *) not_ok "dry-run (bad model): refusal text — got '$out'" ;;
+esac
+case "$out" in
+  *"DRY RUN"*) not_ok "dry-run (bad model): no plan is printed past the refusal" ;;
+  *) ok "dry-run (bad model): no plan is printed past the refusal" ;;
+esac
+
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

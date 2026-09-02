@@ -153,6 +153,33 @@ settle
 hasnt "no rename without a pane" "$(cat "$FAKE_HERDR_LOG")" "agent rename"
 unset PANE
 
+# ── per-lane model (GH-2350): the seat's knob rides the exec ─────────────────
+reset
+printf '{"owner":"fake","repo":"fake","projectNumber":1,"models":{"dispatch":"claude-opus-5"}}\n' >"$REPO_DIR/.ralph.json"
+out=$(run_hero)
+rc=$?
+[ "$rc" = 0 ] && ok "dispatch model: hero exits 0" || not_ok "dispatch model: hero exits 0 — rc $rc: $out"
+has "dispatch model: --model rides the exec beside --name" "$(cat "$FAKE_CLAUDE_LOG")" "^--name fake-dispatch --model claude-opus-5 /ralph:hero$"
+settle
+reset
+printf '{"owner":"fake","repo":"fake","projectNumber":1,"models":{"dispatch":"claude-opus-5"}}\n' >"$REPO_DIR/.ralph.json"
+out=$(FAKE_CLAUDE_HELP="  -h, --help" run_hero)
+has "dispatch model: --model survives a harness without --name" "$(cat "$FAKE_CLAUDE_LOG")" "^--model claude-opus-5 /ralph:hero$"
+settle
+reset
+printf '{"owner":"fake","repo":"fake","projectNumber":1,"models":{"dispatch":"claude-opus-5"}}\n' >"$REPO_DIR/.ralph.json"
+out=$(RALPH_MODEL_DISPATCH=fable run_hero)
+has "dispatch model: RALPH_MODEL_DISPATCH outranks .ralph.json" "$(cat "$FAKE_CLAUDE_LOG")" "^--name fake-dispatch --model fable /ralph:hero$"
+settle
+reset
+printf '{"owner":"fake","repo":"fake","projectNumber":1}\n' >"$REPO_DIR/.ralph.json"
+out=$(RALPH_MODEL_DISPATCH='bad value' run_hero)
+rc=$?
+[ "$rc" != 0 ] && ok "dispatch bad model: an unridable model refuses the seat" || not_ok "dispatch bad model: expected a refusal, got rc 0"
+has "dispatch bad model: the refusal names the source" "$out" "RALPH_MODEL_DISPATCH='bad value'"
+hasnt "dispatch bad model: the harness is never exec'd" "$(cat "$FAKE_CLAUDE_LOG")" "ralph:hero"
+settle
+
 echo
 echo "hero.test.sh: $pass passed, $fail failed ($n total)"
 [ "$fail" = 0 ]

@@ -570,5 +570,82 @@ case "$out" in
 esac
 unset FAKE_HERDR_PROMPT_HOOK
 
+# ── 6. per-lane model (GH-2350) — one resolver, first hit wins, refuses ─────
+# what it cannot hand an argv. The lanes are the five session kinds a
+# cockpit starts, not the role registry.
+is "model: the lane vocabulary is the five session kinds" "driver lead dispatch deliver tend" "$RALPH_MODEL_LANES"
+MROOT="$TMP/models"
+mkdir -p "$MROOT/a/.claude" "$MROOT/b/.claude" "$MROOT/c"
+printf '{"owner":"f","repo":"f","projectNumber":1,"models":{"driver":"claude-sonnet-5","tend":"bad value"}}\n' >"$MROOT/a/.ralph.json"
+printf '{"env":{"RALPH_MODEL_LEAD":"opus"}}\n' >"$MROOT/a/.claude/settings.json"
+printf '{"env":{"RALPH_MODEL_DELIVER":"claude-haiku-4-5[1m]"}}\n' >"$MROOT/b/.claude/settings.json"
+with_env() { local kv="$1"; shift; ( export "$kv"; "$@" ); }
+is "model: unset everywhere is inherit — empty output" "" "$(ralph_lane_model dispatch "$MROOT/c")"
+succeeds "model: unset everywhere is rc 0 (inherit is not an error)" ralph_lane_model dispatch "$MROOT/c"
+is "model: .ralph.json models.<lane>" "claude-sonnet-5" "$(ralph_lane_model driver "$MROOT/a")"
+is "model: a lane .ralph.json does not name falls THROUGH to the settings env block" "opus" "$(ralph_lane_model lead "$MROOT/a")"
+is "model: the settings env block alone" "claude-haiku-4-5[1m]" "$(ralph_lane_model deliver "$MROOT/b")"
+is "model: RALPH_MODEL_<LANE> in the environment outranks both files" "fable" "$(RALPH_MODEL_DRIVER=fable ralph_lane_model driver "$MROOT/a")"
+is "model: ROOT defaults to \$REPO" "claude-sonnet-5" "$(REPO="$MROOT/a" ralph_lane_model driver)"
+is "model: a full model id survives the shape check" "us.anthropic.claude-opus-5:0" "$(RALPH_MODEL_LEAD=us.anthropic.claude-opus-5:0 ralph_lane_model lead "$MROOT/c")"
+fails "model: an unknown lane refuses (investigators are not a lane)" ralph_lane_model investigator "$MROOT/a"
+fails "model: a value with whitespace refuses — a config error, never a silent inherit" ralph_lane_model tend "$MROOT/a"
+fails "model: a shell metacharacter refuses" with_env 'RALPH_MODEL_LEAD=x;rm' ralph_lane_model lead "$MROOT/c"
+fails "model: a leading dash refuses (it would read as a flag)" with_env 'RALPH_MODEL_LEAD=-model' ralph_lane_model lead "$MROOT/c"
+fails "model: over 80 chars refuses" with_env "RALPH_MODEL_LEAD=$(printf 'a%.0s' $(seq 1 81))" ralph_lane_model lead "$MROOT/c"
+out=$(ralph_lane_model tend "$MROOT/a" 2>&1 >/dev/null)
+case "$out" in
+  *".ralph.json models.tend='bad value'"*) ok "model: the refusal names the source and the value" ;;
+  *) not_ok "model: refusal text — got '$out'" ;;
+esac
+is "model args: two argv words, --model then the value" "--model|claude-sonnet-5|" "$(ralph_model_args driver "$MROOT/a" | tr '\n' '|')"
+is "model args: nothing configured prints nothing" "" "$(ralph_model_args dispatch "$MROOT/c")"
+fails "model args: the resolver's refusal propagates" ralph_model_args tend "$MROOT/a"
+is "observed: --model is not a binding flag (GH-2267 reads it as not_requested)" "not_requested" "$(ralph_tool_binding_observed --model claude-sonnet-5)"
+# PR #2374 P1: an unreadable file is a refusal, never a fall-through — the
+# knob being set must not render as the knob being ignored.
+mkdir -p "$MROOT/d/.claude" "$MROOT/e" "$MROOT/f" "$MROOT/g/.claude"
+printf 'not json' >"$MROOT/d/.ralph.json"
+printf '{"env":{"RALPH_MODEL_DRIVER":"fable"}}\n' >"$MROOT/d/.claude/settings.json"
+printf '{"models":"claude-sonnet-5"}\n' >"$MROOT/e/.ralph.json"
+printf '{"models":{"driver":5}}\n' >"$MROOT/f/.ralph.json"
+printf '{"models":{"lead":"opus"}}\n' >"$MROOT/g/.ralph.json"
+printf '{"env":"nope"}\n' >"$MROOT/g/.claude/settings.json"
+fails "model: malformed .ralph.json refuses instead of falling through to the settings block" ralph_lane_model driver "$MROOT/d"
+out=$(ralph_lane_model driver "$MROOT/d" 2>&1 >/dev/null)
+case "$out" in *"cannot read"*".ralph.json"*) ok "model: the malformed-file refusal names the file" ;; *) not_ok "model: malformed-file refusal text — got '$out'" ;; esac
+fails "model: a models value that is not an object refuses" ralph_lane_model driver "$MROOT/e"
+fails "model: a non-string lane value refuses" ralph_lane_model driver "$MROOT/f"
+is "model: a lane absent from a well-formed models object still inherits" "" "$(ralph_lane_model driver "$MROOT/g")"
+fails "model: a settings env block that is not an object refuses" ralph_lane_model tend "$MROOT/g"
+is "model: the lane .ralph.json does name never reaches the broken settings block" "opus" "$(ralph_lane_model lead "$MROOT/g")"
+# PR #2374 P2: an EMPTY file is unreadable too — a plain jq filter runs
+# zero times on it and prints nothing, which read as inherit.
+mkdir -p "$MROOT/h/.claude" "$MROOT/i"
+printf '{"models":{"lead":"opus"}}\n' >"$MROOT/h/.ralph.json"
+: >"$MROOT/h/.claude/settings.json"
+printf '  \n' >"$MROOT/i/.ralph.json"
+fails "model: an empty settings.json refuses rather than reading as inherit" ralph_lane_model driver "$MROOT/h"
+fails "model: a whitespace-only .ralph.json refuses" ralph_lane_model driver "$MROOT/i"
+is "model: the lane the well-formed .ralph.json names never reaches the empty settings file" "opus" "$(ralph_lane_model lead "$MROOT/h")"
+# A top-level value that is not an object (null, array, scalar) is refused
+# too — loadConfig's own "expected a JSON object" rule, restated here because
+# board.ts never reads settings.json when .ralph.json exists, so this reader
+# is the only thing that would ever look at that file.
+mkdir -p "$MROOT/k/.claude" "$MROOT/l"
+printf '{"models":{"lead":"opus"}}\n' >"$MROOT/k/.ralph.json"
+printf 'null\n' >"$MROOT/k/.claude/settings.json"
+printf '[]\n' >"$MROOT/l/.ralph.json"
+fails "model: a top-level null settings.json refuses" ralph_lane_model driver "$MROOT/k"
+fails "model: a top-level array .ralph.json refuses" ralph_lane_model driver "$MROOT/l"
+# An empty STRING is not a model and not an error: it names nothing, like
+# an absent key — the shell convention this repo already uses for its env
+# knobs (RALPH_CLAIM_MAX_ESTIMATE: empty = off), so it falls through.
+mkdir -p "$MROOT/j/.claude"
+printf '{"models":{"driver":""}}\n' >"$MROOT/j/.ralph.json"
+printf '{"env":{"RALPH_MODEL_DRIVER":"claude-sonnet-5"}}\n' >"$MROOT/j/.claude/settings.json"
+is "model: an empty string names nothing and falls through like an absent key" "claude-sonnet-5" "$(ralph_lane_model driver "$MROOT/j")"
+is "model: an empty RALPH_MODEL_<LANE> in the environment is unset, not a refusal" "claude-sonnet-5" "$(RALPH_MODEL_DRIVER= ralph_lane_model driver "$MROOT/j")"
+
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

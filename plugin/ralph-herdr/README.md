@@ -17,7 +17,10 @@ spawns does.
 - herdr >= 0.8.0 with a running server (`herdr`), plus `jq`
 - a ralph-configured repo: a reachable board CLI, board scope configured
   (`.ralph.json` or the tracked `.claude/settings.json` env block — board.ts reads
-  both from the repo tree, so panes need no scope env), `gh` authed with
+  both from the repo tree, so panes need no scope env; the same two files carry
+  the optional per-lane model, `.ralph.json` `models.{driver,lead,dispatch,deliver,tend}`
+  or `RALPH_MODEL_<LANE>`, which every spawn path here hands the harness as
+  `--model` — GH-2350; nothing set = inherit), `gh` authed with
   `repo,project` scopes. The board CLI is discovered in order (GH-1761):
   `RALPH_HERDR_BOARD` override → `ralph/scripts/board` in the repo tree (the
   vendored-checkout layout, i.e. ralph-hero itself) → the installed ralph plugin

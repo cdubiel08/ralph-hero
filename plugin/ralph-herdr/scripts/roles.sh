@@ -545,3 +545,117 @@ ralph_investigator_harness_args() {
   }
   printf '%s\n' "--agents" "$json" "--agent" "investigator" "--tools" "$tools"
 }
+
+# ── Per-lane model (GH-2350) ─────────────────────────────────────────────────
+# A spawn asks the harness for a model per LANE, or asks for nothing and
+# inherits the account default (the status quo: every spawn path handed
+# `agent start` no --model at all, which is why the corpus walked the
+# calendar of default models). The lane vocabulary is the five session kinds
+# a cockpit starts — not the C8 role, which is about who may WRITE, and not
+# the lane letter, which is a name grammar. `driver` covers every /ralph:work
+# session (fleet, team worker, headless tick); `lead` the team orchestrator;
+# `dispatch` the hero seat; `deliver` and `tend` their passes.
+#
+# Resolution, first hit wins:
+#   1. RALPH_MODEL_<LANE> in the spawner's environment (uppercased lane)
+#   2. .ralph.json            models.<lane>
+#   3. .claude/settings.json  env.RALPH_MODEL_<LANE>
+# — 2 and 3 are the two files board.ts loadConfig reads, in its order, so a
+# repo configures its model where it configured its board and never has to
+# switch config lanes to reach this knob. Unlike loadConfig the chain falls
+# THROUGH: a lane `.ralph.json` does not name is looked up in the settings
+# block rather than read as inherit, since "the first place that names it"
+# is the rule a reader can hold in their head. Unset everywhere = inherit.
+RALPH_MODEL_LANES="driver lead dispatch deliver tend"
+
+# ralph_lane_model LANE [ROOT] — the model LANE's session should be asked
+# for, on stdout; empty output (rc 0) means inherit. rc 1 on an unknown lane
+# or a value that could not ride an argv — a loud config error, never a
+# silent inherit, because "the knob is set" and "the knob is ignored" must
+# not render alike (the RALPH_CLAIM_MAX_ESTIMATE shape). Whether the model
+# EXISTS is claude's contract: harness args are forwarded verbatim, and a
+# mirror of its alias table here would be a second copy that drifts.
+ralph_lane_model() {
+  local lane="${1-}" root="${2:-${REPO:-$PWD}}" var model="" src=""
+  case " $RALPH_MODEL_LANES " in
+    *" $lane "*) ;;
+    *)
+      echo "ralph_lane_model: unknown lane '$lane' (lanes: $RALPH_MODEL_LANES)" >&2
+      return 1
+      ;;
+  esac
+  var="RALPH_MODEL_$(printf '%s' "$lane" | tr '[:lower:]' '[:upper:]')"
+  model="${!var-}"
+  src="\$$var"
+  # A file that cannot be READ is a refusal, never an empty answer: malformed
+  # JSON, a `models` that is not an object, or a value that is not a string
+  # would otherwise fall through to a lower-priority source or to inherit —
+  # "the knob is set" rendering as "the knob is ignored" (PR #2374 P1). The
+  # jq program errors on every such shape and is silent only on absence —
+  # `-n` + `input` included, so an EMPTY or whitespace-only file (which a
+  # plain filter would pass over without running) errors too (PR #2374 P2).
+  if [ -z "$model" ] && [ -n "$root" ] && [ -f "$root/.ralph.json" ]; then
+    src="$root/.ralph.json models.$lane"
+    model=$(jq -rn --arg l "$lane" '
+      input | if type != "object" then error("expected a JSON object at the top level, got \(type)") else . end
+      | .models as $m
+      | if $m == null then empty
+        elif ($m | type) != "object" then error("models must be an object, got \($m | type)")
+        else ($m[$l] as $v
+          | if $v == null then empty
+            elif ($v | type) != "string" then error("models.\($l) must be a string, got \($v | type)")
+            else $v end)
+        end' "$root/.ralph.json" 2>&1) || {
+      echo "ralph_lane_model: cannot read $src — ${model:-jq failed}; refusing rather than inheriting" >&2
+      return 1
+    }
+  fi
+  if [ -z "$model" ] && [ -n "$root" ] && [ -f "$root/.claude/settings.json" ]; then
+    src="$root/.claude/settings.json env.$var"
+    model=$(jq -rn --arg v "$var" '
+      input | if type != "object" then error("expected a JSON object at the top level, got \(type)") else . end
+      | .env as $e
+      | if $e == null then empty
+        elif ($e | type) != "object" then error("env must be an object, got \($e | type)")
+        else ($e[$v] as $x
+          | if $x == null then empty
+            elif ($x | type) != "string" then error("env.\($v) must be a string, got \($x | type)")
+            else $x end)
+        end' "$root/.claude/settings.json" 2>&1) || {
+      echo "ralph_lane_model: cannot read $src — ${model:-jq failed}; refusing rather than inheriting" >&2
+      return 1
+    }
+  fi
+  [ -n "$model" ] || return 0
+  # Shape only: one argv word, no whitespace or shell metacharacters. The
+  # bracket pair admits the harness's context-window suffix (`[1m]`).
+  case "$model" in
+    [A-Za-z0-9]*) ;;
+    *)
+      echo "ralph_lane_model: $src='$model' is not a model name (must start with a letter or digit)" >&2
+      return 1
+      ;;
+  esac
+  # Parameter expansion, not grep: a `]` inside a bracket expression closes
+  # it in every regex flavour, and the first draft's pattern matched nothing.
+  local rest="${model//[A-Za-z0-9._:-]/}"
+  rest="${rest//\[/}"
+  rest="${rest//\]/}"
+  if [ "${#model}" -gt 80 ] || [ -n "$rest" ]; then
+    echo "ralph_lane_model: $src='$model' is not a model name (allowed: letters, digits, . _ : [ ] -; max 80 chars)" >&2
+    return 1
+  fi
+  printf '%s\n' "$model"
+}
+
+# ralph_model_args LANE [ROOT] — the `claude` arguments asking for LANE's
+# model, one per line (empty output, rc 0, when nothing is configured).
+# Callers read them into "$@" beside the binding and containment args and
+# append them LAST, so the argv a reader already recognises keeps its shape.
+# rc 1 propagates ralph_lane_model's refusal.
+ralph_model_args() {
+  local model
+  model=$(ralph_lane_model "$@") || return 1
+  [ -n "$model" ] || return 0
+  printf '%s\n' "--model" "$model"
+}

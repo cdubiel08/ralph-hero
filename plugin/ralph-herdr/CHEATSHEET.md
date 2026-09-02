@@ -60,7 +60,10 @@ command -v gh && command -v jq || brew install gh jq
 gh auth login -s repo,project
 ```
 
-Board scope lives in `.ralph.json` (`{owner, repo, projectNumber, host?}`) at the
+Board scope lives in `.ralph.json` (`{owner, repo, projectNumber, host?, models?}`
+— `models: {driver, lead, dispatch, deliver, tend}` pins the `--model` each lane's
+spawn asks for; `RALPH_MODEL_<LANE>` in the spawner's env or the settings block
+does the same; unset = inherit, GH-2350) at the
 repo root, or the `RALPH_GH_OWNER` / `RALPH_GH_REPO` / `RALPH_GH_PROJECT_NUMBER`
 env block. Then:
 

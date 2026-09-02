@@ -44,6 +44,12 @@ ralph_plugin_freshness_notice
 lane=deliver
 agent=r0-deliver
 
+# The lane's model (GH-2350) — the one harness argument this path hands over.
+model=$(ralph_lane_model "$lane" "$REPO") ||
+  die "the $lane model could not be resolved (see the reason above) — not spawning $agent"
+model_args=()
+[ -n "$model" ] && model_args=(--model "$model")
+
 next=$("$BOARD" deliver-queue --json | jq -r '.next.number // empty')
 if [ -z "$next" ]; then
   echo "$lane queue empty — nothing to spawn"
@@ -74,14 +80,14 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   else
     echo "  $HERDR tab create --cwd $REPO --label \"$lane\" --no-focus"
   fi
-  echo "  $HERDR agent start $agent --kind claude --pane <captured>"
+  echo "  $HERDR agent start $agent --kind claude --pane <captured>${model:+ -- --model $model}"
   echo "  $HERDR agent prompt $agent \"/ralph:$lane\""
   # The exact spawn record the live path would append (pane_id omitted — pane
   # ids are captured live, never predicted). Printed, never written: dry-run
   # stops before ANY mutation, ledger appends included.
   if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
     record=$(_ralph_spawn_record "$ref" 0 "" "" "" "" "$(date -u +%FT%TZ)" "" "$REPO" driver "" "" "" "" \
-      "$(ralph_tool_binding_observed)" not_requested) || record=""
+      "$(ralph_tool_binding_observed ${model_args[@]+"${model_args[@]}"})" not_requested "$model") || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"
   fi
   exit 0
@@ -118,8 +124,9 @@ fi
 # Provisional C7 record at pane creation (audit D2b parity with
 # spawn_work_session and work-team.sh): a launcher killed between the split
 # and `agent start` leaves a sweepable row instead of nothing. role=driver,
-# issue 0, checkout $REPO. GH-2267: this path hands `agent start` no harness
-# argument at all — no binding flag, no sandbox document — so both outcomes
+# issue 0, checkout $REPO. GH-2267: this path hands `agent start` no
+# containment argument — no binding flag, no sandbox document (a `--model`,
+# GH-2350, is neither and the observer ignores it) — so both outcomes
 # are `not_requested`, read off that (empty) argv rather than off the role,
 # and written so an absent field keeps meaning "a record from before this
 # existed", never "known off". A ref that cannot be minted degrades exactly
@@ -132,7 +139,7 @@ record="" ledger=""
 ref=$(ralph_agent_ref "$agent" 2>/dev/null) || ref=""
 if [ -n "$ref" ]; then
   record=$(_ralph_spawn_record "$ref" 0 "" "" "" "$pane" "$ts" "$shell_pid" "$REPO" driver "" "" "" "" \
-    "$(ralph_tool_binding_observed)" not_requested) || record=""
+    "$(ralph_tool_binding_observed ${model_args[@]+"${model_args[@]}"})" not_requested "$model") || record=""
   ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
   if [ -n "$record" ] && [ -n "$ledger" ]; then
     RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" || {
@@ -156,7 +163,7 @@ fi
 # The provisional row follows the same split: a REFUSED start proved no
 # worker ever existed, so the row closes here (never_started); an UNCERTAIN
 # one stays open for reconcile to prove, like the pane it describes.
-if ! agent_start_when_ready "$agent" "$pane"; then
+if ! agent_start_when_ready "$agent" "$pane" ${model_args[@]+"${model_args[@]}"}; then
   if [ "${RALPH_HERDR_START_OUTCOME:-uncertain}" = "refused" ]; then
     _ralph_spawn_close "$ref" "$ledger" never_started
     [ -n "$cleanup_pane" ] && "$HERDR" pane close "$cleanup_pane" >/dev/null 2>&1 || true

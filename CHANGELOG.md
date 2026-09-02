@@ -19,6 +19,19 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Added
 
+- **Per-lane model setting (GH-2350).** Every cockpit spawn path — driver
+  (`spawn_work_session`), lead (`work-team.sh`), dispatch (`hero.sh`),
+  deliver and tend passes — plus the headless `tick.sh` runner now asks the
+  harness for a model per lane: `RALPH_MODEL_<LANE>` in the spawner's
+  environment → `.ralph.json` `models.<lane>` → the tracked settings `env`
+  block, first hit wins, one reader (`roles.sh ralph_lane_model`). Nothing
+  set = no `--model` flag = the account default every spawn inherited before,
+  so an unconfigured repo changes nothing. A value that cannot ride an argv
+  refuses the spawn loudly rather than inheriting silently; whether the
+  model exists stays the harness's contract. The spawn record carries
+  `model_requested` beside the two containment outcomes, so the usage fact
+  can be compared against what was asked for (#2352). `tick.sh` keeps
+  `sonnet` as its floor when nothing is configured.
 - **`board reap-leases --closed` — a second reaper key: the unit is CLOSED
   on GitHub (GH-2368).** GH-2108 keyed the reaper on the missing checkout,
   which assumes one throwaway worktree per unit; a unit driven from the main

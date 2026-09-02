@@ -440,5 +440,42 @@ log_hasnt "tend dry: no agent started" "agent start"
 log_hasnt "tend dry: no prompt sent" "agent prompt"
 is "tend dry: the ledger is untouched" "0" "$(ledger_count 'true')"
 
+# ── per-lane model (GH-2350): each pass asks for its own lane's model ────────
+cp "$REPO_DIR/.ralph.json" "$TMP/ralph.json.bak"
+printf '{"owner":"fake","repo":"fake","projectNumber":1,"models":{"deliver":"claude-sonnet-5","tend":"claude-haiku-4-5"}}\n' >"$REPO_DIR/.ralph.json"
+reset
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+log_has "deliver model: --model is the one harness argument the deliverer is handed" \
+  "agent start r0-deliver --kind claude --pane pS1 -- --model claude-sonnet-5"
+is "deliver model: the row records model_requested beside both not_requested outcomes" "1" \
+  "$(ledger_count '.ev=="spawn" and .model_requested=="claude-sonnet-5" and .tool_binding=="not_requested" and .process_containment=="not_requested"')"
+has "deliver model: the watcher still takes over" "$out" "notify-watch r0-deliver"
+reset
+out=$(RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
+log_has "tend model: --model rides LAST, after binding and containment" \
+  "agent start t0-tend --kind claude --pane pS1 -- --disallowedTools Edit,Write,NotebookEdit --settings .* --model claude-haiku-4-5"
+is "tend model: the provisional row carries model_requested" "1" \
+  "$(ledger_count '.ev=="spawn" and .model_requested=="claude-haiku-4-5" and .tokens.role=="tender"')"
+has "tend model: containment is still probed and applied" "$out" "process containment: applied for t0-tend"
+has "tend model: tool binding is still read as accepted off the argv" "$out" "tool binding: accepted for t0-tend"
+reset
+out=$(RALPH_MODEL_DELIVER=fable RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+log_has "deliver model: RALPH_MODEL_DELIVER outranks .ralph.json" \
+  "agent start r0-deliver --kind claude --pane pS1 -- --model fable"
+reset
+out=$(RALPH_MODEL_TEND='bad value' RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "tend bad model: an unridable model refuses the pass"; else not_ok "tend bad model: expected a refusal, got rc 0"; fi
+has "tend bad model: the refusal names the source" "$out" "RALPH_MODEL_TEND='bad value'"
+log_hasnt "tend bad model: refused before any surface — no split" "pane split"
+log_hasnt "tend bad model: refused before any surface — no agent" "agent start"
+is "tend bad model: the ledger is untouched" "0" "$(ledger_count 'true')"
+reset
+out=$(RALPH_HERDR_DRY_RUN=true RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane deliver)
+has "deliver dry (model): the plan prints the argv the live path hands over" "$out" "agent start r0-deliver --kind claude --pane <captured> -- --model claude-sonnet-5"
+has "deliver dry (model): the printed record carries model_requested" "$out" '"model_requested":"claude-sonnet-5"'
+log_hasnt "deliver dry (model): no agent started" "agent start"
+cp "$TMP/ralph.json.bak" "$REPO_DIR/.ralph.json"
+
 echo "$pass passed, $fail failed ($n total)"
 [ "$fail" -eq 0 ]
