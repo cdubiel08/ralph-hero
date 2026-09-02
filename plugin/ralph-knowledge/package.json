@@ -37,16 +37,16 @@
     "graphology-simple-path": "^0.2.0",
     "graphology-traversal": "^0.3.1",
     "graphology-types": "^0.24.8",
-    "ignore": "^7.0.6",
+    "ignore": "^7.0.7",
     "sqlite-vec": "^0.1.9",
     "yaml": "^2.9.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.4.0",
     "@vitest/coverage-v8": "^4.1.11",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vitest": "^4.0.0"
   },
