@@ -22,33 +22,39 @@ TIMEOUT_MIN="${RALPH_TICK_TIMEOUT_MIN:-45}"
 # restated here because this runner is installed without the herdr plugin:
 # RALPH_MODEL_DRIVER > .ralph.json models.driver > .claude/settings.json
 # env.RALPH_MODEL_DRIVER > sonnet, the default this runner always had.
-# RALPH_TICK_RUNNER still replaces the whole command.
 # A file that cannot be read is a usage error, never an empty answer: a
-# malformed file or a non-string value must not fall through to sonnet.
-MODEL="${RALPH_MODEL_DRIVER:-}"
-if [ -z "$MODEL" ] && [ -f "$REPO_ROOT/.ralph.json" ]; then
-  MODEL=$(jq -r '.models as $m | if $m == null then empty
-      elif ($m | type) != "object" then error("models must be an object")
-      elif $m.driver == null then empty
-      elif ($m.driver | type) != "string" then error("models.driver must be a string")
-      else $m.driver end' "$REPO_ROOT/.ralph.json" 2>&1) || {
-    echo "tick: cannot read $REPO_ROOT/.ralph.json models.driver — $MODEL" >&2; exit 64; }
-fi
-if [ -z "$MODEL" ] && [ -f "$REPO_ROOT/.claude/settings.json" ]; then
-  MODEL=$(jq -r '.env as $e | if $e == null then empty
-      elif ($e | type) != "object" then error("env must be an object")
-      elif $e.RALPH_MODEL_DRIVER == null then empty
-      elif ($e.RALPH_MODEL_DRIVER | type) != "string" then error("env.RALPH_MODEL_DRIVER must be a string")
-      else $e.RALPH_MODEL_DRIVER end' "$REPO_ROOT/.claude/settings.json" 2>&1) || {
-    echo "tick: cannot read $REPO_ROOT/.claude/settings.json env.RALPH_MODEL_DRIVER — $MODEL" >&2; exit 64; }
-fi
-[ -n "$MODEL" ] || MODEL=sonnet
-# Shape only — one argv word; the harness owns whether the model exists.
-_rest="${MODEL//[A-Za-z0-9._:-]/}"; _rest="${_rest//\[/}"; _rest="${_rest//\]/}"
-case "$MODEL" in [A-Za-z0-9]*) ;; *) _rest="x" ;; esac
-if [ -n "$_rest" ] || [ "${#MODEL}" -gt 80 ]; then
-  echo "tick: driver model '$MODEL' is not a model name (allowed: letters, digits, . _ : [ ] -; max 80 chars)" >&2
-  exit 64
+# malformed or EMPTY file (jq -n + input errors on it; a plain filter runs
+# zero times and prints nothing) or a non-string value must not fall through
+# to sonnet. RALPH_TICK_RUNNER replaces the whole command and never sees
+# MODEL, so under it the knob is neither read nor validated — a custom
+# transport keeps working over a models block it does not use (PR #2374 P2).
+MODEL=""
+if [ -z "${RALPH_TICK_RUNNER:-}" ]; then
+  MODEL="${RALPH_MODEL_DRIVER:-}"
+  if [ -z "$MODEL" ] && [ -f "$REPO_ROOT/.ralph.json" ]; then
+    MODEL=$(jq -rn 'input | .models as $m | if $m == null then empty
+        elif ($m | type) != "object" then error("models must be an object")
+        elif $m.driver == null then empty
+        elif ($m.driver | type) != "string" then error("models.driver must be a string")
+        else $m.driver end' "$REPO_ROOT/.ralph.json" 2>&1) || {
+      echo "tick: cannot read $REPO_ROOT/.ralph.json models.driver — $MODEL" >&2; exit 64; }
+  fi
+  if [ -z "$MODEL" ] && [ -f "$REPO_ROOT/.claude/settings.json" ]; then
+    MODEL=$(jq -rn 'input | .env as $e | if $e == null then empty
+        elif ($e | type) != "object" then error("env must be an object")
+        elif $e.RALPH_MODEL_DRIVER == null then empty
+        elif ($e.RALPH_MODEL_DRIVER | type) != "string" then error("env.RALPH_MODEL_DRIVER must be a string")
+        else $e.RALPH_MODEL_DRIVER end' "$REPO_ROOT/.claude/settings.json" 2>&1) || {
+      echo "tick: cannot read $REPO_ROOT/.claude/settings.json env.RALPH_MODEL_DRIVER — $MODEL" >&2; exit 64; }
+  fi
+  [ -n "$MODEL" ] || MODEL=sonnet
+  # Shape only — one argv word; the harness owns whether the model exists.
+  _rest="${MODEL//[A-Za-z0-9._:-]/}"; _rest="${_rest//\[/}"; _rest="${_rest//\]/}"
+  case "$MODEL" in [A-Za-z0-9]*) ;; *) _rest="x" ;; esac
+  if [ -n "$_rest" ] || [ "${#MODEL}" -gt 80 ]; then
+    echo "tick: driver model '$MODEL' is not a model name (allowed: letters, digits, . _ : [ ] -; max 80 chars)" >&2
+    exit 64
+  fi
 fi
 RUNNER="${RALPH_TICK_RUNNER:-claude -p --model $MODEL --permission-mode acceptEdits}"
 

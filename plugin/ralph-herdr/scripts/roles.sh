@@ -591,11 +591,13 @@ ralph_lane_model() {
   # JSON, a `models` that is not an object, or a value that is not a string
   # would otherwise fall through to a lower-priority source or to inherit —
   # "the knob is set" rendering as "the knob is ignored" (PR #2374 P1). The
-  # jq program errors on every such shape and is silent only on absence.
+  # jq program errors on every such shape and is silent only on absence —
+  # `-n` + `input` included, so an EMPTY or whitespace-only file (which a
+  # plain filter would pass over without running) errors too (PR #2374 P2).
   if [ -z "$model" ] && [ -n "$root" ] && [ -f "$root/.ralph.json" ]; then
     src="$root/.ralph.json models.$lane"
-    model=$(jq -r --arg l "$lane" '
-      .models as $m
+    model=$(jq -rn --arg l "$lane" '
+      input | .models as $m
       | if $m == null then empty
         elif ($m | type) != "object" then error("models must be an object, got \($m | type)")
         else ($m[$l] as $v
@@ -609,8 +611,8 @@ ralph_lane_model() {
   fi
   if [ -z "$model" ] && [ -n "$root" ] && [ -f "$root/.claude/settings.json" ]; then
     src="$root/.claude/settings.json env.$var"
-    model=$(jq -r --arg v "$var" '
-      .env as $e
+    model=$(jq -rn --arg v "$var" '
+      input | .env as $e
       | if $e == null then empty
         elif ($e | type) != "object" then error("env must be an object, got \($e | type)")
         else ($e[$v] as $x

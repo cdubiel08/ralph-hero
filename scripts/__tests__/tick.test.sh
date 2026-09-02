@@ -208,6 +208,7 @@ run_tick_model() {
   TICK_OUT=$(cat "$scen/out" 2>/dev/null || true)
 }
 
+printf '#!/usr/bin/env bash\necho "CUSTOM $*" >> "%s"\nexit 0\n' "$TMP_ROOT/custom-runner.log" > "$TMP_ROOT/custom-runner.sh"
 run_tick_model default "" ""
 expect_contains "no config -> the runner keeps its sonnet default" "$CLAUDE_LOG" "-p --model sonnet --permission-mode acceptEdits /ralph:work 42"
 
@@ -231,11 +232,22 @@ expect_contains "a well-formed models object without driver keeps the sonnet def
 run_tick_model bracket '{"models":{"driver":"claude-haiku-4-5[1m]"}}' ""
 expect_contains "a bracketed model reaches the runner as ONE literal word, never glob-expanded" "$CLAUDE_LOG" "-p --model claude-haiku-4-5[1m] --permission-mode"
 
+run_tick_model empty-settings '{"models":{"lead":"opus"}}' " "
+[ "$TICK_RC" -eq 64 ] && pass "an empty settings.json is a usage error, not a silent sonnet (exit 64)" || fail "empty settings: expected exit 64, got $TICK_RC"
+
 run_tick_model bad "" "" "RALPH_MODEL_DRIVER=bad value"
 [ "$TICK_RC" -eq 64 ] && pass "an unridable driver model is a usage error (exit 64)" || fail "bad model: expected exit 64, got $TICK_RC"
 expect_contains "the refusal names the value" "$TICK_OUT" "driver model 'bad value' is not a model name"
 expect_not_contains "the refusal happens before any board read" "$BOARD_LOG" "BOARD"
 expect_not_contains "the refusal happens before any runner spawn" "$CLAUDE_LOG" "ralph:work"
+
+# A custom RALPH_TICK_RUNNER never receives MODEL, so the knob is neither
+# read nor validated under it (PR #2374 P2): a transport that worked before
+# this knob existed keeps working over a models block it does not use.
+run_tick_model custom-runner 'not json' "" "RALPH_TICK_RUNNER=bash $TMP_ROOT/custom-runner.sh" "RALPH_MODEL_DRIVER=bad value"
+[ "$TICK_RC" -eq 0 ] && pass "a custom runner ignores a malformed models config and a bad RALPH_MODEL_DRIVER" || fail "custom runner: expected exit 0, got $TICK_RC ($TICK_OUT)"
+expect_contains "the custom runner still receives the work prompt" "$(cat "$TMP_ROOT/custom-runner.log" 2>/dev/null || true)" "CUSTOM /ralph:work 42"
+expect_not_contains "the custom runner never sees a --model" "$(cat "$TMP_ROOT/custom-runner.log" 2>/dev/null || true)" "--model"
 
 # ---------------------------------------------------------------------------
 echo

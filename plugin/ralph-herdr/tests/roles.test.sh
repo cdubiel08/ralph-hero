@@ -619,6 +619,23 @@ fails "model: a non-string lane value refuses" ralph_lane_model driver "$MROOT/f
 is "model: a lane absent from a well-formed models object still inherits" "" "$(ralph_lane_model driver "$MROOT/g")"
 fails "model: a settings env block that is not an object refuses" ralph_lane_model tend "$MROOT/g"
 is "model: the lane .ralph.json does name never reaches the broken settings block" "opus" "$(ralph_lane_model lead "$MROOT/g")"
+# PR #2374 P2: an EMPTY file is unreadable too — a plain jq filter runs
+# zero times on it and prints nothing, which read as inherit.
+mkdir -p "$MROOT/h/.claude" "$MROOT/i"
+printf '{"models":{"lead":"opus"}}\n' >"$MROOT/h/.ralph.json"
+: >"$MROOT/h/.claude/settings.json"
+printf '  \n' >"$MROOT/i/.ralph.json"
+fails "model: an empty settings.json refuses rather than reading as inherit" ralph_lane_model driver "$MROOT/h"
+fails "model: a whitespace-only .ralph.json refuses" ralph_lane_model driver "$MROOT/i"
+is "model: the lane the well-formed .ralph.json names never reaches the empty settings file" "opus" "$(ralph_lane_model lead "$MROOT/h")"
+# An empty STRING is not a model and not an error: it names nothing, like
+# an absent key — the shell convention this repo already uses for its env
+# knobs (RALPH_CLAIM_MAX_ESTIMATE: empty = off), so it falls through.
+mkdir -p "$MROOT/j/.claude"
+printf '{"models":{"driver":""}}\n' >"$MROOT/j/.ralph.json"
+printf '{"env":{"RALPH_MODEL_DRIVER":"claude-sonnet-5"}}\n' >"$MROOT/j/.claude/settings.json"
+is "model: an empty string names nothing and falls through like an absent key" "claude-sonnet-5" "$(ralph_lane_model driver "$MROOT/j")"
+is "model: an empty RALPH_MODEL_<LANE> in the environment is unset, not a refusal" "claude-sonnet-5" "$(RALPH_MODEL_DRIVER= ralph_lane_model driver "$MROOT/j")"
 
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
