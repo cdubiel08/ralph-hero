@@ -546,7 +546,17 @@ spawn_investigator() {
   # the investigator gains Bash, the sandbox and its probe engage here with
   # no edit.
   local -a contain=()
-  local containment=inapplicable tools contain_out
+  local containment=inapplicable tools contain_out tool_binding
+  # GH-2267: the tool-binding outcome is read off the argv that will actually
+  # be handed to `agent start`, never off the role row. The definition is the
+  # one declaration of what an investigator may do, so a definition that
+  # grants a writing tool is refused here by observation of the argv, not by
+  # trusting the file's name.
+  tool_binding=$(ralph_tool_binding_observed "${harness[@]}")
+  [ "$tool_binding" != not_applied ] || {
+    echo "spawn_investigator: the investigator harness leaves a writing tool enabled (tool binding not_applied: ${harness[*]}) — refusing to spawn a writer into $checkout" >&2
+    return 1
+  }
   tools=$(ralph_investigator_tools 2>/dev/null) || tools=""
   case ",$tools," in
     *,Bash,*)
@@ -571,6 +581,7 @@ spawn_investigator() {
     echo "  $HERDR tab create --cwd $checkout --no-focus --label \"GH-$issue investigator\""
     echo "  $HERDR agent start $name --kind claude --pane <captured> -- ${harness[*]}${contain[*]:+ --settings <process containment: seatbelt denyWrite $checkout>}"
     echo "  process containment: $containment${contain[*]:+ (in-pane probe after start; refuse unless applied)}"
+    echo "  tool binding: $tool_binding (read off the argv above; recorded beside process containment, separately — GH-2267)"
     echo "  $HERDR agent prompt $name <question>"
     return 0
   fi
@@ -600,11 +611,14 @@ spawn_investigator() {
     }
   fi
   echo "process containment: $containment for $name"
+  echo "tool binding: $tool_binding for $name"
 
   ts=$(date -u +%FT%TZ)
   if ref=$(ralph_agent_ref "$name" 2>/dev/null); then
+    # The record is written AFTER the probe, so both achieved outcomes ride
+    # it directly (GH-2267) — no provisional row, no second event.
     record=$(_ralph_spawn_record "$ref" "$issue" "" "" "" "$pane" "$ts" "" "$checkout" \
-      investigator "$parent" "$depth" "$parent") || record=""
+      investigator "$parent" "$depth" "$parent" "" "$tool_binding" "$containment") || record=""
     ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
     if [ -n "$record" ] && [ -n "$ledger" ]; then
       RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" ||

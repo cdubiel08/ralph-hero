@@ -121,6 +121,24 @@ is "record: no parent token on a root spawn" "false"          "$(jqr '.tokens | 
 is "record: address token is the board's herd address (GH-2209)" "fake-repo/w123-fake-issue" "$(jqr '.tokens.address')"
 is "record: root token is the agent's own ref" "$(jqr '.agent_ref')" "$(jqr '.tokens.root')"
 is "record: spawn_epoch token matches the ref" "$(jqr '.agent_ref' | sed 's/^.*#//')" "$(jqr '.tokens.spawn_epoch')"
+# GH-2267: a driver requested neither mechanism — written, never left absent,
+# and as TWO top-level fields (never one, never inside .lineage or .tokens).
+is "record: tool_binding is not_requested for a driver (GH-2267)" "not_requested" "$(jqr '.tool_binding')"
+is "record: process_containment is not_requested for a driver (GH-2267)" "not_requested" "$(jqr '.process_containment')"
+is "record: the C7 lineage carries neither (strict producer schema)" "false" \
+  "$(jqr '.lineage | has("tool_binding") or has("process_containment")')"
+is "record: the token map carries neither (tokens are chrome)" "false" \
+  "$(jqr '.tokens | has("tool_binding") or has("process_containment")')"
+
+# The record builder takes the two outcomes as positionals 15 and 16 and
+# omits the fields when they are empty — a provisional row says nothing.
+inv=$(_ralph_spawn_record "i123-look#ab12cd34" 123 "" "" "" "p2" "2026-09-01T00:00:00Z" "" "$TMP" \
+  investigator "w123-x#00000001" 1 "w123-x#00000001" "" accepted inapplicable)
+is "record: positional 15 lands as tool_binding" "accepted" "$(jq -r '.tool_binding' <<<"$inv")"
+is "record: positional 16 lands as process_containment" "inapplicable" "$(jq -r '.process_containment' <<<"$inv")"
+prov=$(_ralph_spawn_record "o45-lead#ab12cd34" 45 "" "" "" "p3" "2026-09-01T00:00:00Z" "" "$TMP" orchestrator)
+is "record: a provisional row omits both fields rather than guessing" "false" \
+  "$(jq -r 'has("tool_binding") or has("process_containment")' <<<"$prov")"
 
 case "$(jqr '.agent_ref')" in
   w123-fix-the-flaky-test\#[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])

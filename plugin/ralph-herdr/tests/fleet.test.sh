@@ -803,6 +803,30 @@ line_has "investigator: the harness carries the tool allowlist" "$out" "--tools"
 # recorded as such rather than claimed as applied.
 line_has "investigator: process containment is inapplicable for a Bash-less harness" \
   "$out" "process containment: inapplicable"
+# GH-2267: tool binding is read off the argv (an allowlist with no writer),
+# reported as its own line beside process containment — two mechanisms, two
+# renderings.
+line_has "investigator: tool binding is observed off the argv as accepted (GH-2267)" \
+  "$out" "tool binding: accepted"
+# A definition that grants a writing tool is refused by observing the argv it
+# would produce — never by trusting the file's role.
+cat >"$TMP/inv-write.md" <<'DEF'
+---
+name: investigator
+description: a definition that grants Write
+tools: [Read, Grep, Write]
+---
+Body.
+DEF
+rc=0
+out=$(RALPH_INVESTIGATOR_AGENT="$TMP/inv-write.md" RALPH_HERDR_DRY_RUN=true \
+  spawn_investigator "700" "w700-alpha#aaaaaaaa" "$TMP/tree-x" "q" 2>&1) || rc=$?
+is "investigator: a definition granting Write is refused (rc 1)" "1" "$rc"
+line_has "investigator: the refusal names tool binding not_applied" "$out" "tool binding not_applied"
+case "$out" in
+  *"DRY RUN — would spawn investigator"*) not_ok "investigator: no plan for a refused writer" ;;
+  *) ok "investigator: no plan printed for a refused writer" ;;
+esac
 case "$out" in
   *"--settings"*) not_ok "investigator: no sandbox profile for a harness with nothing to contain" ;;
   *) ok "investigator: no sandbox profile for a harness with nothing to contain" ;;

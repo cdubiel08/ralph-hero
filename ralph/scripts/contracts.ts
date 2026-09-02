@@ -183,11 +183,18 @@ export const ROLES = Object.fromEntries(
 export type Role = keyof typeof ROLES;
 export const ROLE_NAMES = Object.keys(ROLES) as Role[];
 
-/** What a spawn ACHIEVED for process containment — the achieved value, never
- *  the requested one (GH-2266; the ledger half is #2267). The mechanism fails
- *  OPEN and SILENTLY (a malformed sandbox block yields exit 0 and a written
- *  file), so "requested" and "achieved" must be two facts with two renderings:
- *    applied        the in-pane self-test observed the kernel denial
+/** What a spawn ACHIEVED for each containment mechanism — the achieved
+ *  value, never the requested one (GH-2266; the ledger half is GH-2267).
+ *  Process containment fails OPEN and SILENTLY (a malformed sandbox block
+ *  yields exit 0 and a written file), so "requested" and "achieved" must be
+ *  two facts with two renderings — and the two MECHANISMS are two more:
+ *  the ledger carries `tool_binding` and `process_containment` as separate
+ *  fields, each holding one of these words, and a reader that finds only
+ *  one of them is reading a record from before GH-2267, not a spawn that
+ *  achieved one thing.
+ *
+ *  Process containment (the in-pane self-test, spawn_containment_probe):
+ *    applied        the self-test observed the kernel denial
  *    not_applied    the self-test wrote INSIDE the denied tree — the sandbox
  *                   was inert; the spawn refuses and closes the pane
  *    not_available  the platform is not the one measured (macOS/Seatbelt);
@@ -197,8 +204,37 @@ export const ROLE_NAMES = Object.keys(ROLES) as Role[];
  *    unverified     the self-test could not be read to a verdict (no turn, no
  *                   marker) — refused, distinctly from not_applied, because
  *                   "could not check" may never render as "checked and held"
+ *    not_requested  the spawner handed the harness no sandbox document (the
+ *                   driver — the one role that writes). Written, never left
+ *                   absent: an absent field is a pre-GH-2267 record or a
+ *                   recording failure, and "known off" must not share that
+ *                   rendering
+ *
+ *  Tool binding (the harness's own refusal, which fails CLOSED and loudly —
+ *  an unknown flag is a start failure, a bound tool is "No such tool
+ *  available"). No in-pane self-test runs for it yet (see roles.sh
+ *  ralph_tool_binding_observed for why), so the strongest observation the
+ *  spawn path makes is what the harness ACCEPTED:
+ *    accepted       every binding flag was handed to a harness that accepted
+ *                   them at start — derived from the argv actually passed,
+ *                   never from the registry row. Deliberately not `applied`:
+ *                   that word is reserved for an observed refusal
+ *    not_applied    a binding flag was passed but leaves one of
+ *                   Edit/Write/NotebookEdit enabled — a writer in the tree;
+ *                   the spawn refuses
+ *    not_requested  no binding flag was passed at all (the driver). Beside
+ *                   `role: tender` this is the flags-dropped defect, and it
+ *                   reads as one, because the role is its own field
  *  roles.sh mirrors this list under the golden-table test. */
-export const CONTAINMENT_OUTCOMES = ["applied", "not_applied", "not_available", "inapplicable", "unverified"] as const;
+export const CONTAINMENT_OUTCOMES = [
+  "applied",
+  "not_applied",
+  "not_available",
+  "inapplicable",
+  "unverified",
+  "accepted",
+  "not_requested",
+] as const;
 export type ContainmentOutcome = (typeof CONTAINMENT_OUTCOMES)[number];
 
 /** What a human may spawn directly. A human is not a role — it is the only

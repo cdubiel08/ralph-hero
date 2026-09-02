@@ -407,5 +407,78 @@ else
 fi
 unset FAKE_HERDR_PROMPT_HOOK
 
+# ── GH-2267: what a spawn ACHIEVED, per mechanism, in the ledger ─────────────
+# Tool binding is observed off the argv actually handed to `agent start`,
+# never off the role row: the same helper answers for a driver's empty argv,
+# an investigator's allowlist and a lead's deny list.
+is "observed: an empty argv is not_requested (the driver)" "not_requested" "$(ralph_tool_binding_observed)"
+is "observed: the deny list naming all three is accepted" "accepted" \
+  "$(ralph_tool_binding_observed --disallowedTools Edit,Write,NotebookEdit)"
+is "observed: the registry's own binding args read as accepted" "accepted" \
+  "$(ralph_tool_binding_observed $(ralph_tool_binding_args tender | tr '\n' ' '))"
+is "observed: a deny list missing one writer is not_applied" "not_applied" \
+  "$(ralph_tool_binding_observed --disallowedTools Edit,Write)"
+is "observed: an allowlist without a writer is accepted" "accepted" \
+  "$(ralph_tool_binding_observed --agents '{}' --agent investigator --tools Read,Grep,Glob)"
+is "observed: an allowlist granting Write is not_applied" "not_applied" \
+  "$(ralph_tool_binding_observed --tools Read,Write)"
+is "observed: the --flag=value spelling is read too" "accepted" "$(ralph_tool_binding_observed --tools=Read)"
+is "observed: a deny list closes an allowlist's writer" "accepted" \
+  "$(ralph_tool_binding_observed --tools Read,Write --disallowedTools Write,Edit,NotebookEdit)"
+is "observed: the driver's registry args (none) are not_requested, not accepted" "not_requested" \
+  "$(ralph_tool_binding_observed $(ralph_tool_binding_args driver | tr '\n' ' '))"
+case "$(ralph_containment_outcomes | tr '\n' ' ')" in
+  *" accepted not_requested "*) ok "observed: both words are in the achieved vocabulary" ;;
+  *) not_ok "observed: accepted/not_requested must be in ralph_containment_outcomes — got '$(ralph_containment_outcomes | tr '\n' ' ')'" ;;
+esac
+
+# The proof the unit exists for: a run with a deliberately broken sandbox —
+# the fake pane behaves exactly as an inert sandbox does (exit 0, a file
+# written INSIDE the denied tree) — leaves a ledger a reader who was not
+# present can tell apart from a contained pane's. Three provisional lead
+# rows (written before their probes, as work-team.sh writes them), then the
+# outcome of each probe recorded as its own event.
+export FAKE_HERDR_PROMPT_HOOK="$TMP/probe-hook.sh"
+L="$RALPH_HERDR_LEDGER"
+seed() { # REF — a provisional spawn row with no outcome fields
+  RALPH_HERDR_LEDGER="$L" ralph_ledger_append "$(jq -nc --arg r "$1" \
+    '{ts: "2026-09-01T00:00:00Z", ev: "spawn", agent_ref: $r, tokens: {role: "orchestrator", issue: "77", depth: "0", state: "spawned"}}')"
+}
+seed "o77-broken#aaaaaaaa"; seed "o78-contained#bbbbbbbb"; seed "o79-linux#cccccccc"; seed "o80-old#dddddddd"
+verdict=$(FAKE_PROBE_MODE=inert RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" 2>/dev/null)
+_ralph_spawn_containment_event "o77-broken#aaaaaaaa" "$L" accepted "$verdict"
+verdict=$(FAKE_PROBE_MODE=applied RALPH_HOME="$TMP/home" spawn_containment_probe t-probe p1 "$TMP/tree-real" "re-spawn" 2>/dev/null)
+_ralph_spawn_containment_event "o78-contained#bbbbbbbb" "$L" accepted "$verdict"
+_ralph_spawn_containment_event "o79-linux#cccccccc" "$L" accepted not_available
+broken_pc=$(_ralph_ledger_latest_process_containment "o77-broken#aaaaaaaa")
+good_pc=$(_ralph_ledger_latest_process_containment "o78-contained#bbbbbbbb")
+linux_pc=$(_ralph_ledger_latest_process_containment "o79-linux#cccccccc")
+is "ledger: the broken-sandbox pane reads not_applied off the ledger alone" "not_applied" "$broken_pc"
+is "ledger: the contained pane reads applied" "applied" "$good_pc"
+is "ledger: the unmeasured platform reads not_available" "not_available" "$linux_pc"
+if [ "$broken_pc" != "$good_pc" ] && [ "$good_pc" != "$linux_pc" ] && [ "$broken_pc" != "$linux_pc" ]; then
+  ok "ledger: applied, not_applied and not_available are three renderings, never one"
+else
+  not_ok "ledger: three outcomes must render distinctly — got '$broken_pc' / '$good_pc' / '$linux_pc'"
+fi
+is "ledger: tool binding is its own field beside it (broken pane)" "accepted" "$(_ralph_ledger_latest_tool_binding "o77-broken#aaaaaaaa")"
+is "ledger: the event carries both mechanisms as two keys" "2" \
+  "$(_ralph_ledger_events "$L" | jq -s '[.[] | select(.ev == "containment" and .agent_ref == "o77-broken#aaaaaaaa")] | last | [.tool_binding, .process_containment] | map(select(. != null)) | length')"
+is "ledger: the outcome is never inferred from the role token" "orchestrator" \
+  "$(_ralph_ledger_events "$L" | jq -rs '[.[] | select(.ev == "containment" and .agent_ref == "o77-broken#aaaaaaaa")] | last | .tokens.role // "orchestrator"')"
+old_pc=$(_ralph_ledger_latest_process_containment "o80-old#dddddddd" 2>/dev/null); rc=$?
+is "ledger: a pre-GH-2267 row reads EMPTY (rc 1) — absent is not not_requested" "1 " "$rc $old_pc"
+is "ledger: containment events neither open nor close a row (open set unchanged)" \
+  "o77-broken#aaaaaaaa o78-contained#bbbbbbbb o79-linux#cccccccc o80-old#dddddddd" \
+  "$(RALPH_HERDR_LEDGER="$L" ralph_ledger_open_agents | grep -E '^o(77|78|79|80)-' | sort | tr '\n' ' ' | sed 's/ $//')"
+before=$(_ralph_ledger_events "$L" | wc -l | tr -d ' ')
+out=$(_ralph_spawn_containment_event "o77-broken#aaaaaaaa" "$L" accepted "" 2>&1)
+is "ledger: an event naming one mechanism is refused (nothing appended)" "$before" "$(_ralph_ledger_events "$L" | wc -l | tr -d ' ')"
+case "$out" in
+  *"both outcomes are required"*) ok "ledger: the half-record refusal says both are required" ;;
+  *) not_ok "ledger: half-record refusal text — got '$out'" ;;
+esac
+unset FAKE_HERDR_PROMPT_HOOK
+
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
