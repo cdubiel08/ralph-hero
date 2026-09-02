@@ -309,6 +309,18 @@ is "malformed TEAM_LEAD_REF: worker stays a depth-0 root" "0" \
 is "malformed TEAM_LEAD_REF: no parent token invented" "" \
   "$(jq -r '.tokens.parent // empty' <<<"$wrec" 2>/dev/null)"
 
+# ═══ per-lane model (GH-2350): the lead's knob rides the harness argv LAST ══
+RALPH_MODEL_LEAD=claude-opus-5 run_wt 900
+is "team dry (model): exits 0" "0" "$RC"
+line_has "team dry (model): --model is appended AFTER binding and containment, so their argv keeps its shape" \
+  "$OUT" "-- --disallowedTools Edit,Write,NotebookEdit --settings <process containment: seatbelt denyWrite $REPO_DIR> --model claude-opus-5"
+line_has "team dry (model): the provisional record carries model_requested" "$OUT" '"model_requested":"claude-opus-5"'
+line_has "team dry (model): the record's role is untouched by the model" "$OUT" '"role":"orchestrator"'
+RALPH_MODEL_LEAD='bad value' run_wt 900
+if [ "$RC" -ne 0 ]; then ok "team dry (bad model): an unridable lead model refuses"; else not_ok "team dry (bad model): expected a refusal, got rc 0"; fi
+line_has "team dry (bad model): the refusal names the source" "$OUT" "RALPH_MODEL_LEAD='bad value'"
+if grep -q "DRY RUN" <<<"$OUT"; then not_ok "team dry (bad model): no plan past the refusal"; else ok "team dry (bad model): no plan past the refusal"; fi
+
 echo
 echo "# work-team: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

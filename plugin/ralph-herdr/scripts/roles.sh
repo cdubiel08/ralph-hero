@@ -545,3 +545,86 @@ ralph_investigator_harness_args() {
   }
   printf '%s\n' "--agents" "$json" "--agent" "investigator" "--tools" "$tools"
 }
+
+# ── Per-lane model (GH-2350) ─────────────────────────────────────────────────
+# A spawn asks the harness for a model per LANE, or asks for nothing and
+# inherits the account default (the status quo: every spawn path handed
+# `agent start` no --model at all, which is why the corpus walked the
+# calendar of default models). The lane vocabulary is the five session kinds
+# a cockpit starts — not the C8 role, which is about who may WRITE, and not
+# the lane letter, which is a name grammar. `driver` covers every /ralph:work
+# session (fleet, team worker, headless tick); `lead` the team orchestrator;
+# `dispatch` the hero seat; `deliver` and `tend` their passes.
+#
+# Resolution, first hit wins:
+#   1. RALPH_MODEL_<LANE> in the spawner's environment (uppercased lane)
+#   2. .ralph.json            models.<lane>
+#   3. .claude/settings.json  env.RALPH_MODEL_<LANE>
+# — 2 and 3 are the two files board.ts loadConfig reads, in its order, so a
+# repo configures its model where it configured its board and never has to
+# switch config lanes to reach this knob. Unlike loadConfig the chain falls
+# THROUGH: a lane `.ralph.json` does not name is looked up in the settings
+# block rather than read as inherit, since "the first place that names it"
+# is the rule a reader can hold in their head. Unset everywhere = inherit.
+RALPH_MODEL_LANES="driver lead dispatch deliver tend"
+
+# ralph_lane_model LANE [ROOT] — the model LANE's session should be asked
+# for, on stdout; empty output (rc 0) means inherit. rc 1 on an unknown lane
+# or a value that could not ride an argv — a loud config error, never a
+# silent inherit, because "the knob is set" and "the knob is ignored" must
+# not render alike (the RALPH_CLAIM_MAX_ESTIMATE shape). Whether the model
+# EXISTS is claude's contract: harness args are forwarded verbatim, and a
+# mirror of its alias table here would be a second copy that drifts.
+ralph_lane_model() {
+  local lane="${1-}" root="${2:-${REPO:-$PWD}}" var model="" src=""
+  case " $RALPH_MODEL_LANES " in
+    *" $lane "*) ;;
+    *)
+      echo "ralph_lane_model: unknown lane '$lane' (lanes: $RALPH_MODEL_LANES)" >&2
+      return 1
+      ;;
+  esac
+  var="RALPH_MODEL_$(printf '%s' "$lane" | tr '[:lower:]' '[:upper:]')"
+  model="${!var-}"
+  src="\$$var"
+  if [ -z "$model" ] && [ -n "$root" ] && [ -f "$root/.ralph.json" ]; then
+    model=$(jq -r --arg l "$lane" '.models[$l] // empty' "$root/.ralph.json" 2>/dev/null) || model=""
+    src="$root/.ralph.json models.$lane"
+  fi
+  if [ -z "$model" ] && [ -n "$root" ] && [ -f "$root/.claude/settings.json" ]; then
+    model=$(jq -r --arg v "$var" '.env[$v] // empty' "$root/.claude/settings.json" 2>/dev/null) || model=""
+    src="$root/.claude/settings.json env.$var"
+  fi
+  [ -n "$model" ] || return 0
+  # Shape only: one argv word, no whitespace or shell metacharacters. The
+  # bracket pair admits the harness's context-window suffix (`[1m]`).
+  case "$model" in
+    [A-Za-z0-9]*) ;;
+    *)
+      echo "ralph_lane_model: $src='$model' is not a model name (must start with a letter or digit)" >&2
+      return 1
+      ;;
+  esac
+  # Parameter expansion, not grep: a `]` inside a bracket expression closes
+  # it in every regex flavour, and the first draft's pattern matched nothing.
+  local rest="${model//[A-Za-z0-9._:-]/}"
+  rest="${rest//\[/}"
+  rest="${rest//\]/}"
+  if [ "${#model}" -gt 80 ] || [ -n "$rest" ]; then
+    echo "ralph_lane_model: $src='$model' is not a model name (allowed: letters, digits, . _ : [ ] -; max 80 chars)" >&2
+    return 1
+  fi
+  printf '%s\n' "$model"
+}
+
+# ralph_model_args LANE [ROOT] — the `claude` arguments asking for LANE's
+# model, one per line (empty output, rc 0, when nothing is configured).
+# Callers read them into "$@" beside the binding and containment args and
+# append them LAST, so the argv a reader already recognises keeps its shape.
+# rc 1 propagates ralph_lane_model's refusal.
+ralph_model_args() {
+  local model
+  model=$(ralph_lane_model "$@") || return 1
+  [ -n "$model" ] || return 0
+  printf '%s\n' "--model" "$model"
+}

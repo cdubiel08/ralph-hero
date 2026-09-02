@@ -466,10 +466,20 @@ notify() {
 
 # _ralph_spawn_record REF N PARENT_ISSUE BRANCH LABEL PANE TS [SHELL_PID] [CHECKOUT]
 #                     [ROLE] [PARENT_REF] [DEPTH] [ROOT_REF] [ADDRESS]
-#                     [TOOL_BINDING] [PROCESS_CONTAINMENT]
+#                     [TOOL_BINDING] [PROCESS_CONTAINMENT] [MODEL_REQUESTED]
 # — print the ledger spawn event as ONE compact JSON line:
 #   {ts, ev: "spawn", agent_ref, pane_id?, shell_pid?, checkout?,
-#    tool_binding?, process_containment?, lineage: <C7>, tokens: <C8 map>}
+#    tool_binding?, process_containment?, model_requested?,
+#    lineage: <C7>, tokens: <C8 map>}
+#
+# model_requested (GH-2350) is the model the spawner ASKED the harness for —
+# the `--model` word on the argv, resolved per lane by ralph_lane_model —
+# never the model the session ran on, which only the usage fact knows
+# (an alias like `sonnet` resolves harness-side). Empty omits the field:
+# a spawn that asked for nothing and a record from before the knob read
+# alike, and both are the truth — neither asked. Top-level beside the two
+# containment outcomes for the same reason they are: the C7 producer
+# schema is strict and the tokens are chrome.
 #
 # tool_binding and process_containment (GH-2267) are what the spawn ACHIEVED
 # for each containment mechanism — two top-level fields, one
@@ -518,6 +528,7 @@ _ralph_spawn_record() {
   # so a stale address from an earlier spawn in the same shell cannot leak
   # onto a different unit's record.
   local address="${14-}" tool_binding="${15-}" process_containment="${16-}"
+  local model_requested="${17-}"
   local parsed lane slug epoch by
   parsed=$(ralph_agent_parse "${ref%%#*}") || return 1
   # shellcheck disable=SC2086  # intentional: parse output is space-separated
@@ -545,13 +556,15 @@ _ralph_spawn_record() {
     --arg by "$by" --arg shell "$shell_pid" --arg checkout "$checkout" \
     --arg role "$role" --arg parent "$parent_ref" --arg depth "$depth" \
     --arg root "$root_ref" --arg address "$address" \
-    --arg tb "$tool_binding" --arg pc "$process_containment" '
+    --arg tb "$tool_binding" --arg pc "$process_containment" \
+    --arg mr "$model_requested" '
     {ts: $ts, ev: "spawn", agent_ref: $ref}
     + (if $pane == "" then {} else {pane_id: $pane} end)
     + (if $shell == "" then {} else {shell_pid: $shell} end)
     + (if $checkout == "" then {} else {checkout: $checkout} end)
     + (if $tb == "" then {} else {tool_binding: $tb} end)
     + (if $pc == "" then {} else {process_containment: $pc} end)
+    + (if $mr == "" then {} else {model_requested: $mr} end)
     + {lineage:
         ({contract: "ralph.lineage", contract_version: 1,
           agent_ref: $ref, issue: $n}
@@ -1359,7 +1372,8 @@ ralph_dep_refs_verdict() {
 spawn_work_session() {
   local n="$1" queue_json="${2:-}" branch label parent title agent live pane out
   local ref ts record ledger src lead_ref="" lead_depth=""
-  local team_lead="" who_lead="" who_dispatch=""
+  local team_lead="" who_lead="" who_dispatch="" model=""
+  local -a model_args=()
   # Lineage (GH-2214/D4.1): a team lead's workspace env carries its own
   # durable ref (work-team.sh mints it at workspace creation), and the
   # workers the lead spawns record it as their C8 parent and root, depth 1 —
@@ -1518,6 +1532,15 @@ spawn_work_session() {
   # the spawn sends the parent workspace is a plan you cannot debug from.
   src=$(ralph_worktree_source_dir)
 
+  # The driver's model (GH-2350), resolved before the dry-run branch so the
+  # plan prints the argv the live path would hand over. A value that cannot
+  # ride an argv refuses here — a config error, loud, before any surface.
+  model=$(ralph_lane_model driver "$REPO") || {
+    echo "the driver model for GH-$n could not be resolved (see the reason above) — not spawning" >&2
+    return 1
+  }
+  [ -n "$model" ] && model_args=(--model "$model")
+
   if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
     echo "DRY RUN — would spawn GH-$n:"
     echo "  branch:  $branch   agent: $agent${label:+   label: $label}"
@@ -1533,7 +1556,7 @@ spawn_work_session() {
     [ -n "$who_lead" ] && _plan_env="$_plan_env${_plan_env:+ }WHO_LEAD=$who_lead"
     [ -n "$who_dispatch" ] && _plan_env="$_plan_env${_plan_env:+ }WHO_DISPATCH=$who_dispatch"
     [ -n "$_plan_env" ] && echo "  $HERDR pane run <captured> export $_plan_env"
-    echo "  $HERDR agent start $agent --kind claude --pane <captured>"
+    echo "  $HERDR agent start $agent --kind claude --pane <captured>${model:+ -- --model $model}"
     echo "  $HERDR agent prompt $agent \"/ralph:work $n\""
     echo "  $HERDR agent wait $agent --until working --until blocked --timeout <${RALPH_HERDR_TURN_WAIT_SEC:-20}s>  (unconfirmed turn = failed spawn)"
     # The exact spawn record the live path would append (pane_id omitted —
@@ -1546,7 +1569,7 @@ spawn_work_session() {
     }
     record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "" "$(date -u +%FT%TZ)" \
       "" "" "" "$lead_ref" "$lead_depth" "$lead_ref" "${RALPH_HERDR_NAMED_ADDRESS-}" \
-      "$(ralph_tool_binding_observed)" not_requested) || record=""
+      "$(ralph_tool_binding_observed ${model_args[@]+"${model_args[@]}"})" not_requested "$model") || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"
     echo "  tokens push (pane <captured>): $(jq -r '[.tokens | to_entries[] | "\(.key)=\(.value)"] | join(" ")' <<<"$record" 2>/dev/null || echo '<none>')"
     RALPH_HERDR_SPAWNED_AGENT="$agent"
@@ -1661,14 +1684,15 @@ spawn_work_session() {
   if ref=$(ralph_agent_ref "$agent" 2>/dev/null); then
     RALPH_HERDR_SPAWNED_REF="$ref"
     # GH-2267: a driver is the one writer, and this path hands `agent start`
-    # no harness argument at all — no binding flag, no sandbox document. Both
-    # outcomes are therefore `not_requested`, read off the (empty) argv this
+    # no containment argument — no binding flag, no sandbox document (a
+    # `--model`, GH-2350, is neither, and the observer ignores it). Both
+    # outcomes are therefore `not_requested`, read off the argv this
     # path passes rather than off the role: the observation is the spawner's
     # own act, and it is written so an absent field keeps meaning "a record
     # from before this existed", never "known off".
     record=$(_ralph_spawn_record "$ref" "$n" "$parent" "$branch" "$label" "$pane" "$ts" \
       "$shell_pid" "$RALPH_HERDR_SPAWNED_WORKTREE" "" "$lead_ref" "$lead_depth" "$lead_ref" "${RALPH_HERDR_NAMED_ADDRESS-}" \
-      "$(ralph_tool_binding_observed)" not_requested) || record=""
+      "$(ralph_tool_binding_observed ${model_args[@]+"${model_args[@]}"})" not_requested "$model") || record=""
     ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
     if [ -n "$record" ] && [ -n "$ledger" ]; then
       RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" || {
@@ -1730,7 +1754,7 @@ spawn_work_session() {
   # either: sibling fleets are gone. Liveness is confirmed by a
   # read, never inferred from error prose; every other start failure dies at
   # once, unchanged.
-  if ! agent_start_when_ready "$agent" "$pane"; then
+  if ! agent_start_when_ready "$agent" "$pane" ${model_args[@]+"${model_args[@]}"}; then
     if printf '%s\n' "$(ralph_agents_json 2>/dev/null)" | jq -e --arg name "$agent" \
         'select(.name == $name)' >/dev/null 2>&1; then
       # The winner's own record is the live one; ours never became a worker,

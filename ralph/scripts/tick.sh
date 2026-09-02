@@ -16,7 +16,29 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # tick works when the plugin is installed outside the ralph-hero checkout.
 BOARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/board"
 TIMEOUT_MIN="${RALPH_TICK_TIMEOUT_MIN:-45}"
-RUNNER="${RALPH_TICK_RUNNER:-claude -p --model sonnet --permission-mode acceptEdits}"
+
+# --- Driver model (GH-2350) ---------------------------------------------------
+# The same knob the cockpit's spawn paths read (roles.sh ralph_lane_model),
+# restated here because this runner is installed without the herdr plugin:
+# RALPH_MODEL_DRIVER > .ralph.json models.driver > .claude/settings.json
+# env.RALPH_MODEL_DRIVER > sonnet, the default this runner always had.
+# RALPH_TICK_RUNNER still replaces the whole command.
+MODEL="${RALPH_MODEL_DRIVER:-}"
+if [ -z "$MODEL" ] && [ -f "$REPO_ROOT/.ralph.json" ]; then
+  MODEL=$(jq -r '.models.driver // empty' "$REPO_ROOT/.ralph.json" 2>/dev/null) || MODEL=""
+fi
+if [ -z "$MODEL" ] && [ -f "$REPO_ROOT/.claude/settings.json" ]; then
+  MODEL=$(jq -r '.env.RALPH_MODEL_DRIVER // empty' "$REPO_ROOT/.claude/settings.json" 2>/dev/null) || MODEL=""
+fi
+[ -n "$MODEL" ] || MODEL=sonnet
+# Shape only — one argv word; the harness owns whether the model exists.
+_rest="${MODEL//[A-Za-z0-9._:-]/}"; _rest="${_rest//\[/}"; _rest="${_rest//\]/}"
+case "$MODEL" in [A-Za-z0-9]*) ;; *) _rest="x" ;; esac
+if [ -n "$_rest" ] || [ "${#MODEL}" -gt 80 ]; then
+  echo "tick: driver model '$MODEL' is not a model name (allowed: letters, digits, . _ : [ ] -; max 80 chars)" >&2
+  exit 64
+fi
+RUNNER="${RALPH_TICK_RUNNER:-claude -p --model $MODEL --permission-mode acceptEdits}"
 
 mkdir -p "$RALPH_HOME/logs"
 

@@ -136,10 +136,20 @@ if [ -n "$SEAT_NAME" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
   disown 2>/dev/null || true
 fi
 
+# The seat's model (GH-2350): the dispatch lane's knob, resolved from the
+# repo's config like every other lane. Not best-effort like the chrome above
+# — an unridable value is a config error, and holding the pane on it is the
+# visible outcome, where an exec that silently dropped the flag would be the
+# knob-ignored rendering ralph_lane_model exists to refuse.
+HERO_MODEL=$(ralph_lane_model dispatch "$REPO") ||
+  die "the dispatch model could not be resolved (see the reason above) — not starting the seat"
+model_args=()
+[ -n "$HERO_MODEL" ] && model_args=(--model "$HERO_MODEL")
+
 # --name is newer than some installed harnesses; probe rather than assume — an
 # unknown flag would abort the exec and hold the pane on a usage error. Absent
 # support degrades the PEER name only; the herd-plane rename above still runs.
 if [ -n "$SEAT_NAME" ] && claude --help 2>/dev/null | grep -q -- '--name'; then
-  exec claude --name "$SEAT_NAME" "/ralph:hero"
+  exec claude --name "$SEAT_NAME" ${model_args[@]+"${model_args[@]}"} "/ralph:hero"
 fi
-exec claude "/ralph:hero"
+exec claude ${model_args[@]+"${model_args[@]}"} "/ralph:hero"

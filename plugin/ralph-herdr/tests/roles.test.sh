@@ -570,5 +570,38 @@ case "$out" in
 esac
 unset FAKE_HERDR_PROMPT_HOOK
 
+# ── 6. per-lane model (GH-2350) — one resolver, first hit wins, refuses ─────
+# what it cannot hand an argv. The lanes are the five session kinds a
+# cockpit starts, not the role registry.
+is "model: the lane vocabulary is the five session kinds" "driver lead dispatch deliver tend" "$RALPH_MODEL_LANES"
+MROOT="$TMP/models"
+mkdir -p "$MROOT/a/.claude" "$MROOT/b/.claude" "$MROOT/c"
+printf '{"owner":"f","repo":"f","projectNumber":1,"models":{"driver":"claude-sonnet-5","tend":"bad value"}}\n' >"$MROOT/a/.ralph.json"
+printf '{"env":{"RALPH_MODEL_LEAD":"opus"}}\n' >"$MROOT/a/.claude/settings.json"
+printf '{"env":{"RALPH_MODEL_DELIVER":"claude-haiku-4-5[1m]"}}\n' >"$MROOT/b/.claude/settings.json"
+with_env() { local kv="$1"; shift; ( export "$kv"; "$@" ); }
+is "model: unset everywhere is inherit — empty output" "" "$(ralph_lane_model dispatch "$MROOT/c")"
+succeeds "model: unset everywhere is rc 0 (inherit is not an error)" ralph_lane_model dispatch "$MROOT/c"
+is "model: .ralph.json models.<lane>" "claude-sonnet-5" "$(ralph_lane_model driver "$MROOT/a")"
+is "model: a lane .ralph.json does not name falls THROUGH to the settings env block" "opus" "$(ralph_lane_model lead "$MROOT/a")"
+is "model: the settings env block alone" "claude-haiku-4-5[1m]" "$(ralph_lane_model deliver "$MROOT/b")"
+is "model: RALPH_MODEL_<LANE> in the environment outranks both files" "fable" "$(RALPH_MODEL_DRIVER=fable ralph_lane_model driver "$MROOT/a")"
+is "model: ROOT defaults to \$REPO" "claude-sonnet-5" "$(REPO="$MROOT/a" ralph_lane_model driver)"
+is "model: a full model id survives the shape check" "us.anthropic.claude-opus-5:0" "$(RALPH_MODEL_LEAD=us.anthropic.claude-opus-5:0 ralph_lane_model lead "$MROOT/c")"
+fails "model: an unknown lane refuses (investigators are not a lane)" ralph_lane_model investigator "$MROOT/a"
+fails "model: a value with whitespace refuses — a config error, never a silent inherit" ralph_lane_model tend "$MROOT/a"
+fails "model: a shell metacharacter refuses" with_env 'RALPH_MODEL_LEAD=x;rm' ralph_lane_model lead "$MROOT/c"
+fails "model: a leading dash refuses (it would read as a flag)" with_env 'RALPH_MODEL_LEAD=-model' ralph_lane_model lead "$MROOT/c"
+fails "model: over 80 chars refuses" with_env "RALPH_MODEL_LEAD=$(printf 'a%.0s' $(seq 1 81))" ralph_lane_model lead "$MROOT/c"
+out=$(ralph_lane_model tend "$MROOT/a" 2>&1 >/dev/null)
+case "$out" in
+  *".ralph.json models.tend='bad value'"*) ok "model: the refusal names the source and the value" ;;
+  *) not_ok "model: refusal text — got '$out'" ;;
+esac
+is "model args: two argv words, --model then the value" "--model|claude-sonnet-5|" "$(ralph_model_args driver "$MROOT/a" | tr '\n' '|')"
+is "model args: nothing configured prints nothing" "" "$(ralph_model_args dispatch "$MROOT/c")"
+fails "model args: the resolver's refusal propagates" ralph_model_args tend "$MROOT/a"
+is "observed: --model is not a binding flag (GH-2267 reads it as not_requested)" "not_requested" "$(ralph_tool_binding_observed --model claude-sonnet-5)"
+
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -61,6 +61,8 @@ Then, in the host repo:
    ```
 
    or env vars in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` (plus `RALPH_GH_HOST` for GitHub Enterprise). `.ralph.json` takes precedence when both exist.
+
+   Optionally pin a model per lane (GH-2350) — `"models": {"driver": "claude-sonnet-5", "lead": "opus"}` in `.ralph.json`, or `RALPH_MODEL_DRIVER` / `RALPH_MODEL_LEAD` / `RALPH_MODEL_DISPATCH` / `RALPH_MODEL_DELIVER` / `RALPH_MODEL_TEND` in the settings `env` block or the spawner's environment (env wins). A lane with nothing set inherits the account default, exactly as before.
 2. **Bootstrap the fields**: `board setup` — idempotent; creates the Workflow State, Claim, Estimate, and Priority fields (never edits existing fields) and prints exactly which steps (if any) must be done in the board UI.
 3. **Sanity check**: `board doctor`.
 4. **See what level of autonomy the repo supports**: `board readiness` — an advisory report at three levels (interactive / unattended / autonomous loop). Recommendations, never gates: ralph adapts to the host repo, and beyond the board itself its conventions are detect-if-present suggestions, never requirements.
@@ -128,7 +130,7 @@ ralph/scripts/install-loop.sh --disable
 
 - **Opt-in is typed and fail-closed**: tick.sh refuses to run unless `$RALPH_HOME/config` (default `~/.ralph/config`) contains `autopilot=true`.
 - **Billing guard**: tick.sh refuses to spawn when `ANTHROPIC_API_KEY` is set (it would bill API credits instead of the subscription) unless `RALPH_ALLOW_API_BILLING=true`.
-- **Transport-agnostic**: `RALPH_TICK_RUNNER` is any command that accepts a prompt (default `claude -p --model sonnet --permission-mode acceptEdits`). An interactive `/ralph:work` session and a bridge-routine drive are equally valid — tick.sh is a convenience, not the architecture.
+- **Transport-agnostic**: `RALPH_TICK_RUNNER` is any command that accepts a prompt (default `claude -p --model <driver model> --permission-mode acceptEdits`, where the driver model is `RALPH_MODEL_DRIVER` → `.ralph.json` `models.driver` → the settings `env` block → `sonnet`). An interactive `/ralph:work` session and a bridge-routine drive are equally valid — tick.sh is a convenience, not the architecture.
 
 ## Enforcement, honestly labeled
 
@@ -146,9 +148,10 @@ Merges in this repo go through `bash scripts/merge-pr.sh PR` (never bare `gh pr 
 | `RALPH_GH_OWNER` / `RALPH_GH_REPO` / `RALPH_GH_PROJECT_NUMBER` | — | Board coordinates (settings.json lane; `.ralph.json` wins) |
 | `RALPH_GH_HOST` | `github.com` | GitHub Enterprise host |
 | `RALPH_LOCK_TTL_MIN` | `120` | Claim TTL in minutes |
+| `RALPH_MODEL_DRIVER` / `_LEAD` / `_DISPATCH` / `_DELIVER` / `_TEND` | — (inherit) | The `--model` a spawn asks for, per lane; `.ralph.json` `models.<lane>` is the file form. Unset = no flag |
 | `RALPH_CLAIM_HOLDER` | `user@hostname` | Holder string written into claims |
 | `RALPH_HOME` | `~/.ralph` | Config, logs, heartbeat, tick lock |
-| `RALPH_TICK_RUNNER` | `claude -p --model sonnet --permission-mode acceptEdits` | The command a tick invokes with the work prompt |
+| `RALPH_TICK_RUNNER` | `claude -p --model <driver model> --permission-mode acceptEdits` | The command a tick invokes with the work prompt (driver model per the row above; `sonnet` when nothing is set) |
 | `RALPH_TICK_TIMEOUT_MIN` | `45` | Hard timeout per tick's work session |
 | `RALPH_TICK_INTERVAL_MIN` | `15` | Scheduler cadence written by `install-loop.sh` |
 | `RALPH_ALLOW_API_BILLING` | unset | Set `true` to let tick.sh spawn with `ANTHROPIC_API_KEY` present |

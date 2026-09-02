@@ -98,8 +98,9 @@ Every mutation echoes the resulting board state. Foreign-repo items on a shared 
 | `RALPH_GH_OWNER` / `RALPH_GH_REPO` / `RALPH_GH_PROJECT_NUMBER` | Yes | Board coordinates (tracked settings or `.ralph.json`) |
 | `RALPH_GH_HOST` | No | GitHub Enterprise host (default `github.com`) — used by both the scope gate and API transport |
 | `RALPH_LOCK_TTL_MIN` | No | Claim staleness threshold, minutes (default 120) |
+| `RALPH_MODEL_DRIVER` / `_LEAD` / `_DISPATCH` / `_DELIVER` / `_TEND` | No | Model a spawn asks for, per lane (or `.ralph.json` `"models": {"driver": …}`); unset = inherit the account default |
 | `RALPH_CLAIM_HOLDER` | No | Claim holder identity (default `user@host`) |
-| `RALPH_TICK_RUNNER` | No | Loop transport (default `claude -p --model sonnet`); any command accepting a prompt |
+| `RALPH_TICK_RUNNER` | No | Loop transport (default `claude -p --model <driver model>`, `sonnet` when none is set); any command accepting a prompt |
 | `RALPH_TICK_TIMEOUT_MIN` | No | Hard per-tick timeout (default 45) |
 | `RALPH_ALLOW_API_BILLING` | No | Must be `"true"` for tick to spawn with `ANTHROPIC_API_KEY` set (guards subscription users against silent API billing) |
 

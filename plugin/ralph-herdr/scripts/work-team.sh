@@ -230,7 +230,12 @@ lead_contain_out=$(ralph_process_containment_args orchestrator "$src") ||
   die "process containment cannot be established for GH-$EPIC's lead (see the reason above) — not spawning an uncontained lead"
 lead_contain=()
 while IFS= read -r out; do [ -n "$out" ] && lead_contain+=("$out"); done <<<"$lead_contain_out"
+# The lead's model (GH-2350), appended LAST so the binding/containment argv
+# a reader already recognises keeps its shape; an unridable value refuses.
+lead_model=$(ralph_lane_model lead "$REPO") ||
+  die "the lead model for GH-$EPIC could not be resolved (see the reason above) — not spawning"
 lead_harness=("${lead_tools[@]}" "${lead_contain[@]}")
+[ -n "$lead_model" ] && lead_harness+=(--model "$lead_model")
 # GH-2267: what the lead's spawn ACHIEVES for tool binding, read off the argv
 # it is about to be handed — not off the registry row that produced it. A
 # writing tool left enabled refuses before any surface exists.
@@ -275,12 +280,12 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "DRY RUN — would spawn the lead for GH-$EPIC:"
   echo "  agent: $LEAD   workspace label: $team_label   cwd: $src"
   echo "  $HERDR workspace create --cwd $src --label \"$team_label\" --env RALPH_HERDR_LEAD=$LEAD --env RALPH_HERDR_TEAM_LEAD=$LEAD${ref:+ --env RALPH_HERDR_TEAM_LEAD_REF=$ref}${DISPATCH_ADDR:+ --env WHO_DISPATCH=$DISPATCH_ADDR} --env RALPH_HERDR_SPAWNER_ROLE=orchestrator --env RALPH_HERDR_INVOKED_BY=agent --no-focus"
-  echo "  $HERDR agent start $LEAD --kind claude --pane <captured>${lead_tools[*]:+ -- ${lead_tools[*]}}${lead_contain[*]:+ --settings <process containment: seatbelt denyWrite $src>}"
+  echo "  $HERDR agent start $LEAD --kind claude --pane <captured>${lead_tools[*]:+ -- ${lead_tools[*]}}${lead_contain[*]:+ --settings <process containment: seatbelt denyWrite $src>}${lead_model:+ --model $lead_model}"
   [ "${#lead_contain[@]}" -gt 0 ] &&
     echo "  containment probe: prompt <captured> to touch <inside $src> <outside \$RALPH_HOME/containment-probes>; refuse unless applied"
   echo "  $HERDR agent prompt $LEAD \"<lead brief: rehydrate GH-$EPIC from board state; staff via work-fleet.sh --epic $EPIC; on epic Done, self-dissolve via workspace close (D3.3)>\""
   if [ -n "$ref" ]; then
-    record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "" "$(date -u +%FT%TZ)" "" "" orchestrator "" "" "" "$lead_addr") || record=""
+    record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "" "$(date -u +%FT%TZ)" "" "" orchestrator "" "" "" "$lead_addr" "" "" "$lead_model") || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"
     echo "  ledger append (containment, after the probe): {ev: \"containment\", agent_ref: \"$ref\", tool_binding: \"$lead_tb\", process_containment: <probe verdict>, via: \"spawn\"}"
   fi
@@ -313,7 +318,7 @@ case "$shell_pid" in '' | *[!0-9]*) shell_pid="" ;; esac
 record="" ledger=""
 if [ -n "$ref" ]; then
   record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "$pane" "$ts" \
-    "$shell_pid" "$src" orchestrator "" "" "" "$lead_addr") || record=""
+    "$shell_pid" "$src" orchestrator "" "" "" "$lead_addr" "" "" "$lead_model") || record=""
   ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
   if [ -n "$record" ] && [ -n "$ledger" ]; then
     RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" || {
