@@ -94,8 +94,9 @@ ralph_hero_pane_stamp "$REPO" "${HERDR_PANE_ID:-}" $$
 # The NEVER-LOAD-BEARING bar survives intact, and the name itself is the
 # carve-out: it deliberately does not parse as grammar B, and reconcile and
 # watch-event admit agents by that parse — so the seat is messageable live but
-# never ledgered, never swept, never adopted (the ralph-deliver/ralph-tend
-# precedent). Still no claim, no lock, no worktree, no ledger row; killing the
+# never ledgered, never swept, never adopted (the precedent the lane passes
+# set before GH-2342 gave them grammar-B names). Still no claim, no lock, no
+# worktree, no ledger row; killing the
 # pane loses nothing, and a herdr server restart drops the name and token with
 # the sitting (there is no ledger record to re-push from — the next
 # `dispatch up` re-derives everything, which is the bar working as stated).

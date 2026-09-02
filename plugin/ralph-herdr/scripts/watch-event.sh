@@ -171,8 +171,10 @@ handle_status() {
   # being wrong in the ledger costs a lie the next session inherits.
 
   # Ralph agents only: grammar-B / gh-N via ralph_agent_parse, plus the two
-  # legacy singleton lanes (which have no parseable identity — they get
-  # attention routing but no ledger record; reconcile skips them the same way).
+  # pre-GH-2342 lane-pass names (no parseable identity — they get attention
+  # routing but no ledger record; reconcile skips them the same way). The
+  # current passes, t0-tend / r0-deliver, parse and are ledgered like any
+  # other agent.
   legacy=""
   if ! parsed=$(ralph_agent_parse "$agent"); then
     case "$agent" in

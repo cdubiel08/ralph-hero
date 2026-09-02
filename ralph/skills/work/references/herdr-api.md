@@ -21,14 +21,21 @@ Every cockpit agent name is `<lane><issue>-<slug>[--<gen>]`, ≤32 chars:
 | `r` | review |
 | `o` | orchestrator |
 | `d` | disposable |
-| `s` | watcher (issue 0 reserved for infra: `s0-watch`) |
+| `s` | watcher (`s0-watch`) |
 | `x` | relay (`x0-relay`) |
+| `i` | investigation |
+| `t` | tending (`t0-tend`, the tend lane pass) |
+
+Issue 0 means "belongs to no unit": the infra pair above, `d0-fork-…` forks,
+and the two lane passes `t0-tend` / `r0-deliver` (GH-2342 — a fixed name, so
+one live pass per lane, but a grammar-B one, so the pass has a ledger row).
 
 Parse-back is guaranteed: lane = char 1, issue = leading digits, slug = the
 rest before any `--N`; `--` appears ONLY in the collision suffix (`--2`..`--9`).
 The harness (claude/codex/pi) is a metadata token, never part of the name.
-Legacy `gh-N` / `ralph-deliver` / `ralph-tend` names stay parseable through
-the transition.
+Legacy `gh-N` names stay parseable through the transition; `ralph-deliver` /
+`ralph-tend` (the pre-0.41 lane-pass names) are recognised as legacy
+singletons — watched, never ledgered.
 
 The durable identity is the ref `name#epoch` (epoch = 4-8 lowercase hex,
 minted at spawn) — a pane_id names a live pane on one server and dies with

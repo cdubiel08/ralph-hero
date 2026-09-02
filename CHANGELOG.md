@@ -19,6 +19,25 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Added
 
+- **Lane passes are ledgered (GH-2342).** `tend-pass` / `deliver-pass` spawn
+  as `t0-tend` / `r0-deliver` — grammar B at issue 0, the "belongs to no
+  unit" convention `s0-watch` / `x0-relay` / `d0-fork-…` already use — so each
+  pass mints a durable ref and writes the provisional C7 row every spawn path
+  writes, closed `never_started` on a refused start. The tender's GH-2267
+  outcomes now land on the ledger as a `containment` event (`tool_binding`,
+  `process_containment`) after the in-pane probe, on success AND on refusal
+  (then `exit containment_<outcome>`); the deliverer's row carries
+  `not_requested` for both, read off the empty argv it is handed. Previously
+  the fixed names `ralph-tend` / `ralph-deliver` parsed in no grammar, so no
+  ref could be minted and the achieved containment was printed to the pass
+  log and recorded nowhere. The names stay fixed (no epoch, no generation),
+  so the one-live-pass-per-lane interlock is unchanged; the old names remain
+  recognised as legacy singletons for panes from an older plugin. Two edges
+  followed: C7 `ralph.lineage` admits `issue: 0` (and no other contract
+  does — `parent_issue` stays positive), and reconcile's `recover_claim`
+  skips issue 0 by name instead of aiming `board get 0` at every dead
+  issue-0 row, which was latent for discovered forks.
+
 - **Plugin staleness is announced at spawn time, not only in a doctor sweep
   (GH-2260)**. `herdr` has no auto-update, so the installed ralph-herdr tree
   drifts from the checkout silently — measured here at 0.14.0 against an

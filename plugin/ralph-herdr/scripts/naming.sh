@@ -7,8 +7,9 @@
 #
 #   lane   one char from the registry: w=work r=review o=orchestrator
 #          i=investigation t=tending (GH-1808)
-#          d=disposable s=watcher x=relay. Issue 0 is reserved for infra
-#          (s0-watch, x0-relay).
+#          d=disposable s=watcher x=relay. Issue 0 is reserved for agents
+#          that belong to no unit: infra (s0-watch, x0-relay), forks
+#          (d0-fork-…) and the lane passes (t0-tend, r0-deliver — GH-2342).
 #   slug   lowercase alnum words, hyphen-separated, starts with a letter,
 #          never contains "--" — so "--" appears ONLY before a generation
 #          suffix and parse-back is unambiguous: lane = char 1, issue =

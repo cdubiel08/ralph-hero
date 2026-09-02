@@ -29,7 +29,9 @@
 #   lost ("lost" is
 #   reserved; a lost agent is recorded as ev=exit reason=swept-unknown —
 #   spelled "lost" before GH-2309, see the exit-reason enum below).
-#     spawn     appended by lib.sh's spawn path AT PANE CREATION — the one
+#     spawn     appended by the spawn paths (lib.sh, work-team.sh, fleet.sh's
+#               investigator, and since GH-2342 the t0-tend / r0-deliver lane
+#               passes) AT PANE CREATION — the one
 #               documented carve-out from "the watcher is the sole appender"
 #               (spawn happens before any event hook can fire; a single-line
 #               O_APPEND write stays atomic). Embeds the C7 LineageRecord as

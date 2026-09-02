@@ -6,8 +6,10 @@
 # this script only reports):
 #
 #   live side    every live ralph agent with a ledger identity (grammar-B or
-#                legacy gh-N; the ralph-deliver/ralph-tend singletons are
-#                deliberately unledgered) has EXACTLY ONE open ledger record
+#                legacy gh-N; the pre-GH-2342 ralph-deliver/ralph-tend
+#                singletons are unledgered by construction — the current
+#                t0-tend / r0-deliver passes are ordinary grammar-B agents)
+#                has EXACTLY ONE open ledger record
 #                across the scanned ledgers — zero means the watcher missed
 #                the spawn and no reconcile has run; two+ means a duplicate
 #                identity the reads would race on.
@@ -184,7 +186,7 @@ while IFS= read -r name; do
   [ -n "$name" ] || continue
   case "$name" in
     ralph-deliver | ralph-tend)
-      note "lineage-$name" "legacy singleton lane — no ledger identity by design"
+      note "lineage-$name" "legacy singleton lane (pre-GH-2342 name) — no ledger identity by design"
       continue
       ;;
   esac

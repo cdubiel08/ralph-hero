@@ -65,7 +65,8 @@ command = [
 # `pane open --placement split`: the launcher pane opens as a TAB in the
 # repo's MAIN workspace (GH-2246 resolution), and the launcher script splits
 # the agent pane beside itself — one click, one surface, the lane's own name
-# throughout (tab `deliver`, skill /ralph:deliver, agent ralph-deliver).
+# throughout (tab `deliver`, skill /ralph:deliver, agent r0-deliver — grammar
+# B at issue 0 since GH-2342, so the pass is ledgered like every spawn).
 [[actions]]
 id = "deliver-pass"
 title = "Ralph: deliver"
