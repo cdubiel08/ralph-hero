@@ -1,6 +1,6 @@
 // signals.go — the card markings whose data is machine-local: the spawn
 // ledger (agent age + branch), the agent's own worktree diff, and the glyph
-// set the whole strip is drawn from. Nothing here touches the network, and
+// tier the whole strip is drawn from. Nothing here touches the network, and
 // every reader returns a distinguishable "not read" rather than a value —
 // a diff we could not measure must never render like a clean worktree.
 package main
@@ -22,64 +22,114 @@ import (
 
 // ── glyphs ──────────────────────────────────────────────────────────────────
 //
-// The branch/clock/agents glyphs are Nerd Font private-use codepoints. A host
-// without a Nerd Font renders tofu at the wrong advance width, which shears
-// the whole fixed-width strip — and the strip is what hitTest maps clicks
-// through. So they are behind a knob that DEFAULTS TO ASCII: a cockpit that
-// looks plainer than it could is strictly better than one whose columns no
-// longer line up with the mouse.
+// Three tiers (GH-2377, the pi-kit shape): nerd, unicode, ascii. Every
+// unicode glyph is a single-cell BMP character, so the fixed-width strip —
+// which hitTest maps clicks through — cannot shear; unicode is therefore the
+// DEFAULT. The nerd tier's chip glyphs are private-use codepoints that render
+// as tofu at the wrong advance width without the font, so opting in stays
+// deliberate. ascii is the escape hatch for a terminal that draws nothing
+// above 7 bits.
 //
-// The three dots are deliberately NOT gated: ● ○ · are ordinary Unicode with
-// predictable single-cell width, not Nerd Font, so the status dot survives on
-// every host.
+// The herdr STATE glyphs (the gutter dot) are not in the tier at all: they are
+// ordinary Unicode in every tier, nerd included, and dotFor reads the
+// constants below directly — three identical rows in a table would be a
+// convention, a single definition is the fact.
+//
+// The nerd tier is written as \uXXXX escapes on purpose: the raw private-use
+// characters were silently dropped by one editor write during the design and
+// the tier became a set of empty strings. An escape cannot be lost that way.
 type glyphSet struct {
-	branch  string
-	clock   string
-	chevron string
-	agents  string
-	// pr leads the In Review chip. ⇅ is ordinary Unicode with a predictable
-	// single-cell width, so unlike the branch/clock/agents glyphs it is NOT
-	// gated — the chip is the one marking whose absence would be read as
-	// "no PR", and a font knob must not be able to say that.
-	pr string
+	name string // "nerd" | "unicode" | "ascii"; "" is a zero value, never a tier
 
-	dotFull   string
-	dotHollow string
-	dotSmall  string
+	branch  string
+	chevron string // epic caret
+	agents  string // fleet count
+	pr      string // the In Review chip
+	merge   string // the Done chip: the closing PR that landed
+	usd     string
+	token   string
+	ctx     string
+	bang    string // P0
+	ok      string
+	err     string
+	stalled string
 }
 
-// Every codepoint here was verified present in JetBrainsMonoNerdFont-Regular.
+// Every codepoint here was verified present in JetBrainsMono Nerd Font (cmap
+// check, 2026-09-01).
 var nerdGlyphs = glyphSet{
-	branch:    "", // nf-dev-git_branch
-	clock:     "", // nf-fa-clock_o
-	chevron:   "❯",
-	agents:    "", // nf-fa-users
-	pr:        "⇅",
-	dotFull:   "●",
-	dotHollow: "○",
-	dotSmall:  "·",
+	name:    "nerd",
+	branch:  "\uE725", // nf-dev-git_branch
+	chevron: "❯",
+	agents:  "\uF0C0", // nf-fa-users
+	pr:      "\uF407", // nf-oct-git_pull_request
+	merge:   "\uF419", // nf-oct-git_merge
+	usd:     "\uF155", // nf-fa-dollar
+	token:   "\uEDE8", // coin
+	ctx:     "\uF50C", // context
+	bang:    "\uF12A", // nf-fa-exclamation
+	ok:      "\uF00C", // nf-fa-check
+	err:     "\uF00D", // nf-fa-close
+	stalled: "\uF071", // nf-fa-warning
+}
+
+var unicodeGlyphs = glyphSet{
+	name:    "unicode",
+	branch:  "⎇",
+	chevron: "❯",
+	agents:  "×",
+	pr:      "⇅",
+	merge:   "⌥",
+	usd:     "$",
+	token:   "¤",
+	ctx:     "⛶",
+	bang:    "!",
+	ok:      "✓",
+	err:     "✗",
+	stalled: "◍",
 }
 
 var asciiGlyphs = glyphSet{
-	branch:    "",
-	clock:     "",
-	chevron:   ">",
-	agents:    "x",
-	pr:        "⇅",
-	dotFull:   "●",
-	dotHollow: "○",
-	dotSmall:  "·",
+	name:    "ascii",
+	branch:  "",
+	chevron: ">",
+	agents:  "x",
+	pr:      "pr",
+	merge:   "M",
+	usd:     "$",
+	token:   "tok",
+	ctx:     "ctx",
+	bang:    "!",
+	ok:      "ok",
+	err:     "!!",
+	stalled: "x",
 }
 
-// resolveGlyphs reads RALPH_COCKPIT_GLYPHS. Anything that is not exactly
-// "nerd" — unset, misspelt, "yes" — takes ASCII: opting IN to a font
-// requirement has to be deliberate, because the failure mode is a sheared
-// grid rather than a missing icon.
+// The state vocabulary's glyphs — the same in every tier (see above). Filled
+// and hollow circles of predictable single-cell width; the status dot must
+// survive on every host.
+const (
+	glyphDotStarting  = "◌"
+	glyphDotFilled    = "●" // working, blocked, done — colour tells them apart
+	glyphDotReporting = "◕"
+	glyphDotHollow    = "○" // idle
+	glyphDotNone      = "·"
+)
+
+// resolveGlyphs reads RALPH_COCKPIT_GLYPHS: exactly "nerd" or "ascii"
+// (case-insensitive, trimmed) selects that tier; anything else — unset,
+// misspelt, "yes" — is unicode. Opting IN to a font requirement has to be
+// deliberate, because the failure mode is a sheared grid rather than a
+// missing icon; opting DOWN to ascii is equally explicit so a typo cannot
+// quietly plain the strip.
 func resolveGlyphs(raw string) glyphSet {
-	if strings.EqualFold(strings.TrimSpace(raw), "nerd") {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "nerd":
 		return nerdGlyphs
+	case "ascii":
+		return asciiGlyphs
 	}
-	return asciiGlyphs
+	return unicodeGlyphs
 }
 
 // ── the spawn ledger ────────────────────────────────────────────────────────

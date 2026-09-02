@@ -252,9 +252,18 @@ FAILING checks renders the same amber as one still running.
 the read actually used, so a repo that raises `RALPH_AUDIT_DAYS` is never told
 "14d" over 30 days of closes.
 
-`RALPH_COCKPIT_GLYPHS=nerd` opts in to Nerd Font glyphs. The default is ASCII
-because a host without the font renders tofu at the wrong advance width, which
-shears the fixed-stride card grid the mouse maps clicks through.
+**Glyph tiers (GH-2377).** `RALPH_COCKPIT_GLYPHS` selects `nerd`, `unicode`
+(the default) or `ascii`; anything else is `unicode`. Every unicode glyph is a
+single-cell BMP character, so the fixed-stride card grid the mouse maps clicks
+through cannot shear; `nerd` is an explicit opt-in because a host without the
+font renders its private-use codepoints as tofu at the wrong width. The herdr
+state dots are Unicode in every tier — `◌` starting, `●` working (yellow),
+`◕` reporting, `●` blocked (red), `○` idle, `●` done (green, filled: a
+finished session is no longer drawn as an idle one), `·` none. A Done-column
+card always draws the done dot, and its right slot is the purple merge glyph
+plus the PR in `closedByPullRequestsReferences` — the Done gate's own field,
+read via `board closed --json --prs` (opt-in, +10 pts/page): a grey `⌥?` is a
+linkage the cockpit could not read, no chip is a close with no closing PR.
 
 **Is the cockpit alive?** The Go TUI stamps
 `~/.ralph/cockpit.heartbeat.json` (pid + instant) every tick, and

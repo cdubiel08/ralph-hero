@@ -20,7 +20,10 @@ func TestCardSignalsArgv(t *testing.T) {
 	if got := argsCardSignals(); len(got) != 2 || got[0] != "card-signals" || got[1] != "--json" {
 		t.Errorf("argsCardSignals() = %v", got)
 	}
-	if got := argsBoardClosed(); len(got) != 2 || got[0] != "closed" || got[1] != "--json" {
+	// `--prs` is the opt-in for the closing-PR linkage (GH-2377): bare
+	// `board closed` never pays for the connection (GH-2151), and the Done
+	// merge chip is the one reader that does.
+	if got := argsBoardClosed(); len(got) != 3 || got[0] != "closed" || got[1] != "--json" || got[2] != "--prs" {
 		t.Errorf("argsBoardClosed() = %v", got)
 	}
 }
@@ -245,6 +248,26 @@ func TestEpicChipDegradesOneStepAtATime(t *testing.T) {
 		t.Errorf("rolled epic = %q, want the name and 2/4", got)
 	}
 
+	// The title is ALL-OR-NOTHING (GH-2377, spec §4): a budget that fits the
+	// number and the tally but not the whole title draws `> #1994 2/4` with
+	// no title at all — never `Epic: co…`, which reads as a different issue.
+	// "> #1994" is 7 cells, " 2/4" is 4, so 20 leaves 8 for " " + title
+	// (13 cells): too small.
+	got = epicChip(m, card, asciiGlyphs, 20)
+	if strings.Contains(got, "…") || strings.Contains(got, "Epic") {
+		t.Errorf("tight budget = %q, want the title dropped whole, never trimmed", got)
+	}
+	if !strings.Contains(got, "#1994") || !strings.Contains(got, "2/4") {
+		t.Errorf("tight budget = %q, want the number and the tally kept", got)
+	}
+	// The exact fit draws it: 7 + 1 + 13 + 1 + 3 = 25.
+	if got := epicChip(m, card, asciiGlyphs, 25); !strings.Contains(got, "Epic: cockpit") {
+		t.Errorf("exact-fit budget = %q, want the whole title", got)
+	}
+	if got := epicChip(m, card, asciiGlyphs, 24); strings.Contains(got, "Epic") {
+		t.Errorf("one cell short = %q, want no title", got)
+	}
+
 	// A truncated child list is a FLOOR, not a total.
 	m.epics = map[int]EpicRollup{1994: {Number: 1994, Title: "Epic: cockpit", Done: 2, Total: 50, Truncated: true}}
 	if got := epicChip(m, card, asciiGlyphs, 60); !strings.Contains(got, "2/50+") {
@@ -301,6 +324,90 @@ func TestParseClosedRefusesAPayloadWithNoItemsArray(t *testing.T) {
 	// meter and away from the spawn verb.
 	if cards[0].State != doneState || cards[0].ClosedAt == "" || cards[0].Repo != "o/r" {
 		t.Errorf("closed card = %+v", cards[0])
+	}
+	// No `closingPRs` array at all — a board CLI that predates `--prs` — is
+	// UNREAD, never "no PR".
+	if cards[0].ClosingPRsRead || cards[0].MergedPR != 0 {
+		t.Errorf("a row with no closingPRs array must read unread: %+v", cards[0])
+	}
+}
+
+func TestParseClosedCarriesTheMergedClosingPRInThreeStates(t *testing.T) {
+	// GH-2377: the Done merge chip reads `closedByPullRequestsReferences` —
+	// the field the Done gate reads. Unread, none, and merged are three
+	// different facts and the card must carry all three.
+	cards, _, err := parseClosed(`{"windowDays":14,"items":[
+	  {"number":1,"repo":"o/r","title":"unread","closedAt":"2026-08-17T04:29:06Z"},
+	  {"number":2,"repo":"o/r","title":"none","closedAt":"2026-08-17T04:29:06Z","closingPRs":[]},
+	  {"number":3,"repo":"o/r","title":"merged","closedAt":"2026-08-17T04:29:06Z","closingPRs":[{"number":30,"merged":true}]},
+	  {"number":4,"repo":"o/r","title":"unmerged only","closedAt":"2026-08-17T04:29:06Z","closingPRs":[{"number":40,"merged":false}]},
+	  {"number":5,"repo":"o/r","title":"newest merged wins","closedAt":"2026-08-17T04:29:06Z","closingPRs":[{"number":52,"merged":true},{"number":51,"merged":true},{"number":59,"merged":false}]}
+	]}`)
+	if err != nil || len(cards) != 5 {
+		t.Fatalf("cards=%v err=%v", cards, err)
+	}
+	want := []struct {
+		read bool
+		pr   int
+	}{{false, 0}, {true, 0}, {true, 30}, {true, 0}, {true, 52}}
+	for i, w := range want {
+		if cards[i].ClosingPRsRead != w.read || cards[i].MergedPR != w.pr {
+			t.Errorf("#%d %s: read=%v pr=%d, want read=%v pr=%d",
+				cards[i].Number, cards[i].Title, cards[i].ClosingPRsRead, cards[i].MergedPR, w.read, w.pr)
+		}
+	}
+}
+
+func TestMergeChipThreeStatesNeverLookAlike(t *testing.T) {
+	// Unread is the loud grey `?`; none is NOTHING (the no-closing-keyword
+	// population the audit exists for is an ordinary state, not an alarm);
+	// merged is the glyph and the number in the purple merged PRs use.
+	for _, g := range []glyphSet{nerdGlyphs, unicodeGlyphs, asciiGlyphs} {
+		unread := mergeChip(Card{Number: 1, State: doneState}, g)
+		if !strings.Contains(unread, "?") || !strings.Contains(unread, g.merge) {
+			t.Errorf("%s: unread merge chip = %q, want the glyph and a ?", g.name, unread)
+		}
+		if got := mergeChip(Card{Number: 2, State: doneState, ClosingPRsRead: true}, g); got != "" {
+			t.Errorf("%s: no merged PR = %q, want nothing", g.name, got)
+		}
+		merged := mergeChip(Card{Number: 3, State: doneState, ClosingPRsRead: true, MergedPR: 30}, g)
+		if !strings.Contains(merged, "#30") || !strings.Contains(merged, g.merge) || strings.Contains(merged, "?") {
+			t.Errorf("%s: merged chip = %q, want %s#30", g.name, merged, g.merge)
+		}
+	}
+}
+
+func TestDoneCardDrawsTheDoneDotAndTheMergeChip(t *testing.T) {
+	// A Done-column card ALWAYS draws the done dot (spec §2) — even with a
+	// live agent still reporting on it — and its right slot is the merge chip
+	// (spec §8), the same slot the diff and PR chips take elsewhere.
+	// Tests render with no colour profile, so the rule is pinned on glyph
+	// SHAPE: a reporting session draws ◕ on any other column, and the Done
+	// card must still draw the filled dot.
+	m := testModel(&fakeRunner{})
+	m.agents = setAgents([]Agent{{Name: "w7-seven", Status: "working", TokenState: "reporting", Issue: 7, Lane: "w", Root: "w7-seven#a"}})
+	if st, ok := m.cardState(7); !ok || st != stateReporting {
+		t.Fatalf("fixture: cardState(7) = %q,%v, want reporting", st, ok)
+	}
+	m.showDone = true
+	card := Card{Number: 7, State: doneState, Title: "shipped", ClosedAt: "2026-08-17T04:29:06Z",
+		ClosingPRsRead: true, MergedPR: 70}
+	m.doneCards = []Card{card}
+	lines := strings.Split(renderCard(m, 2, 0, card, 60), "\n")
+	if !strings.HasPrefix(lines[0], glyphDotFilled) || strings.Contains(lines[0], glyphDotReporting) {
+		t.Errorf("line 1 = %q, want the filled done dot in the gutter, never the live agent's", lines[0])
+	}
+	if !strings.Contains(lines[0], "#70") || !strings.Contains(lines[0], unicodeGlyphs.merge) {
+		t.Errorf("line 1 = %q, want the merge chip in the right slot", lines[0])
+	}
+	// The same card in any other column would draw the agent's own dot.
+	if got := statusDot(m, Card{Number: 7, State: "In Progress"}, unicodeGlyphs); !strings.Contains(got, glyphDotReporting) {
+		t.Errorf("an In Progress card with a reporting agent = %q, want ◕", got)
+	}
+	// Unread renders the grey ? in the same slot.
+	unread := Card{Number: 8, State: doneState, Title: "unread", ClosedAt: "2026-08-17T04:29:06Z"}
+	if l1 := strings.Split(renderCard(m, 2, 0, unread, 60), "\n")[0]; !strings.Contains(l1, unicodeGlyphs.merge+"?") {
+		t.Errorf("unread line 1 = %q, want a grey %s?", l1, unicodeGlyphs.merge)
 	}
 }
 

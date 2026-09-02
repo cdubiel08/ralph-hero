@@ -11,26 +11,88 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
-func TestResolveGlyphsDefaultsToASCII(t *testing.T) {
-	// Opting in to a font requirement must be deliberate: without the font the
-	// glyphs render as tofu at the wrong advance width, which shears the
-	// fixed-stride card grid the mouse maps through.
-	for _, raw := range []string{"", "ascii", "yes", "NERDFONT", "true", " "} {
-		if got := resolveGlyphs(raw); got.branch != "" {
-			t.Errorf("resolveGlyphs(%q) opted into Nerd Font glyphs", raw)
+func TestResolveGlyphsTiers(t *testing.T) {
+	// unicode is the default (GH-2377): every glyph in it is single-cell BMP,
+	// so the fixed-stride card grid cannot shear. Opting IN to the Nerd Font
+	// requirement and opting DOWN to ascii are both exact spellings —
+	// anything else, including a typo, lands on the default.
+	for _, raw := range []string{"", "unicode", "yes", "NERDFONT", "true", " ", "nerdy", "asci"} {
+		if got := resolveGlyphs(raw); got.name != "unicode" {
+			t.Errorf("resolveGlyphs(%q) = tier %q, want unicode", raw, got.name)
 		}
 	}
 	for _, raw := range []string{"nerd", "NERD", " nerd "} {
-		if got := resolveGlyphs(raw); got.branch == "" {
-			t.Errorf("resolveGlyphs(%q) should be the nerd set", raw)
+		if got := resolveGlyphs(raw); got.name != "nerd" {
+			t.Errorf("resolveGlyphs(%q) = tier %q, want nerd", raw, got.name)
 		}
 	}
-	// The three dots are ordinary Unicode, not Nerd Font — the status dot must
-	// survive on a host with no special font at all.
-	if asciiGlyphs.dotFull == "" || asciiGlyphs.dotHollow == "" || asciiGlyphs.dotSmall == "" {
-		t.Error("the status dots must never be gated behind the font knob")
+	for _, raw := range []string{"ascii", "ASCII", " ascii "} {
+		if got := resolveGlyphs(raw); got.name != "ascii" {
+			t.Errorf("resolveGlyphs(%q) = tier %q, want ascii", raw, got.name)
+		}
+	}
+}
+
+func TestNerdTierIsPrivateUseAndNeverEmpty(t *testing.T) {
+	// The raw private-use characters were silently dropped by one editor
+	// write during the design and the tier became a set of empty strings;
+	// the source now carries \uXXXX escapes, and this pins that they survived.
+	want := map[string]rune{
+		"branch": 0xE725, "agents": 0xF0C0, "pr": 0xF407, "merge": 0xF419,
+		"usd": 0xF155, "token": 0xEDE8, "ctx": 0xF50C, "bang": 0xF12A,
+		"ok": 0xF00C, "err": 0xF00D, "stalled": 0xF071,
+	}
+	got := map[string]string{
+		"branch": nerdGlyphs.branch, "agents": nerdGlyphs.agents, "pr": nerdGlyphs.pr,
+		"merge": nerdGlyphs.merge, "usd": nerdGlyphs.usd, "token": nerdGlyphs.token,
+		"ctx": nerdGlyphs.ctx, "bang": nerdGlyphs.bang, "ok": nerdGlyphs.ok,
+		"err": nerdGlyphs.err, "stalled": nerdGlyphs.stalled,
+	}
+	for k, r := range want {
+		if got[k] != string(r) {
+			t.Errorf("nerd %s = %q, want U+%04X", k, got[k], r)
+		}
+	}
+	// The caret is ordinary Unicode in the nerd tier too — no nerd chevron
+	// was chosen, and a PUA caret would gate the epic chip behind the font.
+	if nerdGlyphs.chevron != "❯" {
+		t.Errorf("nerd chevron = %q, want ❯", nerdGlyphs.chevron)
+	}
+}
+
+func TestEveryTierGlyphIsAtMostThreeCellsAndTheChipsNeverVanish(t *testing.T) {
+	// A multi-cell glyph shears the fixed-width strip hitTest maps clicks
+	// through; and the chips whose absence would read as a FACT (no PR, no
+	// merge, no epic) must be non-empty in every tier. The branch glyph is
+	// the one deliberate blank (ascii has none), since a branch reads as a
+	// branch without a marker.
+	for _, g := range []glyphSet{nerdGlyphs, unicodeGlyphs, asciiGlyphs} {
+		for name, glyph := range map[string]string{
+			"chevron": g.chevron, "agents": g.agents, "pr": g.pr, "merge": g.merge,
+			"usd": g.usd, "token": g.token, "ctx": g.ctx, "bang": g.bang,
+			"ok": g.ok, "err": g.err, "stalled": g.stalled,
+		} {
+			if glyph == "" {
+				t.Errorf("%s tier: %s glyph is empty", g.name, name)
+			}
+			if w := lipgloss.Width(glyph); w > 3 {
+				t.Errorf("%s tier: %s glyph %q is %d cells", g.name, name, glyph, w)
+			}
+		}
+		if g.name != "ascii" && lipgloss.Width(g.branch) != 1 {
+			t.Errorf("%s tier: branch glyph %q must be one cell", g.name, g.branch)
+		}
+	}
+	// The status dots are tier-independent Unicode — the gutter must survive
+	// on every host, nerd included.
+	for _, d := range []string{glyphDotStarting, glyphDotFilled, glyphDotReporting, glyphDotHollow, glyphDotNone} {
+		if lipgloss.Width(d) != 1 {
+			t.Errorf("state dot %q is not one cell", d)
+		}
 	}
 }
 

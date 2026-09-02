@@ -5547,7 +5547,8 @@ export function listOwnRecentClosed(
   /** GH-2151: opt-in per caller (the GH-1803 shape — ask only for what you
    *  read). `closedByPullRequestsReferences(10)` under `issues(100)` is +10
    *  pts/page by the product rule; `tendQueue` and doctor's audit line read
-   *  it, `recentDone` never renders it and does not pay for it. */
+   *  it, and `board closed --prs` (the cockpit's Done merge chip, GH-2377);
+   *  bare `recentDone` never renders it and does not pay for it. */
   withClosingPRs = false,
 ): Array<{
   number: number;
@@ -5558,10 +5559,14 @@ export function listOwnRecentClosed(
    *  GitHub's own closing linkage. A truncated page with no merged node reads
    *  FALSE: the row surfaces for audit rather than being silently skipped. */
   hasMergedClosingPR?: boolean;
+  /** Present only when `withClosingPRs` — the first page of the linkage
+   *  itself, number and merged flag (scalars beside `merged`, so free). The
+   *  cockpit renders the highest-numbered MERGED one as the Done chip. */
+  closingPRs?: Array<{ number: number; merged: boolean }>;
 }> {
   const cutoff = since.getTime();
   const closingPRs = withClosingPRs
-    ? `closedByPullRequestsReferences(first: 10) { nodes { merged } }`
+    ? `closedByPullRequestsReferences(first: 10) { nodes { number merged } }`
     : "";
   return withCache(ctx, (cache) => {
     const out: Array<{
@@ -5570,6 +5575,7 @@ export function listOwnRecentClosed(
       closedAt: string;
       stateReason: string | null;
       hasMergedClosingPR?: boolean;
+      closingPRs?: Array<{ number: number; merged: boolean }>;
     }> = [];
     let after: string | null = null;
     for (;;) {
@@ -5629,6 +5635,9 @@ export function listOwnRecentClosed(
                 hasMergedClosingPR: (c.closedByPullRequestsReferences?.nodes ?? []).some(
                   (p: any) => p?.merged === true,
                 ),
+                closingPRs: (c.closedByPullRequestsReferences?.nodes ?? [])
+                  .filter((p: any) => typeof p?.number === "number")
+                  .map((p: any) => ({ number: p.number as number, merged: p.merged === true })),
               }
             : {}),
         });
@@ -6912,6 +6921,10 @@ export interface DoneItem {
   repo: string; // nameWithOwner — own-repo by construction; carried for URLs
   title: string;
   closedAt: string;
+  /** Present only under `--prs` (GH-2377): GitHub's own closing linkage, the
+   *  field the Done gate reads. ABSENT means the caller did not ask — the
+   *  cockpit draws that as an unread chip, never as "no PR". */
+  closingPRs?: Array<{ number: number; merged: boolean }>;
 }
 
 export interface DoneResult {
@@ -6933,15 +6946,23 @@ export interface DoneResult {
  *
  *  The window is a WINDOW. Every consumer must say so — a bare "Done" header
  *  over 14 days of closes claims a completeness this read does not have. */
-export function recentDone(ctx: Ctx, opts: TendOpts = parseTendOpts()): DoneResult {
+export function recentDone(
+  ctx: Ctx,
+  opts: TendOpts = parseTendOpts(),
+  /** GH-2377: carry each close's `closedByPullRequestsReferences` (number +
+   *  merged) for the cockpit's Done merge chip. Opt-in, because it is the
+   *  +10 pts/page connection GH-2151 kept off the bare view. */
+  withClosingPRs = false,
+): DoneResult {
   const since = new Date(ctx.now().getTime() - opts.auditDays * 86_400_000);
-  const items = listOwnRecentClosed(ctx, since)
+  const items = listOwnRecentClosed(ctx, since, withClosingPRs)
     .filter((c) => c.stateReason !== "NOT_PLANNED")
     .map((c) => ({
       number: c.number,
       repo: `${ctx.cfg.owner}/${ctx.cfg.repo}`,
       title: c.title,
       closedAt: c.closedAt,
+      ...(c.closingPRs ? { closingPRs: c.closingPRs } : {}),
     }))
     .sort((a, b) => (a.closedAt < b.closedAt ? 1 : a.closedAt > b.closedAt ? -1 : b.number - a.number));
   return { windowDays: opts.auditDays, since: since.toISOString(), items };
@@ -12447,12 +12468,15 @@ reads
                               gates are RUN, not predicted, and never on a
                               viewer's timer) and drops the PR number on
                               exactly its merged and closed rows
-  closed [--json]             own-repo board items closed as COMPLETED inside
+  closed [--json] [--prs]     own-repo board items closed as COMPLETED inside
                               RALPH_AUDIT_DAYS (14), newest first — the Done
                               view. \`list\` cannot answer it (open-issues-only
                               by construction, GH-1814). NOT_PLANNED is
                               excluded, reconcile's own rule. A WINDOW, never
-                              all history: every consumer must say so
+                              all history: every consumer must say so.
+                              --prs carries each close's closing-PR linkage
+                              (number + merged; the Done gate's field) for the
+                              cockpit's merge chip — opt-in, +10 pts/page
 
 mutations
   create --title T [--body B] [--parent NNN] [--estimate XS..XL] [--state S]
@@ -12795,7 +12819,7 @@ interface ParsedArgs {
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "resume", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
-  "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace", "all", "closed",
+  "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace", "all", "closed", "prs",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
@@ -14030,11 +14054,18 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "closed": {
-      const res = recentDone(ctx);
+      const res = recentDone(ctx, parseTendOpts(), flags.prs === true);
       if (flags.json) json(res);
       else {
         out(`${res.items.length} closed as completed since ${res.since} (${res.windowDays}d window)`);
-        for (const c of res.items) out(`  #${c.number} ${c.closedAt} ${c.title}`);
+        for (const c of res.items) {
+          const prs = c.closingPRs
+            ? c.closingPRs.length
+              ? " " + c.closingPRs.map((p) => `pr#${p.number}${p.merged ? " MERGED" : ""}`).join(" ")
+              : " (no closing PR)"
+            : "";
+          out(`  #${c.number} ${c.closedAt} ${c.title}${prs}`);
+        }
       }
       return 0;
     }

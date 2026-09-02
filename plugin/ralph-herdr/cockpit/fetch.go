@@ -102,7 +102,7 @@ func argsBoardFrontier() []string { return []string{"frontier", "--json"} }
 // would pay for a 14-day closed-issue walk on every pass to fill a column
 // nobody is looking at.
 func argsCardSignals() []string { return []string{"card-signals", "--json"} }
-func argsBoardClosed() []string { return []string{"closed", "--json"} }
+func argsBoardClosed() []string { return []string{"closed", "--json", "--prs"} }
 func argsBoardInbox() []string  { return []string{"inbox", "--json"} }
 
 // The topology snapshot (GH-2219) is two verbs on one keypress: the roster is
@@ -465,16 +465,25 @@ func parseCardSignals(out string) (map[int]PRMark, map[int]EpicRollup, error) {
 	return prs, epics, nil
 }
 
-// parseClosed reads `board closed --json` into Done cards. Same pointer rule:
-// an absent `items` array is a failed read, never an empty window.
+// parseClosed reads `board closed --json --prs` into Done cards. Same pointer
+// rule: an absent `items` array is a failed read, never an empty window.
+//
+// `closingPRs` is a pointer one level down for the same reason card-signals'
+// `prs` is: a row whose array is ABSENT (a board CLI that predates `--prs`
+// ignores the flag and emits none) must render the merge chip UNREAD, while
+// an empty array is the stronger fact that GitHub links no PR to this close.
 func parseClosed(out string) ([]Card, int, error) {
 	var payload struct {
 		WindowDays int `json:"windowDays"`
 		Items      *[]struct {
-			Number   int    `json:"number"`
-			Repo     string `json:"repo"`
-			Title    string `json:"title"`
-			ClosedAt string `json:"closedAt"`
+			Number     int    `json:"number"`
+			Repo       string `json:"repo"`
+			Title      string `json:"title"`
+			ClosedAt   string `json:"closedAt"`
+			ClosingPRs *[]struct {
+				Number int  `json:"number"`
+				Merged bool `json:"merged"`
+			} `json:"closingPRs"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
@@ -485,10 +494,21 @@ func parseClosed(out string) ([]Card, int, error) {
 	}
 	cards := make([]Card, 0, len(*payload.Items))
 	for _, it := range *payload.Items {
-		cards = append(cards, Card{
+		c := Card{
 			Number: it.Number, Repo: it.Repo, Title: it.Title,
 			State: doneState, ClosedAt: it.ClosedAt,
-		})
+		}
+		if it.ClosingPRs != nil {
+			c.ClosingPRsRead = true
+			for _, p := range *it.ClosingPRs {
+				// Only a MERGED closing PR is the Done gate's evidence; a
+				// closed-unmerged one linked by keyword proves nothing landed.
+				if p.Merged && p.Number > c.MergedPR {
+					c.MergedPR = p.Number
+				}
+			}
+		}
+		cards = append(cards, c)
 	}
 	return cards, payload.WindowDays, nil
 }

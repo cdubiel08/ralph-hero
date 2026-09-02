@@ -894,7 +894,7 @@ export class FakeGh {
               ...(query.includes("closedByPullRequestsReferences")
                 ? {
                     closedByPullRequestsReferences: {
-                      nodes: (fi.prs ?? []).map((p) => ({ merged: p.merged })),
+                      nodes: (fi.prs ?? []).map((p) => ({ number: p.number, merged: p.merged })),
                     },
                   }
                 : {}),

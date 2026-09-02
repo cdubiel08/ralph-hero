@@ -466,7 +466,11 @@ func TestJoinAgentStateTokenRefinesNeverContradicts(t *testing.T) {
 		{"a stale spawned token loses to live idle", "idle", "spawned", stateIdle},
 		{"a stale spawned token loses to live motion", "working", "spawned", stateWorking},
 		{"a stale working token loses to live idle", "idle", "working", stateIdle},
-		{"done is idle — nothing is happening", "done", "", stateIdle},
+		// GH-2377: `done` is its own state. "Over, cleanly" and "waiting for
+		// input" were one hollow dot, and a finished session read as a stalled
+		// one.
+		{"done is done, not idle", "done", "", stateDone},
+		{"done outranks nothing but unknown", "done", "reporting", stateDone},
 		{"unknown with no token stays unknown", "unknown", "", stateUnknown},
 		{"a token can speak when herdr cannot", "unknown", "working", stateWorking},
 		{"an unrecognised herdr status is unknown, not invented", "wedged", "", stateUnknown},
@@ -666,22 +670,28 @@ func TestDoneSwapClampsTheCursorAndKeepsItsThreeEmptyStatesApart(t *testing.T) {
 
 func TestPriorityGlyphIsLiteralAndNullIsDistinct(t *testing.T) {
 	// GH-2321: the bar meter read as a broken glyph; the priority is now its
-	// own name, legible on a monochrome terminal without a legend.
-	for _, p := range []string{"P0", "P1", "P2", "P3"} {
-		if g := priorityGlyph(p); !strings.Contains(g, p) {
-			t.Errorf("priorityGlyph(%q) = %q, must carry the literal name", p, g)
+	// own name, legible on a monochrome terminal without a legend. GH-2377:
+	// P0 is the tier's bang glyph, padded to the two cells its siblings take.
+	for _, g := range []glyphSet{nerdGlyphs, unicodeGlyphs, asciiGlyphs} {
+		for _, p := range []string{"P1", "P2", "P3"} {
+			if got := priorityGlyph(p, g); !strings.Contains(got, p) {
+				t.Errorf("%s: priorityGlyph(%q) = %q, must carry the literal name", g.name, p, got)
+			}
 		}
-	}
-	// A null priority sinks an item below stale backlog in `board next`, so it
-	// is a real defect and renders as a visible `P?` rather than as blank.
-	empty := priorityGlyph("")
-	if !strings.Contains(empty, "P?") {
-		t.Errorf("an unset priority must render as P?, not as %q", empty)
-	}
-	for _, p := range []string{"P0", "P1", "P2", "P3"} {
-		if g := priorityGlyph(p); lipgloss.Width(g) != lipgloss.Width(empty) {
-			t.Errorf("priorityGlyph(%q) is %d cells, empty is %d — the glyph must be fixed-width",
-				p, lipgloss.Width(g), lipgloss.Width(empty))
+		if got := priorityGlyph("P0", g); !strings.Contains(got, g.bang) || strings.Contains(got, "P0") {
+			t.Errorf("%s: priorityGlyph(P0) = %q, want the bang glyph %q", g.name, got, g.bang)
+		}
+		// A null priority sinks an item below stale backlog in `board next`,
+		// so it is a real defect and renders as a visible `P?`, never blank.
+		empty := priorityGlyph("", g)
+		if !strings.Contains(empty, "P?") {
+			t.Errorf("%s: an unset priority must render as P?, not as %q", g.name, empty)
+		}
+		for _, p := range []string{"P0", "P1", "P2", "P3"} {
+			if got := priorityGlyph(p, g); lipgloss.Width(got) != 2 || lipgloss.Width(empty) != 2 {
+				t.Errorf("%s: priorityGlyph(%q) is %d cells, empty is %d — the glyph must be two cells",
+					g.name, p, lipgloss.Width(got), lipgloss.Width(empty))
+			}
 		}
 	}
 }
@@ -717,10 +727,10 @@ func TestAgeChipDashesRatherThanZero(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	// A live agent with no ledger record: not an agent that is zero minutes old.
 	m.agents = setAgents([]Agent{{Name: "w80-x", Status: "working", Issue: 80, Lane: "w"}})
-	if got := ageChip(m, Card{Number: 80}, asciiGlyphs); !strings.Contains(got, "—") {
+	if got := ageChip(m, Card{Number: 80}); !strings.Contains(got, "—") {
 		t.Errorf("ageChip = %q, want a dash", got)
 	}
-	if strings.Contains(ageChip(m, Card{Number: 80}, asciiGlyphs), "0m") {
+	if strings.Contains(ageChip(m, Card{Number: 80}), "0m") {
 		t.Error("a missing record must never render as 0m")
 	}
 }

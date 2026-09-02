@@ -8446,6 +8446,53 @@ describe("board closed — the Done window (GH-2062)", () => {
     expect(recentDone(ctx, { staleDays: 30, auditDays: 14 }).items).toEqual([]);
     expect(recentDone(ctx, { staleDays: 30, auditDays: 30 }).items).toHaveLength(1);
   });
+
+  /** GH-2377: the cockpit's Done merge chip reads GitHub's own closing
+   *  linkage — the Done gate's field — and needs three facts kept apart:
+   *  the caller did not ask (key ABSENT), asked and there is none (empty
+   *  array), and a merged closing PR. Opt-in, so the bare view stays at the
+   *  GH-2151 cost. */
+  it("--prs carries the closing-PR linkage per close; bare closed carries no key at all", () => {
+    gh.issues.set(1, {
+      number: 1, title: "merged", state: "Done", issueState: "CLOSED",
+      stateReason: "COMPLETED", closedAt: days(1), updatedAt: days(1),
+      prs: [{ number: 11, merged: true }, { number: 12, merged: false }],
+    });
+    gh.issues.set(2, {
+      number: 2, title: "no keyword", state: "Done", issueState: "CLOSED",
+      stateReason: "COMPLETED", closedAt: days(2), updatedAt: days(2),
+    });
+    const withPrs = recentDone(ctx, TEND_DEFAULTS, true).items;
+    expect(withPrs.map((c) => [c.number, c.closingPRs])).toEqual([
+      [1, [{ number: 11, merged: true }, { number: 12, merged: false }]],
+      [2, []],
+    ]);
+    const bare = recentDone(ctx, TEND_DEFAULTS).items;
+    expect(bare.every((c) => !("closingPRs" in c))).toBe(true);
+
+    // The CLI flag is the same opt-in, and it is a boolean: `--prs --json`
+    // must not swallow `--json` as its value.
+    const seen: string[] = [];
+    const inner = ctx.exec;
+    ctx.exec = (argv, stdin) => {
+      if (stdin) seen.push(JSON.parse(stdin).query ?? "");
+      return inner(argv, stdin);
+    };
+    const outLines: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      outLines.push(String(s));
+      return true;
+    });
+    try {
+      run(["closed", "--prs", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(seen.some((q) => q.includes("closedByPullRequestsReferences"))).toBe(true);
+    const payload = JSON.parse(outLines.join(""));
+    expect(payload.items[0].closingPRs).toEqual([{ number: 11, merged: true }, { number: 12, merged: false }]);
+    expect(payload.items[1].closingPRs).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
