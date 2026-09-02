@@ -536,7 +536,13 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		// timer is right-justified by `pad`, which cannot push back, so an
 		// over-long epic name would simply run into it and both would be
 		// unreadable. Two spaces of separator on each side.
+		// The cost chip sits beside the timer on the right — both are the
+		// live session's meters, and both are fixed-width so the epic chip's
+		// budget can be computed before it is built.
 		timer := ageChip(m, card, g)
+		if cost := costChip(m, card); cost != "" {
+			timer = cost + "  " + timer
+		}
 		if epic := epicChip(m, card, g, inner-lipgloss.Width(lead)-lipgloss.Width(timer)-4); epic != "" {
 			lead += "  " + epic
 		}
@@ -725,6 +731,27 @@ func ageChip(m Model, card Card, g glyphSet) string {
 		label = formatAge(age)
 	}
 	return styleTimer.Render(strings.TrimSpace(g.clock+" ") + label)
+}
+
+// costChip — "$8.00 274k": the live session's list-equivalent spend and its
+// largest prompt so far, from the ledger's latest usage fact (GH-2347). Read
+// at each done turn and at exit, so it is a meter, not a bill. No fact yet
+// renders NOTHING rather than $0: an unmeasured session is not a free one.
+func costChip(m Model, card Card) string {
+	u, ok := m.cardCost(card.Number)
+	if !ok {
+		return ""
+	}
+	return styleTimer.Render(fmt.Sprintf("$%.2f %s", u.ListUSD, formatTokens(u.MaxContext)))
+}
+
+// formatTokens — "274k" at thousand precision, the unit every cost surface
+// prints; below a thousand the bare count.
+func formatTokens(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%dk", (n+500)/1000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // renderOverlay draws the peek/dag pane: bordered, clipped to the body area.

@@ -478,10 +478,12 @@ record_is_ours() {
 }
 
 # live_rows — the herd as US-separated columns, derived once:
-#   name  status  pane  scope  checkout
+#   name  status  pane  scope  checkout  agent_session
 # Phase B walked live_json with four jq forks per agent to read exactly these.
+# agent_session (GH-2347) is the worker's Claude session id, carried onto the
+# discover record so its usage facts can find the transcript.
 live_rows=$(printf '%s\n' "$live_json" | jq -r '
-  [(.name // ""), (.status // ""), (.pane // ""), (.scope // ""), (.checkout // "")]
+  [(.name // ""), (.status // ""), (.pane // ""), (.scope // ""), (.checkout // ""), (.agent_session // "")]
   | join("\u001f")' 2>/dev/null) || live_rows=""
 
 # pane_cwd PANE — the pane's cwd from the pass-start snapshot, or empty. Read
@@ -588,6 +590,7 @@ while IFS= read -r f; do
       continue
     }
     log "exit $ref (reason $verdict) [$f]"
+    ralph_ledger_usage_append "$ref" reconcile 2>&1 | while IFS= read -r l; do log "$l"; done || true
     # Phase F needs these NAMES (GH-1862). This phase exists precisely because
     # a restart-rebuilt pane is still ANSWERED by `agent list` — that is why the
     # verdict comes from the pane and not from the herd — so the herd read that
@@ -697,6 +700,7 @@ while IFS= read -r f; do
           '{ts: $ts, ev: "exit", agent_ref: $ref, reason: "swept-unknown", via: "reconcile"}')" ||
           log "exit-swept append failed for $ref"
         log "exit $ref (reason swept-unknown) [$f]"
+        ralph_ledger_usage_append "$ref" reconcile 2>&1 | while IFS= read -r l; do log "$l"; done || true
         # NO claim release here, deliberately. Phase A's evidence is an
         # ABSENCE — this name is not in the herd — and an absence does not
         # survive being asked of the wrong server. herdr runs [[startup]] for
@@ -723,7 +727,7 @@ unset RALPH_HERDR_LEDGER
 # Reads the pre-derived live_rows columns rather than re-parsing each agent
 # (GH-1775): this loop used to fork four jq and an awk per live agent to pull
 # out name/pane/scope/checkout that one pass had already produced.
-while IFS=$'\037' read -r name _status pane agent_scope cwd; do
+while IFS=$'\037' read -r name _status pane agent_scope cwd csid; do
   [ -n "$name" ] || continue
   # Keyed by scope|name: a live `w42-fix` already ledgered in repo A must not
   # suppress the discovery of repo B's genuinely different `w42-fix`.
@@ -789,11 +793,12 @@ while IFS=$'\037' read -r name _status pane agent_scope cwd; do
   # read as permission to write a tree.
   discovered_role=$(ralph_role_for_lane "$lane" 2>/dev/null) || discovered_role=""
   ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg p "$pane" \
-    --arg checkout "$repo_root" \
+    --arg checkout "$repo_root" --arg sid "${csid-}" \
     --arg role "$discovered_role" --arg issue "$issue" --arg slug "$slug" \
     '{ts: $ts, ev: "discover", agent_ref: $ref, pane_id: $p, via: "reconcile",
-      checkout: $checkout,
-      tokens: ({issue: $issue}
+      checkout: $checkout}
+     + (if $sid == "" then {} else {claude_session: $sid} end)
+     + {tokens: ({issue: $issue}
                + (if $role == "" then {} else {role: $role} end)
                + (if $slug == "" then {} else {slug: $slug} end))}')" ||
     { log "discover append failed for $name"; ralph_ledger_unlock "$file"; continue; }

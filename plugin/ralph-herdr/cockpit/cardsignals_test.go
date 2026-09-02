@@ -541,3 +541,42 @@ func TestParseInboxCountsRowsStillWithTheirLeads(t *testing.T) {
 		t.Errorf("absent leadPending: leads=%q err=%v", leads, err)
 	}
 }
+
+func TestCostChipIsTheLiveSessionsMeterNeverZero(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.ledger = Ledger{Read: true, ByRef: map[string]LedgerSpawn{
+		"w10-ten#a":   {Ref: "w10-ten#a", Issue: 10, SpawnedAt: time.Now().Add(-5 * time.Minute)},
+		"w10-ten#old": {Ref: "w10-ten#old", Issue: 10, SpawnedAt: time.Now().Add(-9 * time.Hour)},
+	}, Usage: map[string]LedgerUsage{
+		"w10-ten#a":   {Ref: "w10-ten#a", ListUSD: 7.999, MaxContext: 274076, Calls: 37, Model: "claude-fable-5-1"},
+		"w10-ten#old": {Ref: "w10-ten#old", ListUSD: 44.1, MaxContext: 444000},
+		"w11-nol#b":   {Ref: "w11-nol#b", ListUSD: 3, MaxContext: 1000},
+	}}
+	m.agents = setAgents([]Agent{
+		{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Root: "w10-ten#a"},
+		{Name: "w12-fresh", Status: "working", Issue: 12, Lane: "w", Root: "w12-fresh#c"},
+	})
+	// The session ON SCREEN, not the dead predecessor that shares its name.
+	if got := costChip(m, Card{Number: 10}); !strings.Contains(got, "$8.00 274k") || strings.Contains(got, "44.10") {
+		t.Errorf("cost chip = %q, want the live session's $8.00 274k", got)
+	}
+	// A live session with no fact yet renders NOTHING — unmeasured is not free.
+	if got := costChip(m, Card{Number: 12}); got != "" {
+		t.Errorf("an unmeasured live session = %q, want nothing", got)
+	}
+	// No live agent at all: nothing, even though the ledger holds a fact.
+	if got := costChip(m, Card{Number: 11}); got != "" {
+		t.Errorf("a unit with no live agent = %q, want nothing", got)
+	}
+	// The chip rides line 3 beside the timer and survives every width.
+	card := Card{Number: 10, State: "In Progress", Title: "t", Priority: "P1", Estimate: "M"}
+	for _, width := range []int{40, 60, 120} {
+		line3 := strings.Split(renderCard(m, 1, 1, card, width), "\n")[2]
+		if !strings.Contains(line3, "$8.00 274k") {
+			t.Errorf("w=%d: line 3 = %q, want the cost chip", width, line3)
+		}
+	}
+	if formatTokens(999) != "999" || formatTokens(1499) != "1k" || formatTokens(274076) != "274k" {
+		t.Errorf("formatTokens: %s %s %s", formatTokens(999), formatTokens(1499), formatTokens(274076))
+	}
+}

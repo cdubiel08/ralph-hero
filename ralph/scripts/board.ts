@@ -1078,6 +1078,7 @@ export interface SmellThresholds {
   intakeDays: number; // GH-2077: days an Intake item has waited for an approval decision
   answerMin: number; // GH-2204: minutes an answered Human Needed item has sat unresumed
   dispatchMin: number; // GH-2212: minutes since the dispatch heartbeat was last written
+  unitCtxMax: number; // GH-2347: a unit's largest single prompt (tokens) past which doctor's unit-cost line names it
 }
 
 export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
@@ -1102,6 +1103,12 @@ export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
   // between stamps; a full day of silence is where "the event lane is dark"
   // becomes the likelier reading than "nothing happened".
   dispatchMin: 1440,
+  // 200k tokens. Measured on this repo (GH-2347): the median worker runs at
+  // 149k context and the one that reached 444k cost $44 with nothing to say
+  // so. The line is advisory — the remedy is the Estimate ceiling (GH-2134),
+  // never a cap: stopping a worker mid-unit strands it, and compaction is a
+  // full rewrite of the context it was meant to save.
+  unitCtxMax: 200_000,
 });
 
 export function parseSmellThresholds(
@@ -1123,6 +1130,7 @@ export function parseSmellThresholds(
     intakeDays: positive("RALPH_SMELL_INTAKE_DAYS", SMELL_DEFAULTS.intakeDays),
     answerMin: positive("RALPH_SMELL_ANSWER_MIN", SMELL_DEFAULTS.answerMin),
     dispatchMin: positive("RALPH_SMELL_DISPATCH_MIN", SMELL_DEFAULTS.dispatchMin),
+    unitCtxMax: positive("RALPH_UNIT_CTX_MAX", SMELL_DEFAULTS.unitCtxMax),
   };
 }
 
@@ -9350,6 +9358,147 @@ export const SMELL_CHECKS = [
  *  breach, `--strict` never escalates it, `--fix` never touches it, and the
  *  exit code below keys on "fail" alone. Anything that should change an exit
  *  code is a warn or a fail — never an info. */
+// ---------------------------------------------------------------------------
+// The herdr ledger — the sqlite tape the watcher writes (GH-2310 `events`,
+// GH-2347 usage facts). Read by shelling out to sqlite3 exactly as every
+// plugin reader does; ZERO GraphQL, never the item cache. One opener owns
+// the path rule and the three gates so `events`, `brief` and doctor cannot
+// disagree about what an absent, unreadable, or too-new tape is.
+// ---------------------------------------------------------------------------
+
+export type HerdrLedgerOpen =
+  | { kind: "absent"; db: string }
+  | { kind: "error"; db: string; msg: string }
+  | { kind: "ok"; db: string; sq: string };
+
+/** Resolve and gate the tape. The plugin's path rule in FULL (ledger.sh): an
+ *  explicit RALPH_HERDR_LEDGER names the JSONL file and wins — its sibling is
+ *  ralph_lc_db_path's rule (ledger-convert.sh): swap a .jsonl extension for
+ *  .sqlite, else append .sqlite. NOT a fixed "ledger.sqlite" beside it —
+ *  /tmp/audit.jsonl converts to /tmp/audit.sqlite. Otherwise the root
+ *  override, then the SAME owner/repo scope the board already resolves.
+ *  Absence is ENOENT and nothing else: existsSync collapses EACCES into
+ *  false, which would render an access failure as "no ledger" — the
+ *  unreadable-vs-absent line every reader here draws. */
+export function openHerdrLedger(ctx: Ctx): HerdrLedgerOpen {
+  const explicit = process.env.RALPH_HERDR_LEDGER;
+  const root = process.env.RALPH_HERDR_LEDGER_ROOT || join(homedir(), ".ralph");
+  const db = explicit
+    ? (explicit.endsWith(".jsonl") ? explicit.slice(0, -".jsonl".length) : explicit) + ".sqlite"
+    : join(root, ctx.cfg.owner, ctx.cfg.repo, "ledger.sqlite");
+  try {
+    statSync(db);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { kind: "absent", db };
+    return { kind: "error", db, msg: `could not read ${db} — ${code ?? (e as Error).message}` };
+  }
+  const sq = process.env.RALPH_SQLITE3_BIN || "sqlite3";
+  const probe = ctx.exec([sq, "--version"]);
+  if (probe.code !== 0) {
+    return {
+      kind: "error",
+      db,
+      msg:
+        `sqlite3 binary not runnable ('${sq}') — macOS ships /usr/bin/sqlite3; ` +
+        `otherwise install sqlite3 (e.g. \`brew install sqlite\`) or set RALPH_SQLITE3_BIN`,
+    };
+  }
+  // Schema gate: refuse anything newer than v1 rather than guessing at its
+  // shape. An unreadable db is an error too — NEVER an empty result: "could
+  // not read" must not render as "nothing happened".
+  const uvR = ctx.exec([sq, db, "PRAGMA user_version;"]);
+  const uv = uvR.code === 0 ? Number(uvR.stdout.trim()) : NaN;
+  if (uvR.code !== 0 || !Number.isInteger(uv))
+    return { kind: "error", db, msg: `could not read ${db} — ${uvR.stderr.trim() || "unreadable user_version"}` };
+  if (uv > 1)
+    return { kind: "error", db, msg: `${db} has user_version=${uv}, newer than the v1 schema this reader knows — upgrade ralph` };
+  return { kind: "ok", db, sq };
+}
+
+/** One unit's latest usage fact (GH-2347), joined to its issue and its
+ *  open/closed state from the same tape. Latest wins per ref: every fact is
+ *  the whole transcript re-read, never a delta. */
+export interface LedgerUnitUsage {
+  ref: string;
+  issue: number | null;
+  open: boolean;
+  ts: string;
+  via: string;
+  model: string;
+  calls: number;
+  listUsd: number;
+  maxContext: number;
+  unpricedCalls: number;
+}
+
+export type LedgerUsageRead = { kind: "absent" } | { kind: "error"; msg: string } | { kind: "ok"; units: LedgerUnitUsage[] };
+
+/** The open-set reduce the plugin's readers run (spawn/discover open, exit
+ *  closes, everything else passes through), plus issue-per-ref and the
+ *  latest usage fact per ref, in one pass over the payloads. */
+export function reduceLedgerUsage(payloads: string[]): LedgerUnitUsage[] {
+  const open = new Map<string, boolean>();
+  const issue = new Map<string, number>();
+  const latest = new Map<string, LedgerUnitUsage>();
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  for (const p of payloads) {
+    let e: Record<string, unknown>;
+    try {
+      e = JSON.parse(p);
+    } catch {
+      continue; // one garbled payload is not a broken ledger
+    }
+    if (!e || typeof e !== "object") continue;
+    const ref = typeof e.agent_ref === "string" ? e.agent_ref : "";
+    if (!ref) continue;
+    if (e.ev === "spawn" || e.ev === "discover") {
+      open.set(ref, true);
+      const lin = e.lineage as { issue?: unknown } | undefined;
+      const tok = e.tokens as { issue?: unknown } | undefined;
+      const n = Number(lin?.issue ?? tok?.issue);
+      if (Number.isInteger(n) && n > 0) issue.set(ref, n);
+    } else if (e.ev === "exit") {
+      open.set(ref, false);
+    } else if (e.ev === "usage" && e.usage && typeof e.usage === "object") {
+      const u = e.usage as Record<string, unknown>;
+      latest.set(ref, {
+        ref,
+        issue: null,
+        open: false,
+        ts: typeof e.ts === "string" ? e.ts : "",
+        via: typeof e.via === "string" ? e.via : "",
+        model: typeof u.model === "string" ? u.model : "",
+        calls: num(u.calls),
+        listUsd: num(u.list_usd),
+        maxContext: num(u.max_context),
+        unpricedCalls: num(u.unpriced_calls),
+      });
+    }
+  }
+  return [...latest.values()].map((u) => ({ ...u, issue: issue.get(u.ref) ?? null, open: open.get(u.ref) === true }));
+}
+
+export function readLedgerUsage(ctx: Ctx): LedgerUsageRead {
+  const o = openHerdrLedger(ctx);
+  if (o.kind === "absent") return { kind: "absent" };
+  if (o.kind === "error") return { kind: "error", msg: o.msg };
+  const q = ctx.exec([o.sq, "-json", o.db, "SELECT payload FROM facts ORDER BY seq;"]);
+  if (q.code !== 0) return { kind: "error", msg: `could not read ${o.db} — ${q.stderr.trim() || `sqlite3 exit ${q.code}`}` };
+  let rows: { payload: string }[];
+  try {
+    rows = q.stdout.trim() ? JSON.parse(q.stdout) : [];
+  } catch {
+    return { kind: "error", msg: `could not read ${o.db} — unparseable sqlite3 -json output` };
+  }
+  return { kind: "ok", units: reduceLedgerUsage(rows.map((r) => r.payload)) };
+}
+
+/** "$8.00" / "274k" — the two numbers every cost surface prints. */
+export const fmtUsd = (n: number): string => `$${n.toFixed(2)}`;
+export const fmtTokens = (n: number): string => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+const shortModel = (m: string): string => m.replace(/^claude-/, "");
+
 export type DoctorLevel = "ok" | "info" | "warn" | "fail";
 
 export interface DoctorReport {
@@ -11248,6 +11397,54 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     add("dispatch-heartbeat", "info", `not evaluated: ${(e as Error).message}`);
   }
 
+  // Unit cost (GH-2347). INFO always, under the same rules as the heartbeat
+  // above: --strict never escalates it, --fix never touches it. The ledger's
+  // usage facts (one per worker, latest wins) name the LIVE units whose
+  // largest prompt passed RALPH_UNIT_CTX_MAX or whose list-equivalent cost
+  // passed the p90 of every measured unit — at ten samples or more, since a
+  // p90 of three numbers is one of them. The remedy it names is the Estimate
+  // ceiling (GH-2134): the fact says the Estimate was dishonest, and the
+  // size ceiling is the control. Deliberately NOT a cap — compaction is a
+  // full rewrite and stopping a worker mid-unit strands it. Closed units are
+  // the population, never findings: nothing can re-estimate finished work.
+  try {
+    const ur = readLedgerUsage(ctx);
+    if (ur.kind === "absent") {
+      add("unit-cost", "ok", "no herdr ledger (the watcher writes usage facts; optional equipment)");
+    } else if (ur.kind === "error") {
+      add("unit-cost", "info", `not evaluated: ${ur.msg}`);
+    } else if (ur.units.length === 0) {
+      add("unit-cost", "ok", "no usage facts yet (written at each done turn and at exit)");
+    } else {
+      const costs = ur.units.map((u) => u.listUsd).sort((a, b) => a - b);
+      const n = costs.length;
+      const p90 = n >= 10 ? costs[Math.max(0, Math.ceil(0.9 * n) - 1)] : null;
+      const median = costs[Math.floor((n - 1) / 2)];
+      const ctxMax = ctx.cfg.smells.unitCtxMax;
+      const flagged = ur.units
+        .filter((u) => u.open && (u.maxContext >= ctxMax || (p90 !== null && u.listUsd > p90)))
+        .sort((a, b) => b.listUsd - a.listUsd);
+      const pop = `${n} unit${n === 1 ? "" : "s"} measured (median ${fmtUsd(median)}${p90 !== null ? `, p90 ${fmtUsd(p90)}` : ", p90 needs ≥10"})`;
+      if (flagged.length === 0) {
+        add("unit-cost", "ok", `${pop}; no live unit past p90 or ≥${fmtTokens(ctxMax)} ctx`);
+      } else {
+        const rows = flagged.map((u) => {
+          const why: string[] = [];
+          if (u.maxContext >= ctxMax) why.push(`${fmtTokens(u.maxContext)} ctx ≥${fmtTokens(ctxMax)}`);
+          if (p90 !== null && u.listUsd > p90) why.push(`${fmtUsd(u.listUsd)} > p90`);
+          return `#${u.issue ?? "?"} ${fmtUsd(u.listUsd)} ${shortModel(u.model)} (${why.join(", ")})`;
+        });
+        add(
+          "unit-cost",
+          "info",
+          `${pop}; live past the line: ${rows.join("; ")} — the Estimate was dishonest: \`board estimate NNN <size>\` (the GH-2134 ceiling is the control; this is never a cap)`,
+        );
+      }
+    }
+  } catch (e) {
+    add("unit-cost", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
   // GraphQL spend attribution (audit B2). INFO always: a number is a fact,
   // never a breach — the exhaustion incident's real blocker was that no
   // surface said WHO was spending. Reads the per-invocation ledger every
@@ -12424,7 +12621,12 @@ maintenance
                               "dispatch-heartbeat": minutes since the event
                               hooks or a hero sitting last stamped
                               ~/.ralph/<owner>/<repo>/dispatch-heartbeat;
-                              GH-2212).
+                              GH-2212), RALPH_UNIT_CTX_MAX (200000 —
+                              "unit-cost": a live unit whose largest prompt
+                              passed it, or whose list-equivalent cost passed
+                              the p90 of every measured unit, read from the
+                              herdr ledger's usage facts; the remedy is
+                              board estimate, never a cap; GH-2347).
                               "foreign-repo-policy" reports the posture in
                               effect and whether it was configured or
                               defaulted; "foreign-items" warns when items from
@@ -12539,7 +12741,7 @@ v0.2.0 additions
 export const VERB_HELP: Record<string, string> = {
   next: "board next [--json] [--fresh]\n  The ranked work queue's head. Empty is typed (--json: diagnosis).\n  example: board next",
   frontier: "board frontier [--json]\n  next's eligible queue re-projected with per-item explanations (fleet feed).\n  example: board frontier --json",
-  brief: "board brief [--json]\n  One orientation read: next head, queue counts, deliver/tend counts, local leases.\n  example: board brief",
+  brief: "board brief [--json]\n  One orientation read: next head, queue counts, deliver/tend counts, local leases,\n  and $/unit for every live unit from the herdr ledger's usage facts (GH-2347 — list-price\n  equivalent, rate-limit weight, not a bill; `not evaluated` when there is no ledger).\n  example: board brief",
   inbox:
     "board inbox [--json] [--digest [--mark]]\n  The human's single surface: Human Needed decisions, tend proposals, Intake approvals,\n  and human-clearable deliver-blocked rows, each with its literal disposition verb.\n  Lead-routed escalations inside their window are withheld as \"with leads\" (GH-2218) —\n  promotion or the TTL admits them; `board escalations` lists them.\n  --digest adds completions since the last mark + a pushWorthy verdict; --mark stamps the window.\n  example: board inbox --digest",
   who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  A lease whose worktree was deleted prints DEAD, not STALE: nothing can refresh it, so it is\n  not aging toward anything. `board reap-leases` clears those.\n  example: board who",
@@ -12864,6 +13066,12 @@ export function run(argv: string[], ctx: Ctx): number {
       const dq = deliverQueue(ctx, parseDeliverOpts(), null, null);
       const tq = tendQueue(ctx);
       const who = readLocalLeases(ctx);
+      // $/unit (GH-2347): the latest usage fact per LIVE unit from the herdr
+      // ledger — one sqlite read, zero GraphQL. null = not evaluated (no
+      // ledger, or one this reader could not open), distinct from [] (a
+      // ledger with no usage fact for any open unit yet).
+      const usageRead = readLedgerUsage(ctx);
+      const liveUsage = usageRead.kind === "ok" ? usageRead.units.filter((u) => u.open).sort((a, b) => b.listUsd - a.listUsd) : null;
       const brief = {
         next: eligible.slice(0, 3).map((i) => ({ number: i.number, title: i.title, priority: i.priority })),
         counts: {
@@ -12877,6 +13085,7 @@ export function run(argv: string[], ctx: Ctx): number {
         },
         // null = the lease dir could not be read — distinct from [] (nobody).
         leases: who,
+        usage: liveUsage,
         cache: cacheFacts(full),
       };
       if (flags.json) {
@@ -12910,6 +13119,18 @@ export function run(argv: string[], ctx: Ctx): number {
         if (foreign) withheld.push(`${foreign} on another repo's checkout`);
         if (dead) withheld.push(`${dead} dead (worktree deleted — \`board reap-leases\` clears them)`);
         if (withheld.length) out(`  leases withheld: ${withheld.join(", ")} — \`board who\` lists every lease on this machine`);
+      }
+      if (usageRead.kind === "absent") out(`cost: not evaluated (no herdr ledger — the watcher writes usage facts; optional equipment)`);
+      else if (usageRead.kind === "error") out(`cost: not evaluated (${usageRead.msg})`);
+      else if (!liveUsage || liveUsage.length === 0) out(`cost: no usage fact for any live unit yet (written at each done turn and at exit)`);
+      else {
+        const total = liveUsage.reduce((a, u) => a + u.listUsd, 0);
+        out(`cost: ${liveUsage.length} live unit${liveUsage.length === 1 ? "" : "s"}, ${fmtUsd(total)} list-equivalent (rate-limit weight, not a bill)`);
+        for (const u of liveUsage)
+          out(
+            `  cost: #${u.issue ?? "?"} ${fmtUsd(u.listUsd)} ${shortModel(u.model)} ${fmtTokens(u.maxContext)} ctx ${u.calls} calls` +
+              `${u.unpricedCalls ? ` (${u.unpricedCalls} unpriced)` : ""} (${u.ref})`,
+          );
       }
       if (cacheNote(full)) out(`  ${cacheNote(full)}`);
       return 0;
@@ -13294,27 +13515,10 @@ export function run(argv: string[], ctx: Ctx): number {
       // malformed CURSOR as an unreadable LEDGER (exit 69 instead of 64).
       if (!Number.isSafeInteger(since))
         throw new UsageError(`--since ${sinceRaw} is beyond the integer range a cursor can hold (max ${Number.MAX_SAFE_INTEGER})`);
-      // The plugin's path rule in FULL (ledger.sh): an explicit
-      // RALPH_HERDR_LEDGER names the JSONL file and wins — its sibling is
-      // ralph_lc_db_path's rule (ledger-convert.sh): swap a .jsonl extension
-      // for .sqlite, else append .sqlite. NOT a fixed "ledger.sqlite" beside
-      // it — /tmp/audit.jsonl converts to /tmp/audit.sqlite.
-      const explicit = process.env.RALPH_HERDR_LEDGER;
-      const root = process.env.RALPH_HERDR_LEDGER_ROOT || join(homedir(), ".ralph");
-      const db = explicit
-        ? (explicit.endsWith(".jsonl") ? explicit.slice(0, -".jsonl".length) : explicit) + ".sqlite"
-        : join(root, ctx.cfg.owner, ctx.cfg.repo, "ledger.sqlite");
-      // Absence is ENOENT and nothing else: existsSync collapses EACCES into
-      // false, which would render an access failure as "no events" — the
-      // unreadable-vs-absent line this verb's whole contract draws.
-      try {
-        statSync(db);
-      } catch (e) {
-        const code = (e as NodeJS.ErrnoException).code;
-        if (code !== "ENOENT") {
-          process.stderr.write(`board events: could not read ${db} — ${code ?? (e as Error).message}\n`);
-          return 69;
-        }
+      // Path rule and the three gates (stat / binary / schema) live in
+      // openHerdrLedger, shared with brief and doctor's unit-cost line.
+      const o = openHerdrLedger(ctx);
+      if (o.kind === "absent") {
         // An unconverted machine is a NORMAL state, not an error — exit 0
         // with an empty result. But say so on stderr, or "not converted yet"
         // renders exactly like "nothing happened".
@@ -13322,32 +13526,11 @@ export function run(argv: string[], ctx: Ctx): number {
         if (flags.json) json({ cursor: 0, facts: [] });
         return 0;
       }
-      const sq = process.env.RALPH_SQLITE3_BIN || "sqlite3";
-      const probe = ctx.exec([sq, "--version"]);
-      if (probe.code !== 0) {
-        process.stderr.write(
-          `board events: sqlite3 binary not runnable ('${sq}') — macOS ships /usr/bin/sqlite3; ` +
-            `otherwise install sqlite3 (e.g. \`brew install sqlite\`) or set RALPH_SQLITE3_BIN\n`,
-        );
+      if (o.kind === "error") {
+        process.stderr.write(`board events: ${o.msg}\n`);
         return 69;
       }
-      // Schema gate: refuse anything newer than v1 rather than guessing at
-      // its shape. An unreadable db is 69 too — NEVER an empty result:
-      // "could not read" must not render as "nothing happened".
-      const uvR = ctx.exec([sq, db, "PRAGMA user_version;"]);
-      const uv = uvR.code === 0 ? Number(uvR.stdout.trim()) : NaN;
-      if (uvR.code !== 0 || !Number.isInteger(uv)) {
-        process.stderr.write(
-          `board events: could not read ${db} — ${uvR.stderr.trim() || "unreadable user_version"}\n`,
-        );
-        return 69;
-      }
-      if (uv > 1) {
-        process.stderr.write(
-          `board events: ${db} has user_version=${uv}, newer than the v1 schema this verb reads — upgrade ralph\n`,
-        );
-        return 69;
-      }
+      const { db, sq } = o;
       // `since` is digits-only by the guard above, so inlining it is safe.
       // -json output survives any payload bytes; the CLI prints NOTHING (not
       // "[]") for an empty result set.

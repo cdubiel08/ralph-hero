@@ -740,6 +740,16 @@ not here.
   moment it blocked. Since GH-1774 an event's *own* reach is narrower still: it
   can record a snapshot-confirmed status against an identity the ledger already
   holds, and otherwise only mark the scope dirty.
+- **Cost is measured at turn boundaries and at exit, from the transcript (GH-2347).**
+  A confirmed state event or a reconcile discover carries the worker's Claude
+  session id (`claude_session`); from then on each `done` status and every exit
+  writer re-reads `~/.claude/projects/<cwd-slug>/<session>.jsonl` and appends a
+  `usage` fact (calls, tokens by cache bucket, largest prompt, list-price
+  equivalent under the 1h TTL — rate-limit weight, never a bill). Latest wins per
+  ref. A worker the watcher never confirmed has no session on the tape and gets
+  no fact — the log says so; nothing renders as `$0`. `board brief`, doctor's
+  `unit-cost` line and the cockpit's `$ ctx` chip read the same fact; the
+  advisory names the Estimate ceiling (GH-2134), never a cap.
 - **A reconcile pass only sweeps records its own server owns (GH-1863, GH-1944).** herdr
   runs `[[startup]]` for *every* server that starts, so an isolated named session
   (`herdr --session probe server`) used to run this pass against the operator's

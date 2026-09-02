@@ -1461,6 +1461,95 @@ run_event pane.agent_status_changed \
 is "idle: still no token push — the spawn-window latch owns that read" "0" \
   "$(log_count '^pane report-metadata')"
 
+# ═══ 10. GH-2347: claude_session on the tape, usage facts from the transcript ═
+# The spawn record cannot know the session (no conversation exists yet); the
+# first CONFIRMED state event binds it, and from then on the exit and `done`
+# writers can find the transcript and price it. Transcripts are read from
+# $CLAUDE_CONFIG_DIR — a TMP one here, never the machine's ~/.claude.
+export CLAUDE_CONFIG_DIR="$TMP/claude"
+USID="0d0c0b0a-1111-2222-3333-444455556666"
+tdir="$CLAUDE_CONFIG_DIR/projects/$(printf '%s' "$REPO_DIR" | LC_ALL=C tr -c 'A-Za-z0-9' '-')"
+mkdir -p "$tdir"
+# One message streamed as two rows (output grows, input side agrees), a
+# second call, a call on a model with no price row, and a torn last line —
+# the shape a live transcript has.
+cat >"$tdir/$USID.jsonl" <<EOF
+{"type":"user","cwd":"$REPO_DIR"}
+{"type":"assistant","timestamp":"2026-09-01T10:00:00Z","message":{"id":"msg_1","model":"claude-sonnet-5","usage":{"input_tokens":1000,"cache_creation_input_tokens":2000,"cache_read_input_tokens":3000,"output_tokens":10,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":2000}}}}
+{"type":"assistant","timestamp":"2026-09-01T10:00:01Z","message":{"id":"msg_1","model":"claude-sonnet-5","usage":{"input_tokens":1000,"cache_creation_input_tokens":2000,"cache_read_input_tokens":3000,"output_tokens":500,"output_tokens_details":{"thinking_tokens":100},"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":2000}}}}
+{"type":"assistant","timestamp":"2026-09-01T10:00:05Z","message":{"id":"msg_2","model":"claude-sonnet-5","usage":{"input_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":5000,"output_tokens":100,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}}}}
+{"type":"assistant","timestamp":"2026-09-01T10:00:09Z","message":{"id":"msg_3","model":"claude-unreleased-9","usage":{"input_tokens":1,"output_tokens":1}}}
+{"type":"assistant","timest
+EOF
+u=$(ralph_usage_from_transcript "$tdir/$USID.jsonl") || u=""
+uj() { jq -r "$1" <<<"$u" 2>/dev/null; }
+is "usage: calls are distinct message ids (streamed rows deduped)" "3" "$(uj '.calls')"
+is "usage: output takes the max across a message's rows"          "601" "$(uj '.output')"
+is "usage: thinking tokens summed"                                "100" "$(uj '.thinking')"
+is "usage: cache write lands in the 1h bucket"                    "2000" "$(uj '.cache_write_1h')"
+is "usage: max_context is the largest single prompt"              "6000" "$(uj '.max_context')"
+is "usage: list_usd prices sonnet-5 at the 1h-write rate, 4dp"    "0.0176" "$(uj '.list_usd')"
+is "usage: an unknown model is counted, never silently priced"    "1" "$(uj '.unpriced_calls')"
+is "usage: the dominant model is named"                           "claude-sonnet-5" "$(uj '.model')"
+printf '{"type":"user"}\n' >"$tdir/empty.jsonl"
+fails "usage: a transcript with no model calls is rc 1, not a zero fact" ralph_usage_from_transcript "$tdir/empty.jsonl"
+is "usage: transcript found by the derived cwd slug" "$tdir/$USID.jsonl" "$(_ralph_usage_transcript "$USID" "$REPO_DIR")"
+is "usage: transcript found by session id alone when the checkout differs" "$tdir/$USID.jsonl" "$(_ralph_usage_transcript "$USID" "/somewhere/else")"
+fails "usage: a session id outside the id charset is refused (it lands on a glob)" _ralph_usage_transcript "../x"
+
+UROOT="$TMP/uroot"
+ULEDG="$UROOT/acme/demo/ledger.jsonl"
+mkdir -p "$UROOT/acme/demo"
+cat >"$ULEDG" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"w2347-usage#u001","pane_id":"p0","checkout":"$REPO_DIR","session":"$(ralph_session_key)","tokens":{"role":"driver","issue":"2347","slug":"usage","root":"w2347-usage#u001","depth":"0","state":"spawned"}}
+{"ts":"t1","ev":"spawn","agent_ref":"w9-nosess#u002","pane_id":"p1","checkout":"$REPO_DIR","session":"$(ralph_session_key)","tokens":{"role":"driver","issue":"9","slug":"nosess","root":"w9-nosess#u002","depth":"0","state":"spawned"}}
+EOF
+herd_fixture '[{"name":"w2347-usage","agent_status":"working","pane_id":"p0","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"'"$USID"'"}},{"name":"w9-nosess","agent_status":"working","pane_id":"p1"}]'
+run_event pane.agent_status_changed '{"pane_id":"p0","agent":"w2347-usage","agent_status":"working"}' "$UROOT"
+is "session: exits 0" "0" "$RC"
+is "session: the confirmed state event carries claude_session" "$USID" \
+  "$(levents "$ULEDG" | jq -r 'select(.ev=="state" and .agent_ref=="w2347-usage#u001") | .claude_session // empty' | head -1)"
+is "session: working is not a turn boundary — no usage fact yet" "0" "$(lcount "$ULEDG" '.ev=="usage"')"
+RALPH_HERDR_LEDGER="$ULEDG"
+is "session: the latest reader answers from the state record" "$USID" "$(_ralph_ledger_latest_claude_session w2347-usage#u001)"
+is "session: open set unchanged — usage/session never open or close a row" "w2347-usage#u001 w9-nosess#u002" \
+  "$(ralph_ledger_open_agents | sort | tr '\n' ' ' | sed 's/ *$//')"
+
+herd_fixture '[{"name":"w2347-usage","agent_status":"done","pane_id":"p0","tokens":{"state":"reporting"},"agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"'"$USID"'"}},{"name":"w9-nosess","agent_status":"working","pane_id":"p1"}]'
+run_event pane.agent_status_changed '{"pane_id":"p0","agent":"w2347-usage","agent_status":"done"}' "$UROOT"
+is "heartbeat: exits 0" "0" "$RC"
+is "heartbeat: a done turn boundary appends one usage fact via event" "1" \
+  "$(lcount "$ULEDG" '.ev=="usage" and .agent_ref=="w2347-usage#u001" and .via=="event" and .claude_session=="'"$USID"'"')"
+is "heartbeat: the fact carries the priced reduction and its price table" "0.0176 6000 $RALPH_USAGE_PRICE_TABLE" \
+  "$(levents "$ULEDG" | jq -r 'select(.ev=="usage") | "\(.usage.list_usd) \(.usage.max_context) \(.price_table)"' | head -1)"
+
+run_event pane.exited '{"pane_id":"p0","workspace_id":"wR"}' "$UROOT"
+is "exit: exits 0" "0" "$RC"
+is "exit: the exit is recorded" "1" "$(lcount "$ULEDG" '.ev=="exit" and .agent_ref=="w2347-usage#u001"')"
+is "exit: a final usage fact follows the exit (latest wins, never a delta)" "usage" \
+  "$(levents "$ULEDG" | jq -r 'select(.agent_ref=="w2347-usage#u001") | .ev' | tail -1)"
+is "exit: two usage facts total for the measured worker" "2" "$(lcount "$ULEDG" '.ev=="usage" and .agent_ref=="w2347-usage#u001"')"
+
+run_event pane.exited '{"pane_id":"p1","workspace_id":"wR"}' "$UROOT"
+is "unmeasured: a worker with no session on the tape still exits cleanly" "0" "$RC"
+is "unmeasured: the exit lands" "1" "$(lcount "$ULEDG" '.ev=="exit" and .agent_ref=="w9-nosess#u002"')"
+is "unmeasured: no usage fact — 'could not measure' is a log line, never a zero" "0" \
+  "$(lcount "$ULEDG" '.ev=="usage" and .agent_ref=="w9-nosess#u002"')"
+line_has "unmeasured: the log says why" "$OUT" "no claude_session recorded for w9-nosess#u002"
+
+# Reconcile's discover record carries the session too — it reads the same
+# snapshot column, so a worker the event hook never confirmed still binds.
+DROOT="$TMP/droot"
+DLEDG="$DROOT/acme/demo/ledger.jsonl"
+mkdir -p "$DROOT/acme/demo"
+USID2="0d0c0b0a-7777-8888-9999-000011112222"
+herd_fixture '[{"name":"w77-disc","agent_status":"working","pane_id":"p0","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"'"$USID2"'"}}]'
+run_reconcile "$DROOT"
+is "discover: exits 0" "0" "$RC"
+is "discover: the record carries claude_session" "$USID2" \
+  "$(levents "$DLEDG" | jq -r 'select(.ev=="discover" and (.agent_ref | startswith("w77-disc#"))) | .claude_session // empty')"
+unset CLAUDE_CONFIG_DIR
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

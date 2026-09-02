@@ -608,6 +608,22 @@ func (m Model) cardAge(issue int, now time.Time) (time.Duration, bool) {
 	return 0, false
 }
 
+// cardCost is the LIVE agent's latest usage fact (GH-2347), resolved through
+// the same exact agent_ref join as cardAge. ok=false = no fact yet for the
+// session on screen: rendered as nothing, never as $0 — a worker between
+// spawn and its first done turn has a cost, just not a recorded one.
+func (m Model) cardCost(issue int) (LedgerUsage, bool) {
+	for _, a := range m.agents[issue] {
+		if a.Root == "" {
+			continue
+		}
+		if u, ok := m.ledger.Usage[a.Root]; ok {
+			return u, true
+		}
+	}
+	return LedgerUsage{}, false
+}
+
 // cardBranch is the checkout the work is on. The live agent's own token is
 // preferred; the ledger's newest spawn for the issue answers for a session
 // that has since exited, which is why an In Review card still names a branch.
