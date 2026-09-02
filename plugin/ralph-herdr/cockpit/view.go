@@ -101,6 +101,9 @@ var (
 	// Epic rollup: the caret and the done/total take the SAME purple merged
 	// PRs use — both mean "landed".
 	styleRollup = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
+	// The epic popover's state tally (spec §11) — a shade above meta so it
+	// reads beside the bold title without competing with it.
+	styleTally = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	// Column headers: the count carries the column's colour, the NAME goes
 	// bold white only where the cursor is.
@@ -176,6 +179,11 @@ func viewModel(m Model) string {
 	if m.showInbox && !m.inboxOK && m.inboxErr != "" {
 		banner = append(banner, styleErr.Render("Inbox stale: "+m.inboxErr))
 	}
+	// And the epic popover: a failed refresh keeps the children on screen
+	// under this line, the same rule.
+	if m.mode == ModeEpic && !m.epicOK && m.epicErr != "" {
+		banner = append(banner, styleErr.Render(fmt.Sprintf("epic #%d stale: %s", m.epicFor, m.epicErr)))
+	}
 	if !m.herdrOK {
 		banner = append(banner, styleBanner.Render(noMuxBanner))
 	}
@@ -198,6 +206,8 @@ func viewModel(m Model) string {
 		body = renderOverlay(m, "frontier DAG — eligible & blocked", m.dagText, bodyHeight)
 	case ModeTopology:
 		body = renderTopology(m, bodyHeight)
+	case ModeEpic:
+		body = renderEpic(m, bodyHeight)
 	default:
 		if m.inboxViewUp() {
 			// The inbox view stays behind the answer input it launched, so
@@ -297,17 +307,17 @@ func legendTable(m Model, card Card) []verbHint {
 	case card.State == doneState:
 		return []verbHint{{"g", "browser"}, {"d", "diff"}, {"D", "back to Human Needed"}}
 	case card.State == columnStates[2] && live > 0:
-		return []verbHint{{"a", "answer"}, {"r", "reply"}, {"⏎", "observe"}, {"␣", "peek"}, {"g", "browser"}}
+		return []verbHint{{"a", "answer"}, {"r", "reply"}, {"⏎", "observe"}, {"␣", "peek"}, {"e", "epic"}, {"g", "browser"}}
 	case card.State == columnStates[2]:
-		return []verbHint{{"a", "answer"}, {"g", "browser"}}
+		return []verbHint{{"a", "answer"}, {"e", "epic"}, {"g", "browser"}}
 	case live >= 2:
-		return []verbHint{{"⏎", "observe w-lane"}, {"␣", "peek"}, {"r", "reply"}, {"d", "diff"}, {"g", "browser"}}
+		return []verbHint{{"⏎", "observe w-lane"}, {"␣", "peek"}, {"r", "reply"}, {"d", "diff"}, {"e", "epic"}, {"g", "browser"}}
 	case live == 1:
-		return []verbHint{{"⏎", "observe"}, {"␣", "peek"}, {"r", "reply"}, {"f", "fork"}, {"d", "diff"}, {"g", "browser"}}
+		return []verbHint{{"⏎", "observe"}, {"␣", "peek"}, {"r", "reply"}, {"f", "fork"}, {"d", "diff"}, {"e", "epic"}, {"g", "browser"}}
 	case card.State == columnStates[1]:
-		return []verbHint{{"d", "diff"}, {"s", "spawn"}, {"g", "browser"}}
+		return []verbHint{{"d", "diff"}, {"s", "spawn"}, {"e", "epic"}, {"g", "browser"}}
 	}
-	return []verbHint{{"s", "spawn"}, {"d", "diff"}, {"g", "browser"}}
+	return []verbHint{{"s", "spawn"}, {"d", "diff"}, {"e", "epic"}, {"g", "browser"}}
 }
 
 // cardVerbs is legend row 1 for the selected card: the spec table, minus
@@ -332,6 +342,8 @@ func cardVerbs(m Model, card Card) []verbHint {
 			kind, _ = refuseSpawn(m, card)
 		case "a":
 			kind, _ = refuseAnswer(card)
+		case "e":
+			kind, _ = refuseEpic(card)
 		}
 		if kind == statusNone {
 			out = append(out, h)
@@ -350,6 +362,8 @@ func legendRows(m Model) [][]string {
 		return [][]string{{styleDim.Render("esc close")}}
 	case ModeInbox:
 		return [][]string{dimHints("j/k row", "a/⏎ answer decision", "g browser", "i/esc close")}
+	case ModeEpic:
+		return [][]string{dimHints("esc close", "j/k child", "⏎ observe", "␣ peek", "g browser")}
 	}
 	row1 := []string{}
 	card, ok := m.selectedCard()
@@ -655,7 +669,21 @@ func columnFlight(m Model, idx int, now time.Time) string {
 // the selected card. No boxes and no per-card borders — a border is two more
 // rows of chrome per card in a column that is already three cards deep.
 func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
-	selected := m.mode != ModePeek && m.mode != ModeDag && m.mode != ModeTopology && m.mode != ModeInbox && colIdx == m.col && rowIdx == m.row
+	selected := m.mode != ModePeek && m.mode != ModeDag && m.mode != ModeTopology && m.mode != ModeInbox && m.mode != ModeEpic && colIdx == m.col && rowIdx == m.row
+	return renderCardFace(m, card, width, selected, false)
+}
+
+// renderCardFace is the card itself, selection decided by the caller. The
+// board columns and the epic popover (GH-2381) draw the SAME face, so the
+// geometry, the dot vocabulary and the selection ink cannot drift between
+// them. `overlay` is the popover's three differences, all from spec §11:
+// line 1's right slot is the child's board STATE (no column carries it in
+// there); a child outside the four column states (Backlog, Intake, …) draws
+// no branch, no age and no cost — there is no session to measure; and a Done
+// child's merge chip moves to line 3,
+// beside its cost, since the state took its slot. No epic chip either: every
+// child has the same parent, and it is the title row.
+func renderCardFace(m Model, card Card, width int, selected, overlay bool) string {
 	g := m.glyphSet()
 	inner := width - 2 // gutter char + one space
 	if inner < 1 {
@@ -686,19 +714,21 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 	// has left. The two are mutually exclusive by column, which is why one
 	// slot suffices.
 	chip := ""
-	switch card.State {
-	case columnStates[0]:
+	switch {
+	case overlay:
+		chip = stateTag(card)
+	case card.State == columnStates[0]:
 		chip = diffChip(m, card)
-	case columnStates[1]:
+	case card.State == columnStates[1]:
 		chip = prChip(m, card, g)
-	case doneState:
+	case card.State == doneState:
 		chip = mergeChip(card, g)
-	case "Human Needed":
+	case card.State == columnStates[2]:
 		// The question owns line 3 on a Human Needed card (the approved
 		// mock), so the cost rides the one slot the card leaves empty: line
 		// 1's right. Nothing else competes for it on this state.
 		chip = costChip(m, card, g)
-	case inboxState:
+	case card.State == inboxState:
 		// The right slot's one fact for an inbox card is WHICH human queue
 		// admitted it — the section header the CLI prints, carried per card
 		// because the column interleaves four queues.
@@ -710,8 +740,13 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 	if chip != "" {
 		avail -= lipgloss.Width(chip) + 2
 	}
+	// A popover child outside the four column states — Backlog, Intake,
+	// Canceled, off-board, unread — has no session to measure: no branch,
+	// no age, no cost, the lead alone on line 3.
+	parked := overlay && card.State != columnStates[0] && card.State != columnStates[1] &&
+		card.State != columnStates[2] && card.State != doneState
 	line1 := left
-	if br := m.cardBranch(card.Number); br != "" && avail > 3 {
+	if br := m.cardBranch(card.Number); br != "" && avail > 3 && !parked {
 		if g.branch != "" {
 			br = g.branch + " " + br
 		}
@@ -742,12 +777,27 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		// empty-priority glyph, which on a live card is a real defect and here
 		// would be a lie about a card nobody can fix. What a closed card has
 		// is when it closed.
-		line3 = styleMeta.Render(trimTo(closedLabel(card, time.Now()), inner))
-		// Right of the closed label, only when a transcript (or the ledger's
-		// usage fact) exists — an unsessioned close draws nothing.
-		if cost := costChip(m, card, g); cost != "" && lipgloss.Width(line3)+lipgloss.Width(cost)+2 <= inner {
-			line3 = pad(line3, inner-lipgloss.Width(cost)) + cost
+		closed := closedLabel(card, time.Now())
+		if !overlay {
+			line3 = styleMeta.Render(trimTo(closed, inner))
+			// Right of the closed label, only when a transcript (or the ledger's
+			// usage fact) exists — an unsessioned close draws nothing.
+			if cost := costChip(m, card, g); cost != "" && lipgloss.Width(line3)+lipgloss.Width(cost)+2 <= inner {
+				line3 = pad(line3, inner-lipgloss.Width(cost)) + cost
+			}
+			break
 		}
+		right := mergeChip(card, g)
+		if cost := costChip(m, card, g); cost != "" {
+			if right != "" {
+				right += "  "
+			}
+			right += cost
+		}
+		// Trimmed on the PLAIN text, with the ellipsis: a chopped `closed 43m ag`
+		// at card width reads as a typo, and trimming a styled string would
+		// cut inside its escape codes.
+		line3 = pad(styleMeta.Render(trimTo(closed, inner-lipgloss.Width(right)-2)), inner-lipgloss.Width(right)) + right
 	case card.State == inboxState && card.Queue == "decision":
 		// A decision row IS a Human Needed item: same phone-answerable
 		// contract, same rendering — the why-line owns the row, because the
@@ -783,6 +833,10 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		// The cost chip and the context alert sit beside the timer on the
 		// right — cost, then alert, then age — all fixed-width, so the epic
 		// chip's budget can be computed before it is built.
+		if parked {
+			line3 = truncate(lead, inner)
+			break
+		}
 		timer := ageChip(m, card)
 		if ctx := ctxChip(m, card, g); ctx != "" {
 			timer = ctx + "  " + timer
@@ -790,8 +844,10 @@ func renderCard(m Model, colIdx, rowIdx int, card Card, width int) string {
 		if cost := costChip(m, card, g); cost != "" {
 			timer = cost + "  " + timer
 		}
-		if epic := epicChip(m, card, g, inner-lipgloss.Width(lead)-lipgloss.Width(timer)-4); epic != "" {
-			lead += "  " + epic
+		if !overlay {
+			if epic := epicChip(m, card, g, inner-lipgloss.Width(lead)-lipgloss.Width(timer)-4); epic != "" {
+				lead += "  " + epic
+			}
 		}
 		line3 = pad(lead, inner-lipgloss.Width(timer)) + timer
 	}
@@ -1174,6 +1230,108 @@ func groupThousands(n int) string {
 		b.WriteRune(c)
 	}
 	return b.String()
+}
+
+// stateTag is the popover child's line-1 right slot: its board state, with
+// the two not-a-state cases kept apart — off the board (no project item) and
+// unread (its field-value page truncated, GH-2381), the latter in the same
+// grey every other "could not read" chip uses.
+func stateTag(card Card) string {
+	switch {
+	case card.StateUnread:
+		return prUnread.Render("state ?")
+	case card.State == "":
+		return styleMeta.Render("off board")
+	}
+	return styleMeta.Render(card.State)
+}
+
+// renderEpic draws the `e` popover (GH-2381, spec §11): the epic's title row —
+// number, title, closed/total, spend, state tally — over its children as
+// board cards in two columns, row-major in board order. Its own renderer,
+// like the topology tree: the clip keeps the FIRST rows and the window
+// follows the selected child, the way colWindow follows the cursor, so j/k
+// can never move the selection off screen.
+func renderEpic(m Model, bodyHeight int) string {
+	innerW := m.width - 6
+	if innerW < 20 {
+		innerW = 20
+	}
+	maxLines := bodyHeight - 4
+	if maxLines < cardRows {
+		maxLines = cardRows
+	}
+	e := m.epic
+	kids := m.epicChildren()
+
+	tally := fmt.Sprintf("%d/%d", e.Closed, len(kids))
+	if e.Truncated {
+		tally += "+"
+	}
+	title := styleTitle.Render(fmt.Sprintf("epic #%d — %s", e.Number, e.Title)) +
+		"  " + styleRollup.Render(tally+" done")
+	if spend, ok := m.epicSpend(kids); ok {
+		title += "  " + styleCost.Render(fmt.Sprintf("$%.2f", spend))
+	}
+	if t := epicTally(kids); t != "" {
+		title += "  " + styleTally.Render(t)
+	}
+	lines := []string{truncate(title, innerW)}
+
+	if len(kids) == 0 {
+		lines = append(lines, styleDim.Render("(no children)"))
+		return styleOverlay.Width(innerW + 2).Render(strings.Join(lines, "\n"))
+	}
+
+	colW := (innerW - 1) / 2
+	pairs := (len(kids) + 1) / 2
+	visible := maxLines / cardRows
+	if pairs > visible {
+		// One row is spent on the "↑N above · +N more" line, as the columns do.
+		visible = (maxLines - 1) / cardRows
+	}
+	if visible < 1 {
+		visible = 1
+	}
+	start := 0
+	if sel := m.epicRow / 2; sel >= visible {
+		start = sel - visible + 1
+	}
+	if start > pairs-visible {
+		start = pairs - visible
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + visible
+	if end > pairs {
+		end = pairs
+	}
+	blank := strings.TrimRight(strings.Repeat(strings.Repeat(" ", colW)+"\n", cardRows), "\n")
+	for p := start; p < end; p++ {
+		li, ri := p*2, p*2+1
+		left := strings.TrimRight(renderCardFace(m, kids[li], colW, li == m.epicRow, true), "\n")
+		right := blank
+		if ri < len(kids) {
+			right = strings.TrimRight(renderCardFace(m, kids[ri], colW, ri == m.epicRow, true), "\n")
+		}
+		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right))
+	}
+	above, below := start*2, len(kids)-end*2
+	if below < 0 {
+		below = 0
+	}
+	if above > 0 || below > 0 {
+		parts := make([]string, 0, 2)
+		if above > 0 {
+			parts = append(parts, fmt.Sprintf("↑%d above", above))
+		}
+		if below > 0 {
+			parts = append(parts, fmt.Sprintf("+%d more", below))
+		}
+		lines = append(lines, truncate(styleDim.Render("  "+strings.Join(parts, " · ")), innerW))
+	}
+	return styleOverlay.Width(innerW + 2).Render(strings.Join(lines, "\n"))
 }
 
 // renderOverlay draws the peek/dag pane: bordered, clipped to the body area.

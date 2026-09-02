@@ -28,6 +28,7 @@ const (
 	ModeDag           // text tree from board frontier --json
 	ModeTopology      // roster tree from board roster --json (GH-2219, unit K)
 	ModeInbox         // full-body inbox view over board inbox Tier 1 (GH-2318)
+	ModeEpic          // the `e` popover — an epic's children as board cards (GH-2381)
 )
 
 // columnStates — the three cockpit columns, board Workflow State names
@@ -77,6 +78,42 @@ type Card struct {
 	// disposition command — the invariant that admitted the row to Tier 1.
 	Queue string
 	Verb  string
+	// StateUnread marks an epic-popover child whose own field-value page was
+	// truncated (GH-2381): its board state could not be read, which must not
+	// render like a child that is off the board (State == "").
+	StateUnread bool
+}
+
+// EpicView is the `e` popover's data (GH-2381): one `board get <epic> --json`,
+// the children in the overlay's board order. Closed counts children CLOSED on
+// GitHub — `parent-check`'s own rollup rule and the epic chip's, so the two
+// tallies cannot disagree. Truncated is the same load-bearing flag the rollup
+// carries: a tally off a truncated list renders with `+`.
+type EpicView struct {
+	Number    int
+	Title     string
+	Repo      string // nameWithOwner from the epic's own URL — the children's browser links
+	Children  []Card
+	Closed    int
+	Truncated bool
+}
+
+// epicOrder is the overlay's column order (spec §11): In Progress, Backlog,
+// Human Needed, Done, with In Review beside In Progress. Anything else —
+// Intake, Canceled, off-board, unread — sorts after, never dropped.
+var epicOrder = map[string]int{
+	columnStates[0]: 0,
+	columnStates[1]: 1,
+	"Backlog":       2,
+	columnStates[2]: 3,
+	doneState:       4,
+}
+
+func epicRank(state string) int {
+	if r, ok := epicOrder[state]; ok {
+		return r
+	}
+	return len(epicOrder)
 }
 
 // PR chip fates (GH-2062, GH-2321). Six, and the two that mean "we did not
@@ -436,6 +473,21 @@ type Model struct {
 	// flight. That read started BEFORE the answer, so its result cannot show
 	// the disposition — one more read is owed when it lands.
 	inboxRereadWanted bool
+
+	// Epic popover (GH-2381). epicFor is the epic the last `e` asked for; the
+	// read is dispatched on the keypress and re-read on the signal cadence
+	// while the overlay is up. epicOK/epicErr keep "read failed" apart from
+	// "no children", and a failed REFRESH keeps the last good view under a
+	// stale banner. epicRow is the selected child. peekReturn is where a
+	// peek's esc lands — the overlay when the peek was opened from it.
+	epic         EpicView
+	epicFor      int
+	epicOK       bool
+	epicErr      string
+	epicRow      int
+	epicInFlight bool
+	lastEpic     time.Time
+	peekReturn   Mode
 
 	// Cursor + mode.
 	col, row int
@@ -1045,6 +1097,126 @@ func (m Model) doneDue(now time.Time) bool {
 		return false
 	}
 	return m.lastDone.IsZero() || !now.Before(m.lastDone.Add(m.cfg.SignalInterval))
+}
+
+// epicDue gates the popover's refresh the way doneDue gates the window:
+// only while the overlay is up, on the signal cadence. The opening read is
+// dispatched by the keypress itself, never here.
+func (m Model) epicDue(now time.Time) bool {
+	if m.epicInFlight || m.mode != ModeEpic || m.epicFor == 0 {
+		return false
+	}
+	return m.lastEpic.IsZero() || !now.Before(m.lastEpic.Add(m.cfg.SignalInterval))
+}
+
+// epicChildren is the overlay's card list: each child joined to the card the
+// cockpit already holds for it — a column card carries the question and the
+// priority the poll read, a Done-window card the closing PR — else the
+// get-derived card. A column card is taken only when its state agrees with
+// the get's: the two reads race, and a child that moved between them keeps
+// the state the fresher (keypress) read saw.
+func (m Model) epicChildren() []Card {
+	out := make([]Card, len(m.epic.Children))
+	for i, c := range m.epic.Children {
+		out[i] = m.joinChild(c)
+	}
+	return out
+}
+
+func (m Model) joinChild(c Card) Card {
+	for _, col := range m.cols {
+		for _, k := range col {
+			if k.Number == c.Number && k.State == c.State {
+				return k
+			}
+		}
+	}
+	if c.State == doneState {
+		for _, k := range m.doneCards {
+			if k.Number == c.Number {
+				return k
+			}
+		}
+	}
+	return c
+}
+
+// epicHasDone reports whether any child is Done — the one case the overlay
+// wants the Done-window read, for the closing PR the get does not carry.
+func (m Model) epicHasDone() bool {
+	for _, c := range m.epic.Children {
+		if c.State == doneState {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) selectedEpicChild() (Card, bool) {
+	kids := m.epicChildren()
+	if m.epicRow < 0 || m.epicRow >= len(kids) {
+		return Card{}, false
+	}
+	return kids[m.epicRow], true
+}
+
+func (m *Model) clampEpicRow() {
+	n := len(m.epic.Children)
+	if n == 0 {
+		m.epicRow = 0
+		return
+	}
+	if m.epicRow >= n {
+		m.epicRow = n - 1
+	}
+	if m.epicRow < 0 {
+		m.epicRow = 0
+	}
+}
+
+// epicSpend totals the children's cost — unit 2's own reader (columnSpend,
+// GH-2378), so the popover's dollars and the column headers' cannot disagree.
+// ok=false when no child has a priced session: nothing is drawn, never $0.
+func (m Model) epicSpend(kids []Card) (float64, bool) {
+	return m.columnSpend(kids)
+}
+
+// epicTally is the title row's state count, from BOARD state: In Progress
+// children are "live" (each card's dot says whether a session actually is),
+// Human Needed "blocked". Every other state is named when nonzero — an
+// Intake or Canceled child is never folded into a bucket it is not in.
+func epicTally(kids []Card) string {
+	labels := []struct{ state, label string }{
+		{columnStates[0], "live"}, {columnStates[1], "in review"}, {columnStates[2], "blocked"},
+		{"Backlog", "backlog"}, {doneState, "done"},
+	}
+	counts := map[string]int{}
+	for _, k := range kids {
+		state := k.State
+		switch {
+		case k.StateUnread:
+			state = "state unread"
+		case state == "":
+			state = "off board"
+		}
+		counts[state]++
+	}
+	var parts []string
+	for _, l := range labels {
+		if n := counts[l.state]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, l.label))
+			delete(counts, l.state)
+		}
+	}
+	rest := make([]string, 0, len(counts))
+	for state := range counts {
+		rest = append(rest, state)
+	}
+	sort.Strings(rest)
+	for _, state := range rest {
+		parts = append(parts, fmt.Sprintf("%d %s", counts[state], strings.ToLower(state)))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // inboxDue gates the inbox read the same way: shown-only, so a cockpit nobody

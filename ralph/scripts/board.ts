@@ -2030,6 +2030,15 @@ export interface Issue {
     title: string;
     issueState: string;
     state: string | null;
+    /** Priority, Estimate and closedAt ride the child fetch for the cockpit's
+     *  epic popover (GH-2381): the first two are read off the same field-value
+     *  page `state` already comes from, closedAt is a scalar on the node —
+     *  zero extra GraphQL cost. The closing PR is deliberately NOT here: a
+     *  `closedByPullRequestsReferences` connection under `subIssues` is the
+     *  nested shape GH-1811 measured at hundreds of points. */
+    priority: string | null;
+    estimate: string | null;
+    closedAt: string | null;
     /** Child's own field-value page truncated: its board state is unreadable,
      *  not unset. Display-only — parentCheck gates on issueState, never this. */
     fieldValuesTruncated: boolean;
@@ -2082,7 +2091,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
             subIssues(first: 50) {
               pageInfo { hasNextPage }
               nodes {
-                number title state
+                number title state closedAt
                 projectItems(first: 10) { nodes { project { id } ${FIELD_VALUES_FRAGMENT} } }
               }
             }
@@ -2131,11 +2140,15 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
         const cItem = (c.projectItems?.nodes ?? []).find(
           (n: any) => n.project?.id === cache.projectId,
         );
+        const cfv = fieldValueMap(cItem?.fieldValues);
         return {
           number: c.number,
           title: c.title,
           issueState: c.state,
-          state: fieldValueMap(cItem?.fieldValues)[STATE_FIELD] ?? null,
+          state: cfv[STATE_FIELD] ?? null,
+          priority: cfv[PRIORITY_FIELD] ?? null,
+          estimate: cfv[ESTIMATE_FIELD] ?? null,
+          closedAt: c.closedAt ?? null,
           fieldValuesTruncated: fieldValuesTruncated(cItem?.fieldValues),
         };
       }),
