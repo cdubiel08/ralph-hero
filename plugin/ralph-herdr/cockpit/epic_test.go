@@ -217,6 +217,27 @@ func TestEpicKeyOpensOnTheReadAndRoutesVerbsToTheChild(t *testing.T) {
 	}
 }
 
+func TestEpicReadLandingAfterTheCursorLeftTheEpicNudgesInsteadOfOpening(t *testing.T) {
+	m := epicModel(&fakeRunner{})
+	v, _ := parseEpic(epicJSON)
+	m.epicFor = 2376
+	m.epicInFlight = true
+	m.row = 1 // #11 — no parent: the operator moved off the epic's card
+	m, _ = updateModel(m, epicMsg{issue: 2376, view: v, ok: true})
+	if m.mode != ModeBrowse || m.statusKind != statusNudge || !strings.Contains(m.status, "epic #2376 read landed after the selection moved") {
+		t.Errorf("a read for an epic the cursor has left must nudge, never open: mode=%v status=%q", m.mode, m.status)
+	}
+	if m.epic.Number != 2376 || m.epicInFlight {
+		t.Error("the data is kept so the next e is instant")
+	}
+	// A sibling card of the SAME epic is still "where they pressed e".
+	m.cols[0][1].ParentNumber = 2376
+	m, _ = updateModel(m, epicMsg{issue: 2376, view: v, ok: true})
+	if m.mode != ModeEpic {
+		t.Errorf("a sibling card of the same epic opens it: mode=%v", m.mode)
+	}
+}
+
 func TestEpicReadNeverHijacksAndDropsAReadForAnotherEpic(t *testing.T) {
 	m := epicModel(&fakeRunner{})
 	v, _ := parseEpic(epicJSON)
@@ -361,6 +382,36 @@ func TestRenderEpicDoneChildTrimsTheClosedLabelWithAnEllipsis(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("the Done child's merge chip must survive at card width; got:\n%s", out)
+	}
+}
+
+func TestRenderEpicNarrowPaneDropsToOneColumnAndShedsChipsBeforeClipping(t *testing.T) {
+	m := openEpic(t, epicModel(&fakeRunner{}))
+	m.width, m.height = 32, 60 // innerW 26 → one column of 26, never two of 12
+	m.doneCards = []Card{{Number: 2377, State: doneState, ClosedAt: time.Now().Add(-43 * time.Minute).UTC().Format(time.RFC3339), MergedPR: 9999, ClosingPRsRead: true}}
+	m.ledger.Usage["w2377-glyphs#r1"] = LedgerUsage{ListUSD: 1.4, MaxContext: 50000}
+	m.agents[2377] = []Agent{{Name: "w2377-glyphs", Status: "done", Issue: 2377, Lane: "w", Root: "w2377-glyphs#r1"}}
+	out := stripANSI(viewModel(m))
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "#2381") && strings.Contains(line, "#2378") {
+			t.Fatalf("a narrow pane must not put two cards on one row: %q", line)
+		}
+		// The merge chip is whole or absent — never a partial PR number.
+		if strings.Contains(line, "closed") && strings.Contains(line, "#") && !strings.Contains(line, "#9999") {
+			t.Errorf("a clipped merge chip is a wrong PR number: %q", line)
+		}
+	}
+	if !strings.Contains(out, "#9999") {
+		t.Errorf("at 26 cells the merge chip alone fits and must be drawn; got:\n%s", out)
+	}
+	if strings.Contains(out, "$1.40") {
+		t.Errorf("the cost is the first chip shed at this width; got:\n%s", out)
+	}
+	// Every row stays inside the frame.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "│") && !strings.HasSuffix(line, "│") {
+			t.Errorf("row overran the frame: %q", line)
+		}
 	}
 }
 

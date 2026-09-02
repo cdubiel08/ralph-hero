@@ -788,6 +788,33 @@ describe("fetchIssue parentage (GH-1791)", () => {
     expect(Object.keys(issue)).toContain("parentNumber");
     expect(issue.parentNumber).toBeNull();
   });
+
+  it("children carry priority, estimate and closedAt off the page the child fetch already pays for (GH-2381)", () => {
+    gh.issues.set(1, {
+      number: 1,
+      state: "Backlog",
+      children: [
+        { number: 11, issueState: "CLOSED", state: "Done", priority: "P1", estimate: "S", closedAt: "2026-09-02T10:00:00Z" },
+        { number: 12, issueState: "OPEN", state: "Backlog", priority: "P2", estimate: "XS" },
+        { number: 13, issueState: "OPEN", state: null }, // off the board: every field present-and-null
+        { number: 14, issueState: "OPEN", state: "Backlog", fieldValuesTruncated: true },
+      ],
+    });
+    const issue = fetchIssue(ctx, 1);
+    expect(issue.children).toEqual([
+      { number: 11, title: "Issue 11", issueState: "CLOSED", state: "Done", priority: "P1", estimate: "S", closedAt: "2026-09-02T10:00:00Z", fieldValuesTruncated: false },
+      { number: 12, title: "Issue 12", issueState: "OPEN", state: "Backlog", priority: "P2", estimate: "XS", closedAt: null, fieldValuesTruncated: false },
+      { number: 13, title: "Issue 13", issueState: "OPEN", state: null, priority: null, estimate: null, closedAt: null, fieldValuesTruncated: false },
+      { number: 14, title: "Issue 14", issueState: "OPEN", state: "Backlog", priority: null, estimate: null, closedAt: null, fieldValuesTruncated: true },
+    ]);
+    // The query asks the child node for closedAt as a scalar and nothing
+    // nested beyond the field-value page it already paid for: no
+    // closedByPullRequestsReferences under subIssues (the GH-1811 shape).
+    const q = gh.queries.find((x) => x.includes("subIssues"))!;
+    const sub = q.slice(q.indexOf("subIssues"), q.indexOf("blockedBy"));
+    expect(sub).toMatch(/number title state closedAt/);
+    expect(sub).not.toMatch(/closedByPullRequestsReferences/);
+  });
 });
 
 describe("transition engine", () => {

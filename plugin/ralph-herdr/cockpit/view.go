@@ -25,6 +25,10 @@ const (
 	statusRows      = 2 // input line pair (reply/answer) — the browse footer is legendRows+1
 	maxLegendRows   = 4 // a legend wrapped past this is clipped, not allowed to eat the body
 	narrowThreshold = 90
+	// minCardWidth is the narrowest a card is ever drawn at: the board's
+	// columns floor at it, and the epic popover drops to one column rather
+	// than draw a card below it.
+	minCardWidth = 20
 )
 
 var (
@@ -522,8 +526,8 @@ func renderColumns(m Model, bodyHeight int) string {
 	}
 	gap := 1
 	colW := (m.width - 2*gap) / 3
-	if colW < 20 {
-		colW = 20
+	if colW < minCardWidth {
+		colW = minCardWidth
 	}
 	cols := make([]string, 0, 3)
 	for i := range columnStates {
@@ -787,12 +791,28 @@ func renderCardFace(m Model, card Card, width int, selected, overlay bool) strin
 			}
 			break
 		}
-		right := mergeChip(card, g)
-		if cost := costChip(m, card, g); cost != "" {
+		// The right slot sheds from the outside in when the card is too
+		// narrow for all of it — the cost first, then the merge chip — so a
+		// clip never eats a chip that was drawn: a partial `⌥#23` is a wrong
+		// PR number, and no chip is the honest form of "no room".
+		merge, cost := mergeChip(card, g), costChip(m, card, g)
+		const minLabel = 8 // "closed …" — the label is never squeezed below this
+		right := merge
+		if cost != "" {
 			if right != "" {
 				right += "  "
 			}
 			right += cost
+		}
+		if lipgloss.Width(right)+2+minLabel > inner {
+			right = merge
+		}
+		if lipgloss.Width(right)+2+minLabel > inner {
+			right = ""
+		}
+		if right == "" {
+			line3 = styleMeta.Render(trimTo(closed, inner))
+			break
 		}
 		// Trimmed on the PLAIN text, with the ellipsis: a chopped `closed 43m ag`
 		// at card width reads as a typo, and trimming a styled string would
@@ -1283,10 +1303,16 @@ func renderEpic(m Model, bodyHeight int) string {
 		return styleOverlay.Width(innerW + 2).Render(strings.Join(lines, "\n"))
 	}
 
-	colW := (innerW - 1) / 2
-	pairs := (len(kids) + 1) / 2
+	// Two columns at the board's own minimum card width, else ONE — the
+	// narrow mode renderColumns already has, so a card is never squeezed
+	// below the width its chips were budgeted for.
+	perRow, colW := 2, (innerW-1)/2
+	if colW < minCardWidth {
+		perRow, colW = 1, innerW
+	}
+	rows := (len(kids) + perRow - 1) / perRow
 	visible := maxLines / cardRows
-	if pairs > visible {
+	if rows > visible {
 		// One row is spent on the "↑N above · +N more" line, as the columns do.
 		visible = (maxLines - 1) / cardRows
 	}
@@ -1294,30 +1320,36 @@ func renderEpic(m Model, bodyHeight int) string {
 		visible = 1
 	}
 	start := 0
-	if sel := m.epicRow / 2; sel >= visible {
+	if sel := m.epicRow / perRow; sel >= visible {
 		start = sel - visible + 1
 	}
-	if start > pairs-visible {
-		start = pairs - visible
+	if start > rows-visible {
+		start = rows - visible
 	}
 	if start < 0 {
 		start = 0
 	}
 	end := start + visible
-	if end > pairs {
-		end = pairs
+	if end > rows {
+		end = rows
 	}
 	blank := strings.TrimRight(strings.Repeat(strings.Repeat(" ", colW)+"\n", cardRows), "\n")
-	for p := start; p < end; p++ {
-		li, ri := p*2, p*2+1
-		left := strings.TrimRight(renderCardFace(m, kids[li], colW, li == m.epicRow, true), "\n")
-		right := blank
-		if ri < len(kids) {
-			right = strings.TrimRight(renderCardFace(m, kids[ri], colW, ri == m.epicRow, true), "\n")
+	for r := start; r < end; r++ {
+		cells := make([]string, 0, 2*perRow)
+		for c := 0; c < perRow; c++ {
+			i := r*perRow + c
+			cell := blank
+			if i < len(kids) {
+				cell = strings.TrimRight(renderCardFace(m, kids[i], colW, i == m.epicRow, true), "\n")
+			}
+			if c > 0 {
+				cells = append(cells, " ")
+			}
+			cells = append(cells, cell)
 		}
-		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right))
+		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, cells...))
 	}
-	above, below := start*2, len(kids)-end*2
+	above, below := start*perRow, len(kids)-end*perRow
 	if below < 0 {
 		below = 0
 	}

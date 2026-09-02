@@ -323,8 +323,15 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		m.epic = msg.view
 		if m.mode == ModeBrowse {
 			// Never-hijack, same as peek: the overlay opens only if the
-			// operator is still where they pressed `e`. Any other mode keeps
-			// the data (the next `e` is instant) and leaves the mode alone.
+			// operator is still where they pressed `e` — in browse AND on a
+			// card of the epic they asked for. A cursor that moved to another
+			// epic's card (or off every card) while the read was out keeps
+			// the data (the next `e` is instant) and gets a nudge, never an
+			// overlay over a context they have left.
+			if card, ok := m.selectedCard(); !ok || card.ParentNumber != msg.issue {
+				m.say(statusNudge, fmt.Sprintf("epic #%d read landed after the selection moved — e on one of its cards opens it", msg.issue))
+				return m, nil
+			}
 			m.mode = ModeEpic
 			m.epicRow = 0
 			m.say(statusView, fmt.Sprintf("epic #%d — %d children; esc closes", msg.view.Number, len(msg.view.Children)))

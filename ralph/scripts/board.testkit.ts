@@ -45,6 +45,9 @@ export interface FakeIssue {
     number: number;
     issueState: "OPEN" | "CLOSED";
     state?: string | null;
+    priority?: string | null; // rides the child's own fieldValues page (GH-2381)
+    estimate?: string | null;
+    closedAt?: string | null;
     fieldValuesTruncated?: boolean;
   }>;
   childrenTruncated?: boolean;
@@ -327,11 +330,12 @@ export class FakeGh {
           number: c.number,
           title: `Issue ${c.number}`,
           state: c.issueState,
+          closedAt: c.closedAt ?? null,
           projectItems: {
             nodes: [
               {
                 project: { id: PROJECT_ID },
-                fieldValues: fieldValues(c.state, undefined, c.fieldValuesTruncated ?? false),
+                fieldValues: fieldValues(c.state, undefined, c.fieldValuesTruncated ?? false, c.priority, undefined, c.estimate),
               },
             ],
           },
