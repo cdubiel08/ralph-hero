@@ -8493,6 +8493,24 @@ describe("board closed — the Done window (GH-2062)", () => {
     expect(payload.items[0].closingPRs).toEqual([{ number: 11, merged: true }, { number: 12, merged: false }]);
     expect(payload.items[1].closingPRs).toEqual([]);
   });
+
+  /** A TRUNCATED linkage page is withheld, not served as complete: the
+   *  omitted node is as likely to be the merged one as any other, and a chip
+   *  drawn off a partial page would name an older PR or none. Absent renders
+   *  unread in the cockpit — card-signals' own rule (GH-2062), one read over.
+   *  The audit's `hasMergedClosingPR` keeps its documented reading. */
+  it("--prs withholds a truncated linkage page rather than exporting it as complete", () => {
+    gh.issues.set(1, {
+      number: 1, title: "many refs", state: "Done", issueState: "CLOSED",
+      stateReason: "COMPLETED", closedAt: days(1), updatedAt: days(1),
+      prs: [{ number: 11, merged: false }],
+    });
+    gh.truncateCardLinkage = "closing";
+    const [c] = recentDone(ctx, TEND_DEFAULTS, true).items;
+    expect("closingPRs" in c).toBe(false);
+    gh.truncateCardLinkage = null;
+    expect(recentDone(ctx, TEND_DEFAULTS, true).items[0].closingPRs).toEqual([{ number: 11, merged: false }]);
+  });
 });
 
 // ---------------------------------------------------------------------------

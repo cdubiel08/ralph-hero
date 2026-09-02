@@ -5559,14 +5559,20 @@ export function listOwnRecentClosed(
    *  GitHub's own closing linkage. A truncated page with no merged node reads
    *  FALSE: the row surfaces for audit rather than being silently skipped. */
   hasMergedClosingPR?: boolean;
-  /** Present only when `withClosingPRs` — the first page of the linkage
-   *  itself, number and merged flag (scalars beside `merged`, so free). The
-   *  cockpit renders the highest-numbered MERGED one as the Done chip. */
+  /** Present only when `withClosingPRs` AND the page was complete — the
+   *  linkage itself, number and merged flag (scalars beside `merged`, so
+   *  free). The cockpit renders the highest-numbered MERGED one as the Done
+   *  chip, so a TRUNCATED page is withheld (absent, which renders UNREAD)
+   *  rather than served as complete: the omitted node is as likely to be
+   *  the one that landed as any other — card-signals' own rule (GH-2062).
+   *  `hasMergedClosingPR` keeps its documented fail-toward-audit reading. */
   closingPRs?: Array<{ number: number; merged: boolean }>;
 }> {
   const cutoff = since.getTime();
+  // `pageInfo` is a field, not a connection: it costs nothing and is the
+  // only way to know whether the ten nodes are the whole linkage.
   const closingPRs = withClosingPRs
-    ? `closedByPullRequestsReferences(first: 10) { nodes { number merged } }`
+    ? `closedByPullRequestsReferences(first: 10) { pageInfo { hasNextPage } nodes { number merged } }`
     : "";
   return withCache(ctx, (cache) => {
     const out: Array<{
@@ -5635,9 +5641,13 @@ export function listOwnRecentClosed(
                 hasMergedClosingPR: (c.closedByPullRequestsReferences?.nodes ?? []).some(
                   (p: any) => p?.merged === true,
                 ),
-                closingPRs: (c.closedByPullRequestsReferences?.nodes ?? [])
-                  .filter((p: any) => typeof p?.number === "number")
-                  .map((p: any) => ({ number: p.number as number, merged: p.merged === true })),
+                ...(c.closedByPullRequestsReferences?.pageInfo?.hasNextPage
+                  ? {}
+                  : {
+                      closingPRs: (c.closedByPullRequestsReferences?.nodes ?? [])
+                        .filter((p: any) => typeof p?.number === "number")
+                        .map((p: any) => ({ number: p.number as number, merged: p.merged === true })),
+                    }),
               }
             : {}),
         });
@@ -6922,8 +6932,9 @@ export interface DoneItem {
   title: string;
   closedAt: string;
   /** Present only under `--prs` (GH-2377): GitHub's own closing linkage, the
-   *  field the Done gate reads. ABSENT means the caller did not ask — the
-   *  cockpit draws that as an unread chip, never as "no PR". */
+   *  field the Done gate reads. ABSENT means the caller did not ask OR the
+   *  linkage page was truncated — the cockpit draws both as an unread chip,
+   *  never as "no PR". */
   closingPRs?: Array<{ number: number; merged: boolean }>;
 }
 
