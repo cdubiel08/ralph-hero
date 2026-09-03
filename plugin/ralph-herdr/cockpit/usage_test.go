@@ -542,3 +542,32 @@ func TestReadLedgerKeepsTheClaudeSessionPerRef(t *testing.T) {
 		t.Errorf("sessions = %+v read=%v, want last-non-empty sid-30", l.Sessions, l.Read)
 	}
 }
+
+// PR #2406 review: a day's fleet larger than maxUsageReads prices only its
+// first sessions. The header must say the total is a floor rather than
+// present the partial sum as the day.
+func TestHeaderMarksACappedDayTotalAsAFloor(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.agents = setAgents([]Agent{{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Session: "sid-10"}})
+	now := time.Now()
+	m.ledger = Ledger{Read: true, ByRef: map[string]LedgerSpawn{}, ByIssue: map[int]LedgerSpawn{}, Usage: map[string]LedgerUsage{}, Sessions: map[string]string{}}
+	m.usage = map[string]usageEntry{"sid-10": {Usage: SessionUsage{Read: true, USD: 1, Calls: []CallUsage{{At: now, USD: 1, Priced: true}}}}}
+	if _, capped := m.usageTargetsCapped(); capped {
+		t.Fatal("one session must not read as capped")
+	}
+	if got := strings.Join(headerStats(m, now), " "); !strings.Contains(stripANSI(got), "$1.00 today") || strings.Contains(got, "+ today") {
+		t.Errorf("uncapped header = %q", stripANSI(got))
+	}
+	for i := 0; i < maxUsageReads+5; i++ {
+		ref := fmt.Sprintf("w%d-x#%d", 100+i, i)
+		m.ledger.ByRef[ref] = LedgerSpawn{Ref: ref, SpawnedAt: now.Add(-time.Minute)}
+		m.ledger.Sessions[ref] = fmt.Sprintf("sid-%d", 100+i)
+	}
+	targets, capped := m.usageTargetsCapped()
+	if !capped || len(targets) != maxUsageReads || targets[0].Session != "sid-10" {
+		t.Errorf("capped=%v len=%d first=%q, want capped at %d with the live session first", capped, len(targets), targets[0].Session, maxUsageReads)
+	}
+	if got := stripANSI(strings.Join(headerStats(m, now), " ")); !strings.Contains(got, "$1.00+ today") {
+		t.Errorf("capped header must mark the floor; got %q", got)
+	}
+}

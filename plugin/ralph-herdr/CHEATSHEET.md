@@ -260,7 +260,10 @@ card earns; a board CLI predating `--fields` leaves the left bare.
 every ledger session that spawned or reported since midnight, not only the
 sessions with a card on screen — so the number no longer equals the visible
 column totals and no longer moves when you swap a column. `/h` is the
-trailing hour; both read the same until the fleet is an hour old.
+trailing hour; both read the same until the fleet is an hour old. A day whose
+fleet outgrows the usage cap (64 transcripts a pass) reads `$N+ today` — a
+floor, never the day; what the cap drops is the oldest of the day's refs,
+since live agents and on-screen cards are priced first.
 
 **Context alert is a fraction of the model's window (GH-2405).** Amber at
 60%, red at 80% of the LAST call's model — 600k/800k on a 1M-window model

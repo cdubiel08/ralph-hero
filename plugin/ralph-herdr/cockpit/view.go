@@ -1284,8 +1284,15 @@ func headerStats(m Model, now time.Time) []string {
 		out = append(out, strings.Join(fleet, "  "))
 	}
 	if today, tokens, hour, ok := m.fleetSpend(now); ok {
+		// A `+` says the day's fleet outgrew the usage cap and this is a
+		// floor, never the day (PR #2406 review): the sessions on screen are
+		// priced first, so what is missing is the oldest of today's refs.
+		plus := ""
+		if _, capped := m.usageTargetsCapped(); capped {
+			plus = "+"
+		}
 		out = append(out,
-			styleCost.Render(fmt.Sprintf("%s%.2f today", g.usd, today)),
+			styleCost.Render(fmt.Sprintf("%s%.2f%s today", g.usd, today, plus)),
 			styleToken.Render(g.token+" "+formatTokens(tokens)),
 			styleCost.Render(fmt.Sprintf("%s%.2f/h", g.usd, hour)))
 	}

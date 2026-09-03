@@ -847,15 +847,29 @@ func (m Model) cardUsage(issue int) (SessionUsage, int) {
 // only when the file moved, but a column of hundreds would still put that on
 // the overlay tick.
 func (m Model) usageTargets() []usageTarget {
+	out, _ := m.usageTargetsCapped()
+	return out
+}
+
+// usageTargetsCapped is usageTargets plus whether the cap CUT the list: a
+// day's fleet larger than maxUsageReads prices only its first sessions, and
+// the header must say so rather than present the partial sum as the day
+// (PR #2406 review). Live agents and on-screen cards are listed first, so
+// what the cap drops is always the oldest of today's ledger refs.
+func (m Model) usageTargetsCapped() (targets []usageTarget, capped bool) {
 	var out []usageTarget
 	seen := map[string]bool{}
 	add := func(sid, checkout string) bool {
 		if sid == "" || seen[sid] {
 			return true
 		}
+		if len(out) >= maxUsageReads {
+			capped = true
+			return false
+		}
 		seen[sid] = true
 		out = append(out, usageTarget{Session: sid, Checkout: checkout})
-		return len(out) < maxUsageReads
+		return true
 	}
 	for _, issue := range sortedIssues(m.agents) {
 		for _, a := range m.agents[issue] {
@@ -864,21 +878,21 @@ func (m Model) usageTargets() []usageTarget {
 				checkout = sp.Checkout
 			}
 			if !add(a.Session, checkout) {
-				return out
+				return out, capped
 			}
 		}
 	}
 	for i := range m.cols {
 		for _, c := range m.cols[i] {
 			if !add(m.cardSession(c.Number)) {
-				return out
+				return out, capped
 			}
 		}
 	}
 	if m.showDone {
 		for _, c := range m.doneCards {
 			if !add(m.cardSession(c.Number)) {
-				return out
+				return out, capped
 			}
 		}
 	}
@@ -893,10 +907,10 @@ func (m Model) usageTargets() []usageTarget {
 			checkout = sp.Checkout
 		}
 		if !add(m.ledger.Sessions[ref], checkout) {
-			return out
+			return out, capped
 		}
 	}
-	return out
+	return out, capped
 }
 
 // usageMissing reports a session on screen the last pass did not cover —
