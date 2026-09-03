@@ -11698,28 +11698,28 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   // reading regardless of what the rest of the machine is doing. `herdr`
   // missing or unreadable degrades to "ok" — optional equipment, the same
   // direction as herdr-cockpit and dispatch-heartbeat above.
+  //
+  // ONE tape read for every ledger-derived line (hook-inert here, unit-cost
+  // and lead-respawns below — GH-2398): the ledger is live and append-only,
+  // so two reads are two snapshots, and one doctor report must not call it
+  // readable on one line and unreadable on the next, or reduce the lines
+  // over different facts. readLedgerPayloads keeps absent/unreadable
+  // distinct; an unparseable tape is `not evaluated` here, never "empty".
+  let tape: LedgerPayloadsRead;
   try {
-    const o = openHerdrLedger(ctx);
-    if (o.kind === "absent") {
+    tape = readLedgerPayloads(ctx);
+  } catch (e) {
+    tape = { kind: "error", msg: (e as Error).message };
+  }
+  try {
+    if (tape.kind === "absent") {
       add("hook-inert", "ok", "no herdr ledger (the watcher writes it; optional equipment)");
-    } else if (o.kind === "error") {
-      add("hook-inert", "info", `not evaluated: ${o.msg}`);
+    } else if (tape.kind === "error") {
+      add("hook-inert", "info", `not evaluated: ${tape.msg}`);
     } else {
-      const q = ctx.exec([o.sq, "-json", o.db, "SELECT payload FROM facts ORDER BY seq;"]);
-      if (q.code !== 0) {
-        add("hook-inert", "info", `not evaluated: could not read ${o.db} — ${q.stderr.trim() || `sqlite3 exit ${q.code}`}`);
-      } else {
-        let rows: { payload: string }[] = [];
-        try {
-          rows = q.stdout.trim() ? JSON.parse(q.stdout) : [];
-        } catch {
-          /* unparseable -json output — treat as no rows, same as an empty tape */
-        }
+      {
         const sinceMs = ctx.now().getTime() - ctx.cfg.smells.hookMin * 60_000;
-        const activity = reduceHookActivity(
-          rows.map((r) => r.payload),
-          sinceMs,
-        );
+        const activity = reduceHookActivity(tape.payloads, sinceMs);
         if (activity.openAgents === 0) {
           add("hook-inert", "ok", "no open agents in this repo's ledger — nothing for the hook to report on");
         } else {
@@ -11761,17 +11761,6 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   // size ceiling is the control. Deliberately NOT a cap — compaction is a
   // full rewrite and stopping a worker mid-unit strands it. Closed units are
   // the population, never findings: nothing can re-estimate finished work.
-  //
-  // ONE tape read for every ledger-derived line (unit-cost here, lead-respawns
-  // below): the ledger is live and append-only, so two reads are two
-  // snapshots, and one doctor report must not call it readable on one line
-  // and unreadable on the next, or reduce the two over different facts.
-  let tape: LedgerPayloadsRead;
-  try {
-    tape = readLedgerPayloads(ctx);
-  } catch (e) {
-    tape = { kind: "error", msg: (e as Error).message };
-  }
   try {
     const ur: LedgerUsageRead = tape.kind === "ok" ? { kind: "ok", units: reduceLedgerUsage(tape.payloads) } : tape;
     if (ur.kind === "absent") {
