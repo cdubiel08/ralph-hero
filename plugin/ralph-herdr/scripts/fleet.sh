@@ -248,11 +248,11 @@ ralph_fleet_consume_budget() {
   [ -n "$held" ] || ralph_ledger_lock "$ledger"
   state=$(ralph_fleet_state "$file") || rc=1
   if [ "$rc" -eq 0 ]; then
-    left=$(jq -r --argjson n "$issue" '
+    left=$(printf '%s' "$state" | jq -r --argjson n "$issue" '
       if .armed != true then "refused: not armed (or expired)"
       elif .budget_left <= 0 then "refused: budget exhausted"
       elif ((.spawned // []) | index($n)) != null then "refused: issue already spawned this run"
-      else (.budget_left - 1 | tostring) end' <<<"$state")
+      else (.budget_left - 1 | tostring) end')
     case "$left" in
       refused:*)
         echo "ralph_fleet_consume_budget: $left (issue $issue)" >&2
@@ -403,11 +403,11 @@ ralph_brief_write() {
 ralph_fleet_frontier_json() {
   local out
   if out=$("$BOARD" frontier --json 2>/dev/null) && [ -n "$out" ]; then
-    jq -c '
+    printf '%s' "$out" | jq -c '
       if type == "array" then {next: (.[0] // null), queue: ., blocked: []}
       elif (.queue? // null) != null then {next: (.next? // .queue[0] // null), queue: .queue, blocked: (.blocked? // [])}
       elif (.frontier? // null) != null then {next: (.frontier[0] // null), queue: .frontier, blocked: (.blocked? // [])}
-      else {next: null, queue: [], blocked: []} end' <<<"$out" 2>/dev/null && return 0
+      else {next: null, queue: [], blocked: []} end' 2>/dev/null && return 0
   fi
   "$BOARD" next --json
 }
@@ -564,7 +564,7 @@ spawn_investigator() {
         echo "spawn_investigator: process containment cannot be established for $checkout — refusing to spawn a Bash-capable investigator uncontained" >&2
         return 1
       }
-      while IFS= read -r out; do [ -n "$out" ] && contain+=("$out"); done <<<"$contain_out"
+      while IFS= read -r out; do [ -n "$out" ] && contain+=("$out"); done < <(printf '%s\n' "$contain_out")
       containment=pending
       ;;
   esac
@@ -596,7 +596,7 @@ spawn_investigator() {
     echo "spawn_investigator: could not open a tab in $checkout" >&2
     return 1
   }
-  pane=$(jq -r '.root_pane.pane_id // empty' <<<"$out")
+  pane=$(printf '%s' "$out" | jq -r '.root_pane.pane_id // empty')
   [ -n "$pane" ] || { echo "spawn_investigator: no pane id in the tab response" >&2; return 1; }
 
   agent_start_when_ready "$name" "$pane" "${harness[@]}" ${contain+"${contain[@]}"} || {
@@ -608,12 +608,12 @@ spawn_investigator() {
     # word, which the probe's Write step may only REFUTE — the recorded word
     # is the probe's.
     probe_out=$(spawn_containment_probe "$name" "$pane" "$checkout" "close the tab and re-dispatch the question" "$tool_binding") || {
-      read -r containment tool_binding <<<"${probe_out:-unverified $tool_binding}"
+      read -r containment tool_binding < <(printf '%s' "${probe_out:-unverified $tool_binding}")
       "$HERDR" pane close "$pane" >/dev/null 2>&1 || true
       echo "spawn_investigator: process containment ${containment:-unverified}, tool binding $tool_binding for $name — closed pane $pane rather than dispatch an uncontained investigator" >&2
       return 1
     }
-    read -r containment tool_binding <<<"$probe_out"
+    read -r containment tool_binding < <(printf '%s' "$probe_out")
   fi
   echo "process containment: $containment for $name"
   echo "tool binding: $tool_binding for $name"
@@ -634,7 +634,7 @@ spawn_investigator() {
       while IFS= read -r out; do
         [ -n "$out" ] || continue
         set -- "$@" "$out"
-      done < <(jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' <<<"$record" 2>/dev/null || true)
+      done < <(printf '%s' "$record" | jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' 2>/dev/null || true)
       [ "$#" -ge 1 ] && ralph_tokens_push "$pane" "$@"
     fi
   fi

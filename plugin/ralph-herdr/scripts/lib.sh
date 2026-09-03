@@ -414,7 +414,7 @@ spawn_turn_started() {
     echo "no turn started for $name within ${secs}s ($(ralph_herdr_err_code "$out" || true)) — the prompt was delivered but never submitted" >&2
     return 1
   fi
-  status=$(jq -r '.agent.agent_status // empty' <<<"$out" 2>/dev/null || true)
+  status=$(printf '%s' "$out" | jq -r '.agent.agent_status // empty' 2>/dev/null || true)
   case "$status" in
     working | blocked) return 0 ;;
   esac
@@ -674,18 +674,18 @@ ralph_worktree_source_dir() {
 # a duplicate; a lane opener falls back to the invoking workspace).
 ralph_main_ws_from_list() {
   local ws_out="$1" src="$2" ws_id
-  ws_id=$(jq -r --arg src "$src" \
+  ws_id=$(printf '%s' "$ws_out" | jq -r --arg src "$src" \
     '[.workspaces[] | select(((.worktree.is_linked_worktree // false) | not) and ((.worktree.checkout_path // "") == $src))][0].workspace_id // empty' \
-    <<<"$ws_out" 2>/dev/null) || ws_id=""
+    2>/dev/null) || ws_id=""
   if [ -z "$ws_id" ]; then
     # The label match must be UNIQUE: two repos can share a checkout basename,
     # and a label-only workspace carries nothing else to tell them apart — a
     # first-match pick would silently adopt another repo's space. Ambiguity
     # returns no id, so each caller lands on its own stated fallback (lane
     # openers use the invoking workspace; dispatch-up creates the space).
-    ws_id=$(jq -r --arg l "$(basename "$src")" \
+    ws_id=$(printf '%s' "$ws_out" | jq -r --arg l "$(basename "$src")" \
       '[.workspaces[] | select((.label == $l) and ((.worktree.is_linked_worktree // false) | not) and ((.worktree.checkout_path // "") == ""))] | if length == 1 then .[0].workspace_id else empty end' \
-      <<<"$ws_out" 2>/dev/null) || ws_id=""
+      2>/dev/null) || ws_id=""
   fi
   printf '%s' "$ws_id"
 }
@@ -930,10 +930,10 @@ spawn_modal_probe() {
     return 0
   }
   [ "$err" = /dev/null ] || rm -f "$err" 2>/dev/null || true
-  text=$(jq -r '.read
+  text=$(printf '%s' "$out" | jq -r '.read
     | if type == "object" then ((.lines // .text // .content // empty)
         | if type == "array" then join("\n") else tostring end)
-      else tostring end' <<<"$out" 2>/dev/null) || text=""
+      else tostring end' 2>/dev/null) || text=""
   [ -n "$text" ] || return 0
   line=$(printf '%s\n' "$text" |
     grep -iE 'trust the files|choose the text style|select login method|welcome to claude|press enter to continue|paste code here if' |
@@ -960,10 +960,10 @@ spawn_prompt_probe() {
   local pane="${1-}" frag="${2-}" out text
   { [ -n "$pane" ] && [ -n "$frag" ]; } || return 2
   out=$(ralph_herdr_call pane_read pane read "$pane" --lines 40 --source visible 2>/dev/null) || return 2
-  text=$(jq -r '.read
+  text=$(printf '%s' "$out" | jq -r '.read
     | if type == "object" then ((.lines // .text // .content // empty)
         | if type == "array" then join("\n") else tostring end)
-      else tostring end' <<<"$out" 2>/dev/null) || return 2
+      else tostring end' 2>/dev/null) || return 2
   [ -n "$text" ] || return 2
   printf '%s\n' "$text" | grep -qF -- "$frag" && return 0
   return 1
@@ -1292,7 +1292,7 @@ touch '$inside' '$outside'; echo PROBE_RC=\$?"
 _spawn_agent_status() {
   local out
   out=$(ralph_herdr_call agent_info agent get "${1-}" 2>/dev/null) || return 1
-  jq -r '.agent.agent_status // empty' <<<"$out" 2>/dev/null
+  printf '%s' "$out" | jq -r '.agent.agent_status // empty' 2>/dev/null
 }
 
 # _ralph_spawn_containment_event REF LEDGER TOOL_BINDING PROCESS_CONTAINMENT
@@ -1356,12 +1356,12 @@ ralph_dep_refs_verdict() {
              detail: "dep-refs.sh is absent from this install"}'
     return 0
   }
-  wired=$(jq -r --argjson n "$n" '
+  wired=$(printf '%s' "$q" | jq -r --argjson n "$n" '
     [.queue[]? | select(.number == $n)] | .[0] // {} |
     ((.blockers // []) | map(.number)) + (.openBlockers // []) + (.closedBlockers // [])
-    | map(tostring) | join(",")' <<<"$q" 2>/dev/null) || wired=""
+    | map(tostring) | join(",")' 2>/dev/null) || wired=""
   out=$(cd "$REPO" 2>/dev/null && bash "$SCRIPT_DIR/dep-refs.sh" "$n" "$wired" 2>/dev/null) || out=""
-  if [ -z "$out" ] || ! jq -e '.ok | type == "boolean"' >/dev/null 2>&1 <<<"$out"; then
+  if [ -z "$out" ] || ! printf '%s' "$out" | jq -e '.ok | type == "boolean"' >/dev/null 2>&1; then
     jq -nc '{ok: false, count: 0, unwired: [], summary: "",
              detail: "dep-refs.sh produced no verdict"}'
     return 0
@@ -1472,13 +1472,13 @@ spawn_work_session() {
   label=$(ralph_address_display "$RALPH_HERDR_NAMED_ADDRESS" 2>/dev/null) || label=""
   title="" parent=""
   if [ -n "$queue_json" ]; then
-    parent=$(jq -r --argjson n "$n" '
+    parent=$(printf '%s' "$queue_json" | jq -r --argjson n "$n" '
       [.next, .queue[]?] | map(select(. != null and .number == $n)) | .[0].parentNumber // empty
-    ' <<<"$queue_json" 2>/dev/null || true)
+    ' 2>/dev/null || true)
     [ -z "$label" ] && [ -n "$parent" ] && label="GH-$n via GH-$parent"
-    title=$(jq -r --argjson n "$n" '
+    title=$(printf '%s' "$queue_json" | jq -r --argjson n "$n" '
       [.next, .queue[]?] | map(select(. != null and .number == $n)) | .[0].title // empty
-    ' <<<"$queue_json" 2>/dev/null || true)
+    ' 2>/dev/null || true)
   fi
 
   # Grammar-B name. ralph_slugify itself falls back to "task" for a title
@@ -1571,7 +1571,7 @@ spawn_work_session() {
       "" "" "" "$lead_ref" "$lead_depth" "$lead_ref" "${RALPH_HERDR_NAMED_ADDRESS-}" \
       "$(ralph_tool_binding_observed ${model_args[@]+"${model_args[@]}"})" not_requested "$model") || record=""
     echo "  ledger append (spawn): ${record:-<could not build the record>}"
-    echo "  tokens push (pane <captured>): $(jq -r '[.tokens | to_entries[] | "\(.key)=\(.value)"] | join(" ")' <<<"$record" 2>/dev/null || echo '<none>')"
+    echo "  tokens push (pane <captured>): $(printf '%s' "$record" | jq -r '[.tokens | to_entries[] | "\(.key)=\(.value)"] | join(" ")' 2>/dev/null || echo '<none>')"
     RALPH_HERDR_SPAWNED_AGENT="$agent"
     RALPH_HERDR_SPAWNED_REF="$ref"
     return 0
@@ -1624,15 +1624,15 @@ spawn_work_session() {
 
   # IDs are opaque server-local tokens — captured from the response, never
   # predicted or derived.
-  pane=$(jq -r '.root_pane.pane_id // empty' <<<"$out")
+  pane=$(printf '%s' "$out" | jq -r '.root_pane.pane_id // empty')
   if [ -z "$pane" ]; then
     echo "no pane id in worktree response for GH-$n" >&2
     return 1
   fi
   RALPH_HERDR_SPAWNED_PANE="$pane"
-  RALPH_HERDR_SPAWNED_WORKTREE=$(jq -r '.worktree.path // .workspace.worktree.checkout_path // empty' <<<"$out" 2>/dev/null) ||
+  RALPH_HERDR_SPAWNED_WORKTREE=$(printf '%s' "$out" | jq -r '.worktree.path // .workspace.worktree.checkout_path // empty' 2>/dev/null) ||
     RALPH_HERDR_SPAWNED_WORKTREE=""
-  RALPH_HERDR_SPAWNED_WORKSPACE=$(jq -r '.workspace.workspace_id // .workspace.id // empty' <<<"$out" 2>/dev/null) ||
+  RALPH_HERDR_SPAWNED_WORKSPACE=$(printf '%s' "$out" | jq -r '.workspace.workspace_id // .workspace.id // empty' 2>/dev/null) ||
     RALPH_HERDR_SPAWNED_WORKSPACE=""
 
   # One driver owns a tree (GH-1808). The w<N>-* pre-check above refuses a
@@ -1781,7 +1781,7 @@ spawn_work_session() {
     while IFS= read -r kv; do
       [ -n "$kv" ] || continue
       set -- "$@" "$kv"
-    done < <(jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' <<<"$record" 2>/dev/null || true)
+    done < <(printf '%s' "$record" | jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' 2>/dev/null || true)
     [ "$#" -ge 1 ] && ralph_tokens_push "$pane" "$@"
   fi
 
