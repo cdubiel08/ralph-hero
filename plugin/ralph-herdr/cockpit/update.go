@@ -126,6 +126,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		now := time.Now()
 		m.lastPoll = now
 		m.boardErr = msg.err
+		m.boardErrReset = msg.resetAt
 		// Per-column merge: a FAILED column read keeps its last good cards
 		// (a failed read and an empty column are different facts — matching
 		// fetch.go's "reports as an error, never as empty" and the fzf

@@ -917,6 +917,41 @@ func TestExplainReadFailure(t *testing.T) {
 	}
 }
 
+func TestRateLimitResetAt(t *testing.T) {
+	exhausted := func(prog string, args []string) (string, string, error) {
+		return `{"resources":{"graphql":{"limit":5000,"remaining":0,"reset":9999999999}}}`, "", nil
+	}
+	healthy := func(prog string, args []string) (string, string, error) {
+		return `{"resources":{"graphql":{"limit":5000,"remaining":4900,"reset":9999999999}}}`, "", nil
+	}
+	cfg := Config{Gh: "gh"}
+
+	// Matched rate-limit text → the probe's reset, non-zero.
+	got := rateLimitResetAt(&rateProbe{cfg: cfg, r: &fakeRunner{respond: exhausted}}, false, "API rate limit exceeded")
+	if got.IsZero() || got.Unix() != 9999999999 {
+		t.Errorf("a matched rate limit must carry the probe's reset, got %v", got)
+	}
+
+	// Unmatched text but an exhausted budget → same rule explainReadFailure uses.
+	got = rateLimitResetAt(&rateProbe{cfg: cfg, r: &fakeRunner{respond: exhausted}}, false, "gh api graphql failed (exit 1)")
+	if got.IsZero() {
+		t.Error("an exhausted budget behind an unmatched failure must still carry the reset")
+	}
+
+	// Healthy budget, unmatched text → not rate-limited, zero.
+	got = rateLimitResetAt(&rateProbe{cfg: cfg, r: &fakeRunner{respond: healthy}}, false, "board: not authenticated")
+	if !got.IsZero() {
+		t.Errorf("a genuine failure with a healthy budget must not claim a reset, got %v", got)
+	}
+
+	// A fired deadline never probes and never claims a reset.
+	fr := &fakeRunner{respond: exhausted}
+	got = rateLimitResetAt(&rateProbe{cfg: cfg, r: fr}, true, "signal: killed")
+	if !got.IsZero() || len(fr.calls) != 0 {
+		t.Errorf("a deadline miss must skip the probe entirely, got reset=%v calls=%d", got, len(fr.calls))
+	}
+}
+
 func TestRateProbeConsultsAtMostOncePerPass(t *testing.T) {
 	fr := &fakeRunner{respond: func(prog string, args []string) (string, string, error) {
 		return `{"resources":{"graphql":{"limit":5000,"remaining":10,"reset":1}}}`, "", nil

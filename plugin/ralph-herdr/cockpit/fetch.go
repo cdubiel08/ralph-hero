@@ -234,6 +234,10 @@ type boardMsg struct {
 	cols   [3][]Card
 	failed [3]bool // per-column: read errored — cols[i] is NOT "empty", it is unknown
 	err    string
+	// resetAt is the GitHub GraphQL reset instant when err is a known rate
+	// limit — zero otherwise (GH-2386). Carried separately from err's text so
+	// the banner can name the retry without re-parsing its own message.
+	resetAt time.Time
 }
 
 // allColumnsUnknown — the failure shape of a single whole-board read. The
@@ -1158,6 +1162,27 @@ func explainReadFailure(p *rateProbe, deadline time.Duration, timedOut bool, com
 	return verbatim
 }
 
+// rateLimitResetAt names the GitHub reset instant when explainReadFailure's
+// classification would land on the rate-limit path — the same two rules
+// (looksRateLimited, or an unmatched failure against an exhausted budget),
+// duplicated on purpose so the banner's "next poll" wording can never
+// disagree with the failure text it is suffixed to. Reuses the probe
+// explainReadFailure already consulted (cached — no extra process). Zero
+// when the reset is unknown or the failure isn't rate-limited.
+func rateLimitResetAt(p *rateProbe, timedOut bool, combined string) time.Time {
+	if timedOut || p == nil {
+		return time.Time{}
+	}
+	st := p.get()
+	if !st.known {
+		return time.Time{}
+	}
+	if looksRateLimited(combined) || st.remaining == 0 {
+		return st.reset
+	}
+	return time.Time{}
+}
+
 // ── tea.Cmds ────────────────────────────────────────────────────────────────
 
 // fetchBoardCmd reads all three columns in ONE board process (GH-1786 — three
@@ -1180,9 +1205,11 @@ func fetchBoardCmd(cfg Config, r Runner) tea.Cmd {
 		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		if err != nil {
+			combined := stderr + out
 			return boardMsg{
-				failed: allColumnsUnknown,
-				err:    explainReadFailure(probe, deadline, timedOut, stderr+out, err),
+				failed:  allColumnsUnknown,
+				err:     explainReadFailure(probe, deadline, timedOut, combined, err),
+				resetAt: rateLimitResetAt(probe, timedOut, combined),
 			}
 		}
 		cols, perr := parseBoardColumns(out)

@@ -165,7 +165,7 @@ func viewModel(m Model) string {
 	// per card, but a board with no In Review card has no chip to say it on.
 	var banner []string
 	if m.boardErr != "" {
-		banner = append(banner, styleErr.Render("board read failed: "+m.boardErr))
+		banner = append(banner, styleErr.Render("board read failed: "+m.boardErr+nextPollSuffix(m, time.Now())))
 	}
 	if !m.signalsOK && m.signalsErr != "" {
 		banner = append(banner, styleErr.Render("card markings unread: "+m.signalsErr))
@@ -264,6 +264,24 @@ func liveness(m Model, now time.Time) string {
 		return styleStale.Render(g.stalled + " stale · no poll has landed")
 	}
 	return styleStale.Render(g.stalled + " stale " + formatAge(age))
+}
+
+// nextPollSuffix names the retry (spec §10): a failed board read must say
+// when it tries again. lastPoll + pollEvery is the cockpit's own answer
+// regardless of cause; a known GitHub reset time replaces the guess with the
+// authoritative instant, since a retry before it would only fail again.
+func nextPollSuffix(m Model, now time.Time) string {
+	if !m.boardErrReset.IsZero() {
+		return fmt.Sprintf(" — next poll after the %s reset", m.boardErrReset.Local().Format("15:04"))
+	}
+	if m.lastPoll.IsZero() {
+		return ""
+	}
+	mins := int(m.lastPoll.Add(m.pollEvery).Sub(now).Round(time.Minute) / time.Minute)
+	if mins < 0 {
+		mins = 0
+	}
+	return fmt.Sprintf(" — next poll in %dm", mins)
 }
 
 // statusLine renders the typed status (spec §10): a leading glyph says what

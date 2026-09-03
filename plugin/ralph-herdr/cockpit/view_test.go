@@ -143,6 +143,39 @@ func TestViewBoardErrNeverShadowedByNoMuxBanner(t *testing.T) {
 	}
 }
 
+func TestViewBoardErrNamesTheRetry(t *testing.T) {
+	// GH-2386: a transient board failure names the retry — lastPoll +
+	// pollEvery when the cause isn't a known rate limit.
+	m := testModel(&fakeRunner{})
+	m.width = 220
+	m.boardErr = "In Progress: timeout"
+	now := time.Now()
+	m.lastPoll = now.Add(-10 * time.Second)
+	m.pollEvery = 90 * time.Second
+	out := viewModel(m)
+	if !strings.Contains(out, "board read failed: In Progress: timeout — next poll in 1m") {
+		t.Errorf("must name the next poll in minutes; got:\n%s", out)
+	}
+
+	// A known rate-limit reset outranks the guessed cadence.
+	m.boardErrReset = now.Add(41 * time.Minute)
+	out = viewModel(m)
+	if !strings.Contains(out, "next poll after the "+m.boardErrReset.Local().Format("15:04")+" reset") {
+		t.Errorf("a known reset must replace the guessed cadence; got:\n%s", out)
+	}
+	if strings.Contains(out, "next poll in 1m") {
+		t.Errorf("a known reset must not also show the guessed cadence; got:\n%s", out)
+	}
+
+	// No boardErr at all → no suffix, no stray banner text.
+	m2 := testModel(&fakeRunner{})
+	m2.lastPoll = now
+	m2.pollEvery = 30 * time.Second
+	if strings.Contains(viewModel(m2), "next poll") {
+		t.Error("a healthy board must never show a retry suffix")
+	}
+}
+
 func TestViewOverlaysAndInput(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	m.mode = ModePeek

@@ -397,7 +397,12 @@ type Model struct {
 	// Board truth.
 	cols     [3][]Card
 	boardErr string // last board read failure — a failed read is not an empty board
-	lastPoll time.Time
+	// boardErrReset is the GitHub GraphQL reset instant when boardErr is a
+	// known rate limit — zero otherwise. Drives the banner's "next poll"
+	// wording (spec §10): a known reset outranks the guessed cadence, since
+	// a retry before it would only fail again.
+	boardErrReset time.Time
+	lastPoll      time.Time
 
 	// Adaptive board cadence (GH-1805). pollEvery is the CURRENT gap between
 	// board walks; it grows by pollBackoff on an unchanged board and snaps back
