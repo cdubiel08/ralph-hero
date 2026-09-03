@@ -313,6 +313,32 @@ while IFS= read -r out; do lead_tools+=("$out"); done < <(ralph_tool_binding_arg
 # separate call by design. The lead sits in the SOURCE checkout, so that is
 # the tree denied. Refuses before any surface exists when it cannot be
 # established (unmeasured platform, unbuildable profile).
+#
+# GH-2360: the platform half of that refusal is checked FIRST and by hand,
+# ahead of the ref mint and provisional row further down this file — so a
+# non-Darwin host used to die here with nothing durable behind it, unable to
+# tell "refused, platform unmeasured" from "never attempted" (the
+# stderr-only paperwork GH-2267 named). Mint the ref, write the provisional
+# row, record the containment event and close it `containment_not_available`
+# — same shape the probe's own refusals use further down — then die. Not
+# gated on RALPH_HERDR_DRY_RUN: dry-run's contract (above, --help) is the
+# spawn PLAN only, and this refusal is not the plan.
+if ralph_role_process_containment orchestrator && ! ralph_process_containment_platform >/dev/null; then
+  ref=$(ralph_agent_ref "$LEAD" 2>/dev/null) || ref=""
+  ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
+  lead_tb=$(ralph_tool_binding_observed "${lead_tools[@]}")
+  if [ -n "$ref" ] && [ -n "$ledger" ]; then
+    record=$(_ralph_spawn_record "$ref" "$EPIC" "" "" "$team_label" "" "$(date -u +%FT%TZ)" \
+      "" "" orchestrator "" "" "" "$lead_addr" "" "" "") || record=""
+    if [ -n "$record" ]; then
+      RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" ||
+        echo "spawn ledger append failed for $ref — reconcile will discover it" >&2
+    fi
+    _ralph_spawn_containment_event "$ref" "$ledger" "$lead_tb" not_available
+    _ralph_spawn_close "$ref" "$ledger" containment_not_available
+  fi
+  die "process containment not_available for GH-$EPIC's lead (see the reason above) — not spawning an uncontained lead"
+fi
 lead_contain_out=$(ralph_process_containment_args orchestrator "$src") ||
   die "process containment cannot be established for GH-$EPIC's lead (see the reason above) — not spawning an uncontained lead"
 lead_contain=()

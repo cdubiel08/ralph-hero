@@ -146,6 +146,16 @@ case "$OUT" in
   *"DRY RUN — would spawn the lead"*) not_ok "team linux: no plan may be printed for a refused spawn" ;;
   *) ok "team linux: no plan printed for a refused spawn" ;;
 esac
+# GH-2360: the refusal is a ledger word, not just a stderr line — a closed
+# row now distinguishes "refused, platform unmeasured" from "never
+# attempted", the same shape the in-pane probe's own refusals leave.
+WTL_SQLITE="${WTL%.jsonl}.sqlite"
+linux_events=$(sqlite3 "$WTL_SQLITE" "SELECT payload FROM facts ORDER BY seq;" 2>/dev/null)
+linux_contain=$(printf '%s\n' "$linux_events" | jq -c 'select(.ev=="containment" and .agent_ref!=null and (.agent_ref|startswith("o900-")))' 2>/dev/null | tail -1)
+line_has "team linux: a containment event names process_containment not_available" "$linux_contain" '"process_containment":"not_available"'
+line_has "team linux: the same event names the observed tool binding" "$linux_contain" '"tool_binding":"accepted"'
+linux_close=$(printf '%s\n' "$linux_events" | jq -c 'select(.ev=="exit" and .agent_ref!=null and (.agent_ref|startswith("o900-")))' 2>/dev/null | tail -1)
+line_has "team linux: the provisional row closes containment_not_available" "$linux_close" '"reason":"containment_not_available"'
 run_wt 900
 line_has "team dry: the prompt names the lead's own staffing path" \
   "$OUT" "work-fleet.sh --epic 900"

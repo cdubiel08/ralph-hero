@@ -76,6 +76,31 @@ while IFS= read -r out; do tool_args+=("$out"); done < <(ralph_tool_binding_args
 # measured on, or an unbuildable profile, refuses here at zero cost. The
 # exit status is read off the helper directly — a `while read … < <(cmd)`
 # loop reports the last `read`, never the producer.
+#
+# GH-2360: the platform half is checked FIRST and by hand, ahead of the ref
+# mint and provisional row this pass otherwise writes only after `agent
+# start` — so a non-Darwin host used to die here with nothing durable
+# behind it, unable to tell "refused, platform unmeasured" from "never
+# attempted" (the stderr-only paperwork GH-2267 named). Mint the ref, write
+# the provisional row, record the containment event and close it
+# `containment_not_available` — same shape the probe's own refusals use
+# further down — then die.
+if ralph_role_process_containment tender && ! ralph_process_containment_platform >/dev/null; then
+  ref=$(ralph_agent_ref "$agent" 2>/dev/null) || ref=""
+  ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
+  tool_binding=$(ralph_tool_binding_observed "${tool_args[@]}")
+  if [ -n "$ref" ] && [ -n "$ledger" ]; then
+    record=$(_ralph_spawn_record "$ref" 0 "" "" "" "" "$(date -u +%FT%TZ)" \
+      "" "$REPO" tender "" "" "" "" "" "" "") || record=""
+    if [ -n "$record" ]; then
+      RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$record" ||
+        echo "spawn ledger append failed for $ref — reconcile will discover it" >&2
+    fi
+    _ralph_spawn_containment_event "$ref" "$ledger" "$tool_binding" not_available
+    _ralph_spawn_close "$ref" "$ledger" containment_not_available
+  fi
+  die "process containment not_available for the tender (see the reason above) — not spawning an uncontained $lane pane"
+fi
 contain_out=$(ralph_process_containment_args tender "$REPO") ||
   die "process containment cannot be established for the tender (see the reason above) — not spawning an uncontained $lane pane"
 contain_args=()
