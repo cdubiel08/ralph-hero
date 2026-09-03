@@ -720,8 +720,37 @@ ralph_ledger_reason_canon() {
     pane_exited) printf 'pane-exited\n' ;;
     pane_closed) printf 'pane-closed\n' ;;
     restart_killed) printf 'restart-killed\n' ;;
+    stood_down) printf 'stood-down\n' ;;
     *) printf '%s\n' "${1-}" ;;
   esac
+}
+
+# ralph_ledger_stood_down NAME — rc 0 when the lead NAME is currently STOOD
+# DOWN (GH-2357): the most recent of its arming/parking events is an exit
+# with reason stood-down. Keyed on the NAME across every epoch, deliberately
+# — a per-ref reading has a hole. `work-team.sh --stand-down` appends the
+# exit for the open ref and only then closes the workspace, and in the
+# window between those two steps the lead is still LIVE with NO open record,
+# which is exactly what reconcile's discover pass mints a fresh ref for
+# (`ev: discover`, new epoch, same name). The death event then finds THAT ref
+# open, and a per-ref check would respawn the lead the operator just parked.
+# So only a `spawn` (a deliberate re-arm — work-team.sh EPIC) re-arms the
+# name; `discover` is reconcile observing a pane, never a decision, and does
+# not. Readers: heal.sh (never respawn/flag a stood-down lead) and
+# resume-teams.sh (never resume one). rc 1 = not stood down, or unreadable —
+# an unreadable ledger must not read as "parked" to a healer.
+ralph_ledger_stood_down() {
+  local name="${1-}" file out
+  [ -n "$name" ] || return 1
+  file=$(ralph_ledger_path) || return 1
+  _ralph_ledger_present "$file" || return 1
+  out=$(_ralph_ledger_events "$file" | jq -r --arg name "$name" -s '
+    reduce .[] as $e ("";
+      if ((($e.agent_ref // "") | split("#")[0]) != $name) then .
+      elif $e.ev == "spawn" then "armed"
+      elif $e.ev == "exit" and (($e.reason // "") | IN("stood-down", "stood_down")) then "stood"
+      else . end)') || return 1
+  [ "$out" = "stood" ]
 }
 
 # ralph_ledger_open_agents [REPO_ROOT] — agent_refs (one per line) with a

@@ -96,7 +96,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 trap hold_pane EXIT
 
-billing_guard
 ralph_plugin_freshness_notice
 
 usage() {
@@ -148,6 +147,12 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+# The billing guard gates SPAWNS (a stray ANTHROPIC_API_KEY would bill API
+# credits for the lead's session). --stand-down spawns nothing — it writes
+# one ledger fact and closes a workspace — so gating it would leave the
+# respawn loop running on exactly the machine that set the key.
+[ -n "$STAND_DOWN" ] || billing_guard
 
 # The cockpit pane has no argv to type into (work-these.sh precedent): prompt
 # on a TTY, refuse on EOF — a non-TTY caller that named no epic made an error,

@@ -100,18 +100,18 @@ ralph_heal_lead_death() (
   case "$epic" in '' | *[!0-9]*) exit 0 ;; esac
 
   # GH-2357: a lead can be deliberately parked (`work-team.sh EPIC
-  # --stand-down`) rather than crashing. The open-for-pane contract above
-  # already makes this branch unreachable through today's one caller —
-  # --stand-down appends {ev: exit, reason: stood-down} and closes the pane's
-  # workspace ONLY after that append lands, so by the time any death event
-  # for this pane could fire, ralph_ledger_open_for_pane no longer counts the
-  # ref as open and watch-event never hands it here at all. The check stays
-  # as a second, cheap guard against a future or direct caller that hands
-  # this function a ref without re-proving it is still open: a stood-down
-  # ref must never be respawned OR flagged orphaned, no matter how it
-  # arrives here.
-  last_reason=$(RALPH_HERDR_LEDGER="$ledger" _ralph_ledger_latest '.reason' "$ref" 2>/dev/null) || last_reason=""
-  if [ "$(ralph_ledger_reason_canon "$last_reason")" = "stood-down" ]; then
+  # --stand-down`) rather than crashing. --stand-down appends {ev: exit,
+  # reason: stood-down} for the open ref and closes the workspace ONLY after
+  # that append lands, so the death event usually finds no open ref for the
+  # pane and never reaches here. The check is keyed on the lead's NAME, not
+  # this ref, because the one way a ref DOES arrive here is the hole between
+  # those two steps: a reconcile discover pass sees a live pane with no open
+  # record and mints a fresh ref (new epoch, same name) — the death event
+  # then heals THAT ref. ralph_ledger_stood_down reads the name's most
+  # recent arm/park event; only a `spawn` (a human re-arm) clears it, a
+  # `discover` never does. A stood-down lead is neither respawned nor
+  # flagged orphaned, whichever epoch is handed here.
+  if RALPH_HERDR_LEDGER="$ledger" ralph_ledger_stood_down "${ref%%#*}"; then
     log "lead $ref stood down by operator — no respawn, no orphan flag (GH-2357)"
     exit 0
   fi

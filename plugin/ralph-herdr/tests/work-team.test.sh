@@ -346,6 +346,18 @@ line_has "stand-down: closes the team workspace" "$(cat "$FAKE_HERDR_LOG")" "wor
 # also proves the refusal is ledger-driven, not just herd-driven).
 is "stand-down: ref is no longer open" "" "$(RALPH_HERDR_LEDGER="$WTL" ralph_ledger_open_ref o930-standdown 2>/dev/null)"
 
+# The billing guard gates spawns only: a stray ANTHROPIC_API_KEY must not
+# leave the respawn loop running because the park lever refused (Greptile P1
+# on #2397).
+: >"$WTL"
+ralph_ledger_append "$standdown_rec" >/dev/null
+herd_fixture '[{"name":"o930-standdown","agent_status":"working","pane_id":"p930","workspace_id":"ws930"}]' "$REPO_DIR"
+RC=0
+OUT=$(RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" RALPH_HERDR_LEDGER="$WTL" \
+  ANTHROPIC_API_KEY=sk-test bash "$SCRIPTS/work-team.sh" 930 --stand-down </dev/null 2>&1) || RC=$?
+is "stand-down (API key set): not gated by the billing guard (rc 0)" "0" "$RC"
+line_has "stand-down (API key set): the lead is parked" "$OUT" "lead o930-standdown stood down"
+
 # No live lead standing for the epic: an explicit, non-fatal no-op.
 herd_fixture '[]' "$REPO_DIR"
 : >"$FAKE_HERDR_LOG"

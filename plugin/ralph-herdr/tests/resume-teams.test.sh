@@ -330,6 +330,17 @@ is "crashed candidate exits 0" "0" "$RC"
 is "crashed candidate still resumes" "1" "$(grep -c '^907 --lead-only$' "$TEAM_LOG")"
 line_has "crashed candidate is visible" "$OUT" "resume team GH-907: resumed"
 
+# A reconcile DISCOVER minted for the dying pane after the stand-down is a
+# newer epoch but not a re-arm (Greptile P1 on #2397): still skipped.
+reset_case
+seed_lead 'o909-team#0001aaaa' "$REPO_DIR"
+seed_exit 'o909-team#0001aaaa' 'stood-down'
+seed_reconciled_discover 'o909-team#0002bbbb' "$REPO_DIR"
+run_resume
+is "rediscovered stood-down candidate exits 0" "0" "$RC"
+is "rediscovered stood-down candidate is never delegated" "0" "$(grep -c '^909 ' "$TEAM_LOG" || true)"
+line_has "rediscovered stood-down candidate is visible" "$OUT" "resume team GH-909: skipped — stood down by operator"
+
 # A human re-arm mints a fresh epoch (work-team.sh EPIC): the newest
 # generation governs, never an older stood-down one.
 reset_case

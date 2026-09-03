@@ -112,14 +112,13 @@ while IFS= read -r candidate; do
   # same as work-team's own rc-4 case, never resumed. Checked before every
   # other candidate rule: a deliberately parked team has nothing to say
   # about checkout ambiguity, and re-arming it is a human's call
-  # (work-team.sh EPIC), not this pass's.
+  # (work-team.sh EPIC), not this pass's. Keyed on the lead's NAME
+  # (ralph_ledger_stood_down): a `discover` minted for the dying pane after
+  # the stand-down is a newer EPOCH but not a re-arm — only a `spawn` is.
   newest_ref=$(jq -r '.newestRef // empty' <<<"$candidate")
-  if [ -n "$newest_ref" ]; then
-    stand_reason=$(RALPH_HERDR_LEDGER="$ledger" _ralph_ledger_latest '.reason' "$newest_ref" 2>/dev/null) || stand_reason=""
-    if [ "$(ralph_ledger_reason_canon "$stand_reason")" = "stood-down" ]; then
-      echo "resume team GH-$epic: skipped — stood down by operator (work-team.sh $epic re-arms it)"
-      continue
-    fi
+  if [ -n "$newest_ref" ] && RALPH_HERDR_LEDGER="$ledger" ralph_ledger_stood_down "${newest_ref%%#*}"; then
+    echo "resume team GH-$epic: skipped — stood down by operator (work-team.sh $epic re-arms it)"
+    continue
   fi
 
   # Liveness may excuse only the absence of checkout on a legacy discovery.
