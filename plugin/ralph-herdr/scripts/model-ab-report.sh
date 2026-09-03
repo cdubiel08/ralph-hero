@@ -109,6 +109,10 @@ DRIVERS_JSON=$("$SQ" -json "$DB" "SELECT payload FROM facts WHERE kind IN ('spaw
     })
   | map(select(.role == "driver" and .issue != null))')
 
+# The UNFILTERED set survives --since on purpose: the mixed-model check
+# below must see a retry's pre-window unit, or the window filter would hide
+# exactly the cross-flip retries it exists to name (PR #2408 P1).
+ALL_DRIVERS_JSON="$DRIVERS_JSON"
 if [ -n "$SINCE" ]; then
   DRIVERS_JSON=$(printf '%s' "$DRIVERS_JSON" | jq -c --arg since "$SINCE" 'map(select(.spawned_at != null and .spawned_at >= $since))')
 fi
@@ -155,10 +159,14 @@ REPORT=$(printf '%s' "$DRIVERS_JSON" | jq -c --argjson closed "$CLOSED_JSON" '
 # in every bucket it touched (PR #2408 P1). Which model "owns" that close is
 # a methodology call the protocol doc leaves to the reader, so the report
 # NAMES them rather than silently picking: exclude or adjudicate by hand.
-MIXED=$(printf '%s' "$DRIVERS_JSON" | jq -c '
-  map({issue, model: (.model_requested // .usage.model // "unknown (no spawn ask, no usage fact)")})
+# Grouped over EVERY driver unit the ledger has, then restricted to the
+# issues in this window — so a pre-window unit still marks its issue mixed.
+MIXED=$(printf '%s' "$ALL_DRIVERS_JSON" | jq -c --argjson window "$DRIVERS_JSON" '
+  ($window | map(.issue) | unique) as $in_window
+  | map({issue, model: (.model_requested // .usage.model // "unknown (no spawn ask, no usage fact)")})
   | group_by(.issue)
-  | map(select((map(.model) | unique | length) > 1) | {issue: .[0].issue, models: (map(.model) | unique)})
+  | map(select((.[0].issue | IN($in_window[])) and (map(.model) | unique | length) > 1)
+        | {issue: .[0].issue, models: (map(.model) | unique)})
   | sort_by(.issue)')
 
 if [ "$JSON_OUT" -eq 1 ]; then
