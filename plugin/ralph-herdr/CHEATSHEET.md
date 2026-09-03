@@ -248,6 +248,31 @@ cockpit is a viewer: `scripts/merge-pr.sh` is still the only thing that answers
 whether a PR may merge. The stated cost of that restraint is that a PR with
 FAILING checks renders the same amber as one still running.
 
+**Done cards read like the others (GH-2405).** Line 3 is `P2 [S]` on the
+left — `board closed --fields` carries the pair, opt-in like `--prs` and
+measured at +10 pts/page on this board (the `projectItems` parent multiplier,
+NOT the field page size, which is why trimming `first:` buys nothing) — and
+on the right the cost then the age since the close in the timer slot. An
+unset priority draws nothing on a closed card, never the red `P?` a live
+card earns; a board CLI predating `--fields` leaves the left bare.
+
+**The header's `today` is the day's fleet (GH-2405).** The usage pass prices
+every ledger session that spawned or reported since midnight, not only the
+sessions with a card on screen — so the number no longer equals the visible
+column totals and no longer moves when you swap a column. `/h` is the
+trailing hour; both read the same until the fleet is an hour old.
+
+**Context alert is a fraction of the model's window (GH-2405).** Amber at
+60%, red at 80% of the LAST call's model — 600k/800k on a 1M-window model
+(Sonnet 5, Fable 5.1, Opus 4.6+), 120k/160k on a 200k one (Haiku 4.5,
+Sonnet 4.5) and on any model the cockpit does not know.
+
+**The footer is two rows, right-aligned (GH-2405).** Card verbs over
+navigation; a status message (✓ landed, ✗ refused, ● nudge, · view change)
+overwrites the navigation row rather than taking a third, and the row comes
+back on the next key or after 30 s. An in-flight spinner stays until its
+result lands.
+
 **Done · 14d is a window, not history.** The header always carries the window
 the read actually used, so a repo that raises `RALPH_AUDIT_DAYS` is never told
 "14d" over 30 days of closes.
@@ -256,7 +281,13 @@ the read actually used, so a repo that raises `RALPH_AUDIT_DAYS` is never told
 (the default) or `ascii`; anything else is `unicode`. Every unicode glyph is a
 single-cell BMP character, so the fixed-stride card grid the mouse maps clicks
 through cannot shear; `nerd` is an explicit opt-in because a host without the
-font renders its private-use codepoints as tofu at the wrong width. The herdr
+font renders its private-use codepoints as tofu at the wrong width. **Set it
+in `~/.ralph/config` as `cockpit_glyphs=nerd` (GH-2405)**, beside
+`autopilot=`: the tier is a property of this MACHINE's terminal font, and a
+herdr pane inherits the server's env, not your shell's exports — so the env
+var only reaches a cockpit you launch by hand; the config line reaches the
+one the sanctioned `cockpit` action opens. Env outranks config when both are
+set. The herdr
 state dots are Unicode in every tier — `◌` starting, `●` working (yellow),
 `◕` reporting, `●` blocked (red), `○` idle, `●` done (green, filled: a
 finished session is no longer drawn as an idle one), `·` none. A Done-column
