@@ -240,7 +240,7 @@ if [ "${#contain_args[@]}" -gt 0 ]; then
   # Two words (GH-2341): the process verdict, then the tool-binding word —
   # which the probe's Write step can only REFUTE, never promote.
   probe_out=$(spawn_containment_probe "$agent" "$pane" "$REPO" "re-run the $lane pass" "$tool_binding") || {
-    read -r outcome tool_binding < <(printf '%s' "${probe_out:-unverified $tool_binding}")
+    read -r outcome tool_binding < <(printf '%s\n' "${probe_out:-unverified $tool_binding}")
     # The refusal is recorded as the two achieved values BEFORE the row is
     # closed (GH-2267): a reader who was not present must be able to tell
     # this pane from a contained one off the ledger alone. The close reason
@@ -256,7 +256,7 @@ if [ "${#contain_args[@]}" -gt 0 ]; then
     RALPH_HERDR_AGENT_LIVE=""
     die "process containment ${outcome:-unverified} for $agent, tool binding $tool_binding (pane $pane) — an uncontained $lane pane must not receive its prompt; closed the surface this run created (the probe's reason is above)"
   }
-  read -r outcome tool_binding < <(printf '%s' "$probe_out")
+  read -r outcome tool_binding < <(printf '%s\n' "$probe_out")
   echo "process containment: $outcome for $agent (a Bash write inside $REPO was refused by the kernel; tool binding is the separate GH-2265 mechanism)"
 else
   outcome=not_requested
