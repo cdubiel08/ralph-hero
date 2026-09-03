@@ -4206,6 +4206,7 @@ describe("state-smell thresholds", () => {
       answerMin: 30,
       dispatchMin: 1440,
       unitCtxMax: 200_000,
+      hookMin: 60,
     });
     expect(
       parseSmellThresholds({
@@ -4217,8 +4218,19 @@ describe("state-smell thresholds", () => {
         RALPH_SMELL_ANSWER_MIN: "60",
         RALPH_SMELL_DISPATCH_MIN: "720",
         RALPH_UNIT_CTX_MAX: "150000",
+        RALPH_SMELL_HOOK_MIN: "120",
       }),
-    ).toEqual({ claimExpiries: 4, escalations: 5, reviewDays: 14, proposalDays: 3, intakeDays: 30, answerMin: 60, dispatchMin: 720, unitCtxMax: 150000 });
+    ).toEqual({
+      claimExpiries: 4,
+      escalations: 5,
+      reviewDays: 14,
+      proposalDays: 3,
+      intakeDays: 30,
+      answerMin: 60,
+      dispatchMin: 720,
+      unitCtxMax: 150000,
+      hookMin: 120,
+    });
   });
 
   it("a bad value warns and falls back — an advisory threshold never fails the sweep", () => {

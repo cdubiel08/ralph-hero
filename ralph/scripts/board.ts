@@ -1079,6 +1079,7 @@ export interface SmellThresholds {
   answerMin: number; // GH-2204: minutes an answered Human Needed item has sat unresumed
   dispatchMin: number; // GH-2212: minutes since the dispatch heartbeat was last written
   unitCtxMax: number; // GH-2347: a unit's largest single prompt (tokens) past which doctor's unit-cost line names it
+  hookMin: number; // GH-2403: lookback window (minutes) for the watch-event "hook-inert" check
 }
 
 export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
@@ -1109,6 +1110,12 @@ export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
   // never a cap: stopping a worker mid-unit strands it, and compaction is a
   // full rewrite of the context it was meant to save.
   unitCtxMax: 200_000,
+  // An hour: long enough that a hero sitting's occasional idle stretch
+  // doesn't starve the fire count to zero, short enough that "recent" still
+  // means something a driver can act on today. The hook itself fires on
+  // every pane status tick while an agent is live, so an hour of a live
+  // fleet is many firings, not a handful.
+  hookMin: 60,
 });
 
 export function parseSmellThresholds(
@@ -1131,6 +1138,7 @@ export function parseSmellThresholds(
     answerMin: positive("RALPH_SMELL_ANSWER_MIN", SMELL_DEFAULTS.answerMin),
     dispatchMin: positive("RALPH_SMELL_DISPATCH_MIN", SMELL_DEFAULTS.dispatchMin),
     unitCtxMax: positive("RALPH_UNIT_CTX_MAX", SMELL_DEFAULTS.unitCtxMax),
+    hookMin: positive("RALPH_SMELL_HOOK_MIN", SMELL_DEFAULTS.hookMin),
   };
 }
 
@@ -9565,6 +9573,80 @@ export function readLedgerUsage(ctx: Ctx): LedgerUsageRead {
   return { kind: "ok", units: reduceLedgerUsage(rows.map((r) => r.payload)) };
 }
 
+/** GH-2403: the two ledger-side facts doctor's "hook-inert" line needs —
+ *  how many agents this repo's tape currently holds open (spawn/discover,
+ *  not yet exited), and how many `ev:"state"` writes carried `via:"event"`
+ *  since a cutoff. `via:"event"` is written ONLY by watch-event.sh's
+ *  handle_status (reconcile writes `via:"orphan"`, heal.sh writes its own
+ *  `ev`s) — the population that read zero for a full day during GH-2396. */
+export interface HookActivity {
+  openAgents: number;
+  eventWrites: number;
+}
+
+export function reduceHookActivity(payloads: string[], sinceMs: number): HookActivity {
+  const open = new Map<string, boolean>();
+  let eventWrites = 0;
+  for (const p of payloads) {
+    let e: Record<string, unknown>;
+    try {
+      e = JSON.parse(p);
+    } catch {
+      continue; // one garbled payload is not a broken ledger
+    }
+    if (!e || typeof e !== "object") continue;
+    const ref = typeof e.agent_ref === "string" ? e.agent_ref : "";
+    if (ref && (e.ev === "spawn" || e.ev === "discover")) {
+      open.set(ref, true);
+    } else if (ref && e.ev === "exit") {
+      open.set(ref, false);
+    } else if (e.ev === "state" && e.via === "event") {
+      const t = typeof e.ts === "string" ? Date.parse(e.ts) : NaN;
+      if (Number.isFinite(t) && t >= sinceMs) eventWrites++;
+    }
+  }
+  let openAgents = 0;
+  for (const v of open.values()) if (v) openAgents++;
+  return { openAgents, eventWrites };
+}
+
+export type HookFireRead = { kind: "unavailable"; reason: string } | { kind: "ok"; fired: number };
+
+/** GH-2403: how many times `herdr` ran watch-event.sh for a
+ *  `pane.agent_status_changed` event since a cutoff — machine-wide, not
+ *  scoped to this repo, because the hook has no workspace cwd at
+ *  invocation (watch-event.sh's own top-of-file comment) and so cannot be
+ *  asked to self-report scoped. `--limit` bounds the read; a busy log that
+ *  scrolls the window out from under a generous limit undercounts `fired`,
+ *  which is the safe direction (biases toward NOT reporting the smell). */
+export function readWatchEventFireCount(ctx: Ctx, sinceMs: number, limit = 500): HookFireRead {
+  let r: ExecResult;
+  try {
+    r = ctx.exec(["herdr", "plugin", "log", "list", "--plugin", "ralph-herdr", "--limit", String(limit)]);
+  } catch (e) {
+    return { kind: "unavailable", reason: (e as Error).message };
+  }
+  if (r.code !== 0)
+    return { kind: "unavailable", reason: (r.stderr || r.stdout).trim().slice(0, 160) || `herdr exited ${r.code}` };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(r.stdout);
+  } catch {
+    return { kind: "unavailable", reason: "herdr plugin log list returned unparseable output" };
+  }
+  const logs = (parsed as { result?: { logs?: unknown } })?.result?.logs;
+  if (!Array.isArray(logs)) return { kind: "unavailable", reason: "herdr plugin log list: no result.logs array" };
+  let fired = 0;
+  for (const l of logs) {
+    if (typeof l !== "object" || l === null) continue;
+    const o = l as Record<string, unknown>;
+    if (o.event !== "pane.agent_status_changed") continue;
+    const started = typeof o.started_unix_ms === "number" ? o.started_unix_ms : NaN;
+    if (Number.isFinite(started) && started >= sinceMs) fired++;
+  }
+  return { kind: "ok", fired };
+}
+
 /** "$8.00" / "274k" — the two numbers every cost surface prints. */
 export const fmtUsd = (n: number): string => `$${n.toFixed(2)}`;
 export const fmtTokens = (n: number): string => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
@@ -11468,6 +11550,82 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     add("dispatch-heartbeat", "info", `not evaluated: ${(e as Error).message}`);
   }
 
+  // Watch-event hook inertness (GH-2403, deferred out of GH-2396's fix).
+  // INFO always, same construction as dispatch-heartbeat above: the only
+  // remedy is a human reading watch-event.sh's stderr, so --strict never
+  // escalates it and --fix never touches it.
+  //
+  // The heartbeat above cannot catch this alone — that is why GH-2396's
+  // incident survived a full day unnoticed: it has TWO writers (the event
+  // hooks AND hero sittings), so a healthy hero sitting keeps it fresh even
+  // while watch-event.sh silently drops every status event. This check
+  // isolates the hook's own effect: `ev:"state"` with `via:"event"` is
+  // written ONLY by handle_status (reconcile writes `via:"orphan"`; heal.sh
+  // writes its own event names) — exactly the population that read zero for
+  // a day during the incident.
+  //
+  // `fired` comes from `herdr plugin log list`, machine-wide across every
+  // repo the herdr server hosts — the hook has no workspace cwd at
+  // invocation (watch-event.sh's own top comment), so it cannot self-report
+  // scoped. Blaming a quiet repo for a noisy machine is the false positive
+  // that would create, so the check is gated on THIS repo's ledger already
+  // holding open agents: zero open agents means zero writes is the expected
+  // reading regardless of what the rest of the machine is doing. `herdr`
+  // missing or unreadable degrades to "ok" — optional equipment, the same
+  // direction as herdr-cockpit and dispatch-heartbeat above.
+  try {
+    const o = openHerdrLedger(ctx);
+    if (o.kind === "absent") {
+      add("hook-inert", "ok", "no herdr ledger (the watcher writes it; optional equipment)");
+    } else if (o.kind === "error") {
+      add("hook-inert", "info", `not evaluated: ${o.msg}`);
+    } else {
+      const q = ctx.exec([o.sq, "-json", o.db, "SELECT payload FROM facts ORDER BY seq;"]);
+      if (q.code !== 0) {
+        add("hook-inert", "info", `not evaluated: could not read ${o.db} — ${q.stderr.trim() || `sqlite3 exit ${q.code}`}`);
+      } else {
+        let rows: { payload: string }[] = [];
+        try {
+          rows = q.stdout.trim() ? JSON.parse(q.stdout) : [];
+        } catch {
+          /* unparseable -json output — treat as no rows, same as an empty tape */
+        }
+        const sinceMs = ctx.now().getTime() - ctx.cfg.smells.hookMin * 60_000;
+        const activity = reduceHookActivity(
+          rows.map((r) => r.payload),
+          sinceMs,
+        );
+        if (activity.openAgents === 0) {
+          add("hook-inert", "ok", "no open agents in this repo's ledger — nothing for the hook to report on");
+        } else {
+          const hf = readWatchEventFireCount(ctx, sinceMs);
+          if (hf.kind === "unavailable") {
+            add("hook-inert", "ok", `herdr plugin log not readable (${hf.reason}) — optional equipment`);
+          } else if (hf.fired === 0) {
+            add("hook-inert", "ok", `hook has not fired in the last ${ctx.cfg.smells.hookMin}min`);
+          } else if (activity.eventWrites === 0) {
+            add(
+              "hook-inert",
+              "info",
+              `watch-event fired ${hf.fired}× in the last ${ctx.cfg.smells.hookMin}min (machine-wide) with zero ` +
+                `ledger writes while this repo has ${activity.openAgents} open agent(s) — the hook may be silently ` +
+                `swallowing status events (GH-2396 was exactly this); \`herdr plugin log list --plugin ralph-herdr\` ` +
+                "shows the raw invocations and their stderr",
+            );
+          } else {
+            add(
+              "hook-inert",
+              "ok",
+              `fired ${hf.fired}×, wrote ${activity.eventWrites} ledger state event(s) in the last ${ctx.cfg.smells.hookMin}min`,
+            );
+          }
+        }
+      }
+    }
+  } catch (e) {
+    add("hook-inert", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
   // Unit cost (GH-2347). INFO always, under the same rules as the heartbeat
   // above: --strict never escalates it, --fix never touches it. The ledger's
   // usage facts (one per worker, latest wins) name the LIVE units whose
@@ -12705,6 +12863,12 @@ maintenance
                               the p90 of every measured unit, read from the
                               herdr ledger's usage facts; the remedy is
                               board estimate, never a cap; GH-2347).
+                              RALPH_SMELL_HOOK_MIN (60 — "hook-inert":
+                              watch-event fired N times (from \`herdr plugin
+                              log\`, machine-wide) with zero via:"event"
+                              ledger writes while this repo's ledger holds
+                              open agents; skipped when it holds none;
+                              GH-2403).
                               "foreign-repo-policy" reports the posture in
                               effect and whether it was configured or
                               defaulted; "foreign-items" warns when items from
