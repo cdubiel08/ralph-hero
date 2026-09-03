@@ -15035,70 +15035,85 @@ const isMain = (() => {
   }
 })();
 
+// Wrapped in an IIFE so every exit path can `return` after setting
+// `process.exitCode` instead of calling `process.exit()`. `process.exit()`
+// tears the process down immediately — on a pipe, `process.stdout.write`
+// is asynchronous, so a forced exit can fire before the buffered tail has
+// actually reached the reader (GH-2372: `board events --json`'s ~420 KB
+// payload truncated for every piped consumer, though a redirect to a file
+// — a synchronous fd — was always complete). Setting `exitCode` and letting
+// the event loop drain naturally is Node's documented fix: the process
+// stays alive until the stdout handle has nothing left buffered.
 if (isMain) {
-  try {
-    const repoRoot = findRepoRoot(process.cwd());
-    let cfg: Config;
+  (() => {
     try {
-      cfg = loadConfig(repoRoot);
-    } catch (e) {
-      // Config-free carve-outs (audit C2): `help` must never exit 64 on a
-      // fresh clone — learning that `board bootstrap` exists cannot require
-      // the config bootstrap creates — and `bootstrap` is HOW config appears.
-      const bare = process.argv.slice(2);
-      const cmd = bare[0];
-      if (!(e instanceof UsageError)) throw e;
-      if (cmd === undefined || cmd === "help" || cmd === "--help" || cmd === "-h") {
-        const topic = bare[1];
-        process.stdout.write((topic && VERB_HELP[topic] ? VERB_HELP[topic] : HELP) + "\n");
-        process.exit(0);
-      }
-      if (cmd === "bootstrap") {
-        const { flags } = parseArgs(bare.slice(1));
-        const path = writeBootstrapConfig(repoRoot, flags);
-        process.stdout.write(`wrote ${path}\n`);
+      const repoRoot = findRepoRoot(process.cwd());
+      let cfg: Config;
+      try {
         cfg = loadConfig(repoRoot);
-      } else {
-        throw e;
+      } catch (e) {
+        // Config-free carve-outs (audit C2): `help` must never exit 64 on a
+        // fresh clone — learning that `board bootstrap` exists cannot require
+        // the config bootstrap creates — and `bootstrap` is HOW config appears.
+        const bare = process.argv.slice(2);
+        const cmd = bare[0];
+        if (!(e instanceof UsageError)) throw e;
+        if (cmd === undefined || cmd === "help" || cmd === "--help" || cmd === "-h") {
+          const topic = bare[1];
+          process.stdout.write((topic && VERB_HELP[topic] ? VERB_HELP[topic] : HELP) + "\n");
+          process.exitCode = 0;
+          return;
+        }
+        if (cmd === "bootstrap") {
+          const { flags } = parseArgs(bare.slice(1));
+          const path = writeBootstrapConfig(repoRoot, flags);
+          process.stdout.write(`wrote ${path}\n`);
+          cfg = loadConfig(repoRoot);
+        } else {
+          throw e;
+        }
       }
+      const ctx: Ctx = {
+        exec: realExec,
+        cfg,
+        repoRoot,
+        cacheDir: join(homedir(), ".ralph", "cache"),
+        now: () => new Date(),
+        itemCacheTtlSec: parseItemCacheTtlSec(process.env.RALPH_ITEM_CACHE_TTL_SEC),
+        itemOracleMaxSec: parseItemOracleMaxSec(process.env.RALPH_ITEM_ORACLE_MAX_SEC),
+        session: {
+          // RALPH_SESSION_ID first so a non-Claude runner can publish the fact
+          // itself; CLAUDE_CODE_SESSION_ID is the one every session here has.
+          id: process.env.RALPH_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID || null,
+          dir: join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "sessions"),
+        },
+      };
+      let code: number;
+      try {
+        code = run(process.argv.slice(2), ctx);
+      } finally {
+        appendBudgetLedger(process.argv[2] ?? "(none)", new Date());
+      }
+      process.exitCode = code;
+    } catch (e) {
+      if (e instanceof UsageError) {
+        process.stderr.write(`usage: ${e.message}\n`);
+        process.exitCode = 64;
+        return;
+      }
+      if (e instanceof RefusalError) {
+        process.stderr.write(`refused: ${e.message}\n`);
+        process.exitCode = 2;
+        return;
+      }
+      if (e instanceof TransientError) {
+        // EX_TEMPFAIL: wait and re-run — never "this request is malformed".
+        process.stderr.write(`temporary: ${e.message}\n`);
+        process.exitCode = 75;
+        return;
+      }
+      process.stderr.write(`error: ${(e as Error).message}\n`);
+      process.exitCode = 1;
     }
-    const ctx: Ctx = {
-      exec: realExec,
-      cfg,
-      repoRoot,
-      cacheDir: join(homedir(), ".ralph", "cache"),
-      now: () => new Date(),
-      itemCacheTtlSec: parseItemCacheTtlSec(process.env.RALPH_ITEM_CACHE_TTL_SEC),
-      itemOracleMaxSec: parseItemOracleMaxSec(process.env.RALPH_ITEM_ORACLE_MAX_SEC),
-      session: {
-        // RALPH_SESSION_ID first so a non-Claude runner can publish the fact
-        // itself; CLAUDE_CODE_SESSION_ID is the one every session here has.
-        id: process.env.RALPH_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID || null,
-        dir: join(process.env.RALPH_HOME || join(homedir(), ".ralph"), "sessions"),
-      },
-    };
-    let code: number;
-    try {
-      code = run(process.argv.slice(2), ctx);
-    } finally {
-      appendBudgetLedger(process.argv[2] ?? "(none)", new Date());
-    }
-    process.exit(code);
-  } catch (e) {
-    if (e instanceof UsageError) {
-      process.stderr.write(`usage: ${e.message}\n`);
-      process.exit(64);
-    }
-    if (e instanceof RefusalError) {
-      process.stderr.write(`refused: ${e.message}\n`);
-      process.exit(2);
-    }
-    if (e instanceof TransientError) {
-      // EX_TEMPFAIL: wait and re-run — never "this request is malformed".
-      process.stderr.write(`temporary: ${e.message}\n`);
-      process.exit(75);
-    }
-    process.stderr.write(`error: ${(e as Error).message}\n`);
-    process.exit(1);
-  }
+  })();
 }
