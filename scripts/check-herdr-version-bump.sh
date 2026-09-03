@@ -59,6 +59,24 @@ MERGE_BASE=$(git merge-base "$BASE_REF" "$HEAD_REF") \
 changed=$(git diff --name-only "$MERGE_BASE" "$HEAD_REF") \
   || die "cannot diff ${MERGE_BASE}..${HEAD_REF}"
 
+# The manifest must be valid TOML at HEAD, independent of the bump check
+# below — GH-2431: a description string carrying an unescaped regex literal
+# (`\[` `\]`, not a legal TOML basic-string escape) broke `herdr plugin
+# install` for every release after 0.51.3, and nothing here noticed because
+# the bump check only greps for the version line, which stays readable even
+# when the file around it doesn't parse.
+#
+# The parser is python3's stdlib tomllib (3.11+). Its absence is its OWN
+# reason code, never conflated with a broken manifest: a machine without it
+# cannot see the file, and "cannot see" is the exit-2 shape above, not a
+# pass — but the message must name the missing parser, or a valid manifest
+# on an old python reads as corrupt.
+python3 -c 'import tomllib' >/dev/null 2>&1 \
+  || die "python3 >= 3.11 (tomllib) is required to validate $MANIFEST; not found on PATH"
+manifest_blob=$(git show "${HEAD_REF}:${MANIFEST}" 2>/dev/null) || die "cannot read $MANIFEST at $HEAD_REF"
+python3 -c 'import sys, tomllib; tomllib.loads(sys.stdin.read())' <<<"$manifest_blob" \
+  || die "$MANIFEST at $HEAD_REF is not valid TOML"
+
 # Behavior surface, per the table above.
 behavior=()
 while IFS= read -r p; do
