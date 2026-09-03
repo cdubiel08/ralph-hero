@@ -641,7 +641,14 @@ fails "model: an unknown lane refuses (investigators are not a lane)" ralph_lane
 fails "model: a value with whitespace refuses — a config error, never a silent inherit" ralph_lane_model tend "$MROOT/a"
 fails "model: a shell metacharacter refuses" with_env 'RALPH_MODEL_LEAD=x;rm' ralph_lane_model lead "$MROOT/c"
 fails "model: a leading dash refuses (it would read as a flag)" with_env 'RALPH_MODEL_LEAD=-model' ralph_lane_model lead "$MROOT/c"
-fails "model: over 80 chars refuses" with_env "RALPH_MODEL_LEAD=$(printf 'a%.0s' $(seq 1 81))" ralph_lane_model lead "$MROOT/c"
+long90=$(printf 'a%.0s' $(seq 1 90))
+is "model: over 80 chars is admitted — no length ceiling (GH-2375)" "$long90" \
+  "$(with_env "RALPH_MODEL_LEAD=$long90" ralph_lane_model lead "$MROOT/c")"
+is "model: a Vertex AI id (@) is admitted (GH-2375)" "claude-3-5-sonnet-v2@20241022" \
+  "$(with_env 'RALPH_MODEL_LEAD=claude-3-5-sonnet-v2@20241022' ralph_lane_model lead "$MROOT/c")"
+bedrock_arn='arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abcdefghijklmnopqrstuvwxyz0123456789'
+is "model: a Bedrock application inference-profile ARN (/, :, >80 chars) is admitted (GH-2375)" "$bedrock_arn" \
+  "$(with_env "RALPH_MODEL_LEAD=$bedrock_arn" ralph_lane_model lead "$MROOT/c")"
 out=$(ralph_lane_model tend "$MROOT/a" 2>&1 >/dev/null)
 case "$out" in
   *".ralph.json models.tend='bad value'"*) ok "model: the refusal names the source and the value" ;;

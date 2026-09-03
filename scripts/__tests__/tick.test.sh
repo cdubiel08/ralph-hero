@@ -232,6 +232,12 @@ expect_contains "a well-formed models object without driver keeps the sonnet def
 run_tick_model bracket '{"models":{"driver":"claude-haiku-4-5[1m]"}}' ""
 expect_contains "a bracketed model reaches the runner as ONE literal word, never glob-expanded" "$CLAUDE_LOG" "-p --model claude-haiku-4-5[1m] --permission-mode"
 
+run_tick_model vertex '{"models":{"driver":"claude-3-5-sonnet-v2@20241022"}}' ""
+expect_contains "a Vertex AI id (@) is admitted (GH-2375)" "$CLAUDE_LOG" "-p --model claude-3-5-sonnet-v2@20241022 --permission-mode"
+
+run_tick_model bedrock-arn '{"models":{"driver":"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abcdefghijklmnopqrstuvwxyz0123456789"}}' ""
+expect_contains "a Bedrock ARN (/, :, >80 chars) is admitted (GH-2375)" "$CLAUDE_LOG" "-p --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abcdefghijklmnopqrstuvwxyz0123456789 --permission-mode"
+
 run_tick_model empty-settings '{"models":{"lead":"opus"}}' " "
 [ "$TICK_RC" -eq 64 ] && pass "an empty settings.json is a usage error, not a silent sonnet (exit 64)" || fail "empty settings: expected exit 64, got $TICK_RC"
 

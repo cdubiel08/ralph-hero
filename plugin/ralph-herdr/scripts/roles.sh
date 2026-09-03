@@ -663,8 +663,13 @@ ralph_lane_model() {
     }
   fi
   [ -n "$model" ] || return 0
-  # Shape only: one argv word, no whitespace or shell metacharacters. The
-  # bracket pair admits the harness's context-window suffix (`[1m]`).
+  # Shape only: one argv word. Refuse whitespace, shell metacharacters and a
+  # leading '-' (reads as a flag) — nothing else, and no length ceiling: a
+  # Vertex AI id carries `@` (`claude-3-5-sonnet-v2@20241022`) and a Bedrock
+  # application inference-profile ARN carries `/` and `:` and runs well past
+  # what an Anthropic-direct id ever needed. Whether the model EXISTS stays
+  # the harness's contract (top-of-function comment); this is only "can it
+  # ride an argv" (PR #2374 review thread, discussion_r3910492324; GH-2375).
   case "$model" in
     [A-Za-z0-9]*) ;;
     *)
@@ -672,15 +677,15 @@ ralph_lane_model() {
       return 1
       ;;
   esac
-  # Parameter expansion, not grep: a `]` inside a bracket expression closes
-  # it in every regex flavour, and the first draft's pattern matched nothing.
-  local rest="${model//[A-Za-z0-9._:-]/}"
-  rest="${rest//\[/}"
-  rest="${rest//\]/}"
-  if [ "${#model}" -gt 80 ] || [ -n "$rest" ]; then
-    echo "ralph_lane_model: $src='$model' is not a model name (allowed: letters, digits, . _ : [ ] -; max 80 chars)" >&2
-    return 1
-  fi
+  local c
+  for c in ' ' $'\t' $'\n' ';' '|' '&' '<' '>' '$' '`' "'" '"' '(' ')'; do
+    case "$model" in
+      *"$c"*)
+        echo "ralph_lane_model: $src='$model' is not a model name (no whitespace or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
+        return 1
+        ;;
+    esac
+  done
   printf '%s\n' "$model"
 }
 
