@@ -2,7 +2,10 @@
   "env": {
     "RALPH_GH_OWNER": "cdubiel08",
     "RALPH_GH_REPO": "ralph-hero",
-    "RALPH_GH_PROJECT_NUMBER": "3"
+    "RALPH_GH_PROJECT_NUMBER": "3",
+    "RALPH_MODEL_DRIVER": "claude-fable-5-1",
+    "RALPH_MODEL_DELIVER": "claude-sonnet-5",
+    "RALPH_MODEL_TEND": "claude-sonnet-5"
   },
   "permissions": {
     "allow": [
