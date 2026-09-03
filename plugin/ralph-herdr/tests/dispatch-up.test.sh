@@ -34,6 +34,13 @@ export FAKE_HERDR_FIXTURES="$TMP/fixtures"
 export FAKE_HERDR_LOG="$TMP/herdr.log"
 export FAKE_BOARD_FIXTURES="$TMP/board-fixtures"
 export FAKE_BOARD_LOG="$TMP/board.log"
+# GH-2364: the wait for a freshly-opened hero's own record defaults to a
+# single non-blocking check here — nothing in this fake harness stamps
+# hero.pane.json from inside a pane (there is no real pane), so the default
+# 10s production bound would time out on every fresh-open case. A test that
+# wants to exercise the wait actually landing on a stamp overrides this
+# per-call (see the delayed-stamp case below).
+export RALPH_HERDR_HERO_STAMP_WAIT_MS=0
 mkdir -p "$FAKE_HERDR_FIXTURES" "$FAKE_BOARD_FIXTURES"
 export RALPH_HERDR_LEDGER_ROOT="$TMP/ledger-root"
 
@@ -100,7 +107,7 @@ has "creates the main workspace on the source checkout, labeled by it" "$(cat "$
 hasnt "never creates an address-labeled sibling (GH-2246)" "$(cat "$FAKE_HERDR_LOG")" "workspace create .*--label fake/dispatch"
 has "opens the hero pane into the created space" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open --plugin ralph-herdr --entrypoint hero --workspace wT --placement tab"
 has "ensure-only leaves the new hero unfocused" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --no-focus"
-has "summary names created + opened" "$out" "workspace wT (created), hero pane pP1 (opened)"
+has "summary names created + opened" "$out" "workspace wT (created), hero pane pP1 (opened-unstamped)"
 has "absorbs the fresh space's default root tab (GH-2316)" "$(cat "$FAKE_HERDR_LOG")" "tab close wT:t1"
 has "summary still carries the dispatch address" "$out" "dispatch up: fake/dispatch"
 has "prints the roster" "$out" "ROSTER (fake)"
@@ -108,6 +115,23 @@ has "roster was asked of the board" "$(cat "$FAKE_BOARD_LOG")" "^roster"
 hb="$RALPH_HERDR_LEDGER_ROOT/fake/fake/dispatch-heartbeat"
 if [ -f "$hb" ]; then ok "heartbeat stamped"; else not_ok "heartbeat stamped — $hb missing"; fi
 has "heartbeat names this writer" "$(cat "$hb" 2>/dev/null)" '"writer":"dispatch-up"'
+
+# ── 1b. GH-2364: the stamp lands mid-wait — waited out, not read off the ack ─
+# hero.sh stamps the record from INSIDE the opened pane, after the ack this
+# script already received. A stamp landing a beat later must still resolve
+# to the proven "opened" state, not the timeout's "opened-unstamped" — the
+# whole point of waiting rather than reporting the instant the ack arrives.
+reset
+(
+  sleep 0.3
+  live_hero pP1
+) &
+out=$(RALPH_HERDR_HERO_STAMP_WAIT_MS=3000 run_up)
+rc=$?
+wait
+[ "$rc" = 0 ] && ok "delayed-stamp run exits 0" || not_ok "delayed-stamp run exits 0 — rc $rc: $out"
+has "waits out the stamp landing and reports the proven pane" "$out" "hero pane pP1 (opened)"
+hasnt "a proven stamp is never reported as unstamped" "$out" "opened-unstamped"
 
 # ── 2. heal: main workspace stands, hero dead — reopen the pane only ────────
 reset
@@ -117,7 +141,7 @@ rc=$?
 [ "$rc" = 0 ] && ok "heal-pane run exits 0" || not_ok "heal-pane run exits 0 — rc $rc: $out"
 hasnt "standing main workspace is not recreated" "$(cat "$FAKE_HERDR_LOG")" "workspace create"
 has "hero pane opened into the standing main workspace" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --workspace wM"
-has "summary names standing + opened" "$out" "workspace wM (standing), hero pane pP1 (opened)"
+has "summary names standing + opened" "$out" "workspace wM (standing), hero pane pP1 (opened-unstamped)"
 hasnt "a standing space's tabs are never closed (GH-2316 is created-only)" "$(cat "$FAKE_HERDR_LOG")" "tab close"
 
 # ── 2b. GH-2316 guard: hero lands in the SAME tab as the default — no close ─
@@ -174,7 +198,7 @@ printf '{"panes":[{"pane_id":"pShell","workspace_id":"wM","tab_id":"wM:t1","term
   >"$FAKE_HERDR_FIXTURES/pane-list.json"
 out=$(run_up)
 has "hero elsewhere does not satisfy the main workspace" "$(cat "$FAKE_HERDR_LOG")" "plugin pane open .* --workspace wM"
-has "summary says opened" "$out" "hero pane pP1 (opened)"
+has "summary says opened" "$out" "hero pane pP1 (opened-unstamped)"
 
 # ── 5. legacy migration: live hero still in the <repo>/dispatch sibling ─────
 reset
@@ -264,6 +288,7 @@ rc=$?
 has "--help states idempotence" "$out" "re-run heals"
 has "--help states no scheduling" "$out" "Arms nothing scheduled"
 has "--help states the main-workspace placement" "$out" "MAIN workspace"
+has "--help documents the hero stamp wait knob (GH-2364)" "$out" "RALPH_HERDR_HERO_STAMP_WAIT_MS"
 
 echo
 echo "$pass passed, $fail failed (of $n)"
