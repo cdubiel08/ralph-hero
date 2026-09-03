@@ -21,6 +21,15 @@
 #                reconcile marks them lost inside the same window a stale
 #                board claim gets. The per-record lines are capped and the
 #                COUNT is always printed (GH-2023) — see the phase.
+#   containment  a third question, riding the live side's single-record pass
+#                (GH-2361): does a live agent's LATEST recorded tool_binding /
+#                process_containment (GH-2267) match what its role's registry
+#                row requires — `accepted`/`applied` for every non-driver
+#                role, `not_requested`/`not_requested` for the driver? GH-2267
+#                shipped the fields and their readers with zero callers; this
+#                is the first. A record with no role or no words is skipped,
+#                never flagged — those predate the model, and "not recorded"
+#                must not render as "recorded and off".
 #
 # The ledger side's remedy is SPLIT by what reconcile can actually do with the
 # record (GH-2066). reconcile's ownership proof is positive and two-sided — a
@@ -68,6 +77,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/ledger.sh"
 # shellcheck source=scope.sh
 . "$SCRIPT_DIR/scope.sh"
+# shellcheck source=roles.sh
+. "$SCRIPT_DIR/roles.sh"
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
 TTL_MIN="${RALPH_LOCK_TTL_MIN:-120}"
@@ -207,17 +218,41 @@ while IFS= read -r name; do
   # be resolved matches nothing and is reported as an unledgered gap, which is
   # the honest answer: we cannot say which ledger should hold it.
   count=0
+  matched_ref="" matched_file=""
   while IFS=$'\037' read -r pf pref _rest; do
     [ -n "$pref" ] || continue
     in_ledger_scope "$name" "$pf" || continue
     case "${pref%%#*}" in
-      "$name") count=$((count + 1)) ;;
+      "$name") count=$((count + 1)); matched_ref="$pref"; matched_file="$pf" ;;
     esac
   done <<EOF_ROWS
 $open_rows
 EOF_ROWS
   case "$count" in
-    1) pass "lineage-$name" "one open ledger record" ;;
+    1)
+      pass "lineage-$name" "one open ledger record"
+      # containment exception naming (GH-2361, GH-2267's ledgered-but-unread
+      # fields): a single well-formed record is the only shape with one
+      # latest-words state to compare, so this rides the pass branch rather
+      # than re-walking the ledger. Skipped on an empty role or empty words —
+      # those are pre-GH-2267/pre-role-model records, and "not recorded" must
+      # never render as "recorded and off" (roles.sh's CONTAINMENT_OUTCOMES
+      # doc, ledger.sh's latest_tool_binding/latest_process_containment).
+      role=$(RALPH_HERDR_LEDGER="$matched_file" _ralph_ledger_latest_role "$matched_ref" 2>/dev/null) || role=""
+      if [ -n "$role" ]; then
+        tb=$(RALPH_HERDR_LEDGER="$matched_file" _ralph_ledger_latest_tool_binding "$matched_ref" 2>/dev/null) || tb=""
+        pc=$(RALPH_HERDR_LEDGER="$matched_file" _ralph_ledger_latest_process_containment "$matched_ref" 2>/dev/null) || pc=""
+        if [ -n "$tb" ] && [ -n "$pc" ]; then
+          exp_tb="not_requested"
+          ralph_role_tool_binding "$role" && exp_tb="accepted"
+          exp_pc="not_requested"
+          ralph_role_process_containment "$role" && exp_pc="applied"
+          if [ "$tb" != "$exp_tb" ] || [ "$pc" != "$exp_pc" ]; then
+            gap "containment-$name" "role $role achieved tool_binding=$tb process_containment=$pc (expected $exp_tb/$exp_pc)"
+          fi
+        fi
+      fi
+      ;;
     0) gap "lineage-$name" "live agent with NO open ledger record — run the reconcile action (the [[startup]] pass heals this on server restart)" ;;
     *) gap "lineage-$name" "$count open ledger records — duplicate identity; the ledger reads would race" ;;
   esac
