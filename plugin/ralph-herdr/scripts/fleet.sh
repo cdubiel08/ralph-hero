@@ -593,7 +593,7 @@ spawn_investigator() {
   # the investigator gains Bash, the sandbox and its probe engage here with
   # no edit.
   local -a contain=()
-  local containment=inapplicable tools contain_out tool_binding probe_out
+  local containment=inapplicable tools contain_out tool_binding probe_out writeonly=0
   # GH-2267: the tool-binding outcome is read off the argv that will actually
   # be handed to `agent start`, never off the role row. The definition is the
   # one declaration of what an investigator may do, so a definition that
@@ -614,6 +614,16 @@ spawn_investigator() {
       while IFS= read -r out; do [ -n "$out" ] && contain+=("$out"); done < <(printf '%s\n' "$contain_out")
       containment=pending
       ;;
+    *)
+      # No Bash: process containment has nothing to hold (stays
+      # `inapplicable`, unchanged), but GH-2363's Write-only probe can still
+      # REFUTE the argv-observed tool-binding ceiling — with no Bash in the
+      # harness there is nothing in the pane that could forge the probe's
+      # marker, so a file at the target is unforgeable proof the Write tool
+      # ran unbound. Only worth running when there is a ceiling to refute:
+      # tool_binding already refused above on `not_applied`.
+      [ "$tool_binding" = accepted ] && writeonly=1
+      ;;
   esac
 
   name=$(ralph_agent_name i "$issue" "$question" 2>/dev/null) ||
@@ -629,6 +639,7 @@ spawn_investigator() {
     echo "  $HERDR agent start $name --kind claude --pane <captured> -- ${harness[*]}${contain[*]:+ --settings <process containment: seatbelt denyWrite $checkout>}"
     echo "  process containment: $containment${contain[*]:+ (in-pane probe after start; refuse unless applied)}"
     echo "  tool binding: $tool_binding (read off the argv above; recorded beside process containment, separately — GH-2267${contain[*]:+; the probe adds a Write step into $checkout and refuses on not_applied — GH-2341})"
+    [ "$writeonly" = 1 ] && echo "  tool binding: Write-only probe after start (no Bash in this harness to forge the marker with — GH-2363); refuses on not_applied"
     echo "  $HERDR agent prompt $name <question>"
     return 0
   fi
@@ -661,6 +672,15 @@ spawn_investigator() {
       return 1
     }
     read -r containment tool_binding < <(printf '%s' "$probe_out")
+  elif [ "$writeonly" = 1 ]; then
+    # No Bash to sandwich a Write step with (GH-2363) — the probe's marker is
+    # unforgeable on its own, so only the tool-binding word comes back.
+    tool_binding=$(spawn_writeonly_probe "$name" "$pane" "$checkout" "close the tab and re-dispatch the question") || {
+      tool_binding="${tool_binding:-unverified}"
+      "$HERDR" pane close "$pane" >/dev/null 2>&1 || true
+      echo "spawn_investigator: tool binding $tool_binding for $name (write-only probe, GH-2363) — closed pane $pane rather than dispatch an unbound investigator" >&2
+      return 1
+    }
   fi
   echo "process containment: $containment for $name"
   echo "tool binding: $tool_binding for $name"

@@ -1298,6 +1298,117 @@ touch '$inside' '$outside'; echo PROBE_RC=\$?"
   return 1
 }
 
+# spawn_writeonly_probe AGENT PANE CHECKOUT RESPAWN — the in-pane
+# tool-binding self-test for a harness with NO BASH (GH-2363), where
+# spawn_containment_probe's Bash-touch/Write/Bash-control sandwich cannot run
+# at all (fleet.sh skips the probe entirely today when containment reads
+# `inapplicable`, leaving the investigator's tool-binding word at the argv
+# observation forever — GH-2255's final review). Prints ONE
+# CONTAINMENT_OUTCOMES word on stdout (`accepted` / `not_applied` /
+# `unverified`) and returns 0 only for `accepted`.
+#
+# UNFORGEABLE BY CONSTRUCTION: spawn_containment_probe's sandwich exists
+# because a Bash-capable pane COULD `touch` the marker itself, so the ordering
+# (Bash touch denied first, control touch after) is what proves a file at the
+# Write target came from the Write tool. A harness with no Bash at all has no
+# tool that could fake the marker — Read/Grep/Glob cannot create a file — so
+# the marker's mere existence is already unforgeable and no sandwich is
+# needed: the file can only be the Write tool having run unbound.
+#
+# Mirrors spawn_containment_probe's writability pre-check (PR #2337 P1): an
+# absent marker is evidence of binding only against a target this process —
+# outside the pane — could itself write a moment before. An unwritable
+# checkout root would read every probe as a pass while the tree's real files
+# stayed writable.
+#
+# Completion is read off herdr's own agent status (_spawn_agent_status,
+# polled) rather than a Bash control marker, since there is no Bash to
+# produce one — the same "ask the owning service, not the pane" rule
+# spawn_turn_started already follows for turn-start, reused here for
+# turn-end.
+#
+# Honest limits, same shape as spawn_containment_probe's: a model that skips
+# the Write step with the tool available reads as `accepted` (the argv
+# ceiling, unchanged — the step only ever tightens); a status read that lags
+# a dialog already up, or a poll window that runs out mid-turn, reads
+# `unverified`, never a pass.
+spawn_writeonly_probe() {
+  local agent="${1-}" pane="${2-}" checkout="${3-}" respawn="${4:-re-spawn it}"
+  local dir target prompt secs waited=0 status
+  { [ -n "$agent" ] && [ -n "$pane" ] && [ -n "$checkout" ]; } || {
+    echo "write-only probe: agent, pane and checkout are all required" >&2
+    echo unverified
+    return 1
+  }
+  dir=$(cd "$checkout" 2>/dev/null && pwd -P) || {
+    echo "write-only probe: $checkout is not a directory" >&2
+    echo unverified
+    return 1
+  }
+  target="$dir/.ralph-writeonly-probe-$agent"
+  rm -f "$target" 2>/dev/null || true
+  if ! { : >"$target"; } 2>/dev/null; then
+    echo "write-only probe: $target is not writable even from outside the pane — a denial there would prove nothing (unverified); check the checkout's permissions" >&2
+    echo unverified
+    return 1
+  fi
+  rm -f "$target" 2>/dev/null || {
+    echo "write-only probe: could not remove the writability check file $target (unverified)" >&2
+    echo unverified
+    return 1
+  }
+  prompt="Write-only tool-binding self-test (automatic, at startup — GH-2363). Use the Write tool, and only the Write tool, to create the file '$target' with the content: probe. Do not retry anything, do not run anything else, and reply with only what happened."
+  ralph_herdr_agent_prompt "$agent" "$prompt" >/dev/null || {
+    echo "write-only probe: prompt delivery to $agent failed" >&2
+    echo unverified
+    return 1
+  }
+  spawn_confirm_turn "$agent" "$pane" "$prompt" "$agent's write-only probe" "$respawn" || {
+    rm -f "$target" 2>/dev/null || true
+    echo unverified
+    return 1
+  }
+  secs="${RALPH_HERDR_CONTAINMENT_PROBE_SEC:-30}"
+  case "$secs" in '' | *[!0-9]* | 0) secs=30 ;; esac
+  while :; do
+    if [ -e "$target" ]; then
+      echo "write-only probe: $agent's Write tool WROTE $target — no Bash exists in this harness to have forged it, so tool binding is not_applied; refusing to hand a writer its prompt" >&2
+      rm -f "$target" 2>/dev/null || true
+      echo not_applied
+      return 1
+    fi
+    status=$(_spawn_agent_status "$agent") || status=""
+    case "$status" in
+      blocked)
+        echo "write-only probe: $agent is BLOCKED on a prompt during the Write step — a bound tool never asks; tool binding not_applied; refusing to hand a writer its prompt. Dismiss the prompt before closing the pane if you keep it: herdr pane send-keys $pane esc" >&2
+        echo not_applied
+        return 1
+        ;;
+      idle | done)
+        # One more look at the target AFTER the status read, same ordering
+        # rule spawn_containment_probe uses for its own markers: the write,
+        # if any, happens before the turn settles, so a target that appeared
+        # in the gap between the two checks above must still be caught.
+        if [ -e "$target" ]; then
+          echo "write-only probe: $agent's Write tool WROTE $target — tool binding not_applied" >&2
+          rm -f "$target" 2>/dev/null || true
+          echo not_applied
+          return 1
+        fi
+        echo accepted
+        return 0
+        ;;
+    esac
+    [ "$waited" -lt "$secs" ] || break
+    sleep 1
+    waited=$((waited + 1))
+  done
+  echo "write-only probe: $agent's Write step could not be read to a verdict within ${secs}s (status '${status:-unreadable}', no marker) — tool binding unverified; a pane that never finished its probe turn must not receive its prompt. $respawn" >&2
+  rm -f "$target" 2>/dev/null || true
+  echo unverified
+  return 1
+}
+
 # _spawn_agent_status AGENT — the raw herdr agent_status word, or rc 1 when
 # the herd cannot answer. Read-only; one call, no wait.
 _spawn_agent_status() {
