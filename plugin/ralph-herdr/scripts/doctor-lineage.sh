@@ -21,6 +21,24 @@
 #                reconcile marks them lost inside the same window a stale
 #                board claim gets. The per-record lines are capped and the
 #                COUNT is always printed (GH-2023) — see the phase.
+#   containment  a third question, riding the live side's single-record pass
+#                (GH-2361): does a live agent's LATEST recorded tool_binding /
+#                process_containment (GH-2267) match what its role's registry
+#                row requires — `accepted` tool_binding for every non-driver
+#                role, `not_requested`/`not_requested` for the driver? GH-2267
+#                shipped the fields and their readers with zero callers; this
+#                is the first. A record with no role or no words is skipped,
+#                never flagged — those predate the model, and "not recorded"
+#                must not render as "recorded and off". Process containment
+#                accepts a SECOND non-gap word, `inapplicable`, but ONLY for
+#                the investigator: its own harness definition grants no Bash
+#                to sandbox, so its spawn path (fleet.sh) records
+#                `inapplicable` by design — a correct recording, not a
+#                failed one. Every OTHER contained role keeps Bash
+#                (`ralph_tool_binding_args` only ever touches Edit/Write/
+#                NotebookEdit), so `inapplicable` there would be the exact
+#                unsandboxed-writer hole this check exists to catch, and
+#                still gaps (review findings on this unit, GH-2361).
 #
 # The ledger side's remedy is SPLIT by what reconcile can actually do with the
 # record (GH-2066). reconcile's ownership proof is positive and two-sided — a
@@ -68,6 +86,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/ledger.sh"
 # shellcheck source=scope.sh
 . "$SCRIPT_DIR/scope.sh"
+# shellcheck source=roles.sh
+. "$SCRIPT_DIR/roles.sh"
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
 TTL_MIN="${RALPH_LOCK_TTL_MIN:-120}"
@@ -207,17 +227,61 @@ while IFS= read -r name; do
   # be resolved matches nothing and is reported as an unledgered gap, which is
   # the honest answer: we cannot say which ledger should hold it.
   count=0
+  matched_ref="" matched_file=""
   while IFS=$'\037' read -r pf pref _rest; do
     [ -n "$pref" ] || continue
     in_ledger_scope "$name" "$pf" || continue
     case "${pref%%#*}" in
-      "$name") count=$((count + 1)) ;;
+      "$name") count=$((count + 1)); matched_ref="$pref"; matched_file="$pf" ;;
     esac
   done <<EOF_ROWS
 $open_rows
 EOF_ROWS
   case "$count" in
-    1) pass "lineage-$name" "one open ledger record" ;;
+    1)
+      pass "lineage-$name" "one open ledger record"
+      # containment exception naming (GH-2361, GH-2267's ledgered-but-unread
+      # fields): a single well-formed record is the only shape with one
+      # latest-words state to compare, so this rides the pass branch rather
+      # than re-walking the ledger. Skipped on an empty role or empty words —
+      # those are pre-GH-2267/pre-role-model records, and "not recorded" must
+      # never render as "recorded and off" (roles.sh's CONTAINMENT_OUTCOMES
+      # doc, ledger.sh's latest_tool_binding/latest_process_containment).
+      role=$(RALPH_HERDR_LEDGER="$matched_file" _ralph_ledger_latest_role "$matched_ref" 2>/dev/null) || role=""
+      if [ -n "$role" ]; then
+        tb=$(RALPH_HERDR_LEDGER="$matched_file" _ralph_ledger_latest_tool_binding "$matched_ref" 2>/dev/null) || tb=""
+        pc=$(RALPH_HERDR_LEDGER="$matched_file" _ralph_ledger_latest_process_containment "$matched_ref" 2>/dev/null) || pc=""
+        if [ -n "$tb" ] && [ -n "$pc" ]; then
+          exp_tb="not_requested"
+          ralph_role_tool_binding "$role" && exp_tb="accepted"
+          # `inapplicable` is a SECOND non-gap answer, but ONLY for the
+          # investigator (review finding on this unit, GH-2361: a first
+          # draft accepted it for every non-driver role, which would have
+          # let an unsandboxed tender/orchestrator/watcher/relay — every one
+          # of which keeps Bash, per `ralph_tool_binding_args` — pass as
+          # healthy). `inapplicable` means the role's OWN harness definition
+          # grants no Bash for a sandbox to hold; today that is true only of
+          # the investigator (`ralph/agents/investigator.md`, and the only
+          # caller that ever writes the word — fleet.sh's spawn_investigator).
+          # Every other contained role must show a real kernel denial.
+          if ralph_role_process_containment "$role"; then
+            exp_pc="applied"
+            case "$role" in
+              investigator) case "$pc" in applied | inapplicable) pc_ok=1 ;; *) pc_ok=0 ;; esac ;;
+              *) [ "$pc" = "applied" ] && pc_ok=1 || pc_ok=0 ;;
+            esac
+          else
+            exp_pc="not_requested"
+            [ "$pc" = "$exp_pc" ] && pc_ok=1 || pc_ok=0
+          fi
+          if [ "$tb" != "$exp_tb" ] || [ "$pc_ok" -ne 1 ]; then
+            exp_pc_note=""
+            [ "$role" = investigator ] && exp_pc_note=" (or inapplicable)"
+            gap "containment-$name" "role $role achieved tool_binding=$tb process_containment=$pc (expected $exp_tb/$exp_pc$exp_pc_note)"
+          fi
+        fi
+      fi
+      ;;
     0) gap "lineage-$name" "live agent with NO open ledger record — run the reconcile action (the [[startup]] pass heals this on server restart)" ;;
     *) gap "lineage-$name" "$count open ledger records — duplicate identity; the ledger reads would race" ;;
   esac

@@ -168,6 +168,88 @@ EOF
 run '[]'
 is "a closed (exited) record is not a finding" "0" "$RC"
 
+# ── containment: expected pair renders nothing extra (GH-2361) ───────────────
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"t99-hygiene#aaaa","pane_id":"p9","tokens":{"role":"tender","depth":"0"},"tool_binding":"accepted","process_containment":"applied"}
+EOF
+run '[{"name":"t99-hygiene","agent_status":"working","pane_id":"p9"}]'
+is "expected pair exits 0" "0" "$RC"
+is "expected pair renders no containment line" "0" "$(printf '%s\n' "$OUT" | grep -c 'containment-t99-hygiene')"
+
+# ── containment: a contained role that never achieved binding is named ───────
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"t99-hygiene#aaaa","pane_id":"p9","tokens":{"role":"tender","depth":"0"},"tool_binding":"not_applied","process_containment":"applied"}
+EOF
+run '[{"name":"t99-hygiene","agent_status":"working","pane_id":"p9"}]'
+is "not_applied tool_binding exits 1" "1" "$RC"
+has_line "not_applied tool_binding is a GAP naming the achieved words" \
+  '^  GAP  containment-t99-hygiene .*tool_binding=not_applied process_containment=applied'
+
+# ── containment: an unverified process containment is named ─────────────────
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"t99-hygiene#aaaa","pane_id":"p9","tokens":{"role":"tender","depth":"0"},"tool_binding":"accepted","process_containment":"unverified"}
+EOF
+run '[{"name":"t99-hygiene","agent_status":"working","pane_id":"p9"}]'
+is "unverified process_containment exits 1" "1" "$RC"
+has_line "unverified process_containment is a GAP" \
+  '^  GAP  containment-t99-hygiene .*process_containment=unverified'
+
+# ── containment: an investigator's inapplicable containment is expected ─────
+# (review finding on this unit, GH-2361): the default investigator grants no
+# Bash, so its own spawn path records process_containment=inapplicable even
+# though the role's registry row requires the mechanism — a correct
+# recording, never a false GAP.
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"i1-scan#aaaa","pane_id":"p2","tokens":{"role":"investigator","depth":"1"},"tool_binding":"accepted","process_containment":"inapplicable"}
+EOF
+run '[{"name":"i1-scan","agent_status":"working","pane_id":"p2"}]'
+is "investigator inapplicable exits 0" "0" "$RC"
+is "investigator inapplicable renders no containment line" "0" "$(printf '%s\n' "$OUT" | grep -c 'containment-i1-scan')"
+
+# ── containment: `inapplicable` is investigator-only, not a blanket pass ────
+# (review finding on this unit, GH-2361 — a second pass caught by the same
+# reviewers): tender keeps Bash (ralph_tool_binding_args only touches
+# Edit/Write/NotebookEdit), so an `inapplicable` process containment there
+# would be exactly the unsandboxed-writer hole this check exists to catch —
+# it must still GAP, unlike the investigator's genuine `inapplicable`.
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"t99-hygiene#aaaa","pane_id":"p9","tokens":{"role":"tender","depth":"0"},"tool_binding":"accepted","process_containment":"inapplicable"}
+EOF
+run '[{"name":"t99-hygiene","agent_status":"working","pane_id":"p9"}]'
+is "tender inapplicable exits 1 — not a blanket pass" "1" "$RC"
+has_line "tender inapplicable is still a GAP" \
+  '^  GAP  containment-t99-hygiene .*process_containment=inapplicable'
+
+# ── containment: an investigator that never got a sandbox at all is named ───
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"i1-scan#aaaa","pane_id":"p2","tokens":{"role":"investigator","depth":"1"},"tool_binding":"accepted","process_containment":"not_available"}
+EOF
+run '[{"name":"i1-scan","agent_status":"working","pane_id":"p2"}]'
+is "investigator not_available exits 1" "1" "$RC"
+has_line "investigator not_available is still a GAP" \
+  '^  GAP  containment-i1-scan .*process_containment=not_available'
+
+# ── containment: the driver's not_requested pair is expected, not a gap ──────
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"role":"driver","depth":"0"},"tool_binding":"not_requested","process_containment":"not_requested"}
+EOF
+run '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
+is "driver's not_requested pair exits 0" "0" "$RC"
+
+# ── containment: a record predating the role model is skipped, not flagged ──
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"depth":"0"}}
+EOF
+run '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
+is "no role recorded exits 0 — not recorded is not a finding" "0" "$RC"
+
+# ── containment: a record predating GH-2267 (role, no words) is skipped ─────
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"t99-hygiene#aaaa","pane_id":"p9","tokens":{"role":"tender","depth":"0"}}
+EOF
+run '[{"name":"t99-hygiene","agent_status":"working","pane_id":"p9"}]'
+is "role but no words exits 0 — not recorded is not off" "0" "$RC"
+
 # ── legacy singletons are noted, never gapped ────────────────────────────────
 : >"$RALPH_HERDR_LEDGER"
 run '[{"name":"ralph-deliver","agent_status":"working","pane_id":"p5"}]'

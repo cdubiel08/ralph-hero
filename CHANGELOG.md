@@ -124,6 +124,15 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Fixed
 
+- **The achieved containment words were ledgered but no surface rendered
+  them (GH-2361).** GH-2267 recorded `tool_binding`/`process_containment`
+  per spawn and shipped readers with zero callers. `doctor-lineage.sh`'s
+  live-side pass now checks each single-record live agent's latest achieved
+  words against its role's registry requirement — `accepted`/`applied` for
+  every non-driver role, `not_requested`/`not_requested` for the driver —
+  and names the row as a GAP when they diverge; a record with no role or no
+  recorded words is skipped, never flagged, since those predate the model.
+  Ships as ralph-herdr **0.51.1**.
 - **A non-Darwin containment refusal left no ledger row (GH-2360).**
   `not_available` was in `CONTAINMENT_OUTCOMES` (GH-2267) but only ever
   reached stderr: `ralph_process_containment_platform`'s refusal fired
