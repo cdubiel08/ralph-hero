@@ -62,18 +62,22 @@
 #
 #   EXIT REASON ENUM (GH-2309, phase C). The typed vocabulary for exit.reason:
 #     finished | yielded | crashed | restart-killed | swept-unknown |
-#     pane-closed | pane-exited
+#     pane-closed | pane-exited | stood-down
 #   Reserved values exist before anything emits them: finished/yielded need
 #   heartbeat/handshake signals that are a separate swing. Live writers today:
 #   reconcile's sweep emits swept-unknown (the honest name for what the sweep
 #   proves — an absence asked twice, nothing about how the worker ended; the
 #   pre-enum spelling was "lost"), phase E's pane-proved verdicts emit
-#   crashed/restart_killed (claim-recover.sh), and the event hooks emit
-#   pane_exited/pane_closed. never_started (the spawn path's provisional
-#   close) is via-spawn bookkeeping, outside this enum. Historical rows are
-#   NEVER rewritten; a reader that branches on reason normalizes through
-#   ralph_ledger_reason_canon (the ONE alias mapping — lost → swept-unknown,
-#   underscore spellings → their hyphenated enum forms), never per consumer.
+#   crashed/restart_killed (claim-recover.sh), the event hooks emit
+#   pane_exited/pane_closed, and work-team.sh's --stand-down (GH-2357) emits
+#   stood-down for an o-lane lead the operator parks deliberately — the one
+#   exit reason a human writes on purpose rather than the watcher inferring
+#   from a pane death, and the one heal.sh (GH-2212) reads back to refuse a
+#   respawn. never_started (the spawn path's provisional close) is via-spawn
+#   bookkeeping, outside this enum. Historical rows are NEVER rewritten; a
+#   reader that branches on reason normalizes through ralph_ledger_reason_canon
+#   (the ONE alias mapping — lost → swept-unknown, underscore spellings →
+#   their hyphenated enum forms), never per consumer.
 #
 #   Appends are sqlite INSERTs (phase D, GH-2311): WAL + busy_timeout carry
 #   concurrent-append safety, and the seq race between two writers settles at
@@ -716,8 +720,50 @@ ralph_ledger_reason_canon() {
     pane_exited) printf 'pane-exited\n' ;;
     pane_closed) printf 'pane-closed\n' ;;
     restart_killed) printf 'restart-killed\n' ;;
+    stood_down) printf 'stood-down\n' ;;
     *) printf '%s\n' "${1-}" ;;
   esac
+}
+
+# ralph_ledger_stood_down NAME — rc 0 when the lead NAME is currently STOOD
+# DOWN (GH-2357): the most recent of its arming/parking events is an exit
+# with reason stood-down. Keyed on the NAME across every epoch, deliberately
+# — a per-ref reading has a hole. `work-team.sh --stand-down` appends the
+# exit for the open ref and only then closes the workspace, and in the
+# window between those two steps the lead is still LIVE with NO open record,
+# which is exactly what reconcile's discover pass mints a fresh ref for
+# (`ev: discover`, new epoch, same name). The death event then finds THAT ref
+# open, and a per-ref check would respawn the lead the operator just parked.
+# So a `spawn` (a deliberate re-arm — work-team.sh EPIC) always re-arms the
+# name, and a `discover` re-arms it ONLY when it names a DIFFERENT pane from
+# the one the stand-down parked: the stood-down exit carries the parked
+# pane's id, so a discover on that same pane is reconcile observing the
+# dying lead (not a decision), while a discover on another pane is a lead
+# that genuinely exists — the re-arm whose own spawn append failed
+# ("spawning unledgered — reconcile will discover it") and would otherwise
+# stay parked forever, its next death never healed. A discover that cannot
+# be compared (either pane id missing — legacy rows) leaves the park in
+# place: toward not-respawning, the direction this issue exists for.
+# Readers: heal.sh (never respawn/flag a stood-down lead) and
+# resume-teams.sh (never resume one). rc 1 = not stood down, or unreadable —
+# an unreadable ledger must not read as "parked" to a healer.
+ralph_ledger_stood_down() {
+  local name="${1-}" file out
+  [ -n "$name" ] || return 1
+  file=$(ralph_ledger_path) || return 1
+  _ralph_ledger_present "$file" || return 1
+  out=$(_ralph_ledger_events "$file" | jq -r --arg name "$name" -s '
+    reduce .[] as $e ({state: "", pane: ""};
+      if ((($e.agent_ref // "") | split("#")[0]) != $name) then .
+      elif $e.ev == "spawn" then {state: "armed", pane: ""}
+      elif $e.ev == "exit" and (($e.reason // "") | IN("stood-down", "stood_down")) then
+        {state: "stood", pane: ($e.pane_id // "")}
+      elif $e.ev == "discover" and .state == "stood" then
+        ((try ($e.pane_id // $e.lineage.herdr.pane_id) catch null) // "") as $p
+        | if $p != "" and .pane != "" and $p != .pane then {state: "armed", pane: ""} else . end
+      else . end)
+    | .state') || return 1
+  [ "$out" = "stood" ]
 }
 
 # ralph_ledger_open_agents [REPO_ROOT] — agent_refs (one per line) with a

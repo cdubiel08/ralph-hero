@@ -44,7 +44,7 @@ candidates=$(jq -cs --arg session "$session" '
     | (.agent_ref // "") as $ref
     | ($ref | capture("^o(?<epic>[0-9]+)-[a-z0-9-]+#[0-9a-f]+$")?) as $m
     | select($m != null)
-    | {epic: $m.epic, ev: .ev, checkout: (.checkout // "")}
+    | {epic: $m.epic, ev: .ev, checkout: (.checkout // ""), ref: $ref}
   ]
   | group_by(.epic)
   | map({
@@ -53,7 +53,13 @@ candidates=$(jq -cs --arg session "$session" '
       # Historical reconciliation discoveries carry no checkout. They may
       # corroborate one checkout-bearing record, but can never supply a path
       # themselves. A checkout-less spawn remains contradictory evidence.
-      missingCheckout: any(.[]; .ev == "spawn" and .checkout == "")
+      missingCheckout: any(.[]; .ev == "spawn" and .checkout == ""),
+      # The most-recently-appended spawn/discover ref for this epic (group_by
+      # is a stable sort, so "last" keeps file order within the group) — the
+      # one live generation the GH-2357 stand-down check below reads. Epochs
+      # are per-spawn, so an OLDER epoch here would answer for a lead this
+      # session already replaced.
+      newestRef: (last.ref)
     })
   | .[]' "$ledger") || {
   echo "resume-teams: ledger is unreadable — launching nothing" >&2
@@ -100,6 +106,21 @@ while IFS= read -r candidate; do
   epic=$(jq -r '.epic' <<<"$candidate")
   missing=$(jq -r '.missingCheckout' <<<"$candidate")
   checkout_count=$(jq -r '.checkouts | length' <<<"$candidate")
+
+  # GH-2357: an operator can park a live lead on purpose (work-team.sh EPIC
+  # --stand-down) without the epic being complete — treated as closed here,
+  # same as work-team's own rc-4 case, never resumed. Checked before every
+  # other candidate rule: a deliberately parked team has nothing to say
+  # about checkout ambiguity, and re-arming it is a human's call
+  # (work-team.sh EPIC), not this pass's. Keyed on the lead's NAME
+  # (ralph_ledger_stood_down): a `discover` minted for the dying pane after
+  # the stand-down is a newer EPOCH but not a re-arm; a `spawn` is, and so
+  # is a `discover` on a different pane (an unledgered re-arm).
+  newest_ref=$(jq -r '.newestRef // empty' <<<"$candidate")
+  if [ -n "$newest_ref" ] && RALPH_HERDR_LEDGER="$ledger" ralph_ledger_stood_down "${newest_ref%%#*}"; then
+    echo "resume team GH-$epic: skipped — stood down by operator (work-team.sh $epic re-arms it)"
+    continue
+  fi
 
   # Liveness may excuse only the absence of checkout on a legacy discovery.
   # It must never hide a checkout-less spawn.

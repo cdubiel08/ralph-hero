@@ -571,6 +571,83 @@ is "heal no-checkout: notification raised" "1" "$(log_fcount 'died — not respa
 is "heal no-checkout: team space still flagged" "1" \
   "$(lcount "$HLEDGER" '.ev=="orphan_space" and .agent_ref=="o43-bare#0001" and .workspace_id=="ws43"')"
 
+# ═══ 5d. GH-2357: heal.sh refuses a respawn once a ref is stood down ════════
+# Unreachable through run_event's own open-for-pane filter — a stood-down ref
+# is closed (in the ledger) before any death event for its pane can even
+# fire, so watch-event's handle_gone never hands it here at all (see heal.sh's
+# header and work-team.sh's --stand-down). This calls ralph_heal_lead_death
+# DIRECTLY instead, to prove heal.sh's OWN second guard: even handed a ref
+# whose latest ledger fact is already exit/stood-down, it refuses to respawn
+# and refuses to flag the space orphaned.
+# shellcheck source=../scripts/heal.sh
+. "$SCRIPTS/heal.sh"
+HEAL_DIRECT_LOG="$TMP/heal-direct.log"
+log() { printf '%s\n' "$*" >>"$HEAL_DIRECT_LOG"; }
+: >"$HEAL_DIRECT_LOG"
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
+cat >"$HLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"o44-parked#0001","pane_id":"p44","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"44","slug":"parked","depth":"0","state":"spawned","root":"o44-parked#0001"}}
+{"ts":"t1","ev":"exit","agent_ref":"o44-parked#0001","reason":"stood-down","via":"operator"}
+EOF
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+RALPH_HERDR_LEDGER="$HLEDGER" ralph_heal_lead_death "$HLEDGER" "o44-parked#0001" "ws44" "pane_exited"
+is "heal stood-down: no respawn delegated" "0" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
+is "heal stood-down: no orphan_space flag" "0" \
+  "$(lcount "$HLEDGER" '.ev=="orphan_space" and .agent_ref=="o44-parked#0001"')"
+is "heal stood-down: no notification raised" "0" "$(log_count '^notification show')"
+line_has "heal stood-down: the log names the operator's stand-down" "$(cat "$HEAL_DIRECT_LOG")" "stood down by operator"
+
+# The REACHABLE case (Greptile P1 on #2397): between the stand-down append and
+# the workspace close, a reconcile discover pass sees a live pane with no open
+# record and mints a fresh ref (new epoch, same name). The death event finds
+# THAT ref open, appends its exit, and hands it here — through run_event, the
+# real path. The guard is keyed on the NAME, so the discover epoch is parked
+# too: no respawn, no orphan flag.
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
+cat >"$HLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"o45-parked#0001","pane_id":"p45","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"45","slug":"parked","depth":"0","state":"spawned","root":"o45-parked#0001"}}
+{"ts":"t1","ev":"exit","agent_ref":"o45-parked#0001","reason":"stood-down","pane_id":"p45","via":"operator"}
+{"ts":"t2","ev":"discover","agent_ref":"o45-parked#0002","pane_id":"p45","via":"reconcile","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"45","slug":"parked"}}
+EOF
+herd_fixture '[]'
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+run_event pane.exited '{"pane_id":"p45","workspace_id":"ws45"}' "$HROOT"
+is "heal stood-down (rediscovered epoch): hook exits 0" "0" "$RC"
+is "heal stood-down (rediscovered epoch): the discover ref's exit is recorded" "1" \
+  "$(lcount "$HLEDGER" '.ev=="exit" and .agent_ref=="o45-parked#0002"')"
+is "heal stood-down (rediscovered epoch): no respawn delegated" "0" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
+is "heal stood-down (rediscovered epoch): no orphan_space flag" "0" \
+  "$(lcount "$HLEDGER" '.ev=="orphan_space" and .agent_ref=="o45-parked#0002"')"
+is "heal stood-down (rediscovered epoch): no notification" "0" "$(log_count '^notification show')"
+# A later SPAWN (a human re-arm) clears the park: the next death heals again.
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
+cat >"$HLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"o46-rearmed#0001","pane_id":"p46a","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"46","slug":"rearmed","depth":"0","state":"spawned","root":"o46-rearmed#0001"}}
+{"ts":"t1","ev":"exit","agent_ref":"o46-rearmed#0001","reason":"stood-down","via":"operator"}
+{"ts":"t2","ev":"spawn","agent_ref":"o46-rearmed#0002","pane_id":"p46","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"46","slug":"rearmed","depth":"0","state":"spawned","root":"o46-rearmed#0002"}}
+EOF
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+run_event pane.exited '{"pane_id":"p46","workspace_id":"ws46"}' "$HROOT"
+is "heal re-armed: a spawn after the stand-down re-arms the name — respawn delegated" "1" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
+# An UNLEDGERED re-arm (its spawn append failed; reconcile discovered it) is
+# a discover on a DIFFERENT pane from the one the stand-down parked — that is
+# a lead that genuinely exists, and its later death heals again (Greptile P1
+# on #2397, second round).
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
+cat >"$HLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"o47-unledgered#0001","pane_id":"p47a","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"47","slug":"unledgered","depth":"0","state":"spawned","root":"o47-unledgered#0001"}}
+{"ts":"t1","ev":"exit","agent_ref":"o47-unledgered#0001","reason":"stood-down","pane_id":"p47a","via":"operator"}
+{"ts":"t2","ev":"discover","agent_ref":"o47-unledgered#0002","pane_id":"p47b","via":"reconcile","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"47","slug":"unledgered"}}
+EOF
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+run_event pane.exited '{"pane_id":"p47b","workspace_id":"ws47"}' "$HROOT"
+is "heal unledgered re-arm: a discover on ANOTHER pane re-arms the name — respawn delegated" "1" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
+unset -f log
+
 unset RALPH_HERDR_WORK_TEAM HEAL_STUB_LOG
 
 # ═══ 6. reconcile: discover / lost / token re-push ═══════════════════════════

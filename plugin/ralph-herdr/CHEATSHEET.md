@@ -357,6 +357,8 @@ owns):
 ```bash
 bash plugin/ralph-herdr/scripts/work-team.sh 2176        # spawn #2176's lead, stop
 herdr plugin action invoke work-team --plugin ralph-herdr  # the same, prompted, in a pane
+bash plugin/ralph-herdr/scripts/work-team.sh 2176 --stand-down  # PARK a live lead (GH-2357): ledger exit stood-down, then workspace close — the healer will not respawn it; work-team.sh 2176 re-arms
+herdr plugin action invoke team-stand-down --plugin ralph-herdr   # the same, prompted, in a pane
 # then, FROM THE LEAD'S OWN PANE:
 bash plugin/ralph-herdr/scripts/work-fleet.sh --epic 2176  # ranked ready children, fleet guards run BY the lead
 bash plugin/ralph-herdr/scripts/work-fleet.sh 2179         # the explicit override / out-of-team lane

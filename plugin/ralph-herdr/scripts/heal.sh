@@ -21,6 +21,16 @@
 #              the writers are the event hooks and hero sittings; doctor's
 #              advisory reads its age and names `dispatch up` as the remedy.
 #
+# STAND-DOWN (GH-2357): a lead whose epic is open but parked (every ready
+# child is human-gated) is not dead, and respawning it every time its pane
+# exits burns a full rehydration for nothing. `work-team.sh EPIC
+# --stand-down` records the durable fact ({ev: exit, reason: "stood-down"})
+# for the live lead BEFORE closing its workspace, so the pane-death event
+# this produces finds the ref already closed and heals nothing — no exit
+# reappend, no orphan flag, no respawn. `respawn` above still owns every
+# OTHER death; stood-down is a third, deliberate outcome, distinct from both
+# "crashed" (respawn) and "epic complete" (rc 4, self-dissolve backstop).
+#
 # PANE-PROVED OWNERSHIP (GH-1863) is the standing constraint on every
 # event-driven repair, and it is honored by CONSTRUCTION rather than by a
 # check here: the only refs a caller may hand ralph_heal_lead_death are the
@@ -88,6 +98,24 @@ ralph_heal_lead_death() (
   epic=${ref#o}
   epic=${epic%%-*}
   case "$epic" in '' | *[!0-9]*) exit 0 ;; esac
+
+  # GH-2357: a lead can be deliberately parked (`work-team.sh EPIC
+  # --stand-down`) rather than crashing. --stand-down appends {ev: exit,
+  # reason: stood-down} for the open ref and closes the workspace ONLY after
+  # that append lands, so the death event usually finds no open ref for the
+  # pane and never reaches here. The check is keyed on the lead's NAME, not
+  # this ref, because the one way a ref DOES arrive here is the hole between
+  # those two steps: a reconcile discover pass sees a live pane with no open
+  # record and mints a fresh ref (new epoch, same name) — the death event
+  # then heals THAT ref. ralph_ledger_stood_down reads the name's most
+  # recent arm/park event: a `spawn` (a human re-arm) clears it, and a
+  # `discover` clears it only on a DIFFERENT pane from the parked one (an
+  # unledgered re-arm) — the same pane is the dying lead. A stood-down lead
+  # is neither respawned nor flagged orphaned, whichever epoch is handed here.
+  if RALPH_HERDR_LEDGER="$ledger" ralph_ledger_stood_down "${ref%%#*}"; then
+    log "lead $ref stood down by operator — no respawn, no orphan flag (GH-2357)"
+    exit 0
+  fi
 
   # Durable flag for the sweep backstop (unit G reads the ledger, not the
   # herd): the team space the dead lead owned, named by the event's own
