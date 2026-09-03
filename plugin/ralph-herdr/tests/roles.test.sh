@@ -210,6 +210,37 @@ HERDR_BIN_PATH="$TMP/broken-herdr.sh" \
   fails "driver guard: an unreadable herd fails CLOSED" \
   ralph_driver_guard "$CHECKOUT" 800
 
+# ── 3b. GH-2356: the SAME check when the tape is SQLite and there is NO
+#      JSONL beside it at all — the fully-converted-machine shape. The old
+#      implementation read the JSONL locator with a bare jq and never looked
+#      at the sibling .sqlite, so this exact scenario went blind: the guard
+#      checked nothing and returned as if the tree were unowned.
+CONVERT="$SCRIPT_DIR/../scripts/ledger-convert.sh"
+CHECKOUT_SQLITE="$TMP/tree-sqlite"
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"2026-08-15T00:00:00Z","ev":"spawn","agent_ref":"w900-gamma#dddddddd","checkout":"$CHECKOUT_SQLITE","tokens":{"role":"driver","issue":"900","depth":"0"}}
+EOF
+bash "$CONVERT" "$RALPH_HERDR_LEDGER" >/dev/null 2>&1
+rm -f "$RALPH_HERDR_LEDGER"
+[ -f "$RALPH_HERDR_LEDGER" ] && not_ok "driver guard (sqlite tape): fixture setup left a JSONL behind" \
+  || ok "driver guard (sqlite tape): only the sqlite tape exists, no JSONL beside it"
+
+herd_fixture '[{"name":"w900-gamma","agent_status":"working"}]' "$ROOT"
+out=$(ralph_driver_guard "$CHECKOUT_SQLITE" 800 2>&1)
+rc=$?
+is "driver guard (sqlite tape, no jsonl): refuses a second driver in a held tree" "1" "$rc"
+case "$out" in
+  *w900-gamma#dddddddd*) ok "driver guard (sqlite tape): the refusal NAMES the live driver" ;;
+  *) not_ok "driver guard (sqlite tape): the refusal must name the live driver — got '$out'" ;;
+esac
+
+succeeds "driver guard (sqlite tape): the SAME issue is left to the atomic name mutex" \
+  ralph_driver_guard "$CHECKOUT_SQLITE" 900
+
+herd_fixture '[]' "$ROOT"
+succeeds "driver guard (sqlite tape): a tree whose driver is gone is free again" \
+  ralph_driver_guard "$CHECKOUT_SQLITE" 800
+
 # ── 4. the investigator's harness binding ────────────────────────────────────
 export RALPH_INVESTIGATOR_AGENT="$ROOT/ralph/agents/investigator.md"
 is "investigator: the allowlist is read from the agent definition" \
