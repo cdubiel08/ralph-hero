@@ -12,7 +12,10 @@
 #
 # What it reports per model bucket: driver units, closed issues, $/closed
 # issue (list-price equivalent, rate-limit weight — not a bill), calls/unit,
-# and the finish.via split (review vs done, GH-2348).
+# and the finish.via split (review vs done, GH-2348). `closed` counts DISTINCT
+# issues, not units: a retried or re-picked issue has several driver units
+# and must not be paid for once per unit (PR #2408 P1) — its units' $ all
+# land in the bucket's total, so $/closed stays the honest per-issue number.
 #
 # What it deliberately does NOT compute: review rounds per PR
 # (review-convergence.sh), escalations to lead, and reopen/rework. Those
@@ -116,13 +119,13 @@ if [ "$N" -eq 0 ]; then
 fi
 
 # Closed state per issue — one gh call per DISTINCT issue among the driver
-# units found (bounded by that count, never the whole board); a bare number
-# resolves in whatever repo `gh` is already scoped to from cwd, same rule
-# board.ts uses.
+# units found (bounded by that count, never the whole board). Run from $REPO
+# so a bare number resolves in the repo the ledger was scoped from, not
+# whatever cwd the caller happens to be in (PR #2408 P1).
 CLOSED_JSON="{}"
 while IFS= read -r n; do
   [ -n "$n" ] || continue
-  state=$(gh issue view "$n" --json state -q .state 2>/dev/null) || state="UNKNOWN"
+  state=$(cd "$REPO" && gh issue view "$n" --json state -q .state 2>/dev/null) || state="UNKNOWN"
   CLOSED_JSON=$(printf '%s' "$CLOSED_JSON" | jq --arg n "$n" --arg s "$state" '. + {($n): $s}')
 done < <(printf '%s' "$DRIVERS_JSON" | jq -r '[.[].issue] | unique | .[]')
 
@@ -133,7 +136,7 @@ REPORT=$(printf '%s' "$DRIVERS_JSON" | jq -c --argjson closed "$CLOSED_JSON" '
   | map({
       model: .[0].model,
       units: length,
-      closed: (map(select(.issue_state == "CLOSED")) | length),
+      closed: (map(select(.issue_state == "CLOSED") | .issue) | unique | length),
       total_list_usd: (map(.usage.list_usd // 0) | add),
       total_calls: (map(.usage.calls // 0) | add),
       finish_review: (map(select(.finish_via == "review")) | length),
