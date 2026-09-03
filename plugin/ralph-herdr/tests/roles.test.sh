@@ -241,6 +241,24 @@ herd_fixture '[]' "$ROOT"
 succeeds "driver guard (sqlite tape): a tree whose driver is gone is free again" \
   ralph_driver_guard "$CHECKOUT_SQLITE" 800
 
+# Fail CLOSED on an unreadable TAPE, the same direction as the unreadable
+# herd: the reducer's rc is jq's (0 over an empty pipe), so without the probe
+# a present-but-unservable sqlite would read as an empty ledger and permit a
+# second writer. A future user_version is the documented unservable shape.
+herd_fixture '[{"name":"w900-gamma","agent_status":"working"}]' "$ROOT"
+DB_SQLITE="${RALPH_HERDR_LEDGER%.jsonl}.sqlite"
+sqlite3 "$DB_SQLITE" 'PRAGMA user_version=2;'
+out=$(ralph_driver_guard "$CHECKOUT_SQLITE" 800 2>&1); rc=$?
+is "driver guard (sqlite tape): an unreadable present tape fails CLOSED" "1" "$rc"
+case "$out" in
+  *"cannot read the ledger"*) ok "driver guard (sqlite tape): the refusal names the ledger read, not a live driver" ;;
+  *) not_ok "driver guard (sqlite tape): expected a ledger-read refusal — got '$out'" ;;
+esac
+is "driver guard (sqlite tape): an unreadable tape prints no driver ref" "" "$(ralph_driver_guard "$CHECKOUT_SQLITE" 800 2>/dev/null)"
+sqlite3 "$DB_SQLITE" 'PRAGMA user_version=1;'
+fails "driver guard (sqlite tape): the restored tape refuses on the live driver again" \
+  ralph_driver_guard "$CHECKOUT_SQLITE" 800
+
 # ── 4. the investigator's harness binding ────────────────────────────────────
 export RALPH_INVESTIGATOR_AGENT="$ROOT/ralph/agents/investigator.md"
 is "investigator: the allowlist is read from the agent definition" \
