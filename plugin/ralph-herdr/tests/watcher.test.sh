@@ -1606,6 +1606,8 @@ is "exit: the exit is recorded" "1" "$(lcount "$ULEDG" '.ev=="exit" and .agent_r
 is "exit: a final usage fact follows the exit (latest wins, never a delta)" "usage" \
   "$(levents "$ULEDG" | jq -r 'select(.agent_ref=="w2347-usage#u001") | .ev' | tail -1)"
 is "exit: two usage facts total for the measured worker" "2" "$(lcount "$ULEDG" '.ev=="usage" and .agent_ref=="w2347-usage#u001"')"
+is "exit: GH-2348 backdates ts to the transcript's last call, not the detection instant" "2026-09-01T10:00:09Z" \
+  "$(levents "$ULEDG" | jq -r 'select(.ev=="exit" and .agent_ref=="w2347-usage#u001") | .ts')"
 
 run_event pane.exited '{"pane_id":"p1","workspace_id":"wR"}' "$UROOT"
 is "unmeasured: a worker with no session on the tape still exits cleanly" "0" "$RC"
@@ -1625,6 +1627,89 @@ run_reconcile "$DROOT"
 is "discover: exits 0" "0" "$RC"
 is "discover: the record carries claude_session" "$USID2" \
   "$(levents "$DLEDG" | jq -r 'select(.ev=="discover" and (.agent_ref | startswith("w77-disc#"))) | .claude_session // empty')"
+
+# ═══ 11. GH-2348: the work skill's finish fact + honest exit timestamps ══════
+# _ralph_ledger_exit_ts: the fast path (SESSION/CHECKOUT passed directly,
+# as reconcile's phase E and the sweep now do — zero extra ledger reads) and
+# the derive-from-ref path (as watch-event's handle_gone does, bounded by one
+# pane's own open refs). Reuses section 10's $USID transcript (last call
+# 2026-09-01T10:00:09Z) and $ULEDG (w2347-usage#u001, already bound to it).
+is "_exit_ts: fast path resolves the transcript's last call" "2026-09-01T10:00:09Z" \
+  "$(_ralph_ledger_exit_ts anyref fallback-ts "$USID" "$REPO_DIR")"
+is "_exit_ts: falls back when no session is known" "fallback-ts" \
+  "$(_ralph_ledger_exit_ts anyref fallback-ts "" "")"
+is "_exit_ts: falls back when the session has no transcript on disk" "fallback-ts" \
+  "$(_ralph_ledger_exit_ts anyref fallback-ts "not-a-real-session-id-000" "$REPO_DIR")"
+RALPH_HERDR_LEDGER="$ULEDG"
+is "_exit_ts: derives session+checkout from the ledger when the caller passes neither" \
+  "2026-09-01T10:00:09Z" "$(_ralph_ledger_exit_ts w2347-usage#u001 fallback-ts)"
+is "_exit_ts: an unknown ref falls back, ledger read and all" "fallback-ts" \
+  "$(_ralph_ledger_exit_ts w9-nope#zzzz fallback-ts)"
+
+# ralph_ledger_finish_append: the work skill's own self-report (the ONE other
+# agent-side ledger writer beside the spawn path's carve-out). Appends
+# `ev: "finish"`, NEVER `ev: "exit"` — review caught that an early exit
+# closes the open-set row while the pane is still live, and reconcile's
+# phase B then mints the still-live pane a fresh, unparented epoch on its
+# next pass. The regression test below reproduces exactly that: phase B's
+# own predicate is `ralph_ledger_open_agents` still naming the ref.
+RALPH_HERDR_LEDGER="$TMP/unit11-finish/ledger.jsonl"
+ralph_ledger_append '{"ts":"t1","ev":"spawn","agent_ref":"w2348-fin#a001","pane_id":"pF"}'
+frc=0
+fout=$(ralph_ledger_finish_append pF review 2>&1) || frc=$?
+is "finish: exits 0" "0" "$frc"
+is "finish: appends a finish fact, via=VIA" "1" \
+  "$(lcount "$RALPH_HERDR_LEDGER" '.ev=="finish" and .agent_ref=="w2348-fin#a001" and .via=="review"')"
+is "finish: no exit fact — the pane is still live" "0" \
+  "$(lcount "$RALPH_HERDR_LEDGER" '.ev=="exit" and .agent_ref=="w2348-fin#a001"')"
+is "finish: REGRESSION (review finding) — the ref stays in the open set, so a still-live pane is never rediscovered as a fresh epoch" \
+  "w2348-fin#a001" "$(ralph_ledger_open_agents)"
+is "finish: pane correlation still resolves the ref — the real exit writer will find and close it later" \
+  "w2348-fin#a001" "$(ralph_ledger_open_for_pane pF)"
+is "finish: no claude_session recorded — the usage attempt is silent, not a zero fact" "0" \
+  "$(lcount "$RALPH_HERDR_LEDGER" '.ev=="usage" and .agent_ref=="w2348-fin#a001"')"
+frc=0
+ralph_ledger_finish_append pF >/dev/null 2>&1 || frc=$?
+is "finish: a second call on the still-open pane succeeds (duplicate facts are tolerated)" "0" "$frc"
+is "finish: two finish facts on the tape now" "2" \
+  "$(lcount "$RALPH_HERDR_LEDGER" '.ev=="finish" and .agent_ref=="w2348-fin#a001"')"
+frc=0
+fout=$(ralph_ledger_finish_append pNope 2>&1) || frc=$?
+is "finish: an unbound pane refuses" "1" "$frc"
+line_has "finish: and says why" "$fout" "no open agent_ref bound to pane"
+frc=0
+fout=$(ralph_ledger_finish_append 2>&1) || frc=$?
+is "finish: no pane id at all refuses" "1" "$frc"
+line_has "finish: and says why" "$fout" "no pane id"
+ralph_ledger_append '{"ts":"t1","ev":"spawn","agent_ref":"w2348-def#a001","pane_id":"pG"}'
+ralph_ledger_finish_append pG >/dev/null 2>&1
+is "finish: VIA defaults to work-skill" "1" \
+  "$(lcount "$RALPH_HERDR_LEDGER" '.ev=="finish" and .agent_ref=="w2348-def#a001" and .via=="work-skill"')"
+
+# The full regression, end to end through the real subprocesses: a spawned,
+# CONFIRMED worker calls finish, then a status event fires (the one that
+# used to mark an unledgered ref dirty for rediscovery), then reconcile
+# runs (its startup pass, phase B) — the ref must survive with its ORIGINAL
+# epoch, never a second, unparented one.
+GROOT="$TMP/groot"
+GLEDG="$GROOT/acme/demo/ledger.jsonl"
+mkdir -p "$GROOT/acme/demo"
+RALPH_HERDR_LEDGER="$GLEDG" ralph_ledger_append \
+  '{"ts":"g0","ev":"spawn","agent_ref":"w2348-e2e#g001","pane_id":"pE","checkout":"'"$REPO_DIR"'","tokens":{"role":"driver","issue":"2348","root":"w2348-e2e#g001","depth":"0"}}'
+herd_fixture '[{"name":"w2348-e2e","agent_status":"working","pane_id":"pE"}]'
+run_event pane.agent_status_changed '{"pane_id":"pE","agent":"w2348-e2e","agent_status":"working"}' "$GROOT"
+is "e2e: the spawn is confirmed by a live state event" "1" \
+  "$(lcount "$GLEDG" '.ev=="state" and (.agent_ref | test("^w2348-e2e#"))')"
+RALPH_HERDR_LEDGER="$GLEDG" ralph_ledger_finish_append pE review >/dev/null 2>&1
+run_event pane.agent_status_changed '{"pane_id":"pE","agent":"w2348-e2e","agent_status":"idle"}' "$GROOT"
+run_reconcile "$GROOT"
+is "e2e: REGRESSION — still live + finished, no rediscovery: the ORIGINAL epoch survives" \
+  "w2348-e2e#g001" "$(RALPH_HERDR_LEDGER=$GLEDG ralph_ledger_open_ref w2348-e2e)"
+is "e2e: exactly one open ref for this name — the review-caught double-epoch never happens" "1" \
+  "$(RALPH_HERDR_LEDGER=$GLEDG ralph_ledger_open_agents | grep -c '^w2348-e2e#')"
+is "e2e: no second discover record for this name" "0" \
+  "$(lcount "$GLEDG" '.ev=="discover" and (.agent_ref | test("^w2348-e2e#"))')"
+
 unset CLAUDE_CONFIG_DIR
 
 echo "1..$n"

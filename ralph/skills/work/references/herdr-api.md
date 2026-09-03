@@ -47,9 +47,9 @@ Source of truth: `ralph/scripts/contracts.ts` (`slugify` / `formatAgentName`
 `ralph_agent_parse` / `ralph_agent_ref`); the shared golden table
 `ralph/contracts/examples/naming-golden.tsv` pins both.
 
-## Self-reporting (tokens + lifecycle)
+## Self-reporting (tokens + lifecycle + completion)
 
-Two surfaces, both per-pane, both best-effort decoration — nothing may ever
+Three surfaces, all per-pane, all best-effort decoration — nothing may ever
 gate on them; the board comment trail is the record.
 
 **Tokens** (`herdr pane report-metadata`) carry the C8 vocabulary from
@@ -87,6 +87,23 @@ need it — the cockpit's `blocked`/`working` chips ride herdr's own detection,
 and the watcher records status changes in the ledger. Prefer the `state`
 token; reach for `report-agent` only when screen detection is demonstrably
 wrong about you.
+
+**Completion** (GH-2348) is the one exception to "nothing may ever gate on
+them": it is a real ledger write, not chrome. `bash
+${CLAUDE_PLUGIN_ROOT}/scripts/ledger-finish.sh "$HERDR_PANE_ID" [VIA]`
+appends a `finish` fact for your own open agent_ref, right at the point your
+own contract already ends your driving — `board move NNN in-review`, or a
+merge close-out — rather than waiting for your pane to physically close
+(the watcher's pane-death hook, or reconcile's next sweep) to record when
+the work actually stopped. It never touches your ledger row's open/closed
+state (deliberately not an `exit` — your pane is still live when this
+fires, and closing it early would tell reconcile the worker is gone while
+herdr still sees it). `VIA` is a free-text provenance tag (`review`/`done`
+for the two hand-off points; defaults to `work-skill`). Never on escalated
+or released — those are not completions, they're a pause. Best-effort
+exactly like the token push: a refused call costs nothing you did not
+already have (your pane's eventual real exit still records one, just later
+and less exact) — warn once and keep going, never retry.
 
 ## Spawning (the sanctioned path)
 
@@ -154,16 +171,20 @@ naming the action:
 | `link-open` | (automatic — the `[[link_handlers]]` target for clicked issue/PR URLs) |
 | `reconcile` | the ledger looks stale after a server restart (also runs at `[[startup]]`) |
 
-## The ledger (read-only for you)
+## The ledger (read-only for you, except your own close-out)
 
 `~/.ralph/<owner>/<repo>/ledger.jsonl` — append-only observation log of
 spawns, state changes, adoptions, exits (`plugin/ralph-herdr/scripts/ledger.sh`).
-The watcher (`watch-event.sh` + `reconcile.sh`) is its sole appender, with one
-documented carve-out: the spawn path appends its own C7 spawn record. **Agents
-never write it.** Read it freely (pure jq reductions; duplicates tolerated),
-but nothing gates on it — it is eventually-honest, bounded by server uptime
-plus the last reconcile. L10 lineage closure is checked read-only by
-`plugin/ralph-herdr/scripts/doctor-lineage.sh`.
+The watcher (`watch-event.sh` + `reconcile.sh`) is its sole appender, with two
+documented carve-outs: the spawn path appends its own C7 spawn record, and
+the Completion self-report above (`ledger-finish.sh`, GH-2348) appends your
+own `finish` fact at close-out — the ONE ledger write an agent makes about
+itself, and only about itself, and the one write that never opens or closes
+a lifecycle row (your ledger row stays open until your pane actually exits).
+Beyond that, **agents never write it.** Read it freely (pure jq reductions;
+duplicates tolerated), but nothing gates on it — it is eventually-honest,
+bounded by server uptime plus the last reconcile. L10 lineage closure is
+checked read-only by `plugin/ralph-herdr/scripts/doctor-lineage.sh`.
 
 ## Fleets (shared claims)
 

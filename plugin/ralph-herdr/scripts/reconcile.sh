@@ -577,14 +577,18 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   export RALPH_HERDR_LEDGER="$f"
   ralph_ledger_lock "$f"
-  while IFS=$'\037' read -r ref pane pid harness _parent _state issue checkout _toks _session; do
+  while IFS=$'\037' read -r ref pane pid harness _parent _state issue checkout _toks session; do
     [ -n "$ref" ] || continue
     verdict=$(ralph_worker_verdict "$pane" "$pid" "$harness")
     case "$verdict" in
       restart_killed | crashed) : ;;
       *) continue ;;
     esac
-    ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg r "$verdict" \
+    # GH-2348: the transcript's own last-call moment, when resolvable — reuses
+    # session/checkout the row above already carries, so this costs zero
+    # extra ledger reads (the GH-1775 rule this phase was built to keep).
+    ref_ts=$(_ralph_ledger_exit_ts "$ref" "$ts" "$session" "$checkout")
+    ralph_ledger_append "$(jq -nc --arg ts "$ref_ts" --arg ref "$ref" --arg r "$verdict" \
       '{ts: $ts, ev: "exit", agent_ref: $ref, reason: $r, via: "reconcile"}')" || {
       log "exit-$verdict append failed for $ref — leaving the claim alone"
       continue
@@ -662,7 +666,14 @@ while IFS= read -r f; do
   ralph_ledger_lock "$f"
   live_names=$(ralph_names_for_ledger "$live_json" "$f")
   candidates=""
-  while IFS=$'\037' read -r ref _pane _pid _harness _parent _state _issue _checkout _toks _session; do
+  # cand_rows parallels candidates 1:1 (ref US session US checkout, one per
+  # line) so the swept-unknown append below can resolve GH-2348's honest ts
+  # from data this scan already paid for — reusing it here, rather than
+  # re-deriving session/checkout per ref at append time, is what keeps this
+  # phase at the O(ledger size) GH-1775 rewrote it to (never O(candidates x
+  # ledger size), the cost this row scan exists to avoid).
+  cand_rows=""
+  while IFS=$'\037' read -r ref _pane _pid _harness _parent _state _issue checkout _toks session; do
     [ -n "$ref" ] || continue
     name=${ref%%#*}
     # Not ours to sweep (GH-1863, narrowed to the record by GH-1944). Every
@@ -679,12 +690,14 @@ while IFS= read -r f; do
         ;;
     esac
     candidates="$candidates $ref"
+    cand_rows="$cand_rows$ref"$'\037'"$session"$'\037'"$checkout"$'\n'
   done < <(ralph_ledger_open_rows || true)
   if [ -n "$candidates" ]; then
     reprobe
     if [ "$fresh_state" = ok ]; then
       fresh_names=$(ralph_names_for_ledger "$fresh_json" "$f") || fresh_names=""
-      for ref in $candidates; do
+      while IFS=$'\037' read -r ref session checkout; do
+        [ -n "$ref" ] || continue
         name=${ref%%#*}
         case " $fresh_names " in
           *" $name "*)
@@ -696,7 +709,10 @@ while IFS= read -r f; do
         # reason=swept-unknown (GH-2309): the honest name for what this sweep
         # proves — an absence, asked twice — never how the worker ended.
         # Pre-enum rows say "lost"; readers map it via ralph_ledger_reason_canon.
-        ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" \
+        # ts (GH-2348): the transcript's own last-call moment when resolvable,
+        # else the detection instant this pass ran at, unchanged.
+        ref_ts=$(_ralph_ledger_exit_ts "$ref" "$ts" "$session" "$checkout")
+        ralph_ledger_append "$(jq -nc --arg ts "$ref_ts" --arg ref "$ref" \
           '{ts: $ts, ev: "exit", agent_ref: $ref, reason: "swept-unknown", via: "reconcile"}')" ||
           log "exit-swept append failed for $ref"
         log "exit $ref (reason swept-unknown) [$f]"
@@ -711,7 +727,9 @@ while IFS= read -r f; do
         # ledger record on that basis is recoverable (the next pass rediscovers
         # a live agent); releasing five working agents' claims is not.
         # Phase E releases instead, on a positive reading of the pane.
-      done
+      done <<EOF
+$cand_rows
+EOF
     else
       log "fresh herd re-probe failed ($fresh_err) — leaving$candidates open for the next reconcile [$f]"
       for ref in $candidates; do
