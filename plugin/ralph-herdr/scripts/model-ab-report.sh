@@ -144,6 +144,9 @@ done < <(printf '%s' "$DRIVERS_JSON" | jq -r '[.[].issue] | unique | .[]')
 # call figure and from the $/closed denominator, and counted in `unmeasured`
 # so a bucket's coverage is visible (PR #2408 P1). Absence priced at zero
 # would make the bucket with more measurement failures look cheaper.
+# $/closed divides the spend of CLOSED issues' units by the closed count —
+# `total $` still carries the whole bucket, but an open unit's spend must not
+# inflate the per-closed-issue figure (PR #2408 P1).
 REPORT=$(printf '%s' "$DRIVERS_JSON" | jq -c --argjson closed "$CLOSED_JSON" '
   map(. + {issue_state: ($closed[(.issue | tostring)] // "UNKNOWN")})
   | map(. + {model: (.model_requested // .usage.model // "unknown (no spawn ask, no usage fact)")})
@@ -155,6 +158,7 @@ REPORT=$(printf '%s' "$DRIVERS_JSON" | jq -c --argjson closed "$CLOSED_JSON" '
       closed: (map(select(.issue_state == "CLOSED") | .issue) | unique | length),
       closed_measured: (map(select(.usage != null and .issue_state == "CLOSED") | .issue) | unique | length),
       total_list_usd: (map(select(.usage != null) | .usage.list_usd // 0) | add // 0),
+      closed_list_usd: (map(select(.usage != null and .issue_state == "CLOSED") | .usage.list_usd // 0) | add // 0),
       total_calls: (map(select(.usage != null) | .usage.calls // 0) | add // 0),
       finish_review: (map(select(.finish_via == "review")) | length),
       finish_done: (map(select(.finish_via == "done")) | length)
@@ -163,7 +167,7 @@ REPORT=$(printf '%s' "$DRIVERS_JSON" | jq -c --argjson closed "$CLOSED_JSON" '
       measured: (.units - .unmeasured)
     })
   | map(. + {
-      usd_per_closed: (if .closed_measured > 0 then (.total_list_usd / .closed_measured) else null end),
+      usd_per_closed: (if .closed_measured > 0 then (.closed_list_usd / .closed_measured) else null end),
       calls_per_unit: (if .measured > 0 then (.total_calls / .measured) else null end)
     })
   | sort_by(.model)')
