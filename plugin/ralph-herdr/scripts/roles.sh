@@ -663,24 +663,67 @@ ralph_lane_model() {
     }
   fi
   [ -n "$model" ] || return 0
-  # Shape only: one argv word, no whitespace or shell metacharacters. The
-  # bracket pair admits the harness's context-window suffix (`[1m]`).
+  # Shape only: one argv word. Refuse whitespace, shell metacharacters and a
+  # leading '-' (reads as a flag) — nothing else, and no length ceiling: a
+  # Vertex AI id carries `@` (`claude-3-5-sonnet-v2@20241022`) and a Bedrock
+  # application inference-profile ARN carries `/` and `:` and runs well past
+  # what an Anthropic-direct id ever needed. Whether the model EXISTS stays
+  # the harness's contract (top-of-function comment); this is only "can it
+  # ride an argv" (PR #2374 review thread, discussion_r3910492324; GH-2375).
+  #
+  # Every refusal below prints the value via %q, never $model raw: a refused
+  # value can still carry control bytes (that's WHY it's refused), and the
+  # first draft echoed it verbatim to stderr — the same forgeable-terminal-
+  # output hole one layer up (Greptile review, PR #2422 discussion_r3920987572).
+  # %q's own idea of "printable" is locale-dependent — measured letting a
+  # Unicode bidi override through unescaped under a UTF-8 locale on CI while
+  # escaping it correctly here — so the tr pass is a backstop: literal byte
+  # range \40-\176 (printable ASCII), '?' for anything outside it. LC_ALL=C
+  # pins tr to byte-wise operation — BSD tr errors ("Illegal byte sequence")
+  # on raw multibyte UTF-8 input under a UTF-8 locale otherwise.
+  local qmodel
+  qmodel=$(printf '%q' "$model" | LC_ALL=C tr -c '\40-\176' '?')
   case "$model" in
     [A-Za-z0-9]*) ;;
     *)
-      printf '%s\n' "ralph_lane_model: $src='$model' is not a model name (must start with a letter or digit)" >&2
+      printf '%s\n' "ralph_lane_model: $src=$qmodel is not a model name (must start with a letter or digit)" >&2
       return 1
       ;;
   esac
-  # Parameter expansion, not grep: a `]` inside a bracket expression closes
-  # it in every regex flavour, and the first draft's pattern matched nothing.
-  local rest="${model//[A-Za-z0-9._:-]/}"
-  rest="${rest//\[/}"
-  rest="${rest//\]/}"
-  if [ "${#model}" -gt 80 ] || [ -n "$rest" ]; then
-    printf '%s\n' "ralph_lane_model: $src='$model' is not a model name (allowed: letters, digits, . _ : [ ] -; max 80 chars)" >&2
-    return 1
-  fi
+  # Control bytes (ESC, CR, ...) are refused too — none is a shell
+  # metacharacter, but a dry-run path that prints the model unescaped would
+  # let one forge terminal output (Codex review, PR #2422 discussion_r3910492324).
+  case "$model" in
+    *[[:cntrl:]]*)
+      printf '%s\n' "ralph_lane_model: $src=$qmodel is not a model name (no control characters)" >&2
+      return 1
+      ;;
+  esac
+  # Unicode bidi/format control characters (LRM/RLM, the 202A-202E embedding
+  # controls, the 2066-2069 isolates) are outside bash's [:cntrl:] class but
+  # can still reorder or hide terminal output when a dry-run path renders the
+  # value — octal escapes, not \uXXXX, for bash 3.2 (Greptile review, PR #2422
+  # discussion_r3921053575).
+  local bidi
+  for bidi in $'\342\200\216' $'\342\200\217' $'\342\200\252' $'\342\200\253' \
+              $'\342\200\254' $'\342\200\255' $'\342\200\256' $'\342\201\246' \
+              $'\342\201\247' $'\342\201\250' $'\342\201\251'; do
+    case "$model" in
+      *"$bidi"*)
+        printf '%s\n' "ralph_lane_model: $src=$qmodel is not a model name (no Unicode bidi/format control characters)" >&2
+        return 1
+        ;;
+    esac
+  done
+  local c
+  for c in ' ' $'\t' $'\n' ';' '|' '&' '<' '>' '$' '`' "'" '"' '(' ')'; do
+    case "$model" in
+      *"$c"*)
+        printf '%s\n' "ralph_lane_model: $src=$qmodel is not a model name (no whitespace or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
+        return 1
+        ;;
+    esac
+  done
   printf '%s\n' "$model"
 }
 

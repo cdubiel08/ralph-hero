@@ -51,10 +51,42 @@ if [ -z "${RALPH_TICK_RUNNER:-}" ]; then
   fi
   [ -n "$MODEL" ] || MODEL=sonnet
   # Shape only — one argv word; the harness owns whether the model exists.
-  _rest="${MODEL//[A-Za-z0-9._:-]/}"; _rest="${_rest//\[/}"; _rest="${_rest//\]/}"
+  # No length ceiling: a Vertex id carries `@` and a Bedrock application
+  # inference-profile ARN carries `/` and `:` and runs past 80 chars
+  # (mirrors roles.sh ralph_lane_model — GH-2375).
+  # Control bytes (ESC, CR, ...) refused too — not shell metacharacters, but
+  # printing the model unescaped could forge terminal output (GH-2375 review).
+  _rest=""
   case "$MODEL" in [A-Za-z0-9]*) ;; *) _rest="x" ;; esac
-  if [ -n "$_rest" ] || [ "${#MODEL}" -gt 80 ]; then
-    echo "tick: driver model '$MODEL' is not a model name (allowed: letters, digits, . _ : [ ] -; max 80 chars)" >&2
+  if [ -z "$_rest" ]; then
+    case "$MODEL" in *[[:cntrl:]]*) _rest="x" ;; esac
+  fi
+  # Unicode bidi/format control characters (LRM/RLM, 202A-202E, 2066-2069):
+  # outside [:cntrl:], but can still reorder or hide terminal output where a
+  # dry-run path renders the value. Octal escapes, not \uXXXX (bash 3.2 —
+  # mirrors roles.sh ralph_lane_model, GH-2375 review discussion_r3921053575).
+  if [ -z "$_rest" ]; then
+    for _c in $'\342\200\216' $'\342\200\217' $'\342\200\252' $'\342\200\253' \
+              $'\342\200\254' $'\342\200\255' $'\342\200\256' $'\342\201\246' \
+              $'\342\201\247' $'\342\201\250' $'\342\201\251'; do
+      case "$MODEL" in *"$_c"*) _rest="x"; break ;; esac
+    done
+  fi
+  if [ -z "$_rest" ]; then
+    for _c in ' ' $'\t' $'\n' ';' '|' '&' '<' '>' '$' '`' "'" '"' '(' ')'; do
+      case "$MODEL" in *"$_c"*) _rest="x"; break ;; esac
+    done
+  fi
+  if [ -n "$_rest" ]; then
+    # %q, never $MODEL raw: a refused value can still carry control bytes
+    # (that's why it's refused) — echoing it verbatim would forge the same
+    # terminal output the refusal exists to prevent (Greptile review,
+    # PR #2422 discussion_r3920987572). tr is a backstop: %q's own
+    # "printable" notion let a Unicode bidi override through unescaped
+    # under a UTF-8 locale on CI. LC_ALL=C pins tr to byte-wise operation —
+    # BSD tr errors on raw multibyte UTF-8 otherwise (mirrors roles.sh).
+    _qmodel=$(printf '%q' "$MODEL" | LC_ALL=C tr -c '\40-\176' '?')
+    printf '%s\n' "tick: driver model $_qmodel is not a model name (must start with a letter or digit, no whitespace, control characters or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
     exit 64
   fi
 fi

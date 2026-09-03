@@ -232,6 +232,12 @@ expect_contains "a well-formed models object without driver keeps the sonnet def
 run_tick_model bracket '{"models":{"driver":"claude-haiku-4-5[1m]"}}' ""
 expect_contains "a bracketed model reaches the runner as ONE literal word, never glob-expanded" "$CLAUDE_LOG" "-p --model claude-haiku-4-5[1m] --permission-mode"
 
+run_tick_model vertex '{"models":{"driver":"claude-3-5-sonnet-v2@20241022"}}' ""
+expect_contains "a Vertex AI id (@) is admitted (GH-2375)" "$CLAUDE_LOG" "-p --model claude-3-5-sonnet-v2@20241022 --permission-mode"
+
+run_tick_model bedrock-arn '{"models":{"driver":"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abcdefghijklmnopqrstuvwxyz0123456789"}}' ""
+expect_contains "a Bedrock ARN (/, :, >80 chars) is admitted (GH-2375)" "$CLAUDE_LOG" "-p --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abcdefghijklmnopqrstuvwxyz0123456789 --permission-mode"
+
 run_tick_model empty-settings '{"models":{"lead":"opus"}}' " "
 [ "$TICK_RC" -eq 64 ] && pass "an empty settings.json is a usage error, not a silent sonnet (exit 64)" || fail "empty settings: expected exit 64, got $TICK_RC"
 
@@ -240,9 +246,20 @@ run_tick_model null-settings '{"models":{"lead":"opus"}}' "null"
 
 run_tick_model bad "" "" "RALPH_MODEL_DRIVER=bad value"
 [ "$TICK_RC" -eq 64 ] && pass "an unridable driver model is a usage error (exit 64)" || fail "bad model: expected exit 64, got $TICK_RC"
-expect_contains "the refusal names the value" "$TICK_OUT" "driver model 'bad value' is not a model name"
+expect_contains "the refusal names the value, %q-escaped rather than raw (GH-2375 Greptile review)" "$TICK_OUT" "driver model bad\\ value is not a model name"
+
+run_tick_model control-char "" "" "$(printf 'RALPH_MODEL_DRIVER=model\x1b[2J')"
+[ "$TICK_RC" -eq 64 ] && pass "a control character in the driver model is a usage error (exit 64, GH-2375 PR #2422 discussion_r3920882583)" || fail "control char: expected exit 64, got $TICK_RC"
+expect_not_contains "the refusal never echoes the raw ESC byte (GH-2375 Greptile review, discussion_r3920987572)" "$TICK_OUT" "$(printf '\x1b[2J')"
+expect_contains "the refusal names the %q-escaped value instead" "$TICK_OUT" "$(printf '%q' "$(printf 'model\x1b[2J')")"
 expect_not_contains "the refusal happens before any board read" "$BOARD_LOG" "BOARD"
 expect_not_contains "the refusal happens before any runner spawn" "$CLAUDE_LOG" "ralph:work"
+
+run_tick_model bidi "" "" "$(printf 'RALPH_MODEL_DRIVER=model\342\200\256ABC')"
+[ "$TICK_RC" -eq 64 ] && pass "a Unicode RLO override (U+202E) in the driver model is a usage error (exit 64, GH-2375 PR #2422 discussion_r3921053575)" || fail "bidi: expected exit 64, got $TICK_RC"
+expect_not_contains "the refusal never echoes the raw bidi character" "$TICK_OUT" "$(printf '\342\200\256')"
+expect_contains "the refusal still names the value (model...ABC, sanitized around the bidi byte)" "$TICK_OUT" "model"
+expect_contains "the refusal still names the value (model...ABC, sanitized around the bidi byte)" "$TICK_OUT" "ABC"
 
 # A custom RALPH_TICK_RUNNER never receives MODEL, so the knob is neither
 # read nor validated under it (PR #2374 P2): a transport that worked before

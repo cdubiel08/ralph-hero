@@ -481,7 +481,7 @@ reset
 out=$(RALPH_MODEL_TEND='bad value' RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
 rc=$?
 if [ "$rc" -ne 0 ]; then ok "tend bad model: an unridable model refuses the pass"; else not_ok "tend bad model: expected a refusal, got rc 0"; fi
-has "tend bad model: the refusal names the source" "$out" "RALPH_MODEL_TEND='bad value'"
+has "tend bad model: the refusal names the source" "$out" "RALPH_MODEL_TEND=bad"
 log_hasnt "tend bad model: refused before any surface — no split" "pane split"
 log_hasnt "tend bad model: refused before any surface — no agent" "agent start"
 is "tend bad model: the ledger is untouched" "0" "$(ledger_count 'true')"
