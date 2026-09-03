@@ -146,6 +146,31 @@ case "$OUT" in
   *"DRY RUN — would spawn the lead"*) not_ok "team linux: no plan may be printed for a refused spawn" ;;
   *) ok "team linux: no plan printed for a refused spawn" ;;
 esac
+# GH-2360: the refusal is a ledger word, not just a stderr line — a closed
+# row now distinguishes "refused, platform unmeasured" from "never
+# attempted", the same shape the in-pane probe's own refusals leave. A DRY
+# run narrates those appends and writes none (run_wt is dry by default); the
+# live refusal path exits before any herdr mutation, so it is safe to run
+# for real against the fakes.
+line_has "team linux dry: narrates the containment append it would make" "$OUT" 'process_containment: "not_available"'
+line_has "team linux dry: narrates the close it would make" "$OUT" 'reason: "containment_not_available"'
+WTL_SQLITE="${WTL%.jsonl}.sqlite"
+is "team linux dry: writes NO ledger row" "0" \
+  "$(sqlite3 "$WTL_SQLITE" "SELECT count(*) FROM facts;" 2>/dev/null || echo 0)"
+RC=0
+OUT=$(RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" RALPH_HERDR_LEDGER="$WTL" \
+  RALPH_HERDR_UNAME=Linux ANTHROPIC_API_KEY= \
+  bash "$SCRIPTS/work-team.sh" 900 </dev/null 2>&1) || RC=$?
+if [ "$RC" -ne 0 ]; then ok "team linux live: refuses"; else not_ok "team linux live: must refuse (rc 0)"; fi
+line_lacks "team linux live: no workspace created for a refused spawn" "$(cat "$FAKE_HERDR_LOG")" "workspace create"
+linux_events=$(sqlite3 "$WTL_SQLITE" "SELECT payload FROM facts ORDER BY seq;" 2>/dev/null)
+is "team linux live: exactly one spawn row for the refused lead" "1" \
+  "$(printf '%s\n' "$linux_events" | jq -c 'select(.ev=="spawn" and (.agent_ref|startswith("o900-")))' 2>/dev/null | grep -c . || true)"
+linux_contain=$(printf '%s\n' "$linux_events" | jq -c 'select(.ev=="containment" and .agent_ref!=null and (.agent_ref|startswith("o900-")))' 2>/dev/null | tail -1)
+line_has "team linux live: a containment event names process_containment not_available" "$linux_contain" '"process_containment":"not_available"'
+line_has "team linux live: the same event names the observed tool binding" "$linux_contain" '"tool_binding":"accepted"'
+linux_close=$(printf '%s\n' "$linux_events" | jq -c 'select(.ev=="exit" and .agent_ref!=null and (.agent_ref|startswith("o900-")))' 2>/dev/null | tail -1)
+line_has "team linux live: the provisional row closes containment_not_available" "$linux_close" '"reason":"containment_not_available"'
 run_wt 900
 line_has "team dry: the prompt names the lead's own staffing path" \
   "$OUT" "work-fleet.sh --epic 900"

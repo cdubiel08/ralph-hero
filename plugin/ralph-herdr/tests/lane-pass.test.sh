@@ -353,7 +353,9 @@ is "tend tool-writer: the containment event records applied / not_applied, separ
 is "tend tool-writer: the row closes tool_binding_not_applied" "1" \
   "$(ledger_count '.ev=="exit" and .reason=="tool_binding_not_applied" and .via=="spawn"')"
 
-# ── 5d. an unmeasured platform refuses BEFORE any surface exists ─────────────
+# ── 5d. an unmeasured platform refuses BEFORE any pane exists, but leaves a
+#        ledger row (GH-2360): the closed row is the only durable proof this
+#        was a refusal, platform unmeasured — never "not attempted" ────────
 reset
 out=$(RALPH_HERDR_UNAME=Linux RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
 rc=$?
@@ -361,7 +363,20 @@ if [ "$rc" -ne 0 ]; then ok "tend linux: refuses"; else not_ok "tend linux: must
 has "tend linux: the refusal names not_available" "$out" "not_available on Linux"
 log_hasnt "tend linux: no pane was split for a spawn that refused" "pane split"
 log_hasnt "tend linux: no agent was started" "agent start"
-is "tend linux: a refusal before any surface exists writes NO ledger row" "0" "$(ledger_count 'true')"
+is "tend linux: one spawn row for the refused pass" "1" \
+  "$(ledger_count '.ev=="spawn" and (.agent_ref | test("^t0-tend#[0-9a-f]{8}$"))')"
+is "tend linux: a containment event names process_containment not_available" "1" \
+  "$(ledger_count '.ev=="containment" and .process_containment=="not_available" and .tool_binding=="accepted"')"
+is "tend linux: the row closes containment_not_available" "1" \
+  "$(ledger_count '.ev=="exit" and .reason=="containment_not_available" and .via=="spawn"')"
+# …and a DRY run of the same refusal narrates the appends and writes none.
+reset
+out=$(RALPH_HERDR_UNAME=Linux RALPH_HERDR_DRY_RUN=true RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "tend linux dry: still refuses"; else not_ok "tend linux dry: must refuse (rc 0)"; fi
+has "tend linux dry: narrates the containment append it would make" "$out" 'process_containment: "not_available"'
+has "tend linux dry: narrates the close it would make" "$out" 'reason: "containment_not_available"'
+is "tend linux dry: the ledger is untouched" "0" "$(ledger_count 'true')"
 
 # ── 6. dry run narrates the in-tab plan and mutates nothing ──────────────────
 reset
