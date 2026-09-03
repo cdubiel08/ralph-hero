@@ -649,6 +649,14 @@ case "$out" in
   *"model"*"[2J"*) ok "model: the control-char refusal names the %q-escaped value instead of the raw byte" ;;
   *) not_ok "model: control-char refusal text — got '$out'" ;;
 esac
+fails "model: a Unicode RLO override (U+202E) refuses — outside [:cntrl:], but can reorder terminal output too (GH-2375, PR #2422 discussion_r3921053575)" \
+  with_env "RALPH_MODEL_LEAD=model$(printf '\342\200\256')ABC" ralph_lane_model lead "$MROOT/c"
+out=$(with_env "RALPH_MODEL_LEAD=model$(printf '\342\200\256')ABC" ralph_lane_model lead "$MROOT/c" 2>&1 >/dev/null)
+case "$out" in
+  *"$(printf '\342\200\256')"*) not_ok "model: the RLO refusal must never echo the raw bidi character — got '$out'" ;;
+  *"model"*"ABC"*) ok "model: the RLO refusal names the %q-escaped value instead of the raw character" ;;
+  *) not_ok "model: RLO refusal text — got '$out'" ;;
+esac
 long90=$(printf 'a%.0s' $(seq 1 90))
 is "model: over 80 chars is admitted — no length ceiling (GH-2375)" "$long90" \
   "$(with_env "RALPH_MODEL_LEAD=$long90" ralph_lane_model lead "$MROOT/c")"

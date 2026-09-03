@@ -693,6 +693,22 @@ ralph_lane_model() {
       return 1
       ;;
   esac
+  # Unicode bidi/format control characters (LRM/RLM, the 202A-202E embedding
+  # controls, the 2066-2069 isolates) are outside bash's [:cntrl:] class but
+  # can still reorder or hide terminal output when a dry-run path renders the
+  # value — octal escapes, not \uXXXX, for bash 3.2 (Greptile review, PR #2422
+  # discussion_r3921053575).
+  local bidi
+  for bidi in $'\342\200\216' $'\342\200\217' $'\342\200\252' $'\342\200\253' \
+              $'\342\200\254' $'\342\200\255' $'\342\200\256' $'\342\201\246' \
+              $'\342\201\247' $'\342\201\250' $'\342\201\251'; do
+    case "$model" in
+      *"$bidi"*)
+        echo "ralph_lane_model: $src=$qmodel is not a model name (no Unicode bidi/format control characters)" >&2
+        return 1
+        ;;
+    esac
+  done
   local c
   for c in ' ' $'\t' $'\n' ';' '|' '&' '<' '>' '$' '`' "'" '"' '(' ')'; do
     case "$model" in

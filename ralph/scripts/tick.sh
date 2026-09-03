@@ -61,6 +61,17 @@ if [ -z "${RALPH_TICK_RUNNER:-}" ]; then
   if [ -z "$_rest" ]; then
     case "$MODEL" in *[[:cntrl:]]*) _rest="x" ;; esac
   fi
+  # Unicode bidi/format control characters (LRM/RLM, 202A-202E, 2066-2069):
+  # outside [:cntrl:], but can still reorder or hide terminal output where a
+  # dry-run path renders the value. Octal escapes, not \uXXXX (bash 3.2 —
+  # mirrors roles.sh ralph_lane_model, GH-2375 review discussion_r3921053575).
+  if [ -z "$_rest" ]; then
+    for _c in $'\342\200\216' $'\342\200\217' $'\342\200\252' $'\342\200\253' \
+              $'\342\200\254' $'\342\200\255' $'\342\200\256' $'\342\201\246' \
+              $'\342\201\247' $'\342\201\250' $'\342\201\251'; do
+      case "$MODEL" in *"$_c"*) _rest="x"; break ;; esac
+    done
+  fi
   if [ -z "$_rest" ]; then
     for _c in ' ' $'\t' $'\n' ';' '|' '&' '<' '>' '$' '`' "'" '"' '(' ')'; do
       case "$MODEL" in *"$_c"*) _rest="x"; break ;; esac
