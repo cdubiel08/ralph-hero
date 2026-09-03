@@ -92,8 +92,7 @@ billing_guard
 ralph_plugin_freshness_notice
 
 usage() {
-  cat <<'EOF'
-usage: work-fleet.sh [--refill] [--no-watch] [ISSUE...]
+  printf '%s' 'usage: work-fleet.sh [--refill] [--no-watch] [ISSUE...]
        work-fleet.sh --epic EPIC
 
   (no ISSUE)  spawn the top RALPH_HERDR_FLEET (default 2, hard cap 4) issues of
@@ -102,8 +101,8 @@ usage: work-fleet.sh [--refill] [--no-watch] [ISSUE...]
               Each is validated against the same frontier read; one that is
               blocked or not eligible is SKIPPED with a reason and the rest
               still spawn. An issue a session already owns is skipped too.
-  --epic EPIC the team lead's staffing path (GH-2214): the ranked frontier
-              filtered to EPIC's direct children, capped at RALPH_HERDR_FLEET.
+  --epic EPIC the team lead'\''s staffing path (GH-2214): the ranked frontier
+              filtered to EPIC'\''s direct children, capped at RALPH_HERDR_FLEET.
               A ranked path — the unwired-reference guard applies. Refused
               beside an explicit list or --refill.
   --refill    arm watcher refill for the run from the frontier. Frontier policy
@@ -113,7 +112,7 @@ usage: work-fleet.sh [--refill] [--no-watch] [ISSUE...]
               the board anyway. Honest limit: nobody narrates completions or
               blocks; the caller owns its own board reads. Env spelling:
               RALPH_HERDR_NO_WATCH=1. Refill is unaffected — its edge trigger
-              is the server-side watch-event hook, not this pane's watcher.
+              is the server-side watch-event hook, not this pane'\''s watcher.
   -h, --help  this.
 
 Every candidate prints the dependency state the frontier asserted about it
@@ -126,12 +125,7 @@ Before any spawn the run prints the IN-FLIGHT FILE SURFACE — the files every
 currently-open fleet PR holds, one `surface:` line per PR labelled by unit, or
 `surface: none in flight`. Fact, never prediction: advisory like the deps:
 line, and an unreadable list prints NOT CHECKED rather than rendering empty.
-
-Knobs: RALPH_HERDR_FLEET, RALPH_HERDR_NO_WATCH, RALPH_HERDR_REFILL / _TTL_MIN / _BUDGET,
-       RALPH_HERDR_DEP_REF_CAP (body references resolved per candidate, 10),
-       RALPH_HERDR_SURFACE_CAP (open fleet PR file lists read, 10),
-       RALPH_HERDR_DRY_RUN=true (plans everything, spawns and arms nothing).
-EOF
+'
 }
 
 REFILL="${RALPH_HERDR_REFILL:-}"
@@ -214,11 +208,22 @@ elif [ -n "$EPIC" ]; then
   # ranking (the pick that used to live in work-team.sh, GH-2214). An empty
   # slice names the epic: "the whole frontier is empty" and "nothing under
   # THIS epic is ready" are different answers, and a lead reading the wrong
-  # one would stop staffing a team that has work.
-  NUMBERS=$(jq -r --argjson e "$EPIC" --argjson k "$FLEET" '
-    [.queue[]? | select(.parentNumber == $e)][0:$k][].number' <<<"$QUEUE_JSON" 2>/dev/null) || NUMBERS=""
+  # one would stop staffing a team that has work. A jq FAILURE is a third
+  # answer, distinct from both (GH-2382): bash 3.2 materializes a here-string
+  # as a /tmp file the GH-2266 containment profile refuses to write, so piping
+  # stdin (never `<<<`) is what lets a contained pane reach jq at all — and
+  # the failure is checked rather than swallowed into "empty".
+  if ! NUMBERS=$(printf '%s' "$QUEUE_JSON" | jq -r --argjson e "$EPIC" --argjson k "$FLEET" '
+    [.queue[]? | select(.parentNumber == $e)][0:$k][].number' 2>/dev/null); then
+    echo "frontier UNREADABLE — jq failed on the frontier read (not the same as empty)" >&2
+    exit 1
+  fi
   if [ -z "$NUMBERS" ]; then
-    if jq -e '.queue | length > 0' <<<"$QUEUE_JSON" >/dev/null 2>&1; then
+    if ! QLEN=$(printf '%s' "$QUEUE_JSON" | jq -r '.queue | length' 2>/dev/null); then
+      echo "frontier UNREADABLE — jq failed on the frontier read (not the same as empty)" >&2
+      exit 1
+    fi
+    if [ "$QLEN" -gt 0 ]; then
       echo "no ready children of GH-$EPIC on the frontier — nothing to staff (blockers may still be open; re-run as they clear)"
     else
       echo "frontier empty — nothing to spawn"
@@ -227,7 +232,10 @@ elif [ -n "$EPIC" ]; then
   fi
   echo "team GH-$EPIC staffing: ranked frontier ∩ direct children, capped at $FLEET"
 else
-  NUMBERS=$(jq -r --argjson k "$FLEET" '.queue[0:$k][]?.number' <<<"$QUEUE_JSON")
+  if ! NUMBERS=$(printf '%s' "$QUEUE_JSON" | jq -r --argjson k "$FLEET" '.queue[0:$k][]?.number' 2>/dev/null); then
+    echo "frontier UNREADABLE — jq failed on the frontier read (not the same as empty)" >&2
+    exit 1
+  fi
   if [ -z "$NUMBERS" ]; then
     echo "frontier empty — nothing to spawn"
     exit 0
@@ -240,16 +248,16 @@ fi
 # named by the board's own one-line `get` view rather than guessed at here.
 frontier_verdict() {
   local n="$1" q="$2" why line
-  jq -e --argjson n "$n" '[.queue[]? | select(.number == $n)] | length > 0' <<<"$q" >/dev/null 2>&1 &&
+  printf '%s' "$q" | jq -e --argjson n "$n" '[.queue[]? | select(.number == $n)] | length > 0' >/dev/null 2>&1 &&
     return 0
-  why=$(jq -r --argjson n "$n" '
+  why=$(printf '%s' "$q" | jq -r --argjson n "$n" '
     [.blocked[]? | select(.number == $n)] | .[0] |
     if . == null then empty
     elif (.truncated // .blockersTruncated // .fieldValuesTruncated // false)
       then "blocked (dependency read truncated — fails closed)"
     else ((.blockers_open // .openBlockers // []) | map("#" + tostring) | join(" ")) as $b
       | if $b == "" then "blocked (open dependencies)" else "blocked by " + $b end
-    end' <<<"$q" 2>/dev/null) || why=""
+    end' 2>/dev/null) || why=""
   if [ -n "$why" ]; then
     printf '%s\n' "$why"
     return 1
@@ -276,7 +284,7 @@ frontier_verdict() {
 # "none" must not render alike — that is this line's own subject.
 dep_evidence() {
   local n="$1" q="$2"
-  jq -r --argjson n "$n" '
+  printf '%s' "$q" | jq -r --argjson n "$n" '
     [.queue[]? | select(.number == $n)] | .[0] // {} |
     if has("blockers") then
       (.blockers // []) as $b
@@ -288,7 +296,7 @@ dep_evidence() {
       | if (($o + $c) | length) == 0 then "deps: none (frontier reports no dependency edges)"
         else "deps: " + (($o + $c) | join(" ")) end
     else "deps: not reported by this board CLI (no blocker list in the frontier read) — NOT the same as none"
-    end' <<<"$q" 2>/dev/null || echo "deps: not reported (frontier read unparseable) — NOT the same as none"
+    end' 2>/dev/null || echo "deps: not reported (frontier read unparseable) — NOT the same as none"
 }
 
 # unwired_refs N QUEUE_JSON — OPEN own-repo issues N's BODY names that the
@@ -317,17 +325,17 @@ dep_evidence() {
 unwired_refs() {
   local n="$1" q="$2" out detail
   out=$(ralph_dep_refs_verdict "$n" "$q")
-  detail=$(jq -r '.detail // ""' <<<"$out" 2>/dev/null) || detail=""
-  if [ "$(jq -r '.ok // false' <<<"$out" 2>/dev/null)" != "true" ]; then
+  detail=$(printf '%s' "$out" | jq -r '.detail // ""' 2>/dev/null) || detail=""
+  if [ "$(printf '%s' "$out" | jq -r '.ok // false' 2>/dev/null)" != "true" ]; then
     echo "  body refs: NOT CHECKED — ${detail:-dep-refs.sh produced no verdict}"
     return 0
   fi
-  if [ "$(jq -r '.count' <<<"$out")" -eq 0 ]; then
+  if [ "$(printf '%s' "$out" | jq -r '.count')" -eq 0 ]; then
     echo "  body refs: no unwired OPEN reference${detail:+ ($detail)}"
     return 0
   fi
   printf 'SKIP body names OPEN %s with no dependency edge — wire it (board dep %s --on N) or name this issue explicitly (work-fleet %s)\n' \
-    "$(jq -r '.summary' <<<"$out")" "$n" "$n"
+    "$(printf '%s' "$out" | jq -r '.summary')" "$n" "$n"
   return 1
 }
 
@@ -365,7 +373,7 @@ inflight_surface() {
     echo "surface: NOT CHECKED — could not list open PRs (not the same as none in flight)"
     return 0
   fi
-  rows=$(jq -r '.[] | "\(.number)\t\(.headRefName)"' <<<"$list" 2>/dev/null) || {
+  rows=$(printf '%s' "$list" | jq -r '.[] | "\(.number)\t\(.headRefName)"' 2>/dev/null) || {
     echo "surface: NOT CHECKED — open-PR list unparseable (not the same as none in flight)"
     return 0
   }
@@ -391,12 +399,12 @@ inflight_surface() {
     fi
     shown=$((shown + 1))
     if files=$(cd "$REPO" 2>/dev/null && gh pr view "$n" --json files 2>/dev/null) &&
-      files=$(jq -r '[.files[].path] | join(" ")' <<<"$files" 2>/dev/null); then
+      files=$(printf '%s' "$files" | jq -r '[.files[].path] | join(" ")' 2>/dev/null); then
       echo "surface: GH-$unit (#$n): ${files:-(no files)}"
     else
       echo "surface: NOT CHECKED for #$n (file list unreadable — not the same as empty)"
     fi
-  done <<<"$rows"
+  done < <(printf '%s\n' "$rows")
   if [ -z "$any" ]; then
     echo "surface: none in flight"
   elif [ "$over" -gt 0 ]; then
