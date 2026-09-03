@@ -21,20 +21,26 @@
 # on stderr rather than swallowed — `ralph_ledger_append` already does this
 # internally — because a silent gap in telemetry is a defect nobody would
 # ever notice. Every path that is a routine "not applicable" (no git repo, no
-# ralph board config, no vendored ralph-herdr checkout, no jq/sqlite3/hasher)
+# ralph board config, no ralph-herdr plugin installed, no jq/sqlite3/hasher)
 # stays silent on both streams, matching every other hook here: this fires on
 # EVERY user turn, and a stderr line per turn in every host repo that hasn't
 # opted into the herdr ledger would be its own kind of noise.
 #
 # Cross-plugin by construction, not by accident: the ledger this hook writes
-# to belongs to the ralph-herdr plugin (`plugin/ralph-herdr/scripts/ledger.sh`),
-# not to the portable `ralph` plugin this hook ships in. It is sourced from
-# the REPO's own tree (never the herdr-installed copy under
-# ~/.config/herdr/...) because ralph_ledger_path's scope resolution is a pure
-# function of the board config any checkout of this repo already carries —
-# no herdr session, no HERDR_ENV, is required to resolve where the ledger
-# lives. A host repo that installs `ralph` standalone (no `plugin/ralph-herdr/`
-# vendored) has nothing to write to, and this hook is a silent no-op there.
+# to belongs to the ralph-herdr HERDR plugin, not to the portable `ralph`
+# plugin this hook ships in. Its library is resolved from the USER's trust
+# boundary only — $RALPH_HERDR_SCRIPTS_DIR (the explicit override
+# herdr-setup.sh already honours), else herdr's own plugin registry
+# (${XDG_CONFIG_HOME:-~/.config}/herdr/plugins.json → plugin_root, the same
+# read herdr-setup.sh makes). NEVER the repository tree: this hook fires on
+# every prompt in every checkout the user opens, so sourcing
+# `<repo>/plugin/ralph-herdr/scripts/ledger.sh` would hand any cloned repo
+# arbitrary code execution as the user (Greptile P1 on #2394). Every file
+# under the repo is read as DATA here (jq, cat, hash) — the same rule the
+# funnels keep. ralph_ledger_path's scope resolution is a pure function of the
+# board config, so no herdr session and no HERDR_ENV is required to resolve
+# where the ledger lives; a machine with no ralph-herdr plugin installed has
+# nothing to write to, and this hook is a silent no-op there.
 #
 # Honest limits, stated rather than hidden:
 #   - The CLAUDE.md chain is hashed as ONE combined blob, not per file. This
@@ -78,11 +84,19 @@ CONF="$ROOT/.ralph.json"
 [ -f "$CONF" ] || CONF="$ROOT/.claude/settings.json"
 [ -f "$CONF" ] || exit 0
 
-# The ledger belongs to ralph-herdr, a sibling plugin — sourced from THIS
-# repo's own tree (see header). Absent in every host repo that installed only
-# the portable `ralph` plugin: silent no-op, never a loud "not vendored" line
-# on every turn.
-LEDGER_LIB="$ROOT/plugin/ralph-herdr/scripts/ledger.sh"
+# The ledger library, from the user's trust boundary only (see header) —
+# never from $ROOT. Absent on a machine with no ralph-herdr plugin: silent
+# no-op, never a loud "not installed" line on every turn.
+LEDGER_LIB=""
+if [ -n "${RALPH_HERDR_SCRIPTS_DIR:-}" ]; then
+  LEDGER_LIB="$RALPH_HERDR_SCRIPTS_DIR/ledger.sh"
+else
+  REGISTRY="${RALPH_HERDR_PLUGINS_JSON:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins.json}"
+  [ -f "$REGISTRY" ] || exit 0
+  PLUGIN_ROOT=$(jq -r 'if type == "array" then map(select(.plugin_id == "ralph-herdr")) | .[0].plugin_root // empty else empty end' "$REGISTRY" 2>/dev/null)
+  [ -n "$PLUGIN_ROOT" ] || exit 0
+  LEDGER_LIB="$PLUGIN_ROOT/scripts/ledger.sh"
+fi
 [ -f "$LEDGER_LIB" ] || exit 0
 # shellcheck source=/dev/null
 . "$LEDGER_LIB" 2>/dev/null || exit 0
