@@ -23,10 +23,15 @@
 //	                        the PR chip, the epic rollup, and (only while it is
 //	                        on screen) the Done window. Default 120, floored at
 //	                        RALPH_COCKPIT_INTERVAL
-//	RALPH_COCKPIT_GLYPHS    "nerd" opts in to Nerd Font card glyphs; anything
-//	                        else (default) uses ASCII — a host without the font
-//	                        renders tofu at the wrong width and shears the
-//	                        fixed-stride card grid the mouse maps through
+//	RALPH_COCKPIT_GLYPHS    "nerd" opts in to Nerd Font card glyphs, "ascii"
+//	                        opts down; anything else (default) is unicode — a
+//	                        host without the font renders tofu at the wrong
+//	                        width and shears the fixed-stride card grid the
+//	                        mouse maps through. Unset in the env, the same
+//	                        knob is read as `cockpit_glyphs=` from
+//	                        $RALPH_HOME/config (~/.ralph/config): a font is a
+//	                        MACHINE property, and a herdr pane does not carry
+//	                        the operator's shell exports (GH-2405)
 //	COLORTERM               "truecolor"/"24bit" (set by the terminal, not the
 //	                        operator) admits the selected card's background
 //	                        wash; anything else draws the selection as bar and
@@ -146,7 +151,7 @@ func resolveConfig(args []string, getenv func(string) string) (Config, error) {
 	cfg.LedgerPath = ledgerPath(cfg.Repo, getenv)
 	cfg.TranscriptRoot = transcriptRoot(getenv)
 	cfg.BudgetPath = budgetPath(getenv)
-	cfg.Glyphs = resolveGlyphs(getenv("RALPH_COCKPIT_GLYPHS"))
+	cfg.Glyphs = resolveGlyphTier(getenv)
 	cfg.Truecolor = resolveTruecolor(getenv("COLORTERM"))
 	// The local write stamp watch (audit A6) and the liveness heartbeat
 	// (audit D6d) — both machine-local, both optional, neither fails startup.

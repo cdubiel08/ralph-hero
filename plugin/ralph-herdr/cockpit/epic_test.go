@@ -381,7 +381,14 @@ func TestRenderEpicDrawsEveryChildStateAsABoardCard(t *testing.T) {
 			t.Errorf("a parked child draws no age: %q", line)
 		}
 	}
-	// Legend: the overlay's own row.
+	// Legend: the overlay's own row — under the open's own view message
+	// while that is up (GH-2405: feedback overwrites the last legend row),
+	// back once it clears.
+	if !strings.Contains(out, "esc closes") {
+		t.Errorf("the open's view message rides the legend row; got:\n%s", out)
+	}
+	m.clearStatus()
+	out = stripANSI(viewModel(m))
 	if !strings.Contains(out, "esc close · j/k child · ⏎ observe · ␣ peek · g browser") {
 		t.Errorf("overlay legend; got:\n%s", out)
 	}

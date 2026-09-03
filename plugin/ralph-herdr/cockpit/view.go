@@ -232,16 +232,19 @@ func viewModel(m Model) string {
 	b.WriteString(strings.Join(lines, "\n"))
 	b.WriteString("\n")
 
-	// Input line (reply/answer) or the legend+status pair.
+	// Input line (reply/answer) or the legend, its last row carrying the
+	// status while one is up. Right-aligned (GH-2405).
 	switch m.mode {
 	case ModeReply, ModeAnswer:
 		b.WriteString(renderInput(m))
 	default:
-		for _, line := range legendLines(m) {
-			b.WriteString(truncate(line, m.width))
-			b.WriteString("\n")
+		lines := legendLines(m)
+		for i, line := range lines {
+			b.WriteString(alignRight(truncate(line, m.width), m.width))
+			if i < len(lines)-1 {
+				b.WriteString("\n")
+			}
 		}
-		b.WriteString(truncate(statusLine(m), m.width))
 	}
 	return b.String()
 }
@@ -414,6 +417,11 @@ const legendSep = " · "
 // cutting the line at whatever hint happened to land on the edge. Capped at
 // maxLegendRows in total — the last row is then marked — so a pane too
 // narrow for even the wrapped form still leaves room for a body.
+//
+// The status line does not get a row of its own (GH-2405): while a message
+// is up it OVERWRITES the last legend row — the navigation row in browse,
+// the least important hotkeys — and the row returns when the message clears
+// (the next key, or statusTTL). The footer never grows for feedback.
 func legendLines(m Model) []string {
 	var out []string
 	for _, row := range legendRows(m) {
@@ -428,7 +436,19 @@ func legendLines(m Model) []string {
 		}
 		out[maxLegendRows-1] = last + " …"
 	}
+	if st := statusLine(m); st != "" && len(out) > 0 {
+		out[len(out)-1] = st
+	}
 	return out
+}
+
+// alignRight pads a footer row out to the pane width so the hotbar sits
+// flush right (GH-2405); a row already at or past the width is untouched.
+func alignRight(s string, width int) string {
+	if w := lipgloss.Width(s); w < width {
+		return strings.Repeat(" ", width-w) + s
+	}
+	return s
 }
 
 func wrapHints(hints []string, width int) []string {
@@ -450,13 +470,14 @@ func wrapHints(hints []string, width int) []string {
 }
 
 // footerRowsOf is how many rows the footer takes below the body: the input
-// pair in reply/answer, else the (possibly wrapped) legend plus the status
-// line. Shared by bodyHeightOf so the body shrinks exactly as the legend grows.
+// pair in reply/answer, else the (possibly wrapped) legend — the status line
+// rides its last row rather than adding one. Shared by bodyHeightOf so the
+// body shrinks exactly as the legend grows.
 func footerRowsOf(m Model) int {
 	if m.mode == ModeReply || m.mode == ModeAnswer {
 		return statusRows
 	}
-	return len(legendLines(m)) + 1
+	return len(legendLines(m))
 }
 
 // bodyHeightOf mirrors viewModel's body sizing — shared with hitTest so the
@@ -776,19 +797,33 @@ func renderCardFace(m Model, card Card, width int, selected, overlay bool) strin
 	var line3 string
 	switch {
 	case card.State == doneState:
-		// A closed card from the window read has no priority and no estimate —
-		// they were never fetched. Falling through to the meter would draw the
-		// empty-priority glyph, which on a live card is a real defect and here
-		// would be a lie about a card nobody can fix. What a closed card has
-		// is when it closed.
 		closed := closedLabel(card, time.Now())
 		if !overlay {
-			line3 = styleMeta.Render(trimTo(closed, inner))
-			// Right of the closed label, only when a transcript (or the ledger's
-			// usage fact) exists — an unsessioned close draws nothing.
-			if cost := costChip(m, card, g); cost != "" && lipgloss.Width(line3)+lipgloss.Width(cost)+2 <= inner {
-				line3 = pad(line3, inner-lipgloss.Width(cost)) + cost
+			// The same shape as every other column (GH-2405): priority and
+			// estimate on the left — `board closed --fields` carries them —
+			// and on the right the cost, then the age since the close in the
+			// timer slot. An UNSET priority on a closed card is not the red
+			// `P?` a live card earns (nobody can fix a closed card's ranking):
+			// each field is drawn only when present, so a pre-`--fields`
+			// board CLI leaves the left bare rather than lying.
+			lead := ""
+			if card.Priority != "" {
+				lead = priorityGlyph(card.Priority, g)
 			}
+			if card.Estimate != "" {
+				if lead != "" {
+					lead += " "
+				}
+				lead += styleEst.Render("[" + card.Estimate + "]")
+			}
+			timer := styleTimer.Render(closedAge(card, time.Now()))
+			if cost := costChip(m, card, g); cost != "" {
+				timer = cost + "  " + timer
+			}
+			if lipgloss.Width(lead)+lipgloss.Width(timer)+2 > inner {
+				lead = ""
+			}
+			line3 = pad(lead, inner-lipgloss.Width(timer)) + timer
 			break
 		}
 		// The right slot sheds from the outside in when the card is too
@@ -1086,15 +1121,26 @@ func epicChip(m Model, card Card, g glyphSet, budget int) string {
 	return head + " " + styleRollup.Render(tally)
 }
 
-// closedLabel is a Done card's line 3: when it closed, at the same minute
-// precision the age chip uses. An unparseable stamp says so rather than
-// rendering an age computed from a zero time.
+// closedLabel is a Done card's line 3 in the epic popover: when it closed,
+// at the same minute precision the age chip uses. An unparseable stamp
+// says so rather than rendering an age computed from a zero time.
 func closedLabel(card Card, now time.Time) string {
 	at, err := time.Parse(time.RFC3339, card.ClosedAt)
 	if err != nil {
 		return "closed (time unreadable)"
 	}
 	return "closed " + formatAge(now.Sub(at)) + " ago"
+}
+
+// closedAge is the column form of the same fact: the bare age in the timer
+// slot every other column's card carries on line 3 (GH-2405). Unreadable
+// is a dash, the age chip's own spelling.
+func closedAge(card Card, now time.Time) string {
+	at, err := time.Parse(time.RFC3339, card.ClosedAt)
+	if err != nil {
+		return "—"
+	}
+	return formatAge(now.Sub(at))
 }
 
 // priorityGlyph — P0 as the tier's bang glyph in bold red, padded to the two
@@ -1153,29 +1199,42 @@ func costChip(m Model, card Card, g glyphSet) string {
 	return ""
 }
 
-// ctxAlertTokens is the gate below which the context chip is not drawn: a
-// healthy context is not a fact the operator acts on. ctxHotTokens is where
-// amber turns red.
+// ctxAlertFrac is the fraction of the model's context window below which
+// the context chip is not drawn: a healthy context is not a fact the
+// operator acts on. ctxHotFrac is where amber turns red. Fractions, not
+// token counts (GH-2405): the old 120k/160k were these same 60%/80% of a
+// 200k window, and the fleet now runs 1M-window models.
 const (
-	ctxAlertTokens = 120_000
-	ctxHotTokens   = 160_000
+	ctxAlertFrac = 0.6
+	ctxHotFrac   = 0.8
 )
 
-// ctxChip — "⛶151k": the LAST call's prompt size, drawn only past the alert
-// gate. Unread context is deliberately not distinguishable from healthy —
-// the `$—` beside it carries the unread fact, and a second grey glyph on
-// every unread card would say the same thing twice.
+// ctxThresholds are the alert and hot lines, in tokens, for one model.
+func ctxThresholds(model string) (alert, hot int) {
+	w := contextWindow(model)
+	return int(float64(w) * ctxAlertFrac), int(float64(w) * ctxHotFrac)
+}
+
+// ctxChip — "⛶651k": the LAST call's prompt size, drawn only past the alert
+// gate for the model that call ran on. Unread context is deliberately not
+// distinguishable from healthy — the `$—` beside it carries the unread
+// fact, and a second grey glyph on every unread card would say the same
+// thing twice.
 func ctxChip(m Model, card Card, g glyphSet) string {
 	u, st := m.cardUsage(card.Number)
-	if st != costMeasured || u.LastContext < ctxAlertTokens {
+	if st != costMeasured {
 		return ""
 	}
-	return ctxInk(u.LastContext).Render(g.ctx + formatTokens(u.LastContext))
+	alert, hot := ctxThresholds(u.LastModel)
+	if u.LastContext < alert {
+		return ""
+	}
+	return ctxInk(u.LastContext, hot).Render(g.ctx + formatTokens(u.LastContext))
 }
 
 // ctxInk — amber from the gate, red from the hot line.
-func ctxInk(n int) lipgloss.Style {
-	if n >= ctxHotTokens {
+func ctxInk(n, hot int) lipgloss.Style {
+	if n >= hot {
 		return styleCtxHot
 	}
 	return styleCtxWarn

@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -138,6 +139,59 @@ func resolveGlyphs(raw string) glyphSet {
 	return unicodeGlyphs
 }
 
+// resolveGlyphTier is the reader the cockpit actually runs (GH-2405): the
+// process env first, else the `cockpit_glyphs=` line of the machine-local
+// `$RALPH_HOME/config` (`~/.ralph/config`, where `autopilot=` already lives).
+// A glyph tier is a property of THIS MACHINE's terminal font, not of a repo
+// or a shell: a herdr pane inherits the server's env, not the operator's
+// profile exports, so an env-only knob was silently unreachable from the
+// sanctioned launch path. Neither source set = unicode, the same default.
+func resolveGlyphTier(getenv func(string) string) glyphSet {
+	if raw := getenv("RALPH_COCKPIT_GLYPHS"); strings.TrimSpace(raw) != "" {
+		return resolveGlyphs(raw)
+	}
+	return resolveGlyphs(ralphConfigValue(ralphConfigPath(getenv), "cockpit_glyphs"))
+}
+
+// ralphConfigPath is $RALPH_HOME/config, else ~/.ralph/config — the file
+// tick.sh reads `autopilot=` from. "" when neither root resolves.
+func ralphConfigPath(getenv func(string) string) string {
+	root := getenv("RALPH_HOME")
+	if root == "" {
+		home := getenv("HOME")
+		if home == "" {
+			return ""
+		}
+		root = filepath.Join(home, ".ralph")
+	}
+	return filepath.Join(root, "config")
+}
+
+// ralphConfigValue reads one `key=value` line from the config file, last
+// occurrence wins, both sides trimmed; `#` lines are comments. An unreadable
+// file or an absent key is "", which every caller treats as unset.
+func ralphConfigValue(path, key string) string {
+	if path == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	val := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(k) == key {
+			val = strings.TrimSpace(v)
+		}
+	}
+	return val
+}
+
 // resolveTruecolor reads COLORTERM the way termenv does: exactly "truecolor"
 // or "24bit" (case-insensitive, trimmed) means the terminal advertised 24-bit
 // colour. Unset or anything else is false — the wash is opt-in by the
@@ -206,6 +260,32 @@ type Ledger struct {
 	// needs it: no ledger and an agent with no record both produce a dash, but
 	// only the second is a fact about that agent.
 	Read bool
+}
+
+// todayRefs lists, sorted, every agent_ref with a known Claude session that
+// SPAWNED since the local midnight or whose latest usage fact was written
+// since then — the day's fleet, for the header's "today" (GH-2405). A ref
+// with no session id is not listed: there is no transcript to price.
+func (l Ledger) todayRefs(now time.Time) []string {
+	y, mo, d := now.Date()
+	midnight := time.Date(y, mo, d, 0, 0, 0, 0, now.Location())
+	seen := map[string]bool{}
+	for ref, sp := range l.ByRef {
+		if !sp.SpawnedAt.Before(midnight) && l.Sessions[ref] != "" {
+			seen[ref] = true
+		}
+	}
+	for ref, u := range l.Usage {
+		if !u.At.Before(midnight) && l.Sessions[ref] != "" {
+			seen[ref] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for ref := range seen {
+		out = append(out, ref)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ledgerPath mirrors ralph_ledger_path (ledger.sh): the RALPH_HERDR_LEDGER
@@ -571,6 +651,39 @@ func priceFor(model string) (priceRow, bool) {
 	return best, ok
 }
 
+// contextWindows is each model family's context window in tokens, matched
+// by prefix like the price rows (longest wins). The context alert is drawn
+// as a FRACTION of this (GH-2405): the fleet runs 1M-window models, and a
+// fixed 120k gate — 60% of the 200k window it was written against —
+// painted every healthy 240k prompt red. An unknown model takes the
+// smaller window, so an unpriced family alerts early rather than never.
+var contextWindows = map[string]int{
+	"claude-fable-5":    1_000_000,
+	"claude-mythos-5":   1_000_000,
+	"claude-opus-5":     1_000_000,
+	"claude-opus-4-8":   1_000_000,
+	"claude-opus-4-7":   1_000_000,
+	"claude-opus-4-6":   1_000_000,
+	"claude-opus-4-5":   200_000,
+	"claude-sonnet-5":   1_000_000,
+	"claude-sonnet-4-6": 1_000_000,
+	"claude-sonnet-4-5": 200_000,
+	"claude-haiku-4-5":  200_000,
+}
+
+const defaultContextWindow = 200_000
+
+// contextWindow resolves a model id to its window, prefix-matched.
+func contextWindow(model string) int {
+	best, n := defaultContextWindow, -1
+	for k, w := range contextWindows {
+		if strings.HasPrefix(model, k) && len(k) > n {
+			best, n = w, len(k)
+		}
+	}
+	return best
+}
+
 // CallUsage is one model call after dedupe: when it happened, what it cost,
 // and how large its prompt was.
 type CallUsage struct {
@@ -591,8 +704,11 @@ type SessionUsage struct {
 	USD         float64
 	Tokens      int
 	LastContext int
-	Unpriced    int
-	Calls       []CallUsage
+	// LastModel is the model the last call ran on — the window LastContext
+	// is judged against (contextWindow).
+	LastModel string
+	Unpriced  int
+	Calls     []CallUsage
 }
 
 // priced reports a reduction that is complete: read, and every call had a
@@ -723,6 +839,7 @@ func readTranscriptUsage(path string) SessionUsage {
 		out.USD += c.USD
 		out.Tokens += c.Tokens
 		out.LastContext = c.Context
+		out.LastModel = rc.model
 		out.Calls = append(out.Calls, c)
 	}
 	return out

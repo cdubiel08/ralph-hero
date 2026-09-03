@@ -661,8 +661,8 @@ func TestDoneSwapClampsTheCursorAndKeepsItsThreeEmptyStatesApart(t *testing.T) {
 		}},
 	})
 	dout := viewModel(filled)
-	if !strings.Contains(dout, "#2061") || !strings.Contains(dout, "closed 1h 30m ago") {
-		t.Errorf("a Done card must carry its number and when it closed; got:\n%s", dout)
+	if !strings.Contains(dout, "#2061") || !strings.Contains(dout, "1h 30m") {
+		t.Errorf("a Done card must carry its number and the age since it closed; got:\n%s", dout)
 	}
 
 	m, _ = updateKey(m, keyMsg("D"))
@@ -1203,7 +1203,7 @@ func TestNarrowViewKeepsWrappedLegendInsideTerminalHeight(t *testing.T) {
 	if got := headerRows + bodyHeightOf(m) + footerRowsOf(m); got != m.height {
 		t.Errorf("header+body+footer = %d, want the %d-row terminal", got, m.height)
 	}
-	if fr := footerRowsOf(m); fr != len(legendLines(m))+1 || fr < 3 {
+	if fr := footerRowsOf(m); fr != len(legendLines(m)) || fr < 2 {
 		t.Errorf("footer rows = %d for a %d-line legend", fr, len(legendLines(m)))
 	}
 	out := viewModel(m)
@@ -1214,8 +1214,12 @@ func TestNarrowViewKeepsWrappedLegendInsideTerminalHeight(t *testing.T) {
 	if last := lines[len(lines)-1]; !strings.Contains(last, "status here") {
 		t.Errorf("status line must stay the last row; got %q", last)
 	}
-	if plain := stripANSI(out); !strings.Contains(plain, "q quit") || !strings.Contains(plain, "h/l j/k move") {
-		t.Errorf("both ends of the legend must survive the wrap:\n%s", out)
+	// While a message is up it overwrites the last wrapped row (GH-2405);
+	// once it clears both ends of the legend are on screen.
+	cleared := m
+	cleared.clearStatus()
+	if plain := stripANSI(viewModel(cleared)); !strings.Contains(plain, "q quit") || !strings.Contains(plain, "h/l j/k move") {
+		t.Errorf("both ends of the legend must survive the wrap:\n%s", plain)
 	}
 	// Body sizing and mouse mapping share footerRowsOf, so a click still lands
 	// on the card it renders over.

@@ -5563,11 +5563,22 @@ export function listOwnRecentClosed(
    *  it, and `board closed --prs` (the cockpit's Done merge chip, GH-2377);
    *  bare `recentDone` never renders it and does not pay for it. */
   withClosingPRs = false,
+  /** GH-2405: carry the item's Priority and Estimate so a Done card can
+   *  render line 3 like every other column's. Opt-in on the same rule as
+   *  `withClosingPRs` — `fieldValues` is a nested connection under
+   *  `projectItems`, so the tend/doctor readers that never draw a card do
+   *  not pay for it. A truncated field page WITHHOLDS both (absent), never
+   *  serves a half-read pair as "unset". */
+  withFields = false,
 ): Array<{
   number: number;
   title: string;
   closedAt: string;
   stateReason: string | null;
+  /** Present only when `withFields` AND the field page was complete; null
+   *  when the field is unset on the item. */
+  priority?: string | null;
+  estimate?: string | null;
   /** Present only when `withClosingPRs` — any merged PR in the first page of
    *  GitHub's own closing linkage. A truncated page with no merged node reads
    *  FALSE: the row surfaces for audit rather than being silently skipped. */
@@ -5587,12 +5598,15 @@ export function listOwnRecentClosed(
   const closingPRs = withClosingPRs
     ? `closedByPullRequestsReferences(first: 10) { pageInfo { hasNextPage } nodes { number merged } }`
     : "";
+  const fields = withFields ? FIELD_VALUES_FRAGMENT : "";
   return withCache(ctx, (cache) => {
     const out: Array<{
       number: number;
       title: string;
       closedAt: string;
       stateReason: string | null;
+      priority?: string | null;
+      estimate?: string | null;
       hasMergedClosingPR?: boolean;
       closingPRs?: Array<{ number: number; merged: boolean }>;
     }> = [];
@@ -5614,7 +5628,7 @@ export function listOwnRecentClosed(
                 ${closingPRs}
                 projectItems(first: ${PROJECT_ITEMS_PAGE}) {
                   pageInfo { hasNextPage }
-                  nodes { isArchived project { id } }
+                  nodes { isArchived project { id } ${fields} }
                 }
               }
             }
@@ -5644,11 +5658,13 @@ export function listOwnRecentClosed(
         if (item.isArchived) continue;
         const closed = new Date(c.closedAt ?? "").getTime();
         if (!Number.isFinite(closed) || closed < cutoff) continue;
+        const fv = withFields && !fieldValuesTruncated(item.fieldValues) ? fieldValueMap(item.fieldValues) : null;
         out.push({
           number: c.number,
           title: c.title ?? "",
           closedAt: c.closedAt,
           stateReason: c.stateReason ?? null,
+          ...(fv ? { priority: fv[PRIORITY_FIELD] ?? null, estimate: fv[ESTIMATE_FIELD] ?? null } : {}),
           ...(withClosingPRs
             ? {
                 hasMergedClosingPR: (c.closedByPullRequestsReferences?.nodes ?? []).some(
@@ -6949,6 +6965,12 @@ export interface DoneItem {
    *  linkage page was truncated — the cockpit draws both as an unread chip,
    *  never as "no PR". */
   closingPRs?: Array<{ number: number; merged: boolean }>;
+  /** Present only under `--fields` (GH-2405) and only when the item's field
+   *  page was complete: the board Priority/Estimate, null when unset. ABSENT
+   *  is "not read", which the cockpit draws as no meter rather than as the
+   *  red `P?` an unset priority earns on a live card. */
+  priority?: string | null;
+  estimate?: string | null;
 }
 
 export interface DoneResult {
@@ -6977,9 +6999,12 @@ export function recentDone(
    *  merged) for the cockpit's Done merge chip. Opt-in, because it is the
    *  +10 pts/page connection GH-2151 kept off the bare view. */
   withClosingPRs = false,
+  /** GH-2405: carry Priority/Estimate for the cockpit's Done card line 3.
+   *  Same opt-in shape as `withClosingPRs`. */
+  withFields = false,
 ): DoneResult {
   const since = new Date(ctx.now().getTime() - opts.auditDays * 86_400_000);
-  const items = listOwnRecentClosed(ctx, since, withClosingPRs)
+  const items = listOwnRecentClosed(ctx, since, withClosingPRs, withFields)
     .filter((c) => c.stateReason !== "NOT_PLANNED")
     .map((c) => ({
       number: c.number,
@@ -6987,6 +7012,7 @@ export function recentDone(
       title: c.title,
       closedAt: c.closedAt,
       ...(c.closingPRs ? { closingPRs: c.closingPRs } : {}),
+      ...("priority" in c ? { priority: c.priority ?? null, estimate: c.estimate ?? null } : {}),
     }))
     .sort((a, b) => (a.closedAt < b.closedAt ? 1 : a.closedAt > b.closedAt ? -1 : b.number - a.number));
   return { windowDays: opts.auditDays, since: since.toISOString(), items };
@@ -12492,12 +12518,16 @@ reads
                               gates are RUN, not predicted, and never on a
                               viewer's timer) and drops the PR number on
                               exactly its merged and closed rows
-  closed [--json] [--prs]     own-repo board items closed as COMPLETED inside
+  closed [--json] [--prs] [--fields]
+                              own-repo board items closed as COMPLETED inside
                               RALPH_AUDIT_DAYS (14), newest first — the Done
                               view. \`list\` cannot answer it (open-issues-only
                               by construction, GH-1814). NOT_PLANNED is
                               excluded, reconcile's own rule. A WINDOW, never
-                              all history: every consumer must say so.
+                              all history: every consumer must say so. --prs
+                              adds the closing-PR linkage, --fields the
+                              Priority/Estimate pair (both opt-in: nested
+                              connections the audit readers never draw).
                               --prs carries each close's closing-PR linkage
                               (number + merged; the Done gate's field) for the
                               cockpit's merge chip — opt-in, +10 pts/page
@@ -12843,7 +12873,7 @@ interface ParsedArgs {
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "resume", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
-  "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace", "all", "closed", "prs",
+  "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace", "all", "closed", "prs", "fields",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
@@ -14078,7 +14108,7 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "closed": {
-      const res = recentDone(ctx, parseTendOpts(), flags.prs === true);
+      const res = recentDone(ctx, parseTendOpts(), flags.prs === true, flags.fields === true);
       if (flags.json) json(res);
       else {
         out(`${res.items.length} closed as completed since ${res.since} (${res.windowDays}d window)`);

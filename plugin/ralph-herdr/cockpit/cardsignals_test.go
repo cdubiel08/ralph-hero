@@ -23,7 +23,9 @@ func TestCardSignalsArgv(t *testing.T) {
 	// `--prs` is the opt-in for the closing-PR linkage (GH-2377): bare
 	// `board closed` never pays for the connection (GH-2151), and the Done
 	// merge chip is the one reader that does.
-	if got := argsBoardClosed(); len(got) != 3 || got[0] != "closed" || got[1] != "--json" || got[2] != "--prs" {
+	// `--fields` (GH-2405) is the second opt-in: Priority/Estimate for the
+	// Done card's line 3, +10 pts/page measured, paid by this reader alone.
+	if got := argsBoardClosed(); len(got) != 4 || got[0] != "closed" || got[1] != "--json" || got[2] != "--prs" || got[3] != "--fields" {
 		t.Errorf("argsBoardClosed() = %v", got)
 	}
 }

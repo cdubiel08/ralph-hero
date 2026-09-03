@@ -8521,6 +8521,57 @@ describe("board closed — the Done window (GH-2062)", () => {
     expect(payload.items[1].closingPRs).toEqual([]);
   });
 
+  /** GH-2405: the cockpit's Done card line 3 needs the item's Priority and
+   *  Estimate. Opt-in on the `--prs` rule — the field page is a nested
+   *  connection nobody else reading closes draws — and three facts stay
+   *  apart: not asked (key ABSENT), asked and unset (null), asked and set. */
+  it("--fields carries Priority/Estimate per close; bare and --prs alone carry no key", () => {
+    gh.issues.set(1, {
+      number: 1, title: "sized", state: "Done", issueState: "CLOSED",
+      stateReason: "COMPLETED", closedAt: days(1), updatedAt: days(1), priority: "P2", estimate: "S",
+    });
+    gh.issues.set(2, {
+      number: 2, title: "unsized", state: "Done", issueState: "CLOSED",
+      stateReason: "COMPLETED", closedAt: days(2), updatedAt: days(2),
+    });
+    const withFields = recentDone(ctx, TEND_DEFAULTS, false, true).items;
+    expect(withFields.map((c) => [c.number, c.priority, c.estimate])).toEqual([
+      [1, "P2", "S"],
+      [2, null, null],
+    ]);
+    expect(withFields.every((c) => !("closingPRs" in c))).toBe(true);
+    for (const items of [recentDone(ctx, TEND_DEFAULTS).items, recentDone(ctx, TEND_DEFAULTS, true).items]) {
+      expect(items.every((c) => !("priority" in c) && !("estimate" in c))).toBe(true);
+    }
+    // A truncated field page withholds the pair rather than serving "unset".
+    gh.issues.get(1)!.fieldValuesTruncated = true;
+    const [t] = recentDone(ctx, TEND_DEFAULTS, false, true).items;
+    expect("priority" in t).toBe(false);
+    gh.issues.get(1)!.fieldValuesTruncated = false;
+
+    // The CLI flag is the same opt-in and composes with --prs.
+    const seen: string[] = [];
+    const inner = ctx.exec;
+    ctx.exec = (argv, stdin) => {
+      if (stdin) seen.push(JSON.parse(stdin).query ?? "");
+      return inner(argv, stdin);
+    };
+    const outLines: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      outLines.push(String(s));
+      return true;
+    });
+    try {
+      run(["closed", "--prs", "--fields", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(seen.some((q) => q.includes("fieldValues(") && q.includes("closedByPullRequestsReferences"))).toBe(true);
+    const payload = JSON.parse(outLines.join(""));
+    expect(payload.items[0]).toMatchObject({ number: 1, priority: "P2", estimate: "S", closingPRs: [] });
+    expect(payload.items[1]).toMatchObject({ number: 2, priority: null, estimate: null });
+  });
+
   /** A TRUNCATED linkage page is withheld, not served as complete: the
    *  omitted node is as likely to be the merged one as any other, and a chip
    *  drawn off a partial page would name an older PR or none. Absent renders
