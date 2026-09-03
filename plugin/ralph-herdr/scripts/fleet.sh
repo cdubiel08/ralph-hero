@@ -389,19 +389,66 @@ ralph_brief_write() {
   printf '%s\n' "$file"
 }
 
-# ralph_fleet_frontier_json — the fleet's candidate source, normalized to the
-# `board next --json` envelope ({next, queue: [...], blocked: [...]}). The
-# blocked section rides along so a caller validating an EXPLICIT issue list can
-# tell "blocked by #N" from "not eligible" without a second board read; its
-# per-item shape is whichever verb answered (frontier: blockers_open; next:
-# openBlockers), so consumers read both keys. Probes ONCE per call
-# for a `board frontier --json` verb (dependency-aware Ready∧blockers-merged
-# frontier — may not exist yet); absent or unparseable, falls back to the
-# ranked `next` queue, whose eligibility filter is already dependency-aware
-# (unclaimed Backlog, no open blockers, truncation fails closed — rankNext in
-# board.ts). Requires $BOARD (lib.sh).
+# ralph_fleet_frontier_json [EPIC] — the fleet's candidate source, normalized
+# to the `board next --json` envelope ({next, queue: [...], blocked: [...]}).
+# The blocked section rides along so a caller validating an EXPLICIT issue
+# list can tell "blocked by #N" from "not eligible" without a second board
+# read; its per-item shape is whichever verb answered (frontier:
+# blockers_open; next: openBlockers), so consumers read both keys. Probes
+# ONCE per call for a `board frontier --json` verb (dependency-aware
+# Ready∧blockers-merged frontier — may not exist yet); absent or unparseable,
+# falls back to the ranked `next` queue, whose eligibility filter is already
+# dependency-aware (unclaimed Backlog, no open blockers, truncation fails
+# closed — rankNext in board.ts). Requires $BOARD (lib.sh).
+#
+# With EPIC given (GH-2417), the READ ITSELF is scoped to EPIC's whole
+# subtree via `board frontier --epic EPIC --json` — the same
+# epicDescendantPredicate walk `board frontier --epic` and doctor's
+# `lead-respawns` line share (GH-2398), so a ready grandchild demoted under a
+# mid-level phase (parentNumber == <phase>, never == EPIC) is a candidate
+# here too. `.epicOnTopology` rides along for the caller's three-way
+# messaging (GH-2382: whole-topology-absent / topology-present-but-empty /
+# unreadable). When the installed board predates `frontier --epic`, this
+# degrades to the whole ranked frontier filtered to EPIC's DIRECT children
+# only — `.degraded: true` marks it. Degrading narrows the result, it never
+# widens it: under-staffing is safe, staffing the wrong epic is not, so a
+# jq failure at every layer returns an EMPTY scoped queue (rc 1), never the
+# unscoped one.
 ralph_fleet_frontier_json() {
-  local out
+  local epic="${1:-}" out
+  if [ -n "$epic" ]; then
+    # Detection has to be the ECHOED `.epic` field, not merely a `.frontier`
+    # key's presence: an installed board CLI that predates GH-2398 silently
+    # IGNORES an unrecognized `--epic` flag (exit 0) and answers with the
+    # whole unscoped frontier under that same `.frontier` key — measured
+    # against the plugin cache while wiring this fix. Only a CLI that
+    # actually understood the flag echoes `.epic` back.
+    if out=$("$BOARD" frontier --json --epic "$epic" 2>/dev/null) && [ -n "$out" ] &&
+      printf '%s' "$out" | jq -e --argjson e "$epic" '(.epic? // null) == $e' >/dev/null 2>&1; then
+      printf '%s' "$out" | jq -c '{
+        next: (.frontier[0] // null),
+        queue: .frontier,
+        blocked: (.blocked? // []),
+        epicOnTopology: (if has("epicOnTopology") then .epicOnTopology else null end)
+      }' 2>/dev/null && return 0
+    fi
+    if out=$("$BOARD" frontier --json 2>/dev/null) && [ -n "$out" ]; then
+      printf '%s' "$out" | jq -c --argjson e "$epic" '
+        ( if type == "array" then .
+          elif (.frontier? // null) != null then .frontier
+          elif (.queue? // null) != null then .queue
+          else [] end ) as $q
+        | { next: null, queue: [$q[]? | select(.parentNumber == $e)], blocked: [], degraded: true }
+        | .next = (.queue[0] // null)' 2>/dev/null && return 0
+    fi
+    if out=$("$BOARD" next --json 2>/dev/null) && [ -n "$out" ]; then
+      printf '%s' "$out" | jq -c --argjson e "$epic" '
+        { next: null, queue: [(.queue // [])[]? | select(.parentNumber == $e)], blocked: (.blocked? // []), degraded: true }
+        | .next = (.queue[0] // null)' 2>/dev/null && return 0
+    fi
+    echo '{"next":null,"queue":[],"blocked":[],"degraded":true}'
+    return 1
+  fi
   if out=$("$BOARD" frontier --json 2>/dev/null) && [ -n "$out" ]; then
     printf '%s' "$out" | jq -c '
       if type == "array" then {next: (.[0] // null), queue: ., blocked: []}

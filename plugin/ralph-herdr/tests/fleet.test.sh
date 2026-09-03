@@ -1021,6 +1021,48 @@ line_has "work-fleet --epic with no value: says what it takes" "$OUT" "--epic ta
 run_wf --epic abc
 is "work-fleet --epic non-numeric: dies" "1" "$RC"
 
+# ═══ 9b'. work-fleet.sh --epic staffs the whole SUBTREE (GH-2417) ═══════════
+# The bug: a mid-level phase (an open Backlog child that itself has
+# children) gets demoted by rankNext to ITS best leaf, so that leaf carries
+# parentNumber == <phase>, never == the epic — invisible to a DIRECT-children
+# filter. The fix routes the read itself through `board frontier --epic`
+# (epicDescendantPredicate, GH-2398), so a board CLI that understands the
+# flag hands back the leaf already scoped under the epic. Modeled here via
+# frontier.epic.<N>.json — fake-board.sh only serves it when it sees
+# `--epic N` past the two-word match key.
+cat >"$FAKE_BOARD_FIXTURES/frontier.epic.800.json" <<'EOF'
+{"epic":800,"epicOnTopology":true,
+ "frontier":[{"number":811,"title":"direct child","parentNumber":800,"blockers":[],"eligible":true},
+             {"number":822,"title":"grandchild under a mid-level phase","parentNumber":850,"via":850,"blockers":[],"eligible":true}],
+ "blocked":[]}
+EOF
+run_wf --epic 800
+is "work-fleet --epic subtree: exits 0" "0" "$RC"
+line_has "work-fleet --epic subtree: the direct child is staffed" "$OUT" "would spawn GH-811"
+line_has "work-fleet --epic subtree: the demoted GRANDCHILD is staffed too (GH-2417)" \
+  "$OUT" "would spawn GH-822"
+line_has "work-fleet --epic subtree: names the whole-subtree scope" "$OUT" "team GH-800 staffing"
+rm -f "$FAKE_BOARD_FIXTURES/frontier.epic.800.json"
+
+# A CLI that echoes epicOnTopology: false — the epic itself has left the
+# board (closed with nothing live beneath it, transferred, off-board).
+cat >"$FAKE_BOARD_FIXTURES/frontier.epic.801.json" <<'EOF'
+{"epic":801,"epicOnTopology":false,"frontier":[],"blocked":[]}
+EOF
+run_wf --epic 801
+is "work-fleet --epic off-topology: exits 0" "0" "$RC"
+line_has "work-fleet --epic off-topology: names the cause, not just empty" \
+  "$OUT" "is not on this board's open topology"
+rm -f "$FAKE_BOARD_FIXTURES/frontier.epic.801.json"
+
+# No frontier.epic.<N>.json fixture at all (only the plain frontier.json from
+# 9b, still holding #501/#502/#503) — models a board CLI predating
+# `--epic` (GH-2398): it silently ignores the flag, so the fleet must
+# degrade to DIRECT children only rather than staffing the wrong epic.
+run_wf --epic 700
+line_has "work-fleet --epic degrade: still finds the direct children" "$OUT" "would spawn GH-501"
+line_has "work-fleet --epic degrade: says the CLI predates --epic" "$OUT" "predates \`frontier --epic\`"
+
 # ═══ 9c. the spawn-edge guard at the fleet path (GH-2214) ════════════════════
 # Every session this script opens is a DRIVER; the spawner's stated role must
 # be allowed to create one. orchestrator→driver is the lead's staffing edge

@@ -15,6 +15,15 @@
 #                        the verb (usage exit 64, like board.ts's UsageError),
 #                        which is exactly what the frontier→next fallback
 #                        probe needs to see
+#   frontier --json
+#     --epic N            frontier.epic.<N>.json when present — a board CLI
+#                        that understands `--epic` (GH-2398/GH-2417),
+#                        expected to carry .epic/.epicOnTopology; absent,
+#                        falls through to plain frontier.json UNSCOPED — a
+#                        board CLI predating the flag silently ignores it
+#                        (exit 0) rather than refusing, which is what the
+#                        fleet's own degrade path (ralph_fleet_frontier_json)
+#                        has to detect
 #   next --json          next.json, else an empty {next, queue} envelope
 #   deliver-queue --json deliver-queue.json, else an empty {next, queue}
 #   tend-queue --json    tend-queue.json, else an empty {next, queue}
@@ -115,12 +124,29 @@ case "${1-} ${2-}" in
     key="doctor"
     ;;
   "frontier --json")
-    # No fixture = the verb does not exist on this board CLI (usage, 64).
-    emit_fixture frontier || {
-      echo "usage: unknown command \"frontier\" — run \`board help\`" >&2
-      exit 64
-    }
-    key="frontier"
+    # GH-2417: `--epic N` rides past this two-word match key (args 3+ are
+    # never part of it), so a caller passing it is modeled here by looking
+    # PAST $1/$2 for the flag. frontier.epic.<N>.json models a board CLI
+    # that understands `--epic` (echoes .epic/.epicOnTopology, like the
+    # real epicDescendantPredicate walk, GH-2398); absent, this falls
+    # through to the plain frontier.json fixture — modeling the
+    # pre-GH-2398 CLI that silently IGNORES an unrecognized `--epic` flag
+    # and answers with the whole unscoped frontier (measured against a
+    # real installed board copy while wiring GH-2417 — it does not refuse).
+    epic_n=""
+    if [ "${3-}" = "--epic" ]; then
+      epic_n="${4-}"
+    fi
+    if [ -n "$epic_n" ] && emit_fixture "frontier.epic.$epic_n"; then
+      key="frontier.epic.$epic_n"
+    else
+      # No fixture = the verb does not exist on this board CLI (usage, 64).
+      emit_fixture frontier || {
+        echo "usage: unknown command \"frontier\" — run \`board help\`" >&2
+        exit 64
+      }
+      key="frontier"
+    fi
     ;;
   "next --json")
     emit_fixture next || echo '{"next":null,"queue":[]}'

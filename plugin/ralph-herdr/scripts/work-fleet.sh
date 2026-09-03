@@ -15,9 +15,17 @@
 # must keep going. Bare invocation is unchanged.
 #
 # --epic EPIC (GH-2214, unit F of #2208) is the TEAM LEAD's staffing path:
-# the ranked frontier filtered to EPIC's DIRECT children (parentNumber),
-# capped at FLEET — the pick that used to run inside work-team.sh, moved here
-# because D3.2 makes staffing the LEAD's act, not the spawner's. It is a
+# the ranked frontier restricted to EPIC's SUBTREE — strict descendants along
+# own-repo parent edges, closed pass-through topology included — capped at
+# FLEET, the pick that used to run inside work-team.sh, moved here because
+# D3.2 makes staffing the LEAD's act, not the spawner's. GH-2417: this was
+# DIRECT children only (parentNumber == EPIC) until a ready grandchild under
+# a mid-level phase proved invisible — rankNext demotes an eligible phase to
+# its best leaf, so that leaf carries parentNumber == <phase>, never EPIC.
+# The read now goes straight to `board frontier --epic EPIC --json`, sharing
+# epicDescendantPredicate with that verb and doctor's `lead-respawns` line
+# (GH-2398) rather than re-deriving the walk here — one definition, so the
+# fleet and doctor cannot disagree about what is "under" an epic. It is a
 # RANKED path (nobody named the issues), so the unwired-reference guard
 # applies. Refused beside an explicit list (the list is already the override
 # lane) and beside --refill (the lead IS its team's standing refiller).
@@ -102,9 +110,9 @@ usage() {
               blocked or not eligible is SKIPPED with a reason and the rest
               still spawn. An issue a session already owns is skipped too.
   --epic EPIC the team lead'\''s staffing path (GH-2214): the ranked frontier
-              filtered to EPIC'\''s direct children, capped at RALPH_HERDR_FLEET.
-              A ranked path — the unwired-reference guard applies. Refused
-              beside an explicit list or --refill.
+              restricted to EPIC'\''s whole subtree (GH-2417), capped at
+              RALPH_HERDR_FLEET. A ranked path — the unwired-reference guard
+              applies. Refused beside an explicit list or --refill.
   --refill    arm watcher refill for the run from the frontier. Frontier policy
               only — refused with an explicit list, which is a closed set.
   --no-watch  print the spawn summary and EXIT instead of watching — for an
@@ -199,38 +207,66 @@ fi
 # .queue is ranked and .next equals .queue[0] in both shapes. With an explicit
 # list it is the eligibility oracle rather than the candidate source — and the
 # title/parent source either way (spawn_work_session reads them out of it).
-QUEUE_JSON=$(ralph_fleet_frontier_json)
+# The --epic case gets its OWN read (below) — the subtree scoping has to
+# happen at the source, not by filtering this unscoped one.
+if [ -z "$EPIC" ]; then
+  QUEUE_JSON=$(ralph_fleet_frontier_json)
+fi
 if [ -n "$ISSUES" ]; then
   NUMBERS="$ISSUES"
   echo "explicit list:${ISSUES} (frontier read used to validate, not to choose)"
 elif [ -n "$EPIC" ]; then
-  # Ranked frontier ∩ EPIC's direct children, order preserved from the
-  # ranking (the pick that used to live in work-team.sh, GH-2214). An empty
-  # slice names the epic: "the whole frontier is empty" and "nothing under
-  # THIS epic is ready" are different answers, and a lead reading the wrong
-  # one would stop staffing a team that has work. A jq FAILURE is a third
-  # answer, distinct from both (GH-2382): bash 3.2 materializes a here-string
-  # as a /tmp file the GH-2266 containment profile refuses to write, so piping
-  # stdin (never `<<<`) is what lets a contained pane reach jq at all — and
-  # the failure is checked rather than swallowed into "empty".
-  if ! NUMBERS=$(printf '%s' "$QUEUE_JSON" | jq -r --argjson e "$EPIC" --argjson k "$FLEET" '
-    [.queue[]? | select(.parentNumber == $e)][0:$k][].number' 2>/dev/null); then
+  # GH-2417: the read is scoped to EPIC's whole subtree by
+  # ralph_fleet_frontier_json's --epic argument, which asks `board frontier
+  # --epic EPIC --json` for the SAME epicDescendantPredicate walk `board
+  # frontier --epic` and doctor's `lead-respawns` line already share
+  # (GH-2398) — never a client-side `parentNumber == EPIC` filter again,
+  # since that is exactly what missed a demoted grandchild leaf (its
+  # parentNumber is the mid-level phase, not EPIC). Order preserved from
+  # the ranking (the pick that used to live in work-team.sh, GH-2214).
+  # An empty slice still distinguishes three answers (GH-2382, unchanged):
+  # "epic not on this board's topology at all" (new: epicOnTopology, GH-2417
+  # rides along on the scoped read), "the whole frontier is empty" vs
+  # "nothing under THIS epic is ready" (a second, unscoped read — only spent
+  # on this empty-slice path), and a jq FAILURE — bash 3.2 materializes a
+  # here-string as a /tmp file the GH-2266 containment profile refuses to
+  # write, so piping stdin (never `<<<`) is what lets a contained pane reach
+  # jq at all, and the failure is checked rather than swallowed into "empty".
+  if ! QUEUE_JSON=$(ralph_fleet_frontier_json "$EPIC"); then
+    echo "frontier UNREADABLE — jq failed on the frontier read (not the same as empty)" >&2
+    exit 1
+  fi
+  if ! NUMBERS=$(printf '%s' "$QUEUE_JSON" | jq -r --argjson k "$FLEET" '.queue[0:$k][]?.number' 2>/dev/null); then
     echo "frontier UNREADABLE — jq failed on the frontier read (not the same as empty)" >&2
     exit 1
   fi
   if [ -z "$NUMBERS" ]; then
-    if ! QLEN=$(printf '%s' "$QUEUE_JSON" | jq -r '.queue | length' 2>/dev/null); then
-      echo "frontier UNREADABLE — jq failed on the frontier read (not the same as empty)" >&2
-      exit 1
-    fi
-    if [ "$QLEN" -gt 0 ]; then
-      echo "no ready children of GH-$EPIC on the frontier — nothing to staff (blockers may still be open; re-run as they clear)"
+    ON_TOPOLOGY=$(printf '%s' "$QUEUE_JSON" | jq -r '.epicOnTopology' 2>/dev/null)
+    if [ "$ON_TOPOLOGY" = "false" ]; then
+      echo "epic #$EPIC is not on this board's open topology (closed with nothing live beneath it, transferred, or off-board) — nothing can be under it"
     else
-      echo "frontier empty — nothing to spawn"
+      # Distinguish "the whole board's frontier is empty" from "nothing
+      # under THIS epic is ready" (GH-2382) — a second, unscoped read, only
+      # spent on this (rare) empty-slice path; the item-walk cache
+      # (RALPH_ITEM_CACHE_TTL_SEC) makes it a cache hit, not a second walk.
+      if ! WHOLE_QUEUE_JSON=$(ralph_fleet_frontier_json) ||
+        ! QLEN=$(printf '%s' "$WHOLE_QUEUE_JSON" | jq -r '.queue | length' 2>/dev/null); then
+        echo "frontier UNREADABLE — jq failed on the frontier read (not the same as empty)" >&2
+        exit 1
+      fi
+      if [ "$QLEN" -gt 0 ]; then
+        echo "no ready children of GH-$EPIC on the frontier — nothing to staff (blockers may still be open; re-run as they clear)"
+      else
+        echo "frontier empty — nothing to spawn"
+      fi
     fi
     exit 0
   fi
-  echo "team GH-$EPIC staffing: ranked frontier ∩ direct children, capped at $FLEET"
+  if [ "$(printf '%s' "$QUEUE_JSON" | jq -r '.degraded // false' 2>/dev/null)" = "true" ]; then
+    echo "team GH-$EPIC staffing: ranked frontier ∩ DIRECT children only, capped at $FLEET (installed board CLI predates \`frontier --epic\` — subtree not checked, degrade only ever under-staffs)"
+  else
+    echo "team GH-$EPIC staffing: ranked frontier under GH-$EPIC's whole subtree, capped at $FLEET"
+  fi
 else
   if ! NUMBERS=$(printf '%s' "$QUEUE_JSON" | jq -r --argjson k "$FLEET" '.queue[0:$k][]?.number' 2>/dev/null); then
     echo "frontier UNREADABLE — jq failed on the frontier read (not the same as empty)" >&2
