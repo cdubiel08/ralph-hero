@@ -139,5 +139,23 @@ printf 'description = "bad \\[ \\] escape"\n' >>"$d/plugin/ralph-herdr/herdr-plu
 commit "$d" "break the manifest"
 expect 2 "unparseable TOML manifest errors" "$d"
 
+# 12. no usable tomllib is its OWN error, named as such — never "not valid
+#     TOML" (a valid manifest on a pre-3.11 python must not read as corrupt),
+#     and never a pass (a parser that cannot see the file is the exit-2 shape).
+d=$(repo nopython)
+echo 'echo changed' >"$d/plugin/ralph-herdr/scripts/spawn.sh"
+bump "$d" 0.7.0
+commit "$d" "bump"
+shim="$TMP_ROOT/shim"; mkdir -p "$shim"
+printf '#!/bin/sh\nexit 1\n' >"$shim/python3"; chmod +x "$shim/python3"
+set +e
+out=$(cd "$d" && PATH="$shim:$PATH" bash "$SCRIPT" main HEAD 2>&1); rc=$?
+set -e
+if [ "$rc" -eq 2 ] && grep -q 'tomllib' <<<"$out" && ! grep -q 'not valid TOML' <<<"$out"; then
+  pass "missing tomllib errors and names the parser (rc=$rc)"
+else
+  fail "missing tomllib errors and names the parser" "want rc=2 naming tomllib, got rc=$rc: $out"
+fi
+
 echo "== $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]
