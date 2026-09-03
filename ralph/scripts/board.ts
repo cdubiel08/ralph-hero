@@ -746,6 +746,19 @@ export function epicDescendantPredicate(
   };
 }
 
+/** Is the epic root anywhere on the topology the ranker sees — the open
+ *  own-repo set, or the closed pass-through edges walked up from it? A root
+ *  on neither has left the board (closed with nothing live beneath it,
+ *  transferred, off-board), and "nothing under it" is then a fact about the
+ *  root, not an empty frontier — the two must not share a rendering. */
+export function epicOnTopology(
+  open: { number: number }[],
+  closedEdges: ClosedEdge[],
+  epic: number,
+): boolean {
+  return open.some((i) => i.number === epic) || closedEdges.some((e) => e.number === epic);
+}
+
 /** The frontier restricted to one epic's subtree, both halves — an item the
  *  ranker BLOCKED under the epic is still the epic's, and a caller counting
  *  "nothing ready" must be able to see why. */
@@ -11748,8 +11761,19 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   // size ceiling is the control. Deliberately NOT a cap — compaction is a
   // full rewrite and stopping a worker mid-unit strands it. Closed units are
   // the population, never findings: nothing can re-estimate finished work.
+  //
+  // ONE tape read for every ledger-derived line (unit-cost here, lead-respawns
+  // below): the ledger is live and append-only, so two reads are two
+  // snapshots, and one doctor report must not call it readable on one line
+  // and unreadable on the next, or reduce the two over different facts.
+  let tape: LedgerPayloadsRead;
   try {
-    const ur = readLedgerUsage(ctx);
+    tape = readLedgerPayloads(ctx);
+  } catch (e) {
+    tape = { kind: "error", msg: (e as Error).message };
+  }
+  try {
+    const ur: LedgerUsageRead = tape.kind === "ok" ? { kind: "ok", units: reduceLedgerUsage(tape.payloads) } : tape;
     if (ur.kind === "absent") {
       add("unit-cost", "ok", "no herdr ledger (the watcher writes usage facts; optional equipment)");
     } else if (ur.kind === "error") {
@@ -11808,7 +11832,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   // not a stand-down case); an unreadable frontier is `not evaluated`,
   // never "empty".
   try {
-    const lr = readLedgerPayloads(ctx);
+    const lr = tape;
     const N = ctx.cfg.smells.leadRespawns;
     if (lr.kind === "absent") {
       add("lead-respawns", "ok", "no herdr ledger (heal.sh records lead respawns there; optional equipment)");
@@ -11840,6 +11864,17 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         const rows = hot.map((e) => {
           const head = `#${e.epic} respawned ${e.spawns}× (last ${e.latest})`;
           if (fr === null) return `${head} — frontier not evaluated: ${frErr}`;
+          // A root that is on neither the open set nor the closed pass-through
+          // topology has left this board (closed with nothing live beneath it,
+          // transferred, off-board): "no descendants" is then a fact about the
+          // root, not about the frontier, and stand-down is the wrong verb —
+          // work-team.sh already refuses a closed epic (exit 4), so these
+          // respawns predate the close.
+          if (!epicOnTopology(own, closedEdges, e.epic))
+            return (
+              `${head} but #${e.epic} is not on this board's open topology (closed, transferred, or off-board) — ` +
+              `the respawns predate that; if a lead pane is still live, \`work-team.sh ${e.epic} --stand-down\` closes it out, otherwise nothing to do`
+            );
           const under = frontierUnderEpic(fr, epicDescendantPredicate(own, closedEdges, e.epic));
           if (under.frontier.length === 0)
             return (
@@ -14365,8 +14400,14 @@ export function run(argv: string[], ctx: Ctx): number {
       const epic = flags.epic === undefined || flags.epic === false ? null : requireNumber(String(flags.epic), "epic number");
       const res = epic === null ? whole : frontierUnderEpic(whole, epicDescendantPredicate(own, closedEdges, epic));
       const scope = epic === null ? "" : ` under epic #${epic}`;
-      if (flags.json) json({ ...res, ...(epic === null ? {} : { epic }), cache: cacheFacts(full) });
-      else if (res.frontier.length === 0) {
+      // A root absent from the topology is reported as such, never as a
+      // quiet "frontier empty" — the same distinction doctor draws.
+      const epicOnBoard = epic === null ? null : epicOnTopology(own, closedEdges, epic);
+      if (flags.json) json({ ...res, ...(epic === null ? {} : { epic, epicOnTopology: epicOnBoard }), cache: cacheFacts(full) });
+      else if (epicOnBoard === false) {
+        out(`epic #${epic} is not on this board's open topology (closed with nothing live beneath it, transferred, or off-board) — nothing can be under it`);
+        if (cacheNote(full)) out(cacheNote(full)!);
+      } else if (res.frontier.length === 0) {
         out(
           `frontier empty${scope}${res.blocked.length ? ` (${res.blocked.length} blocked: ${res.blocked.map((b) => `#${b.number}`).join(" ")})` : ""}`,
         );

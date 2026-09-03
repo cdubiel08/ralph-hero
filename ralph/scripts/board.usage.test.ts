@@ -431,6 +431,47 @@ describe("doctor: lead-respawns (GH-2398) — advisory by construction", () => {
     expect(c.detail).not.toContain("#2000 respawned");
   });
 
+  it("a root that has left the open topology is its own fact — never an empty frontier, never stand-down", () => {
+    buildDb(loop(1525));
+    const gh = new FakeGh();
+    gh.issues.set(7, { number: 7, state: "Backlog", priority: "P0" }); // the board has work; #1525 is simply not on it
+    const c = check(doctor(ctx(gh)));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("#1525 respawned 3×");
+    expect(c.detail).toContain("#1525 is not on this board's open topology");
+    expect(c.detail).not.toContain("EMPTY");
+    expect(c.detail).not.toContain("the GH-2357 loop signature");
+  });
+
+  it("a CLOSED root with a live grandchild is still on the topology — the pass-through edge counts", () => {
+    buildDb(loop(1525));
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED" });
+    gh.issues.set(1526, { number: 1526, state: "Backlog", priority: "P2", parent: 1525 });
+    const c = check(doctor(ctx(gh)));
+    expect(c.detail).toContain("with 1 ready item(s) under it (#1526)");
+    expect(c.detail).not.toContain("not on this board's open topology");
+  });
+
+  it("unit-cost and lead-respawns reduce over ONE tape read — two snapshots of a live ledger are two facts", () => {
+    buildDb([...loop(1525), spawn("w1-a#aaaa", 1), usage("w1-a#aaaa", 1.0, 50_000)]);
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    const base = ctx(gh);
+    let tapeReads = 0;
+    const cx: Ctx = {
+      ...base,
+      exec: (argv, stdin) => {
+        if (argv[0] === "sqlite3" && argv.includes("-json")) tapeReads++;
+        return base.exec(argv, stdin);
+      },
+    };
+    const r = doctor(cx);
+    expect(r.checks.find((c) => c.name === "unit-cost")!.detail).toContain("1 unit measured");
+    expect(check(r).level).toBe("info");
+    expect(tapeReads).toBe(1);
+  });
+
   it("honours RALPH_SMELL_LEAD_RESPAWNS", () => {
     buildDb(loop(1525));
     const gh = new FakeGh();
@@ -511,6 +552,28 @@ describe("board frontier --epic NNN (GH-2398) — next's ranking restricted to o
     const j = JSON.parse(cap.text());
     expect(j.frontier).toEqual([]);
     expect(j.blocked.map((b: { number: number }) => b.number)).toEqual([1526]);
+  });
+
+  it("an epic not on the topology is named as such — never a quiet 'frontier empty'", () => {
+    const gh = new FakeGh();
+    gh.issues.set(7, { number: 7, state: "Backlog", priority: "P0" });
+    const cap = capture();
+    try {
+      expect(run(["frontier", "--epic", "1525"], ctx(gh))).toBe(0);
+    } finally {
+      cap.restore();
+    }
+    expect(cap.text()).toContain("epic #1525 is not on this board's open topology");
+    expect(cap.text()).not.toContain("frontier empty");
+    const cap2 = capture();
+    try {
+      run(["frontier", "--epic", "1525", "--json"], ctx(gh));
+    } finally {
+      cap2.restore();
+    }
+    const j = JSON.parse(cap2.text());
+    expect(j.epicOnTopology).toBe(false);
+    expect(j.frontier).toEqual([]);
   });
 
   it("a bare --epic is a usage error, not the whole frontier", () => {
