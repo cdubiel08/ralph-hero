@@ -369,6 +369,14 @@ is "tend linux: a containment event names process_containment not_available" "1"
   "$(ledger_count '.ev=="containment" and .process_containment=="not_available" and .tool_binding=="accepted"')"
 is "tend linux: the row closes containment_not_available" "1" \
   "$(ledger_count '.ev=="exit" and .reason=="containment_not_available" and .via=="spawn"')"
+# …and a DRY run of the same refusal narrates the appends and writes none.
+reset
+out=$(RALPH_HERDR_UNAME=Linux RALPH_HERDR_DRY_RUN=true RALPH_HERDR_LANE_TAB=1 HERDR_PANE_ID="w1:p9" run_lane tend)
+rc=$?
+if [ "$rc" -ne 0 ]; then ok "tend linux dry: still refuses"; else not_ok "tend linux dry: must refuse (rc 0)"; fi
+has "tend linux dry: narrates the containment append it would make" "$out" 'process_containment: "not_available"'
+has "tend linux dry: narrates the close it would make" "$out" 'reason: "containment_not_available"'
+is "tend linux dry: the ledger is untouched" "0" "$(ledger_count 'true')"
 
 # ── 6. dry run narrates the in-tab plan and mutates nothing ──────────────────
 reset

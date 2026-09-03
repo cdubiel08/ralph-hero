@@ -84,12 +84,19 @@ while IFS= read -r out; do tool_args+=("$out"); done < <(ralph_tool_binding_args
 # attempted" (the stderr-only paperwork GH-2267 named). Mint the ref, write
 # the provisional row, record the containment event and close it
 # `containment_not_available` — same shape the probe's own refusals use
-# further down — then die.
+# further down — then die. A dry run still refuses, but PRINTS the appends
+# it would make and writes none: dry-run stops before ANY mutation, ledger
+# appends included (the plan below says so), and a refusal is no exception.
 if ralph_role_process_containment tender && ! ralph_process_containment_platform >/dev/null; then
   ref=$(ralph_agent_ref "$agent" 2>/dev/null) || ref=""
   ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || ledger=""
   tool_binding=$(ralph_tool_binding_observed "${tool_args[@]}")
-  if [ -n "$ref" ] && [ -n "$ledger" ]; then
+  if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
+    echo "DRY RUN — would record the refused $lane pass (nothing written):"
+    echo "  ledger append (spawn): provisional row for ${ref:-<no ref>}"
+    echo "  ledger append (containment): {ev: \"containment\", agent_ref: \"${ref:-<no ref>}\", tool_binding: \"$tool_binding\", process_containment: \"not_available\", via: \"spawn\"}"
+    echo "  ledger append (exit): {ev: \"exit\", agent_ref: \"${ref:-<no ref>}\", reason: \"containment_not_available\", via: \"spawn\"}"
+  elif [ -n "$ref" ] && [ -n "$ledger" ]; then
     record=$(_ralph_spawn_record "$ref" 0 "" "" "" "" "$(date -u +%FT%TZ)" \
       "" "$REPO" tender "" "" "" "" "" "" "") || record=""
     if [ -n "$record" ]; then
