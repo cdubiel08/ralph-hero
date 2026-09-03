@@ -99,6 +99,27 @@ pfield() {
   jq -r "$1" <<<"$PAYLOAD" 2>/dev/null || true
 }
 
+# title_agent TITLE — best-effort agent name recovered from a pane title
+# (GH-2396). herdr composes a ralph pane's title as "<address> <glyph>"
+# (tokens.sh's address-as-title rule, GH-2210/D6.2), where <address> is
+# "<repo>[/<team>]/<name>" and <glyph> is one ASCII char — so the name is
+# always the tail after the last "/" with one trailing " X" glyph stripped.
+# Prints nothing (rc 1) when TITLE is empty or has no "/", which callers
+# treat as "no candidate", never as a name.
+title_agent() {
+  local title="${1-}" tail
+  [ -n "$title" ] || return 1
+  case "$title" in
+    */*) tail="${title##*/}" ;;
+    *) return 1 ;;
+  esac
+  case "$tail" in
+    *' '?) tail="${tail% ?}" ;;
+  esac
+  [ -n "$tail" ] || return 1
+  printf '%s\n' "$tail"
+}
+
 ledger_root() { printf '%s\n' "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"; }
 
 # ledger_for_agent NAME — find the ledger that holds NAME open; prints
@@ -141,7 +162,7 @@ live_names() {
 
 # ── pane.agent_status_changed ────────────────────────────────────────────────
 handle_status() {
-  local agent status pane parsed legacy entry file ref ts cwd repo_root
+  local agent status pane parsed legacy candidate entry file ref ts cwd repo_root
   local lane issue slug gen title labels body snapshot confirmed
   local prior checkout verdict addr csid
   agent=$(pfield '.agent // .data.agent // empty')
@@ -179,7 +200,20 @@ handle_status() {
   if ! parsed=$(ralph_agent_parse "$agent"); then
     case "$agent" in
       ralph-deliver | ralph-tend) legacy=1 ;;
-      *) exit 0 ;;
+      *)
+        # data.agent is the harness kind (herdr 0.8.2, GH-2396) — "claude",
+        # not the pane name — on every payload this server sends. The real
+        # name only survives in .title's composed address; try recovering it
+        # from there before giving up on the event entirely. .agent stays
+        # the first choice above, unchanged, for a payload that does carry
+        # the name.
+        candidate=$(title_agent "$(pfield '.title // .data.title // empty')") || candidate=""
+        if [ -n "$candidate" ] && parsed=$(ralph_agent_parse "$candidate"); then
+          agent="$candidate"
+        else
+          exit 0
+        fi
+        ;;
     esac
   fi
 
