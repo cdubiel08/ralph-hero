@@ -194,6 +194,27 @@ is "unverified process_containment exits 1" "1" "$RC"
 has_line "unverified process_containment is a GAP" \
   '^  GAP  containment-t99-hygiene .*process_containment=unverified'
 
+# ── containment: an investigator's inapplicable containment is expected ─────
+# (review finding on this unit, GH-2361): the default investigator grants no
+# Bash, so its own spawn path records process_containment=inapplicable even
+# though the role's registry row requires the mechanism — a correct
+# recording, never a false GAP.
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"i1-scan#aaaa","pane_id":"p2","tokens":{"role":"investigator","depth":"1"},"tool_binding":"accepted","process_containment":"inapplicable"}
+EOF
+run '[{"name":"i1-scan","agent_status":"working","pane_id":"p2"}]'
+is "investigator inapplicable exits 0" "0" "$RC"
+is "investigator inapplicable renders no containment line" "0" "$(printf '%s\n' "$OUT" | grep -c 'containment-i1-scan')"
+
+# ── containment: an investigator that never got a sandbox at all is named ───
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"i1-scan#aaaa","pane_id":"p2","tokens":{"role":"investigator","depth":"1"},"tool_binding":"accepted","process_containment":"not_available"}
+EOF
+run '[{"name":"i1-scan","agent_status":"working","pane_id":"p2"}]'
+is "investigator not_available exits 1" "1" "$RC"
+has_line "investigator not_available is still a GAP" \
+  '^  GAP  containment-i1-scan .*process_containment=not_available'
+
 # ── containment: the driver's not_requested pair is expected, not a gap ──────
 cat >"$RALPH_HERDR_LEDGER" <<EOF
 {"ts":"$NOW","ev":"spawn","agent_ref":"w123-fix#aaaa","pane_id":"p1","tokens":{"role":"driver","depth":"0"},"tool_binding":"not_requested","process_containment":"not_requested"}
