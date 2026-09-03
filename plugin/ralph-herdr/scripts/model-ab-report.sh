@@ -10,9 +10,12 @@
 # alias resolving to a different model than named) still land in a bucket
 # instead of an unreadable "unknown".
 #
-# What it reports per model bucket: driver units, closed issues, $/closed
-# issue (list-price equivalent, rate-limit weight — not a bill), calls/unit,
-# and the finish.via split (review vs done, GH-2348). `closed` counts DISTINCT
+# What it reports per model bucket: driver units, how many of them have NO
+# usage fact (`unmeasured` — excluded from every $ and call figure, never
+# priced at zero), closed issues, $/closed issue over MEASURED closed
+# issues only (list-price equivalent, rate-limit weight — not a bill),
+# calls/unit over measured units, and the finish.via split (review vs done,
+# GH-2348; the LAST finish fact in ledger order wins). `closed` counts DISTINCT
 # issues, not units: a retried or re-picked issue has several driver units
 # and must not be paid for once per unit (PR #2408 P1) — its units' $ all
 # land in the bucket's total, so $/closed stays the honest per-issue number.
@@ -94,6 +97,8 @@ DB=$(ralph_lc_db_path "$LEDGER_JSONL")
 SQ="${RALPH_SQLITE3_BIN:-sqlite3}"
 command -v "$SQ" >/dev/null 2>&1 || { echo "model-ab-report: sqlite3 binary not runnable ('$SQ')" >&2; exit 1; }
 
+# group_by keeps each group in input (seq) order, so the `last` finish fact
+# below is ledger order — the latest-wins rule — never an alphabetical sort.
 DRIVERS_JSON=$("$SQ" -json "$DB" "SELECT payload FROM facts WHERE kind IN ('spawn','usage','finish') ORDER BY seq;" | jq -c '
   [.[].payload | fromjson?]
   | map(select(.agent_ref))
@@ -105,7 +110,7 @@ DRIVERS_JSON=$("$SQ" -json "$DB" "SELECT payload FROM facts WHERE kind IN ('spaw
       spawned_at: ([.[] | select(.ev == "spawn") | .ts] | map(select(. != null)) | .[0] // null),
       model_requested: ([.[] | select(.ev == "spawn") | .model_requested] | map(select(. != null and . != "")) | .[0] // null),
       usage: ([.[] | select(.ev == "usage") | .usage] | sort_by(.last_ts // "") | last),
-      finish_via: ([.[] | select(.ev == "finish") | .via] | sort | last)
+      finish_via: ([.[] | select(.ev == "finish") | .via] | last)
     })
   | map(select(.role == "driver" and .issue != null))')
 
@@ -134,6 +139,11 @@ while IFS= read -r n; do
   CLOSED_JSON=$(printf '%s' "$CLOSED_JSON" | jq --arg n "$n" --arg s "$state" '. + {($n): $s}')
 done < <(printf '%s' "$DRIVERS_JSON" | jq -r '[.[].issue] | unique | .[]')
 
+# A unit with no usage fact (the watcher could not bind the session or read
+# its transcript) is UNMEASURED, not free: it is excluded from every $ and
+# call figure and from the $/closed denominator, and counted in `unmeasured`
+# so a bucket's coverage is visible (PR #2408 P1). Absence priced at zero
+# would make the bucket with more measurement failures look cheaper.
 REPORT=$(printf '%s' "$DRIVERS_JSON" | jq -c --argjson closed "$CLOSED_JSON" '
   map(. + {issue_state: ($closed[(.issue | tostring)] // "UNKNOWN")})
   | map(. + {model: (.model_requested // .usage.model // "unknown (no spawn ask, no usage fact)")})
@@ -141,15 +151,20 @@ REPORT=$(printf '%s' "$DRIVERS_JSON" | jq -c --argjson closed "$CLOSED_JSON" '
   | map({
       model: .[0].model,
       units: length,
+      unmeasured: (map(select(.usage == null)) | length),
       closed: (map(select(.issue_state == "CLOSED") | .issue) | unique | length),
-      total_list_usd: (map(.usage.list_usd // 0) | add),
-      total_calls: (map(.usage.calls // 0) | add),
+      closed_measured: (map(select(.usage != null and .issue_state == "CLOSED") | .issue) | unique | length),
+      total_list_usd: (map(select(.usage != null) | .usage.list_usd // 0) | add // 0),
+      total_calls: (map(select(.usage != null) | .usage.calls // 0) | add // 0),
       finish_review: (map(select(.finish_via == "review")) | length),
       finish_done: (map(select(.finish_via == "done")) | length)
     })
   | map(. + {
-      usd_per_closed: (if .closed > 0 then (.total_list_usd / .closed) else null end),
-      calls_per_unit: (if .units > 0 then (.total_calls / .units) else null end)
+      measured: (.units - .unmeasured)
+    })
+  | map(. + {
+      usd_per_closed: (if .closed_measured > 0 then (.total_list_usd / .closed_measured) else null end),
+      calls_per_unit: (if .measured > 0 then (.total_calls / .measured) else null end)
     })
   | sort_by(.model)')
 
@@ -175,9 +190,9 @@ if [ "$JSON_OUT" -eq 1 ]; then
 fi
 
 printf '%s\n' "$REPORT" | jq -r '
-  (["model", "units", "closed", "$/closed", "calls/unit", "total $", "finish:review", "finish:done"] | @tsv),
+  (["model", "units", "unmeasured", "closed", "$/closed", "calls/unit", "total $", "finish:review", "finish:done"] | @tsv),
   (.[] | [
-      .model, .units, .closed,
+      .model, .units, .unmeasured, .closed,
       (if .usd_per_closed then (.usd_per_closed * 100 | round / 100 | tostring) else "n/a" end),
       (if .calls_per_unit then (.calls_per_unit * 10 | round / 10 | tostring) else "n/a" end),
       (.total_list_usd * 100 | round / 100 | tostring),
