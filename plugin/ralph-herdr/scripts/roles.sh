@@ -670,19 +670,26 @@ ralph_lane_model() {
   # what an Anthropic-direct id ever needed. Whether the model EXISTS stays
   # the harness's contract (top-of-function comment); this is only "can it
   # ride an argv" (PR #2374 review thread, discussion_r3910492324; GH-2375).
+  #
+  # Every refusal below prints the value via %q, never $model raw: a refused
+  # value can still carry control bytes (that's WHY it's refused), and the
+  # first draft echoed it verbatim to stderr — the same forgeable-terminal-
+  # output hole one layer up (Greptile review, PR #2422 discussion_r3920987572).
+  local qmodel
+  qmodel=$(printf '%q' "$model")
   case "$model" in
     [A-Za-z0-9]*) ;;
     *)
-      echo "ralph_lane_model: $src='$model' is not a model name (must start with a letter or digit)" >&2
+      echo "ralph_lane_model: $src=$qmodel is not a model name (must start with a letter or digit)" >&2
       return 1
       ;;
   esac
   # Control bytes (ESC, CR, ...) are refused too — none is a shell
   # metacharacter, but a dry-run path that prints the model unescaped would
-  # let one forge terminal output (Codex review, PR #2422 discussion_r3920882583).
+  # let one forge terminal output (Codex review, PR #2422 discussion_r3910492324).
   case "$model" in
     *[[:cntrl:]]*)
-      echo "ralph_lane_model: $src='$model' is not a model name (no control characters)" >&2
+      echo "ralph_lane_model: $src=$qmodel is not a model name (no control characters)" >&2
       return 1
       ;;
   esac
@@ -690,7 +697,7 @@ ralph_lane_model() {
   for c in ' ' $'\t' $'\n' ';' '|' '&' '<' '>' '$' '`' "'" '"' '(' ')'; do
     case "$model" in
       *"$c"*)
-        echo "ralph_lane_model: $src='$model' is not a model name (no whitespace or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
+        echo "ralph_lane_model: $src=$qmodel is not a model name (no whitespace or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
         return 1
         ;;
     esac

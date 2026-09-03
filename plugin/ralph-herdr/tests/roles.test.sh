@@ -643,6 +643,12 @@ fails "model: a shell metacharacter refuses" with_env 'RALPH_MODEL_LEAD=x;rm' ra
 fails "model: a leading dash refuses (it would read as a flag)" with_env 'RALPH_MODEL_LEAD=-model' ralph_lane_model lead "$MROOT/c"
 fails "model: a control character refuses — not a metacharacter, but could forge terminal output (GH-2375, PR #2422 discussion_r3920882583)" \
   with_env $'RALPH_MODEL_LEAD=model\x1b[2J' ralph_lane_model lead "$MROOT/c"
+out=$(with_env $'RALPH_MODEL_LEAD=model\x1b[2J' ralph_lane_model lead "$MROOT/c" 2>&1 >/dev/null)
+case "$out" in
+  *$'\x1b'*) not_ok "model: the control-char refusal must never echo the raw ESC byte (GH-2375 Greptile review, discussion_r3920987572) — got '$out'" ;;
+  *"model"*"[2J"*) ok "model: the control-char refusal names the %q-escaped value instead of the raw byte" ;;
+  *) not_ok "model: control-char refusal text — got '$out'" ;;
+esac
 long90=$(printf 'a%.0s' $(seq 1 90))
 is "model: over 80 chars is admitted — no length ceiling (GH-2375)" "$long90" \
   "$(with_env "RALPH_MODEL_LEAD=$long90" ralph_lane_model lead "$MROOT/c")"
@@ -653,7 +659,7 @@ is "model: a Bedrock application inference-profile ARN (/, :, >80 chars) is admi
   "$(with_env "RALPH_MODEL_LEAD=$bedrock_arn" ralph_lane_model lead "$MROOT/c")"
 out=$(ralph_lane_model tend "$MROOT/a" 2>&1 >/dev/null)
 case "$out" in
-  *".ralph.json models.tend='bad value'"*) ok "model: the refusal names the source and the value" ;;
+  *".ralph.json models.tend=bad\\ value"*) ok "model: the refusal names the source and the %q-escaped value" ;;
   *) not_ok "model: refusal text — got '$out'" ;;
 esac
 is "model args: two argv words, --model then the value" "--model|claude-sonnet-5|" "$(ralph_model_args driver "$MROOT/a" | tr '\n' '|')"

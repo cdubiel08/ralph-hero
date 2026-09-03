@@ -67,7 +67,12 @@ if [ -z "${RALPH_TICK_RUNNER:-}" ]; then
     done
   fi
   if [ -n "$_rest" ]; then
-    echo "tick: driver model '$MODEL' is not a model name (must start with a letter or digit, no whitespace, control characters or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
+    # %q, never $MODEL raw: a refused value can still carry control bytes
+    # (that's why it's refused) — echoing it verbatim would forge the same
+    # terminal output the refusal exists to prevent (Greptile review,
+    # PR #2422 discussion_r3920987572).
+    _qmodel=$(printf '%q' "$MODEL")
+    echo "tick: driver model $_qmodel is not a model name (must start with a letter or digit, no whitespace, control characters or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
     exit 64
   fi
 fi
