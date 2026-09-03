@@ -808,6 +808,11 @@ line_has "investigator: process containment is inapplicable for a Bash-less harn
 # renderings.
 line_has "investigator: tool binding is observed off the argv as accepted (GH-2267)" \
   "$out" "tool binding: accepted"
+# GH-2363: with no Bash in the harness and an argv ceiling of `accepted`, the
+# dry-run plan names the Write-only probe that will run in-pane after start —
+# the mechanism the argv observation alone cannot supply.
+line_has "investigator: the dry-run plan names the write-only probe (GH-2363)" \
+  "$out" "Write-only probe after start (no Bash in this harness to forge the marker with — GH-2363)"
 # A definition that grants a writing tool is refused by observing the argv it
 # would produce — never by trusting the file's role.
 cat >"$TMP/inv-write.md" <<'DEF'
