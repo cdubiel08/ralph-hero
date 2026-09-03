@@ -30,10 +30,15 @@
 #                is the first. A record with no role or no words is skipped,
 #                never flagged — those predate the model, and "not recorded"
 #                must not render as "recorded and off". Process containment
-#                accepts a SECOND non-gap word, `inapplicable`, beside
-#                `applied`: a role that requires the mechanism still records
-#                it when its harness grants no Bash to sandbox (today's
-#                investigator) — a correct recording, not a failed one.
+#                accepts a SECOND non-gap word, `inapplicable`, but ONLY for
+#                the investigator: its own harness definition grants no Bash
+#                to sandbox, so its spawn path (fleet.sh) records
+#                `inapplicable` by design — a correct recording, not a
+#                failed one. Every OTHER contained role keeps Bash
+#                (`ralph_tool_binding_args` only ever touches Edit/Write/
+#                NotebookEdit), so `inapplicable` there would be the exact
+#                unsandboxed-writer hole this check exists to catch, and
+#                still gaps (review findings on this unit, GH-2361).
 #
 # The ledger side's remedy is SPLIT by what reconcile can actually do with the
 # record (GH-2066). reconcile's ownership proof is positive and two-sided — a
@@ -249,24 +254,30 @@ EOF_ROWS
         if [ -n "$tb" ] && [ -n "$pc" ]; then
           exp_tb="not_requested"
           ralph_role_tool_binding "$role" && exp_tb="accepted"
-          # `inapplicable` sits beside `applied` as a SECOND non-gap answer
-          # (review findings on this unit, GH-2361): a role's registry row
-          # requiring process containment says a sandbox must be attempted,
-          # not that the harness grants Bash for it to hold — today's
-          # investigator has none, so its own spawn path (fleet.sh) records
-          # `inapplicable` by design (the design record's own "one is
-          # inapplicable where the other is required"), and that is a
-          # correct recording, not a failed one. Only the remaining words —
-          # not_applied, not_available, unverified, not_requested — are.
+          # `inapplicable` is a SECOND non-gap answer, but ONLY for the
+          # investigator (review finding on this unit, GH-2361: a first
+          # draft accepted it for every non-driver role, which would have
+          # let an unsandboxed tender/orchestrator/watcher/relay — every one
+          # of which keeps Bash, per `ralph_tool_binding_args` — pass as
+          # healthy). `inapplicable` means the role's OWN harness definition
+          # grants no Bash for a sandbox to hold; today that is true only of
+          # the investigator (`ralph/agents/investigator.md`, and the only
+          # caller that ever writes the word — fleet.sh's spawn_investigator).
+          # Every other contained role must show a real kernel denial.
           if ralph_role_process_containment "$role"; then
             exp_pc="applied"
-            case "$pc" in applied | inapplicable) pc_ok=1 ;; *) pc_ok=0 ;; esac
+            case "$role" in
+              investigator) case "$pc" in applied | inapplicable) pc_ok=1 ;; *) pc_ok=0 ;; esac ;;
+              *) [ "$pc" = "applied" ] && pc_ok=1 || pc_ok=0 ;;
+            esac
           else
             exp_pc="not_requested"
             [ "$pc" = "$exp_pc" ] && pc_ok=1 || pc_ok=0
           fi
           if [ "$tb" != "$exp_tb" ] || [ "$pc_ok" -ne 1 ]; then
-            gap "containment-$name" "role $role achieved tool_binding=$tb process_containment=$pc (expected $exp_tb/$exp_pc, or process_containment=inapplicable when the role's harness grants no Bash)"
+            exp_pc_note=""
+            [ "$role" = investigator ] && exp_pc_note=" (or inapplicable)"
+            gap "containment-$name" "role $role achieved tool_binding=$tb process_containment=$pc (expected $exp_tb/$exp_pc$exp_pc_note)"
           fi
         fi
       fi

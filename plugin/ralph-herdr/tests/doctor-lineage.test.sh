@@ -206,6 +206,20 @@ run '[{"name":"i1-scan","agent_status":"working","pane_id":"p2"}]'
 is "investigator inapplicable exits 0" "0" "$RC"
 is "investigator inapplicable renders no containment line" "0" "$(printf '%s\n' "$OUT" | grep -c 'containment-i1-scan')"
 
+# ── containment: `inapplicable` is investigator-only, not a blanket pass ────
+# (review finding on this unit, GH-2361 — a second pass caught by the same
+# reviewers): tender keeps Bash (ralph_tool_binding_args only touches
+# Edit/Write/NotebookEdit), so an `inapplicable` process containment there
+# would be exactly the unsandboxed-writer hole this check exists to catch —
+# it must still GAP, unlike the investigator's genuine `inapplicable`.
+cat >"$RALPH_HERDR_LEDGER" <<EOF
+{"ts":"$NOW","ev":"spawn","agent_ref":"t99-hygiene#aaaa","pane_id":"p9","tokens":{"role":"tender","depth":"0"},"tool_binding":"accepted","process_containment":"inapplicable"}
+EOF
+run '[{"name":"t99-hygiene","agent_status":"working","pane_id":"p9"}]'
+is "tender inapplicable exits 1 — not a blanket pass" "1" "$RC"
+has_line "tender inapplicable is still a GAP" \
+  '^  GAP  containment-t99-hygiene .*process_containment=inapplicable'
+
 # ── containment: an investigator that never got a sandbox at all is named ───
 cat >"$RALPH_HERDR_LEDGER" <<EOF
 {"ts":"$NOW","ev":"spawn","agent_ref":"i1-scan#aaaa","pane_id":"p2","tokens":{"role":"investigator","depth":"1"},"tool_binding":"accepted","process_containment":"not_available"}
