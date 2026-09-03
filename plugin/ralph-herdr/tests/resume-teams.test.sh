@@ -341,6 +341,18 @@ is "rediscovered stood-down candidate exits 0" "0" "$RC"
 is "rediscovered stood-down candidate is never delegated" "0" "$(grep -c '^909 ' "$TEAM_LOG" || true)"
 line_has "rediscovered stood-down candidate is visible" "$OUT" "resume team GH-909: skipped — stood down by operator"
 
+# An UNLEDGERED re-arm — its spawn append failed, reconcile discovered it on
+# a DIFFERENT pane from the parked one — is a lead that genuinely exists:
+# resumed when it later dies (Greptile P1 on #2397, second round).
+reset_case
+seed_lead 'o910-team#0001aaaa' "$REPO_DIR"
+jq -nc '{ts:"2026-08-29T12:02:00Z", ev:"exit", agent_ref:"o910-team#0001aaaa", reason:"stood-down", pane_id:"p910a", via:"operator"}' >>"$LEDGER"
+seed_reconciled_discover 'o910-team#0002bbbb' "$REPO_DIR" # pane p-discovered ≠ p910a
+run_resume
+is "unledgered re-arm exits 0" "0" "$RC"
+is "unledgered re-arm resumes on the rediscovered epoch" "1" "$(grep -c '^910 --lead-only$' "$TEAM_LOG")"
+line_has "unledgered re-arm is visible" "$OUT" "resume team GH-910: resumed"
+
 # A human re-arm mints a fresh epoch (work-team.sh EPIC): the newest
 # generation governs, never an older stood-down one.
 reset_case

@@ -734,9 +734,17 @@ ralph_ledger_reason_canon() {
 # which is exactly what reconcile's discover pass mints a fresh ref for
 # (`ev: discover`, new epoch, same name). The death event then finds THAT ref
 # open, and a per-ref check would respawn the lead the operator just parked.
-# So only a `spawn` (a deliberate re-arm — work-team.sh EPIC) re-arms the
-# name; `discover` is reconcile observing a pane, never a decision, and does
-# not. Readers: heal.sh (never respawn/flag a stood-down lead) and
+# So a `spawn` (a deliberate re-arm — work-team.sh EPIC) always re-arms the
+# name, and a `discover` re-arms it ONLY when it names a DIFFERENT pane from
+# the one the stand-down parked: the stood-down exit carries the parked
+# pane's id, so a discover on that same pane is reconcile observing the
+# dying lead (not a decision), while a discover on another pane is a lead
+# that genuinely exists — the re-arm whose own spawn append failed
+# ("spawning unledgered — reconcile will discover it") and would otherwise
+# stay parked forever, its next death never healed. A discover that cannot
+# be compared (either pane id missing — legacy rows) leaves the park in
+# place: toward not-respawning, the direction this issue exists for.
+# Readers: heal.sh (never respawn/flag a stood-down lead) and
 # resume-teams.sh (never resume one). rc 1 = not stood down, or unreadable —
 # an unreadable ledger must not read as "parked" to a healer.
 ralph_ledger_stood_down() {
@@ -745,11 +753,16 @@ ralph_ledger_stood_down() {
   file=$(ralph_ledger_path) || return 1
   _ralph_ledger_present "$file" || return 1
   out=$(_ralph_ledger_events "$file" | jq -r --arg name "$name" -s '
-    reduce .[] as $e ("";
+    reduce .[] as $e ({state: "", pane: ""};
       if ((($e.agent_ref // "") | split("#")[0]) != $name) then .
-      elif $e.ev == "spawn" then "armed"
-      elif $e.ev == "exit" and (($e.reason // "") | IN("stood-down", "stood_down")) then "stood"
-      else . end)') || return 1
+      elif $e.ev == "spawn" then {state: "armed", pane: ""}
+      elif $e.ev == "exit" and (($e.reason // "") | IN("stood-down", "stood_down")) then
+        {state: "stood", pane: ($e.pane_id // "")}
+      elif $e.ev == "discover" and .state == "stood" then
+        ((try ($e.pane_id // $e.lineage.herdr.pane_id) catch null) // "") as $p
+        | if $p != "" and .pane != "" and $p != .pane then {state: "armed", pane: ""} else . end
+      else . end)
+    | .state') || return 1
   [ "$out" = "stood" ]
 }
 

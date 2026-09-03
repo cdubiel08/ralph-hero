@@ -108,9 +108,10 @@ ralph_heal_lead_death() (
   # those two steps: a reconcile discover pass sees a live pane with no open
   # record and mints a fresh ref (new epoch, same name) — the death event
   # then heals THAT ref. ralph_ledger_stood_down reads the name's most
-  # recent arm/park event; only a `spawn` (a human re-arm) clears it, a
-  # `discover` never does. A stood-down lead is neither respawned nor
-  # flagged orphaned, whichever epoch is handed here.
+  # recent arm/park event: a `spawn` (a human re-arm) clears it, and a
+  # `discover` clears it only on a DIFFERENT pane from the parked one (an
+  # unledgered re-arm) — the same pane is the dying lead. A stood-down lead
+  # is neither respawned nor flagged orphaned, whichever epoch is handed here.
   if RALPH_HERDR_LEDGER="$ledger" ralph_ledger_stood_down "${ref%%#*}"; then
     log "lead $ref stood down by operator — no respawn, no orphan flag (GH-2357)"
     exit 0

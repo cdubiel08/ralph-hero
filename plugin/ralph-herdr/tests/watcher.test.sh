@@ -607,7 +607,7 @@ line_has "heal stood-down: the log names the operator's stand-down" "$(cat "$HEA
 rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
 cat >"$HLEDGER" <<EOF
 {"ts":"t0","ev":"spawn","agent_ref":"o45-parked#0001","pane_id":"p45","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"45","slug":"parked","depth":"0","state":"spawned","root":"o45-parked#0001"}}
-{"ts":"t1","ev":"exit","agent_ref":"o45-parked#0001","reason":"stood-down","via":"operator"}
+{"ts":"t1","ev":"exit","agent_ref":"o45-parked#0001","reason":"stood-down","pane_id":"p45","via":"operator"}
 {"ts":"t2","ev":"discover","agent_ref":"o45-parked#0002","pane_id":"p45","via":"reconcile","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"45","slug":"parked"}}
 EOF
 herd_fixture '[]'
@@ -632,6 +632,20 @@ EOF
 : >"$HEAL_STUB_LOG"
 run_event pane.exited '{"pane_id":"p46","workspace_id":"ws46"}' "$HROOT"
 is "heal re-armed: a spawn after the stand-down re-arms the name — respawn delegated" "1" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
+# An UNLEDGERED re-arm (its spawn append failed; reconcile discovered it) is
+# a discover on a DIFFERENT pane from the one the stand-down parked — that is
+# a lead that genuinely exists, and its later death heals again (Greptile P1
+# on #2397, second round).
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
+cat >"$HLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"o47-unledgered#0001","pane_id":"p47a","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"47","slug":"unledgered","depth":"0","state":"spawned","root":"o47-unledgered#0001"}}
+{"ts":"t1","ev":"exit","agent_ref":"o47-unledgered#0001","reason":"stood-down","pane_id":"p47a","via":"operator"}
+{"ts":"t2","ev":"discover","agent_ref":"o47-unledgered#0002","pane_id":"p47b","via":"reconcile","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"47","slug":"unledgered"}}
+EOF
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+run_event pane.exited '{"pane_id":"p47b","workspace_id":"ws47"}' "$HROOT"
+is "heal unledgered re-arm: a discover on ANOTHER pane re-arms the name — respawn delegated" "1" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
 unset -f log
 
 unset RALPH_HERDR_WORK_TEAM HEAL_STUB_LOG

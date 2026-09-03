@@ -114,7 +114,8 @@ while IFS= read -r candidate; do
   # about checkout ambiguity, and re-arming it is a human's call
   # (work-team.sh EPIC), not this pass's. Keyed on the lead's NAME
   # (ralph_ledger_stood_down): a `discover` minted for the dying pane after
-  # the stand-down is a newer EPOCH but not a re-arm — only a `spawn` is.
+  # the stand-down is a newer EPOCH but not a re-arm; a `spawn` is, and so
+  # is a `discover` on a different pane (an unledgered re-arm).
   newest_ref=$(jq -r '.newestRef // empty' <<<"$candidate")
   if [ -n "$newest_ref" ] && RALPH_HERDR_LEDGER="$ledger" ralph_ledger_stood_down "${newest_ref%%#*}"; then
     echo "resume team GH-$epic: skipped — stood down by operator (work-team.sh $epic re-arms it)"
