@@ -61,7 +61,7 @@ fi
 # had. An empty herd is a successful read; only a failed one refuses.
 herd=$(ralph_agents_json 2>/dev/null) ||
   die "cannot read the herd, so a live pre-0.42 $lane pass (ralph-$lane) cannot be ruled out — one live pass per lane; not spawning $agent until herdr answers"
-legacy_live=$(jq -r --arg n "ralph-$lane" 'select(.name == $n) | .name' <<<"$herd" 2>/dev/null | head -1) || legacy_live=""
+legacy_live=$(printf '%s' "$herd" | jq -r --arg n "ralph-$lane" 'select(.name == $n) | .name' 2>/dev/null | head -1) || legacy_live=""
 [ -z "$legacy_live" ] ||
   die "a $lane pass is already live under its pre-0.42 name ($legacy_live) — one live pass per lane; let it finish (or close its pane) before starting $agent"
 
@@ -111,7 +111,7 @@ fi
 contain_out=$(ralph_process_containment_args tender "$REPO") ||
   die "process containment cannot be established for the tender (see the reason above) — not spawning an uncontained $lane pane"
 contain_args=()
-while IFS= read -r out; do [ -n "$out" ] && contain_args+=("$out"); done <<<"$contain_out"
+while IFS= read -r out; do [ -n "$out" ] && contain_args+=("$out"); done < <(printf '%s\n' "$contain_out")
 # The lane's model (GH-2350), appended LAST so the binding/containment argv
 # a reader already recognises keeps its shape; an unridable value refuses.
 model=$(ralph_lane_model "$lane" "$REPO") ||
@@ -170,14 +170,14 @@ if [ "${RALPH_HERDR_LANE_TAB:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
     3) die "herdr did not answer the $lane agent-pane split (unreachable, or timed out — a timed-out split may still have landed; check the tab before retrying)" ;;
     *) die "herdr's answer to the $lane agent-pane split was not a response this plugin can read — see the transport error above" ;;
   esac
-  pane=$(jq -r '.pane.pane_id // empty' <<<"$s")
+  pane=$(printf '%s' "$s" | jq -r '.pane.pane_id // empty')
   [ -n "$pane" ] || die "no pane id in split response"
   cleanup_pane="$pane" cleanup_tab=""
 else
   t=$(ralph_herdr_tab_create "$lane")
-  pane=$(jq -r '.root_pane.pane_id // empty' <<<"$t")
+  pane=$(printf '%s' "$t" | jq -r '.root_pane.pane_id // empty')
   [ -n "$pane" ] || die "no pane id in tab response"
-  cleanup_pane="" cleanup_tab=$(jq -r '.tab.tab_id // empty' <<<"$t")
+  cleanup_pane="" cleanup_tab=$(printf '%s' "$t" | jq -r '.tab.tab_id // empty')
 fi
 
 # Provisional C7 record at pane creation (audit D2b parity with
@@ -240,7 +240,7 @@ if [ "${#contain_args[@]}" -gt 0 ]; then
   # Two words (GH-2341): the process verdict, then the tool-binding word —
   # which the probe's Write step can only REFUTE, never promote.
   probe_out=$(spawn_containment_probe "$agent" "$pane" "$REPO" "re-run the $lane pass" "$tool_binding") || {
-    read -r outcome tool_binding <<<"${probe_out:-unverified $tool_binding}"
+    read -r outcome tool_binding < <(printf '%s\n' "${probe_out:-unverified $tool_binding}")
     # The refusal is recorded as the two achieved values BEFORE the row is
     # closed (GH-2267): a reader who was not present must be able to tell
     # this pane from a contained one off the ledger alone. The close reason
@@ -256,7 +256,7 @@ if [ "${#contain_args[@]}" -gt 0 ]; then
     RALPH_HERDR_AGENT_LIVE=""
     die "process containment ${outcome:-unverified} for $agent, tool binding $tool_binding (pane $pane) — an uncontained $lane pane must not receive its prompt; closed the surface this run created (the probe's reason is above)"
   }
-  read -r outcome tool_binding <<<"$probe_out"
+  read -r outcome tool_binding < <(printf '%s\n' "$probe_out")
   echo "process containment: $outcome for $agent (a Bash write inside $REPO was refused by the kernel; tool binding is the separate GH-2265 mechanism)"
 else
   outcome=not_requested
@@ -274,7 +274,7 @@ if [ -n "$record" ]; then
   while IFS= read -r kv; do
     [ -n "$kv" ] || continue
     set -- "$@" "$kv"
-  done < <(jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' <<<"$record" 2>/dev/null || true)
+  done < <(printf '%s' "$record" | jq -r '.tokens | to_entries[] | "\(.key)=\(.value)"' 2>/dev/null || true)
   [ "$#" -ge 1 ] && ralph_tokens_push "$pane" "$@"
 fi
 
