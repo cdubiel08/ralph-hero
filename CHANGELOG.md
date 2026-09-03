@@ -124,6 +124,18 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Fixed
 
+- **A non-Darwin containment refusal left no ledger row (GH-2360).**
+  `not_available` was in `CONTAINMENT_OUTCOMES` (GH-2267) but only ever
+  reached stderr: `ralph_process_containment_platform`'s refusal fired
+  before `work-team.sh` / `tend-pass.sh` ever minted a ref or wrote a
+  provisional row, so the ledger could not distinguish "refused, platform
+  unmeasured" from "never attempted". Both spawners now check the platform
+  half of the gate by hand, ahead of the existing
+  `ralph_process_containment_args` call, and on refusal mint the ref, write
+  the provisional row, record the containment event
+  (`tool_binding: <observed>, process_containment: not_available`), and
+  close the row `containment_not_available` — the same shape the in-pane
+  probe's own refusals already leave. Ships as ralph-herdr **0.49.1**.
 - **A self-closed unit left its worktree lock behind (GH-2367).**
   `transition()` released the caller's own `~/.ralph/sessions/wt-*` lock on
   exactly one edge — `In Progress → Backlog` (GH-2107) — so a session that
