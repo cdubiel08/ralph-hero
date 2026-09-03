@@ -132,7 +132,7 @@ to a version heading when that artifact next releases. Full tag history:
   every non-driver role, `not_requested`/`not_requested` for the driver —
   and names the row as a GAP when they diverge; a record with no role or no
   recorded words is skipped, never flagged, since those predate the model.
-  Ships as ralph-herdr **0.50.1**.
+  Ships as ralph-herdr **0.50.2**.
 - **A non-Darwin containment refusal left no ledger row (GH-2360).**
   `not_available` was in `CONTAINMENT_OUTCOMES` (GH-2267) but only ever
   reached stderr: `ralph_process_containment_platform`'s refusal fired
