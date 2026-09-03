@@ -26,15 +26,19 @@
 #   by ralph_ledger_append. It is how reconcile proves a ledger is its own once
 #   the last pane that would have proven it is gone (GH-1933).
 #   ev vocabulary: spawn | state | adopt | exit | discover | containment |
-#   usage | lost ("lost" is
+#   usage | finish | lost ("lost" is
 #   reserved; a lost agent is recorded as ev=exit reason=swept-unknown —
 #   spelled "lost" before GH-2309, see the exit-reason enum below).
 #     spawn     appended by the spawn paths (lib.sh, work-team.sh, fleet.sh's
 #               investigator, and since GH-2342 the t0-tend / r0-deliver lane
-#               passes) AT PANE CREATION — the one
-#               documented carve-out from "the watcher is the sole appender"
+#               passes) AT PANE CREATION — one of two
+#               documented carve-outs from "the watcher is the sole appender"
 #               (spawn happens before any event hook can fire; a single-line
-#               O_APPEND write stays atomic). Embeds the C7 LineageRecord as
+#               O_APPEND write stays atomic). The other is the work skill's
+#               own close-out (ralph_ledger_finish_append, GH-2348 — see
+#               `finish` below): the ONE ledger write an agent makes ABOUT
+#               ITSELF, at the exact point its own contract already ends its
+#               driving. Embeds the C7 LineageRecord as
 #               .lineage and the C8 token map as .tokens. Provisional since
 #               the 2026-08-19 audit (D2b): written before `agent start`, so
 #               a spawner killed pre-start leaves a sweepable open row; the
@@ -59,12 +63,23 @@
 #               containment; latest wins per ref. See the usage section at
 #               the end of this file for the shape and the claude_session
 #               field the state/discover records carry.
+#     finish    the work skill's own close-out (GH-2347 — `ralph_ledger_
+#               finish_append`, one agent-side writer beside spawn's own
+#               carve-out): {via}. NEVER `ev: exit` — the pane is still live
+#               when this fires, and closing the open-set row under a live
+#               pane is what let a rediscovery path mint a fresh, unparented
+#               epoch for it (caught in review — see the finish-facts section
+#               near the end of this file). Neutral to the open-set reduce
+#               like usage/containment; latest wins per ref. A duration
+#               reader should prefer the earliest `finish.ts` for a ref when
+#               one exists, falling back to the real exit's own (backdated)
+#               ts otherwise.
 #
 #   EXIT REASON ENUM (GH-2309, phase C). The typed vocabulary for exit.reason:
-#     finished | yielded | crashed | restart-killed | swept-unknown |
-#     pane-closed | pane-exited | stood-down
-#   Reserved values exist before anything emits them: finished/yielded need
-#   heartbeat/handshake signals that are a separate swing. Live writers today:
+#     yielded | crashed | restart-killed | swept-unknown | pane-closed |
+#     pane-exited | stood-down
+#   Reserved values exist before anything emits them: yielded needs a
+#   heartbeat/handshake signal that is a separate swing. Live writers today:
 #   reconcile's sweep emits swept-unknown (the honest name for what the sweep
 #   proves — an absence asked twice, nothing about how the worker ended; the
 #   pre-enum spelling was "lost"), phase E's pane-proved verdicts emit
@@ -74,10 +89,14 @@
 #   exit reason a human writes on purpose rather than the watcher inferring
 #   from a pane death, and the one heal.sh (GH-2212) reads back to refuse a
 #   respawn. never_started (the spawn path's provisional close) is via-spawn
-#   bookkeeping, outside this enum. Historical rows are NEVER rewritten; a
-#   reader that branches on reason normalizes through ralph_ledger_reason_canon
-#   (the ONE alias mapping — lost → swept-unknown, underscore spellings →
-#   their hyphenated enum forms), never per consumer.
+#   bookkeeping, outside this enum. `finished` is deliberately NOT a
+#   member — see `finish` above: a driver's own hand-off claim is a fact
+#   about the WORK, and only the pane's own death may close the ledger row,
+#   so it is a separate, neutral event rather than a value this enum's
+#   readers would have to special-case. Historical rows are NEVER
+#   rewritten; a reader that branches on reason normalizes through
+#   ralph_ledger_reason_canon (the ONE alias mapping — lost → swept-unknown,
+#   underscore spellings → their hyphenated enum forms), never per consumer.
 #
 #   Appends are sqlite INSERTs (phase D, GH-2311): WAL + busy_timeout carry
 #   concurrent-append safety, and the seq race between two writers settles at
@@ -1342,4 +1361,152 @@ ralph_ledger_usage_append() {
   ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg sid "$sid" --arg via "$via" \
     --arg pt "$RALPH_USAGE_PRICE_TABLE" --argjson u "$usage" \
     '{ts: $ts, ev: "usage", agent_ref: $ref, claude_session: $sid, via: $via, price_table: $pt, usage: $u}')"
+}
+
+# ── finish facts (GH-2348) ───────────────────────────────────────────────────
+# Nothing closed a ref until its PANE was proved gone (watch-event's
+# pane.exited/closed) or absent twice (reconcile's sweep). Both are real
+# signals about the PANE, not about the WORK — a driver's board move to In
+# Review, or a merge close-out, hands the unit off well before the pane
+# itself closes (the human hasn't clicked away, or the pass that would
+# notice hasn't run yet). Measured on this repo: 257 of 316 exits were
+# swept-unknown, median duration 1,103 min against 17 min of real
+# model-call span — spawn to exit was measuring the reconcile sweep, not
+# the work.
+#
+# Two fixes, one per population:
+#   ralph_ledger_finish_append   the work skill's OWN self-report, run from
+#                                inside the still-live pane at the exact
+#                                moment identified above — the ONE other
+#                                agent-side ledger writer beside the spawn
+#                                path's own C7 record (see the header:
+#                                "Agents never write it" — spawn and this
+#                                are the two documented exceptions). It
+#                                appends `ev: "finish"`, DELIBERATELY NOT
+#                                `ev: "exit"`: the ref's own pane is still
+#                                live when this runs (the session goes on to
+#                                post its close-out comment and print its
+#                                final line), so closing the open-set row
+#                                here would tell every rediscovery path the
+#                                worker is gone while herdr still sees it —
+#                                watch-event's handle_status marks the
+#                                ledger dirty on the very next status event
+#                                for a ref it cannot find open, and
+#                                reconcile's phase B then mints a FRESH
+#                                epoch for the still-live pane, with no
+#                                parent/root lineage carried over (review
+#                                caught this — GH-2348's PR #2395). `finish`
+#                                is neutral to the open-set reduce, the same
+#                                shape as `usage`/`containment`: latest wins
+#                                per ref, never opens or closes a row. The
+#                                real `ev: exit` still lands later, exactly
+#                                as before (pane-death hook or the sweep); a
+#                                duration reader should prefer the earliest
+#                                `finish.ts` for a ref when one exists, and
+#                                fall back to the exit's own (backdated) ts
+#                                otherwise. Best-effort: an unresolved pane,
+#                                no open ref bound to it (already exited, or
+#                                never confirmed), or a failed append all
+#                                print one stderr line and return 1 — a lost
+#                                self-report degrades to the slower, honest
+#                                exit it always fell back to, never a
+#                                blocked close-out. PANE is trusted at face
+#                                value, exactly as `herdr pane
+#                                report-metadata` already trusts it — the
+#                                same self-report boundary, not a new,
+#                                weaker one; a wrong pane costs a stray data
+#                                point, never a lifecycle mutation (which is
+#                                the property this redesign exists for).
+#   _ralph_ledger_exit_ts        the fallback named in the same issue, for a
+#                                session that dies BEFORE it can self-report:
+#                                every exit-composing site below stamps `ts`
+#                                from the transcript's own last-call moment —
+#                                the SAME reduction ralph_usage_from_transcript
+#                                already performs for the usage fact appended
+#                                right beside it — instead of the instant this
+#                                pass happened to discover the pane gone. The
+#                                exit `reason` is untouched (still whatever the
+#                                writer's own evidence says: swept-unknown,
+#                                crashed, restart-killed, pane-exited/closed);
+#                                only the timestamp gets honest.
+
+# _ralph_ledger_exit_ts REF FALLBACK_TS [SESSION] [CHECKOUT] — the ts an exit
+# writer should stamp on REF's record: REF's transcript's last-call moment
+# when one is resolvable, else FALLBACK_TS unchanged. SESSION/CHECKOUT are an
+# optional fast path for a caller that already has them off an
+# ralph_ledger_open_rows scan (reconcile's phase E) — passing them skips a
+# second whole-ledger read for a value the caller's own loop already paid
+# for. A caller with only a pane or a ref (watch-event's handle_gone) leaves
+# them empty and this derives them the same way ralph_ledger_usage_append
+# does, bounded by the handful of refs one pane death can ever bind.
+#
+# Deliberately NOT wired into reconcile's swept-unknown sweep's mass path
+# without the row data already in hand (see the sweep's own comment) — that
+# phase's candidate count is unbounded by a single pane, and GH-1775 spent
+# real effort removing exactly this shape of per-ref whole-ledger read from
+# it; SESSION/CHECKOUT passed through from the row scan keep this at zero
+# extra ledger reads there too.
+#
+# Best-effort and silent on every miss: no confirmed claude_session, no
+# transcript on disk, or no model calls in it are all the ORDINARY case for
+# a session that crashed early or was never confirmed — never a reason to
+# fail the exit append waiting on this.
+_ralph_ledger_exit_ts() {
+  local ref="${1-}" fallback="${2-}" sid="${3-}" checkout="${4-}" file usage last
+  [ -n "$ref" ] || { printf '%s\n' "$fallback"; return 0; }
+  if [ -z "$sid" ]; then
+    sid=$(_ralph_ledger_latest_claude_session "$ref" 2>/dev/null) || sid=""
+  fi
+  [ -n "$sid" ] || { printf '%s\n' "$fallback"; return 0; }
+  if [ -z "$checkout" ]; then
+    checkout=$(_ralph_ledger_latest_checkout "$ref" 2>/dev/null) || checkout=""
+  fi
+  file=$(_ralph_usage_transcript "$sid" "$checkout" 2>/dev/null) || { printf '%s\n' "$fallback"; return 0; }
+  usage=$(ralph_usage_from_transcript "$file" 2>/dev/null) || { printf '%s\n' "$fallback"; return 0; }
+  last=$(jq -r '.last_ts // empty' <<<"$usage" 2>/dev/null) || last=""
+  printf '%s\n' "${last:-$fallback}"
+}
+
+# ralph_ledger_finish_append PANE [VIA] — the work skill's self-report
+# completion fact: `ev: "finish"` for the open agent_ref bound to PANE,
+# appended right now. Never `ev: "exit"` — see the section header above for
+# why: the pane is still alive when this runs, and closing the open-set row
+# under a live pane is what let reconcile's phase B mint a fresh, unparented
+# epoch for it. VIA tags provenance on the record (default "work-skill");
+# the work skill passes review/done to distinguish the two hand-off points
+# named in GH-2348 without adding a second call shape.
+#
+# Locked read-decide-append: ralph_ledger_open_for_pane resolves the
+# caller's own ref(s) from the pane id alone (a driver pane binds exactly
+# one; the loop tolerates more the same way watch-event's handle_gone
+# does), each gets its finish fact and a fresh usage fact right beside it
+# (GH-2347's own rule — "written at exit by every exit writer that had a
+# worker to measure" — extended here since a finish is, for measurement
+# purposes, the same kind of checkpoint a `done` turn boundary already is).
+# The lock is still needed: it is decision atomicity against a concurrent
+# writer closing this same ref with a REAL exit mid-call, not write
+# atomicity (appends serialize themselves).
+ralph_ledger_finish_append() {
+  local pane="${1-}" via="${2:-work-skill}" file ref ts refs rc=0
+  [ -n "$pane" ] || { echo "ledger finish: no pane id — nothing to mark" >&2; return 1; }
+  file=$(ralph_ledger_path) || return 1
+  ts=$(date -u +%FT%TZ)
+  ralph_ledger_lock "$file"
+  refs=$(ralph_ledger_open_for_pane "$pane") || refs=""
+  if [ -z "$refs" ]; then
+    ralph_ledger_unlock "$file"
+    echo "ledger finish: no open agent_ref bound to pane $pane — already exited, or never confirmed" >&2
+    return 1
+  fi
+  for ref in $refs; do
+    ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg via "$via" \
+      '{ts: $ts, ev: "finish", agent_ref: $ref, via: $via}')" || {
+      echo "ledger finish: finish append failed for $ref" >&2
+      rc=1
+      continue
+    }
+    ralph_ledger_usage_append "$ref" "$via" >/dev/null 2>&1 || true
+  done
+  ralph_ledger_unlock "$file"
+  return "$rc"
 }

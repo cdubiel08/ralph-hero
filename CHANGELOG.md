@@ -19,6 +19,25 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Added
 
+- **The work skill self-reports completion so per-unit duration is real
+  (GH-2348).** Nothing closed an agent's ledger row until its pane was
+  proved gone (watch-event's pane-death hook) or absent twice (reconcile's
+  sweep) — both real signals about the PANE, not the WORK, so spawn-to-exit
+  duration measured the sweep clock rather than the work (257/316 exits on
+  this repo's own ledger were `swept-unknown`, median 1,103 min against 17
+  min of real model-call span). `board move NNN in-review` or a merge
+  close-out now runs `ledger-finish.sh` (new, `ralph/scripts/`), which
+  appends a `finish` fact for the session's own open agent_ref right
+  then — the one other agent-side ledger write beside the spawn path's own
+  carve-out. It is deliberately NOT an `exit`: the pane is still live when
+  it fires, and an earlier draft that closed the row there let reconcile
+  mint a fresh, unparented epoch for the still-live worker on its next
+  pass (caught in review) — `finish` is neutral to the open-set reduce,
+  the same shape as the `usage` fact, and the real exit still lands later
+  exactly as before. For a session that dies first, every exit writer now
+  backdates its `ts` to the transcript's own last-call moment (the same
+  reduction the `usage` fact already performs) instead of the detection
+  instant, at zero extra ledger reads on the highest-volume sweep path.
 - **Per-lane model setting (GH-2350).** Every cockpit spawn path — driver
   (`spawn_work_session`), lead (`work-team.sh`), dispatch (`hero.sh`),
   deliver and tend passes — plus the headless `tick.sh` runner now asks the

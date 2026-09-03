@@ -404,7 +404,7 @@ handle_status() {
 
 # ── pane.exited / pane.closed ────────────────────────────────────────────────
 handle_gone() {
-  local reason="$1" pane ws live live_json snapshot f refs ref ts w_exited o_exited
+  local reason="$1" pane ws live live_json snapshot f refs ref ts ref_ts w_exited o_exited
   pane=$(pfield '.pane_id // .data.pane_id // empty')
   ws=$(pfield '.workspace_id // .data.workspace_id // empty')
   [ -n "$pane" ] || exit 0
@@ -441,7 +441,12 @@ handle_gone() {
     refs=$(ralph_ledger_open_for_pane "$pane") || refs=""
     w_exited="" o_exited=""
     for ref in $refs; do
-      ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg ref "$ref" --arg r "$reason" --arg p "$pane" \
+      # GH-2348: an honest end for the swept-unknown/pane-* population too —
+      # the transcript's own last-call moment when one resolves, else the
+      # detection instant above unchanged. Bounded cost: at most the handful
+      # of refs one pane death can ever bind, never a ledger-wide scan.
+      ref_ts=$(_ralph_ledger_exit_ts "$ref" "$ts")
+      ralph_ledger_append "$(jq -nc --arg ts "$ref_ts" --arg ref "$ref" --arg r "$reason" --arg p "$pane" \
         '{ts: $ts, ev: "exit", agent_ref: $ref, reason: $r, pane_id: $p}')" ||
         log "exit append failed for $ref"
       log "exit $ref (reason $reason, pane $pane)"
