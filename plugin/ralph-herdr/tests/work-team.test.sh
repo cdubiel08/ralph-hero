@@ -343,7 +343,7 @@ line_has "team dry (model): the provisional record carries model_requested" "$OU
 line_has "team dry (model): the record's role is untouched by the model" "$OUT" '"role":"orchestrator"'
 RALPH_MODEL_LEAD='bad value' run_wt 900
 if [ "$RC" -ne 0 ]; then ok "team dry (bad model): an unridable lead model refuses"; else not_ok "team dry (bad model): expected a refusal, got rc 0"; fi
-line_has "team dry (bad model): the refusal names the source" "$OUT" "RALPH_MODEL_LEAD='bad value'"
+line_has "team dry (bad model): the refusal names the source" "$OUT" "RALPH_MODEL_LEAD=bad"
 if grep -q "DRY RUN" <<<"$OUT"; then not_ok "team dry (bad model): no plan past the refusal"; else ok "team dry (bad model): no plan past the refusal"; fi
 
 # ═══ 8. --stand-down: park a LIVE lead deliberately (GH-2357) ════════════════

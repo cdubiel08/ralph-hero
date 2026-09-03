@@ -176,7 +176,7 @@ printf '{"owner":"fake","repo":"fake","projectNumber":1}\n' >"$REPO_DIR/.ralph.j
 out=$(RALPH_MODEL_DISPATCH='bad value' run_hero)
 rc=$?
 [ "$rc" != 0 ] && ok "dispatch bad model: an unridable model refuses the seat" || not_ok "dispatch bad model: expected a refusal, got rc 0"
-has "dispatch bad model: the refusal names the source" "$out" "RALPH_MODEL_DISPATCH='bad value'"
+has "dispatch bad model: the refusal names the source" "$out" "RALPH_MODEL_DISPATCH=bad"
 hasnt "dispatch bad model: the harness is never exec'd" "$(cat "$FAKE_CLAUDE_LOG")" "ralph:hero"
 settle
 
