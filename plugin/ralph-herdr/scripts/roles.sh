@@ -675,8 +675,14 @@ ralph_lane_model() {
   # value can still carry control bytes (that's WHY it's refused), and the
   # first draft echoed it verbatim to stderr — the same forgeable-terminal-
   # output hole one layer up (Greptile review, PR #2422 discussion_r3920987572).
+  # %q's own idea of "printable" is locale-dependent — measured letting a
+  # Unicode bidi override through unescaped under a UTF-8 locale on CI while
+  # escaping it correctly here — so the tr pass is a backstop: literal byte
+  # range \40-\176 (printable ASCII), '?' for anything outside it. LC_ALL=C
+  # pins tr to byte-wise operation — BSD tr errors ("Illegal byte sequence")
+  # on raw multibyte UTF-8 input under a UTF-8 locale otherwise.
   local qmodel
-  qmodel=$(printf '%q' "$model")
+  qmodel=$(printf '%q' "$model" | LC_ALL=C tr -c '\40-\176' '?')
   case "$model" in
     [A-Za-z0-9]*) ;;
     *)
