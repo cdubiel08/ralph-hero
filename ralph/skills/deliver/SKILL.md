@@ -1,5 +1,5 @@
 ---
-description: Shepherd In Review PRs from open to merged — one pass over the deliver queue. Reacts to concluded checks, review deltas, stale attestations, and merge-gate PENDING verdicts; maintains branch topology; demotes semantic rework; closes out items whose PRs already merged. Mechanical remediation only — never authors feature semantics. Triggers on "deliver", "shepherd the review queue", "work the In Review items", "chase the open PRs".
+description: Shepherd In Review PRs from open to merged — one pass over the deliver queue. Reacts to concluded checks, review deltas, stale attestations, and merge-gate PENDING verdicts; maintains branch topology; escalates semantic rework to the lead; closes out items whose PRs already merged. Mechanical remediation only — never authors feature semantics, never demotes on its own judgment. Triggers on "deliver", "shepherd the review queue", "work the In Review items", "chase the open PRs".
 argument-hint: "[<issue-number> | (empty = take the deliver queue's next)]"
 context: inline
 model: sonnet
@@ -18,6 +18,34 @@ One pass over the deliver lane: the In Review items whose open PRs have an actio
 
 The board CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/board` — that placeholder resolves to wherever this plugin is installed; never substitute a repo-relative path. Below, `board` is shorthand for it.
 
+## Judgment boundary (Sonnet-may / lead-decides, GH-2353)
+
+Two classes of call, so a pass never blurs them. **Yours alone, no
+escalation** — every mechanical remediation this file names: re-run flakes,
+fix lint/format, `--run` re-attestation, reviewer nudges, evidence-only thread
+replies, rebase/push through the lease, marker and log upkeep, and the
+post-merge reconciliation that yields to `reconcile`. None of these change
+what the PR *does* — they get an existing, gate-legible fact back in front of
+the gate.
+
+**The lead's call, escalated — never executed by this lane**
+(`board move NNN human-needed --why "…"`, composed per
+[../work/references/escalation.md](../work/references/escalation.md), which
+addresses the lead by default when this session has one, GH-2179): whether a
+genuinely failing test at unchanged semantics is real rework rather than a
+flake that looked convincing, whether an advisory P1/P2 finding is serious
+enough to hold the merge though the gate does not block on it, an unclassified
+gate FAIL, and anything that would change the unit's scope. **Rework demotion
+specifically is the lead's decision, not this lane's**: post the findings
+comment (the evidence — which threads, which test, why it reads as rework and
+not flake) and escalate with your read; never run the two-hop demotion
+yourself. A confirming answer resumes the item to In Progress under the
+answering session's own claim (GH-2204) — that session either drives the
+rework directly or releases it to Backlog for the next `/ralph:work` pass to
+pick up. Solo (no `$RALPH_HERDR_LEAD`), the same escalation lands on the human
+exactly as it always has — nothing about the boundary changes without a lead
+in the loop.
+
 ## One pass
 
 `board deliver-queue --json` picks the work: take `next` (or the argument's issue if given — it must be in the queue). Empty `next` ⇒ nothing to do: write the exit report and stop. Handle ONE item per pass, end to end, then exit at a surfaced state. You are a single-pass operator: whatever invoked you decides whether and when another pass happens — never arrange one yourself, and never wait around for state to change.
@@ -31,9 +59,9 @@ Merge exclusively through the host repo's own gate: `bash scripts/merge-pr.sh PR
 - **PENDING** (exit 75) — evidence not in yet. Leave In Review, journal, exit. Not a failure.
 - **FAIL — state** — re-read reality: the PR is usually already merged (native auto-merge, or a prior run). Treat per the post-merge rule below; anything else → Human Needed.
 - **FAIL — mergeable** — CONFLICTING → record `git rev-parse origin/<branch>` first, rebase onto main, resolve preserving both sides' stated intent, push **through the lease** (see the push rule below), exit at In Review (quiescence restarts the clock). UNKNOWN → wait, exit at In Review; never rebase or push on mere uncertainty.
-- **FAIL — checks** — remediate mechanically: re-run flakes, fix lint/format. A genuinely failing test at unchanged semantics is a rework signal → demotion.
-- **FAIL — review** (CHANGES_REQUESTED) — **run `bash scripts/review-staleness.sh PR` before demoting (GH-1816).** `reviewDecision` carries no commit binding, so a CHANGES_REQUESTED keeps blocking after its findings were fixed and pushed, until the reviewer re-reviews — hours later when it is rate-limited, which is the normal shape of a round, not a race. Map its `verdict`: **`live`** (a blocking review bound to the current head) → rework demotion, unchanged. **`stale`** (every blocking review predates the head) → **do not demote**: the item awaits evidence, not the author. Hold at In Review, post one comment naming the blocking review, its commit, and the current head, and — if no nudge has been posted at this head yet — post the reviewer nudge below; then exit. **Anything else** (`not-evaluated`, an absent script, unusable output) → demote, exactly as before this check existed: an unreadable answer never proves the verdict is stale, and this fix may not become under-demotion where it cannot see. Either way the merge still refuses; gate 1 is unchanged and unforceable.
-- **FAIL — attestation** — re-run the attested commands at the current head via `scripts/attest-pr.sh PR --run "<cmd>" --carry-review` — **contract rules: re-attestation only ever through `--run` (observed exit codes, never caller-typed), and the review verdict only ever carried forward, never authored or retyped**. Commands fail → demotion. Refusals key on their tokens, never the shared exit code: `ATTESTATION REFUSED — head moved` is not a test failure (re-check quiescence, retry once, else exit at In Review); `ATTESTATION REFUSED — no prior review` → Human Needed, never a fresh self-approval.
+- **FAIL — checks** — remediate mechanically: re-run flakes, fix lint/format. A genuinely failing test at unchanged semantics is a rework signal → escalate per the Judgment boundary above, never demote yourself.
+- **FAIL — review** (CHANGES_REQUESTED) — **run `bash scripts/review-staleness.sh PR` before demoting (GH-1816).** `reviewDecision` carries no commit binding, so a CHANGES_REQUESTED keeps blocking after its findings were fixed and pushed, until the reviewer re-reviews — hours later when it is rate-limited, which is the normal shape of a round, not a race. Map its `verdict`: **`live`** (a blocking review bound to the current head) → escalate per the Judgment boundary above (post the findings comment, then hand the rework call to the lead), never demote yourself. **`stale`** (every blocking review predates the head) → **do not demote**: the item awaits evidence, not the author. Hold at In Review, post one comment naming the blocking review, its commit, and the current head, and — if no nudge has been posted at this head yet — post the reviewer nudge below; then exit. **Anything else** (`not-evaluated`, an absent script, unusable output) → escalate per the Judgment boundary above, exactly as the `live` case does: an unreadable answer never proves the verdict is stale, and this fix may not become under-demotion where it cannot see. Either way the merge still refuses; gate 1 is unchanged and unforceable.
+- **FAIL — attestation** — re-run the attested commands at the current head via `scripts/attest-pr.sh PR --run "<cmd>" --carry-review` — **contract rules: re-attestation only ever through `--run` (observed exit codes, never caller-typed), and the review verdict only ever carried forward, never authored or retyped**. Commands fail → escalate per the Judgment boundary above. Refusals key on their tokens, never the shared exit code: `ATTESTATION REFUSED — head moved` is not a test failure (re-check quiescence, retry once, else exit at In Review); `ATTESTATION REFUSED — no prior review` → Human Needed, never a fresh self-approval.
 - Any unclassified FAIL → Human Needed with the gate output quoted.
 
 Reviewer nudges take the shape the merge policy declares. When
@@ -129,7 +157,7 @@ themselves a machine-local fact that no remote reader could ever have observed.
 
 - **`no-open-pr` rows**: verify at least one linked PR actually MERGED, then `board move NNN done` (the Done-evidence guard accepts either linkage this lane uses — a closing-reference merged PR, or one merged on this issue's branch — so `--why` is for a completion with no merged PR at all, GH-1732). A linked PR closed *unmerged* → Human Needed with the finding, the escalation composed per [../work/references/escalation.md](../work/references/escalation.md). This lane is the only thing that un-strands these. **Apply units are different by design**: on an apply-labeled item the close gate refuses Done without `ralph-apply-evidence:v1` — that refusal means the deploy, not the merge, is the outcome; leave it open (or escalate), never route around the gate.
 - **Post-merge state writes yield to reconcile — contract rule.** After a successful merge (or FAIL — state on an already-merged PR), re-read the issue: already Done/Canceled means the event lane won — journal and exit. Only `board move NNN done` when the issue did not auto-close, and treat a refusal (lost race) as success after re-read.
-- **Rework demotion**: post ONE findings comment enumerating every unresolved thread, then the legal two-hop — In Review → In Progress → Backlog (`RALPH_CLAIM_HOLDER=deliver@<host>` for the transient hop) — and release. Both hops now carry the reason on the record (GH-2078): the first as `board move NNN in-progress --why "<the rework the findings demand>"`, the second as the release's `-m`. Never self-fix semantics: any change a reviewer would call a design decision belongs to a work session.
+- **Rework escalation** (see Judgment boundary — never self-executed): post ONE findings comment enumerating every unresolved thread, then `board move NNN human-needed --why "<the findings, and why they read as rework rather than flake>"`. Whether this really is rework, and driving it, is the lead's or human's call, not this lane's: never run the two-hop demotion yourself, and never self-fix semantics — any change a reviewer would call a design decision belongs to a work session someone dispatches after confirming.
 - **Stack safety**: before merging a PR that is the base of another open PR, retarget the dependent first — GitHub *closes*, not retargets, dependents on base-branch deletion.
 - **Every push goes through the lease — contract rule.** Never `git push` a PR branch directly, and never `--force`. Record the remote head **before** rebasing (`git rev-parse origin/<branch>`), then push with `bash ${CLAUDE_PLUGIN_ROOT}/scripts/deliver-push.sh --branch <branch> --expect <that-sha>`. Map the `DELIVER PUSH <verdict>` token, never the bare exit code: **PENDING** (exit 75, lease refused — a peer moved the branch) → abandon the push, leave the branch alone, exit at In Review; **WARN — noop** → nothing was pushed and the lease was never evaluated, so do not report it as a successful push; **FAIL** → Human Needed with the output quoted. A refused lease is this gate working, not an error: never retry it with a wider hammer.
 - **Pre-push quiescence re-check**: immediately before any push (rebase, conflict fix, format), re-check the item is still quiescent (`board deliver-queue --json` — the item must not read `settling`); fresh activity aborts the push, exit at In Review. **Know what this check cannot see** (GH-1917): quiescence is computed from *remote* signals only — state change, issue comment, open-PR activity (the deliver-queue quiescence guard in `board.ts`). A live interactive `/ralph:work` session editing files locally emits none of them, so for that hazard this re-check is not an independent second guard; it is the settle-window predicate sampled twice. The lease above is what actually excludes that session, because it is the only check with an atomic winner.
