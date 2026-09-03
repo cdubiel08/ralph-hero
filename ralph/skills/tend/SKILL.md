@@ -16,6 +16,32 @@ One bounded pass over the tend lane: Backlog shape (dedup, dependency wiring, st
 
 The board CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/board` — that placeholder resolves to wherever this plugin is installed; never substitute a repo-relative path. Below, `board` is shorthand for it.
 
+## Judgment boundary (Sonnet-may / lead-decides, GH-2353)
+
+**Yours alone, no escalation** — everything a clean sweep needs: dep-edge
+judgment against the blocked-by test (a real edge → wire it, no edge →
+dismiss with a reason; both are recorded, reversible moves, not scope
+changes), freshening a body you verified against the live tree, forming an
+unformed item (estimate, priority, parent/dep wiring per
+[../work/references/work-shape.md](../work/references/work-shape.md)), pulling
+a surfaced observation into a tracked `--intake` issue with provenance, and
+every marker this lane writes (`proposed`, `audited`). None of these commit
+the board to anything irreversible — a wired dep can be re-judged, an intake
+item still needs approval before anyone works it.
+
+**The lead's (or, solo, the human's) call, never tend's** — unchanged from the
+rest of this file, restated once: whether a proposed closure is real
+(`board resolve --accept|--reject`), and whether a done-audit gap means
+reopening. This lane's proposals are deliberately **not** a C9 escalation —
+`Backlog → Human Needed` is illegal, and a proposal is asynchronous, not a
+paused unit (see
+[../work/references/escalation.md](../work/references/escalation.md)) — so
+there is no lead-address to route through the way `/ralph:work` and
+`/ralph:deliver` route Human Needed (GH-2179); the marker just sits in
+`board tend-queue`'s `proposed` category until whoever is adjudicating the
+backlog — lead or human — answers it. Never read a pending proposal's silence
+as consent, and never re-propose the same closure without new evidence.
+
 ## One pass
 
 `board tend-queue --json` classifies; you judge. Work the queue in order, at most **`RALPH_TEND_BATCH` (default 5) items per pass**, then exit — a hygiene lane that runs long stops being hygiene. The lane's goal state is a **clean sweep**: a pass with `checked>0, acted=0` and no new observations pulled (an empty queue is the degenerate case — `checked=0`, nothing accumulated; both end the loop). You are a single-pass operator: whatever invoked you decides whether another pass happens — never arrange one yourself.
