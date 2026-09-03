@@ -296,6 +296,47 @@ is "unknown event: exits 0" "0" "$RC"
 is "non-ralph/unknown: ledger untouched" "$lines_before" "$(wc -l <"$WLEDGER" | tr -d ' ')"
 is "non-ralph/unknown: no herdr calls at all" "0" "$(wc -l <"$FAKE_HERDR_LOG" | tr -d ' ')"
 
+# ═══ 3a. GH-2396: .agent is the harness kind, name recovered from .title ═════
+# herdr 0.8.2's real payload is the enveloped shape below with .data.agent set
+# to the HARNESS ("claude"), never the pane name — the name only survives in
+# .data.title's composed address ("<repo>/<name> <glyph>", GH-2210/D6.2).
+# Captured shape (herdr plugin log entries 150-200, 2026-09-02/03), pinned so
+# a future payload change is caught here instead of silently exiting 0.
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
+: >"$FAKE_HERDR_LOG"
+before_titled=$(lcount "$WLEDGER" '.ev=="state" and .agent_ref=="w123-fix#aaaa" and .agent_status=="working" and .via=="event"')
+run_event pane.agent_status_changed \
+  '{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed","pane_id":"p1","workspace_id":"w1","agent_status":"working","agent":"claude","title":"acme/demo/w123-fix *"}}' "$WROOT"
+is "GH-2396 envelope: exits 0" "0" "$RC"
+is "GH-2396 envelope: state recorded against the title-derived name" "$((before_titled + 1))" \
+  "$(lcount "$WLEDGER" '.ev=="state" and .agent_ref=="w123-fix#aaaa" and .agent_status=="working" and .via=="event"')"
+is "GH-2396 envelope: state token pushed to the right pane" "1" \
+  "$(log_count '^pane report-metadata p1 --source ralph-herdr --token state=working$')"
+
+# .agent stays the first choice: a payload that DOES carry a parseable name
+# is unaffected by the title fallback, even alongside a title.
+herd_fixture '[{"name":"w123-fix","agent_status":"working","pane_id":"p1"}]'
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"p1","agent":"w123-fix","agent_status":"working","title":"acme/demo/w999-other *"}' "$WROOT"
+is "GH-2396 envelope: a parseable .agent is never overridden by .title" "1" \
+  "$(log_count '^pane report-metadata p1 --source ralph-herdr --token state=working$')"
+
+# The fallback must not turn a genuinely non-ralph pane into a false match: no
+# "/" in the title (nothing to recover) and a "/" whose tail still fails
+# grammar B both stay the pre-fix no-op.
+: >"$FAKE_HERDR_LOG"
+lines_before=$(wc -l <"$WLEDGER" | tr -d ' ')
+run_event pane.agent_status_changed \
+  '{"data":{"pane_id":"p9","agent_status":"working","agent":"claude","title":"some other window"}}' "$WROOT"
+is "GH-2396 envelope: a title with no '/' is still ignored" "0" "$RC"
+run_event pane.agent_status_changed \
+  '{"data":{"pane_id":"p9","agent_status":"working","agent":"claude","title":"acme/demo/Not A Slug *"}}' "$WROOT"
+is "GH-2396 envelope: a title tail that fails grammar B is still ignored" "0" "$RC"
+is "GH-2396 envelope: neither non-match wrote to the ledger" "$lines_before" \
+  "$(wc -l <"$WLEDGER" | tr -d ' ')"
+is "GH-2396 envelope: neither non-match made an herdr call" "0" "$(wc -l <"$FAKE_HERDR_LOG" | tr -d ' ')"
+
 before_unconfirmed=$(lcount "$WLEDGER" '.ev=="state"')
 before_working=$(lcount "$WLEDGER" '.ev=="state" and .agent_status=="working"')
 # ── events are hints, not authority (GH-1774) ───────────────────────────────
@@ -386,6 +427,16 @@ is "adopt: the dead lead's unrespawnable notification stands alone" "1" \
 RALPH_HERDR_LEDGER="$ALEDGER"
 is "adopt: dead parent closed, gp+child stay open" "s0-root#0001 w11-child#0003" \
   "$(ralph_ledger_open_agents | sort | tr '\n' ' ' | sed 's/ *$//')"
+
+# GH-2396 remedy: pane.closed correlates by pane id, never by name, so the
+# enveloped {event,data} shape already worked — pinned here with a fixture so
+# a future payload change is caught the same way section 3a catches it for
+# pane.agent_status_changed.
+: >"$FAKE_HERDR_LOG"
+run_event pane.closed '{"event":"pane_closed","data":{"pane_id":"p11"}}' "$AROOT"
+is "envelope pane.closed: exits 0" "0" "$RC"
+is "envelope pane.closed: exit recorded via .data.pane_id" "1" \
+  "$(lcount "$ALEDGER" '.ev=="exit" and .agent_ref=="w11-child#0003" and .reason=="pane_closed"')"
 
 # ═══ 5. pane.exited: orphan pass, no live grandparent ════════════════════════
 OROOT="$TMP/oroot"
