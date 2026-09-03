@@ -80,7 +80,7 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   else
     echo "  $HERDR tab create --cwd $REPO --label \"$lane\" --no-focus"
   fi
-  echo "  $HERDR agent start $agent --kind claude --pane <captured>${model:+ -- --model $model}"
+  printf '%s\n' "  $HERDR agent start $agent --kind claude --pane <captured>${model:+ -- --model $model}"
   echo "  $HERDR agent prompt $agent \"/ralph:$lane\""
   # The exact spawn record the live path would append (pane_id omitted — pane
   # ids are captured live, never predicted). Printed, never written: dry-run

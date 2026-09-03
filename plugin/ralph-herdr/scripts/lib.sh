@@ -1678,7 +1678,7 @@ spawn_work_session() {
     [ -n "$who_lead" ] && _plan_env="$_plan_env${_plan_env:+ }WHO_LEAD=$who_lead"
     [ -n "$who_dispatch" ] && _plan_env="$_plan_env${_plan_env:+ }WHO_DISPATCH=$who_dispatch"
     [ -n "$_plan_env" ] && echo "  $HERDR pane run <captured> export $_plan_env"
-    echo "  $HERDR agent start $agent --kind claude --pane <captured>${model:+ -- --model $model}"
+    printf '%s\n' "  $HERDR agent start $agent --kind claude --pane <captured>${model:+ -- --model $model}"
     echo "  $HERDR agent prompt $agent \"/ralph:work $n\""
     echo "  $HERDR agent wait $agent --until working --until blocked --timeout <${RALPH_HERDR_TURN_WAIT_SEC:-20}s>  (unconfirmed turn = failed spawn)"
     # The exact spawn record the live path would append (pane_id omitted —

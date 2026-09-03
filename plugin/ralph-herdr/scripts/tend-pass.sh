@@ -135,7 +135,7 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   else
     echo "  $HERDR tab create --cwd $REPO --label \"$lane\" --no-focus"
   fi
-  echo "  $HERDR agent start $agent --kind claude --pane <captured>${tool_args[*]:+ -- ${tool_args[*]}}${contain_args[*]:+ --settings <process containment: seatbelt denyWrite $REPO>}${model:+ --model $model}"
+  printf '%s\n' "  $HERDR agent start $agent --kind claude --pane <captured>${tool_args[*]:+ -- ${tool_args[*]}}${contain_args[*]:+ --settings <process containment: seatbelt denyWrite $REPO>}${model:+ --model $model}"
   [ "${#contain_args[@]}" -gt 0 ] &&
     echo "  containment probe: prompt <captured> to touch <inside $REPO> <outside \$RALPH_HOME/containment-probes>; refuse unless applied; then Write <inside $REPO> and a control touch — refuse on tool binding not_applied (GH-2341)"
   echo "  tool binding: $tool_binding (read off the argv above — GH-2267; recorded on the containment event beside the probe verdict, after the in-pane Write step has had its say)"

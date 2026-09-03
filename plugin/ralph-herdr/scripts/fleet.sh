@@ -666,12 +666,12 @@ spawn_investigator() {
     # word, which the probe's Write step may only REFUTE — the recorded word
     # is the probe's.
     probe_out=$(spawn_containment_probe "$name" "$pane" "$checkout" "close the tab and re-dispatch the question" "$tool_binding") || {
-      read -r containment tool_binding < <(printf '%s' "${probe_out:-unverified $tool_binding}")
+      read -r containment tool_binding < <(printf '%s\n' "${probe_out:-unverified $tool_binding}")
       "$HERDR" pane close "$pane" >/dev/null 2>&1 || true
       echo "spawn_investigator: process containment ${containment:-unverified}, tool binding $tool_binding for $name — closed pane $pane rather than dispatch an uncontained investigator" >&2
       return 1
     }
-    read -r containment tool_binding < <(printf '%s' "$probe_out")
+    read -r containment tool_binding < <(printf '%s\n' "$probe_out")
   elif [ "$writeonly" = 1 ]; then
     # No Bash to sandwich a Write step with (GH-2363) — the probe's marker is
     # unforgeable on its own, so only the tool-binding word comes back.

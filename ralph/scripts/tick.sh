@@ -86,7 +86,7 @@ if [ -z "${RALPH_TICK_RUNNER:-}" ]; then
     # under a UTF-8 locale on CI. LC_ALL=C pins tr to byte-wise operation —
     # BSD tr errors on raw multibyte UTF-8 otherwise (mirrors roles.sh).
     _qmodel=$(printf '%q' "$MODEL" | LC_ALL=C tr -c '\40-\176' '?')
-    echo "tick: driver model $_qmodel is not a model name (must start with a letter or digit, no whitespace, control characters or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
+    printf '%s\n' "tick: driver model $_qmodel is not a model name (must start with a letter or digit, no whitespace, control characters or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
     exit 64
   fi
 fi
