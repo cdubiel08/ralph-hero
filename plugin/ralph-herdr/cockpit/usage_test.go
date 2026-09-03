@@ -567,7 +567,9 @@ func TestHeaderMarksACappedDayTotalAsAFloor(t *testing.T) {
 	if !capped || len(targets) != maxUsageReads || targets[0].Session != "sid-10" {
 		t.Errorf("capped=%v len=%d first=%q, want capped at %d with the live session first", capped, len(targets), targets[0].Session, maxUsageReads)
 	}
-	if got := stripANSI(strings.Join(headerStats(m, now), " ")); !strings.Contains(got, "$1.00+ today") {
-		t.Errorf("capped header must mark the floor; got %q", got)
+	// Every aggregate off the capped map is a floor — the dropped refs are
+	// sorted by name, not activity, so the hour and the tokens are cut too.
+	if got := stripANSI(strings.Join(headerStats(m, now), " ")); !strings.Contains(got, "$1.00+ today") || !strings.Contains(got, "0+ ") || !strings.Contains(got, "$1.00+/h") {
+		t.Errorf("capped header must mark every aggregate as a floor; got %q", got)
 	}
 }

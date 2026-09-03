@@ -1291,10 +1291,13 @@ func headerStats(m Model, now time.Time) []string {
 		if _, capped := m.usageTargetsCapped(); capped {
 			plus = "+"
 		}
+		// All three read from the same capped map, and the refs the cap
+		// drops are sorted by name, not by activity, so the token count and
+		// the trailing hour are floors too.
 		out = append(out,
 			styleCost.Render(fmt.Sprintf("%s%.2f%s today", g.usd, today, plus)),
-			styleToken.Render(g.token+" "+formatTokens(tokens)),
-			styleCost.Render(fmt.Sprintf("%s%.2f/h", g.usd, hour)))
+			styleToken.Render(g.token+" "+formatTokens(tokens)+plus),
+			styleCost.Render(fmt.Sprintf("%s%.2f%s/h", g.usd, hour, plus)))
 	}
 	if m.gqlOK {
 		out = append(out, styleGql.Render("gql "+groupThousands(m.gql)))

@@ -261,7 +261,7 @@ every ledger session that spawned or reported since midnight, not only the
 sessions with a card on screen — so the number no longer equals the visible
 column totals and no longer moves when you swap a column. `/h` is the
 trailing hour; both read the same until the fleet is an hour old. A day whose
-fleet outgrows the usage cap (64 transcripts a pass) reads `$N+ today` — a
+fleet outgrows the usage cap (64 transcripts a pass) reads `$N+ today`, `¤ N+`, `$N+/h` — a
 floor, never the day; what the cap drops is the oldest of the day's refs,
 since live agents and on-screen cards are priced first.
 
