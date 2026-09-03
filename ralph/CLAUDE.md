@@ -60,17 +60,52 @@ A lane is a **typed selector + a judgment skill + a goal** — cadence is derive
 
 ### Work/deliver exclusion is typed at the branch write (GH-1917)
 
-The lanes spec accepted this exclusion as **probabilistic**: an interactive `/ralph:work` session never holds `tick.pid`, so if it idles past `RALPH_SETTLE_MIN` deliver can rebase and push a branch that live session still owns. The two named mitigations do not cover it. Quiescence and the pre-push re-check evaluate the *same* predicate — the newest of state change, issue comment, and open-PR activity (`board.ts:3697-3713`), all **remote** signals — and a session editing files locally emits none of them. So the re-check is not an independent second guard for this hazard; it is the settle window sampled twice. Two mitigations, one blind spot.
+The lanes spec accepted this exclusion as **probabilistic** (residue §8.2):
+quiescence and the pre-push re-check both evaluate the same remote-signal
+predicate (`board.ts:3697-3713`), so a session editing files locally, with
+no push and no board write, is invisible to both — two mitigations, one
+blind spot. A message cannot be the atomic winner mutual exclusion needs
+(GH-1890), and Projects V2 has no compare-and-swap, so the board claim
+can't carry it either.
 
-Mutual exclusion needs an atomic winner, and **a message cannot be one** (that is GH-1890's finding, and why no channel was built here). Projects V2 has no compare-and-swap, so the board claim cannot carry it either — and the claim is gone by then regardless: `transition()` clears it on In Progress → In Review (`board.ts:2108-2136`) and read-back-throws if the clear did not stick.
+The contested resource is a **git branch**, and git ref updates are a real
+server-side CAS: `scripts/deliver-push.sh` pushes with a
+`--force-with-lease` pinned to the head deliver rebased from (never bare —
+a bare lease compares against the remote-tracking ref, which any background
+`git fetch` silently refreshes). A work session that pushed first wins;
+deliver is refused (`DELIVER PUSH PENDING`, exit 75 — back off, not
+escalate). This excludes at the **push instant**, and only against work
+that was pushed — the load-bearing half, not the whole.
 
-But the contested resource is not a board item — it is a **git branch, and git ref updates are a real server-side CAS**. That is the primitive `scripts/deliver-push.sh` uses: a `--force-with-lease` pinned to the head deliver rebased from, so a work session that pushed first wins and deliver is refused (`DELIVER PUSH PENDING`, exit 75 — back off, not escalate). Always pinned, never bare: a bare `--force-with-lease` compares against the remote-tracking ref, which **any background `git fetch` silently refreshes** — proved to clobber in `deliver-push.test.ts`, which also keeps a control case showing a plain force push destroying the work commit outright.
+**The other half: deliver reads the lease it already had (GH-1929).** A
+session holding *unpushed* local commits emits no remote signal at all, so
+the push-instant lease can't see it either. `board claim` already publishes
+a per-(worktree, unit) lock (`takeWorktreeLock`, GH-1956) at the
+acquisition point contract rule 1 makes mandatory — no user script can
+strip it. `classifyDeliver` refuses a held unit **entirely**, before any
+PR-shaped reasoning, surfacing it as a `local-session-active` blocked row
+(the GH-1977 precedent: a row that vanished would read like one that
+merged). Same `RALPH_LOCK_TTL_MIN` clock as the board claim, so a dead
+session blocks deliver for one TTL, not forever — **the lease deliberately
+outlives the claim** (`transition()` clears the claim on In Progress → In
+Review, but `deliver-queue` only reads In Review items, so a lease cleared
+there would be dead code), which costs deliver's pickup latency up to
+`RALPH_LOCK_TTL_MIN` after the driving session's last claim touch, not the
+~5-min `RALPH_SETTLE_MIN` window. `--steal` is the immediate override; no
+"I am finished" reclaim verb exists (that would be the opt-in convention
+residue §8.3 warns against). **Two edges are the exception: In Progress →
+Backlog clears the session's own lock (GH-2107), and so does every move
+into Done or Canceled (GH-2367)** — a closed unit has no driver left to
+read the lease, and a lock left behind by a self-close is a tombstone
+`reap-leases` cannot see in the main checkout. Own lock only, best-effort
+delete after the state write and claim-clear verify. An unreadable
+sessions dir returns **null, never an empty probe**; this covers a
+**same-machine** deliver only — unpushed commits are a machine-local fact,
+so residue §8.2 correctly survives for a deliver loop on another host.
 
-Honest bound: this excludes at the **push instant**, and only against work that was *pushed*. This is the load-bearing half of the exclusion, not the whole of it.
-
-**The other half: deliver reads the lease it already had (GH-1929).** A session holding *unpushed* local commits emits no remote signal, so quiescence, the pre-push re-check and the pinned lease all read a quiet branch and deliver rebases anyway — lanes spec residue §8.2. The fix is not a new lock. `board claim` already publishes a per-(worktree, unit) record (`takeWorktreeLock`, GH-1956) at the acquisition point contract rule 1 makes **mandatory**, which is precisely what a branch-level lease could not have promised — GH-1929's own second design question, and why this does not land as residue §8.3 ("conventions fail open by nature"): no user script can strip a lock taken inside the CLI's claim path. Two non-accidental properties make it readable from outside the owning session — the sessions dir is machine-shared, and the issue number is in the **filename** — so `localSessionLease()` names every live holder with one `readdir` and zero API cost, which matters on a walk running at the 1-pt GraphQL floor. `classifyDeliver` refuses a held unit **entirely**, before any PR-shaped reasoning (the hazard is invisible to every check that follows, so no amount of looking at the PR can rule it out), and surfaces it as a `local-session-active` blocked row — the GH-1977 precedent: a row that merely vanished would read exactly like one that merged.
-
-Rejected: a new `refs/ralph/lease/<branch>` ref (GH-1929's first option) — a second lock needing its own expiry and heartbeat semantics, for a hazard that never leaves the machine. Reusing the record settles expiry by inheritance: the **same `RALPH_LOCK_TTL_MIN` clock** as the board claim, so the row is self-clearing (`windowExpiresAt` is the lock's expiry, unlike `convergence-stalled`, which only a human clears) and a dead session blocks deliver for one TTL, not forever. **The lease deliberately outlives the claim, and that costs latency.** Clearing the lock wherever `transition()` clears the claim would give the two one coherent lifecycle — and would make this dead code, since `deliver-queue` only ever considers *In Review* items, so a lease released on entering In Review is one the probe can never observe. The lease must outlive In Progress or it does nothing. The price is that deliver's pickup latency for a unit becomes up to `RALPH_LOCK_TTL_MIN` (120 min) after the driving session's last claim touch, rather than the ~5-min `RALPH_SETTLE_MIN` window. No "I am finished" verb was added to reclaim it: that would be precisely the opt-in convention residue §8.3 warns about, whose *omission* — the default — silently restores the hazard. TTL-only fails in the safe direction (it over-blocks deliver; it never loses a commit), the operator has the knob, and `--steal` is the immediate override. **Two edges are the exception: In Progress → Backlog clears the session's own lock (GH-2107), and so does every move into Done or Canceled (GH-2367) — a closed unit has no driver and no deliver pass left to read the lease, and a lock left behind by a self-close is a tombstone `reap-leases` cannot see when the checkout is the main repo (#2242 sat four days).** That edge — `board release` and the `move backlog --why` demotion — returns the unit to the eligible pool, where the lock guards nothing deliver reads (deliver-queue considers In Review only) and blocks exactly the spawn the release exists to permit: measured as answer → release → `work-fleet` SKIP for a full TTL. Own lock only (a fresh lock naming another session is a live driver a non-owning demoter may not disarm), deleted after the state write and claim-clear verify, best-effort — a failed unlink restores the TTL status quo, never blocks the release. Three stated bounds: an unreadable sessions dir returns **null, never an empty probe** — "we could not read the lease" must not render as "no lease is held" — and this covers a **same-machine** deliver only. Residue §8.2 survives for a deliver loop on another host, correctly: unpushed commits are a machine-local fact, so there was never anything for a remote reader to see.
+Full rationale (every rejected design, the latency-vs-safety tradeoff, the
+GH-1956 lock's own O_EXCL mechanism):
+`../thoughts/shared/research/2026-09-02-ralph-claude-md-lane-exclusion-history.md`.
 
 **The four-dimension lane test** (gates every future lane proposal; stated once, here): a new lane is justified only when **signal source, write lane, pacing signal, and permission set all four differ simultaneously** from every existing lane. The pacing signal is the observable a lane derives its next wake from (work: queue depth; deliver: check conclusions, review deltas, retry/settle windows; tend: accumulation age; dispatch: capacity and fleet/lead state) — a proposal that differs only in derived cadence numbers fails the test.
 
@@ -94,9 +129,7 @@ shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh
 
 Branch `<kind>/NNN-<slug>`, agent `w NNN-<slug>` — the **same slug**, so the branch panel, `herdr agent list` and `.claude/worktrees/` read as one vocabulary. Declared in `contracts.ts` (`formatBranchName`/`parseBranchName` beside grammar B's `formatAgentName`/`parseAgentName`, sharing `slugify`/`truncateSlug`/`slugBudget`); read via **`board name NNN [--json]`**, which is what tick.sh and tick-herdr.sh call — a shell that rebuilt slugify would be a second grammar. Kind comes from labels (apply label wins, and fails closed to `apply` on a truncated label list) with `feat` as the stated default; the registry is closed, so `spike/1807-x` does not parse.
 
-**The peer address is a third namespace, and it is harness-owned (GH-1918).** A session's messaging address is not its agent name — it is the *worktree leaf* plus a suffix the harness assigns at session start, so `w1918-slug` does not resolve and never will. Ralph owns only the root: `peerPrefix()` in `contracts.ts` (declared apart from `worktreeLeaf()` because it asserts where the transport roots the address, not where the directory lives), surfaced as `board name`'s `peerPrefix` and resolved by **`board peer NNN`**, which takes the enumerated live names and returns the one address. The address can therefore be *recognised* but never *constructed* — enumeration stays mandatory. The suffix pattern is hyphen-free by measurement, and that is the safety argument: a bare `startsWith` would let `feat-1918-one`'s prefix address `feat-1918-one-session-two`'s session. Both branch grammars are matched, so a session that resumed a legacy `feature/GH-NNN` branch (leaf `GH-NNN`) is not reported dead; repeats of one address dedupe to one session. The residual limit is honest and unfixable by derivation: **retitle a unit after its session spawned and the slug drifts**, so the live session stops resolving until it is addressed by its listed name. Zero matches and two matches are both **refusals with exit 1** — one worktree can hold two sessions, and the wrong session is worse than none.
-
-The legacy `feature/GH-NNN` resolves everywhere for the deprecation window, and **resume beats re-cut** — a unit that already has a legacy branch keeps it, or its work splits across two heads. Both grammars are covered by ONE query: `deliver-queue`'s PR linkage moved from exact `pullRequests(headRefName:)` to `refs(refPrefix:"refs/heads/", query:"<number>")`, because GitHub's ref filter is a **substring** match (probed, not assumed). That also returns coincidences — `feature/GH-18070`, `chore/1807-typo` — which `parseBranchName` rejects client-side; the alternative (recomputing the exact branch) would have needed the `labels` connection back in the item walk that GH-1803 just removed. Measured: +1 pt per 10-item deliver chunk, item walk untouched.
+**The peer address is a third namespace, and it is harness-owned (GH-1918).** It is not the agent name — it is the *worktree leaf* plus a harness-assigned suffix, so it can be *recognised* via **`board peer NNN`** (enumerated live names → one address) but never *constructed*. The legacy `feature/GH-NNN` branch resolves everywhere for the deprecation window, and **resume beats re-cut**. Full rationale (the hyphen-collision safety argument, the retitle-drift limit, the substring-match query GH-1807 needed): `../thoughts/shared/research/2026-09-02-ralph-claude-md-naming-and-install-history.md`.
 
 ## The Loop
 
@@ -133,4 +166,4 @@ Claude Code installs `ralph` from the marketplace clone as an immutable versione
 
 The herdr half of the cockpit does **not** auto-update (herdr has no `plugin update`), so `scripts/herdr-plugin-version` stamps the `ralph-herdr` version this ralph release expects; `herdr-setup.sh check` compares it against herdr's registered version and names the reinstall command on drift. Bump the stamp with `plugin/ralph-herdr/herdr-plugin.toml` — `scripts/__tests__/herdr-setup.test.sh` fails if they diverge.
 
-That consistency test is not the one that catches a missed bump (GH-1976): it compares the two stamps to *each other*, which says nothing about whether either tracks the code — GH-1808 shipped `roles.sh` and a changed spawn path at 0.6.0 and both stayed green while installed cockpits ran a copy without the script in it. `scripts/check-herdr-version-bump.sh` closes that from the other side, as a `pull_request`-only CI job: a diff touching the plugin's **behavior surface** — `scripts/**`, non-test `cockpit/**`, the manifest itself — must move the manifest version. README/CHEATSHEET, `tests/**` and `features/**` are excluded because they never ship into an install, and a guard that reddened on them would train people to bump for nothing, which is how a signal stops meaning anything. An unresolvable base ref is exit 2, never a pass: this guard exists because an absent signal read as "fine" once already.
+That consistency test alone does not catch a missed bump (GH-1976) — it compares the two stamps to *each other*, not to the code. `scripts/check-herdr-version-bump.sh` closes that from the other side, as a `pull_request`-only CI job: a diff touching the plugin's **behavior surface** (`scripts/**`, non-test `cockpit/**`, the manifest itself) must move the manifest version; docs and tests are excluded. An unresolvable base ref is exit 2, never a pass. Full rationale: `../thoughts/shared/research/2026-09-02-ralph-claude-md-naming-and-install-history.md`.

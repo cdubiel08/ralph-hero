@@ -44,215 +44,285 @@ Intake → Backlog → In Progress → In Review → Done
                    Human Needed ←──────┘   Canceled (explicit cancel; reopen = only exit from terminal)
 ```
 
-**Intake (GH-2077) is the approval tier.** Before it, filing an issue WAS
-approving it for autonomous pickup — `next`'s pool is every unclaimed Backlog
-item — so every way to track unapproved work was dishonest (fake blocker, fake
-claim, P3-and-hope) or kept it off the board entirely, invisible to `tend`,
-`doctor`, and anyone accountable for it. An empty `board next` was ambiguous
-the way GH-2048 showed for PRs: "no work" and "work that was never filable"
-rendered identically. Design record (normative):
-`thoughts/shared/ideas/2026-08-18-GH-2060-intake-tier-design.md`.
+**Intake (GH-2077) is the approval tier** — before it, filing an issue *was*
+approving it for autonomous pickup, so every way to track unapproved work was
+dishonest or invisible to `tend`/`doctor`. It is a seventh Workflow State
+rather than a field or label, fail-closed by construction: every eligibility
+read already filters `state === "Backlog"`, so an Intake item drops out of
+`next`/`frontier` with zero predicate change. Design record (normative):
+`thoughts/shared/ideas/2026-08-18-GH-2060-intake-tier-design.md`; full
+implementation rationale (surfaces, `board setup`'s option-add mechanism, the
+epic in-flight probe fix, what stayed deliberately unchanged):
+`thoughts/shared/research/2026-09-02-claude-md-intake-tier-implementation.md`.
 
-Why a seventh STATE rather than a field or a label: **exclusion is by
-construction**. Every eligibility read already filters `state === "Backlog"`,
-so an Intake item drops out of `next`/`frontier` with zero predicate change —
-there is no reader to forget. A separate `Approval` field makes eligibility a
-two-field join whose unset value must read as *approved* for back-compat,
-which fails **open** on any reader that forgets it; a label is foreclosed
-twice over (eligibility is never a function of labels, and the ranking lanes
-skip the `labels` connection for cost, GH-1803). Promotion is a `transition`,
-so approval inherits the gated, comment-trailed lane every other state change
-uses, and a state renders as a board column for free.
+**Edges are strictly one-way**: `Intake → Backlog | Canceled`, nothing else —
+no demotion edge back to Intake, and `Intake → In Progress` is absent, so
+`board claim` on an unapproved item refuses via the MACHINE with no special
+code. Approval (`Intake → Backlog`) refuses without a Priority **and** an
+Estimate — Backlog means approved *and* rankable.
 
-The edges are **strictly one-way**: `Intake → Backlog | Canceled`, nothing
-else. `Backlog → Intake` loses the argument `Backlog → Human Needed` already
-lost — a demotion edge is a way to hide work from the queue; scope that
-collapses is Canceled plus a fresh Intake item, and the edge cannot be cheaply
-removed once scripts lean on it. `Intake → In Progress` is absent, which is
-what makes **`board claim` on an unapproved item refuse via the MACHINE** — no
-second predicate, no special code. Approval — the `Intake → Backlog` move —
-refuses without a **Priority and an Estimate**: Backlog means approved *and
-rankable*, and an approval landing a null-priority item has not approved it
-into the queue, it has lost it (`next` sorts null behind every real option and
-no lane names it).
+**`create` has no default landing state**: `--intake` (minimal detail,
+Priority/Estimate optional) or `--backlog` (both REQUIRED, the refusal names
+whichever is missing); neither flag → a refusal naming both lanes. The
+readiness bar is one helper, `backlogReadinessGaps`, called by both the
+approval edge and `create` — two spellings of "approved and rankable" held
+apart by a comment is the GH-1843 drift shape.
 
-**`create` has no default landing state**, and that is a deliberate breaking
-change: `--intake` (minimal detail, Priority/Estimate optional) or `--backlog`
-(both REQUIRED, each missing one named in the refusal), neither → a refusal
-naming both lanes. Intake-by-default would silently pile up the loop's own
-follow-up filings awaiting approval; Backlog-by-default is the status quo this
-closes; a config default would make a bare `create` mean different things in
-two repos. The bar itself lives in ONE helper (`backlogReadinessGaps`) that
-both the approval edge and the create lane call — two spellings of "approved
-and rankable" held apart by a comment is the GH-1843 drift shape. This
-supersedes GH-1792's stderr nudge, which existed only because there was no
-lane for "I do not know the priority yet"; that filing has `--intake` now, so
-the bar is enforced instead of suggested.
+**Surfaces**: `next`/`frontier` exclude Intake by construction (pinned by a
+test, including the epic in-flight probe). `list` shows Intake by default.
+`tend-queue`'s existing `unformed` category takes Intake items with their
+age. `doctor` gains an advisory `intake-stale` line
+(`RALPH_SMELL_INTAKE_DAYS`, 14), info-only — never strict-escalated, never
+`--fix`ed, since the only remedies are a human's approval or rejection.
+`deliver-queue`, `prune` and `board-volume` are untouched by construction.
+**`board setup` adds the option itself (GH-2127)**: `updateProjectV2Field`
+resubmits every existing option with its id and verifies the add by **id
+survival**, never the ack; an unreadable current option set refuses the
+mutation and prints the manual step. Until the option exists, every Intake
+filing and move fails closed on the missing-option refusal. Deliberately
+unchanged: state-guard adoption still lands Backlog (GH-1952 must reach a
+driver unattended), and so does `reopen`.
 
-Surfaces: `next`/`frontier` exclude Intake by construction (pinned by a test,
-because the day someone rewrites the filter as `state !== "Done"` nothing else
-would notice) — **including the epic in-flight probe**, which was written as
-`state !== "Backlog"` and would have read an unapproved *child* as work in
-progress, demoting its root out of the queue and reporting an in-flight epic
-whose holder cannot exist. `list` shows Intake by default (hiding a tier from
-the human truth-telling surface recreates the invisibility). `tend-queue`'s
-existing `unformed` category takes Intake items with their age. `doctor` gains
-an advisory `intake-stale` line (`RALPH_SMELL_INTAKE_DAYS`, 14) under the info
-rules in full — never strict-escalated, never fixed, because the only remedies
-are a human's approval or rejection. `deliver-queue`, `prune` and
-`board-volume` are untouched by construction. **`board setup` adds the option
-itself (GH-2127)** — `updateProjectV2Field` replaces the whole option set, so
-every existing option is resubmitted *with its id* (the documented mechanism
-for preserving item values) and the add is verified by id survival, never by
-the ack; an unreadable current option set refuses the mutation and prints the
-manual step instead, because a blind resubmit is exactly the destructive write
-the id mechanism exists to prevent. Until the option exists — a board whose
-option set could not be read — every Intake filing and move fails closed on
-`mutationCache`'s missing-option refusal. Deliberately unchanged: state-guard
-**adoption still lands Backlog** (an auto-adopted release-failure filing,
-GH-1952, must reach a driver unattended), and so does `reopen`.
-
-**Backward edges are tightened (GH-2078, the second GH-2060 unit).** The two
-demotions — `In Progress → Backlog` and `In Review → In Progress` — refuse
-without a `--why`, which lands as a comment before the state write: backward
-moves are exceptional, and the reason is auditable instead of implicit
-(`release` already carried it as `-m`; `board claim` gained `--why` because
-claiming an In Review item IS the demotion lane GH-1816 showed being
-over-used). `Human Needed → Backlog` is REMOVED from the machine: an answered
-item resumes (`→ In Progress`) or dies (`→ Canceled`) — a parking edge out of
-an escalation loses the question, since the item re-enters the eligible pool
-and the next claimant re-derives the context the escalation existed to hand
-over. "Answered: not now, park it" is recorded but undecided (possibly
-`Human Needed → Intake`); it does not resurrect the edge meanwhile.
-Deliberately untouched: doctor's stale-claim demotion (a direct field write,
-In Progress only, already commented) and reconcile (reality lane, never
-MACHINE-guarded).
+**Backward edges are tightened (GH-2078, the second GH-2060 unit).**
+`In Progress → Backlog` and `In Review → In Progress` refuse without a
+`--why`, landed as a comment before the state write. `Human Needed →
+Backlog` is REMOVED from the machine: an answered item resumes (`→ In
+Progress`) or dies (`→ Canceled`) — no parking edge out of an escalation.
+Deliberately untouched: doctor's stale-claim demotion and `reconcile`.
 
 **The resume edge belongs to the RESUMING agent (GH-2204).** `board answer
-NNN -m` is comment-only: the **Answer** comment lands (timestamped by a
-`ralph-answer:v1` marker) and the item STAYS Human Needed — the driving
-session takes `Human Needed → In Progress` itself via `board claim NNN`, so
-the session→unit binding (GH-1948), the worktree lock (GH-1956) and the size
-ceiling (GH-2134) bind on the actual driver, never on the answering proxy
-(the old transition claimed to the ANSWERER: a hero pane broke on rule 9 at
-its second answer, deliver-queue read a phantom `local-session-active`, and a
-dead driver left the item In Progress + claimed + nobody, invisible to
-work-fleet for a full TTL). `--resume` keeps the one-invocation form for
-self-answer (answerer == driver). The answered-but-unresumed window is
-surfaced, never silent: `board escalations` marks those rows `ANSWERED …
-resume pending`, and doctor's `answer-unresumed` `i` line ages them past
-`RALPH_SMELL_ANSWER_MIN` (30 min; an unreadable answer clock ages as overdue
-— toward visibility).
+NNN -m` is comment-only — the Answer comment lands and the item STAYS Human
+Needed; the driving session takes `Human Needed → In Progress` itself via
+`board claim NNN`, so the session→unit binding (GH-1948), the worktree lock
+(GH-1956) and the size ceiling (GH-2134) all bind on the actual driver.
+`--resume` keeps the one-invocation form for self-answer. `board
+escalations` marks answered-but-unresumed rows `ANSWERED … resume pending`;
+doctor's `answer-unresumed` `i` line ages them past `RALPH_SMELL_ANSWER_MIN`
+(30 min).
 
-**Escalations carry an audience (GH-2179, the GH-2176 arbitration unit).** In
-a team, a worker's `move NNN human-needed --why` routes to the epic's **lead**
-— the route rides the Decision-needed comment as a `ralph-escalation:v1`
-marker (no marker = human-addressed: every pre-existing escalation and every
-reconcile correction, by construction). Default keys on `$RALPH_HERDR_LEAD`
-(the team spawn path sets it; solo sessions keep the status quo untouched);
-`--to-human` forces the reserved-set direction, `--to-lead <name>` is
-explicit. The lead dispositions via `answer` (answer/re-steer — the resuming
-session's claim then disposes it by state, GH-2204) or **`board promote NNN
-[-m]`** (durable marker, no state
-change — Human Needed is already the right state; promotion changes the
-audience, not the machine). **Promotion writes the inbox directly (GH-2218,
-the topology-J amendment)**: `board inbox` Tier 1 withholds a lead-routed
-escalation still inside its window as a counted `with leads` line — never a
-decision row, never dropped (the GH-2108 rule) — and a promotion, the lead's
-or the TTL's, is the admission. One arbitration hop total: worker → lead →
-inbox. Dispatch reads the inbox like the human does and is messageable, but
-adjudicates nothing by default — reachable, never a rung. An unreadable
-trail admits the row: failing toward visibility, the same direction as
-auto-promotion. **The TTL bound is computed at read time, never by
-a cron**: `board escalations` classifies every Human Needed item, and a
-lead-routed escalation unadjudicated for `RALPH_LOCK_TTL_MIN` renders
-auto-promoted — same shape as claim staleness, no tracking state to drift; a
-dead lead costs latency, never a stranded worker (an unparseable route
-timestamp fails the same direction). Promotion deliberately validates no C9
-shape: the TTL path cannot validate by construction, so a stricter manual path
-would train leads to wait out the clock; `board contract validate
-ralph.escalation` stays the deliberate check.
+**Escalations carry an audience (GH-2179, the GH-2176 arbitration unit).**
+In a team, a worker's `move NNN human-needed --why` routes to the epic's
+**lead** via a `ralph-escalation:v1` marker (no marker = human-addressed).
+Default keys on `$RALPH_HERDR_LEAD`; `--to-human` forces the reserved-set
+direction, `--to-lead <name>` is explicit. The lead dispositions via
+`answer` or **`board promote NNN [-m]`** (durable marker, no state change).
+**Promotion writes the inbox directly (GH-2218)**: `board inbox` Tier 1
+withholds a lead-routed escalation still inside its window as a counted
+`with leads` line — never dropped — and a promotion (the lead's or the TTL's)
+is the admission. **The TTL bound is computed at read time** by `board
+escalations` (`RALPH_LOCK_TTL_MIN`), never by a cron. `board contract
+validate ralph.escalation` is the deliberate check.
 
-v0.2.0 (the 2026-08-19 ways-of-working audit; full rationale in CHANGELOG.md):
-**In Progress → Done is legal** — gates key on the destination (the GH-1777
-argument extended), so apply units close on their evidence comment and
-decision units on a `ralph-decision-evidence:v1` marker (`board move NNN done
---decision <artifact>`) instead of laundering through a fictional In Review
-hop. **Same-state moves are retries, not violations**: a pure noop, or
-completing a half-applied terminal close on the same evidence a fresh move
-demands (`doctor --fix` does the same instead of demoting finished work).
-**`board defer NNN --until "<condition>" [--recheck ISO]`** parks unready
-Backlog items out of ranking via a Defer text field riding the fieldValues
-page (zero extra GraphQL); claiming lifts it; doctor surfaces elapsed
-rechecks. Orientation is one read: **`board brief`** (queues + leases) and
-**`board who`** (the GH-1956 leases, zero API). **A lease whose checkout was
-deleted is DEAD, not stale (GH-2108)** — staleness asks whether the holder
-might come back, which is unanswerable-forever for a lock nothing can refresh,
-and the two rendered identically until 83 of this machine's 126 locks were
-tombstones. `who` is machine-wide and withholds nothing; `brief` is repo-scoped
-and shows only this repo's live leases (another checkout's `#76` names a
-*different* issue), counting and naming what it held back rather than dropping
-it silently. `board reap-leases [--apply]` is the reaper, keyed on the **missing
-checkout and never on age** — a lease is deliver's `local-session-active` signal,
-so a clock may not be allowed to delete a live one; every read failure that is
-not ENOENT leaves the lock alone. **`--closed` adds the second key (GH-2368): the
-unit is CLOSED on GitHub** — a closed unit has no lease consumer, so a lock its
-checkout never releases (main checkout, kept worktree) is reapable; one issue
-read per same-repo present row, `sameRepo !== true` and unreadable rows kept,
-re-read before each unlink. **`board bootstrap`** is the
-config-free first-run bring-up; **`board add <url>`** is the sanctioned
-cross-repo add behind `RALPH_ALLOW_FOREIGN_REPO_ITEMS`. Transport failures
-and rate limits are typed **exit 75** (EX_TEMPFAIL, reads retried bounded;
-mutations never — GH-1973 stands); lanes pre-flight GraphQL's own free
-`rateLimit` field and defer under `RALPH_GH_BUDGET_FLOOR` (GH-2278 — REST
-`rate_limit`'s `graphql` key mirrors `core` and could never see the
-starvation); every invocation appends a spend
-line to `~/.ralph/budget.jsonl` (doctor's `gql-spend` names top spenders;
-`RALPH_GQL_COST=0` disables, `=1` narrates).
+Full rationale for this subsection:
+`thoughts/shared/research/2026-09-02-claude-md-board-edges-and-escalation-history.md`.
 
-- **transition** — agent intent, guarded by the MACHINE table. `Backlog → Done` is legal (GH-1777) so already-delivered work closes through the *gated* lane rather than detouring via `reconcile`, which writes the state field unchecked; the Done evidence gates key on the destination, so nothing is weakened. **Done evidence is either linkage deliver already uses (GH-1732)**: a merged closing-reference PR, or a merged PR on a branch that *parses* as this issue's (`board name NNN`'s grammar, legacy included) — **plus one derived form (GH-2198): an epic root every one of whose children is closed.** The fact is the one `parent-check` already computed to advance the root to In Review, so demanding `--why` there made the escape hatch the routine path for every completed epic; it costs zero extra reads (the child list rides the issue fetch), a childless issue keeps the linkage gates, a truncated child list counts as not-all-closed, a Canceled child counts (CLOSED on GitHub — `parent-check`'s own key), and the refusal on a non-qualifying root names the children still open — the guard and the close-out lane may not disagree about what "linked" means, or `--why` becomes the routine path for the no-closing-keyword population the lane exists for and stops meaning anything. The branch read runs only when the closing-reference half came up empty, and every unreadable path returns no evidence: a rate limit may not manufacture a close. **The branch read is a merged-PR search, not a live-ref read (GH-1996)** — because the first version's stated premise was false. `merge-pr.sh` deletes the head ref right after merging (`merge-pr.sh:565`; GH-1873 is about the *local* delete), observed on #1995 — GH-1732's own PR — so by the time any close-out asked, the ref was already gone and the new evidence path found nothing for the entire population it was built to serve. It failed closed, so no wrong close ever happened; it simply did not work. Search's `head:` qualifier survives the deletion (verified against #1995 after its branch was deleted, 1 pt, the same slot the refs read occupied). `head:` is a **prefix** match and needs the kind — `head:1732` matches nothing — so one qualifier per grammar is OR'd into a single query, which the closed `BRANCH_KINDS` set plus the legacy `feature/GH-N` makes a bounded six. Being a prefix match it also returns `feat/17320-…`, which `parseBranchName` rejects client-side — the same re-validation the substring ref read needed, for the same reason. Honest limit: search is eventually consistent, so a just-merged PR may not be indexed yet, which reads as no evidence — the fail-closed direction. `deliver-queue`'s own ref read is untouched: it runs against OPEN PRs, whose branches still exist. `Backlog → Human Needed` stays illegal — Human Needed is a pause on in-flight work that `answer` resumes, so a tend closure proposal files as a `<!-- ralph-tend:v1 proposed -->` marker comment (a `proposed` tend-queue category, plus a doctor `i` line when unanswered) instead. A proposal is **pending until answered**, and every disposition is observable: a `<!-- ralph-tend:v1 resolved -->` marker (written by `board resolve NNN --accept|--reject`, and by `reopen` itself — reopening *is* accepting `reopen-as-unevidenced`), or, on a closed item, the close itself for any proposal filed before it. Rejection has no other form: "leave it in Backlog" changes nothing observable, so the lane would re-surface it forever and never reach its clean sweep. Claim = `{holder}|{iso8601}` in the Claim text field, TTL 120 min (`RALPH_LOCK_TTL_MIN`); `--steal` posts an eviction comment; **no `--force` exists anywhere** — stale TTL is the only side door. Read-back verifies the claim won (GitHub has no CAS; the loser backs off). A verified claim also **binds the session to the unit** (GH-1948): contract rule 9 ("one unit per session") stops being prose, and a second *distinct* claim from one session is refused. The binding is local (`~/.ralph/sessions/<session-id>.json`, keyed on `CLAUDE_CODE_SESSION_ID`) because the fact is — the board holder is `user@host`, shared by every session on the machine, so a rule keyed on *it* would refuse the legitimate concurrent panes rule 9 exists to permit. Enforced at claim rather than at the spawn path, since a self-dispatch is precisely the session that never passed the spawner. Check runs before any mutation; the binding is written after the read-back verify, so a session that loses a claim race stays unbound and can take the other work it was just told to pick. No session id → *not evaluated*, never refused. The bind is an **O_EXCL create**, which is the compare-and-swap the guard's read cannot be: two overlapping claims from one session both read an absent binding and both pass the guard, and without it the last write would silently pick which unit the session "has" while both issues stayed claimed by it. Unlike the board claim — where Projects V2 has no CAS, so races are made visible rather than impossible — a local file can actually win this one, and the loser is refused by name — after **unwinding the claim it just took**, since leaving an issue In Progress under a claim nobody drives would cost the queue a full TTL. The unwind re-reads first and restores only what is still recognisably its own — an unconditional rollback would clear a newer claim and regress work the session cannot see. **A second guard beside it is keyed on the worktree (GH-1956)**, because the session key alone is blind to the case that motivated it: a herdr fork pane (`claude --resume <id> --fork-session`) is a *new* session id in the *source's* worktree, so the binding reads unbound and the `user@host` holder reads as the same holder — two harnesses about to race on one index, one branch, one set of uncommitted files. Keyed on the worktree rather than on fork-ness deliberately: a fork is the cheapest way to reach that state, not the only one, and an env marker set by `fork.sh` would miss a hand-started second `claude` and would not survive a `/clear`. The mechanism is a **lock, not a ranking**: one file whose name is derived from (worktree, unit), published write-then-`link(2)` — atomic *and* `EEXIST`-failing, so exactly one creator wins and a peer can never read a half-written record and score it as "no owner". Comparing peer records instead is not a CAS at all: two sessions can each publish after the other has scanned, and both then read a directory that justifies their own success. Every path ends in a **read-back** whose session id must be ours, which is what settles even two concurrent `--steal`s — both may unlink and both may create, but the surviving file names one owner and everyone else refuses. Displacement — the only path that does not reduce to one exclusive create — is **serialized by a second, short-lived mutex**, because validate-then-replace is two steps POSIX cannot fuse (there is no conditional unlink): two sessions validating the same incumbent could otherwise each unlink the other's replacement after it landed, and both pass their own read-back. Anyone who cannot enter refuses rather than proceeding on a validation that may already be stale, and the incumbent is re-read *inside* the section, since whatever was seen before entering may have been replaced by the displacer that just left. The mutex deliberately has **no expiry**: an expiring lock needs fencing to be safe, and recovering one by unlinking the path lets two recoverers each delete the other's fresh mutex and both enter — the race the mutex exists to remove, reintroduced by its own escape hatch. The bounded price is stated rather than escaped: a displacer killed mid-section blocks further *displacement* of that one lock — never a first claim, never another unit, never another worktree — and the refusal names the file to delete. Same check-early/act-late shape as the binding: the pre-check only reads, so the common refusal costs nothing and leaves the board untouched, and the lock is taken only once the claim is verifiably ours — acting earlier would let a steal that then *loses* the race erase the incumbent's lock on its way out and disarm the guard while the incumbent is still driving. A loser never unwinds the board claim: the winner holds the same unit under the same holder and the same claim field, so the board is already correct and a "restore" would strip the winner's claim rather than its own. Staleness is the **same clock the board claim uses** (`RALPH_LOCK_TTL_MIN`) — "the source is gone and this fork is its continuation" already has exactly one definition here, and a longer local clock would let a fork steal on the board and still be refused locally; `--steal` is the explicit form of that assertion and displaces the lock immediately, which is what a crashed session resumed in its own worktree uses — but it displaces **only the lock the pre-check actually saw**, matched on owner and `since`. A different lock present by then belongs to a *concurrent* stealer, a session the operator never spoke to because it did not exist when the assertion was made; without that identity check two concurrent stealers each unlink the other's lock after the other's read-back has already returned, and both succeed. Only the *same* unit is guarded — a second session claiming a *different* unit from one checkout is also wrong, but it has a legitimate reading (a worktree reused after its first unit shipped) and refusing it would cost false refusals to catch a case nobody has hit. No session id or no repo root → *not evaluated*, never guessed at.
-- **create** — retry-safe (GH-1973). A lost response and a failed write are indistinguishable to a caller, and the safe-looking answer — retry — is the one that files a duplicate (three confirmed pairs, 62–122 s apart, during a network flap). `create` owns the hazard rather than exporting it: a **pre-mutation twin search** (byte-identical title, OPEN, authored by the viewer, inside `RALPH_CREATE_DEDUPE_SEC`/300) adopts an already-filed issue instead of duplicating it, and a **read-back on mutation failure** resolves the lost-response case in-invocation so no retry is needed for it. All three conjuncts carry weight: title alone collides with legitimately-repeated intake, a foreign author's issue is never ours to adopt, and an unbounded window would be a title lock. A failed guard **warns and files** — the outage that loses a response is the one that breaks this read, and refusing would make `create` unusable exactly when it is needed; the read-back is the backstop. When the read-back itself cannot be read, the error says the write **may** have landed and names the search to run, rather than inviting the blind retry. `--allow-duplicate` is the explicit assertion that a second issue is meant.
-- **reconcile** — GitHub reality wins: closed→Done/Canceled, reopened→Backlog, off-board→adopt. Every correction posts a comment.
-- **parent-check** — rollup: all children closed → parent to In Review (deliberately multi-hop; fails closed on truncated child lists).
+v0.2.0 (the 2026-08-19 ways-of-working audit; full history in
+CHANGELOG.md): **In Progress → Done is legal** (gates key on the
+destination) — apply units close on their evidence comment, decision units
+via `board move NNN done --decision <artifact>` binding a
+`ralph-decision-evidence:v1` marker. **Same-state moves are retries, not
+violations** — a pure noop, or a fresh move completing a half-applied
+terminal close on the same evidence (`doctor --fix` does the same). **`board
+defer NNN --until "<condition>" [--recheck ISO]`** parks unready Backlog
+items out of ranking via a Defer field; claiming lifts it. **`board brief`**
+(queues + leases) and **`board who`** (leases, zero API) are the orientation
+reads. **A lease whose checkout was deleted is DEAD, not stale (GH-2108)** —
+`who` is machine-wide and withholds nothing; `brief` is repo-scoped. `board
+reap-leases [--apply]` reaps on the **missing checkout**, never age; **`--closed`
+adds the second key (GH-2368)**: the unit is CLOSED on GitHub. **`board
+bootstrap`** is the config-free first-run bring-up; **`board add <url>`** is
+the sanctioned cross-repo add behind `RALPH_ALLOW_FOREIGN_REPO_ITEMS`.
+Transport failures and rate limits are typed **exit 75** (EX_TEMPFAIL, reads
+retried bounded, mutations never — GH-1973 stands); lanes pre-flight
+GraphQL's own free `rateLimit` field and defer under `RALPH_GH_BUDGET_FLOOR`
+(GH-2278); every invocation appends a spend line to `~/.ralph/budget.jsonl`
+(doctor's `gql-spend`; `RALPH_GQL_COST=0` disables, `=1` narrates). Full
+rationale:
+`thoughts/shared/research/2026-09-02-claude-md-v0.2.0-ways-of-working-audit.md`.
+
+- **transition** — agent intent, guarded by the MACHINE table. `Backlog →
+  Done` is legal (GH-1777): already-delivered work closes through the gated
+  lane rather than detouring via `reconcile`, which writes the state field
+  unchecked. **Done evidence** is a merged closing-reference PR, a merged PR
+  on a branch that *parses* as this issue's (`board name NNN`'s grammar,
+  legacy included — GH-1732; the branch read is a merged-PR search via
+  `head:` qualifiers, GH-1996, never a live-ref read, since `merge-pr.sh`
+  deletes the head ref on merge), or **one derived form (GH-2198): an epic
+  root every one of whose children is closed** (a Canceled child counts; a
+  truncated child list counts as not-all-closed; the refusal on a
+  non-qualifying root names the children still open). Every unreadable path
+  returns no evidence. `Backlog → Human Needed` stays illegal — a tend
+  closure proposal instead files a `<!-- ralph-tend:v1 proposed -->` marker
+  comment, disposed via `board resolve NNN --accept|--reject` (or the close
+  itself for a proposal filed before it). Claim = `{holder}|{iso8601}` in
+  the Claim field, TTL 120 min (`RALPH_LOCK_TTL_MIN`); `--steal` posts an
+  eviction comment; **no `--force` exists anywhere** — stale TTL is the only
+  side door; read-back verifies the winner. **A verified claim also binds
+  the session to the unit (GH-1948)**: contract rule 9 ("one unit per
+  session") is enforced in code — a second *distinct* claim from one
+  session is refused, tracked locally
+  (`~/.ralph/sessions/<session-id>.json`, keyed on
+  `CLAUDE_CODE_SESSION_ID`) because the board holder (`user@host`) is
+  shared by every session on the machine. No session id → not evaluated.
+  **A second guard is keyed on the worktree (GH-1956)** for the fork-pane
+  case the session key is blind to: a per-(worktree, unit) lock file,
+  `link(2)`-atomic and `EEXIST`-failing, read-back-verified, `--steal`
+  displacement serialized by a short-lived, non-expiring mutex, staleness on
+  the same `RALPH_LOCK_TTL_MIN` clock as the board claim. Full rationale
+  (every rejected alternative, the O_EXCL argument, the displacement race):
+  `thoughts/shared/research/2026-09-02-claude-md-mutation-lane-guards.md`.
+- **create** — retry-safe (GH-1973): a pre-mutation twin search
+  (byte-identical title, OPEN, viewer-authored, inside
+  `RALPH_CREATE_DEDUPE_SEC`/300, 0 disables) adopts an already-filed issue
+  instead of duplicating it, and a read-back on mutation failure resolves
+  the lost-response case in-invocation. A failed guard **warns and files**
+  rather than refusing. `--allow-duplicate` is the explicit assertion that a
+  second issue is meant. Rationale:
+  `thoughts/shared/research/2026-09-02-claude-md-mutation-lane-guards.md`.
+- **reconcile** — GitHub reality wins: closed→Done/Canceled,
+  reopened→Backlog, off-board→adopt. Every correction posts a comment.
+- **parent-check** — rollup: all children closed → parent to In Review
+  (deliberately multi-hop; fails closed on truncated child lists).
 
 Guards by construction: scope gate (origin remote must match configured host/owner/repo before any mutation, incl. `doctor --fix`); cross-repo board items are partitioned by `ownRepo()` and never touched (bare-number resolution would hit the wrong repo's issue); archived items skipped everywhere; blocker-list truncation counts as blocked.
 
 ### Apply units — merge ≠ done (GH-1692)
 
-Opt-in, via an `apply` block in `.github/ralph-merge-policy.json` (`enabled`, `label`, `infraPaths`) — the same file the merge gate reads, so a repo opts in once and `board.ts` + `merge-pr.sh` cannot drift. **ralph-hero armed it on 2026-08-02 (#1696)**: `enabled: true`, label `ralph:apply`, `infraPaths` `[".github/**", "ralph/scripts/install-loop.sh"]` — so every gate below fires here, and a change touching those paths needs an apply twin before its closing keyword passes gate 6. A repo that has not opted in leaves them inert, as does a board with no apply issues.
+Opt-in, via an `apply` block in `.github/ralph-merge-policy.json` (`enabled`,
+`label`, `infraPaths`) — the same file the merge gate reads, so a repo opts
+in once and `board.ts` + `merge-pr.sh` cannot drift. **ralph-hero armed it
+on 2026-08-02 (#1696)**: `enabled: true`, label `ralph:apply`, `infraPaths`
+`[".github/**", "ralph/scripts/install-loop.sh"]`.
 
-An issue carrying the configured apply label (`apply.label`, default `ralph:apply`) is work whose completion is a *deploy*, not a merge — terraform, secrets, rulesets, a scheduled job's next fire. Four enforcement points:
+An issue carrying the configured apply label (`apply.label`, default
+`ralph:apply`) is work whose completion is a *deploy*, not a merge —
+terraform, secrets, rulesets, a scheduled job's next fire. Four enforcement
+points:
 
 | | |
 |---|---|
-| **Decomposition** | infra-touching units split into a ship issue + one or more apply units (`board create --backlog --apply`, which resolves the configured `apply.label` rather than a literal); settings-only changes get *only* an apply unit |
-| **Merge gate 6** | `scripts/apply-keywords.sh` — no closing keyword may bind an apply unit, and an infra-touching PR may not close a ship issue with no apply twin. Re-published server-side as the `ralph-apply-keywords` status (recomputed on `edited`, since that's how a closing keyword arrives after CI went green) |
-| **Close gate** | `transition()` refuses Done without a shape-valid `ralph-apply-evidence:v1` comment (`scripts/apply-evidence.sh` posts one). No `--why` escape, no merged-PR escape. `kind=run` evidence must bind `run.head_sha == merge_sha` — and, since that proves which tree the run checked out but not that the operator named the right tree, the script also refuses a run that does not **descend from the fix merge** (GH-1961). A run triggered before the fix landed is recent, green, and produces a healthy artifact while having executed the *old* workflow file, because `actions/checkout` pins to the run's own event SHA; recency and a green conclusion are not ancestry. The fix merge is **derived, never typed** — the apply unit's `blockedBy` twin is the ship issue and its merged closing PR carries the commit — so the rule needs no prose to find its subject. A candidate counts as a required ancestor only if it is **reachable from the default branch** — tested, not read off the PR's recorded base name, which is a proxy that a branch rename silently invalidates while history survives it; a merge into a stacked base that never landed is still excluded, which is what the proxy was there for. `--fix-merge <sha>` **adds** to the derived set and can never suppress it: an override that replaced derivation would let an operator name a weak ancestor and skip the real fix, which is this issue's own defect handed a flag. The two failure modes are deliberately not alike: a question with **no subject** (no twin, no closing PR merged to the default branch) records `ancestry: not_evaluated` *with a reason* and proceeds, since a settings-only unit legitimately has no ship twin; a question **with** a subject that the compare API leaves unanswered **refuses and posts nothing**, because a failed read rendering as a pass is the very defect the check removes, and evidence is the one artifact no later reader re-opens. `--fix-merge <sha>` gives the no-subject case a subject. **The reason is typed, and the gate reads it (GH-2261).** That two-failure-mode rule was applied to the compare API and missed by the reads that go *looking* for the subject: an unreadable `blockedBy` twin, an unreadable default branch, and an unresolvable repo all landed in the no-subject bucket, warned, and posted at exit 0 — and `board.ts` never read `ancestry` at all, so the whole protection lived in one script's refusal path with a hole in it (#2161 closed through it; safe only because a human re-derived the ancestry by hand). `ancestry.reason_code` is now an enum — `no_subject` vs `read_failed` (with `failed_read` naming which read, `repo_resolution` never borrowing the API-read string for something that never reached the API) — the script refuses every `read_failed` before composing anything, and `validateApplyEvidence` accepts `descends` and `not_evaluated: no_subject` while refusing `read_failed`. So the settings-only population passes **by construction**, needing no operator assertion: an escape hatch the legitimate majority must use every time stops being read and becomes the path, which is the `--why` failure GH-2198 fixed. `--fix-merge` does not rescue a failed read either — it adds to the derived set and can never replace it, so proceeding on an operator sha while the derivation is unknown is the same weak-ancestor substitution the flag is barred from making. An **absent** `ancestry` refuses rather than passing (GH-1841's missing-`base_ref` call): it predates the binding so it cannot answer the question, and a validator accepting absence would pass every pre-existing test and inherit the entire hole — but the refusal binds **forward only**, on the payload's own `applied_at` against one dated constant. GH-1841 could treat absence as a one-time re-attest because attestations are in flight; apply evidence is swept by `apply-closed-unevidenced` over every closed apply unit forever and its `--fix` REOPENS them, so an unbounded refusal would have had a 15-minute cron resurrect five finished pre-field closes (#1697, #1728, #1739, #1771, #1953) whose ancestry nobody can now re-derive — GH-2052's unsatisfiable remedy. The bound is on the payload, not on a sweep or a caller, so there is still one predicate and no second reader; it is self-closing, since every payload the script can produce carries ancestry; and it grandfathers ABSENCE only — a pre-epoch payload carrying `read_failed` is still refused. GH-1961 now has two enforcement points; neither is load-bearing alone |
+| **Decomposition** | infra-touching units split into a ship issue + one or more apply units (`board create --backlog --apply`, resolving the configured label); settings-only changes get *only* an apply unit |
+| **Merge gate 6** | `scripts/apply-keywords.sh` — no closing keyword may bind an apply unit, and an infra-touching PR may not close a ship issue with no apply twin. Republished as the `ralph-apply-keywords` status (recomputed on `edited`) |
+| **Close gate** | `transition()` refuses Done without a shape-valid `ralph-apply-evidence:v1` comment (`scripts/apply-evidence.sh` posts one). No `--why` escape. `kind=run` evidence must bind `run.head_sha == merge_sha` **and descend from the fix merge (GH-1961)** — derived from the apply unit's `blockedBy` twin, reachable-from-default-branch tested (never the PR's recorded base name). `--fix-merge <sha>` only *adds* to the derived set, never suppresses it. **The ancestry reason is typed and the gate reads it (GH-2261)**: `no_subject` (settings-only, passes) vs `read_failed` (refuses, posts nothing) — closing the hole where a failed read once rendered as a pass and `board.ts` never checked `ancestry` at all. An **absent** `ancestry` refuses (grandfathered forward-only against one dated constant, GH-1841's precedent) |
 | **Surfacing** | doctor's `merged-unapplied`, `apply-verify-elapsed` (honours `<!-- ralph-verify-after: ISO -->` in the body), `apply-closed-unevidenced` (strict-fail; `--fix` reopens to Human Needed) |
 
-Honestly labelled limits: GitHub has no pre-close hook, so a UI close is *corrected within one reconcile pass*, not prevented — and a reconcile pass is tens of minutes, not 15 (see the cron ceiling under Enforcement layers), so an unevidenced UI close can read as Done on the board for the better part of an hour; a label added after a PR's status was computed doesn't recompute it (merge time is the backstop); and non-run evidence proves a command exited 0, not that the operator's claim is true. Plan: `thoughts/shared/plans/2026-08-01-infra-apply-isolation.md`.
+Honestly labelled limits: GitHub has no pre-close hook, so a UI close is
+*corrected within one reconcile pass*, not prevented (tens of minutes, not
+15 — see the cron ceiling under Enforcement layers); a label added after a
+PR's status was computed doesn't recompute it (merge time is the backstop);
+non-run evidence proves a command exited 0, not that the operator's claim
+is true. Full ancestry rationale:
+`thoughts/shared/research/2026-09-02-claude-md-apply-units-history.md`.
+Plan: `thoughts/shared/plans/2026-08-01-infra-apply-isolation.md`.
 
 ### Lane selectors and the doctor sweep
 
-Branch and agent names are **derived, once** (GH-1807) — `board name NNN` is the only grammar; details in `ralph/CLAUDE.md`.
+Branch and agent names are **derived, once** (GH-1807) — `board name NNN` is
+the only grammar; details in `ralph/CLAUDE.md`.
 
-**Lane selectors** (GH-1712): `board deliver-queue` (quiescent In Review items with actionable PR signal — marker-gated per PR, gate truth from `merge-pr.sh --dry-run`, bounded verdict-agnostic retry) and `board tend-queue` (stale bodies, cleared/truncated deps, unjudged high-overlap dep candidates — `deps-unwired`, GH-2136, candidates inline on the row, dismissals recorded via `board dep --dismiss` — unformed intake, unaudited closes). **The Done audit is O(exceptions), not O(closes) (GH-2151).** The audit demand permanently exceeded the lane's capacity (185 unaudited closes at batch 5, ~13 closes/day) and a close aging past `RALPH_AUDIT_DAYS` dropped out *unaudited and unrecorded* — "audited" and "aged out unaudited" rendered alike, the GH-1971/GH-2048 collapse. A close carrying the gated Done lane's own evidence — a merged closing PR in GitHub's `closedByPullRequestsReferences`, or shape-valid `ralph-decision-evidence:v1` / `ralph-apply-evidence:v1` evidence judged by the gate's OWN validators (`decisionEvidence`, `validateApplyEvidence` — marker presence alone is not evidence) — now self-audits at read time: withheld from `done-audit` as a counted `evidenced` line (GH-1945: counted, never silent), no marker written (GH-2179's no-tracking-state shape — nothing to drift, and the backlog absorbs retroactively: measured 83/93 recent COMPLETED closes carry a merged closing PR). NOT_PLANNED closes are excluded from the audit entirely — reconcile's own rule, a cancellation claims nothing to verify — though a pending post-close proposal on one still surfaces as `proposed`. What still surfaces is exactly the no-closing-keyword population the audit exists for (epic-root rollup closes, `--why` closes, GH-1996 branch-linkage-only closes — deliberately not re-derived per close: that search costs a query each, and those closes *deserve* the look). The linkage read is opt-in per caller (GH-1803 shape): `tendQueue` and doctor pay ~+10 pts/page on the bounded closed-window read; `recentDone` never renders it and does not pay. Doctor's `done-audit-pending` `i` line counts the current window's still-curable exceptions with time-to-expiry — deliberately *not* the already-expired (no verb can audit an expired close, so that line's remedy could never act and it would clear only by time passing: the GH-2052 unsatisfiable-remedy trap wearing an info line). Both are `next`-class typed read-only queries; empty `next` means spawn nothing. **`deliver-queue` also refuses a unit a live local session is driving (GH-1929)** — the other half of GH-1917's push-instant lease, for the unpushed-commits case no remote signal can see. It reads the per-(worktree, unit) lock `board claim` already publishes (GH-1956), which is why it is enforcement and not convention: that acquisition is mandatory and unstrippable. Held rows surface as `local-session-active` and are **self-clearing on `RALPH_LOCK_TTL_MIN`**, so a dead session costs one TTL, not a human. An unreadable sessions dir yields **null, never an empty probe** — "could not read the lease" may not render as "no lease is held" — and the whole read is machine-local by nature, so a deliver loop on another host keeps the original exposure. A lane = typed selector + judgment skill + goal; the four-dimension lane test gating new lane proposals is stated once in `ralph/CLAUDE.md`. Transport recipes (attended `/loop`, unattended routines/scheduler with the two-key fail-closed opt-in): `ralph/examples/README.md`.
+**Lane selectors** (GH-1712): `board deliver-queue` (quiescent In Review
+items with actionable PR signal — marker-gated per PR, gate truth from
+`merge-pr.sh --dry-run`, bounded verdict-agnostic retry) and `board
+tend-queue` (stale bodies, cleared/truncated deps, unjudged high-overlap dep
+candidates — `deps-unwired`, GH-2136, dismissals via `board dep --dismiss` —
+unformed intake, unaudited closes).
 
-**`board pr-orphans` is the one selector not keyed on the board (GH-2048).** Every other surface here needs a board item to hang a row on — `next`/`frontier` rank issues, `deliver-queue` selects In Review items, `doctor` sweeps board invariants — so an open PR referencing no issue is not merely unranked, it is *unseeable*, and an empty queue renders identically to one that is empty because its work never reached the board. Three PRs sat that way for up to 23 days (#1779, #1587, plus 12 untriaged dependabot PRs), found only because the board hit zero open work and someone audited PRs to explain the emptiness. The selector reads GitHub's own `closingIssuesReferences` — the field gate 6 reads — never the PR body, which is app-writable (GH-1940); doctor carries the count as an advisory `i` line under `board-volume`'s rules (`--strict` never escalates it, `--fix` never acts on it). Deliberately a selector and not a gate: blocking `gh pr create` has no sanctioned alternative to redirect to (GH-1717's unchanged reason for observing rather than redirecting), and auto-filing an issue per orphan would convert a human's exploratory branch into board work without their say. Bot authors are skipped by default, and the spelling is the trap the first draft fell into: GraphQL returns `dependabot` while every doc and the web UI say `dependabot[bot]`, so a suffixed list matched nothing and left all 12 rows standing — the "a dozen rows and nobody reads it" failure the check exists to avoid. Honest limit: making orphans visible does not make anyone look.
+**The Done audit is O(exceptions), not O(closes) (GH-2151).** A close
+carrying the gated Done lane's own evidence — a merged closing PR, or
+shape-valid `ralph-decision-evidence:v1` / `ralph-apply-evidence:v1`
+evidence judged by the gate's OWN validators — self-audits at read time,
+withheld from `done-audit` as a counted `evidenced` line (never silent),
+with no marker written. NOT_PLANNED closes are excluded entirely
+(`reconcile`'s own rule). What still surfaces is the no-closing-keyword
+population the audit exists for (epic-root rollup closes, `--why` closes,
+GH-1996 branch-linkage-only closes). Doctor's `done-audit-pending` `i` line
+counts the current window's still-curable exceptions, never the
+already-expired.
 
-`board doctor [--fix] [--strict]` is the invariant sweep — plus four `i`-level **state smells** (GH-1715: `repeated-claim-expiry`, `escalation-ping-pong`, `review-stalled`; GH-1777: `tend-proposal-stale`) read from the comment trail the machine already wrote. Info lines are advisory by construction: `--strict` never escalates them, `--fix` never acts on them, and a history read that throws degrades to `not evaluated` rather than touching the exit code. `board-volume` (GH-1788) is a fifth `i` line under the same rules — scanned nodes and pages vs `RALPH_VOLUME_MAX_ITEMS` (800), with `board prune` as the named remedy: a **dry run unless `--apply`** that removes long-closed terminal issues *from the project only*. The GitHub issue is left completely intact — title, body, comments, labels, closed state. What is lost is the **board item**: its Workflow State and Claim field values are deleted with it, and re-adding the issue to the project later does not bring them back. That is the one-way half, and the reason prune is offered rather than swept. One sweep removes at most `--limit` items (200) and aborts after 5 consecutive mutation failures, so a rate limit or a revoked scope cannot burn the budget this line of work exists to protect. `--json` reports the run it actually performed — under `--apply` it applies, and never silently reports a dry run. Its predicate fails closed on everything another reader still needs — non-terminal closes (doctor's drift sweep), recent closes (tend's Done audit), apply units, and any closed node an open item's tree walks through. **The `i` marker is gated on the remedy existing, not on the threshold (GH-2052).** Once GH-2050 swept the 763 PR/draft items out, the count became honest and the line became *permanent*: 860 real issues, 0 prunable, the text itself saying there was nothing to do. That is not a mis-calibrated constant but an unsatisfiable one — `RALPH_PRUNE_AFTER_DAYS` (180) floors the board at one retention window of closed work, ~840 items at this repo's throughput, so no threshold under that floor is reachable by the remedy the line names, and raising 800 would only move the same unsatisfiable line to a bigger number. Over-threshold **with** candidates stays `i` and names the prune; over-threshold with **nothing** prunable reads `ok`, prints the identical measurement (doctor renders every check, `ok` included) and says why there is no action — the marker asking a reader to act is what is withheld, never the number. 800 keeps a coherent meaning: the point at which pruning is worth recommending as soon as anything becomes prunable. A read that throws still degrades to `not evaluated` at `i`, since a failed measurement may not read like a healthy one. `installed-plugin` (GH-1825) is a sixth: the gates in `board.ts` ship as a versioned **install**, so merging one is not the moment it becomes true — the line resolves the copy agents actually call (`installPath` from `~/.claude/plugins/installed_plugins.json`, `$CLAUDE_CONFIG_DIR` honoured; version read from that copy's own manifest, the registry record only as a labelled fallback) and compares it against `CAPABILITY_FLOORS`. A floor is **derived, never configured**: `since` is a fact about ralph's release history (the apply close gate landed in 0.1.81) and `reliedOn` is the opt-in the repo already declares once in the merge policy — so a new gate adds one row beside itself, the version exists in no second place, and a repo that enabled nothing hears nothing. Several installed copies are judged by the lowest (any may be the one a session resolved); an absent/unreadable registry or an unparseable version reads `not evaluated`, which is why the weekly CI doctor — which has no plugin install at all — stays green. `board readiness` is the advisory agent-readiness report (3 levels: interactive / unattended / autonomous loop — recommendations, never gates); its Level-3 `integration-policy` check (GH-2138) measures collision surface, main velocity, median PR lifetime, and the ruleset's strict/merge-queue bits, and emits a **recommended integration policy, not a table** — a decision gets read, a table joins the unread (GH-2048's limit); strict-without-queue and hot-collision both name the merge queue by name (recommended, never implemented — a stated non-goal), and every unreadable input degrades to `info`, never `miss`. `board help` lists everything.
+**`deliver-queue` also refuses a unit a live local session is driving
+(GH-1929)** — reads the per-(worktree, unit) lock `board claim` already
+publishes (GH-1956); held rows surface as `local-session-active`,
+self-clearing on `RALPH_LOCK_TTL_MIN`. An unreadable sessions dir yields
+**null, never an empty probe**.
+
+**`board pr-orphans` is the one selector not keyed on the board (GH-2048).**
+Reads GitHub's own `closingIssuesReferences`, never the PR body
+(app-writable, GH-1940); doctor carries the count as an advisory `i` line
+under `board-volume`'s rules. Bot authors are skipped by default
+(`RALPH_PR_ORPHAN_IGNORE_AUTHORS`, default `dependabot,renovate,github-actions`,
+a trailing `[bot]` stripped on both sides); set it EMPTY to surface
+everyone.
+
+`board doctor [--fix] [--strict]` is the invariant sweep, plus four
+`i`-level **state smells** (GH-1715: `repeated-claim-expiry`,
+`escalation-ping-pong`, `review-stalled`; GH-1777: `tend-proposal-stale`)
+read from the comment trail. Info lines are advisory by construction:
+`--strict` never escalates them, `--fix` never acts on them. `board-volume`
+(GH-1788) is a fifth `i` line (scanned nodes/pages vs
+`RALPH_VOLUME_MAX_ITEMS`, 800), with **`board prune [--apply]`** as the
+remedy: a dry run unless `--apply`, removing long-closed terminal issues
+*from the project only* — the GitHub issue stays fully intact; only the
+board item's Workflow State and Claim values are lost, the one-way half.
+`--limit` (200), 5-consecutive-failure breaker, `--json` reports the run it
+actually performed. **The `i` marker is gated on the remedy existing, not
+the threshold (GH-2052)**: over-threshold with nothing prunable reads `ok`,
+not `i`. `board sweep-non-issues [--apply]` is the separate one-time
+removal of PR/draft board items (GH-2050) — same bounds, an **allowlist**
+predicate (`PULL_REQUEST`, `DRAFT_ISSUE`), never by-exclusion, so
+`REDACTED` and any future item kind stay on the retained side.
+
+`installed-plugin` (GH-1825) resolves the copy agents actually call
+(`installPath` from `~/.claude/plugins/installed_plugins.json`,
+`$CLAUDE_CONFIG_DIR` honoured; version read from that copy's own manifest)
+against `CAPABILITY_FLOORS`, a floor **derived, never configured** from
+ralph's release history and each repo's own merge-policy opt-ins. `board
+readiness` is the advisory agent-readiness report (3 levels: interactive /
+unattended / autonomous loop). Its Level-3 `integration-policy` check
+(GH-2138) emits a recommended integration policy, never a table, and every
+unreadable input degrades to `info`, never `miss`. `board help` lists
+everything.
+
+Full rationale for this subsection:
+`thoughts/shared/research/2026-09-02-claude-md-lane-selectors-and-doctor-history.md`.
 
 ### Enforcement layers (honestly labeled)
 
 1. `board.ts` — typed gates at the path all sanctioned traffic uses.
-2. `.github/workflows/state-guard.yml` — the corrective wall: issue-event lane (adopt/reconcile/parent gate) + reconciler cron (`doctor --fix`, configured `*/15`). **The cron cadence is a ceiling, not a guarantee (GH-1703)** — GitHub delays scheduled workflows under load and deprioritizes low-activity repos; measured here at a 14-min median with a 33-min tail (30 fires, 2026-08-16) and 30–80 min on a quiet stretch (2026-08-02). Every latency claim below that says "one reconcile pass" means tens of minutes, not 15. The issue-event lane is the prompt half. Needs the `ROUTING_PAT` secret (GITHUB_TOKEN can't write a personal-account Projects V2 board). Every correction is a visible comment.
-   - **Doctor's `state-guard` line names the cause, not just the count (GH-2282).** It used to render a rate limit, a rotten PAT and a real bug as one string — `N/5 recent runs not successful` — and this repo rotated a healthy PAT off that reading twice (2026-06-05, 2026-08-08). The newest failure's own log is now read (`gh run view --log-failed` — the ONE extra call, fired only when a failure exists, so a green window costs exactly what it did) and classified into three verdict *shapes*, not one verdict with a suffix: `rate-limited, self-healed — no action` is an `i` line once green runs follow (a fact about a past outage, not a present fault); `rate-limited — wait, do not rotate the PAT` keeps the fail and names the reset (derived from the failed run's timestamp plus the hourly window, never read from the reader's own `rateLimit`, which is a different token in any host repo); `auth — rotate ROUTING_PAT` leads with the credential and quotes its evidence; `other — debug <run URL>` covers everything else, including an unreadable log. Rate-limit evidence is tested first and outranks auth evidence, because a starved token also fails `gh auth status` with `The token in GH_TOKEN is invalid` (run 33223698651 printed both) — an auth-first reading names the PAT on exactly the log the check exists to read correctly. `project … not found (checked user + organization)` counts as auth: that is what the 2026-08-08 expired-PAT incident actually logged. `event`/`databaseId`/`url` ride the existing `gh run list`. GH-1722's warn-inside/fail-outside split is untouched.
-3. `ralph/hooks/funnel-{board,merge,push}.sh` — short courtesy redirects to the CLI / merge gate / push lease, registered once in `ralph/hooks/hooks.json`. **Never counted as enforcement.**
-   - `funnel-push.sh` (GH-1930) redirects a raw **force** push on a branch with an open PR to `ralph/scripts/deliver-push.sh`, whose `--expect` pins the remote head so a peer that moved the branch is a typed refusal instead of a silent clobber (GH-1917). Three narrowings, because a wrong redirect here strands a session's own work: a fast-forward push is never in scope (the hazard is the destructive write, and every session pushes its own branch normally), an unreadable PR state fails **open** (a rate-limited `gh` may not block a push), and the rail is inert where the lease script is absent.
-   - `funnel-gate-watch.sh` (GH-1845) is the **advisory** member of the family: a *polling loop* over `gh pr checks` is pointed at `scripts/pr-gate-watch.sh`, and it prints to stderr and **exits 0**, never 2. The loop cannot terminate here — `ralph-attestation` is pending by design until `attest-pr.sh` runs — but it mutates nothing, so blocking it would spend a hook's strongest signal on its weakest case, and a false trip would strand a session with no way past. Registered for **Monitor as well as Bash**, because an armed Monitor is the form the mistake actually takes: a Bash loop at least returns. Two narrowings the substring version got wrong: `gh` must be in **command position** (`while true; do echo "gh pr checks"; sleep 30; done` is a loop that never calls `gh`), and the `-R` bypass **requires the `owner/repo` argument**, or an unrelated `--repo`-prefixed flag silences the rail on a loop that does target this repo. A single `gh pr checks` is never in scope — the defect is waiting on it, so a loop keyword *and* a `sleep` are both required.
-   - **Quoted is not run** (the defect GH-1930 was filed against, and which refused a doc edit *in* that issue's own session): all three funnels now strip quoted spans before matching, so a command that merely quotes `gh pr merge` or a blocked board verb as an argument — an issue body, a doc, a commit message — is no longer refused as if it were running one. `funnel-board.sh` keeps one exact exception: `gh api` carries its GraphQL mutation *inside* the quotes, so those segments are matched whole. Stripping can only under-redirect, which is the safe direction for a rail that is never enforcement.
-   - `ralph/hooks/hint-pr-linkage.sh` (GH-1717) is the *non-redirect* sibling: a PostToolUse observation that notes an unlinked `gh pr create` and never exits 2, because `gh pr create` has no sanctioned alternative to redirect to (the funnel-merge test, #1713). It stays silent on apply units — gate 6 forbids the very keyword a naive hint would ask for.
-4. `.github/workflows/doctor.yml` — weekly `doctor --strict` from CI: the watcher-of-the-watcher (this repo has observed silent Actions non-fire and an expired PAT).
+2. `.github/workflows/state-guard.yml` — the corrective wall: issue-event
+   lane (adopt/reconcile/parent gate) + reconciler cron (`doctor --fix`,
+   configured `*/15`). **The cron cadence is a ceiling, not a guarantee
+   (GH-1703)** — measured here at a 14-min median with a 33-min tail; every
+   "one reconcile pass" claim below means tens of minutes, not 15. Needs the
+   `ROUTING_PAT` secret. Every correction is a visible comment.
+   - **Doctor's `state-guard` line names the cause, not just the count
+     (GH-2282).** Reads the newest failure's log (`gh run view
+     --log-failed`, one extra call, only on a failure) and classifies into
+     `rate-limited, self-healed — no action`, `rate-limited — wait, do not
+     rotate the PAT`, `auth — rotate ROUTING_PAT`, or `other — debug <run
+     URL>`. Rate-limit evidence is tested before auth evidence.
+3. `ralph/hooks/funnel-{board,merge,push}.sh` — short courtesy redirects to
+   the CLI / merge gate / push lease, registered once in
+   `ralph/hooks/hooks.json`. **Never counted as enforcement.**
+   - `funnel-push.sh` (GH-1930) redirects a raw **force** push on a branch
+     with an open PR to `ralph/scripts/deliver-push.sh`, whose `--expect`
+     pins the remote head (GH-1917). A fast-forward push is never in scope;
+     an unreadable PR state fails **open**.
+   - `funnel-gate-watch.sh` (GH-1845) is **advisory**: points a `gh pr
+     checks` polling loop at `scripts/pr-gate-watch.sh` and **exits 0**,
+     never 2 (`ralph-attestation` is pending by design until
+     `attest-pr.sh` runs, so the loop cannot terminate here). Registered
+     for Monitor as well as Bash. `gh` must be in **command position**, and
+     the `-R` bypass requires the `owner/repo` argument.
+   - **Quoted is not run**: all three funnels strip quoted spans before
+     matching (`ralph/hooks/lib/cmdscan.sh`, GH-2058 — the one shared
+     reader). `funnel-board.sh` keeps one exact exception: `gh api`'s
+     GraphQL mutation is matched whole even inside quotes.
+   - `ralph/hooks/hint-pr-linkage.sh` (GH-1717) is the non-redirect sibling:
+     a PostToolUse observation on an unlinked `gh pr create` that never
+     exits 2. Stays silent on apply units.
+4. `.github/workflows/doctor.yml` — weekly `doctor --strict` from CI: the
+   watcher-of-the-watcher (this repo has observed silent Actions non-fire
+   and an expired PAT).
 
 ## Skills, Agent, Workflows
 
@@ -262,35 +332,160 @@ Model tiers (stated once in work/SKILL.md): sonnet default, haiku for mechanical
 
 ## The Loop
 
-`ralph/scripts/tick.sh` runs ONE iteration, scheduler-owned (launchd/cron via `install-loop.sh --enable`). Autopilot is a typed fail-closed opt-in and tick refuses to spawn under `ANTHROPIC_API_KEY` — mechanics in `ralph/CLAUDE.md`.
+`ralph/scripts/tick.sh` runs ONE iteration, scheduler-owned (launchd/cron via `install-loop.sh --enable`). Autopilot is a typed fail-closed opt-in and tick refuses to spawn under `ANTHROPIC_API_KEY`; mechanics in `ralph/CLAUDE.md`.
 
 ## Merge Gate (GH-1589; gate 6 added in GH-1694)
 
-`main` is ruleset-protected — all changes land via PR; merge through `bash scripts/merge-pr.sh PR` (never bare `gh pr merge`; the funnel hook redirects — only in repos that ship the gate; host repos without `scripts/merge-pr.sh` keep their own merge flow).
+`main` is ruleset-protected — all changes land via PR; merge through `bash
+scripts/merge-pr.sh PR` (never bare `gh pr merge`; the funnel hook
+redirects — only in repos that ship the gate; host repos without
+`scripts/merge-pr.sh` keep their own merge flow).
 
-**The gate family is installable into host repos (GH-2083).** The plugin ships the whole family vendored under `ralph/kit/` (14 scripts + `lib/` + `validate-attestation.yml` + a minimal policy seed); `bash <plugin>/scripts/install-gates.sh` from a host repo installs it — idempotent, respects host-modified and host-deleted files (no overwrite without `--force`), stamps `.github/ralph-kit.json`, and PRINTS what it cannot do (the branch ruleset, the reviewer opt-in, the `workflow` token scope). Vendoring is forced, not chosen: validate-attestation.yml runs the gate scripts in Actions, where no plugin install exists, so a shim resolving the installed plugin (GH-1825 machinery) has nothing to resolve in CI. Drift is managed on both sides: `ralph/scripts/kit-sync.sh` is the one writer of the kit and `kit.test.ts` asserts byte-identity with the canonical repo-root `scripts/` in CI, while doctor's `gate-kit` advisory line (`i` only, never strict-escalated) compares a host repo's stamp against the installed plugin's kit manifest and names `install-gates.sh` as the remedy. state-guard.yml and doctor.yml joined the kit in GH-2088 as self-adapting workflows: a resolve step uses the in-tree board CLI when present (this repo, unchanged) and otherwise clones the kit's source repo at the release tag the host's `.github/ralph-kit.json` stamp pins — a stated supply-chain surface, bounded by the pin, and the same trust the vendored scripts already extend. The installer WITHHOLDS both from a host with no board config (a */15 cron in a boardless repo burns runner quota doing nothing; configuring `.ralph.json` and re-running installs them), and at run time no-board exits idle while a configured board with a missing/rotten ROUTING_PAT fails loudly. The script enforces: no `CHANGES_REQUESTED`, CI green, a head_sha-bound attestation (`scripts/attest-pr.sh` with real exit codes), an external review per `.github/ralph-merge-policy.json`, and apply-keyword hygiene (gate 6, see above — armed here; inert in a repo that has not opted in).
+**The gate family is installable into host repos (GH-2083).** The plugin
+ships the whole family vendored under `ralph/kit/` (14 scripts + `lib/` +
+`validate-attestation.yml` + a minimal policy seed); `bash
+<plugin>/scripts/install-gates.sh` from a host repo installs it —
+idempotent, respects host-modified and host-deleted files (no overwrite
+without `--force`), stamps `.github/ralph-kit.json`, and PRINTS what it
+cannot do (the branch ruleset, the reviewer opt-in, the `workflow` token
+scope). Vendoring is forced, not chosen: `validate-attestation.yml` runs
+the gate scripts in Actions, where no plugin install exists.
+`ralph/scripts/kit-sync.sh` is the one writer of the kit and `kit.test.ts`
+asserts byte-identity with the canonical repo-root `scripts/` in CI, while
+doctor's `gate-kit` advisory line (`i` only) compares a host repo's stamp
+against the installed plugin's kit manifest and names `install-gates.sh` as
+the remedy. state-guard.yml and doctor.yml joined the kit in GH-2088 as
+self-adapting workflows: a resolve step uses the in-tree board CLI when
+present and otherwise clones the kit's source repo at the release tag the
+host's stamp pins. The installer WITHHOLDS both from a host with no board
+config, and at run time a configured board with a missing/rotten
+`ROUTING_PAT` fails loudly.
 
-**Gate 5 is one scoped review per head (GH-1847).** Two modes, derived from the policy: `review` (a formal APPROVED review at the head — every reviewer that has that verb) and **`findings`**, opted into by naming `head_marker`, for reviewers that do not. **Findings mode carries two request protocols (GH-2087)**: the comment-marker protocol below (Codex), and `request_mode: "review-request"` for GitHub Copilot in kit host repos — engaged via a review request (the requestable login is `Copilot`; reviews are filed by `copilot-pull-request-reviewer[bot]`, the default bot when the mode names none), predicate in `scripts/copilot-review-evidence.sh`, dispatched by all three gate-5 readers. Measured, not assumed (public corpus, n=31: `thoughts/shared/research/2026-08-19-copilot-review-evidence-measurement.md`): a clean diff still files a review ("generated no comments"), so the GH-1847 unsatisfiable-predicate trap does not apply — but a **quota-exhausted Copilot files a real COMMENTED review at the head** saying it reviewed nothing (9/31 sampled), so a bare review-object predicate is wrong and the failure-body family is excluded; no severity markup exists, so **every** unresolved non-outdated bot thread blocks (fix or resolve — no P0 scoping to fall back on); an unrecognized `request_mode` fails closed like invalid JSON, and a request on an unentitled repo is silently dropped (200, nothing recorded) — read the request back. This repo runs findings mode against Codex: request exactly ONE review per head — `@codex review for P0 issues only` plus `<!-- ralph-review-head: <full-sha> -->` — and the gate passes when the bot has ANSWERED at that head with **zero unresolved P0 threads**. "Answered" is a review object at the head *or* a bot comment naming the head commit — with nothing to say Codex files no review at all (observed on #1853), so a review-only predicate would be unsatisfiable on exactly the clean PRs it must pass. The comment test binds on the SHA the reviewer reports, never on its prose. P1/P2 are advisory: visible, adjudicated by the driver, never blocking. The predicate is one script, `scripts/codex-review-evidence.sh`, which merge-pr.sh, validate-attestation.sh and pr-gate-watch.sh all RUN — the previous three-copy mirror is what let a gate and its watcher disagree. Why the inversion: Codex has no APPROVED verb (67 reviews on this repo, 0 clean), and a zero-findings predicate does not terminate on a large diff — findings grew 5→19→22 across 33 rounds on #1764 — so it acted as an unlegislated diff-size cap nobody voted for. An OUTDATED thread does not block: Codex never resolves its own threads, so counting them would rebuild that trap. Resolving a thread fires no workflow event GitHub accepts (`pull_request_review_thread` is refused in an `on:` block — it invalidated the whole file when tried), so after resolving a P0, post any PR comment to make the required status recompute. CodeRabbit is gone (GH-1847) — it was a second, redundant reviewer that blocked through gate 1. `validate-attestation.yml` republishes the verdict as the required `ralph-attestation` status. Gates are RUN, not predicted.
+The script enforces: no `CHANGES_REQUESTED`, CI green, a head_sha-bound
+attestation (`scripts/attest-pr.sh` with real exit codes), an external
+review per `.github/ralph-merge-policy.json`, and apply-keyword hygiene
+(gate 6, above — armed here; inert in a repo that has not opted in).
 
-**Sub-P0 findings are counted, never gated (GH-1945).** P1/P2 — and every finding from a reviewer the policy does not gate on — were advisory by design and *unread* in practice: three consecutive PRs (#1939/#1941/#1942) merged over valid open findings, because a PR with five open P1 threads and a PR with none rendered identically on every surface a driver reads. `scripts/advisory-findings.sh PR` counts unresolved, non-outdated badged threads minus the ones gate 5 already blocks on (policy bot + P0), and `pr-gate-watch.sh` appends the count to the two verdicts whose next move is toward merge (`GATE-READY`, `GATE-YOURS attestation`). It changes no verdict and blocks no merge — the judgment stays with the driver; only the invisibility is fixed. Reviewer-agnostic **by measurement**: Greptile renders severity as `<img alt="P1">` and Codex as `![P1 Badge](…)`, so a parser written against either alone misses the other's findings entirely — and Greptile's own status check is completion-only (`pass` regardless), which is why its P0 is counted here rather than left to a gate that does not exist. Zero is printed (`no unresolved advisory findings`) rather than left as silence, and an unreadable count says `NOT COUNTED` — "none" and "never ran" must not read alike, which is the whole defect. **A count of zero is not a clean PR (GH-1971).** The count answers what is outstanding, never whether anyone looked, so a reviewer that is rate-limited, quota-exhausted or uninstalled produced the words a reviewed-and-clean PR produces — this line's own founding defect, one layer in, and live during the capped Greptile trial. The script now reports `reviewed` beside the count in three states, and an unreviewed head renders as `NO ADVISORY REVIEW AT THIS HEAD` rather than borrowing clean's wording. "Reviewed" is the shape gate 5 already uses — a non-dismissed review object at the head, or a comment naming the head commit — reimplemented rather than delegated because `codex-review-evidence.sh` binds to the one policy bot and to a scoped request, while this line is reviewer-agnostic. Two bounds carry it: the **PR author is excluded** (the driver's own `ralph-review-head` request comment names the head, so counting it would make every PR prove its own review — and when the author cannot be read, comment evidence is skipped rather than trusted), and `reviewed` is **never inferred from the findings**, since an unresolved thread can be inherited from an older head. An unreadable history reads `unknown`, never `false`. The honest limit: a reviewer with nothing to say may file nothing, so `reviewed:false` diagnoses no cause — it only stops the silence reading as clean.
+**Gate 5 is one scoped review per head (GH-1847).** Two modes, derived from
+the policy: `review` (a formal APPROVED review at the head) and
+**findings**, opted into by naming `head_marker`, for reviewers that do
+not. Findings mode carries two request protocols (GH-2087): the
+comment-marker protocol below (Codex), and `request_mode:
+"review-request"` for GitHub Copilot in kit host repos (requestable login
+`Copilot`; reviews filed by `copilot-pull-request-reviewer[bot]`;
+predicate in `scripts/copilot-review-evidence.sh`). This repo runs findings
+mode against Codex: request exactly ONE review per head — `@codex review
+for P0 issues only` plus `<!-- ralph-review-head: <full-sha> -->` — and the
+gate passes when the bot has ANSWERED at that head (a review object, or a
+bot comment naming the head commit) with **zero unresolved P0 threads**.
+P1/P2 are advisory: visible, adjudicated by the driver, never blocking. The
+predicate is one script, `scripts/codex-review-evidence.sh`, RUN (not
+mirrored) by `merge-pr.sh`, `validate-attestation.sh` and
+`pr-gate-watch.sh`. CodeRabbit is gone (GH-1847). `validate-attestation.yml`
+republishes the verdict as the required `ralph-attestation` status. Gates
+are RUN, not predicted.
 
-**The rules the gates read live in one file (GH-1843).** Gate 5's *predicate* was shared in GH-1847, but everything around it was not: five scripts — `merge-pr.sh`, `validate-attestation.sh`, `pr-gate-watch.sh`, `codex-review-evidence.sh`, `advisory-findings.sh` — each re-derived policy parsing, evidence-mode derivation, the `norm()` bot-login rule, exempt-author waivers, and the attestation payload's extraction and validation. Seven review rounds on #1764 produced 20+ findings that were, in the large majority, one reader disagreeing with another about the same bytes, in both directions: stricter than the gate is a watcher that never terminates, looser is `GATE-READY` into a merge that immediately refuses. Two of them were correct when written and stale when read, because #1839 changed gate 5 mid-review. Each fix was cheap; the class regenerates as long as the rules live in five places, held together by comments saying "must change with gate 5" — a convention, not a mechanism. `scripts/lib/merge-evidence.sh` is now the one reader, published on **two surfaces over one definition**: `ME_JQ_LIB` (jq source, prepended by `pr-gate-watch.sh`, which does its work inside a single jq program) and `me_*` bash wrappers running that same source, for the scripts that step through gates line by line. A rewrite into either surface alone would have left the other as the fifth copy. Three things it fixed on contact: `head_marker` defaulted to `""` in three readers and `"ralph-review-head"` in a fourth — the mirror bug one edit from being live; attestation validity now returns a **reason code** rather than a boolean, because `stale` (re-attest) and `rejected` (a verdict against merging) have opposite correct responses and a caller that cannot tell them apart either loops forever or merges over a REJECTED; and a malformed policy reports a **distinct exit 2**, so every gate fails closed on it while the two non-gating readers deliberately fall back to defaults. The library never turns errexit on for a caller that did not have it — it saves and restores, since a bare `set -e` in a sourced helper silently converts the caller's next tolerated non-zero exit into an abort. Its own suite asserts the thing the extraction actually buys: the jq surface and the bash surface answer *identically*, and every reader resolves the same policy file.
+**Sub-P0 findings are counted, never gated (GH-1945).**
+`scripts/advisory-findings.sh PR` counts unresolved, non-outdated badged
+threads beyond what gate 5 already blocks on; `pr-gate-watch.sh` appends
+the count to `GATE-READY` and `GATE-YOURS attestation`. It changes no
+verdict and blocks no merge — reviewer-agnostic by measurement (severity is
+badged differently per reviewer). Zero is printed explicitly
+(`no unresolved advisory findings`); an unreadable count says `NOT
+COUNTED`. **A count of zero is not a clean PR (GH-1971).** The script
+reports `reviewed` beside the count in three states (`true`/`false`/
+`unknown`), and an unreviewed head renders as `NO ADVISORY REVIEW AT THIS
+HEAD` rather than borrowing clean's wording. The PR author is excluded from
+counting as a reviewer; `reviewed` is never inferred from the findings
+themselves.
 
-**The attestation is read from the paginated comment list (GH-1842).** All three readers located the `<!-- ralph-attestation:v1 -->` comment via `gh pr view --json comments`, which returns a **bounded window** — so on a PR long enough to matter (#1764: 40+ comments over seven review rounds) a *valid* attestation falls outside it and reads as absent: the gate refuses a merge, the validator publishes red, and the watcher demands an attestation that already exists. `me_attestation_comment` in `scripts/lib/merge-evidence.sh` is now the one reader, `--paginate` like gate 5, and the marker has one definition instead of three copies beside a comment asking them to stay in sync. **An unreadable comment list is not an absent attestation** — it is a distinct exit 3, mapped to `MERGE GATE PENDING`, `pending`, and `GATE-WAIT attestation` respectively, because "retry the read" and "go run attest-pr.sh" are opposite instructions and collapsing them is what sends a driver to re-do finished work. Gate 4's evidence is tracked separately from gate 5's in the watcher (`comments_ok`, not `fetch_ok`): one unreadable read may not be reported under the other's name.
+**The rules the gates read live in one file (GH-1843).**
+`scripts/lib/merge-evidence.sh` is the one reader for policy parsing,
+evidence-mode derivation, the `norm()` bot-login rule, exempt-author
+waivers, and attestation payload extraction/validation — published on two
+surfaces over one definition: `ME_JQ_LIB` (jq, prepended by
+`pr-gate-watch.sh`) and `me_*` bash wrappers over that same source.
+Attestation validity returns a **reason code**, not a boolean (`stale`
+re-attests, `rejected` blocks — opposite responses); a malformed policy
+reports a distinct exit 2.
 
-**A PR body is app-writable, so the linkage the gate reads is downstream of a third party (GH-1940).** Greptile edits the pull-request *description* in place, writing its summary between `<!-- greptile_comment -->` markers (observed on #1939) — any installed review app with write scope can do the same. Gate 6 rightly does not regex the body; it reads GitHub's own `closingIssuesReferences`, because closing keywords are honoured in commit messages too. But that field is **derived from** the body, so nothing in this repo may treat a PR body as authored input. The property everything rests on — an app preserves the author's `Closes #N` when it rewrites the body — is contracted nowhere and silent if it ever changes: the gate would evaluate a PR that closes nothing, pass it, and the merge would fold nothing back into the board. `scripts/pr-linkage-drift.sh PR` asserts the invariant where it is cheap — every closing keyword still visible in the body or the commits must appear in the derived linkage — and `pr-gate-watch.sh` appends drift to the same two merge-ward verdicts as the advisory count. **It gates nothing**, same split as GH-1945. The load-bearing output is `where`, not the count: a keyword the *commits* still carry while the *body* has lost it is the signature of a rewrite. Biased toward silence by construction — code stripped from the body AND the commit messages (fenced blocks and inline spans; both halves were proved necessary by this line's own PR, which tripped on its own body and then on its own fix commit), own-repo references only (GitHub creates no cross-repo closing linkage), and each candidate confirmed to be an issue rather than a PR, since `#N` also spells a pull request and a PR number can never appear in the linkage. Not evaluated prints `NOT CHECKED`, never intact.
+**The attestation is read from the paginated comment list (GH-1842).**
+`me_attestation_comment` reads `gh pr view --json comments --paginate`
+(like gate 5), so a valid attestation past GitHub's bounded comment window
+is found rather than reading absent. An unreadable comment list is a
+distinct exit 3 (`MERGE GATE PENDING` / `pending` / `GATE-WAIT
+attestation`), never conflated with a genuinely absent attestation.
 
-**The review loop has a termination condition (GH-1849).** One review per head bounds each round; nothing bounded the *number* of rounds, and #1764 ran 33 of them (#1755, 17) with findings growing 5 → 19 → 22 as each fix pass widened the blast radius — a full session spent on an unlegislated budget. `scripts/review-convergence.sh PR` answers one question: are blocking findings still going down? `stalled` (no strict decrease across the last two completed passes) and `cap-reached` (`--cap`, else `RALPH_REVIEW_ROUND_CAP`, else 5; unattended lanes set 2) both mean stop iterating and escalate to Human Needed rather than requesting another review — **hitting the cap is an escalation, not a failure.** `pr-gate-watch.sh` appends those two to `GATE-YOURS review` and nowhere else: that is the verdict whose next move is "fix these and re-request", and a round count beside a decision to merge is noise. **Derived, never recorded** — a pass is the `ralph-review-head` request the driver already posts (gate 5 *refuses* an unmarked request, so the trail is reliable), and its findings are the policy bot's blocking threads filed before the next one; there is no marker to write and nothing to keep in sync. Unlike gate 5 it counts findings *filed* per pass, not outstanding now: the subject is the reviewer's output per round, and filtering to what survives would score a diligent driver's worst pass as its best. **Zero is the floor, not a stall** — a strict-decrease test applied at zero condemns every clean PR, which is exactly what the first draft did to #1970/#1962/#1964/#1949 when it was run against them, so `converged` is checked first and outranks the cap. The rule measures and gates nothing at the merge path: there is no code path at "the driver decides to re-request", so the judgment stays with the driver — the same split GH-1945 settled for advisory findings. **What it does gate is which work an unattended lane picks up (GH-1977).** `board deliver-queue` runs the same script on the rows that reach the queue and holds `stalled`/`cap-reached` out of `queue` as a `convergence-stalled` **blocked row** — surfaced, never silently withheld, because a stalled PR that vanished from the queue would read identically to one that merged. It is a selector, so it still does not escalate: the `board move NNN human-needed` stays the driver's. Budgeted (`RALPH_DELIVER_CONVERGENCE_MAX`, 3) and run *after* classification rather than in the ranking walk — the check is 3 API reads and ~1.4 s per PR while the walk runs at the 1-pt floor (GH-1803) — and rows past the budget keep their classification, which is what an ungated rule means. Not-evaluated never invents a block: an unreadable verdict, a crashed script, or a host repo that ships no `scripts/review-convergence.sh` leaves the queue exactly as it was.
+**A PR body is app-writable (GH-1940).** Gate 6 reads GitHub's own
+`closingIssuesReferences`, never the body (Greptile rewrites bodies in
+place between markers). `scripts/pr-linkage-drift.sh PR` asserts every
+closing keyword still visible in the body or the commits appears in the
+derived linkage; appended to the same two verdicts as the advisory count.
+**Gates nothing** — the load-bearing output is `where`, not the count: a
+keyword the commits still carry while the body lost it is a rewrite
+signature. Own-repo references only; code stripped from both body and
+commit messages before scanning.
 
-**Every gate can pass a merge GitHub will refuse (GH-2057).** The ruleset enumerates its required status checks by **literal name**, per-matrix entries included (`build-and-test-knowledge (20)`), so a diff that drops a matrix leg stops producing a context the ruleset still requires — required, never reported, unmergeable. Observed on #2055: attestation green, Codex clean at head, apply-keywords PASS, every CI leg green, `MERGE GATE PASS` printed, and then `the base branch policy prohibits the merge`. Our gate ran and said yes because it does not read the authority that decides. `scripts/ruleset-contexts.sh PR` compares the base branch's effective rules (`repos/{o}/{r}/rules/branches/{branch}` — the *effective* set, so GitHub's own ruleset-matching is not re-derived here) against the contexts the head actually produced, and names the difference. It **gates nothing** — the refusal is GitHub's to make and all the driver is owed is the string instead of the opaque one; same measure/decide split as GH-1945 and GH-1849. `pr-gate-watch.sh` appends it to **`GATE-READY` alone**, unlike the advisory count and linkage drift: that is the one verdict that says act now and the only one whose recommended next action GitHub can refuse, and on `GATE-YOURS attestation` the answer is noise by construction — `ralph-attestation` is required and unproduced until `attest-pr.sh` runs, which is what that verdict already says. It **fails open**, which is load-bearing twice over: a host repo with no ruleset is the common case and an unreadable one is a rate limit, not a policy, so neither may darken a merge path — but they are different answers, not one, and a ruleset read that requires nothing (`ok:true, count:0`) never renders like a ruleset we could not read (`ok:false`). Honest limit stated in the output rather than guessed at: a required context absent because CI has not started is indistinguishable from one the diff deleted without reading the workflow file and expanding its matrix, so the wording is "required but not produced at this head" and the judgment stays with the driver.
+**The review loop has a termination condition (GH-1849).**
+`scripts/review-convergence.sh PR`: `stalled` (no strict decrease across
+the last two completed passes) or `cap-reached` (`--cap`, else
+`RALPH_REVIEW_ROUND_CAP`, else 5; unattended lanes set 2) both mean stop
+iterating and escalate rather than re-request — hitting the cap is an
+escalation, not a failure. `pr-gate-watch.sh` appends only these two to
+`GATE-YOURS review`. Derived from the `ralph-review-head` request trail,
+never recorded. `converged` is checked first and outranks the cap, since
+zero findings is the floor, not a stall. **`board deliver-queue` gates
+queue pickup on it (GH-1977)**: `stalled`/`cap-reached` rows surface as a
+`convergence-stalled` blocked row, budgeted at
+`RALPH_DELIVER_CONVERGENCE_MAX` (3), run after classification.
 
-**Quoted-is-not-run was line-based, and every real body is multi-line (GH-2057, second finding).** `funnel-merge.sh` strips quoted spans before matching (GH-1930) using `sed`, which reads a line at a time — so a `--body "…"` spanning newlines had its opening and closing quotes on different lines, matched nothing, survived stripping, and any `gh pr merge` inside it was refused as though it were being run. The rail refused GH-2057's own filing. The stripper now reads the whole command as one record. Backticks are deliberately **not** stripped: outside quotes they are command substitution, which really does run what is inside them, and stripping them would open the hole the rail exists to close. The three sibling funnels carried the same defect and were fixed together in **GH-2058**, as one shared reader rather than three more edits: `ralph/hooks/lib/cmdscan.sh` is now the only place any rail decides what shell quoting means. That is the GH-1843 shape — a rule living in four files held together by a comment asking the copies to stay in sync — and it had already cost exactly one round: GH-2057 fixed one copy and the other three kept the bug. In the siblings the defect was one shape worse, because they also **split the command into segments before stripping**, so a multi-line `--body` was cut at every newline and at every `;`/`&`/`|` *inside* it and its bounding quotes then landed in different segments, leaving each segment's `sed` nothing to match. Reversing that — derive segments on **unquoted** separators, strip afterwards — is what made both halves multi-line-native at once. Two rules survive the move unchanged, and one is new: backticks outside quotes are still never stripped (command substitution really does run); `funnel-board`'s `gh api` exception still matches its segment whole (the GraphQL mutation lives *inside* the quotes) and `funnel-gate-watch` still preserves a double-quoted span carrying `$(` or a backtick, since `until [ -z "$(gh pr checks N)" ]` is the loop it exists for; and a `#` comment now runs to end of **line** rather than truncating the whole command at the first `#` anywhere, so a comment on line 1 no longer silences line 2. The anti-drift check is a test, not a convention: `cmdscan.test.sh` asserts every `funnel-*.sh` sources the shared reader and carries no private quoted-span regex — matched on the regex rather than on `sed`, because GH-2057's own fix was written in awk and a check spelling only the tool it last saw would have missed it.
+**Every gate can pass a merge GitHub will refuse (GH-2057).** The ruleset
+enumerates required status checks by literal name, per-matrix entries
+included — a diff that drops a matrix leg produces no context the ruleset
+still requires. `scripts/ruleset-contexts.sh PR` compares the base
+branch's effective rules against the contexts actually produced and names
+the difference. **Gates nothing** (GitHub's refusal is authoritative);
+appended to `GATE-READY` alone. **Fails open** on no ruleset or an
+unreadable one, distinguished from `ok:true, count:0`.
 
-**The attestation is bound to the base, not only the head (GH-1841).** Every gate here binds evidence to `head_sha` — and retargeting a PR changes what it *merges* without moving the head. So a green `ralph-attestation` computed against base A survived a retarget to base B, and gate 4 accepted evidence for a diff that no longer existed. `attest-pr.sh` now records `base_ref` beside `head_sha`, and the shared reader's `me_attestation_status` gained a `base-changed` reason code that gate 4, `validate-attestation.sh` and `pr-gate-watch.sh` all map to the same remedy — re-attest. The identity is the base **ref name**, deliberately not the base SHA: a base sha moves every time the target branch gains a commit, so binding to it would invalidate every open attestation in the repo each time anything merges — churn, not a gate — while a ref name changes on exactly the event this catches and on no other. A payload with **no** `base_ref` lands on the same code rather than passing: it predates the binding, so it cannot answer the question, and the one-time cost is one re-attest per in-flight PR when this reaches the default branch. An unreadable base is the other direction — the caller passes `""` and the check is **skipped**, because a field we could not read is not evidence that the PR was retargeted. The workflow half matters as much as the predicate: a base retarget arrives as `pull_request_target` action `edited`, which the attestation job skipped wholesale on the correct reasoning that a *body* edit cannot change whether the head is attested. It now takes `edited` when `github.event.changes.base` is present and still ignores every other edit, so the status recomputes to pending on the retarget instead of staying green until the next push.
+**Quoted-is-not-run was line-based (GH-2057 second finding), fixed
+repo-wide as GH-2058.** `ralph/hooks/lib/cmdscan.sh` is the one shared
+reader every `funnel-*.sh` sources (`cmdscan.test.sh` asserts it, matched
+on the regex rather than the tool). Backticks outside quotes are never
+stripped (real command substitution); a `#` comment runs to end of line,
+not the whole command; `funnel-board`'s `gh api` exception and
+`funnel-gate-watch`'s `$(...)`-preserving exception both survive unchanged.
 
-**A blocking review is not evidence that the author has work to do (GH-1816).** Gate 1 blocks on `reviewDecision`, which is repo-level aggregate state carrying **no commit binding** — so a `CHANGES_REQUESTED` keeps blocking after its findings were fixed and pushed, until the reviewer re-reviews. That is the *normal* shape of a review round, and hours wide when the reviewer is rate-limited. The deliver lane read that token on 2026-08-12 and demoted GH-1774 In Review → Backlog as semantic rework, against a PR (#1797) that was green and complete: the demotion drops the claim and makes finished work read as unstarted. `scripts/review-staleness.sh PR` answers the one question gate 1 cannot — **whose turn is it** — by comparing each blocking review's `commit_id` against `headRefOid`: `live` (a blocking review at the head — demote, unchanged), `stale` (every blocking review predates it — hold at In Review and nudge), `no-block`. `pr-gate-watch.sh` appends only `stale` and not-evaluated to `GATE-FAIL review`; `live` is what that verdict already means. **Gate 1 is untouched and still unforceable** — a stale verdict still refuses the merge; the same measure/decide split as GH-1945 and GH-1849. Blocking is GitHub's own semantics reimplemented, never guessed: the script runs only *inside* a `CHANGES_REQUESTED` reviewDecision, and within it scores each reviewer's **newest non-dismissed** review, so a `CHANGES_REQUESTED` the same reviewer later superseded is not counted as a head-bound block. Every failed read — unreadable reviews, a missing head, a blocking review with no `commit_id`, or a reviewDecision the review list does not corroborate — is `not-evaluated`, and the caller then demotes exactly as before: the bug being fixed is over-demotion, and the fix may not become under-demotion where it cannot see. The judgement each pass made is recorded in the `<!-- ralph-deliver:v1 -->` marker as `review_staleness`, so a held item and a demoted one no longer read alike; the selector's re-arm delta ignores that field, so recording it can neither hold nor re-arm a row.
+**The attestation is bound to the base, not only the head (GH-1841).**
+`attest-pr.sh` records `base_ref` beside `head_sha`; a retarget
+(`pull_request_target` `edited` with `github.event.changes.base` present)
+recomputes the status to pending via a `base-changed` reason code, mapped
+to the same re-attest remedy everywhere. A payload with no `base_ref` lands
+on the same code (predates the binding); an unreadable base skips the
+check.
 
-**Never wait on a PR with a `gh pr checks` poll loop** — `ralph-attestation` is pending *by design* until `attest-pr.sh` runs, so `until ! grep -q pending` can never fire, and its silence is indistinguishable from CI still running. Use `bash scripts/pr-gate-watch.sh PR --watch`: it classifies whose turn it is and exits on the first terminal verdict — `GATE-YOURS attestation` (hands back the runnable `attest-pr.sh` line with the real reviewer/URL), `GATE-YOURS review` (incl. the inverse trap: a **rate-limited CodeRabbit check reports `pass`** while reviewing nothing, so all-green is not merge-ready), `GATE-FAIL`, `GATE-READY`, `GATE-DONE`. Review outranks attestation because `attest-pr.sh` refuses without a verdict. It reads the **same `.github/ralph-merge-policy.json`** the merge gate reads and derives the same evidence mode, and in findings mode it *runs the gate's own predicate* (`scripts/codex-review-evidence.sh`) rather than mirroring it, so the classifier and gate 5 cannot disagree about what counts: approvals must be the policy reviewer's, non-dismissed, **at the current head** (REST keeps review objects across a push), exempt authors wait for nothing, a red `ralph-attestation` is a `GATE-FAIL` rather than an absence, and `GATE-READY` requires `mergeable == MERGEABLE`.
+**A blocking review is not evidence the author has work to do (GH-1816).**
+`scripts/review-staleness.sh PR` compares each blocking review's
+`commit_id` against `headRefOid`: `live` (demote, unchanged), `stale` (hold
+at In Review, nudge), `no-block`. `pr-gate-watch.sh` appends only `stale`
+and not-evaluated to `GATE-FAIL review`. Gate 1 (`reviewDecision`) is
+untouched and still unforceable. Recorded in the
+`<!-- ralph-deliver:v1 -->` marker as `review_staleness`.
+
+**Never wait on a PR with a `gh pr checks` poll loop** —
+`ralph-attestation` is pending *by design* until `attest-pr.sh` runs, so
+`until ! grep -q pending` can never fire. Use `bash scripts/pr-gate-watch.sh
+PR --watch`: it classifies whose turn it is and exits on the first
+terminal verdict — `GATE-YOURS attestation` (hands back the runnable
+`attest-pr.sh` line), `GATE-YOURS review` (incl. a rate-limited check
+reporting `pass` while reviewing nothing), `GATE-FAIL`, `GATE-READY`,
+`GATE-DONE`. Review outranks attestation. It reads the same
+`.github/ralph-merge-policy.json` and, in findings mode, *runs* the gate's
+own predicate rather than mirroring it. `GATE-READY` requires `mergeable ==
+MERGEABLE`.
+
+Full incident history and every rejected alternative for this section:
+`thoughts/shared/research/2026-09-02-claude-md-merge-gate-history.md`.
 
 ## CI/CD
 
@@ -298,34 +493,139 @@ Six workflows in `.github/workflows/` — read their `on:` blocks for triggers. 
 
 **Verify release fired after merging `ralph/**`** — push-event workflows have silently not fired here before: `gh run list --commit <merge-sha>`; `workflow_dispatch` is the manual backup. A release that *ran and failed* now files its own issue (GH-1952) — adopted onto the board by state-guard, so it reaches a driver without anyone remembering to look. A release that never fired at all still does not, which is why the manual check survives.
 
-**The release version is computed from main's tip, not the merge commit (GH-1952).** `concurrency: release-ralph` serializes *execution*, but `actions/checkout` pins to the push event's own SHA — so a queued run read the manifest as of its own merge, computed the version the run ahead had just taken, and died on `tag already exists` having shipped nothing (observed 2026-08-15: `ralph-v0.1.134` tags a commit that does not contain #1951). **Its twin, measured on the same incident: `git tag` ran before `git pull --rebase`.** The winning run tagged its commit, then rebased onto a main that had advanced — moving the commit and *leaving the tag on the pre-rebase one*. That is why `ralph-v0.1.134` points at 43aa4ce8, which is not reachable from main at all, while main's own tip is a second, untagged "release ralph-v0.1.134" commit. No content was lost (main's manifest and tree are correct); the published Release for 0.1.134 is simply cut from a tree missing #1951.
-
-The job now fetches and advances onto main's tip before reading anything, floors the version at `max(manifest, highest ralph-v tag)` — the two disagree exactly when a prior run pushed one without the other — walks the patch forward on a collision rather than exiting 128, and rebases *before* tagging. `release-knowledge.yml` has the same checkout shape and is tracked separately.
+**The release version is computed from main's tip, not the merge commit
+(GH-1952)** — a double bug (a stale checkout re-computing an already-taken
+version, plus tagging before rebasing and leaving the tag on the pre-rebase
+commit) shipped a tagged release from a tree missing a merged commit,
+though main's own manifest and tree stayed correct. The job now fetches and
+advances onto main's tip before reading anything, floors the version at
+`max(manifest, highest ralph-v tag)`, walks the patch forward on a
+collision, and rebases *before* tagging. `release-knowledge.yml` has the
+same checkout shape and is tracked separately. Full incident:
+`thoughts/shared/research/2026-09-02-claude-md-release-pipeline-history.md`.
 
 ## Configuration
 
-Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` (+ optional `RALPH_GH_HOST` for GHE). A repo-root `.ralph.json` (`{owner, repo, projectNumber, host?}`) takes precedence when present. Auth is gh-keychain (`gh auth login -s repo,project`). Machine-local: `RALPH_LOCK_TTL_MIN`, `RALPH_CLAIM_HOLDER`, `RALPH_TICK_RUNNER`, `RALPH_TICK_TIMEOUT_MIN`, `RALPH_ALLOW_API_BILLING`, `RALPH_SMELL_CLAIM_EXPIRIES` / `RALPH_SMELL_ESCALATIONS` / `RALPH_SMELL_REVIEW_DAYS` / `RALPH_SMELL_PROPOSAL_DAYS` / `RALPH_SMELL_INTAKE_DAYS` / `RALPH_SMELL_ANSWER_MIN` / `RALPH_SMELL_DISPATCH_MIN` (doctor's state-smell thresholds, 2/3/7d/7d/14d/30min/1440min — the last is GH-2212's `dispatch-heartbeat` advisory: minutes since an event hook or hero sitting stamped `~/.ralph/<owner>/<repo>/dispatch-heartbeat`), `RALPH_UNIT_CTX_MAX` (GH-2347 — doctor's `unit-cost` advisory, 200000: a live unit whose largest single prompt passed it, or whose list-equivalent cost passed the p90 of every measured unit, is named with `board estimate` as the remedy — the fact says the Estimate was dishonest and the GH-2134 ceiling is the control; never a cap, because compaction is a full rewrite and stopping a worker mid-unit strands it. The facts come from the herdr ledger's `usage` events, which the watcher writes from the worker's transcript at each `done` turn and at exit, joined by the `claude_session` the confirmed state/discover records carry; `board brief` prints the same numbers per live unit and `board events` carries them raw), `RALPH_GQL_COST=1` (log GitHub's own `rateLimit{cost}` per query to stderr — measurement mode, cost-neutral; observed table: `thoughts/shared/research/2026-08-11-graphql-cost-measurement.md`), `RALPH_VOLUME_MAX_ITEMS` / `RALPH_PRUNE_AFTER_DAYS` (board-volume advisory + prune age window, 800/180), `RALPH_ALLOW_FOREIGN_REPO_ITEMS` (GH-1815 — multi-repo opt-in; unset = deny, and unset is distinguishable from an explicit `false` so doctor can say which), `RALPH_ITEM_CACHE_TTL_SEC` (item-cache Δ, default 90, 0 disables, max 600 — see below), `RALPH_ITEM_ORACLE_MAX_SEC` (GH-1804 — T_max, the hard staleness ceiling the change oracle may extend a cached walk to, default 600, 0 disables, max 3600), `RALPH_REVIEW_ROUND_CAP` (GH-1849 — review round cap, default 5; unattended lanes set 2), `RALPH_DELIVER_CONVERGENCE_MAX` (GH-1977 — convergence checks `deliver-queue` spends per pass, default 3), `RALPH_CREATE_DEDUPE_SEC` (GH-1973 — how far back `board create`'s duplicate guard looks, default 300, 0 disables), `RALPH_DEP_CANDIDATES_MAX` (GH-2135 — candidate cap on `board dep-candidates`, default 10), `RALPH_DEP_OVERLAP_MIN` (GH-2136 — the `deps-unwired` qualification threshold on the scale-free overlap coefficient, default 0.2; a fact about a board's vocabulary density, out-of-range warns and uses the default), `RALPH_PR_ORPHAN_IGNORE_AUTHORS` (GH-2048 — authors whose unlinked open PRs `board pr-orphans` skips, default `dependabot,renovate,github-actions`; a trailing `[bot]` is stripped on both sides because GraphQL's `author.login` omits it while REST and the UI write it, and the suffixed spelling matched nothing; set it EMPTY to surface everyone), `RALPH_SESSION_ID` (GH-1948 — overrides `CLAUDE_CODE_SESSION_ID` as the session→unit binding key, for non-Claude runners; unset and no Claude id = the guard is not evaluated), `RALPH_CLAIM_MAX_ESTIMATE` (GH-2134 — claim-size ceiling: a fresh claim refuses at/above it and warns one notch under; unset = `XL`, empty = disabled, a value outside XS..XL is a loud config error; no Estimate on the item = not evaluated; the remedy the refusal names is `board estimate NNN <size>`), `RALPH_GH_BUDGET_FLOOR` (GH-1817 — GraphQL points below which a polling loop backs off instead of spending, default 500), `RALPH_MODEL_<LANE>` for `DRIVER`/`LEAD`/`DISPATCH`/`DELIVER`/`TEND` (GH-2350 — the model a spawn asks the harness for, per lane; resolved by ONE reader, `roles.sh ralph_lane_model`, as process env → `.ralph.json` `models.<lane>` → the settings `env` block, falling through per lane; unset everywhere = no `--model` = inherit the account default, which is what every spawn did before; a value that cannot ride an argv is a loud refusal, never a silent inherit; `tick.sh` restates the same chain with its old `sonnet` as the floor; the spawn record carries `model_requested` so #2352 can compare asked-for against billed), `~/.ralph/config` (`autopilot=true`).
+Scope vars live in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` (+ optional `RALPH_GH_HOST` for GHE). A repo-root `.ralph.json` (`{owner, repo, projectNumber, host?}`) takes precedence when present. Auth is gh-keychain (`gh auth login -s repo,project`). Machine-local: `RALPH_LOCK_TTL_MIN`, `RALPH_CLAIM_HOLDER`, `RALPH_TICK_RUNNER`, `RALPH_TICK_TIMEOUT_MIN`, `RALPH_ALLOW_API_BILLING`, `RALPH_SMELL_CLAIM_EXPIRIES` / `RALPH_SMELL_ESCALATIONS` / `RALPH_SMELL_REVIEW_DAYS` / `RALPH_SMELL_PROPOSAL_DAYS` / `RALPH_SMELL_INTAKE_DAYS` / `RALPH_SMELL_ANSWER_MIN` / `RALPH_SMELL_DISPATCH_MIN` (doctor's state-smell thresholds, 2/3/7d/7d/14d/30min/1440min — the last is GH-2212's `dispatch-heartbeat` advisory, minutes since an event hook or hero sitting stamped `~/.ralph/<owner>/<repo>/dispatch-heartbeat`), `RALPH_UNIT_CTX_MAX` (GH-2347 — doctor's `unit-cost` advisory, 200000: a live unit past it in prompt cost is named with `board estimate` as the remedy, never a cap — compaction is a full rewrite and stopping a worker mid-unit strands it; sourced from the herdr ledger's `usage` events, joined by `claude_session`; `board brief`/`board events` carry the same numbers), `RALPH_GQL_COST=1` (log GitHub's own `rateLimit{cost}` per query to stderr — measurement mode, cost-neutral; table: `thoughts/shared/research/2026-08-11-graphql-cost-measurement.md`), `RALPH_VOLUME_MAX_ITEMS` / `RALPH_PRUNE_AFTER_DAYS` (board-volume advisory + prune age window, 800/180), `RALPH_ALLOW_FOREIGN_REPO_ITEMS` (GH-1815 — multi-repo opt-in; unset = deny, distinguishable from an explicit `false`), `RALPH_ITEM_CACHE_TTL_SEC` (item-cache Δ, default 90, 0 disables, max 600 — see below), `RALPH_ITEM_ORACLE_MAX_SEC` (GH-1804 — T_max, the hard staleness ceiling the change oracle may extend a cached walk to, default 600, 0 disables, max 3600), `RALPH_REVIEW_ROUND_CAP` (GH-1849 — review round cap, default 5; unattended lanes set 2), `RALPH_DELIVER_CONVERGENCE_MAX` (GH-1977 — convergence checks `deliver-queue` spends per pass, default 3), `RALPH_CREATE_DEDUPE_SEC` (GH-1973 — how far back `board create`'s duplicate guard looks, default 300, 0 disables), `RALPH_DEP_CANDIDATES_MAX` (GH-2135 — candidate cap on `board dep-candidates`, default 10), `RALPH_DEP_OVERLAP_MIN` (GH-2136 — the `deps-unwired` qualification threshold on the scale-free overlap coefficient, default 0.2; out-of-range warns and uses the default), `RALPH_PR_ORPHAN_IGNORE_AUTHORS` (GH-2048 — authors whose unlinked open PRs `board pr-orphans` skips, default `dependabot,renovate,github-actions`; a trailing `[bot]` is stripped on both sides; set it EMPTY to surface everyone), `RALPH_SESSION_ID` (GH-1948 — overrides `CLAUDE_CODE_SESSION_ID` as the session→unit binding key, for non-Claude runners; unset and no Claude id = the guard is not evaluated), `RALPH_CLAIM_MAX_ESTIMATE` (GH-2134 — claim-size ceiling: a fresh claim refuses at/above it and warns one notch under; unset = `XL`, empty = disabled, a value outside XS..XL is a loud config error; no Estimate on the item = not evaluated; the remedy the refusal names is `board estimate NNN <size>`), `RALPH_GH_BUDGET_FLOOR` (GH-1817 — GraphQL points below which a polling loop backs off instead of spending, default 500), `RALPH_MODEL_<LANE>` for `DRIVER`/`LEAD`/`DISPATCH`/`DELIVER`/`TEND` (GH-2350 — the model a spawn asks the harness for, per lane; resolved by ONE reader, `roles.sh ralph_lane_model`, as process env → `.ralph.json` `models.<lane>` → the settings `env` block, falling through per lane; unset everywhere = no `--model` = inherit the account default; a value that cannot ride an argv is a loud refusal, never a silent inherit; `tick.sh` restates the same chain with its old `sonnet` as the floor; the spawn record carries `model_requested` so #2352 can compare asked-for against billed), `~/.ralph/config` (`autopilot=true`).
 
 ### Item cache — reads may be stale, writes see truth (GH-1806)
 
 The item walk is memoized for 90 s (`RALPH_ITEM_CACHE_TTL_SEC`); `--fresh` forces a walk, and a cached answer always says so. This is **client-side bounded staleness, not a lease** — the cache never drives a write-guard evaluation. The three rules carrying that safety argument are in `ralph/CLAUDE.md`.
 
-Past Δ the walk is **gated by a change oracle, not automatic (GH-1804)**: a REST conditional request against the repo's issues list, whose 304 costs zero rate limit on a budget measurably independent of the GraphQL one the walk spends (#1801 observed GraphQL 0/5000 while REST read 4983/5000). A 304 extends the cached entry up to `RALPH_ITEM_ORACLE_MAX_SEC` (T_max, 600). What it buys is smaller than "an unchanged board is free to confirm unchanged", and the difference is load-bearing: **project-field writes are invisible to issue-level `updated_at`** — measured, not assumed — so a plain `board move`/`board claim`, the most common write on this board, returns 304, and a full Backlog → In Progress → In Review sequence returns 304 the whole way. For those writes **T_max is the correctness-relevant bound**, and it is a hard ceiling no certification overrides. Foreign-repo board items sit outside the probed repo and are invisible to the oracle entirely; T_max alone bounds them. Every failure direction is toward paying for the walk — `gh api` **exits 1 on a 304**, so the verdict is read from the HTTP status line and never the exit code (reading exit-1 as "unchanged" would turn every network failure into a quiet board that never walks again), and the certification is refused unless the etag's capture instant precedes the walk it vouches for. `doctor` never uses it, at any staleness: it is the one walk consumer that mutates from what it read.
+Past Δ the walk is **gated by a change oracle, not automatic (GH-1804)**: a
+REST conditional request against the repo's issues list, whose 304 costs
+zero rate limit on a budget measurably independent of the GraphQL one the
+walk spends (#1801 observed GraphQL 0/5000 while REST read 4983/5000). A
+304 extends the cached entry up to `RALPH_ITEM_ORACLE_MAX_SEC` (T_max,
+600). What it buys is smaller than "an unchanged board is free to confirm
+unchanged": **project-field writes are invisible to issue-level
+`updated_at`**, so a plain `board move`/`board claim` returns 304, and a
+full Backlog → In Progress → In Review sequence returns 304 the whole way —
+for those writes, T_max is the correctness-relevant bound, a hard ceiling
+no certification overrides. Foreign-repo board items sit outside the probed
+repo and are invisible to the oracle entirely; T_max alone bounds them.
+`gh api` **exits 1 on a 304**, so the verdict is read from the HTTP status
+line and never the exit code, and the certification is refused unless the
+etag's capture instant precedes the walk it vouches for. `doctor` never
+uses it, at any staleness.
 
 ## Gotchas
 
 - **Projects V2 has no compare-and-swap.** The claim protocol makes races visible and refused (read-back + doctor), not impossible. One flock-serialized scheduler per machine keeps real concurrency rare.
-- **The board can hold items from other repos, but board.ts will not put one there.** Multi-repo is opt-in (`RALPH_ALLOW_FOREIGN_REPO_ITEMS`, unset = deny, GH-1815) and the guard sits at the add-to-project mutation — keyed on the issue URL GitHub returned beside the node id, since comparing `cfg.owner/cfg.repo` against itself asserts nothing. Audited 2026-08-14: the two add sites (`adopt`, `createIssue`) are own-repo *by construction* — `fetchIssue` pins owner/repo and `requireNumber` takes a bare integer — so the guard currently refuses nothing and exists so a future non-own-repo add path trips instead of silently making a repo-scoped walk incomplete. GitHub has no pre-add hook, so an item added by hand or by other automation is *caught* by doctor's full-project sweep (`foreign-items`, which warns under deny), not prevented; pre-existing items are grandfathered — never auto-removed, not escalated by `--strict`, not touched by `--fix`. board.ts resolves bare numbers within the configured repo only, so foreign items are never written either way.
-- **Archived items** are returned by the items API but reject writes — filtered everywhere. Corollary (GH-1788): **archiving buys no scan relief.** It hides an item from the board's views while every full scan still pages through it. Only removing the item from the project (`board prune`) shrinks a scan.
-- **`board sweep-non-issues` is the one-time removal of that dead weight (GH-2050)** — a separate verb, deliberately not an arm on `prune`. Prune's predicate is a fail-closed argument about *issues other readers still need* (closedDrift, tend's Done audit, the apply-evidence sweep, tree edges); a PR or draft item has no such reader, because `board.ts` cannot see it at all. Teaching one predicate to reason about two kinds of subject is how a fail-closed guarantee erodes (GH-1821 and GH-1889 both said so). It is also *safe in a way prune is not*: removing a board item destroys its Workflow State and Claim values, which for a PR item were never written and never read — so unlike prune's one-way half, nothing is lost. Same bounds as prune (dry run until `--apply`, `--limit` 200, 5-consecutive-failure breaker), and the removal loop is now literally shared code (`removeProjectItems`) rather than a second copy. Its walk is its own: `listItemsFull` drops every non-issue node before returning, so the items this sweep exists to find are invisible to it; one connection, the 1-pt floor. **The verification gate is printed, never asserted** — the ProjectV2 API cannot read a built-in workflow's filter, so the newest non-issue item's `createdAt` and creator are the only observable of whether the auto-add source is still depositing, and the operator compares that against a PR they know was opened after the filter edit. A timestamp threshold in the tool would be a coin flip wearing a gate's clothes: a board with no recent PRs cannot distinguish "the filter was fixed" from "nobody opened a PR." The predicate is an **allowlist** (`SWEEPABLE_ITEM_KINDS` = `PULL_REQUEST`, `DRAFT_ISSUE`), never "anything that is not ISSUE" — because `ProjectV2ItemType` also has `REDACTED`, which is what GitHub returns when the viewer cannot see an item's content, and a redacted item may perfectly well be an **issue** whose Workflow State and Claim values are real. By-exclusion would remove it and destroy them, which is exactly the one-way loss this sweep's safety argument claims cannot happen here. An absent `type`, a `REDACTED` one, and any kind GitHub adds to the enum later all land on the retained side by default — the direction a sweep with no undo has to fail. `board-volume` is deliberately unchanged: it already breaks `nonIssue` out as its own term, and it measures the walk's real cost, which is the honest number whether or not the items are prunable.
-- **A full scan pays for more than issues.** ~47% of this board's paged nodes are pull requests and drafts: the `... on Issue` fragment never matches them, so they are invisible to `board.ts` and unprunable by it, yet cost a slot on every page. Volume is therefore *measured by the walk*, never inferred from survivors.
-- **An existing field's option set is API-editable in ONE direction (GH-2127).** `updateProjectV2Field` REPLACES the set, and an option resubmitted without its `id` is recreated as a new one, clearing every item value that referenced it — so adding is safe only when every existing option comes back with its id, which is what `setup` does and then verifies by id survival. **Removal is not offered**: deleting an option clears the Workflow State of every item still holding it, which is unrecoverable and unbounded from here, so the 5 legacy v1 states stay a deliberate human act in the board UI. Not "the API cannot" — "this file will not".
-- **Editing an existing field's options / creating fields**: `board setup` is idempotent and prints exactly which steps are manual.
-- **Starvation is a property of the token, not of any one surface — and an exhausted-budget `gh` write fails SILENTLY (GH-1817).** Two defects that look alike and are not, so they get opposite failure directions in one shared reader, `scripts/lib/gh-budget.sh`. **(A)** `gh pr comment` printed `GraphQL: API rate limit already exceeded` and **exited 0** into a background job's output file; the comment never posted and nothing surfaced until that file was read by hand. Exit code is not a reliable signal for `gh` under rate limiting — the *output* is, on **either stream** (a guard watching only the one it expected reproduces the defect on the other). `gb_gh` searches both and returns a distinct **exit 4**, which the write sites map onto the repo's existing EX_TEMPFAIL 75: "wait for the reset" and "this request is malformed" are different remedies, and a rate limit gh *already* failed on is still typed as 4 rather than passed through. It **fails closed** — a write we cannot confirm landed is a failure, and a false positive costs one re-run of an idempotent post. Wired at the writes nobody re-reads in-invocation: `attest-pr.sh` (announcing `ATTESTATION POSTED` over a comment that never existed leaves the driver waiting on a gate that can never go green) and `apply-evidence.sh` (its comment *is* the close gate's evidence, so a phantom post makes `board move N done` refuse for a reason the operator was just told is satisfied). **(B)** Bounding each consumer (#1785, #1803, #1814) caps one surface's cost; only a pre-spend check caps the *aggregate* — the loop that actually drove the budget to 0/5000 on 2026-08-12 was `gh pr view --json reviews` every 45 s and read no board data at all, so no amount of board-read bounding would have prevented it. `gb_backoff_seconds` is read before each poll in `pr-gate-watch.sh --watch` (the repo's one sanctioned poll loop), naps toward the reset — capped at 300 s so a watcher stays interruptible rather than going dark until the top of the hour — and **narrates it on stderr**, because a backoff nobody can see is the same silent degradation #1787 fixed in the cockpit; stdout stays the verdict stream a Monitor parses. It **fails open**: an unreadable budget must never block work, since reading a transient outage as starvation is strictly worse than the starvation it guards against — and unreadable is exit 3, never a zero, because "cannot read" and "exhausted" must not read alike. `board.ts` is deliberately untouched: `ghGraphQL` already throws on any `body.errors` including `RATE_LIMITED` (board.ts:1289), so it is not the surface that fails quietly. **The budget authority is GraphQL's own `rateLimit` field, never REST `rate_limit`'s `graphql` sub-bucket (GH-2278).** That sub-bucket *mirrors `core`*: measured five times first-hand, during and after a real 5024-point exhaustion, it reported `remaining 5000 used 0` byte-identical to `core` — reset epoch included, sliding with the clock the way `core`'s rolling hour does — at the instant GraphQL's counter said `0/5000`. So the lane pre-flight and `gb_snapshot` had **never been able to fire**; the one contrary reading on record was second-hand and did not reproduce. `core` is reported correctly by the same call, so the fix is per-resource: `gb_snapshot graphql` (the default) reads `{ rateLimit { remaining limit resetAt } }` and normalises `resetAt` to an epoch, any other resource stays on REST. The field is exempt from the budget it reports (two consecutive probes leave `remaining` unchanged though `cost` prints 1), so the pre-flight is still cost-neutral — and it **answers at zero**, which is why every verdict is read from `remaining` and never from "the call came back" (pinned against a stubbed `remaining: 0` at exit 0). A probe GitHub itself refuses on budget is the recover-after half — authoritative over any counter: `gb_snapshot` exits **4** (distinct from unreadable's 3, since "proceed" and "back off" are opposite remedies), `gb_backoff_seconds` prints a bounded 60 s rather than a 0 that would render "GitHub said no" as healthy, and `board.ts` reads `TransientError.reason === "rate-limited"` to defer while a transport flap on the probe still proceeds. Fail-open is unchanged in both readers. Honest limit: this sees a *current* exhaustion, never a coming one — a long pass can still be starved after it starts, which is what `ghGraphQL`'s own `RATE_LIMITED → 75` and `pr-gate-watch`'s observed-error path (GH-2276) are for. When diagnosing a starved fleet, read `gh api graphql -f query='{rateLimit{remaining resetAt}}'`; `gh api rate_limit --jq .resources.graphql` will tell you 5000.
-- **GraphQL cost is per nested CONNECTION in the document** (not per field, not per node): each one over a 100-item page is +1 pt/page, so the item walk carries a `QueueSelect` and each caller asks only for what it reads (GH-1803 — `next`/`frontier`/`tend-queue` skip `labels`, `deliver-queue` skips both and runs at the 1-pt floor; `doctor` and `list` need both). An unselected group is **absent** from the item, never `[]` with `truncated: false` — the lean item types make `tsc` refuse the unguarded read, because a fail-closed flag is GitHub's assertion and a read that never asked may not make it. Trimming a nested `first:` is worth exactly zero **on the walk** (measured, twice) — and that is a fact about the walk's shape, not about GitHub's cost function (GH-1811). Cost tracks `nodeCount`, which is the **product of the `first:`/`last:` values down each nesting**; the walk's connections all hang under one `items(first:100)` page, so their products land in the same buckets and trimming moves nothing. Nest one level deeper and the same trim is worth hundreds of points: `deliver-queue`'s `refs(first:10) × associatedPullRequests(first:10) × contexts(first:100)` was 10,000 nodes for ONE alias, and the query measured **607 pts, not the 100 recorded in GH-1801** — over-generalizing this bullet is exactly how GH-1807 added 55 pts/candidate believing it had added 1. The fix (607 → 8) is structural: per-PR facts hang off top-level `node(id:)` aliases, never inside a linkage connection, and `board.test.ts` asserts that shape. **Probe the document you are actually sending** (`RALPH_GQL_COST=1`) rather than deriving a number from either measurement.
-- **The ranking lanes no longer walk the project (GH-1814).** `next`/`frontier`/`deliver-queue` join `list` on the issues-rooted read (`repository.issues(states: OPEN)`, GH-1785), so their page count tracks open work instead of the 1443 items the board has ever held — measured 30 → 13 pts and **47 s → 5 s**, the wall time being the half that matters (the cockpit's `boardTimeout` is 25 s). What kept them on the scan was the *closed* half: a Done phase between an epic root and its live grandchildren is pass-through topology the ranker needs. `closedTreeEdges()` resolves exactly those by walking UPWARD from the open set — usually zero round trips, because most parents are open — instead of paging every closed item to find the few that matter. Off-board and foreign parents leave the tree severed, as the scan did. On this read `projectItems` is a **second** nesting level with `fieldValues` under it, so its `first:` is the whole price (20 → 21 pts, 10 → 11, and `fieldValues` moves nothing) — the exception the bullet above predicts, and pinned by a test.
-- **`tend-queue` joined them (GH-1891) — 47 pts / 22 queries → 17 / 6.** It was the last lane on the scan, because the Done audit needs *closed* items. Those now come from a bounded `repository.issues(states: CLOSED, orderBy: UPDATED_AT DESC)` read that stops at the first node older than the audit window. That cut is **complete, not a heuristic**: closing an issue is an update, so `updatedAt >= closedAt` always and an in-window close cannot sort below an out-of-window one — the one property the whole optimization rests on. With the scan gone the *trail fetch* became the biggest term, so tend uses `fetchCommentTrails` (comments only, batched 100) instead of `fetchHistories` (batched 20): `projectItems × fieldValues` was ~200 of the ~280 nodes charged per issue and tend reads neither, which is also why the larger batch bills **less** than the smaller one did. Doctor's smells keep `fetchHistories` — a comments-only read may not claim `stateUpdatedAt: null`, since that would assert something it never asked for. Both are pinned in `board.metrics.test.ts`, including the invariance that matters: cost is identical on a board with 300 long-closed items and one with none.
-- **The project scan can silently drop a live item.** Observed on 2026-08-14: `#1873` (open board item, not archived, closed that morning) was reproducibly absent from `listItemsFull`'s `closed` half while the issues-rooted read returned it — GitHub's `items(first:100, after:)` cursor is not stable across a board that is being mutated under the walk. So the scan under-reported the Done audit, and the GH-1891 rewrite is a **completeness** fix as much as a cost one. Everything still entering through `listItemsFull` (doctor's sweeps, `prune`, `list`) inherited the hazard, so the walk now **detects its own truncation** (GH-1896): it reads the connection's `totalCount` and compares it against the nodes it actually paged, retries once, and raises a named error on a second short read rather than serving a board with a hole in it. A drop silently fails *open* in doctor's sweeps — a missing item reads as "none" — which is the one outcome this file refuses everywhere else. The check is a field, not a nested connection, so it costs nothing; it stays inert if GitHub answers without a `totalCount`, since an unasked question may not fail a walk.
+- **The board can hold items from other repos, but board.ts will not put
+  one there.** Multi-repo is opt-in (`RALPH_ALLOW_FOREIGN_REPO_ITEMS`,
+  unset = deny, GH-1815), guarded at the add-to-project mutation. GitHub
+  has no pre-add hook, so a hand-added item is *caught* by doctor's
+  `foreign-items` sweep (warns under deny), not prevented; pre-existing
+  items are grandfathered — never auto-removed, not escalated by
+  `--strict`, not touched by `--fix`. board.ts resolves bare numbers within
+  the configured repo only.
+- **Archived items** are returned by the items API but reject writes —
+  filtered everywhere. **Archiving buys no scan relief** — it hides an item
+  from the board's views while every full scan still pages through it;
+  only `board prune` shrinks a scan.
+- **`board sweep-non-issues [--apply]`** is the one-time removal of PR/draft
+  board items (GH-2050) — a separate verb from `prune`, because prune's
+  predicate reasons about issues other readers still need and a PR/draft
+  item has none; removal is also safe in a way prune is not (their
+  Workflow State/Claim were never written). An **allowlist** predicate
+  (`PULL_REQUEST`, `DRAFT_ISSUE`), never by-exclusion — `REDACTED` (a
+  content-hidden item, which may be a real issue) and any future item kind
+  stay on the retained side by default.
+- **A full scan pays for more than issues.** ~47% of this board's paged
+  nodes are pull requests and drafts, invisible to `board.ts`'s Issue
+  fragment yet costing a slot on every page. Volume is measured by the
+  walk, never inferred from survivors.
+- **An existing field's option set is API-editable in ONE direction
+  (GH-2127).** `updateProjectV2Field` REPLACES the set; adding is safe only
+  when every existing option comes back with its id (what `setup` does,
+  verified by id survival). **Removal is not offered** — deleting an option
+  clears the Workflow State of every item still holding it, unrecoverable
+  and unbounded, so the 5 legacy v1 states stay a deliberate human act in
+  the board UI. Not "the API cannot" — "this file will not".
+- **Editing an existing field's options / creating fields**: `board setup`
+  is idempotent and prints exactly which steps are manual.
+- **Starvation is a property of the token, not of any one surface — and an
+  exhausted-budget `gh` write fails SILENTLY (GH-1817).**
+  `scripts/lib/gh-budget.sh` is the shared reader: a rate-limited `gh`
+  write can print an error and **exit 0** (`gb_gh` searches both stdout and
+  stderr, returns a distinct **exit 4**, mapped onto EX_TEMPFAIL 75 — wired
+  at `attest-pr.sh` and `apply-evidence.sh`'s unread-back writes). A
+  pre-spend check caps the *aggregate*, not just each bounded consumer:
+  `gb_backoff_seconds` naps toward the reset (capped 300s, narrated on
+  stderr) in `pr-gate-watch.sh --watch`; fails **open** on an unreadable
+  budget (exit 3, distinct from exhausted's exit 4). **The budget authority
+  is GraphQL's own `rateLimit` field, never REST `rate_limit`'s `graphql`
+  sub-bucket (GH-2278)** — that sub-bucket mirrors `core` and reports 5000
+  while GraphQL itself reads 0. `gb_snapshot graphql` (default) reads
+  `{ rateLimit { remaining limit resetAt } }` directly and answers even at
+  zero; a probe GitHub itself refuses on budget exits **4**, distinct from
+  unreadable's 3. Diagnose with `gh api graphql -f
+  query='{rateLimit{remaining resetAt}}'`; `gh api rate_limit --jq
+  .resources.graphql` will tell you 5000 and lie.
+- **GraphQL cost is per nested CONNECTION in the document** (not per field,
+  not per node): each one over a 100-item page is +1 pt/page, so the item
+  walk carries a `QueueSelect` and each caller asks only for what it reads
+  (GH-1803 — `next`/`frontier`/`tend-queue` skip `labels`, `deliver-queue`
+  skips both and runs at the 1-pt floor). An unselected group is **absent**
+  from the item, never `[]` with `truncated: false`. Trimming a nested
+  `first:` is worth exactly zero **on the walk** (measured, twice) — all
+  its connections hang under one `items(first:100)` page — but worth
+  hundreds of points one level deeper: 10,000 nodes for one aliased
+  `deliver-queue` field measured **607 pts, not the 100 recorded earlier**
+  (GH-1811, and GH-1807's own over-generalization of the zero-cost
+  finding). **Probe the document you are actually sending**
+  (`RALPH_GQL_COST=1`) rather than deriving a number from either
+  measurement.
+- **The ranking lanes no longer walk the project (GH-1814).**
+  `next`/`frontier`/`deliver-queue` join `list` on the issues-rooted read
+  (`repository.issues(states: OPEN)`, GH-1785), tracking open work instead
+  of every item the board has ever held — measured 30 → 13 pts and
+  **47 s → 5 s** (the cockpit's `boardTimeout` is 25 s). `closedTreeEdges()`
+  resolves the pass-through Done-phase topology (an epic root above live
+  grandchildren) by walking UPWARD from the open set instead of paging
+  every closed item.
+- **`tend-queue` joined them (GH-1891)** — 47 pts/22 queries → 17/6, via a
+  bounded `repository.issues(states: CLOSED, orderBy: UPDATED_AT DESC)`
+  read that stops at the first node older than the audit window (complete,
+  not a heuristic: `updatedAt >= closedAt` always). Uses
+  `fetchCommentTrails` (comments only, batched 100) instead of
+  `fetchHistories` (batched 20) — doctor's smells keep `fetchHistories`
+  since they need `stateUpdatedAt`.
+- **The project scan can silently drop a live item (GH-1896).** GitHub's
+  `items(first:100, after:)` cursor is not stable across a board being
+  mutated under the walk. `listItemsFull` now **detects its own
+  truncation**: reads the connection's `totalCount`, retries once, and
+  raises a named error on a second short read rather than serving a board
+  with a hole in it — costs nothing (a field, not a connection) and stays
+  inert if GitHub answers without `totalCount`.
+
+Full incident history for this section:
+`thoughts/shared/research/2026-09-02-claude-md-gotchas-history.md`;
+companion raw measurements:
+`thoughts/shared/research/2026-08-11-graphql-cost-measurement.md`,
+`thoughts/shared/research/2026-08-12-GH-1803-lean-query-measured.md`,
+`thoughts/shared/research/2026-09-01-GH-2278-rest-rate-limit-graphql-bucket-mirrors-core.md`.
 
 ## History
 
