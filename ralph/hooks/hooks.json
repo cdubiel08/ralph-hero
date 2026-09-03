@@ -14,6 +14,16 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; exec \"${CLAUDE_PLUGIN_ROOT}/hooks/prefix-fingerprint.sh\""
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
