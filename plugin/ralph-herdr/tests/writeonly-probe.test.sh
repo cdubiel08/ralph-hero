@@ -22,7 +22,11 @@ export FAKE_HERDR_LOG="$TMP/herdr.log"
 mkdir -p "$FAKE_HERDR_FIXTURES"
 export RALPH_HERDR_REPO="$TMP"
 export RALPH_HERDR_LEDGER="$TMP/ledger/ledger.jsonl"
-mkdir -p "$TMP/ledger"
+# lib.sh resolves a board CLI at source time; CI has no installed plugin, so
+# point it at the fake (the shape roles.test.sh uses). Nothing here calls it.
+export RALPH_HERDR_BOARD="$SCRIPT_DIR/fake-board.sh"
+export FAKE_BOARD_FIXTURES="$TMP/board-fixtures"
+mkdir -p "$TMP/ledger" "$FAKE_BOARD_FIXTURES"
 
 # shellcheck source=../scripts/lib.sh
 . "$SCRIPT_DIR/../scripts/lib.sh"
