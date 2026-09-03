@@ -529,6 +529,17 @@ _ralph_spawn_record() {
   # onto a different unit's record.
   local address="${14-}" tool_binding="${15-}" process_containment="${16-}"
   local model_requested="${17-}"
+  # GH-2362: the writer must refuse what the later containment event already
+  # refuses (lib.sh's `_ralph_spawn_containment_event`, GH-2255) — a record
+  # naming one containment word without the other is indistinguishable from
+  # the other being unknown. Every current caller passes both or neither, so
+  # this is a latent invariant, not a live bug; stated here so a future
+  # caller cannot drift the two apart.
+  if { [ -n "$tool_binding" ] && [ -z "$process_containment" ]; } ||
+    { [ -z "$tool_binding" ] && [ -n "$process_containment" ]; }; then
+    echo "spawn: refusing record for $ref — both outcomes are required (tool_binding='${tool_binding}', process_containment='${process_containment}')" >&2
+    return 1
+  fi
   local parsed lane slug epoch by
   parsed=$(ralph_agent_parse "${ref%%#*}") || return 1
   # shellcheck disable=SC2086  # intentional: parse output is space-separated
