@@ -392,11 +392,11 @@ ralph_spawn_edge_guard() {
 # Prints the LIVE driver already holding CHECKOUT and returns 1; rc 0 (silent)
 # when the tree has no live driver and a new one may take it.
 #
-# Two reads, and the order matters. The ledger names every driver ever spawned
-# into a checkout; `agent list` says which of them still exists. A ledger hit
-# alone would refuse forever on a tree whose driver died — the ledger is
-# append-only and nothing retracts a spawn — so liveness is CONFIRMED against
-# the herd, never inferred from the record.
+# Two reads, and the order matters. The ledger names every driver spawn still
+# OPEN (no exit recorded) into a checkout; `agent list` says which of them
+# still exists. A ledger hit alone would refuse forever on a tree whose
+# driver died and never got an exit record — so liveness is CONFIRMED
+# against the herd, never inferred from the record.
 #
 # Fails CLOSED on an unreadable herd: an unprovable "nobody is driving this
 # tree" must not become permission to add a second writer. That is the same
@@ -412,18 +412,54 @@ ralph_spawn_edge_guard() {
 # This is a structural refusal, not a lock: nothing is taken, nothing expires,
 # and there is no --force. A tree whose driver is gone is simply free again.
 ralph_driver_guard() {
-  local checkout="${1-}" issue="${2-}" ledger refs ref name herd
+  local checkout="${1-}" issue="${2-}" ledger rows ref pane shell_pid harness parent state row_issue row_checkout tokens session role refs herd name
   if [ -z "$checkout" ]; then
     echo "ralph_driver_guard: no checkout path given — refusing to prove a tree unowned without naming it" >&2
     return 1
   fi
-  ledger=$(ralph_ledger_path "${REPO:-$PWD}" 2>/dev/null) || ledger=""
-  [ -n "$ledger" ] && [ -f "$ledger" ] || return 0
-  # Every driver spawn recorded into this exact checkout, newest last.
-  refs=$(jq -r --arg c "$checkout" --arg i "$issue" '
-    select(.ev == "spawn" and .checkout == $c and (.tokens.role // "") == "driver")
-    | select($i == "" or (.tokens.issue // "") != $i)
-    | .agent_ref' "$ledger" 2>/dev/null) || refs=""
+  # Read through the ledger's own reducer (ralph_ledger_open_rows), not a bare
+  # jq over the JSONL locator: since phase D (GH-2311) the SQLite tape is the
+  # tape and a bare-jq read went blind on it — a present ledger.jsonl is
+  # frozen (export-only), and a fully-converted machine has none at all, so
+  # the direct read either saw stale facts or nothing, and this guard stood
+  # down silently either way (GH-2356). The reducer already applies the
+  # tape/JSONL fallback rule and already narrows to OPEN refs (no exit
+  # recorded), which is a strict subset of "every spawn ever" — a closed
+  # driver row can no longer produce a false refusal here.
+  #
+  # Fails CLOSED on an unreadable ledger, the same direction as the herd read
+  # below. The reducer cannot carry that verdict itself — its rc is jq's, and
+  # jq over an empty pipe exits 0 — so a present tape that cannot be served
+  # (no sqlite3, a future user_version, a torn file) would read as "empty
+  # ledger" and wave a second writer through. Probe the events reader first:
+  # no ledger at all is a free tree (rc 0); a present one that will not read
+  # is a refusal, never a permission.
+  ledger=$(ralph_ledger_path "${REPO:-$PWD}" 2>/dev/null) || return 0
+  if _ralph_ledger_present "$ledger"; then
+    if ! _ralph_ledger_events "$ledger" >/dev/null 2>&1; then
+      echo "ralph_driver_guard: cannot read the ledger at $ledger — refusing to add a driver to $checkout without proving no live driver holds it" >&2
+      return 1
+    fi
+  else
+    return 0
+  fi
+  refs=""
+  rows=$(ralph_ledger_open_rows "${REPO:-$PWD}" 2>/dev/null) || {
+    echo "ralph_driver_guard: cannot read the ledger at $ledger — refusing to add a driver to $checkout without proving no live driver holds it" >&2
+    return 1
+  }
+  [ -n "$rows" ] || return 0
+  while IFS=$'\037' read -r ref pane shell_pid harness parent state row_issue row_checkout tokens session; do
+    [ -n "$ref" ] || continue
+    [ "$row_checkout" = "$checkout" ] || continue
+    role=$(printf '%s' "$tokens" | jq -r '.role // ""' 2>/dev/null) || role=""
+    [ "$role" = "driver" ] || continue
+    [ -n "$issue" ] && [ "$row_issue" = "$issue" ] && continue
+    refs="${refs:+$refs
+}$ref"
+  done <<EOF
+$rows
+EOF
   [ -n "$refs" ] || return 0
   herd=$(ralph_agents_json 2>/dev/null) || {
     echo "ralph_driver_guard: cannot read the herd — refusing to add a driver to $checkout without proving no live driver holds it" >&2
