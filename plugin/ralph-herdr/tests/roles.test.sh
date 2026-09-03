@@ -641,6 +641,8 @@ fails "model: an unknown lane refuses (investigators are not a lane)" ralph_lane
 fails "model: a value with whitespace refuses — a config error, never a silent inherit" ralph_lane_model tend "$MROOT/a"
 fails "model: a shell metacharacter refuses" with_env 'RALPH_MODEL_LEAD=x;rm' ralph_lane_model lead "$MROOT/c"
 fails "model: a leading dash refuses (it would read as a flag)" with_env 'RALPH_MODEL_LEAD=-model' ralph_lane_model lead "$MROOT/c"
+fails "model: a control character refuses — not a metacharacter, but could forge terminal output (GH-2375, PR #2422 discussion_r3920882583)" \
+  with_env $'RALPH_MODEL_LEAD=model\x1b[2J' ralph_lane_model lead "$MROOT/c"
 long90=$(printf 'a%.0s' $(seq 1 90))
 is "model: over 80 chars is admitted — no length ceiling (GH-2375)" "$long90" \
   "$(with_env "RALPH_MODEL_LEAD=$long90" ralph_lane_model lead "$MROOT/c")"

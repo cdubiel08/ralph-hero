@@ -247,6 +247,9 @@ run_tick_model null-settings '{"models":{"lead":"opus"}}' "null"
 run_tick_model bad "" "" "RALPH_MODEL_DRIVER=bad value"
 [ "$TICK_RC" -eq 64 ] && pass "an unridable driver model is a usage error (exit 64)" || fail "bad model: expected exit 64, got $TICK_RC"
 expect_contains "the refusal names the value" "$TICK_OUT" "driver model 'bad value' is not a model name"
+
+run_tick_model control-char "" "" "$(printf 'RALPH_MODEL_DRIVER=model\x1b[2J')"
+[ "$TICK_RC" -eq 64 ] && pass "a control character in the driver model is a usage error (exit 64, GH-2375 PR #2422 discussion_r3920882583)" || fail "control char: expected exit 64, got $TICK_RC"
 expect_not_contains "the refusal happens before any board read" "$BOARD_LOG" "BOARD"
 expect_not_contains "the refusal happens before any runner spawn" "$CLAUDE_LOG" "ralph:work"
 

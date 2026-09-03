@@ -677,6 +677,15 @@ ralph_lane_model() {
       return 1
       ;;
   esac
+  # Control bytes (ESC, CR, ...) are refused too — none is a shell
+  # metacharacter, but a dry-run path that prints the model unescaped would
+  # let one forge terminal output (Codex review, PR #2422 discussion_r3920882583).
+  case "$model" in
+    *[[:cntrl:]]*)
+      echo "ralph_lane_model: $src='$model' is not a model name (no control characters)" >&2
+      return 1
+      ;;
+  esac
   local c
   for c in ' ' $'\t' $'\n' ';' '|' '&' '<' '>' '$' '`' "'" '"' '(' ')'; do
     case "$model" in

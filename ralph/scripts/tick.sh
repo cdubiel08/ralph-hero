@@ -54,15 +54,20 @@ if [ -z "${RALPH_TICK_RUNNER:-}" ]; then
   # No length ceiling: a Vertex id carries `@` and a Bedrock application
   # inference-profile ARN carries `/` and `:` and runs past 80 chars
   # (mirrors roles.sh ralph_lane_model — GH-2375).
+  # Control bytes (ESC, CR, ...) refused too — not shell metacharacters, but
+  # printing the model unescaped could forge terminal output (GH-2375 review).
   _rest=""
   case "$MODEL" in [A-Za-z0-9]*) ;; *) _rest="x" ;; esac
+  if [ -z "$_rest" ]; then
+    case "$MODEL" in *[[:cntrl:]]*) _rest="x" ;; esac
+  fi
   if [ -z "$_rest" ]; then
     for _c in ' ' $'\t' $'\n' ';' '|' '&' '<' '>' '$' '`' "'" '"' '(' ')'; do
       case "$MODEL" in *"$_c"*) _rest="x"; break ;; esac
     done
   fi
   if [ -n "$_rest" ]; then
-    echo "tick: driver model '$MODEL' is not a model name (must start with a letter or digit, no whitespace or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
+    echo "tick: driver model '$MODEL' is not a model name (must start with a letter or digit, no whitespace, control characters or shell metacharacters: ; | & < > \$ \` ' \" ( ))" >&2
     exit 64
   fi
 fi
