@@ -1038,6 +1038,37 @@ case "$out" in
 esac
 
 
+# ── both-or-neither containment words (GH-2362) ──────────────────────────
+# The writer must refuse what the later containment event already refuses:
+# a record naming one word without the other. Neither word is legitimate
+# (a provisional record, containment not yet known); both is legitimate;
+# exactly one is not.
+out=$(_ralph_spawn_record "w124-x#ab12cd35" 124 "" "" "" "p2" "2026-09-01T00:00:00Z" \
+  "" "$TMP" driver "" "" "" "" applied "" 2>&1)
+rc=$?
+is "record: tool_binding without process_containment refuses (rc 1)" "1" "$rc"
+case "$out" in
+  *"both outcomes are required"*) ok "record: tool_binding-only refusal names both required" ;;
+  *) not_ok "record: tool_binding-only refusal text — got '$out'" ;;
+esac
+out=$(_ralph_spawn_record "w125-x#ab12cd36" 125 "" "" "" "p2" "2026-09-01T00:00:00Z" \
+  "" "$TMP" driver "" "" "" "" "" applied 2>&1)
+rc=$?
+is "record: process_containment without tool_binding refuses (rc 1)" "1" "$rc"
+case "$out" in
+  *"both outcomes are required"*) ok "record: process_containment-only refusal names both required" ;;
+  *) not_ok "record: process_containment-only refusal text — got '$out'" ;;
+esac
+rec=$(_ralph_spawn_record "w126-x#ab12cd37" 126 "" "" "" "p2" "2026-09-01T00:00:00Z" \
+  "" "$TMP" driver "" "" "" "" applied applied)
+is "record: both containment words together still succeeds" "applied|applied" \
+  "$(jq -r '"\(.tool_binding)|\(.process_containment)"' <<<"$rec")"
+rec=$(_ralph_spawn_record "w127-x#ab12cd38" 127 "" "" "" "p2" "2026-09-01T00:00:00Z" \
+  "" "$TMP" driver "" "" "" "" "" "")
+is "record: neither containment word still succeeds (provisional row)" "false" \
+  "$(jq -r 'has("tool_binding") or has("process_containment")' <<<"$rec")"
+
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
