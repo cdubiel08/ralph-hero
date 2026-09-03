@@ -1763,6 +1763,48 @@ is "e2e: no second discover record for this name" "0" \
 
 unset CLAUDE_CONFIG_DIR
 
+# ═══ 7. GH-2407: ledger_for_agent scopes to the confirmed agent's own repo ═══
+# Two repos, each running an open agent under the identical bare name — the
+# exact collision GH-2407 flags: grammar-B names (naming.sh) carry no repo
+# qualifier, so a blind global scan binds whichever ledger ralph_ledger_enum
+# happens to reach first. "acme/demo" sorts before "other/proj"
+# (ralph_ledger_enum is `sort -u`), so a pre-fix run resolves the confirmed
+# repo-B agent against repo A's ledger instead.
+CROOT7="$TMP/croot7"
+CHECKOUT_B="$TMP/checkoutB7"
+mkdir -p "$CROOT7/acme/demo" "$CROOT7/other/proj" "$CHECKOUT_B"
+printf '{"owner":"other","repo":"proj"}\n' >"$CHECKOUT_B/.ralph.json"
+LEDGER_A7="$CROOT7/acme/demo/ledger.jsonl"
+LEDGER_B7="$CROOT7/other/proj/ledger.jsonl"
+RALPH_HERDR_LEDGER="$LEDGER_A7" ralph_ledger_append \
+  '{"ts":"c0","ev":"spawn","agent_ref":"w500-dup#a001","pane_id":"pDA","checkout":"'"$REPO_DIR"'","tokens":{"role":"w","issue":"500","slug":"dup","root":"w500-dup#a001","depth":"0"}}'
+RALPH_HERDR_LEDGER="$LEDGER_B7" ralph_ledger_append \
+  '{"ts":"c0","ev":"spawn","agent_ref":"w500-dup#b001","pane_id":"pDB","checkout":"'"$CHECKOUT_B"'","tokens":{"role":"w","issue":"500","slug":"dup","root":"w500-dup#b001","depth":"0"}}'
+
+# The event's live snapshot confirms repo B's agent, at repo B's checkout.
+herd_fixture '[{"name":"w500-dup","agent_status":"working","pane_id":"pDB"}]' "$CHECKOUT_B"
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"pDB","agent":"w500-dup","agent_status":"working"}' "$CROOT7"
+is "GH-2407 collision: exits 0" "0" "$RC"
+is "GH-2407 collision: the state lands on repo B's OWN ledger" "1" \
+  "$(lcount "$LEDGER_B7" '.ev=="state" and .agent_ref=="w500-dup#b001" and .agent_status=="working"')"
+is "GH-2407 collision: repo A's ledger, enumerated first, is untouched" "0" \
+  "$(lcount "$LEDGER_A7" '.ev=="state"')"
+is "GH-2407 collision: state token pushed to the confirmed agent's own pane" "1" \
+  "$(log_count '^pane report-metadata pDB --source ralph-herdr --token state=working$')"
+
+# Symmetric check: repo A's agent under the same collision resolves to ITS
+# own ledger, not repo B's — the scoping is not accidentally one-directional.
+herd_fixture '[{"name":"w500-dup","agent_status":"blocked","pane_id":"pDA"}]' "$REPO_DIR"
+: >"$FAKE_HERDR_LOG"
+run_event pane.agent_status_changed \
+  '{"pane_id":"pDA","agent":"w500-dup","agent_status":"blocked"}' "$CROOT7"
+is "GH-2407 collision (A): the state lands on repo A's OWN ledger" "1" \
+  "$(lcount "$LEDGER_A7" '.ev=="state" and .agent_ref=="w500-dup#a001" and .agent_status=="blocked"')"
+is "GH-2407 collision (A): repo B's ledger is untouched by this event" "0" \
+  "$(lcount "$LEDGER_B7" '.ev=="state" and .agent_status=="blocked"')"
+
 echo "1..$n"
 echo "# $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

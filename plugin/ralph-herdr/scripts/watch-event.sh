@@ -122,14 +122,35 @@ title_agent() {
 
 ledger_root() { printf '%s\n' "${RALPH_HERDR_LEDGER_ROOT:-$HOME/.ralph}"; }
 
-# ledger_for_agent NAME — find the ledger that holds NAME open; prints
-# "FILE<TAB>REF" for the first match. rc 1 when no ledger knows the agent.
-# Enumerated via ralph_ledger_enum (locator paths — post phase D a fresh
-# machine's ledger is sqlite-only, invisible to a *.jsonl glob).
+# ledger_for_agent NAME [REPO_ROOT] — find the ledger that holds NAME open;
+# prints "FILE<TAB>REF" for the first match. rc 1 when no ledger knows the
+# agent. Enumerated via ralph_ledger_enum (locator paths — post phase D a
+# fresh machine's ledger is sqlite-only, invisible to a *.jsonl glob).
+#
+# GH-2407: a bare name carries no repo qualifier (naming.sh's grammar-B names
+# are lane+issue+slug only), so two repos each running an agent with the same
+# name collide under a blind global scan — the FIRST ledger enumerated wins,
+# which need not be the event's own. REPO_ROOT, when given, is the confirmed
+# agent's own checkout (resolved by the caller via ralph_all_agents' .checkout
+# + `git rev-parse --show-toplevel`): its own ledger is checked FIRST, and
+# only an unscoped caller (no repo_root resolvable) or a miss there falls back
+# to the historical global scan — never silently narrower than before.
 ledger_for_agent() {
-  local name="$1" f ref
+  local name="$1" root="${2-}" f ref scoped=""
+  if [ -n "$root" ]; then
+    scoped=$(RALPH_HERDR_LEDGER_ROOT="$(ledger_root)" ralph_ledger_path "$root" 2>/dev/null) || scoped=""
+    if [ -n "$scoped" ]; then
+      ref=$(RALPH_HERDR_LEDGER="$scoped" ralph_ledger_open_agents |
+        awk -F'#' -v n="$name" '$1 == n { print; exit }') || ref=""
+      if [ -n "$ref" ]; then
+        printf '%s\t%s\n' "$scoped" "$ref"
+        return 0
+      fi
+    fi
+  fi
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    [ -n "$scoped" ] && [ "$f" = "$scoped" ] && continue
     ref=$(RALPH_HERDR_LEDGER="$f" ralph_ledger_open_agents |
       awk -F'#' -v n="$name" '$1 == n { print; exit }') || ref=""
     if [ -n "$ref" ]; then
@@ -162,7 +183,7 @@ live_names() {
 
 # ── pane.agent_status_changed ────────────────────────────────────────────────
 handle_status() {
-  local agent status pane parsed legacy candidate entry file ref ts cwd repo_root
+  local agent status pane parsed legacy candidate entry file ref ts repo_root
   local lane issue slug gen title labels body snapshot confirmed
   local prior checkout verdict addr csid
   agent=$(pfield '.agent // .data.agent // empty')
@@ -238,6 +259,8 @@ handle_status() {
     fi
   fi
   csid=""
+  checkout=""
+  repo_root=""
   if [ -n "$confirmed" ]; then
     status=$(printf '%s' "$confirmed" | jq -r '.status // empty')
     pane=$(printf '%s' "$confirmed" | jq -r '.pane // empty')
@@ -246,6 +269,13 @@ handle_status() {
     # started. It rides the state event so the usage facts can find the
     # transcript — the spawn record was written before any session existed.
     csid=$(printf '%s' "$confirmed" | jq -r '.agent_session // empty' 2>/dev/null) || csid=""
+    # GH-2407: the confirmed row's own checkout scopes the ledger lookup below
+    # to THIS event's repo before any cross-repo fallback — resolved once,
+    # here, since both the ledger lookup and the done-verdict read need it.
+    checkout=$(printf '%s' "$confirmed" | jq -r '.checkout // empty' 2>/dev/null) || checkout=""
+    if [ -n "$checkout" ]; then
+      repo_root=$(git -C "$checkout" rev-parse --show-toplevel 2>/dev/null) || repo_root="$checkout"
+    fi
     [ -n "$status" ] || exit 0
   else
     log "$agent not confirmed in a live snapshot — treating the event as a hint only, no durable write"
@@ -259,14 +289,13 @@ handle_status() {
   verdict=""
   if [ "$status" = "done" ] && [ -n "$confirmed" ]; then
     prior=$(printf '%s' "$confirmed" | jq -r '.state_token // empty' 2>/dev/null) || prior=""
-    checkout=$(printf '%s' "$confirmed" | jq -r '.checkout // empty' 2>/dev/null) || checkout=""
     verdict=$(ralph_session_outcome "$prior" "$checkout")
   fi
 
   ts=$(date -u +%FT%TZ)
   file="" ref=""
   if [ -z "$legacy" ]; then
-    if entry=$(ledger_for_agent "$agent"); then
+    if entry=$(ledger_for_agent "$agent" "$repo_root"); then
       IFS=$'\t' read -r file ref <<<"$entry"
     else
       # First sighting: no ledger holds this agent open (spawned before the
@@ -275,12 +304,8 @@ handle_status() {
       # carries no durable identity, the delivery is unordered, and a reused
       # agent name would bind the record to the wrong worker. Resolve the scope
       # far enough to mark it dirty, then let reconcile do the discovering
-      # against a snapshot it can actually verify.
-      cwd=$(printf '%s' "$confirmed" | jq -r '.checkout // empty' 2>/dev/null) || cwd=""
-      repo_root=""
-      if [ -n "$cwd" ]; then
-        repo_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || repo_root="$cwd"
-      fi
+      # against a snapshot it can actually verify. repo_root is the same
+      # confirmed-checkout derivation ledger_for_agent's own scoping just used.
       if [ -n "$repo_root" ]; then
         file=$(ralph_ledger_path "$repo_root" 2>/dev/null) || file=""
       fi
