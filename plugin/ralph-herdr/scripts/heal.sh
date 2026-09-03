@@ -21,6 +21,16 @@
 #              the writers are the event hooks and hero sittings; doctor's
 #              advisory reads its age and names `dispatch up` as the remedy.
 #
+# STAND-DOWN (GH-2357): a lead whose epic is open but parked (every ready
+# child is human-gated) is not dead, and respawning it every time its pane
+# exits burns a full rehydration for nothing. `work-team.sh EPIC
+# --stand-down` records the durable fact ({ev: exit, reason: "stood-down"})
+# for the live lead BEFORE closing its workspace, so the pane-death event
+# this produces finds the ref already closed and heals nothing — no exit
+# reappend, no orphan flag, no respawn. `respawn` above still owns every
+# OTHER death; stood-down is a third, deliberate outcome, distinct from both
+# "crashed" (respawn) and "epic complete" (rc 4, self-dissolve backstop).
+#
 # PANE-PROVED OWNERSHIP (GH-1863) is the standing constraint on every
 # event-driven repair, and it is honored by CONSTRUCTION rather than by a
 # check here: the only refs a caller may hand ralph_heal_lead_death are the
@@ -88,6 +98,23 @@ ralph_heal_lead_death() (
   epic=${ref#o}
   epic=${epic%%-*}
   case "$epic" in '' | *[!0-9]*) exit 0 ;; esac
+
+  # GH-2357: a lead can be deliberately parked (`work-team.sh EPIC
+  # --stand-down`) rather than crashing. The open-for-pane contract above
+  # already makes this branch unreachable through today's one caller —
+  # --stand-down appends {ev: exit, reason: stood-down} and closes the pane's
+  # workspace ONLY after that append lands, so by the time any death event
+  # for this pane could fire, ralph_ledger_open_for_pane no longer counts the
+  # ref as open and watch-event never hands it here at all. The check stays
+  # as a second, cheap guard against a future or direct caller that hands
+  # this function a ref without re-proving it is still open: a stood-down
+  # ref must never be respawned OR flagged orphaned, no matter how it
+  # arrives here.
+  last_reason=$(RALPH_HERDR_LEDGER="$ledger" _ralph_ledger_latest '.reason' "$ref" 2>/dev/null) || last_reason=""
+  if [ "$(ralph_ledger_reason_canon "$last_reason")" = "stood-down" ]; then
+    log "lead $ref stood down by operator — no respawn, no orphan flag (GH-2357)"
+    exit 0
+  fi
 
   # Durable flag for the sweep backstop (unit G reads the ledger, not the
   # herd): the team space the dead lead owned, named by the event's own

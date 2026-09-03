@@ -65,6 +65,7 @@
 #   tab close <ID>                tab-close.json
 #   tab rename <ID> <LABEL>       tab-rename.json
 #   pane close <ID>               pane-close.json
+#   workspace close <ID>          workspace-close.json
 #   agent read <NAME> …           agent-read.<NAME>.txt, then agent-read.txt —
 #                                 RAW pane text, not a JSON envelope (default:
 #                                 empty output, the blank-tail degradation)
@@ -350,6 +351,9 @@ case "$key" in
     ;;
   pane-close)
     respond "cli:pane:close" "ok" '{}' pane-close
+    ;;
+  workspace-close)
+    respond "cli:workspace:close" "ok" '{}' workspace-close
     ;;
   agent-read)
     # RAW pane text (what --source recent-unwrapped prints), never a JSON

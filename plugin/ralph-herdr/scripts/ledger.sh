@@ -62,18 +62,22 @@
 #
 #   EXIT REASON ENUM (GH-2309, phase C). The typed vocabulary for exit.reason:
 #     finished | yielded | crashed | restart-killed | swept-unknown |
-#     pane-closed | pane-exited
+#     pane-closed | pane-exited | stood-down
 #   Reserved values exist before anything emits them: finished/yielded need
 #   heartbeat/handshake signals that are a separate swing. Live writers today:
 #   reconcile's sweep emits swept-unknown (the honest name for what the sweep
 #   proves — an absence asked twice, nothing about how the worker ended; the
 #   pre-enum spelling was "lost"), phase E's pane-proved verdicts emit
-#   crashed/restart_killed (claim-recover.sh), and the event hooks emit
-#   pane_exited/pane_closed. never_started (the spawn path's provisional
-#   close) is via-spawn bookkeeping, outside this enum. Historical rows are
-#   NEVER rewritten; a reader that branches on reason normalizes through
-#   ralph_ledger_reason_canon (the ONE alias mapping — lost → swept-unknown,
-#   underscore spellings → their hyphenated enum forms), never per consumer.
+#   crashed/restart_killed (claim-recover.sh), the event hooks emit
+#   pane_exited/pane_closed, and work-team.sh's --stand-down (GH-2357) emits
+#   stood-down for an o-lane lead the operator parks deliberately — the one
+#   exit reason a human writes on purpose rather than the watcher inferring
+#   from a pane death, and the one heal.sh (GH-2212) reads back to refuse a
+#   respawn. never_started (the spawn path's provisional close) is via-spawn
+#   bookkeeping, outside this enum. Historical rows are NEVER rewritten; a
+#   reader that branches on reason normalizes through ralph_ledger_reason_canon
+#   (the ONE alias mapping — lost → swept-unknown, underscore spellings →
+#   their hyphenated enum forms), never per consumer.
 #
 #   Appends are sqlite INSERTs (phase D, GH-2311): WAL + busy_timeout carry
 #   concurrent-append safety, and the seq race between two writers settles at

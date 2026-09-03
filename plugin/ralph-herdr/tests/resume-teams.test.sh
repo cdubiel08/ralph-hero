@@ -111,6 +111,12 @@ seed_lead() {
 # Reconcile's historical discovery shape proves the session, role, and durable
 # ref but carries no checkout. Keep it literal so this test cannot accidentally
 # strengthen the production record and hide compatibility defects.
+seed_exit() {
+  ref="$1" reason="$2"
+  jq -nc --arg ref "$ref" --arg reason "$reason" \
+    '{ts:"2026-08-29T12:02:00Z", ev:"exit", agent_ref:$ref, reason:$reason, via:"operator"}' >>"$LEDGER"
+}
+
 seed_legacy_discover() {
   ref="$1"
   jq -nc --arg session "$SESSION" --arg ref "$ref" \
@@ -301,6 +307,39 @@ is "failed candidate is attempted once" "1" "$(grep -c '^904 --lead-only$' "$TEA
 is "later candidate still runs" "1" "$(grep -c '^905 --lead-only$' "$TEAM_LOG")"
 line_has "delegated failure is visible" "$OUT" "resume team GH-904: failed (rc 9)"
 line_has "later success is visible" "$OUT" "resume team GH-905: resumed"
+
+# GH-2357: an operator can park a live lead on purpose. That is treated as
+# closed here, exactly like work-team's own rc-4 "epic complete" case — never
+# resumed, and re-arming it is a human's call (work-team.sh EPIC), not this
+# pass's.
+reset_case
+seed_lead 'o906-team#eeee0001' "$REPO_DIR"
+seed_exit 'o906-team#eeee0001' 'stood-down'
+run_resume
+is "stood-down candidate exits 0" "0" "$RC"
+is "stood-down candidate is never delegated" "0" "$(grep -c '^906 ' "$TEAM_LOG" || true)"
+line_has "stood-down candidate is visible" "$OUT" "resume team GH-906: skipped — stood down by operator"
+
+# A natural exit reason is NOT stood-down: the candidate still resumes —
+# proves the new check is specific, not "any exit skips".
+reset_case
+seed_lead 'o907-team#ffff0001' "$REPO_DIR"
+seed_exit 'o907-team#ffff0001' 'pane-exited'
+run_resume
+is "crashed candidate exits 0" "0" "$RC"
+is "crashed candidate still resumes" "1" "$(grep -c '^907 --lead-only$' "$TEAM_LOG")"
+line_has "crashed candidate is visible" "$OUT" "resume team GH-907: resumed"
+
+# A human re-arm mints a fresh epoch (work-team.sh EPIC): the newest
+# generation governs, never an older stood-down one.
+reset_case
+seed_lead 'o908-team#0001aaaa' "$REPO_DIR"
+seed_exit 'o908-team#0001aaaa' 'stood-down'
+seed_lead 'o908-team#0002bbbb' "$REPO_DIR"
+run_resume
+is "re-armed candidate exits 0" "0" "$RC"
+is "re-armed candidate resumes on the newest epoch" "1" "$(grep -c '^908 --lead-only$' "$TEAM_LOG")"
+line_has "re-armed candidate is visible" "$OUT" "resume team GH-908: resumed"
 
 # Candidate inference is ledger-only. The board may be resolved as an
 # executable by lib.sh, but no ranking/listing verb may be invoked here.

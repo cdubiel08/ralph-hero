@@ -5,6 +5,7 @@
 #
 #   work-team.sh EPIC
 #   work-team.sh EPIC --lead-only   # accepted for compatibility; same thing
+#   work-team.sh EPIC --stand-down  # park a LIVE lead deliberately (GH-2357)
 #
 # LEAD-ONLY BY DESIGN (D3.2, an operator deviation recorded in
 # thoughts/shared/plans/2026-08-28-herd-topology-design.md): "dispatch
@@ -39,6 +40,27 @@
 # a lead that dies mid-dissolve is flagged by heal.sh (ev "orphan_space")
 # and removed by `herdr-setup.sh sweep` under its liveness proofs — an
 # orphan costs one sweep, never forever.
+#
+# --stand-down IS THE OPERATOR'S PARK LEVER (GH-2357), for the case
+# self-dissolve does not cover: an epic that is open but has nothing
+# agent-staffable left (every ready child is human-gated), so the lead
+# rightly stops its wake loop while the epic itself stays live. Before this
+# verb existed, an operator's plain pane exit (or /exit inside the lead's
+# pane) looked identical to a crash to heal.sh's event healer — same
+# pane.exited event, same open ledger ref — and got respawned within
+# seconds, forever, each respawn burning a full lead rehydration. There was
+# no way to tell "died" from "stood down on purpose" because nothing
+# recorded the intent. --stand-down records it: it appends the durable exit
+# fact ({ev: exit, reason: "stood-down"}, GH-2357's new exit-reason enum
+# value) for the LIVE lead's ledger ref UNDER THE SAME MUTEX watch-event.sh
+# uses, and only THEN closes the team workspace — so the append is always
+# visible before the workspace close can produce a pane-death event, and
+# that event's own open-for-pane read (ledger.sh) finds the ref already
+# closed and heals nothing (no exit reappend, no orphan flag, no respawn:
+# verified against a live incident, seq 247 in ledger.sh's own record).
+# `resume-teams.sh` (`rh day`) honors the same fact and never resumes a
+# stood-down team either. A human re-arms it the ordinary way: run
+# work-team.sh EPIC again.
 #
 # THE TEAM SPACE is a herdr WORKSPACE (`workspace create`), because that is
 # the one pane-creating call that carries `--env` (probed on the installed
@@ -80,13 +102,20 @@ ralph_plugin_freshness_notice
 usage() {
   cat <<'EOF'
 usage: work-team.sh EPIC [--lead-only]
+       work-team.sh EPIC --stand-down
 
-  EPIC         the epic issue the team is scoped to. Its lead is the o-lane
-               pane o<EPIC>-<slug>; a live one is never doubled (idempotent),
-               a dead one is respawned by re-running this script.
-  --lead-only  accepted for compatibility (heal.sh, GH-2212): lead-only is
-               the only behavior now — team launch spawns the lead and stops.
-  -h, --help   this.
+  EPIC          the epic issue the team is scoped to. Its lead is the o-lane
+                pane o<EPIC>-<slug>; a live one is never doubled (idempotent),
+                a dead one is respawned by re-running this script.
+  --lead-only   accepted for compatibility (heal.sh, GH-2212): lead-only is
+                the only behavior now — team launch spawns the lead and stops.
+  --stand-down  park a LIVE lead deliberately (GH-2357): records the durable
+                exit fact ({ev: exit, reason: "stood-down"}) for its ledger
+                ref, then closes its team workspace. heal.sh never respawns a
+                ref its own pane-death event finds already closed this way,
+                and resume-teams.sh (`rh day`) never resumes it either. A
+                human re-arms the team the ordinary way: work-team.sh EPIC.
+  -h, --help    this.
 
 The lead staffs its own workers (D3.2): from its pane it runs
   work-fleet.sh --epic EPIC     # ranked ready children, fleet guards run BY it
@@ -94,20 +123,22 @@ The lead staffs its own workers (D3.2): from its pane it runs
 Naming worker issues HERE is refused — dispatch does not spawn what the lead
 owns.
 
-Knobs: RALPH_HERDR_DRY_RUN=true.
+Knobs: RALPH_HERDR_DRY_RUN=true (the spawn plan only — --stand-down is a
+live ledger + workspace mutation and is unaffected by it).
 EOF
 }
 
-EPIC=""
+EPIC="" STAND_DOWN=""
 for arg in "$@"; do
   case "$arg" in
     --lead-only) ;; # compatibility no-op: lead-only is the only behavior
+    --stand-down) STAND_DOWN=1 ;;
     -h | --help)
       trap - EXIT # --help is a read, not a pane session: don't hold for Enter
       usage
       exit 0
       ;;
-    *[!0-9]* | "") die "unknown argument '$arg' (--lead-only, --help, or the epic number)" ;;
+    *[!0-9]* | "") die "unknown argument '$arg' (--lead-only, --stand-down, --help, or the epic number)" ;;
     *)
       if [ -z "$EPIC" ]; then
         EPIC="$arg"
@@ -127,13 +158,72 @@ if [ -z "$EPIC" ]; then
     echo "  name it: work-team.sh EPIC" >&2
     exit 64
   fi
-  echo "Ralph: team launch"
-  echo "  the epic number this team is scoped to. The lead is spawned and"
-  echo "  staffs its own workers from the epic's ready frontier (D3.2)."
+  if [ -n "$STAND_DOWN" ]; then
+    echo "Ralph: team stand-down"
+    echo "  the epic whose LIVE lead should be parked (GH-2357). Its ledger ref"
+    echo "  is closed as stood-down, then its team workspace is closed — the"
+    echo "  healer will not respawn it; work-team.sh EPIC re-arms it."
+  else
+    echo "Ralph: team launch"
+    echo "  the epic number this team is scoped to. The lead is spawned and"
+    echo "  staffs its own workers from the epic's ready frontier (D3.2)."
+  fi
   printf 'epic: '
   read -r EPIC || EPIC=""
   [ -n "$EPIC" ] || die "no epic named — nothing to do"
   case "$EPIC" in *[!0-9]*) die "epic must be an issue number (got '$EPIC')" ;; esac
+fi
+
+finish() {
+  trap - EXIT
+  echo "$1"
+  # Same constraint as hold_pane: a caller that is not a pane says so.
+  [ -t 0 ] && [ -z "${RALPH_HERDR_NO_HOLD:-}" ] && { printf 'Enter to close.\n'; read -r _ || true; }
+  exit 0
+}
+
+# ── --stand-down: park a LIVE lead deliberately (GH-2357) ────────────────────
+# No board read needed — standing down acts on whatever pane is actually
+# live for this epic, not on the epic's board state, so a deleted or
+# terminal epic can still have its orphaned lead parked by hand.
+if [ -n "$STAND_DOWN" ]; then
+  herd=$(ralph_agents_json 2>/dev/null) || die "cannot read the herd — refusing to stand down GH-$EPIC's lead without proving which pane it holds"
+  live_row=$(printf '%s\n' "$herd" | jq -c --arg pfx "o$EPIC-" '
+    select(.name | startswith($pfx))' 2>/dev/null | head -1)
+  if [ -z "$live_row" ]; then
+    finish "team GH-$EPIC: no live lead standing — nothing to stand down"
+  fi
+  live_name=$(jq -r '.name // empty' <<<"$live_row")
+  live_pane=$(jq -r '.pane // empty' <<<"$live_row")
+  live_ws=$(jq -r '.workspace // empty' <<<"$live_row")
+
+  ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) ||
+    die "no board scope discoverable from $REPO — cannot record a stand-down without a ledger (the pane is still live, nothing changed)"
+
+  # Read-decide-append under the SAME mutex watch-event.sh uses (ledger.sh):
+  # the exit fact must be visible before workspace close can produce the
+  # pane-death event that would otherwise race it (see the header).
+  ralph_ledger_lock "$ledger"
+  standdown_ref=$(RALPH_HERDR_LEDGER="$ledger" ralph_ledger_open_ref "$live_name" 2>/dev/null) || standdown_ref=""
+  if [ -z "$standdown_ref" ]; then
+    ralph_ledger_unlock "$ledger"
+    die "no open ledger record for $live_name — cannot record a stand-down without a durable ref (the pane is still live, nothing changed)"
+  fi
+  standdown_fact=$(jq -nc --arg ts "$(date -u +%FT%TZ)" --arg ref "$standdown_ref" --arg p "$live_pane" \
+    '{ts: $ts, ev: "exit", agent_ref: $ref, reason: "stood-down", pane_id: $p, via: "operator"}')
+  if ! RALPH_HERDR_LEDGER="$ledger" ralph_ledger_append "$standdown_fact"; then
+    ralph_ledger_unlock "$ledger"
+    die "stand-down append failed for $live_name — nothing changed, the pane is still live"
+  fi
+  ralph_ledger_unlock "$ledger"
+
+  if [ -n "$live_ws" ]; then
+    "$HERDR" workspace close "$live_ws" >/dev/null 2>&1 ||
+      echo "team GH-$EPIC: stand-down recorded for $live_name, but workspace close failed for $live_ws — close it by hand (herdr workspace close $live_ws)" >&2
+  else
+    echo "team GH-$EPIC: stand-down recorded for $live_name, but no workspace id was resolvable — close its pane by hand" >&2
+  fi
+  finish "team GH-$EPIC: lead $live_name stood down — heal.sh will not respawn it while it stays parked; work-team.sh $EPIC re-arms the team"
 fi
 
 # The epic, read once from the board: the title feeds the lead's name slug,
@@ -195,14 +285,6 @@ DISPATCH_ADDR=$("$BOARD" name dispatch --json 2>/dev/null | jq -r '.address // e
 herd=$(ralph_agents_json 2>/dev/null) || die "cannot read the herd — refusing to spawn a lead for GH-$EPIC without proving none is standing"
 live=$(printf '%s\n' "$herd" | jq -r --arg pfx "o$EPIC-" '
   select(.name | startswith($pfx)) | .name' 2>/dev/null | head -1)
-
-finish() {
-  trap - EXIT
-  echo "$1"
-  # Same constraint as hold_pane: a caller that is not a pane says so.
-  [ -t 0 ] && [ -z "${RALPH_HERDR_NO_HOLD:-}" ] && { printf 'Enter to close.\n'; read -r _ || true; }
-  exit 0
-}
 
 if [ -n "$live" ]; then
   finish "team GH-$EPIC: lead $live already standing — not doubling it (the lead staffs its own workers)"

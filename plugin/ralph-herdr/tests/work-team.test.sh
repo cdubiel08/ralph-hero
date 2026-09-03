@@ -321,6 +321,58 @@ if [ "$RC" -ne 0 ]; then ok "team dry (bad model): an unridable lead model refus
 line_has "team dry (bad model): the refusal names the source" "$OUT" "RALPH_MODEL_LEAD='bad value'"
 if grep -q "DRY RUN" <<<"$OUT"; then not_ok "team dry (bad model): no plan past the refusal"; else ok "team dry (bad model): no plan past the refusal"; fi
 
+# ═══ 8. --stand-down: park a LIVE lead deliberately (GH-2357) ════════════════
+# lib.sh (and therefore ledger.sh) is already sourced from section 7; RALPH_HERDR_LEDGER
+# is already exported at $WTL, so direct ledger calls here and run_wt's subprocess
+# calls read the same tape.
+: >"$WTL"
+standdown_rec=$(jq -nc --arg checkout "$REPO_DIR" \
+  '{ts: "2026-09-01T00:00:00Z", ev: "spawn", agent_ref: "o930-standdown#aaaa0001",
+    pane_id: "p930", workspace_id: "ws930", checkout: $checkout,
+    lineage: {role: "orchestrator"}, tokens: {role: "orchestrator"}}')
+ralph_ledger_append "$standdown_rec" >/dev/null
+herd_fixture '[{"name":"o930-standdown","agent_status":"working","pane_id":"p930","workspace_id":"ws930"}]' "$REPO_DIR"
+: >"$FAKE_HERDR_LOG"
+
+run_wt 930 --stand-down
+is "stand-down: exits 0" "0" "$RC"
+line_has "stand-down: reports the parked lead" "$OUT" "lead o930-standdown stood down"
+line_has "stand-down: names the re-arm path" "$OUT" "work-team.sh 930 re-arms the team"
+is "stand-down: exit fact appended with reason stood-down" "1" \
+  "$(_ralph_ledger_events "$WTL" 2>/dev/null | jq -rs '[.[] | select(.ev=="exit" and .agent_ref=="o930-standdown#aaaa0001" and .reason=="stood-down" and .via=="operator")] | length')"
+line_has "stand-down: closes the team workspace" "$(cat "$FAKE_HERDR_LOG")" "workspace close ws930"
+# The ref is now closed — a second stand-down finds no live lead (the pane
+# would be gone in reality; here the herd fixture still says "live", so this
+# also proves the refusal is ledger-driven, not just herd-driven).
+is "stand-down: ref is no longer open" "" "$(RALPH_HERDR_LEDGER="$WTL" ralph_ledger_open_ref o930-standdown 2>/dev/null)"
+
+# No live lead standing for the epic: an explicit, non-fatal no-op.
+herd_fixture '[]' "$REPO_DIR"
+: >"$FAKE_HERDR_LOG"
+run_wt 931 --stand-down
+is "stand-down (no live lead): exits 0" "0" "$RC"
+line_has "stand-down (no live lead): explicit no-op" "$OUT" "no live lead standing — nothing to stand down"
+line_lacks "stand-down (no live lead): never closes a workspace" "$(cat "$FAKE_HERDR_LOG")" "workspace close"
+
+# An unreadable herd cannot prove which pane (if any) is the live lead —
+# fail closed, same as the spawn path's own liveness check.
+RC=0
+OUT=$(HERDR_BIN_PATH=/usr/bin/false RALPH_HERDR_REPO="$REPO_DIR" RALPH_HERDR_BOARD="$BIN/board" \
+  RALPH_HERDR_LEDGER="$WTL" ANTHROPIC_API_KEY= \
+  bash "$SCRIPTS/work-team.sh" 930 --stand-down </dev/null 2>&1) || RC=$?
+is "stand-down (unreadable herd): dies" "1" "$RC"
+line_has "stand-down (unreadable herd): names the reason" "$OUT" "cannot read the herd"
+
+# A live pane with no open ledger record cannot be recorded stood down —
+# refuse rather than close a workspace whose respawn-safety we cannot prove.
+herd_fixture '[{"name":"o932-noref","agent_status":"working","pane_id":"p932","workspace_id":"ws932"}]' "$REPO_DIR"
+: >"$FAKE_HERDR_LOG"
+run_wt 932 --stand-down
+is "stand-down (no ledger ref): dies" "1" "$RC"
+line_has "stand-down (no ledger ref): names the reason" "$OUT" "no open ledger record for o932-noref"
+line_lacks "stand-down (no ledger ref): never closes the workspace" "$(cat "$FAKE_HERDR_LOG")" "workspace close"
+herd_fixture '[]' "$REPO_DIR"
+
 echo
 echo "# work-team: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

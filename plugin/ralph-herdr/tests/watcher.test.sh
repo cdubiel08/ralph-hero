@@ -571,6 +571,34 @@ is "heal no-checkout: notification raised" "1" "$(log_fcount 'died — not respa
 is "heal no-checkout: team space still flagged" "1" \
   "$(lcount "$HLEDGER" '.ev=="orphan_space" and .agent_ref=="o43-bare#0001" and .workspace_id=="ws43"')"
 
+# ═══ 5d. GH-2357: heal.sh refuses a respawn once a ref is stood down ════════
+# Unreachable through run_event's own open-for-pane filter — a stood-down ref
+# is closed (in the ledger) before any death event for its pane can even
+# fire, so watch-event's handle_gone never hands it here at all (see heal.sh's
+# header and work-team.sh's --stand-down). This calls ralph_heal_lead_death
+# DIRECTLY instead, to prove heal.sh's OWN second guard: even handed a ref
+# whose latest ledger fact is already exit/stood-down, it refuses to respawn
+# and refuses to flag the space orphaned.
+# shellcheck source=../scripts/heal.sh
+. "$SCRIPTS/heal.sh"
+HEAL_DIRECT_LOG="$TMP/heal-direct.log"
+log() { printf '%s\n' "$*" >>"$HEAL_DIRECT_LOG"; }
+: >"$HEAL_DIRECT_LOG"
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
+cat >"$HLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"o44-parked#0001","pane_id":"p44","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"44","slug":"parked","depth":"0","state":"spawned","root":"o44-parked#0001"}}
+{"ts":"t1","ev":"exit","agent_ref":"o44-parked#0001","reason":"stood-down","via":"operator"}
+EOF
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+RALPH_HERDR_LEDGER="$HLEDGER" ralph_heal_lead_death "$HLEDGER" "o44-parked#0001" "ws44" "pane_exited"
+is "heal stood-down: no respawn delegated" "0" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
+is "heal stood-down: no orphan_space flag" "0" \
+  "$(lcount "$HLEDGER" '.ev=="orphan_space" and .agent_ref=="o44-parked#0001"')"
+is "heal stood-down: no notification raised" "0" "$(log_count '^notification show')"
+line_has "heal stood-down: the log names the operator's stand-down" "$(cat "$HEAL_DIRECT_LOG")" "stood down by operator"
+unset -f log
+
 unset RALPH_HERDR_WORK_TEAM HEAL_STUB_LOG
 
 # ═══ 6. reconcile: discover / lost / token re-push ═══════════════════════════
