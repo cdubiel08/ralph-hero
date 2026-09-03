@@ -42,8 +42,10 @@ lanes is a statement about the *unit*, not about who is typing:
 
 Both errors cost. A careless `--backlog` puts an unformed item in the
 approved queue, indistinguishable by state from an approved one, until
-someone reads it — `board defer` is the park, checked at the claim, so a
-parked item cannot be dispatched even by number. Routing every filing
+someone reads it — `board defer` is the park: it drops the item out of
+`next`/`frontier`, and the fleet's spawn path refuses it even when named by
+number. It is not a lock — an explicit `board claim` lifts it, deliberately,
+since taking the unit asserts its precondition now holds. Routing every filing
 through Intake costs the other way: the fleet stalls on approvals nobody
 needed (measured 2026-08-29, both directions in one night).
 
