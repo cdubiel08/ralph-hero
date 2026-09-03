@@ -84,7 +84,9 @@ changing focus; --focus enters the proven hero pane after healing it.
 it heals nothing, opens nothing, and prints no roster. Refuses when no
 live hero is recorded.
 
-Knobs: RALPH_ALLOW_API_BILLING (the hero session bills like any spawn).
+Knobs: RALPH_ALLOW_API_BILLING (the hero session bills like any spawn);
+RALPH_HERDR_HERO_STAMP_WAIT_MS (bound on waiting for a freshly-opened hero
+pane's own record to appear, default 10000).
 EOF
     exit 0
     ;;
@@ -226,6 +228,29 @@ if [ -z "$hero_pane" ]; then
       "$HERDR" tab close "$created_tab" >/dev/null 2>&1 || true
     fi
   fi
+  # GH-2364: the ack above only proves the pane exists, not that hero.sh has
+  # stamped hero.pane.json — that happens from INSIDE the pane, after its own
+  # session starts (cockpit-pane.sh: ralph_hero_pane_stamp, hero.sh:75). A
+  # cold herdr start's first `dispatch up` used to report "opened" the instant
+  # the ack arrived, so a cockpit phase landing inside that window read the
+  # record as absent and refused (cockpit-open.sh:135). Wait bounded for the
+  # record to name THIS pane specifically — comparing pane ids means a stale
+  # record from an unrelated pane can never satisfy the wait. On timeout the
+  # pane is still open (never a die: the seat exists either way; a duplicate
+  # costs a pane, a refusal costs the seat) but the state names what is
+  # actually true — opened, not yet provable — so a caller reading it (or a
+  # human reading the summary line) can tell the two apart.
+  _hero_wait_ms=${RALPH_HERDR_HERO_STAMP_WAIT_MS:-10000}
+  _hero_waited=0
+  hero_live=""
+  while :; do
+    hero_live=$(ralph_hero_live_pane "$REPO" 2>/dev/null) || hero_live=""
+    [ "$hero_live" = "$hero_pane" ] && break
+    [ "$_hero_waited" -lt "$_hero_wait_ms" ] || break
+    sleep 0.25
+    _hero_waited=$((_hero_waited + 250))
+  done
+  [ "$hero_live" = "$hero_pane" ] || hero_state="opened-unstamped"
 fi
 
 # The default contract is ensure-only. The attended day path opts into one
