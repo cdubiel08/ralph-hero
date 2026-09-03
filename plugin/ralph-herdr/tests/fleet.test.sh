@@ -855,6 +855,55 @@ rc=0
 out=$(spawn_investigator_fleet 700 0 2>&1) || rc=$?
 is "investigator fleet: K must be positive" "1" "$rc"
 
+# ═══ 7c. spawn_investigator (GH-2427): the probe's stdout survives $() ═══════
+# GH-2382 replaced a here-string (`<<<`, which always appends a trailing
+# newline) with `read ... < <(printf '%s' "$probe_out")`. `probe_out` comes
+# from a command substitution, which always strips trailing newlines, so the
+# printf never restores one either — `read` hits EOF with no newline and
+# returns 1 (POSIX), though it still populates the variables. Every real
+# caller sources fleet.sh under `set -euo pipefail` (work-fleet.sh,
+# work-team.sh, lib.sh), so a real containment probe on a Bash-capable
+# investigator died right after "process containment: applied" with no
+# visible error. Reproduced here against the fake herd exactly as
+# roles.test.sh proves spawn_containment_probe in isolation, under an
+# explicit `set -e` subshell — the same posture the production sourcing chain
+# imposes, which the outer `set +e` in this file's own preamble does not.
+cat >"$TMP/inv-bash.md" <<'DEF'
+---
+name: investigator
+description: a Bash-capable investigator (containment engages)
+tools: [Read, Grep, Bash]
+---
+Body.
+DEF
+mkdir -p "$TMP/tree-x"
+cat >"$TMP/probe-hook.sh" <<'HOOK'
+#!/usr/bin/env bash
+# Plays an obedient, fully-sandboxed pane: touches only the OUTSIDE and
+# control markers a bound Bash + Write step would leave (FAKE_PROBE_MODE
+# "applied", per roles.test.sh's own probe-hook.sh).
+paths=$(printf '%s' "$2" | grep -o "touch '[^']*' '[^']*'" | head -1)
+outside=$(printf '%s' "$paths" | sed -n "s/^touch '[^']*' '\([^']*\)'\$/\1/p")
+control=$(printf '%s' "$2" | sed -n "s/^touch '\([^']*\)'; echo CONTROL_RC.*\$/\1/p" | head -1)
+[ -n "$outside" ] && touch "$outside"
+[ -n "$control" ] && touch "$control"
+HOOK
+chmod +x "$TMP/probe-hook.sh"
+rc=0
+out=$(
+  (
+    set -e
+    RALPH_INVESTIGATOR_AGENT="$TMP/inv-bash.md" RALPH_HERDR_UNAME=Darwin \
+      RALPH_HOME="$TMP/home-inv" FAKE_HERDR_PROMPT_HOOK="$TMP/probe-hook.sh" \
+      spawn_investigator "700" "w700-alpha#aaaaaaaa" "$TMP/tree-x" "Where is the retry loop?"
+  ) 2>&1
+) || rc=$?
+is "investigator probe (GH-2427): a Bash-capable investigator's containment probe does not die under set -e" "0" "$rc"
+line_has "investigator probe (GH-2427): process containment reads applied" "$out" "process containment: applied"
+line_has "investigator probe (GH-2427): tool binding reads accepted (no writer in the harness)" "$out" "tool binding: accepted"
+line_has "investigator probe (GH-2427): the spawn completes past the probe" "$out" "spawned investigator"
+unset FAKE_HERDR_PROMPT_HOOK
+
 # ═══ 8. work-fleet.sh — refill arming is opt-in plumbing ═════════════════════
 printf '{"frontier":[{"number":501,"title":"One"},{"number":502,"title":"Two"}],"blocked":[]}\n' \
   >"$FAKE_BOARD_FIXTURES/frontier.json"
