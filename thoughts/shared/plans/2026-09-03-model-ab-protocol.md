@@ -58,7 +58,11 @@ mostly-open windows if throughput drops.
    later, or stay claimed if the same session can wait it out — driver's
    call, contract rule 3 permits either.
 5. Once Window B's trigger is reached, run the report `--since` the flip
-   timestamp, compare against the Window A snapshot.
+   timestamp, compare against the Window A snapshot. **Adjudicate the
+   `mixed-model issues` footer first**: an issue retried across the flip has
+   units in both buckets and is counted closed in each — decide per issue
+   whether it belongs to the model that closed it or is excluded outright,
+   and say which in the write-up. The report names them; it never picks.
 6. Compose the written recommendation: which model wins on $/closed issue
    and calls/unit, whether the delta is worth the review-rounds/rework
    picture (pull `review-convergence.sh` per closed PR in each window —

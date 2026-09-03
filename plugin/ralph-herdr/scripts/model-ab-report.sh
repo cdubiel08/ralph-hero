@@ -26,7 +26,8 @@
 # Usage: model-ab-report.sh [--since ISO8601] [--json]
 #   --since ISO8601   only include driver units spawned at/after this
 #                     instant (default: everything the ledger has)
-#   --json            machine-readable array instead of the printed table
+#   --json            machine-readable {buckets, mixed_model_issues} instead
+#                     of the printed table
 #
 # Knobs (same as every other ledger reader in this plugin):
 #   RALPH_HERDR_REPO           repo root to resolve board scope from (default $PWD)
@@ -148,8 +149,20 @@ REPORT=$(printf '%s' "$DRIVERS_JSON" | jq -c --argjson closed "$CLOSED_JSON" '
     })
   | sort_by(.model)')
 
+# Issues whose driver units span MORE THAN ONE model bucket — a retry or a
+# re-pick across the window flip. Each bucket above still carries its own
+# units' $ and credits the issue's close, so such an issue is counted closed
+# in every bucket it touched (PR #2408 P1). Which model "owns" that close is
+# a methodology call the protocol doc leaves to the reader, so the report
+# NAMES them rather than silently picking: exclude or adjudicate by hand.
+MIXED=$(printf '%s' "$DRIVERS_JSON" | jq -c '
+  map({issue, model: (.model_requested // .usage.model // "unknown (no spawn ask, no usage fact)")})
+  | group_by(.issue)
+  | map(select((map(.model) | unique | length) > 1) | {issue: .[0].issue, models: (map(.model) | unique)})
+  | sort_by(.issue)')
+
 if [ "$JSON_OUT" -eq 1 ]; then
-  printf '%s\n' "$REPORT"
+  jq -cn --argjson buckets "$REPORT" --argjson mixed "$MIXED" '{buckets: $buckets, mixed_model_issues: $mixed}'
   exit 0
 fi
 
@@ -162,3 +175,10 @@ printf '%s\n' "$REPORT" | jq -r '
       (.total_list_usd * 100 | round / 100 | tostring),
       .finish_review, .finish_done
     ] | @tsv)'
+MIXED_N=$(printf '%s' "$MIXED" | jq 'length')
+if [ "$MIXED_N" -gt 0 ]; then
+  printf '\nmixed-model issues (counted closed in EVERY bucket they touched — adjudicate by hand): %s\n' "$MIXED_N"
+  printf '%s' "$MIXED" | jq -r '.[] | "  #\(.issue)  \(.models | join(" + "))"'
+else
+  printf '\nmixed-model issues: none (no issue has driver units in more than one bucket)\n'
+fi
