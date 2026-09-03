@@ -712,6 +712,63 @@ export function frontierView(ranked: {
   };
 }
 
+/** "Under epic E": a strict descendant along own-repo parent edges — the
+ *  open items' edges plus the closed pass-through topology `next` already
+ *  reads (a Done phase between a root and its live grandchildren must not
+ *  hide them here either). Visited-set bounded, so a malformed cycle
+ *  degrades to "not under". The root itself is NOT under itself: what this
+ *  answers is "is there staffable work beneath the lead", and a root left
+ *  eligible only because every child is blocked (`childrenBlocked`) is not
+ *  that. Deliberately a superset of work-fleet.sh's direct-child filter
+ *  (`parentNumber == EPIC`): a ready grandchild the fleet's filter is blind
+ *  to is still work under the epic, and a doctor line that called that
+ *  frontier "empty" would name the wrong remedy (stand-down parks an epic
+ *  that has work). ONE definition, shared by `frontier --epic` and doctor's
+ *  `lead-respawns` (GH-2398) so the two cannot drift. */
+export function epicDescendantPredicate(
+  open: { number: number; parentNumber: number | null }[],
+  closedEdges: ClosedEdge[],
+  epic: number,
+): (n: number) => boolean {
+  const parentOf = new Map<number, number | null>();
+  for (const i of open) parentOf.set(i.number, i.parentNumber);
+  for (const e of closedEdges) if (!parentOf.has(e.number)) parentOf.set(e.number, e.parentNumber);
+  return (n: number): boolean => {
+    if (n === epic) return false;
+    const seen = new Set<number>();
+    let cur = parentOf.get(n) ?? null;
+    while (cur !== null && !seen.has(cur)) {
+      if (cur === epic) return true;
+      seen.add(cur);
+      cur = parentOf.get(cur) ?? null;
+    }
+    return false;
+  };
+}
+
+/** Is the epic root anywhere on the topology the ranker sees — the open
+ *  own-repo set, or the closed pass-through edges walked up from it? A root
+ *  on neither has left the board (closed with nothing live beneath it,
+ *  transferred, off-board), and "nothing under it" is then a fact about the
+ *  root, not an empty frontier — the two must not share a rendering. */
+export function epicOnTopology(
+  open: { number: number }[],
+  closedEdges: ClosedEdge[],
+  epic: number,
+): boolean {
+  return open.some((i) => i.number === epic) || closedEdges.some((e) => e.number === epic);
+}
+
+/** The frontier restricted to one epic's subtree, both halves — an item the
+ *  ranker BLOCKED under the epic is still the epic's, and a caller counting
+ *  "nothing ready" must be able to see why. */
+export function frontierUnderEpic(res: FrontierResult, under: (n: number) => boolean): FrontierResult {
+  return {
+    frontier: res.frontier.filter((f) => under(f.number)),
+    blocked: res.blocked.filter((b) => under(b.number)),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Config + scope
 // ---------------------------------------------------------------------------
@@ -1080,6 +1137,7 @@ export interface SmellThresholds {
   dispatchMin: number; // GH-2212: minutes since the dispatch heartbeat was last written
   unitCtxMax: number; // GH-2347: a unit's largest single prompt (tokens) past which doctor's unit-cost line names it
   hookMin: number; // GH-2403: lookback window (minutes) for the watch-event "hook-inert" check
+  leadRespawns: number; // GH-2398: scheduler respawns of ONE epic's lead within an hour at which doctor's lead-respawns line names it
 }
 
 export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
@@ -1116,6 +1174,12 @@ export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
   // every pane status tick while an agent is live, so an hour of a live
   // fleet is many firings, not a handful.
   hookMin: 60,
+  // Three. One scheduler respawn is heal.sh doing its job (a lead died, a
+  // successor stood up); two could be a flaky pane. Three within an hour is
+  // where "the successor keeps dying the same way" becomes the likelier
+  // reading — GH-2357 observed the loop at one respawn every ~3 s, so a real
+  // loop clears any sane threshold within its first minute.
+  leadRespawns: 3,
 });
 
 export function parseSmellThresholds(
@@ -1139,6 +1203,7 @@ export function parseSmellThresholds(
     dispatchMin: positive("RALPH_SMELL_DISPATCH_MIN", SMELL_DEFAULTS.dispatchMin),
     unitCtxMax: positive("RALPH_UNIT_CTX_MAX", SMELL_DEFAULTS.unitCtxMax),
     hookMin: positive("RALPH_SMELL_HOOK_MIN", SMELL_DEFAULTS.hookMin),
+    leadRespawns: positive("RALPH_SMELL_LEAD_RESPAWNS", SMELL_DEFAULTS.leadRespawns),
   };
 }
 
@@ -9558,7 +9623,13 @@ export function reduceLedgerUsage(payloads: string[]): LedgerUnitUsage[] {
   return [...latest.values()].map((u) => ({ ...u, issue: issue.get(u.ref) ?? null, open: open.get(u.ref) === true }));
 }
 
-export function readLedgerUsage(ctx: Ctx): LedgerUsageRead {
+export type LedgerPayloadsRead = { kind: "absent" } | { kind: "error"; msg: string } | { kind: "ok"; payloads: string[] };
+
+/** The whole tape, in seq order, one JSON payload per row — the ONE read
+ *  every ledger-derived doctor line reduces over. Absent/unreadable stay
+ *  distinct here so no reducer can render "could not read" as "nothing
+ *  happened". */
+export function readLedgerPayloads(ctx: Ctx): LedgerPayloadsRead {
   const o = openHerdrLedger(ctx);
   if (o.kind === "absent") return { kind: "absent" };
   if (o.kind === "error") return { kind: "error", msg: o.msg };
@@ -9570,7 +9641,61 @@ export function readLedgerUsage(ctx: Ctx): LedgerUsageRead {
   } catch {
     return { kind: "error", msg: `could not read ${o.db} — unparseable sqlite3 -json output` };
   }
-  return { kind: "ok", units: reduceLedgerUsage(rows.map((r) => r.payload)) };
+  return { kind: "ok", payloads: rows.map((r) => r.payload) };
+}
+
+export function readLedgerUsage(ctx: Ctx): LedgerUsageRead {
+  const r = readLedgerPayloads(ctx);
+  if (r.kind !== "ok") return r;
+  return { kind: "ok", units: reduceLedgerUsage(r.payloads) };
+}
+
+/** One epic's scheduler-driven lead respawns inside the window (GH-2398). */
+export interface LeadRespawnEpic {
+  epic: number;
+  /** Spawn facts with `lineage.spawner.invoked_by: scheduler` — heal.sh's
+   *  respawn path, never a human's `work-team.sh EPIC` or an agent's. */
+  spawns: number;
+  /** The newest such spawn's ISO timestamp. */
+  latest: string;
+}
+
+/** The lead-respawn signature GH-2357 observed: heal.sh standing a successor
+ *  up every few seconds for an epic whose lead keeps dying. Counted per epic
+ *  from the ref's own grammar (`o<EPIC>-<slug>#<epoch>` — the lane letter is
+ *  the o-lane, the epic is a spawn-time fact) over spawn facts the SCHEDULER
+ *  invoked within [now - windowMs, now]. A human re-arm (`invoked_by: human`)
+ *  or an agent's spawn is not a respawn; a fact with no parseable `ts` is
+ *  not inside any window and is never counted. Every epic with ≥1 such
+ *  spawn is returned — the threshold is the caller's line to draw. */
+export function reduceLeadRespawns(payloads: string[], now: Date, windowMs: number): LeadRespawnEpic[] {
+  const since = now.getTime() - windowMs;
+  const until = now.getTime();
+  const byEpic = new Map<number, LeadRespawnEpic>();
+  for (const p of payloads) {
+    let e: Record<string, unknown>;
+    try {
+      e = JSON.parse(p);
+    } catch {
+      continue; // one garbled payload is not a broken ledger
+    }
+    if (!e || typeof e !== "object" || e.ev !== "spawn") continue;
+    const ref = typeof e.agent_ref === "string" ? e.agent_ref : "";
+    const m = /^o(\d+)-/.exec(ref);
+    if (!m) continue;
+    const lin = e.lineage as { spawner?: { invoked_by?: unknown } } | undefined;
+    if (lin?.spawner?.invoked_by !== "scheduler") continue;
+    const t = typeof e.ts === "string" ? Date.parse(e.ts) : NaN;
+    if (!Number.isFinite(t) || t < since || t > until) continue;
+    const epic = Number(m[1]);
+    const cur = byEpic.get(epic);
+    if (!cur) byEpic.set(epic, { epic, spawns: 1, latest: e.ts as string });
+    else {
+      cur.spawns += 1;
+      if (t > Date.parse(cur.latest)) cur.latest = e.ts as string;
+    }
+  }
+  return [...byEpic.values()].sort((a, b) => b.spawns - a.spawns || a.epic - b.epic);
 }
 
 /** GH-2403: the two ledger-side facts doctor's "hook-inert" line needs —
@@ -11573,28 +11698,28 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   // reading regardless of what the rest of the machine is doing. `herdr`
   // missing or unreadable degrades to "ok" — optional equipment, the same
   // direction as herdr-cockpit and dispatch-heartbeat above.
+  //
+  // ONE tape read for every ledger-derived line (hook-inert here, unit-cost
+  // and lead-respawns below — GH-2398): the ledger is live and append-only,
+  // so two reads are two snapshots, and one doctor report must not call it
+  // readable on one line and unreadable on the next, or reduce the lines
+  // over different facts. readLedgerPayloads keeps absent/unreadable
+  // distinct; an unparseable tape is `not evaluated` here, never "empty".
+  let tape: LedgerPayloadsRead;
   try {
-    const o = openHerdrLedger(ctx);
-    if (o.kind === "absent") {
+    tape = readLedgerPayloads(ctx);
+  } catch (e) {
+    tape = { kind: "error", msg: (e as Error).message };
+  }
+  try {
+    if (tape.kind === "absent") {
       add("hook-inert", "ok", "no herdr ledger (the watcher writes it; optional equipment)");
-    } else if (o.kind === "error") {
-      add("hook-inert", "info", `not evaluated: ${o.msg}`);
+    } else if (tape.kind === "error") {
+      add("hook-inert", "info", `not evaluated: ${tape.msg}`);
     } else {
-      const q = ctx.exec([o.sq, "-json", o.db, "SELECT payload FROM facts ORDER BY seq;"]);
-      if (q.code !== 0) {
-        add("hook-inert", "info", `not evaluated: could not read ${o.db} — ${q.stderr.trim() || `sqlite3 exit ${q.code}`}`);
-      } else {
-        let rows: { payload: string }[] = [];
-        try {
-          rows = q.stdout.trim() ? JSON.parse(q.stdout) : [];
-        } catch {
-          /* unparseable -json output — treat as no rows, same as an empty tape */
-        }
+      {
         const sinceMs = ctx.now().getTime() - ctx.cfg.smells.hookMin * 60_000;
-        const activity = reduceHookActivity(
-          rows.map((r) => r.payload),
-          sinceMs,
-        );
+        const activity = reduceHookActivity(tape.payloads, sinceMs);
         if (activity.openAgents === 0) {
           add("hook-inert", "ok", "no open agents in this repo's ledger — nothing for the hook to report on");
         } else {
@@ -11637,7 +11762,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   // full rewrite and stopping a worker mid-unit strands it. Closed units are
   // the population, never findings: nothing can re-estimate finished work.
   try {
-    const ur = readLedgerUsage(ctx);
+    const ur: LedgerUsageRead = tape.kind === "ok" ? { kind: "ok", units: reduceLedgerUsage(tape.payloads) } : tape;
     if (ur.kind === "absent") {
       add("unit-cost", "ok", "no herdr ledger (the watcher writes usage facts; optional equipment)");
     } else if (ur.kind === "error") {
@@ -11672,6 +11797,94 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     }
   } catch (e) {
     add("unit-cost", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
+  // Lead respawn loop (GH-2398, the deferred fourth item of GH-2357). INFO
+  // always, under the same rules as the two lines above: --strict never
+  // escalates it, --fix never touches it — the only remedies are an
+  // operator's `work-team.sh EPIC --stand-down` (parks the lead; heal.sh
+  // then skips it) or fixing whatever keeps killing the successor. The
+  // signature GH-2357 observed: heal.sh standing a new lead up every ~3 s
+  // for an epic with nothing staffable, each spawn a full rehydration.
+  // Stand-down removes the loop only when someone runs the verb; a lead
+  // that keeps dying for another reason (containment refusal,
+  // prompt-delivery failure) still loops silently through heal.sh's respawn
+  // path, and this line is what makes it visible.
+  //
+  // Two reads, joined lazily: the ledger's spawn facts (`invoked_by:
+  // scheduler`, one `o<EPIC>-` ref per epoch) inside the last hour, and —
+  // ONLY when some epic is at or past RALPH_SMELL_LEAD_RESPAWNS — the same
+  // frontier walk `board frontier --epic` serves. The frontier read is
+  // spent on a signature, never on a quiet ledger. An empty frontier under
+  // the epic and a frontier WITH ready work are rendered as two different
+  // facts with two different remedies (a lead dying with work available is
+  // not a stand-down case); an unreadable frontier is `not evaluated`,
+  // never "empty".
+  try {
+    const lr = tape;
+    const N = ctx.cfg.smells.leadRespawns;
+    if (lr.kind === "absent") {
+      add("lead-respawns", "ok", "no herdr ledger (heal.sh records lead respawns there; optional equipment)");
+    } else if (lr.kind === "error") {
+      add("lead-respawns", "info", `not evaluated: ${lr.msg}`);
+    } else {
+      const epics = reduceLeadRespawns(lr.payloads, ctx.now(), 3_600_000);
+      const hot = epics.filter((e) => e.spawns >= N);
+      const seen = epics.length === 0
+        ? "no scheduler lead respawn in the last hour"
+        : `scheduler lead respawns in the last hour: ${epics.map((e) => `#${e.epic}×${e.spawns}`).join(" ")}`;
+      if (hot.length === 0) {
+        add("lead-respawns", "ok", `${seen}; none at the RALPH_SMELL_LEAD_RESPAWNS line (${N})`);
+      } else {
+        let fr: FrontierResult | null = null;
+        let frErr: string | null = null;
+        let own: QueueItemWithBlockers[] = [];
+        let closedEdges: ClosedEdge[] = [];
+        try {
+          const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+          own = full.open;
+          closedEdges = closedTreeEdges(ctx, own);
+          fr = frontierView(
+            rankNext(own, closedEdges, priorityOptionOrder(ctx, { values: full.open.map((i) => i.priority) })),
+          );
+        } catch (e) {
+          frErr = (e as Error).message;
+        }
+        const rows = hot.map((e) => {
+          const head = `#${e.epic} respawned ${e.spawns}× (last ${e.latest})`;
+          if (fr === null) return `${head} — frontier not evaluated: ${frErr}`;
+          // A root that is on neither the open set nor the closed pass-through
+          // topology has left this board (closed with nothing live beneath it,
+          // transferred, off-board): "no descendants" is then a fact about the
+          // root, not about the frontier, and stand-down is the wrong verb —
+          // work-team.sh already refuses a closed epic (exit 4), so these
+          // respawns predate the close.
+          if (!epicOnTopology(own, closedEdges, e.epic))
+            return (
+              `${head} but #${e.epic} is not on this board's open topology (closed, transferred, or off-board) — ` +
+              `the respawns predate that; if a lead pane is still live, \`work-team.sh ${e.epic} --stand-down\` closes it out, otherwise nothing to do`
+            );
+          const under = frontierUnderEpic(fr, epicDescendantPredicate(own, closedEdges, e.epic));
+          if (under.frontier.length === 0)
+            return (
+              `${head} with an EMPTY ready frontier under it` +
+              (under.blocked.length ? ` (${under.blocked.length} blocked)` : "") +
+              ` — the GH-2357 loop signature: \`work-team.sh ${e.epic} --stand-down\` parks the lead (heal.sh then stops respawning it); ` +
+              `confirm with \`board frontier --epic ${e.epic}\``
+            );
+          return (
+            `${head} with ${under.frontier.length} ready item(s) under it (${under.frontier
+              .slice(0, 5)
+              .map((f) => `#${f.number}`)
+              .join(" ")}${under.frontier.length > 5 ? " …" : ""})` +
+            ` — NOT a stand-down case: the lead is dying with work available; read heal.sh's log and the herdr notifications for the death reason`
+          );
+        });
+        add("lead-respawns", "info", `${seen}; at/over ${N}: ${rows.join("; ")}`);
+      }
+    }
+  } catch (e) {
+    add("lead-respawns", "info", `not evaluated: ${(e as Error).message}`);
   }
 
   // GraphQL spend attribution (audit B2). INFO always: a number is a fact,
@@ -12553,13 +12766,17 @@ reads
                               leaf (leaf inherits the root's priority, carries
                               "via"); an epic with a child in flight heads nothing
   frontier [--json]           the work-stealing frontier (ralph-herdr fleets):
-                              every issue eligible to start NOW — next's queue,
+           [--epic NNN]       every issue eligible to start NOW — next's queue,
                               item for item — each with its explanation
                               {number, title, parentNumber?, blockers:
                               [{number, state}], eligible}, plus a blocked
                               section [{number, blockers_open, truncated?}].
                               A re-projection of next's ranking, never a
-                              second eligibility computation
+                              second eligibility computation. --epic NNN
+                              keeps only NNN's strict descendants (own-repo
+                              parent edges, closed pass-through topology
+                              included) in BOTH halves — the read doctor's
+                              lead-respawns line joins (GH-2398)
   name NNN [--json]           the derived names for a unit (GH-1807): branch
                               <kind>/NNN-<slug>, agent w NNN-<slug> (grammar B,
                               same slug), worktree leaf, and the herd ADDRESS
@@ -12868,7 +13085,17 @@ maintenance
                               log\`, machine-wide) with zero via:"event"
                               ledger writes while this repo's ledger holds
                               open agents; skipped when it holds none;
-                              GH-2403).
+                              GH-2403),
+                              RALPH_SMELL_LEAD_RESPAWNS (3 — "lead-respawns":
+                              an epic whose lead the scheduler (heal.sh)
+                              respawned that many times in the last hour,
+                              read from the ledger's spawn facts; joined
+                              with board frontier --epic only on a hit —
+                              an EMPTY frontier under the epic is the
+                              GH-2357 loop signature and names
+                              work-team.sh EPIC --stand-down; a frontier
+                              with ready work is a lead dying with work
+                              available, a different fact; GH-2398).
                               "foreign-repo-policy" reports the posture in
                               effect and whether it was configured or
                               defaulted; "foreign-items" warns when items from
@@ -12982,7 +13209,7 @@ v0.2.0 additions
  *  example, the flags that matter. The monolith HELP above stays the index. */
 export const VERB_HELP: Record<string, string> = {
   next: "board next [--json] [--fresh]\n  The ranked work queue's head. Empty is typed (--json: diagnosis).\n  example: board next",
-  frontier: "board frontier [--json]\n  next's eligible queue re-projected with per-item explanations (fleet feed).\n  example: board frontier --json",
+  frontier: "board frontier [--json] [--epic NNN]\n  next's eligible queue re-projected with per-item explanations (fleet feed).\n  --epic NNN restricts both halves to NNN's subtree (strict descendants).\n  example: board frontier --json\n  example: board frontier --epic 1525",
   brief: "board brief [--json]\n  One orientation read: next head, queue counts, deliver/tend counts, local leases,\n  and $/unit for every live unit from the herdr ledger's usage facts (GH-2347 — list-price\n  equivalent, rate-limit weight, not a bill; `not evaluated` when there is no ledger).\n  example: board brief",
   inbox:
     "board inbox [--json] [--digest [--mark]]\n  The human's single surface: Human Needed decisions, tend proposals, Intake approvals,\n  and human-clearable deliver-blocked rows, each with its literal disposition verb.\n  Lead-routed escalations inside their window are withheld as \"with leads\" (GH-2218) —\n  promotion or the TTL admits them; `board escalations` lists them.\n  --digest adds completions since the last mark + a pushWorthy verdict; --mark stamps the window.\n  example: board inbox --digest",
@@ -13043,7 +13270,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
 /** Flags that take a value. Declared beside the booleans so arity is a property
  *  of the flag rather than of the token that happens to follow it. */
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
-  "blocked-by", "body", "candidates", "decision", "estimate", "holder", "host",
+  "blocked-by", "body", "candidates", "decision", "epic", "estimate", "holder", "host",
   "label", "lane", "limit", "message", "on", "out", "owner", "parent", "priority",
   "project", "recheck", "repo", "since", "state", "title", "to-lead", "until", "why",
 ]);
@@ -14147,17 +14374,31 @@ export function run(argv: string[], ctx: Ctx): number {
       const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
       const own = full.open;
       const closedEdges = closedTreeEdges(ctx, own);
-      const res = frontierView(
+      const whole = frontierView(
         rankNext(
           own,
           closedEdges,
           priorityOptionOrder(ctx, { values: own.map((i) => i.priority), fresh: flags.fresh === true }),
         ),
       );
-      if (flags.json) json({ ...res, cache: cacheFacts(full) });
-      else if (res.frontier.length === 0) {
+      // --epic N (GH-2398): the same ranking, restricted to N's subtree —
+      // strict descendants along own-repo parent edges, closed pass-through
+      // topology included, over ONE predicate doctor's `lead-respawns` line
+      // shares (epicDescendantPredicate). Never a different ranking.
+      if (flags.epic === true) throw new UsageError("--epic needs an issue number: board frontier --epic NNN");
+      const epic = flags.epic === undefined || flags.epic === false ? null : requireNumber(String(flags.epic), "epic number");
+      const res = epic === null ? whole : frontierUnderEpic(whole, epicDescendantPredicate(own, closedEdges, epic));
+      const scope = epic === null ? "" : ` under epic #${epic}`;
+      // A root absent from the topology is reported as such, never as a
+      // quiet "frontier empty" — the same distinction doctor draws.
+      const epicOnBoard = epic === null ? null : epicOnTopology(own, closedEdges, epic);
+      if (flags.json) json({ ...res, ...(epic === null ? {} : { epic, epicOnTopology: epicOnBoard }), cache: cacheFacts(full) });
+      else if (epicOnBoard === false) {
+        out(`epic #${epic} is not on this board's open topology (closed with nothing live beneath it, transferred, or off-board) — nothing can be under it`);
+        if (cacheNote(full)) out(cacheNote(full)!);
+      } else if (res.frontier.length === 0) {
         out(
-          `frontier empty${res.blocked.length ? ` (${res.blocked.length} blocked: ${res.blocked.map((b) => `#${b.number}`).join(" ")})` : ""}`,
+          `frontier empty${scope}${res.blocked.length ? ` (${res.blocked.length} blocked: ${res.blocked.map((b) => `#${b.number}`).join(" ")})` : ""}`,
         );
         if (cacheNote(full)) out(cacheNote(full)!);
       } else {
