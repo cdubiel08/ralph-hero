@@ -4207,6 +4207,7 @@ describe("state-smell thresholds", () => {
       dispatchMin: 1440,
       unitCtxMax: 200_000,
       hookMin: 60,
+      leadRespawns: 3,
     });
     expect(
       parseSmellThresholds({
@@ -4219,6 +4220,7 @@ describe("state-smell thresholds", () => {
         RALPH_SMELL_DISPATCH_MIN: "720",
         RALPH_UNIT_CTX_MAX: "150000",
         RALPH_SMELL_HOOK_MIN: "120",
+        RALPH_SMELL_LEAD_RESPAWNS: "6",
       }),
     ).toEqual({
       claimExpiries: 4,
@@ -4230,6 +4232,7 @@ describe("state-smell thresholds", () => {
       dispatchMin: 720,
       unitCtxMax: 150000,
       hookMin: 120,
+      leadRespawns: 6,
     });
   });
 

@@ -18,7 +18,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { doctor, readLedgerUsage, realExec, reduceLedgerUsage, run, type Ctx } from "./board.js";
+import {
+  doctor,
+  parseSmellThresholds,
+  readLedgerUsage,
+  realExec,
+  reduceLeadRespawns,
+  reduceLedgerUsage,
+  run,
+  UsageError,
+  type Ctx,
+} from "./board.js";
 import { FakeGh, makeCtx } from "./board.testkit.js";
 
 let root: string;
@@ -26,8 +36,8 @@ let saved: Record<string, string | undefined> = {};
 
 /** sqlite3 runs for real; everything else (gh, git) stays on the fake — brief
  *  and doctor walk the board, and a real gh here would be a network call. */
-function ctx(): Ctx {
-  const base = makeCtx(new FakeGh());
+function ctx(gh: FakeGh = new FakeGh()): Ctx {
+  const base = makeCtx(gh);
   return { ...base, exec: (argv, stdin) => (argv[0] === "sqlite3" ? realExec(argv, stdin) : base.exec(argv, stdin)) };
 }
 
@@ -254,5 +264,263 @@ describe("doctor: unit-cost (GH-2347) — advisory by construction", () => {
     const c = check(doctor(ctx()));
     expect(c.level).toBe("ok");
     expect(c.detail).toContain("2 units measured");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// lead-respawns (GH-2398) — the GH-2357 loop signature, read from the same
+// tape: heal.sh (`invoked_by: scheduler`) standing a successor lead up for
+// one epic N times inside an hour, joined with the epic's ready frontier
+// only on a hit. The test clock is NOW = 2026-07-31T12:00:00Z (board.testkit).
+// ---------------------------------------------------------------------------
+
+/** A lead spawn record in the wire shape lib.sh's _ralph_spawn_record writes:
+ *  the o-lane ref carries the epic, lineage.spawner.invoked_by carries who. */
+const leadSpawn = (epic: number, ts: string, by: "scheduler" | "human" | "agent" = "scheduler", epoch = ts.replace(/\D/g, "")) =>
+  JSON.stringify({
+    ts,
+    ev: "spawn",
+    agent_ref: `o${epic}-some-epic#${epoch}`,
+    lineage: { contract: "ralph.lineage", contract_version: 1, issue: epic, role: "lead", spawner: { script: "work-team.sh", invoked_by: by } },
+    tokens: { role: "lead", issue: String(epic), spawn_epoch: epoch },
+  });
+
+describe("reduceLeadRespawns — scheduler-invoked o-lane spawns per epic, inside the window", () => {
+  const now = new Date("2026-07-31T12:00:00Z");
+  const hour = 3_600_000;
+
+  it("counts only scheduler-invoked lead spawns inside [now-1h, now], grouped by the ref's own epic", () => {
+    const rows = reduceLeadRespawns(
+      [
+        leadSpawn(1525, "2026-07-31T11:59:57Z"),
+        leadSpawn(1525, "2026-07-31T11:59:54Z"),
+        leadSpawn(1525, "2026-07-31T11:59:51Z"),
+        leadSpawn(1525, "2026-07-31T10:59:00Z"), // an hour and a minute ago — outside
+        leadSpawn(1525, "2026-07-31T12:00:01Z"), // after now — a clock skew is not a respawn
+        leadSpawn(1525, "2026-07-31T11:30:00Z", "human"), // an operator's re-arm is not a respawn
+        leadSpawn(1525, "2026-07-31T11:31:00Z", "agent"),
+        leadSpawn(2000, "2026-07-31T11:45:00Z"),
+        spawn("w1525-a-worker#w1", 1525), // a worker under the epic, wrong lane
+        JSON.stringify({ ts: "2026-07-31T11:50:00Z", ev: "exit", agent_ref: "o1525-some-epic#x", reason: "pane-closed" }),
+        JSON.stringify({ ts: "not a time", ev: "spawn", agent_ref: "o1525-some-epic#nt", lineage: { spawner: { invoked_by: "scheduler" } } }),
+        "{not json",
+      ],
+      now,
+      hour,
+    );
+    expect(rows).toEqual([
+      { epic: 1525, spawns: 3, latest: "2026-07-31T11:59:57Z" },
+      { epic: 2000, spawns: 1, latest: "2026-07-31T11:45:00Z" },
+    ]);
+  });
+
+  it("an empty tape is an empty answer", () => {
+    expect(reduceLeadRespawns([], now, hour)).toEqual([]);
+  });
+});
+
+describe("RALPH_SMELL_LEAD_RESPAWNS — the threshold reader", () => {
+  it("defaults to 3 and honours a positive override", () => {
+    expect(parseSmellThresholds({}).leadRespawns).toBe(3);
+    expect(parseSmellThresholds({ RALPH_SMELL_LEAD_RESPAWNS: "5" }).leadRespawns).toBe(5);
+  });
+});
+
+describe("doctor: lead-respawns (GH-2398) — advisory by construction", () => {
+  const check = (r: ReturnType<typeof doctor>) => r.checks.find((c) => c.name === "lead-respawns")!;
+  // Three respawns at ~3 s apart — the cadence GH-2357 measured.
+  const loop = (epic: number) => [
+    leadSpawn(epic, "2026-07-31T11:59:51Z"),
+    leadSpawn(epic, "2026-07-31T11:59:54Z"),
+    leadSpawn(epic, "2026-07-31T11:59:57Z"),
+  ];
+
+  it("no ledger is ok, quietly", () => {
+    const c = check(doctor(ctx()));
+    expect(c.level).toBe("ok");
+    expect(c.detail).toContain("no herdr ledger");
+  });
+
+  it("an unreadable ledger is not evaluated — never ok", () => {
+    writeFileSync(dbPath(), "not a database");
+    const c = check(doctor(ctx()));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("not evaluated");
+  });
+
+  it("under the line is ok, and the count is still shown — a withheld reading is never silent", () => {
+    buildDb([leadSpawn(1525, "2026-07-31T11:59:51Z"), leadSpawn(1525, "2026-07-31T11:59:54Z")]);
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    const cx = ctx(gh);
+    // The frontier read is spent on a signature only: below the line, doctor
+    // costs exactly what it costs with no respawn on the tape at all.
+    const quiet = new FakeGh();
+    quiet.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    const c = check(doctor(cx));
+    expect(c.level).toBe("ok");
+    expect(c.detail).toContain("#1525×2");
+    expect(c.detail).toContain("none at the RALPH_SMELL_LEAD_RESPAWNS line (3)");
+    const withTape = gh.graphqlCalls;
+    rmSync(dbPath());
+    doctor(ctx(quiet));
+    expect(withTape).toBe(quiet.graphqlCalls);
+  });
+
+  it("at the line with an EMPTY frontier under the epic names the GH-2357 signature and the stand-down remedy", () => {
+    buildDb(loop(1525));
+    const gh = new FakeGh();
+    // The epic root alone on the board — every child closed and pruned, the
+    // GH-2357 shape. The root itself ranks as a plain leaf, but the root is
+    // never "under" itself: nothing staffable beneath the lead.
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    const cx = ctx(gh);
+    const strictBaseline = doctor(cx, { strict: true }).ok;
+    const r = doctor(cx, { strict: true });
+    const c = check(r);
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("#1525 respawned 3× (last 2026-07-31T11:59:57Z) with an EMPTY ready frontier under it");
+    expect(c.detail).toContain("work-team.sh 1525 --stand-down");
+    expect(c.detail).toContain("board frontier --epic 1525");
+    expect(r.ok).toBe(strictBaseline); // info never touches the exit code
+  });
+
+  it("at the line with READY work under the epic is a different fact — NOT a stand-down case", () => {
+    buildDb(loop(1525));
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    gh.issues.set(1526, { number: 1526, state: "Backlog", priority: "P2", parent: 1525 });
+    const c = check(doctor(ctx(gh)));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("#1525 respawned 3×");
+    expect(c.detail).toContain("with 1 ready item(s) under it (#1526)");
+    expect(c.detail).toContain("NOT a stand-down case");
+    expect(c.detail).not.toContain("--stand-down`");
+  });
+
+  it("a ready GRANDCHILD counts as work under the epic — a superset of the fleet's direct-child filter", () => {
+    buildDb(loop(1525));
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    gh.issues.set(1526, { number: 1526, state: "Backlog", priority: "P2", parent: 1525 }); // a phase with its own child
+    gh.issues.set(1527, { number: 1527, state: "Backlog", priority: "P2", parent: 1526 });
+    const c = check(doctor(ctx(gh)));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("with 1 ready item(s) under it (#1527)");
+  });
+
+  it("a Done phase between the root and a live grandchild does not hide the grandchild", () => {
+    buildDb(loop(1525));
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    gh.issues.set(1526, { number: 1526, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED", parent: 1525 });
+    gh.issues.set(1527, { number: 1527, state: "Backlog", priority: "P2", parent: 1526 });
+    const c = check(doctor(ctx(gh)));
+    expect(c.detail).toContain("with 1 ready item(s) under it (#1527)");
+  });
+
+  it("only the epic at the line is joined; a sibling epic under it is counted, not judged", () => {
+    buildDb([...loop(1525), leadSpawn(2000, "2026-07-31T11:40:00Z")]);
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    gh.issues.set(2000, { number: 2000, state: "Backlog", priority: "P1" });
+    const c = check(doctor(ctx(gh)));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("scheduler lead respawns in the last hour: #1525×3 #2000×1");
+    expect(c.detail).toContain("at/over 3: #1525 respawned 3×");
+    expect(c.detail).not.toContain("#2000 respawned");
+  });
+
+  it("honours RALPH_SMELL_LEAD_RESPAWNS", () => {
+    buildDb(loop(1525));
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    const cx = ctx(gh);
+    expect(check(doctor(cx)).level).toBe("info");
+    cx.cfg.smells.leadRespawns = 4;
+    expect(check(doctor(cx)).level).toBe("ok");
+  });
+
+  it("an unreadable frontier on a hit is `not evaluated`, never rendered as empty", () => {
+    buildDb(loop(1525));
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    const base = ctx(gh);
+    // The issues-rooted open walk (`states: OPEN`) is the frontier's read;
+    // doctor's own sweeps walk the project items, so only the join breaks.
+    const cx: Ctx = {
+      ...base,
+      exec: (argv, stdin) => {
+        if ([...argv, stdin ?? ""].some((a) => /states:\s*OPEN/.test(String(a)))) throw new Error("boom: the issues read fell over");
+        return base.exec(argv, stdin);
+      },
+    };
+    const c = check(doctor(cx));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("#1525 respawned 3×");
+    expect(c.detail).toContain("frontier not evaluated: boom");
+    expect(c.detail).not.toContain("EMPTY");
+    expect(c.detail).not.toContain("--stand-down");
+  });
+});
+
+describe("board frontier --epic NNN (GH-2398) — next's ranking restricted to one subtree", () => {
+  it("empty under an epic whose only ready item is the root itself", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    gh.issues.set(7, { number: 7, state: "Backlog", priority: "P0" }); // a flat item elsewhere — not under 1525
+    const cap = capture();
+    try {
+      expect(run(["frontier", "--epic", "1525"], ctx(gh))).toBe(0);
+    } finally {
+      cap.restore();
+    }
+    expect(cap.text()).toContain("frontier empty under epic #1525");
+    expect(cap.text()).not.toContain("#7");
+  });
+
+  it("lists the descendants — grandchildren included — and carries the epic in --json", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    gh.issues.set(1526, { number: 1526, state: "Backlog", priority: "P2", parent: 1525 });
+    gh.issues.set(1527, { number: 1527, state: "Backlog", priority: "P2", parent: 1526 });
+    gh.issues.set(7, { number: 7, state: "Backlog", priority: "P0" });
+    const cap = capture();
+    try {
+      expect(run(["frontier", "--epic", "1525", "--json"], ctx(gh))).toBe(0);
+    } finally {
+      cap.restore();
+    }
+    const j = JSON.parse(cap.text());
+    expect(j.epic).toBe(1525);
+    expect(j.frontier.map((f: { number: number }) => f.number)).toEqual([1527]);
+    expect(j.blocked).toEqual([]);
+  });
+
+  it("a blocked descendant stays visible in the blocked half — the caller can see WHY nothing is ready", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    gh.issues.set(1526, { number: 1526, state: "Backlog", priority: "P2", parent: 1525, blockedBy: [{ number: 9, state: "OPEN" }] });
+    gh.issues.set(9, { number: 9, state: "Backlog", priority: "P3" });
+    const cap = capture();
+    try {
+      expect(run(["frontier", "--epic", "1525", "--json"], ctx(gh))).toBe(0);
+    } finally {
+      cap.restore();
+    }
+    const j = JSON.parse(cap.text());
+    expect(j.frontier).toEqual([]);
+    expect(j.blocked.map((b: { number: number }) => b.number)).toEqual([1526]);
+  });
+
+  it("a bare --epic is a usage error, not the whole frontier", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1" });
+    const cap = capture();
+    try {
+      expect(() => run(["frontier", "--epic"], ctx(gh))).toThrow(UsageError);
+    } finally {
+      cap.restore();
+    }
   });
 });
