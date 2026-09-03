@@ -129,5 +129,15 @@ perl -pi -e 's/^min_herdr_version = ".*"/min_herdr_version = "0.9.0"/' \
 commit "$d" "bump the wrong line"
 expect 1 "moving min_herdr_version is not a bump" "$d"
 
+# 11. an unparseable manifest is an ERROR even when the version line still
+#     greps cleanly — the GH-2431 shape: an unescaped regex literal in the
+#     description string breaks the TOML parser without touching the
+#     version = "..." line the bump check itself reads.
+d=$(repo brokentoml)
+bump "$d" 0.7.0
+printf 'description = "bad \\[ \\] escape"\n' >>"$d/plugin/ralph-herdr/herdr-plugin.toml"
+commit "$d" "break the manifest"
+expect 2 "unparseable TOML manifest errors" "$d"
+
 echo "== $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]
