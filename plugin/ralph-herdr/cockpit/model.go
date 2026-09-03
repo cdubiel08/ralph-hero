@@ -356,9 +356,13 @@ func joinAgentState(status, token string) string {
 }
 
 // Grammar-B agent names (naming.sh / contracts.ts parity) plus the legacy
-// gh-N shape kept first-class through the transition.
+// gh-N shape kept first-class through the transition. The lane class here is
+// its own pinned copy of the registry (ralph/scripts/contracts.ts LANES,
+// mirrored in naming.sh's `[wrodsxit]`) — TestParseAgentNameTable in
+// fetch_test.go is what catches this file drifting behind the others again
+// (GH-2355).
 var (
-	agentNameRe  = regexp.MustCompile(`^([wrodsx])([0-9]+)-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)(?:--[2-9])?$`)
+	agentNameRe  = regexp.MustCompile(`^([wrodsxit])([0-9]+)-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)(?:--[2-9])?$`)
 	legacyNameRe = regexp.MustCompile(`^gh-([0-9]+)$`)
 )
 

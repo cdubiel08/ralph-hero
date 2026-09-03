@@ -509,6 +509,8 @@ func TestParseAgentNameTable(t *testing.T) {
 		{"w123-fix-things", "w", 123, true},
 		{"gh-7", "w", 7, true},
 		{"x0-relay", "x", 0, true},
+		{"i1234-investigate", "i", 1234, true},
+		{"t0-tend", "t", 0, true},
 		{"r45-review--3", "r", 45, true}, // generation suffix range is 2..9
 		{"r45-review--2", "r", 45, true},
 		{"r45-review--1", "", 0, false}, // 1 is outside the gen range, and a slug never holds "--"
