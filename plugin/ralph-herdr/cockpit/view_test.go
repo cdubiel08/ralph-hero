@@ -144,27 +144,25 @@ func TestViewBoardErrNeverShadowedByNoMuxBanner(t *testing.T) {
 }
 
 func TestViewBoardErrNamesTheRetry(t *testing.T) {
-	// GH-2386: a transient board failure names the retry — lastPoll +
-	// pollEvery when the cause isn't a known rate limit.
+	// GH-2386: a transient board failure names the retry — the cadence the
+	// scheduler will actually keep (lastPoll + pollEvery, what pollDue gates
+	// on), whatever the cause. The reset time rides the failure text itself
+	// (describeRateLimit), never a "wait until" promise pollDue would break.
 	m := testModel(&fakeRunner{})
 	m.width = 220
-	m.boardErr = "In Progress: timeout"
+	m.boardErr = "GitHub GraphQL budget exhausted (0/5000) — resets 13:00 (in 41m)"
 	now := time.Now()
 	m.lastPoll = now.Add(-10 * time.Second)
 	m.pollEvery = 90 * time.Second
 	out := viewModel(m)
-	if !strings.Contains(out, "board read failed: In Progress: timeout — next poll in 1m") {
-		t.Errorf("must name the next poll in minutes; got:\n%s", out)
+	if !strings.Contains(out, "resets 13:00 (in 41m) — next poll in 1m") {
+		t.Errorf("must name the reset AND the real next poll; got:\n%s", out)
 	}
-
-	// A known rate-limit reset outranks the guessed cadence.
-	m.boardErrReset = now.Add(41 * time.Minute)
-	out = viewModel(m)
-	if !strings.Contains(out, "next poll after the "+m.boardErrReset.Local().Format("15:04")+" reset") {
-		t.Errorf("a known reset must replace the guessed cadence; got:\n%s", out)
+	if strings.Contains(out, "after the") {
+		t.Errorf("must not promise a wait the scheduler does not make; got:\n%s", out)
 	}
-	if strings.Contains(out, "next poll in 1m") {
-		t.Errorf("a known reset must not also show the guessed cadence; got:\n%s", out)
+	if !m.pollDue(now.Add(90*time.Second)) || m.pollDue(now.Add(60*time.Second)) {
+		t.Error("the suffix must describe pollDue's own gate")
 	}
 
 	// No boardErr at all → no suffix, no stray banner text.

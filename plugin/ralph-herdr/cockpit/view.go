@@ -267,13 +267,13 @@ func liveness(m Model, now time.Time) string {
 }
 
 // nextPollSuffix names the retry (spec §10): a failed board read must say
-// when it tries again. lastPoll + pollEvery is the cockpit's own answer
-// regardless of cause; a known GitHub reset time replaces the guess with the
-// authoritative instant, since a retry before it would only fail again.
+// when it tries again, and the answer is the cadence the scheduler will
+// actually keep — lastPoll + pollEvery, the same sum pollDue gates on. A
+// GitHub reset time is NOT folded in here: pollDue does not honour one, so
+// a banner claiming "after the reset" would promise a wait the cockpit does
+// not make. The reset is already named beside the failure itself
+// (describeRateLimit) whenever the probe knows it.
 func nextPollSuffix(m Model, now time.Time) string {
-	if !m.boardErrReset.IsZero() {
-		return fmt.Sprintf(" — next poll after the %s reset", m.boardErrReset.Local().Format("15:04"))
-	}
 	if m.lastPoll.IsZero() {
 		return ""
 	}
