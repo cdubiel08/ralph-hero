@@ -26,6 +26,37 @@ issue whose only verification is "it works" is unverifiable and therefore
 undeliverable. It does not enumerate implementation steps — the session's
 plan artifact does that, sized by the Estimate.
 
+## Which lane — the filer's confidence, not the filer's identity
+
+`board create` has no default landing state, and the choice between its two
+lanes is a statement about the *unit*, not about who is typing:
+
+- **`--backlog`** — the filer is confident the unit is formed: an outcome,
+  its verification, the evidence that makes it real (a measurement, a
+  `file:line`, a reproducer), and a Priority and Estimate it can be ranked
+  on. An agent filing a well-evidenced follow-up mid-work belongs here.
+- **`--intake`** — the filer is *not sure it is fully fleshed out*: a symptom
+  with no located cause, a scope that cannot be bounded yet, an observation
+  suspected of being two units. Intake is where a human decides; it is not
+  a courtesy step for work that already meets the bar above.
+
+Both errors cost. A careless `--backlog` puts an unformed item in the
+approved queue, indistinguishable by state from an approved one, until
+someone reads it — `board defer` is the park: it drops the item out of
+`next`/`frontier`, and the fleet's spawn path refuses it even when named by
+number. It is not a lock — an explicit `board claim` lifts it, deliberately,
+since taking the unit asserts its precondition now holds. Routing every filing
+through Intake costs the other way: the fleet stalls on approvals nobody
+needed (measured 2026-08-29, both directions in one night).
+
+**The board cannot tell a considered `--backlog` from a careless one** — no
+state history distinguishes an item created in Backlog from one promoted
+out of Intake, and a session binding marks the sanctioned follow-up path,
+not a smell (GH-2284, decided: no check ships). A reader tells them apart
+by the body against the bar above. That is why the bar lives here, where
+filing happens, and why a Backlog item whose body cannot answer "what is
+true after the merge, and how will the session know" is the thing to park.
+
 ## Estimate — agent context budget
 
 Estimate measures how much of one session's context window the unit
