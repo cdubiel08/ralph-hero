@@ -399,7 +399,7 @@ if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
   echo "DRY RUN — would spawn the lead for GH-$EPIC:"
   echo "  agent: $LEAD   workspace label: $team_label   cwd: $src"
   echo "  $HERDR workspace create --cwd $src --label \"$team_label\" --env RALPH_HERDR_LEAD=$LEAD --env RALPH_HERDR_TEAM_LEAD=$LEAD${ref:+ --env RALPH_HERDR_TEAM_LEAD_REF=$ref}${DISPATCH_ADDR:+ --env WHO_DISPATCH=$DISPATCH_ADDR} --env RALPH_HERDR_SPAWNER_ROLE=orchestrator --env RALPH_HERDR_INVOKED_BY=agent --no-focus"
-  echo "  $HERDR agent start $LEAD --kind claude --pane <captured>${lead_tools[*]:+ -- ${lead_tools[*]}}${lead_contain[*]:+ --settings <process containment: seatbelt denyWrite $src>}${lead_model:+ --model $lead_model}"
+  printf '%s\n' "  $HERDR agent start $LEAD --kind claude --pane <captured>${lead_tools[*]:+ -- ${lead_tools[*]}}${lead_contain[*]:+ --settings <process containment: seatbelt denyWrite $src>}${lead_model:+ --model $lead_model}"
   [ "${#lead_contain[@]}" -gt 0 ] &&
     echo "  containment probe: prompt <captured> to touch <inside $src> <outside \$RALPH_HOME/containment-probes>; refuse unless applied"
   echo "  $HERDR agent prompt $LEAD \"<lead brief: rehydrate GH-$EPIC from board state; staff via work-fleet.sh --epic $EPIC; on epic Done, self-dissolve via workspace close (D3.3)>\""

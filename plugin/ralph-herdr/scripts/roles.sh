@@ -616,7 +616,7 @@ ralph_lane_model() {
   case " $RALPH_MODEL_LANES " in
     *" $lane "*) ;;
     *)
-      echo "ralph_lane_model: unknown lane '$lane' (lanes: $RALPH_MODEL_LANES)" >&2
+      printf '%s\n' "ralph_lane_model: unknown lane '$lane' (lanes: $RALPH_MODEL_LANES)" >&2
       return 1
       ;;
   esac
@@ -642,7 +642,7 @@ ralph_lane_model() {
             elif ($v | type) != "string" then error("models.\($l) must be a string, got \($v | type)")
             else $v end)
         end' "$root/.ralph.json" 2>&1) || {
-      echo "ralph_lane_model: cannot read $src — ${model:-jq failed}; refusing rather than inheriting" >&2
+      printf '%s\n' "ralph_lane_model: cannot read $src — ${model:-jq failed}; refusing rather than inheriting" >&2
       return 1
     }
   fi
@@ -658,7 +658,7 @@ ralph_lane_model() {
             elif ($x | type) != "string" then error("env.\($v) must be a string, got \($x | type)")
             else $x end)
         end' "$root/.claude/settings.json" 2>&1) || {
-      echo "ralph_lane_model: cannot read $src — ${model:-jq failed}; refusing rather than inheriting" >&2
+      printf '%s\n' "ralph_lane_model: cannot read $src — ${model:-jq failed}; refusing rather than inheriting" >&2
       return 1
     }
   fi
@@ -668,7 +668,7 @@ ralph_lane_model() {
   case "$model" in
     [A-Za-z0-9]*) ;;
     *)
-      echo "ralph_lane_model: $src='$model' is not a model name (must start with a letter or digit)" >&2
+      printf '%s\n' "ralph_lane_model: $src='$model' is not a model name (must start with a letter or digit)" >&2
       return 1
       ;;
   esac
@@ -678,7 +678,7 @@ ralph_lane_model() {
   rest="${rest//\[/}"
   rest="${rest//\]/}"
   if [ "${#model}" -gt 80 ] || [ -n "$rest" ]; then
-    echo "ralph_lane_model: $src='$model' is not a model name (allowed: letters, digits, . _ : [ ] -; max 80 chars)" >&2
+    printf '%s\n' "ralph_lane_model: $src='$model' is not a model name (allowed: letters, digits, . _ : [ ] -; max 80 chars)" >&2
     return 1
   fi
   printf '%s\n' "$model"
