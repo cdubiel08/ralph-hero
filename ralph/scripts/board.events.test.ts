@@ -12,9 +12,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { realExec, run, UsageError, type Ctx } from "./board.js";
 import { FakeGh, makeCtx } from "./board.testkit.js";
 
@@ -260,5 +262,79 @@ describe("board events --since", () => {
     }
     expect(code).toBe(69);
     expect(c.errs.join("")).toContain("sqlite3");
+  });
+});
+
+/**
+ * GH-2372 — a large `events --json` payload survives a real OS pipe.
+ *
+ * The bug lived at the CLI entrypoint (`isMain`'s `process.exit(code)`),
+ * which `run()` never reaches — calling `run()` in-process, as every test
+ * above does, cannot exercise it. These tests spawn the actual script (via
+ * tsx, the same interpreter `ralph/scripts/board`'s shim falls back to) as
+ * a child process and read its stdout through a real pipe, the way a piped
+ * consumer (`| jq`) does. A forced `process.exit()` before the async
+ * `stdout.write` to that pipe drains truncates the tail; letting the
+ * process exit naturally via `process.exitCode` does not.
+ */
+describe("board events --json survives a pipe (GH-2372)", () => {
+  const TSX = fileURLToPath(new URL("../../node_modules/.bin/tsx", import.meta.url));
+  const BOARD_TS = fileURLToPath(new URL("./board.ts", import.meta.url));
+
+  let repoRoot: string;
+  let ledgerRoot: string;
+
+  beforeEach(() => {
+    repoRoot = mkdtempSync(join(tmpdir(), "board-events-cli-repo-"));
+    mkdirSync(join(repoRoot, ".git"));
+    writeFileSync(
+      join(repoRoot, ".ralph.json"),
+      JSON.stringify({ owner: "cdubiel08", repo: "ralph-hero", projectNumber: 1 }) + "\n",
+    );
+    ledgerRoot = mkdtempSync(join(tmpdir(), "board-events-cli-ledger-"));
+  });
+
+  afterEach(() => {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(ledgerRoot, { recursive: true, force: true });
+  });
+
+  it("a payload well past the pipe buffer size parses in full when piped through a real child process", () => {
+    // ~2500 facts of this shape is comfortably past the 16-64 KB a pipe
+    // write can complete synchronously — the same order of magnitude as
+    // the 665-fact / ~420 KB ledger that surfaced GH-2372.
+    const n = 2500;
+    const payloads = Array.from(
+      { length: n },
+      (_, i) => `{"kind":"spawn","agent":"w${i}","session":"deadbeef${String(i).padStart(6, "0")}"}`,
+    );
+    const dbDir = join(ledgerRoot, "cdubiel08", "ralph-hero");
+    mkdirSync(dbDir, { recursive: true });
+    const db = join(dbDir, "ledger.sqlite");
+    const inserts = payloads
+      .map((p, i) => `INSERT INTO facts(seq, payload) VALUES(${i + 1}, '${p.replaceAll("'", "''")}');`)
+      .join("\n");
+    const build = realExec(
+      ["sqlite3", db],
+      `PRAGMA user_version=1;\nCREATE TABLE facts(seq INTEGER PRIMARY KEY, payload TEXT NOT NULL);\n${inserts}\n`,
+    );
+    expect(build.code).toBe(0);
+
+    // spawnSync reads the child's stdout over an actual OS pipe (never a
+    // regular file), which is exactly the channel GH-2372's fix depends on.
+    const r = spawnSync(TSX, [BOARD_TS, "events", "--since", "0", "--json"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, RALPH_HERDR_LEDGER_ROOT: ledgerRoot, RALPH_CLAIM_HOLDER: "test@host" },
+      maxBuffer: 64 * 1024 * 1024,
+    });
+
+    expect(r.status).toBe(0);
+    expect(r.signal).toBeNull();
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.cursor).toBe(n);
+    expect(parsed.facts).toHaveLength(n);
+    expect(parsed.facts[0]).toEqual({ kind: "spawn", agent: "w0", session: "deadbeef000000", seq: 1 });
+    expect(parsed.facts[n - 1]).toEqual({ kind: "spawn", agent: `w${n - 1}`, session: `deadbeef00${n - 1}`, seq: n });
   });
 });
