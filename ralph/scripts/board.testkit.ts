@@ -908,7 +908,15 @@ export class FakeGh {
                 nodes:
                   fi.onBoard === false
                     ? []
-                    : [{ isArchived: fi.archived ?? false, project: { id: PROJECT_ID } }],
+                    : [
+                        {
+                          isArchived: fi.archived ?? false,
+                          project: { id: PROJECT_ID },
+                          // GH-2405: the field page rides only when the
+                          // document asks for it (`closed --fields`).
+                          ...(query.includes("fieldValues(") ? { fieldValues: this.queueFieldValues(fi) } : {}),
+                        },
+                      ],
               },
             })),
           },

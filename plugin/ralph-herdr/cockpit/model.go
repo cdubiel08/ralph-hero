@@ -529,8 +529,12 @@ type Model struct {
 	// Chrome. status is plain text; statusKind types it (spec §10) and the
 	// renderer supplies the glyph, so the text never carries a tier glyph
 	// baked in at write time.
-	status       string
-	statusKind   statusKind
+	status     string
+	statusKind statusKind
+	// statusAt is when the status was set: a landed/refused/view message
+	// clears after statusTTL on a tick (or on the next key), giving the
+	// navigation row it overwrites back (GH-2405). In-flight never expires.
+	statusAt     time.Time
 	width        int
 	height       int
 	pollInFlight bool
@@ -568,7 +572,21 @@ const (
 
 // say sets the status line with its kind.
 func (m *Model) say(kind statusKind, text string) {
-	m.status, m.statusKind = text, kind
+	m.status, m.statusKind, m.statusAt = text, kind, time.Now()
+}
+
+// statusTTL is how long a non-in-flight status holds the navigation row
+// before a tick clears it (GH-2405).
+const statusTTL = 30 * time.Second
+
+// clearStatus drops a settled status so the legend row it overwrote comes
+// back. An in-flight status is never cleared here — its own result lands
+// the next one.
+func (m *Model) clearStatus() {
+	if m.statusKind == statusFlight {
+		return
+	}
+	m.status, m.statusKind, m.statusAt = "", statusNone, time.Time{}
 }
 
 // pollStale is the header's liveness verdict: true when the last poll failed
@@ -829,15 +847,29 @@ func (m Model) cardUsage(issue int) (SessionUsage, int) {
 // only when the file moved, but a column of hundreds would still put that on
 // the overlay tick.
 func (m Model) usageTargets() []usageTarget {
+	out, _ := m.usageTargetsCapped()
+	return out
+}
+
+// usageTargetsCapped is usageTargets plus whether the cap CUT the list: a
+// day's fleet larger than maxUsageReads prices only its first sessions, and
+// the header must say so rather than present the partial sum as the day
+// (PR #2406 review). Live agents and on-screen cards are listed first, so
+// what the cap drops is always the oldest of today's ledger refs.
+func (m Model) usageTargetsCapped() (targets []usageTarget, capped bool) {
 	var out []usageTarget
 	seen := map[string]bool{}
 	add := func(sid, checkout string) bool {
 		if sid == "" || seen[sid] {
 			return true
 		}
+		if len(out) >= maxUsageReads {
+			capped = true
+			return false
+		}
 		seen[sid] = true
 		out = append(out, usageTarget{Session: sid, Checkout: checkout})
-		return len(out) < maxUsageReads
+		return true
 	}
 	for _, issue := range sortedIssues(m.agents) {
 		for _, a := range m.agents[issue] {
@@ -846,25 +878,39 @@ func (m Model) usageTargets() []usageTarget {
 				checkout = sp.Checkout
 			}
 			if !add(a.Session, checkout) {
-				return out
+				return out, capped
 			}
 		}
 	}
 	for i := range m.cols {
 		for _, c := range m.cols[i] {
 			if !add(m.cardSession(c.Number)) {
-				return out
+				return out, capped
 			}
 		}
 	}
 	if m.showDone {
 		for _, c := range m.doneCards {
 			if !add(m.cardSession(c.Number)) {
-				return out
+				return out, capped
 			}
 		}
 	}
-	return out
+	// Every ledger session that spawned or reported TODAY (GH-2405), so the
+	// header's "today" covers the day's fleet — a Done card scrolled out of
+	// the window, a lane pass, a session on a column that is not up. Sorted,
+	// so the cap drops the same refs on every pass. Exited transcripts parse
+	// once (the cache keys on size+mtime), so the cost is a stat per ref.
+	for _, ref := range m.ledger.todayRefs(time.Now()) {
+		checkout := ""
+		if sp, ok := m.ledger.ByRef[ref]; ok {
+			checkout = sp.Checkout
+		}
+		if !add(m.ledger.Sessions[ref], checkout) {
+			return out, capped
+		}
+	}
+	return out, capped
 }
 
 // usageMissing reports a session on screen the last pass did not cover —
@@ -891,7 +937,7 @@ func sortedIssues(agents map[int][]Agent) []int {
 
 // maxUsageReads bounds one pass. Beyond it the chip stays `$—` rather than
 // silently reading as measured.
-const maxUsageReads = 24
+const maxUsageReads = 64
 
 // fleetTally counts live agents by joined state, in the strip's own rank
 // order, for the header. Only states with a member are returned.
@@ -916,12 +962,15 @@ type fleetCount struct {
 	N     int
 }
 
-// fleetSpend is the header's three clock numbers over every session on
-// screen: spend and tokens since the local midnight, and spend in the
-// trailing hour. Sessions whose transcript was not read (or not fully
-// priced) contribute nothing — the `$—` on their card carries that fact,
-// the header does not repeat it — and ok=false when NO session priced, so
-// a fleet of unreadable transcripts draws no `$0.00 today`.
+// fleetSpend is the header's three clock numbers over every session the
+// usage pass prices — the sessions on screen AND every ledger session that
+// spawned or reported today (usageTargets, GH-2405), so "today" is the
+// day's fleet rather than whichever columns happen to be up: spend and
+// tokens since the local midnight, and spend in the trailing hour. Sessions
+// whose transcript was not read (or not fully priced) contribute nothing —
+// the `$—` on their card carries that fact, the header does not repeat it —
+// and ok=false when NO session priced, so a fleet of unreadable transcripts
+// draws no `$0.00 today`.
 func (m Model) fleetSpend(now time.Time) (todayUSD float64, todayTokens int, hourUSD float64, ok bool) {
 	y, mo, d := now.Date()
 	midnight := time.Date(y, mo, d, 0, 0, 0, 0, now.Location())

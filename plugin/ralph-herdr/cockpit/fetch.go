@@ -115,7 +115,7 @@ func argsBoardFrontier() []string { return []string{"frontier", "--json"} }
 // would pay for a 14-day closed-issue walk on every pass to fill a column
 // nobody is looking at.
 func argsCardSignals() []string { return []string{"card-signals", "--json"} }
-func argsBoardClosed() []string { return []string{"closed", "--json", "--prs"} }
+func argsBoardClosed() []string { return []string{"closed", "--json", "--prs", "--fields"} }
 func argsBoardInbox() []string  { return []string{"inbox", "--json"} }
 
 // The topology snapshot (GH-2219) is two verbs on one keypress: the roster is
@@ -531,6 +531,11 @@ func parseClosed(out string) ([]Card, int, error) {
 				Number int  `json:"number"`
 				Merged bool `json:"merged"`
 			} `json:"closingPRs"`
+			// Priority/Estimate ride `--fields` (GH-2405); absent (an older
+			// board CLI, or a truncated field page) and null (unset) both
+			// read as "", and the card draws only what is present.
+			Priority *string `json:"priority"`
+			Estimate *string `json:"estimate"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
@@ -544,6 +549,12 @@ func parseClosed(out string) ([]Card, int, error) {
 		c := Card{
 			Number: it.Number, Repo: it.Repo, Title: it.Title,
 			State: doneState, ClosedAt: it.ClosedAt,
+		}
+		if it.Priority != nil {
+			c.Priority = *it.Priority
+		}
+		if it.Estimate != nil {
+			c.Estimate = *it.Estimate
 		}
 		if it.ClosingPRs != nil {
 			c.ClosingPRsRead = true

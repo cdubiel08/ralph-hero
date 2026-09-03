@@ -251,13 +251,14 @@ func TestCostChipTrioAndTheSessionJoin(t *testing.T) {
 	if len(targets) != 3 || targets[0].Session != "sid-10" || targets[0].Checkout != "/wt/10" {
 		t.Errorf("targets = %+v", targets)
 	}
-	// A Done card prices when its transcript exists — right of the label —
-	// and an unsessioned close draws nothing at all.
+	// A Done card prices when its transcript exists — cost then the age
+	// since the close, in the timer slot like every other column (GH-2405)
+	// — and an unsessioned close draws nothing at all.
 	m.showDone = true
 	m.doneCards = []Card{{Number: 30, State: doneState, Title: "shipped", ClosedAt: time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339)}}
 	line3 := strings.Split(renderCard(m, 2, 0, m.doneCards[0], 60), "\n")[2]
-	if !strings.Contains(line3, "closed") || !strings.Contains(line3, "$0.50") {
-		t.Errorf("done line 3 = %q, want closed label + cost", line3)
+	if !strings.Contains(line3, "$0.50  3h 00m") {
+		t.Errorf("done line 3 = %q, want cost then closed age", line3)
 	}
 	line3 = strings.Split(renderCard(m, 2, 0, Card{Number: 77, State: doneState, Title: "old", ClosedAt: "2026-09-01T00:00:00Z"}, 60), "\n")[2]
 	if strings.Contains(line3, "$") {
@@ -272,35 +273,51 @@ func TestCostChipTrioAndTheSessionJoin(t *testing.T) {
 	}
 }
 
-func TestContextAlertIsGatedAt120kAndTurnsRedAt160k(t *testing.T) {
+func TestContextAlertIsAFractionOfTheModelWindow(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	m.agents = setAgents([]Agent{{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Session: "sid-10"}})
 	g := m.glyphSet()
-	set := func(ctx int) {
-		m.usage = map[string]usageEntry{"sid-10": {Usage: SessionUsage{Read: true, USD: 1, LastContext: ctx}}}
+	set := func(model string, ctx int) {
+		m.usage = map[string]usageEntry{"sid-10": {Usage: SessionUsage{Read: true, USD: 1, LastContext: ctx, LastModel: model}}}
 	}
-	set(119_999)
+	// A 200k-window model keeps the original lines: 60% = 120k, 80% = 160k.
+	set("claude-haiku-4-5-20251001", 119_999)
 	if got := ctxChip(m, Card{Number: 10}, g); got != "" {
 		t.Errorf("below the gate = %q, want nothing", got)
 	}
-	set(120_000)
-	amber := ctxChip(m, Card{Number: 10}, g)
-	if !strings.Contains(amber, g.ctx+"120k") {
+	set("claude-haiku-4-5-20251001", 120_000)
+	if amber := ctxChip(m, Card{Number: 10}, g); !strings.Contains(amber, g.ctx+"120k") {
 		t.Errorf("at the gate = %q, want %s120k", amber, g.ctx)
 	}
-	set(151_400)
-	if got := ctxChip(m, Card{Number: 10}, g); !strings.Contains(got, "151k") {
-		t.Errorf("151k = %q", got)
-	}
-	set(160_000)
-	red := ctxChip(m, Card{Number: 10}, g)
-	if !strings.Contains(red, "160k") {
+	set("claude-haiku-4-5-20251001", 160_000)
+	if red := ctxChip(m, Card{Number: 10}, g); !strings.Contains(red, "160k") {
 		t.Errorf("at hot = %q", red)
+	}
+	// A 1M-window model (GH-2405): the 236k prompt that rendered red on the
+	// live board is healthy; the lines sit at 600k and 800k.
+	set("claude-sonnet-5", 236_574)
+	if got := ctxChip(m, Card{Number: 10}, g); got != "" {
+		t.Errorf("236k on a 1M window = %q, want nothing", got)
+	}
+	set("claude-sonnet-5", 600_000)
+	if got := ctxChip(m, Card{Number: 10}, g); !strings.Contains(got, "600k") {
+		t.Errorf("600k on a 1M window = %q, want the amber chip", got)
+	}
+	set("claude-fable-5-1", 800_000)
+	if got := ctxChip(m, Card{Number: 10}, g); !strings.Contains(got, "800k") {
+		t.Errorf("800k on fable = %q, want the red chip", got)
+	}
+	// An unknown model takes the smaller window: it alerts early, never never.
+	if alert, hot := ctxThresholds("gpt-9"); alert != 120_000 || hot != 160_000 {
+		t.Errorf("unknown model thresholds = %d/%d, want 120k/160k", alert, hot)
+	}
+	if w := contextWindow("claude-fable-5-1"); w != 1_000_000 {
+		t.Errorf("fable-5-1 window = %d", w)
 	}
 	// The test binary renders without a colour profile, so the ink is
 	// asserted on the style the chip picks, not on the escape it emits.
-	if ctxInk(120_000).GetForeground() == ctxInk(160_000).GetForeground() || ctxInk(159_999).GetForeground() != ctxInk(120_000).GetForeground() {
-		t.Error("amber and red must be two inks with the line at 160k")
+	if ctxInk(120_000, 160_000).GetForeground() == ctxInk(160_000, 160_000).GetForeground() || ctxInk(159_999, 160_000).GetForeground() != ctxInk(120_000, 160_000).GetForeground() {
+		t.Error("amber and red must be two inks with the line at hot")
 	}
 	// Unread context is not drawn — the `$—` beside it carries the fact.
 	m.usage = map[string]usageEntry{"sid-10": {}}
@@ -308,7 +325,7 @@ func TestContextAlertIsGatedAt120kAndTurnsRedAt160k(t *testing.T) {
 		t.Errorf("unread context = %q, want nothing", got)
 	}
 	// On the card: cost, then alert, then age, in that order.
-	set(151_400)
+	set("claude-haiku-4-5", 151_400)
 	line3 := strings.Split(renderCard(m, 0, 0, Card{Number: 10, State: "In Progress", Title: "t", Priority: "P1", Estimate: "S"}, 70), "\n")[2]
 	i, j := strings.Index(line3, "$1.00"), strings.Index(line3, "151k")
 	if i < 0 || j < 0 || i > j {
@@ -523,5 +540,36 @@ func TestReadLedgerKeepsTheClaudeSessionPerRef(t *testing.T) {
 	l := readLedger(p)
 	if !l.Read || l.Sessions["w30-x#d"] != "sid-30" {
 		t.Errorf("sessions = %+v read=%v, want last-non-empty sid-30", l.Sessions, l.Read)
+	}
+}
+
+// PR #2406 review: a day's fleet larger than maxUsageReads prices only its
+// first sessions. The header must say the total is a floor rather than
+// present the partial sum as the day.
+func TestHeaderMarksACappedDayTotalAsAFloor(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.agents = setAgents([]Agent{{Name: "w10-ten", Status: "working", Issue: 10, Lane: "w", Session: "sid-10"}})
+	now := time.Now()
+	m.ledger = Ledger{Read: true, ByRef: map[string]LedgerSpawn{}, ByIssue: map[int]LedgerSpawn{}, Usage: map[string]LedgerUsage{}, Sessions: map[string]string{}}
+	m.usage = map[string]usageEntry{"sid-10": {Usage: SessionUsage{Read: true, USD: 1, Calls: []CallUsage{{At: now, USD: 1, Priced: true}}}}}
+	if _, capped := m.usageTargetsCapped(); capped {
+		t.Fatal("one session must not read as capped")
+	}
+	if got := strings.Join(headerStats(m, now), " "); !strings.Contains(stripANSI(got), "$1.00 today") || strings.Contains(got, "+ today") {
+		t.Errorf("uncapped header = %q", stripANSI(got))
+	}
+	for i := 0; i < maxUsageReads+5; i++ {
+		ref := fmt.Sprintf("w%d-x#%d", 100+i, i)
+		m.ledger.ByRef[ref] = LedgerSpawn{Ref: ref, SpawnedAt: now.Add(-time.Minute)}
+		m.ledger.Sessions[ref] = fmt.Sprintf("sid-%d", 100+i)
+	}
+	targets, capped := m.usageTargetsCapped()
+	if !capped || len(targets) != maxUsageReads || targets[0].Session != "sid-10" {
+		t.Errorf("capped=%v len=%d first=%q, want capped at %d with the live session first", capped, len(targets), targets[0].Session, maxUsageReads)
+	}
+	// Every aggregate off the capped map is a floor — the dropped refs are
+	// sorted by name, not activity, so the hour and the tokens are cut too.
+	if got := stripANSI(strings.Join(headerStats(m, now), " ")); !strings.Contains(got, "$1.00+ today") || !strings.Contains(got, "0+ ") || !strings.Contains(got, "$1.00+/h") {
+		t.Errorf("capped header must mark every aggregate as a floor; got %q", got)
 	}
 }

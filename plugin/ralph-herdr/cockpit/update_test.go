@@ -1153,3 +1153,33 @@ func TestInboxViewAnswerDuringAnInFlightReadStillGetsItsOwnReread(t *testing.T) 
 		t.Error("a failed stale read must still pay the owed re-read")
 	}
 }
+
+// GH-2405: a settled status overwrites the navigation row rather than taking
+// its own, so it must also give the row back: on the next key, and on the
+// first tick past statusTTL. An in-flight status never expires on its own.
+func TestSettledStatusClearsOnKeyAndOnTTL(t *testing.T) {
+	m := testModel(&fakeRunner{})
+	m.say(statusOK, "delivered to w10-ten")
+	m, _ = updateModel(m, keyMsg("j"))
+	if m.statusKind != statusNone || m.status != "" {
+		t.Errorf("a key must clear a settled status; got kind %d %q", m.statusKind, m.status)
+	}
+	m.say(statusRefuse, "no")
+	m.statusAt = time.Now().Add(-statusTTL - time.Second)
+	m, _ = updateModel(m, tickMsg(time.Now()))
+	if m.statusKind != statusNone {
+		t.Errorf("a tick past statusTTL must clear a settled status; got kind %d %q", m.statusKind, m.status)
+	}
+	m.say(statusView, "board")
+	m, _ = updateModel(m, tickMsg(time.Now()))
+	if m.statusKind != statusView {
+		t.Errorf("a tick inside statusTTL must keep the status; got kind %d", m.statusKind)
+	}
+	m.say(statusFlight, "spawning…")
+	m.statusAt = time.Now().Add(-time.Hour)
+	m, _ = updateModel(m, tickMsg(time.Now()))
+	m, _ = updateModel(m, keyMsg("j"))
+	if m.statusKind != statusFlight {
+		t.Errorf("an in-flight status is never cleared by tick or key; got kind %d", m.statusKind)
+	}
+}

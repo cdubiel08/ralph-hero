@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -412,5 +413,68 @@ func TestReadLedgerKeepsTheLatestUsageFactPerRef(t *testing.T) {
 	// The spawn row still lands beside it — the usage arm must not eat spawns.
 	if _, ok := l.ByRef["w2347-usage#u1"]; !ok {
 		t.Error("the spawn row must still be served")
+	}
+}
+
+// GH-2405: the glyph tier is read as process env FIRST, else the
+// machine-local `cockpit_glyphs=` line of $RALPH_HOME/config — a font is a
+// property of the machine's terminal, and a herdr pane does not carry the
+// operator's shell exports, so an env-only knob was unreachable from the
+// sanctioned launch. Neither set = unicode.
+func TestResolveGlyphTierFallsThroughToRalphConfig(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"RALPH_HOME": dir}
+	getenv := func(k string) string { return env[k] }
+	if got := resolveGlyphTier(getenv); got.name != "unicode" {
+		t.Errorf("no config, no env = %q, want unicode", got.name)
+	}
+	os.WriteFile(filepath.Join(dir, "config"), []byte("# machine-local\nautopilot=true\ncockpit_glyphs = ascii\ncockpit_glyphs=nerd\n"), 0o644)
+	if got := resolveGlyphTier(getenv); got.name != "nerd" {
+		t.Errorf("config cockpit_glyphs (last wins) = %q, want nerd", got.name)
+	}
+	env["RALPH_COCKPIT_GLYPHS"] = "ascii"
+	if got := resolveGlyphTier(getenv); got.name != "ascii" {
+		t.Errorf("env outranks config; got %q", got.name)
+	}
+	env["RALPH_COCKPIT_GLYPHS"] = "  "
+	if got := resolveGlyphTier(getenv); got.name != "nerd" {
+		t.Errorf("a blank env value is unset, config still answers; got %q", got.name)
+	}
+	if v := ralphConfigValue(filepath.Join(dir, "config"), "autopilot"); v != "true" {
+		t.Errorf("autopilot = %q", v)
+	}
+	if v := ralphConfigValue(filepath.Join(dir, "missing"), "cockpit_glyphs"); v != "" {
+		t.Errorf("unreadable config = %q, want empty", v)
+	}
+	// $HOME/.ralph/config is the default root.
+	if p := ralphConfigPath(func(k string) string { return map[string]string{"HOME": "/h"}[k] }); p != "/h/.ralph/config" {
+		t.Errorf("default path = %q", p)
+	}
+}
+
+// GH-2405: the header's "today" is the day's fleet — every ledger ref with a
+// session that spawned or reported since midnight — not only the sessions
+// with a card on screen.
+func TestLedgerTodayRefs(t *testing.T) {
+	now := time.Date(2026, 9, 2, 15, 0, 0, 0, time.UTC)
+	l := Ledger{
+		ByRef: map[string]LedgerSpawn{
+			"w1-today#a":     {Ref: "w1-today#a", SpawnedAt: now.Add(-3 * time.Hour)},
+			"w2-yesterday#b": {Ref: "w2-yesterday#b", SpawnedAt: now.Add(-30 * time.Hour)},
+			"w3-nosession#c": {Ref: "w3-nosession#c", SpawnedAt: now.Add(-time.Hour)},
+			"r0-deliver#d":   {Ref: "r0-deliver#d", SpawnedAt: now.Add(-40 * time.Hour)},
+		},
+		Usage: map[string]LedgerUsage{
+			// Spawned before midnight, but reported today: counted.
+			"r0-deliver#d": {Ref: "r0-deliver#d", At: now.Add(-time.Hour)},
+			// A usage fact with no spawn record at all still names a session.
+			"w9-orphan#e": {Ref: "w9-orphan#e", At: now.Add(-2 * time.Hour)},
+		},
+		Sessions: map[string]string{"w1-today#a": "s1", "w2-yesterday#b": "s2", "r0-deliver#d": "s4", "w9-orphan#e": "s9"},
+	}
+	got := l.todayRefs(now)
+	want := []string{"r0-deliver#d", "w1-today#a", "w9-orphan#e"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("todayRefs = %v, want %v (sorted; yesterday's spawn and the sessionless ref excluded)", got, want)
 	}
 }

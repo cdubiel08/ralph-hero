@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func hintsOf(hs []verbHint) string {
@@ -141,17 +143,29 @@ func TestFooterPinnedToTheBottomAtThreeHeights(t *testing.T) {
 				t.Errorf("h=%d short=%v: rendered %d lines, want exactly the pane height:\n%s", h, short, len(lines), out)
 				continue
 			}
-			if got := stripANSI(lines[h-1]); got != "✓ delivered to w10-ten" {
+			// GH-2405: the status OVERWRITES the navigation row rather than
+			// taking a third; rows are right-aligned, so compare trimmed.
+			if got := strings.TrimLeft(stripANSI(lines[h-1]), " "); got != "✓ delivered to w10-ten" {
 				t.Errorf("h=%d short=%v: last row must be the status line; got %q", h, short, got)
 			}
-			if got := stripANSI(lines[h-2]); !strings.HasPrefix(got, "h/l j/k move") {
-				t.Errorf("h=%d short=%v: row -2 must be the navigation row; got %q", h, short, got)
+			if got := strings.TrimLeft(stripANSI(lines[h-2]), " "); !strings.HasPrefix(got, "on #") {
+				t.Errorf("h=%d short=%v: row -2 must be the card verbs; got %q", h, short, got)
 			}
-			if got := stripANSI(lines[h-3]); !strings.HasPrefix(got, "on #") {
-				t.Errorf("h=%d short=%v: row -3 must be the card verbs; got %q", h, short, got)
+			if got := stripANSI(lines[h-1]); lipgloss.Width(got) != m.width {
+				t.Errorf("h=%d short=%v: footer rows are right-aligned to the pane width; got width %d", h, short, lipgloss.Width(got))
 			}
 			if got := headerRows + bodyHeightOf(m) + footerRowsOf(m); got != h {
 				t.Errorf("h=%d: header+body+footer = %d", h, got)
+			}
+			// Once the message clears, the navigation row is back on the
+			// same row and the frame keeps its height.
+			cleared := m
+			cleared.clearStatus()
+			cl := strings.Split(viewModel(cleared), "\n")
+			if len(cl) != h {
+				t.Errorf("h=%d short=%v: cleared status rendered %d lines", h, short, len(cl))
+			} else if got := strings.TrimLeft(stripANSI(cl[h-1]), " "); !strings.HasPrefix(got, "h/l j/k move") {
+				t.Errorf("h=%d short=%v: after the message clears the last row is the navigation row; got %q", h, short, got)
 			}
 		}
 	}
@@ -166,8 +180,8 @@ func TestFooterPinnedUnderAnOverlay(t *testing.T) {
 	if len(lines) != m.height {
 		t.Fatalf("rendered %d lines for a %d-row pane", len(lines), m.height)
 	}
-	if got := stripANSI(lines[m.height-2]); got != "esc close" {
-		t.Errorf("overlay legend must sit on row -2; got %q", got)
+	if got := strings.TrimLeft(stripANSI(lines[m.height-1]), " "); got != "esc close" {
+		t.Errorf("overlay legend must sit on the last row (no status up); got %q", got)
 	}
 }
 

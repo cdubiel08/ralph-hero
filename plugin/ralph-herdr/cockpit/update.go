@@ -48,6 +48,11 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		// A settled message expires on the tick after statusTTL, so an
+		// unattended pane gets its navigation row back (GH-2405).
+		if m.statusKind != statusNone && m.statusKind != statusFlight && !m.statusAt.IsZero() && time.Time(msg).Sub(m.statusAt) > statusTTL {
+			m.clearStatus()
+		}
 		// The tick is FIXED at the floor: the agent overlay is a local herdr
 		// call and must stay live. Only the board walk — the expensive read —
 		// is gated by the adaptive cadence (GH-1805).
@@ -492,6 +497,10 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		m.snapToFloor()
+		// A settled message has been read once a key is pressed: clear it
+		// so the navigation row it overwrote returns (GH-2405). The key's
+		// own verb says whatever it has to say next.
+		m.clearStatus()
 		return updateKey(m, msg)
 	}
 	return m, nil
