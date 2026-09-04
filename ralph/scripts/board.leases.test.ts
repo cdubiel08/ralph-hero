@@ -229,6 +229,7 @@ describe("partitionBriefLeases — the repo-scoped cut (GH-2108)", () => {
     file: "/sessions/wt-1-0000000000000000.json",
     worktreeState: "present",
     sameRepo: true,
+    ownerRepo: "cdubiel08/repo-a",
     ...over,
   });
 
@@ -278,6 +279,30 @@ describe("board who — machine-wide, withholds nothing (GH-2108)", () => {
     writeLock(61, linkedWorktree(other, "feat-61-a"));
     const { out } = capture(() => run(["who"], ctxFor(mine)));
     expect(out).toMatch(/#61 /);
+  });
+
+  it("names owner/repo on a same-repo lease line (GH-2453) — a bare number is ambiguous across repos", () => {
+    const repo = gitRepo("repo-a");
+    writeLock(52, repo);
+    const { out } = capture(() => run(["who"], ctxFor(repo)));
+    expect(out).toMatch(/^cdubiel08\/ralph-hero#52 /m);
+  });
+
+  it("names owner/repo on ANOTHER repo's lease too, read from that checkout's own config (GH-2453)", () => {
+    const mine = gitRepo("repo-a");
+    const other = gitRepo("repo-b");
+    writeFileSync(join(other, ".ralph.json"), JSON.stringify({ owner: "someone-else", repo: "repo-b", projectNumber: 7 }));
+    writeLock(61, other);
+    const { out } = capture(() => run(["who"], ctxFor(mine)));
+    expect(out).toMatch(/^someone-else\/repo-b#61 /m);
+  });
+
+  it("falls back to a bare #N when the foreign checkout's own config cannot be read", () => {
+    const mine = gitRepo("repo-a");
+    const other = gitRepo("repo-b"); // no .ralph.json, no .claude/settings.json
+    writeLock(62, other);
+    const { out } = capture(() => run(["who"], ctxFor(mine)));
+    expect(out).toMatch(/^#62 /m);
   });
 
   it("an unreadable sessions dir is not evaluated, never 'nobody working'", () => {
