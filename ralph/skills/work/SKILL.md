@@ -1,6 +1,6 @@
 ---
 description: Drive one board issue (or a described outcome) end-to-end — investigate, design, build, verify, ship — in whatever order and depth the unit demands. The only execution verb in ralph v2. Triggers on "work NNN", "ship this ticket", "take the next item", "implement this", "fix this issue", or a bare issue number handed to ralph.
-argument-hint: "[<issue-number> | \"<outcome description>\" | (empty = pick from queue)]"
+argument-hint: "[<issue-number> [--epic <root-number>] | \"<outcome description>\" | (empty = pick from queue)]"
 context: inline
 model: sonnet
 allowed-tools:
@@ -23,15 +23,19 @@ The board CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/board` — that placeholder reso
 
 ## Intake
 
-`$ARGUMENTS` is an issue number, an outcome description, or empty.
+`$ARGUMENTS` is an issue number (optionally followed by `--epic <root-number>`), an outcome description, or empty.
 
 - **Issue number** → `board get NNN`. The body is the outcome — accept it bare; never demand a research doc or plan that doesn't exist.
 - **Outcome, no issue** → `board create --backlog --title … --body … --priority P0..P3 --estimate XS..XL` first. The board knows before you start. There is no default landing state: `--backlog` is approved work (Priority and Estimate required); `--intake` files something tracked but not yet approved, which no lane will pick up.
 - **Empty** → fold any replies on Human Needed items first — `board escalations` marks answered items `ANSWERED … resume pending`; resuming one IS a claim (`board claim NNN` takes the Human Needed → In Progress edge, GH-2204). Then `board next` and say in one line why you're taking it.
 
+**`--epic <root-number>` (GH-2450, D6 unit 8)** — present when the spawner (`spawn_work_session`) resolved this unit as a team member; absent for a flat unit or a manually-typed invocation. When present, `board get <root-number>` **before** `board get NNN`: the epic root's body is the living design record (`board amend`, GH-2449) a lead may keep true through a pivot, and the unit body is one child's slice of it — read the whole before the slice. Missing `--epic` is never an error; it just means there is no root to read first.
+
 Anything you file — the outcome above, a follow-up, a decomposition — is shaped by [references/work-shape.md](references/work-shape.md): the unit definition (one issue = one PR, independently mergeable), Estimate as agent context budget, blocked-by vs parent, never rebase for freshness alone. Read it before filing.
 
 Claim it: `board claim NNN`. A live foreign claim → pick other work.
+
+**Checkpoint re-read (GH-2450).** After planning and before opening the PR, re-read this issue's own comment thread (`gh issue view NNN --json comments`) for anything landed since your claim — a peer's correction, an amend broadcast ("root #E amended \<at\>, re-read before continuing."). When you were given `--epic E`, also re-read the root's thread for a `<!-- ralph-amend:v1 -->` marker newer than your claim's timestamp (`board get NNN --json | jq -r .claim.since`) — a lead may amend without `--broadcast`, and the marker is the only trace then. Either signal means re-reading the root body and adjusting the plan before the PR opens: a session that skips this re-read builds on the stale body, and the marker only makes that miss visible at review — it does not prevent it.
 
 ## Boundaries
 

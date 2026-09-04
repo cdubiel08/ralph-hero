@@ -169,6 +169,39 @@ is "label fallback: no address token stamped" "false" \
   "$(jq -r '.tokens | has("address")' <<<"$old_record" 2>/dev/null)"
 rm -f "$FAKE_BOARD_FIXTURES/name.77.json"
 
+# ── --epic on the /ralph:work prompt (GH-2450, D6 unit 8) ───────────────────
+# A flat unit (the default fake-board fixture stamps teamEpic:null) sends the
+# prompt it always sent — no --epic invented from nothing.
+line_has() {
+  case "$2" in *"$3"*) ok "$1" ;; *) not_ok "$1 — got: $2" ;; esac
+}
+line_lacks() {
+  case "$2" in *"$3"*) not_ok "$1 — got: $2" ;; *) ok "$1" ;; esac
+}
+prompt_line=$(printf '%s\n' "$out" | grep 'agent prompt ')
+line_lacks "epic: a flat unit's dry-run prompt carries no --epic" "$prompt_line" "--epic"
+line_has "epic: a flat unit's dry-run prompt is unchanged" "$prompt_line" "\"/ralph:work 123\""
+
+# A team member's `board name` answer carries teamEpic (epicTeamOf's own
+# derivation, GH-2209) — the dry-run prompt appends --epic with it.
+printf '{"number":124,"kind":"feat","lane":"w","branch":"feat/124-unit-a","worktree":"feat-124-unit-a","agent":"w124-unit-a","legacyBranch":"feature/GH-124","team":"t100-epic","teamEpic":100,"address":"fake-repo/t100-epic/w124-unit-a"}\n' \
+  >"$FAKE_BOARD_FIXTURES/name.124.json"
+EPIC_QUEUE='{"next":{"number":124,"title":"Unit A","parentNumber":100},"queue":[]}'
+epic_out=$(RALPH_HERDR_DRY_RUN=true spawn_work_session 124 "$EPIC_QUEUE" 2>&1)
+epic_prompt_line=$(printf '%s\n' "$epic_out" | grep 'agent prompt ')
+line_has "epic: a team member's dry-run prompt carries --epic 100" "$epic_prompt_line" "\"/ralph:work 124 --epic 100\""
+rm -f "$FAKE_BOARD_FIXTURES/name.124.json"
+
+# A malformed teamEpic (an older board's non-numeric surprise, or a hand-
+# edited fixture) is dropped rather than riding an argv unvalidated.
+printf '{"number":125,"kind":"feat","lane":"w","branch":"feat/125-unit-b","worktree":"feat-125-unit-b","agent":"w125-unit-b","legacyBranch":"feature/GH-125","team":"t100-epic","teamEpic":"not-a-number","address":"fake-repo/t100-epic/w125-unit-b"}\n' \
+  >"$FAKE_BOARD_FIXTURES/name.125.json"
+BAD_EPIC_QUEUE='{"next":{"number":125,"title":"Unit B","parentNumber":100},"queue":[]}'
+bad_epic_out=$(RALPH_HERDR_DRY_RUN=true spawn_work_session 125 "$BAD_EPIC_QUEUE" 2>&1)
+bad_epic_prompt_line=$(printf '%s\n' "$bad_epic_out" | grep 'agent prompt ')
+line_lacks "epic: a non-numeric teamEpic is dropped, not passed through" "$bad_epic_prompt_line" "--epic"
+rm -f "$FAKE_BOARD_FIXTURES/name.125.json"
+
 # The exported read-backs (run in THIS shell, not a subshell, to see them).
 RALPH_HERDR_DRY_RUN=true spawn_work_session 123 "$QUEUE" >/dev/null 2>&1
 is "dry-run: RALPH_HERDR_SPAWNED_AGENT exported" "w123-fix-the-flaky-test" "$RALPH_HERDR_SPAWNED_AGENT"

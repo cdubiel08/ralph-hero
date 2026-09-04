@@ -786,10 +786,20 @@ ralph_branch_for_issue() {
 #                              an older board copy, and the spawn record then
 #                              omits the token, which every consumer must
 #                              already survive (tokens are decorative)
+#   RALPH_HERDR_NAMED_EPIC     the unit's epic root number (GH-2450/D6 unit
+#                              8) — board.ts's own epicTeamOf walk, read off
+#                              `.teamEpic` rather than re-parsed from the
+#                              address's `t<epic>-` segment (a flat unit has
+#                              no team segment to parse and would read as no
+#                              epic when it may still resolve one). Empty
+#                              against an older board copy or a flat unit —
+#                              the spawn prompt then omits `--epic` exactly as
+#                              it always has.
 _ralph_resolve_names() {
   local n="${1-}" names branch legacy
   RALPH_HERDR_NAMED_BRANCH=""
   RALPH_HERDR_NAMED_ADDRESS=""
+  RALPH_HERDR_NAMED_EPIC=""
   names=$("$BOARD" name "$n" --json) || {
     echo "ralph_branch_for_issue: \`board name $n\` failed — cannot derive the branch" >&2
     return 1
@@ -797,6 +807,8 @@ _ralph_resolve_names() {
   branch=$(printf '%s' "$names" | jq -r '.branch // empty')
   legacy=$(printf '%s' "$names" | jq -r '.legacyBranch // empty')
   RALPH_HERDR_NAMED_ADDRESS=$(printf '%s' "$names" | jq -r '.address // empty')
+  RALPH_HERDR_NAMED_EPIC=$(printf '%s' "$names" | jq -r '.teamEpic // empty')
+  case "$RALPH_HERDR_NAMED_EPIC" in '' | *[!0-9]*) RALPH_HERDR_NAMED_EPIC="" ;; esac
   if [ -z "$branch" ]; then
     echo "ralph_branch_for_issue: \`board name $n\` returned no branch" >&2
     return 1
@@ -1492,7 +1504,7 @@ ralph_dep_refs_verdict() {
 }
 
 spawn_work_session() {
-  local n="$1" queue_json="${2:-}" branch label parent title agent live pane out
+  local n="$1" queue_json="${2:-}" branch label parent title agent live pane out work_prompt
   local ref ts record ledger src lead_ref="" lead_depth=""
   local team_lead="" who_lead="" who_dispatch="" model=""
   local -a model_args=()
@@ -1538,6 +1550,17 @@ spawn_work_session() {
   # spawn record stamps (GH-2209), and a subshell would drop it on the floor.
   _ralph_resolve_names "$n" || return 1
   branch="$RALPH_HERDR_NAMED_BRANCH"
+
+  # The /ralph:work invocation this spawn sends (D6 unit 8, GH-2450): a team
+  # member carries its epic root so the session can read the root body before
+  # the unit body and re-read the root's amend markers at its checkpoint — the
+  # one thing the pane env's RALPH_HERDR_ADDRESS/WHO_LEAD tokens (below) do
+  # not carry, because those land in the shell environment, never in the
+  # prompt text the harness turns into the session's own argument. A flat
+  # unit (no epic root, or an older board with no `teamEpic`) sends the exact
+  # prompt this always sent.
+  work_prompt="/ralph:work $n"
+  [ -n "$RALPH_HERDR_NAMED_EPIC" ] && work_prompt="$work_prompt --epic $RALPH_HERDR_NAMED_EPIC"
 
   # Chain of command (GH-2217, D4.2) — derived LOCALLY from the one address
   # read the resolver already paid for, never a second board call per spawn:
@@ -1679,7 +1702,7 @@ spawn_work_session() {
     [ -n "$who_dispatch" ] && _plan_env="$_plan_env${_plan_env:+ }WHO_DISPATCH=$who_dispatch"
     [ -n "$_plan_env" ] && echo "  $HERDR pane run <captured> export $_plan_env"
     printf '%s\n' "  $HERDR agent start $agent --kind claude --pane <captured>${model:+ -- --model $model}"
-    echo "  $HERDR agent prompt $agent \"/ralph:work $n\""
+    echo "  $HERDR agent prompt $agent \"$work_prompt\""
     echo "  $HERDR agent wait $agent --until working --until blocked --timeout <${RALPH_HERDR_TURN_WAIT_SEC:-20}s>  (unconfirmed turn = failed spawn)"
     # The exact spawn record the live path would append (pane_id omitted —
     # pane ids are captured from the worktree response, never predicted) and
@@ -1907,8 +1930,8 @@ spawn_work_session() {
     [ "$#" -ge 1 ] && ralph_tokens_push "$pane" "$@"
   fi
 
-  ralph_herdr_agent_prompt "$agent" "/ralph:work $n" >/dev/null || {
-    echo "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"/ralph:work $n\"" >&2
+  ralph_herdr_agent_prompt "$agent" "$work_prompt" >/dev/null || {
+    echo "prompt delivery failed — agent $agent is LIVE and idle in pane $pane; prompt it manually: herdr agent prompt $agent \"$work_prompt\"" >&2
     return 1
   }
 
@@ -1927,7 +1950,7 @@ spawn_work_session() {
   else
     respawn="remove the worktree (herdr worktree remove --workspace <id>) and re-spawn GH-$n"
   fi
-  spawn_confirm_turn "$agent" "$pane" "/ralph:work $n" "GH-$n's agent $agent" "$respawn" || return 1
+  spawn_confirm_turn "$agent" "$pane" "$work_prompt" "GH-$n's agent $agent" "$respawn" || return 1
 
   RALPH_HERDR_SPAWNED_AGENT="$agent"
   echo "spawned GH-$n on $branch (pane $pane, agent $agent)"
