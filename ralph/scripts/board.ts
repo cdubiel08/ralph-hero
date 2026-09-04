@@ -1154,6 +1154,7 @@ export interface SmellThresholds {
   unitCtxMax: number; // GH-2347: a unit's largest single prompt (tokens) past which doctor's unit-cost line names it
   hookMin: number; // GH-2403: lookback window (minutes) for the watch-event "hook-inert" check
   leadRespawns: number; // GH-2398: scheduler respawns of ONE epic's lead within an hour at which doctor's lead-respawns line names it
+  approvalHours: number; // GH-2447: hours a PR may sit awaiting-approval before doctor's approval-wait line names it
 }
 
 export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
@@ -1196,6 +1197,11 @@ export const SMELL_DEFAULTS: Readonly<SmellThresholds> = Object.freeze({
   // reading — GH-2357 observed the loop at one respawn every ~3 s, so a real
   // loop clears any sane threshold within its first minute.
   leadRespawns: 3,
+  // A day. Matched to the design record's own default (D2/unit 5): shorter
+  // and every PR opened this afternoon reads as a smell before a reviewer's
+  // next sitting; the number is advisory, never a gate, so erring toward
+  // fewer false positives costs nothing but a slower nudge.
+  approvalHours: 24,
 });
 
 export function parseSmellThresholds(
@@ -1220,6 +1226,7 @@ export function parseSmellThresholds(
     unitCtxMax: positive("RALPH_UNIT_CTX_MAX", SMELL_DEFAULTS.unitCtxMax),
     hookMin: positive("RALPH_SMELL_HOOK_MIN", SMELL_DEFAULTS.hookMin),
     leadRespawns: positive("RALPH_SMELL_LEAD_RESPAWNS", SMELL_DEFAULTS.leadRespawns),
+    approvalHours: positive("RALPH_SMELL_APPROVAL_HOURS", SMELL_DEFAULTS.approvalHours),
   };
 }
 
@@ -6263,6 +6270,17 @@ export interface DeliverRow {
   /** GH-1929: the live foreign session holding this unit's worktree lock.
    *  Present only on `local-session-active` rows. */
   lease?: LeaseHold | null;
+  /** GH-2447 (D4) — `awaiting-approval` rows only. The wait's start, derived
+   *  from the PR's OWN GitHub timeline (ready-for-review / review-requested,
+   *  whichever is later) — never the marker's `at`, which is when the gate
+   *  last ran, not when the PR started waiting on a human. See
+   *  `deriveApprovalWait`. */
+  since?: string | null;
+  /** GH-2447 — hours from `since` to now (still waiting). Null = UNMEASURED,
+   *  never zero: no timeline anchor, or a merge/approval GitHub recorded no
+   *  event for (verbal approval, hand merge). Present only on
+   *  `awaiting-approval` rows. */
+  waitHours?: number | null;
 }
 
 export interface DeliverQueueResult {
@@ -6316,6 +6334,141 @@ export function parseConvergenceVerdict(out: string): { verdict: string; detail:
     return { verdict: j.verdict, detail: typeof j.detail === "string" ? j.detail : "" };
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Approval-wait metric (GH-2447, unit 5 of the approval-gated-hosts design,
+// D4). DERIVED from GitHub's own PR timeline, one query per PR, never
+// recorded — the ledger (unit 4) carries board transitions, not this. Kept
+// deliberately OUTSIDE `classifyDeliver`: that function is pure (candidates,
+// opts, clock, probe in; a queue out), and this is a network read that only
+// ever applies to the few rows already classified `awaiting-approval` — a
+// decoration a caller opts into (`attachApprovalWait`), never a cost every
+// classification pays.
+// ---------------------------------------------------------------------------
+
+/** The GitHub facts D4 measures approval wait from. `readyForReviewAt` and
+ *  `reviewRequestedAt` are each the LATEST such event GitHub recorded — a
+ *  re-request after changes moves the clock forward on purpose, matching
+ *  `awaitingApproval`'s own re-arm-on-delta semantics below. */
+export interface PrApprovalTimeline {
+  readyForReviewAt: string | null;
+  reviewRequestedAt: string | null;
+  /** Latest APPROVED review's `submittedAt`. */
+  approvedAt: string | null;
+  mergedAt: string | null;
+}
+
+export interface ApprovalWait {
+  /** The wait's start — the later of ready-for-review / review-requested.
+   *  Null when the timeline held neither: nothing to measure from. */
+  since: string | null;
+  /** Hours from `since` to the approving review, or (still open, still
+   *  waiting) to `now`. Null = UNMEASURED, never zero (the honest-limits
+   *  bullet in the design record): a PR merged with no approving review
+   *  GitHub recorded — approved verbally, merged by hand — leaves no anchor
+   *  to measure an interval from, and reporting zero would say "approved
+   *  instantly" about a wait nobody saw. */
+  waitHours: number | null;
+}
+
+const laterIso = (a: string | null, b: string | null): string | null =>
+  a === null ? b : b === null ? a : a > b ? a : b;
+
+/** Pure. Given the PR's own timeline facts and the clock, the wait — never
+ *  the marker's `at`, which is when the gate last RAN, not when the PR
+ *  started waiting on a human. */
+export function deriveApprovalWait(t: PrApprovalTimeline, now: Date): ApprovalWait {
+  const since = laterIso(t.reviewRequestedAt, t.readyForReviewAt);
+  if (since === null) return { since: null, waitHours: null };
+  const sinceMs = new Date(since).getTime();
+  if (t.approvedAt !== null) {
+    const approvedMs = new Date(t.approvedAt).getTime();
+    // An approval that predates the current wait (superseded by a later
+    // re-request) is not evidence of THIS wait's end — falls through exactly
+    // like "no approval yet".
+    if (approvedMs >= sinceMs) return { since, waitHours: (approvedMs - sinceMs) / 3_600_000 };
+  }
+  if (t.mergedAt !== null) return { since, waitHours: null }; // unmeasured — see the doc comment above
+  return { since, waitHours: (now.getTime() - sinceMs) / 3_600_000 };
+}
+
+/** Parses the raw `pullRequest` node from `fetchPrApprovalTimeline`'s query.
+ *  Split out so the shape is testable without a network round trip. */
+export function parseApprovalTimeline(node: any): PrApprovalTimeline {
+  const nodes: any[] = node?.timelineItems?.nodes ?? [];
+  const latestOfType = (typename: string): string | null => {
+    const ts = nodes
+      .filter((x) => x?.__typename === typename && typeof x?.createdAt === "string")
+      .map((x) => x.createdAt as string);
+    return ts.length ? ts.sort()[ts.length - 1] : null;
+  };
+  const reviews: any[] = node?.reviews?.nodes ?? [];
+  const approvedTimes = reviews
+    .filter((r) => r?.state === "APPROVED" && typeof r?.submittedAt === "string")
+    .map((r) => r.submittedAt as string);
+  return {
+    readyForReviewAt: latestOfType("ReadyForReviewEvent"),
+    reviewRequestedAt: latestOfType("ReviewRequestedEvent"),
+    approvedAt: approvedTimes.length ? approvedTimes.sort()[approvedTimes.length - 1] : null,
+    mergedAt: typeof node?.mergedAt === "string" ? node.mergedAt : null,
+  };
+}
+
+/** Two nested connections (GH-1803: cost tracks connections, not fields) —
+ *  cheap and flat regardless of how many timeline events or reviews a PR
+ *  has, since both stay on one page. */
+const APPROVAL_TIMELINE_QUERY = `
+  query($owner: String!, $repo: String!, $n: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $n) {
+        mergedAt
+        timelineItems(first: 100, itemTypes: [READY_FOR_REVIEW_EVENT, REVIEW_REQUESTED_EVENT]) {
+          nodes {
+            __typename
+            ... on ReadyForReviewEvent { createdAt }
+            ... on ReviewRequestedEvent { createdAt }
+          }
+        }
+        reviews(last: 30) { nodes { state submittedAt } }
+      }
+    }
+  }`;
+
+/** One query per PR (D4) — own-repo scope, same assumption `merge-pr.sh
+ *  --dry-run` already makes for a deliver row's PR number. Null = GitHub
+ *  answered with no such PR (deleted, or a cross-repo number this reader
+ *  cannot resolve) — the caller leaves the row undecorated rather than
+ *  inventing a wait. */
+export function fetchPrApprovalTimeline(ctx: Ctx, prNumber: number): PrApprovalTimeline | null {
+  const data: any = ghGraphQL(ctx, APPROVAL_TIMELINE_QUERY, {
+    owner: ctx.cfg.owner,
+    repo: ctx.cfg.repo,
+    n: prNumber,
+  });
+  const node = data?.repository?.pullRequest;
+  return node ? parseApprovalTimeline(node) : null;
+}
+
+/** Decorates `awaiting-approval` blocked rows with `since`/`waitHours` in
+ *  place — bounded by how many rows actually hold that reason (typically
+ *  zero to a handful), never by the size of the walk. Best-effort: a read
+ *  that fails leaves the row exactly as `classifyDeliver` produced it,
+ *  because this decoration is not what the queue's classification depends
+ *  on. */
+export function attachApprovalWait(ctx: Ctx, rows: DeliverRow[]): void {
+  for (const row of rows) {
+    if (row.reason !== "awaiting-approval" || row.pr === null) continue;
+    try {
+      const t = fetchPrApprovalTimeline(ctx, row.pr);
+      const w = t ? deriveApprovalWait(t, ctx.now()) : { since: null, waitHours: null };
+      row.since = w.since;
+      row.waitHours = w.waitHours;
+    } catch {
+      row.since = null;
+      row.waitHours = null;
+    }
   }
 }
 
@@ -6936,7 +7089,12 @@ export function deliverQueue(
   }
   // GH-1929. Unbudgeted, unlike the convergence probe: one `readdir` for the
   // whole pass and no API call at all, so there is nothing here to ration.
-  return classifyDeliver(cands, opts, ctx.now(), probe, conv, localSessionLease(ctx));
+  const result = classifyDeliver(cands, opts, ctx.now(), probe, conv, localSessionLease(ctx));
+  // GH-2447 (D4): decorate awaiting-approval rows with elapsed, derived from
+  // each PR's own timeline. Bounded by the (typically zero to a handful)
+  // rows that reason actually classifies — never by the walk.
+  attachApprovalWait(ctx, result.blocked);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -10191,6 +10349,9 @@ export function readWatchEventFireCount(ctx: Ctx, sinceMs: number, limit = 500):
 /** "$8.00" / "274k" — the two numbers every cost surface prints. */
 export const fmtUsd = (n: number): string => `$${n.toFixed(2)}`;
 export const fmtTokens = (n: number): string => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+/** "3.2h" / "1.4d" — GH-2447's approval-wait number, in whichever unit reads
+ *  honestly at its size. */
+export const fmtHours = (h: number): string => (h >= 48 ? `${(h / 24).toFixed(1)}d` : `${h.toFixed(1)}h`);
 const shortModel = (m: string): string => m.replace(/^claude-/, "");
 
 export type DoctorLevel = "ok" | "info" | "warn" | "fail";
@@ -11159,6 +11320,11 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   const checks: DoctorReport["checks"] = [];
   const add = (name: string, level: DoctorLevel, detail: string) =>
     checks.push({ name, level, detail });
+  // GH-2447: set by the item sweep below from the walk it already paid for.
+  // Gates the approval-wait line's own read — null (sweep never ran, or
+  // failed) fails toward STILL checking, never toward silently skipping a
+  // real signal.
+  let openItemsSeen: Array<{ state: string }> | null = null;
 
   // auth
   const auth = ctx.exec(["gh", "auth", "status"]);
@@ -11269,6 +11435,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     try {
       const pages = listItemsFull(ctx);
       const { own: items, foreign } = ownRepo(ctx, pages.open);
+      openItemsSeen = items; // GH-2447: this walk already has .state for free
       const closedOwn = ownRepo(ctx, pages.closed).own;
       // The report-only sweep may be answered from the item cache (GH-1806) —
       // --fix never is. A doctor line saying "ok" about a board it read 80 s
@@ -12301,6 +12468,55 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     }
   } catch (e) {
     add("lead-respawns", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
+  // Approval-wait (GH-2447, unit 5 of the approval-gated-hosts design). INFO
+  // always, same rules as the three lines above: --strict never escalates
+  // it, --fix never touches it — the only remedy is a human approving (or
+  // the ruleset changing), which no `board` verb can do on anyone's behalf.
+  // Probes are OFF (`null, null`, brief's own convention): this is a glance
+  // at rows already classified quiescent, never a gate run — and quiescent
+  // is exactly what a marker-recorded `awaiting-approval` row already is
+  // (GH-2444: reviewDecision re-reads free every pass off the phase-B PR
+  // fetch, no dry-run needed to keep seeing it). `deliverQueue` costs its
+  // own open-items walk, so it is spent only when the item sweep's own walk
+  // (openItemsSeen, above) already saw an In Review item — a board with none
+  // pays zero extra round trips for this line, and an unreadable sweep
+  // (openItemsSeen === null) fails toward still checking.
+  try {
+    const mayBeWaiting = openItemsSeen === null || openItemsSeen.some((i) => i.state === "In Review");
+    const dq = mayBeWaiting
+      ? deliverQueue(ctx, parseDeliverOpts(), null, null)
+      : { next: null, queue: [], blocked: [] as DeliverRow[] };
+    const waiting = dq.blocked.filter((b) => b.reason === "awaiting-approval");
+    if (waiting.length === 0) {
+      add("approval-wait", "ok", "no PRs currently awaiting approval");
+    } else {
+      const measured = waiting
+        .filter((b): b is typeof b & { waitHours: number } => typeof b.waitHours === "number")
+        .map((b) => b.waitHours);
+      const unmeasured = waiting.length - measured.length;
+      const sorted = [...measured].sort((a, b) => a - b);
+      const n = sorted.length;
+      const median = n > 0 ? sorted[Math.floor((n - 1) / 2)] : null;
+      const p90 = n >= 10 ? sorted[Math.max(0, Math.ceil(0.9 * n) - 1)] : null;
+      const H = ctx.cfg.smells.approvalHours;
+      const flagged = waiting
+        .filter((b) => typeof b.waitHours === "number" && b.waitHours >= H)
+        .sort((a, b) => (b.waitHours as number) - (a.waitHours as number));
+      const pop =
+        `${waiting.length} PR${waiting.length === 1 ? "" : "s"} awaiting approval` +
+        (median !== null ? ` (median ${fmtHours(median)}${p90 !== null ? `, p90 ${fmtHours(p90)}` : ", p90 needs ≥10"})` : "") +
+        (unmeasured > 0 ? `, ${unmeasured} unmeasured` : "");
+      if (flagged.length === 0) {
+        add("approval-wait", "ok", `${pop}; none past RALPH_SMELL_APPROVAL_HOURS (${H}h)`);
+      } else {
+        const rows = flagged.map((b) => `#${b.number} pr#${b.pr} ${fmtHours(b.waitHours as number)}`);
+        add("approval-wait", "info", `${pop}; past the line: ${rows.join(", ")}`);
+      }
+    }
+  } catch (e) {
+    add("approval-wait", "info", `not evaluated: ${(e as Error).message}`);
   }
 
   // GraphQL spend attribution (audit B2). INFO always: a number is a fact,
@@ -13599,6 +13815,12 @@ maintenance
                               work-team.sh EPIC --stand-down; a frontier
                               with ready work is a lead dying with work
                               available, a different fact; GH-2398).
+                              RALPH_SMELL_APPROVAL_HOURS (24 — "approval-wait":
+                              PRs currently awaiting-approval, median and p90
+                              hours DERIVED from each PR's own GitHub
+                              timeline (never recorded); named when past the
+                              line; "unmeasured" counts PRs with no timeline
+                              anchor separately, never as zero; GH-2447).
                               "foreign-repo-policy" reports the posture in
                               effect and whether it was configured or
                               defaulted; "foreign-items" warns when items from
@@ -13742,7 +13964,7 @@ export const VERB_HELP: Record<string, string> = {
   add: "board add <issue-url>\n  Add an issue by URL — the sanctioned cross-repo path, gated on RALPH_ALLOW_FOREIGN_REPO_ITEMS.\n  example: board add https://github.com/o/r/issues/9",
   reconcile: "board reconcile <n>\n  Reality sync: GitHub open/closed wins over the board.\n  example: board reconcile 1234",
   "parent-check": "board parent-check <n>\n  Roll a parent forward when every child is closed.\n  example: board parent-check 1200",
-  "deliver-queue": "board deliver-queue [--json]\n  Quiescent In Review items with actionable PR signal (the deliver lane's selector).\n  example: board deliver-queue --json",
+  "deliver-queue": "board deliver-queue [--json]\n  Quiescent In Review items with actionable PR signal (the deliver lane's selector).\n  An awaiting-approval row shows elapsed, derived from the PR's own GitHub timeline (GH-2447).\n  example: board deliver-queue --json",
   "tend-queue": "board tend-queue [--json]\n  Backlog-hygiene and Done-audit rows (the tend lane's selector).\n  example: board tend-queue",
   "dep-candidates":
     "board dep-candidates <n> [--json]\n  Unclaimed Backlog items that might depend on #n (or vice versa), by term overlap — recall-biased, never writes an edge.\n  example: board dep-candidates 2135",
@@ -14990,6 +15212,14 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "deliver-queue": {
       const res = deliverQueue(ctx);
+      // GH-2447: an awaiting-approval row names how long — derived, not the
+      // marker's `at` (attachApprovalWait already ran inside deliverQueue).
+      // Unmeasured (no timeline anchor) says so rather than hiding the row.
+      const blockedLabel = (b: DeliverRow): string => {
+        const base = `#${b.number}${b.pr ? ` pr#${b.pr}` : ""}←${b.reason}`;
+        if (b.reason !== "awaiting-approval") return base;
+        return typeof b.waitHours === "number" ? `${base}(${fmtHours(b.waitHours)})` : `${base}(unmeasured)`;
+      };
       // A stalled loop is the one blocked row whose remedy is a human's, so it
       // gets its detail line rather than a bare `←reason` (GH-1977).
       const stalledLines = (): void => {
@@ -15017,9 +15247,7 @@ export function run(argv: string[], ctx: Ctx): number {
       if (flags.json) json(res);
       else if (!res.next) {
         const why = res.blocked.length
-          ? ` (${res.blocked.length} blocked: ${res.blocked
-              .map((b) => `#${b.number}${b.pr ? ` pr#${b.pr}` : ""}←${b.reason}`)
-              .join(" ")})`
+          ? ` (${res.blocked.length} blocked: ${res.blocked.map(blockedLabel).join(" ")})`
           : "";
         out(`deliver queue empty${why}`);
         stalledLines();
@@ -15030,12 +15258,7 @@ export function run(argv: string[], ctx: Ctx): number {
           }] ${r.title}`;
         out(`deliver next: ${rowLine(res.next)}`);
         for (const r of res.queue.slice(1, 6)) out(`  then ${rowLine(r)}`);
-        if (res.blocked.length)
-          out(
-            `  blocked: ${res.blocked
-              .map((b) => `#${b.number}${b.pr ? ` pr#${b.pr}` : ""}←${b.reason}`)
-              .join(" ")}`,
-          );
+        if (res.blocked.length) out(`  blocked: ${res.blocked.map(blockedLabel).join(" ")}`);
         stalledLines();
       }
       return 0;

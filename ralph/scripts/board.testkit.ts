@@ -78,6 +78,17 @@ export interface FakeIssue {
     // GH-2444: GitHub's own approval-rule verdict — read straight off the
     // deliver phase-B PR node, no dry-run probe involved.
     reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+    // GH-2447: the PR's own timeline, served only to fetchPrApprovalTimeline's
+    // query — deliberately separate from reviewsAt/pushedAt above, which
+    // drive the cheap deliver cursors and mean something different (any
+    // review, any push) than this (ready/request events, an APPROVED review,
+    // mergedAt).
+    approvalTimeline?: {
+      readyForReviewAt?: string | null;
+      reviewRequestedAt?: string | null;
+      approvedAt?: string | null;
+      mergedAt?: string | null;
+    };
   }>;
   branchPrs?: FakeIssue["prs"]; // sugar: PRs on the LEGACY feature/GH-NNN branch
   /** Branch-convention refs by name. Both linkage readers see these: the
@@ -580,6 +591,28 @@ export class FakeGh {
         }),
         stderr: "",
       };
+    }
+
+    // GH-2447: approval-wait's own timeline query, one PR per call, keyed by
+    // NUMBER (own-repo scope, unlike the id-keyed phase B below). Matched
+    // before it since both mention "pullRequest"/"node" adjacent text.
+    if (query.includes("timelineItems(")) {
+      const n = Number((variables as any).n);
+      const p = this.allPrs().get(`PR_${n}`);
+      if (!p) return data({ repository: { pullRequest: null } });
+      const t = p.approvalTimeline ?? {};
+      const nodes: unknown[] = [];
+      if (t.readyForReviewAt) nodes.push({ __typename: "ReadyForReviewEvent", createdAt: t.readyForReviewAt });
+      if (t.reviewRequestedAt) nodes.push({ __typename: "ReviewRequestedEvent", createdAt: t.reviewRequestedAt });
+      return data({
+        repository: {
+          pullRequest: {
+            mergedAt: t.mergedAt ?? null,
+            timelineItems: { nodes },
+            reviews: { nodes: t.approvedAt ? [{ state: "APPROVED", submittedAt: t.approvedAt }] : [] },
+          },
+        },
+      });
     }
 
     // Deliver-lane phase B (GH-1811): pK alias per OPEN PR, facts only. Keyed
