@@ -75,6 +75,9 @@ export interface FakeIssue {
     threadsAt?: string[]; // unresolved-thread last-comment times
     commentAt?: string;
     pushedAt?: string;
+    // GH-2444: GitHub's own approval-rule verdict — read straight off the
+    // deliver phase-B PR node, no dry-run probe involved.
+    reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
   }>;
   branchPrs?: FakeIssue["prs"]; // sugar: PRs on the LEGACY feature/GH-NNN branch
   /** Branch-convention refs by name. Both linkage readers see these: the
@@ -454,6 +457,8 @@ export class FakeGh {
     return {
       ...this.deliverPrLink(p),
       headRefOid: p.headSha ?? "deadbeef",
+      reviewDecision: p.reviewDecision ?? null,
+      mergeable: p.mergeable ?? null,
       commits: {
         nodes: [
           {

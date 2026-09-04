@@ -5727,6 +5727,8 @@ describe("deliver-queue: classification (spec §4.2)", () => {
     reviewCursor: null,
     threadCursor: null,
     lastActivityAt: "2026-07-31T11:00:00Z", // 60 min ago — well settled
+    reviewDecision: null,
+    mergeable: null,
     ...over,
   });
   // Fixtures declare `prs` as full facts; `openPrs` is derived the way the
@@ -5857,6 +5859,111 @@ describe("deliver-queue: classification (spec §4.2)", () => {
     expect(probed).toEqual([]);
     expect(res.next).toBeNull();
     expect(res.blocked[0]).toMatchObject({ reason: "retry-window" });
+  });
+
+  it("GH-2444: marker says gate=approval + reviewDecision REVIEW_REQUIRED + no cheap delta → `awaiting-approval`, outside the retry window, zero probes across two passes", () => {
+    const probed: number[] = [];
+    const probe: Parameters<typeof classifyDeliver>[3] = (pr) => {
+      probed.push(pr);
+      return { verdict: "PASS", gate: null };
+    };
+    // `at` 90 min ago: the retry window has EXPIRED, which used to re-arm a
+    // session every hour forever. The approval hold outranks the window.
+    const approval = entry({ verdict: "PENDING", gate: "approval", at: "2026-07-31T10:30:00Z" });
+    const cands = [
+      cand(1, { prs: [dpr(101, { reviewDecision: "REVIEW_REQUIRED" })], marker: { "101": approval } }),
+    ];
+    const pass1 = classifyDeliver(cands, DELIVER_DEFAULTS, NOW, probe);
+    expect(pass1.next).toBeNull();
+    expect(pass1.blocked).toEqual([
+      {
+        number: 1,
+        title: "Issue 1",
+        pr: 101,
+        reason: "awaiting-approval",
+        verdict: "PENDING",
+        gate: "approval",
+        deltaAt: "2026-07-31T10:30:00Z", // the marker's `at` IS the row's since
+        windowExpiresAt: null,
+      },
+    ]);
+    const pass2 = classifyDeliver(cands, DELIVER_DEFAULTS, NOW, probe);
+    expect(pass2.blocked).toMatchObject([{ number: 1, reason: "awaiting-approval" }]);
+    expect(probed).toEqual([]); // zero gate runs across both passes
+  });
+
+  it("GH-2444: reviewDecision alone never holds a row — a marker-less PR still probes, and an earlier gate's verdict wins", () => {
+    // The reviewer's P1 on #2468: in an approval-gated host every PR reads
+    // REVIEW_REQUIRED from the moment it opens; a shortcut on the field would
+    // stop the lane from ever requesting the external review or fixing CI.
+    const probed: number[] = [];
+    const res = classify([cand(1, { prs: [dpr(101, { reviewDecision: "REVIEW_REQUIRED" })] })], (pr) => {
+      probed.push(pr);
+      return { verdict: "FAIL", gate: "checks" };
+    });
+    expect(probed).toEqual([101]);
+    expect(res.next).toMatchObject({ number: 1, reason: "actionable", verdict: "FAIL", gate: "checks" });
+  });
+
+  it("GH-2444: the probe half — a dry-run reporting PENDING — approval holds the row instead of confirming it", () => {
+    const res = classify([cand(1, { prs: [dpr(101, { reviewDecision: "REVIEW_REQUIRED" })] })], () => ({
+      verdict: "PENDING",
+      gate: "approval",
+    }));
+    expect(res.next).toBeNull();
+    expect(res.blocked).toMatchObject([
+      { number: 1, pr: 101, reason: "awaiting-approval", verdict: "PENDING", gate: "approval", windowExpiresAt: null },
+    ]);
+    // The gate token alone is not enough either: once GitHub no longer reads
+    // REVIEW_REQUIRED the probe result is stale and the row confirms as usual.
+    const cleared = classify([cand(2, { prs: [dpr(102, { reviewDecision: "APPROVED" })] })], () => ({
+      verdict: "PENDING",
+      gate: "approval",
+    }));
+    expect(cleared.next).toMatchObject({ number: 2, reason: "actionable" });
+  });
+
+  it("GH-2444: an approval hold re-arms on the approval's own review (cheap delta) and on reviewDecision moving", () => {
+    const approval = entry({ verdict: "PENDING", gate: "approval", at: "2026-07-31T10:30:00Z" });
+    const probed: number[] = [];
+    const probe: Parameters<typeof classifyDeliver>[3] = (pr) => {
+      probed.push(pr);
+      return { verdict: "PASS", gate: null };
+    };
+    // The approving review moves review_cursor → probe → PASS → actionable.
+    const reviewed = classifyDeliver(
+      [cand(1, { prs: [dpr(101, { reviewDecision: "APPROVED", reviewCursor: "2026-07-31T11:00:00Z" })], marker: { "101": approval } })],
+      DELIVER_DEFAULTS, NOW, probe,
+    );
+    expect(probed).toEqual([101]);
+    expect(reviewed.next).toMatchObject({ number: 1, reason: "actionable", verdict: "PASS" });
+    // reviewDecision moved with no cheap delta (rule relaxed): back on the
+    // ordinary window — expired here, so a bounded retry, not a hold.
+    const relaxed = classifyDeliver(
+      [cand(2, { prs: [dpr(102, { reviewDecision: null })], marker: { "102": approval } })],
+      DELIVER_DEFAULTS, NOW, probe,
+    );
+    expect(relaxed.next).toMatchObject({ number: 2, reason: "retry" });
+  });
+
+  it("GH-2444: a CONFLICTING PR is never held — a base advance moves nothing in the cheap tuple, so the conflict releases the hold to the ordinary window", () => {
+    const approval = entry({ verdict: "PENDING", gate: "approval", at: "2026-07-31T10:30:00Z" }); // window expired
+    const facts = (mergeable: DeliverPrFacts["mergeable"]) =>
+      dpr(101, { reviewDecision: "REVIEW_REQUIRED", mergeable });
+    const conflicting = classify([cand(1, { prs: [facts("CONFLICTING")], marker: { "101": approval } })]);
+    expect(conflicting.next).toMatchObject({ number: 1, reason: "retry" }); // a session rebases
+    // MERGEABLE, UNKNOWN (still computing) and unreported all keep the hold:
+    // none is evidence of work to do.
+    for (const m of ["MERGEABLE", "UNKNOWN", null] as const) {
+      const held = classify([cand(1, { prs: [facts(m)], marker: { "101": approval } })]);
+      expect(held.blocked, String(m)).toMatchObject([{ number: 1, reason: "awaiting-approval" }]);
+    }
+    // The probe half releases the same way.
+    const probed = classify([cand(2, { prs: [dpr(102, { reviewDecision: "REVIEW_REQUIRED", mergeable: "CONFLICTING" })] })], () => ({
+      verdict: "PENDING",
+      gate: "approval",
+    }));
+    expect(probed.next).toMatchObject({ number: 2, reason: "actionable" });
   });
 
   it("bounded retry re-arms after RALPH_RETRY_MIN for EVERY verdict class — unchanged PENDING and unchanged PASS alike", () => {
@@ -10539,6 +10646,7 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
           row(15, "marker-current"),
           row(16, "deferred"),
           row(17, "reviewer-rate-limited"),
+          row(18, "awaiting-approval"),
         ],
       },
     );
@@ -10548,9 +10656,17 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
     expect(res.deliverBlocked.find((r) => r.number === 11)!.detail).toContain("board move 11 in-progress");
     const withheldReasons = res.withheld.map((w) => w.reason).sort();
     expect(withheldReasons).toEqual(
-      ["deferred", "local-session-active", "marker-current", "retry-window", "reviewer-rate-limited", "settling"].sort(),
+      [
+        "awaiting-approval",
+        "deferred",
+        "local-session-active",
+        "marker-current",
+        "retry-window",
+        "reviewer-rate-limited",
+        "settling",
+      ].sort(),
     );
-    expect(res.withheld.reduce((s, w) => s + w.count, 0)).toBe(6);
+    expect(res.withheld.reduce((s, w) => s + w.count, 0)).toBe(7);
   });
 
   it("one row per issue: a proposal outranks approving the same Intake item; a decision outranks everything", () => {

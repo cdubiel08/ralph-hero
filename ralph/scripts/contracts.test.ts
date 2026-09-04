@@ -24,6 +24,7 @@ import {
   CONTRACT_IDS,
   type ContractId,
   DEFAULT_BRANCH_KIND,
+  DELIVER_REASONS,
   emitJsonSchemas,
   formatBranchName,
   parseBranchName,
@@ -901,6 +902,10 @@ describe("C6 BoardQueue refinements", () => {
     expect(res.success).toBe(false);
     expect(issuesOf(res)).toContain("queue numbers must be unique");
   });
+
+  it("GH-2444: `awaiting-approval` is a declared DeliverReason", () => {
+    expect(DELIVER_REASONS).toContain("awaiting-approval");
+  });
 });
 
 describe("C8 TokenVocabulary", () => {
@@ -1014,6 +1019,52 @@ describe("C6 parity: real `board … --json` output validates against the schema
       const parsed = capture(["deliver-queue", "--json"], ctx) as { queue: unknown[]; blocked: unknown[] };
       expect(parsed.queue.length).toBeGreaterThan(0);
       expect(parsed.blocked.length).toBeGreaterThan(0);
+      const res = validateContract("ralph.board_queue", envelope("deliver-queue", parsed));
+      expect(res.success, issuesOf(res)).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("GH-2444: deliver-queue --json reports a gate-recorded approval wait as `awaiting-approval` with no probe", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const OLD = "2026-07-31T10:00:00Z"; // settled relative to testkit NOW
+    // The marker a deliver session wrote after merge-pr.sh reported
+    // `PENDING — approval`; every cursor matches the fixture's PR facts, so
+    // nothing cheap has moved, and `at` is past the retry window.
+    const marker = JSON.stringify({
+      prs: {
+        "101": {
+          head_sha: "sha-a",
+          verdict: "PENDING",
+          gate: "approval",
+          check_conclusions: "",
+          review_cursor: null,
+          thread_cursor: null,
+          at: OLD,
+        },
+      },
+    });
+    gh.issues.set(1, {
+      number: 1,
+      state: "In Review",
+      stateUpdatedAt: OLD,
+      comments: [`<!-- ralph-deliver:v1 -->\n\`\`\`json\n${marker}\n\`\`\``],
+      commentTimes: [OLD],
+      prs: [
+        { number: 101, merged: false, headSha: "sha-a", pushedAt: OLD, reviewDecision: "REVIEW_REQUIRED" },
+      ],
+    });
+    try {
+      // Ambient RALPH_* exports must not steer classification (board.test.ts parity).
+      vi.stubEnv("RALPH_SETTLE_MIN", undefined);
+      vi.stubEnv("RALPH_RETRY_MIN", undefined);
+      vi.stubEnv("RALPH_DELIVER_DRYRUN_MAX", undefined);
+      vi.stubEnv("RALPH_MERGE_PR_SH", undefined);
+      const parsed = capture(["deliver-queue", "--json"], ctx) as { queue: unknown[]; blocked: unknown[] };
+      expect(parsed.queue).toHaveLength(0);
+      expect(parsed.blocked).toMatchObject([{ number: 1, pr: 101, reason: "awaiting-approval" }]);
       const res = validateContract("ralph.board_queue", envelope("deliver-queue", parsed));
       expect(res.success, issuesOf(res)).toBe(true);
     } finally {

@@ -6208,6 +6208,19 @@ export interface DeliverPrFacts {
   /** Newest of head push / PR comment / review / thread activity — the PR's
    *  contribution to the quiescence clock and the delta's own timestamp. */
   lastActivityAt: string | null;
+  /** GH-2444: GitHub's own verdict on the base ruleset's approval rule — the
+   *  same field merge-pr.sh gate 1b reads. A scalar, so it rides this same
+   *  phase-B fetch at zero extra cost (GH-1803: only nested connections
+   *  charge). It is the CLEARING signal for an `awaiting-approval` row, read
+   *  free every pass; it never classifies one on its own (see
+   *  awaitingApproval). */
+  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  /** GH-2444: GitHub's merge-conflict verdict, the one gate input the cheap
+   *  cursors above cannot see — a base advance that makes the PR CONFLICTING
+   *  moves no head, check, review or thread. Read here (a free scalar) so an
+   *  `awaiting-approval` hold releases to the ordinary window when the PR
+   *  needs a rebase before anyone can approve it. Null = GitHub did not say. */
+  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | null;
 }
 
 export interface DeliverCandidate {
@@ -6304,6 +6317,33 @@ export function parseConvergenceVerdict(out: string): { verdict: string; detail:
   } catch {
     return null;
   }
+}
+
+/** GH-2444: is this PR waiting on nothing but the base ruleset's own approval
+ *  rule? Two facts must agree: the gate's LAST run (a marker entry or a fresh
+ *  probe) named `approval` as the pending gate — merge-pr.sh's gate 1b, which
+ *  runs after every other gate, so the token itself certifies the rest passed
+ *  — and GitHub's `reviewDecision` still reads REVIEW_REQUIRED. Either alone
+ *  is not enough: the field alone is true of every PR in an approval-gated
+ *  host from the moment it opens (the reviewer's P1 on #2468), and the gate
+ *  token alone may be stale once an approval landed. A CONFLICTING PR is
+ *  never held (the second P1): the conflict is invisible to the cheap tuple. */
+export const APPROVAL_GATE = "approval";
+function awaitingApproval(
+  gate: { verdict: string; gate: string | null },
+  pr: Pick<DeliverPrFacts, "reviewDecision" | "mergeable">,
+): boolean {
+  return (
+    gate.verdict === "PENDING" &&
+    gate.gate === APPROVAL_GATE &&
+    pr.reviewDecision === "REVIEW_REQUIRED" &&
+    // A conflict is the one gate input the cheap cursors cannot see (a base
+    // advance moves nothing in the tuple), so it releases the hold: the row
+    // returns to the ordinary window and a session rebases. Anything else —
+    // MERGEABLE, UNKNOWN (GitHub still computing), null (not reported) — is
+    // not evidence of work to do, so it keeps the hold.
+    pr.mergeable !== "CONFLICTING"
+  );
 }
 
 /** Pure classification per spec §4.2 — deterministic given candidates, opts,
@@ -6411,6 +6451,32 @@ export function classifyDeliver(
       const windowExpired = entryAt === null || now.getTime() - entryAt >= retryMs;
       if (cheapDelta) {
         probeCands.push({ c, pr: p, entry, deltaAt: ms(p.lastActivityAt) ?? 0 });
+      } else if (awaitingApproval(entry, p)) {
+        // GH-2444: the recorded gate run said the base ruleset's own approval
+        // rule is the ONLY thing left (merge-pr.sh runs gate 1b last, so an
+        // `approval` token means every earlier gate passed), nothing cheap has
+        // moved since, and GitHub still reads REVIEW_REQUIRED. Before this
+        // branch the row cycled retry-window → retry on `retryMs` forever —
+        // one full deliver session per PR per window, none of which could do
+        // anything but rediscover the wait. Held quiescent instead, outside
+        // the window: `reviewDecision` is re-read for free every pass (a
+        // scalar on the phase-B fetch), and a human's approval also lands a
+        // review, which moves `review_cursor` and re-arms the probe. The
+        // marker's `at` is the row's `since`. Never a shortcut on
+        // REVIEW_REQUIRED alone: in an approval-gated host every PR reads
+        // that from the moment it opens, and a marker-less or delta-carrying
+        // PR still needs the gates run (a review request, a CI fix, a
+        // rebase) before an approver has anything to approve.
+        blocked.push({
+          number: c.number,
+          title: c.title,
+          pr: p.number,
+          reason: "awaiting-approval",
+          verdict: entry.verdict,
+          gate: entry.gate ?? null,
+          deltaAt: entry.at,
+          windowExpiresAt: null,
+        });
       } else if (windowExpired) {
         // Bounded retry, ANY verdict (§4.2.3b): a stuck PENDING and a recorded
         // PASS whose PR never merged re-arm identically. No selector-side
@@ -6466,6 +6532,16 @@ export function classifyDeliver(
       // Probe crashed (no parseable verdict) — still actionable; the session
       // runs the gates itself and finds out.
       confirmed.push({ ...base, reason: "actionable", verdict: null, gate: null });
+      continue;
+    }
+    if (awaitingApproval(v, pc.pr)) {
+      // GH-2444, the probe half: the dry-run itself just reported approval as
+      // the current blocker. A session dispatched now could only rediscover
+      // the wait, so the row is held instead of confirmed. Honest cost: no
+      // session ever writes a marker for it, so a marker-less (or
+      // delta-carrying) approval wait spends one budgeted probe per pass
+      // until a human approves — bounded by dryrunMax, never a session.
+      blocked.push({ ...base, reason: "awaiting-approval", verdict: v.verdict, gate: v.gate, windowExpiresAt: null });
       continue;
     }
     const tupleEqual =
@@ -6590,7 +6666,7 @@ const DELIVER_PR_LINK = `id number state`;
  *  Selected ONLY under a top-level `node(id:)` alias (phase B): a single node
  *  multiplies nothing, so this costs ~212 nodes per PR flat. */
 const DELIVER_PR_FACTS = `
-  number state headRefOid
+  number state headRefOid reviewDecision mergeable
   commits(last: 1) { nodes { commit { committedDate pushedDate
     statusCheckRollup { contexts(first: 100) { nodes {
       __typename
@@ -6638,6 +6714,8 @@ function prFactsFrom(node: any): DeliverPrFacts {
       reviewCursor,
       anyThread,
     ]),
+    reviewDecision: node.reviewDecision ?? null,
+    mergeable: node.mergeable ?? null,
   };
 }
 
@@ -8634,11 +8712,15 @@ export interface InboxTier1 {
  *  (local-session-active, settling, retry-window, marker-current — their
  *  `windowExpiresAt` IS their disposition), `deferred` (probe-budget backoff;
  *  the next deliver pass re-probes with no human in the loop), and
- *  `reviewer-rate-limited`, which CANNOT enter: it has no disposing verb and
- *  no computable expiry (the quota reset instant is the reviewer's secret),
- *  so admitting it would put a row in the decision queue nothing can dispose.
- *  `no-pr`'s population is rollup-advanced epic parents and human-placed
- *  items (see classifyDeliver) — nothing but a human ever clears one. */
+ *  `reviewer-rate-limited` and `awaiting-approval`, neither of which CAN
+ *  enter: both have no disposing `board` verb and no computable expiry (the
+ *  quota reset instant is the reviewer's secret; a native-approval wait
+ *  clears on a GitHub review, not a board write) — GH-2444's clearer is
+ *  literally "a human approves the PR", which has no `board` spelling, so
+ *  admitting either would put a row in the decision queue nothing here can
+ *  dispose. `no-pr`'s population is rollup-advanced epic parents and
+ *  human-placed items (see classifyDeliver) — nothing but a human ever
+ *  clears one. */
 export const INBOX_DELIVER_VERBS: Partial<Record<DeliverReason, (n: number) => string>> = {
   "convergence-stalled": (n) => `board move ${n} in-progress --why "<rework direction>"`,
   "no-pr": (n) => `board move ${n} done (passes bare on an all-children-closed epic root; else --why "<review verdict>")`,

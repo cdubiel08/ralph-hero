@@ -823,6 +823,7 @@ export const DELIVER_REASONS = [
   "convergence-stalled", // GH-1977: review-convergence.sh says `stalled`/`cap-reached` — held OUT of the queue so an unattended lane stops re-requesting, surfaced as its own blocked row so it never reads as "merged"
   "reviewer-rate-limited", // audit B7: the merge gate's own text says the external reviewer is rate-limited — a session dispatched now would only rediscover the wait. Self-clearing: the next pass re-reads the gate
   "local-session-active", // GH-1929: a live session on THIS machine holds the GH-1956 worktree lock for this unit — it may be sitting on unpushed local commits, which no remote signal can see. Held OUT of the queue until the lock ages out on RALPH_LOCK_TTL_MIN
+  "awaiting-approval", // GH-2444: the gate's last run (marker or probe) named `approval` — merge-pr.sh's gate 1b, which runs LAST, so every other gate passed — and the PR's own `reviewDecision` still reads REVIEW_REQUIRED. Held OUT of the retry window with no session: `reviewDecision` is re-read free every pass off the PR-facts fetch, and the approval's own review re-arms the probe. Only a human approving (or the rule changing) clears it
 ] as const;
 /** THE tend-lane category list (same single-declaration rule): board.ts
  *  derives its TendCategory type from this tuple. */
