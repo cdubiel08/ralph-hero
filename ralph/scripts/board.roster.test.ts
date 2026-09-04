@@ -416,7 +416,63 @@ describe("roster: derived-address fallback for token-less agents (installed cock
     const v = view(ctxFor(gh), true);
     expect(v.rows[0].repo).toBe("landcrawler-ai");
     expect(v.rows[0].address).toBeNull();
+    expect(v.rows[0].note).toContain("not derived");
     expect(gh.graphqlCalls).toBe(0);
+  });
+
+  it("--all derives an off-repo row's address through THAT checkout's own config, never ours (GH-2453)", () => {
+    const gh = new FakeGh();
+    // The parent edge is a cross-repo edge unless it names the SAME repo the
+    // derivation ctx carries (fetchIssue drops off-repo parent edges by
+    // design) — so this fixture, unlike chainIssues, is scoped to the
+    // foreign identity the derivation will actually query as.
+    gh.issues.set(100, {
+      number: 100,
+      state: "In Progress",
+      title: "Herd epic",
+      repo: "someone-else/landcrawler-ai",
+      children: [{ number: 102, state: "Backlog", issueState: "OPEN" }],
+    });
+    gh.issues.set(102, {
+      number: 102,
+      state: "In Progress",
+      title: "Leaf unit",
+      repo: "someone-else/landcrawler-ai",
+      parent: 100,
+      parentRepo: "someone-else/landcrawler-ai",
+    });
+    const other = join(root, "other-repo");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(
+      join(other, ".ralph.json"),
+      JSON.stringify({ owner: "someone-else", repo: "landcrawler-ai", projectNumber: 3 }),
+    );
+    serveHerdr(
+      gh,
+      [{ name: "w102-leaf-unit", agent_status: "working", cwd: other, workspace_id: "w2", tokens: {} }],
+      [{ workspace_id: "w2", repo_name: "landcrawler-ai" }],
+    );
+    const v = view(ctxFor(gh), true);
+    expect(v.rows[0]).toMatchObject({
+      repo: "landcrawler-ai",
+      address: "landcrawler-ai/t100-herd-epic/w102-leaf-unit",
+      addressSource: "derived",
+      teamEpic: 100,
+      issue: 102,
+    });
+  });
+
+  it("an off-repo row with no cwd, or an unreadable config, says WHY it derived nothing", () => {
+    const gh = new FakeGh();
+    chainIssues(gh);
+    serveHerdr(
+      gh,
+      [{ name: "w102-leaf-unit", agent_status: "working", workspace_id: "w2", tokens: {} }], // no cwd
+      [{ workspace_id: "w2", repo_name: "landcrawler-ai" }],
+    );
+    const v = view(ctxFor(gh), true);
+    expect(v.rows[0].address).toBeNull();
+    expect(v.rows[0].note).toContain("no checkout cwd");
   });
 });
 

@@ -1121,6 +1121,22 @@ export function loadConfig(repoRoot: string): Config {
   };
 }
 
+/** Best-effort config for a checkout THIS process does not own (GH-2453) —
+ *  `board who`'s owner/repo label and the roster's off-repo address
+ *  derivation both read another checkout's own config rather than assume it
+ *  matches ours. Reuses `loadConfig` whole (same precedence, same fields) and
+ *  swallows whatever it throws: a missing repo root, a missing config file, a
+ *  malformed one, or one missing owner/repo/projectNumber are all just
+ *  "unreadable" here. This is advisory labeling for a human, never a
+ *  mutation-path load, so it must never throw. */
+export function loadConfigQuiet(repoRoot: string): Config | null {
+  try {
+    return loadConfig(repoRoot);
+  } catch {
+    return null;
+  }
+}
+
 /** Doctor's state-smell tripwires (GH-1715): how much observed failure a
  *  single issue must have accumulated before doctor says anything about it.
  *  Defaults are deliberately conservative — a check that fires on a healthy
@@ -3802,6 +3818,12 @@ export interface LeaseRow {
   /** Whether this lock's checkout belongs to the configured repo. null = could
    *  not tell (either side unresolved), which is kept, never withheld. */
   sameRepo: boolean | null;
+  /** `owner/repo`, for labeling a lease that may not be ours (GH-2453). Our
+   *  own repo's identity is read from OUR config (zero I/O, authoritative); a
+   *  foreign or unresolved checkout is asked its OWN config file, which may
+   *  not exist or may not be readable — null then, same as every other
+   *  "could not tell" here, never a guess. */
+  ownerRepo: string | null;
 }
 export function readLocalLeases(ctx: Ctx): LeaseRow[] | null {
   if (!ctx.session?.dir) return null;
@@ -3826,6 +3848,19 @@ export function readLocalLeases(ctx: Ctx): LeaseRow[] | null {
     const state = worktreeState(held.lock.worktree);
     // Only a checkout that is actually there can be asked what repo it is.
     const theirCommon = state === "present" ? gitCommonDir(held.lock.worktree) : null;
+    const sameRepo = ourCommon && theirCommon ? ourCommon === theirCommon : null;
+    // Our own repo's identity is already known (zero I/O); a foreign or
+    // unresolved one is asked its OWN config file, only when present — the
+    // same "present only" gate `theirCommon` uses just above.
+    const ownerRepo =
+      sameRepo === true
+        ? `${ctx.cfg.owner}/${ctx.cfg.repo}`
+        : state === "present"
+          ? (() => {
+              const foreign = loadConfigQuiet(held.lock.worktree);
+              return foreign ? `${foreign.owner}/${foreign.repo}` : null;
+            })()
+          : null;
     rows.push({
       issue: Number(m[1]),
       session: held.lock.session,
@@ -3836,7 +3871,8 @@ export function readLocalLeases(ctx: Ctx): LeaseRow[] | null {
       ours: held.lock.session === (ctx.session.id ?? ""),
       file,
       worktreeState: state,
-      sameRepo: ourCommon && theirCommon ? ourCommon === theirCommon : null,
+      sameRepo,
+      ownerRepo,
     });
   }
   rows.sort((a, b) => a.issue - b.issue);
@@ -4155,6 +4191,21 @@ const teamString = (t: { epic: number; slug: string }): string => `t${t.epic}-${
  *  and a row past the budget says "not derived (budget)", which is a
  *  different fact from unattributable. Derivation failures degrade the ROW,
  *  never the roster: one rate-limited walk may not take down the view. */
+/** A Ctx scoped to ANOTHER checkout's own board config (GH-2453) — used only
+ *  to derive a roster address for an off-repo row, never for a write. Shares
+ *  this process's exec/cache/session (there is only one `gh`, and GraphQL
+ *  variables carry the owner/repo, not the process); only `cfg` and
+ *  `repoRoot` change, walking up from the agent's own reported cwd to find
+ *  its checkout root the same way this process found its own. Null when that
+ *  checkout's config cannot be read — a foreign checkout's config errors are
+ *  never surfaced into THIS process's roster, only silence (row.note says
+ *  why one row derived nothing). */
+function foreignCtxFor(ctx: Ctx, cwd: string): Ctx | null {
+  const root = findRepoRoot(cwd);
+  const cfg = loadConfigQuiet(root);
+  return cfg === null ? null : { ...ctx, cfg, repoRoot: root };
+}
+
 export function rosterView(ctx: Ctx, opts: { all: boolean; deriveMax: number }): RosterView {
   const { agents, reason: agentsReason } = readHerdAgents(ctx);
   const { workspaces, reason: workspacesReason } = readHerdWorkspaces(ctx);
@@ -4163,7 +4214,13 @@ export function rosterView(ctx: Ctx, opts: { all: boolean; deriveMax: number }):
   let deriveSpent = 0;
   // Budget note: deriveMax counts DERIVATIONS (unique issues), not fetches —
   // one deep parent chain pays several fetchIssue calls under one tick.
-  const derived = new Map<number, { team: { epic: number; title: string } | null; title: string } | null>();
+  // Keyed by "owner/repo#issue", never a bare issue number (GH-2453): once
+  // a foreign repo's own #N can be derived too, two repos' own #N would
+  // otherwise collide on one cache slot and one budget entry. The owner
+  // comes from the ctx the derivation actually queries as — the row's own
+  // `repo` is a basename (the address grammar's segment) and cannot tell two
+  // owners' same-named repos apart.
+  const derived = new Map<string, { team: { epic: number; title: string } | null; title: string } | null>();
   const rowLease = new Map<RosterRow, LeaseRow>();
   const usedLeases = new Set<string>();
 
@@ -4218,27 +4275,38 @@ export function rosterView(ctx: Ctx, opts: { all: boolean; deriveMax: number }):
       // address is null — every other null in this view carries its reason.
       else if (row.repo === ctx.cfg.repo && named?.kind !== "v2")
         row.note = named?.kind === "legacy" ? "no derivable address (legacy session name)" : "no derivable address (name not grammar B)";
-      // Derived-address fallback: own-repo, grammar-B named, budgeted.
-      else if (row.repo === ctx.cfg.repo && named?.kind === "v2") {
-        if (derived.has(named.issue) || deriveSpent < opts.deriveMax) {
-          if (!derived.has(named.issue)) {
-            deriveSpent++;
-            try {
-              const issue = fetchIssue(ctx, named.issue);
-              derived.set(named.issue, { team: epicTeamOf(ctx, issue), title: issue.title });
-            } catch (e) {
-              derived.set(named.issue, null);
-              row.note = `address not derived (${(e as Error).message.slice(0, 120)})`;
+      // Derived-address fallback, grammar-B named, budgeted — own-repo reads
+      // through OUR ctx (zero extra I/O); an off-repo row (GH-2453) is asked
+      // through THAT checkout's own config, read from its cwd, and never
+      // through ours — a foreign #N is never a fetch against our own board.
+      else if (named?.kind === "v2") {
+        const derivationCtx =
+          row.repo === ctx.cfg.repo ? ctx : a.cwd !== null ? foreignCtxFor(ctx, a.cwd) : null;
+        if (derivationCtx === null) {
+          if (row.repo !== ctx.cfg.repo)
+            row.note = a.cwd === null ? "address not derived (no checkout cwd)" : "address not derived (that repo's own config is unreadable here)";
+        } else {
+          const key = `${derivationCtx.cfg.owner}/${derivationCtx.cfg.repo}#${named.issue}`;
+          if (derived.has(key) || deriveSpent < opts.deriveMax) {
+            if (!derived.has(key)) {
+              deriveSpent++;
+              try {
+                const issue = fetchIssue(derivationCtx, named.issue);
+                derived.set(key, { team: epicTeamOf(derivationCtx, issue), title: issue.title });
+              } catch (e) {
+                derived.set(key, null);
+                row.note = `address not derived (${(e as Error).message.slice(0, 120)})`;
+              }
             }
-          }
-          const d = derived.get(named.issue);
-          if (d !== null && d !== undefined) {
-            row.address = formatAddress(ctx.cfg.repo, d.team, named.lane, named.issue, d.title);
-            row.addressSource = "derived";
-            row.team = d.team === null ? null : formatTeamSegment(d.team.epic, d.team.title);
-            row.teamEpic = d.team?.epic ?? null;
-          } else if (row.note === null) row.note = "address not derived (board read failed)";
-        } else row.note = `address not derived (budget: RALPH_ROSTER_DERIVE_MAX=${opts.deriveMax})`;
+            const d = derived.get(key);
+            if (d !== null && d !== undefined) {
+              row.address = formatAddress(row.repo!, d.team, named.lane, named.issue, d.title);
+              row.addressSource = "derived";
+              row.team = d.team === null ? null : formatTeamSegment(d.team.epic, d.team.title);
+              row.teamEpic = d.team?.epic ?? null;
+            } else if (row.note === null) row.note = "address not derived (board read failed)";
+          } else row.note = `address not derived (budget: RALPH_ROSTER_DERIVE_MAX=${opts.deriveMax})`;
+        }
       }
     }
     // Lease join: same unit AND same checkout. Realpath both sides — the lock
@@ -14117,7 +14185,12 @@ export function run(argv: string[], ctx: Ctx): number {
               : l.stale
                 ? " STALE (past TTL)"
                 : ` — lease until ${l.expiresAt}`;
-          out(`#${l.issue} ${l.ours ? "(this session)" : l.session} in ${l.worktree} since ${l.since}${status}`);
+          // GH-2453: `who` is machine-wide, so a bare `#N` names a different
+          // issue per repo. Prefixed when that checkout's own repo identity
+          // is known; a bare number otherwise is not a guess, it is what an
+          // unresolved or unreadable checkout honestly gives us.
+          const label = l.ownerRepo ? `${l.ownerRepo}#${l.issue}` : `#${l.issue}`;
+          out(`${label} ${l.ours ? "(this session)" : l.session} in ${l.worktree} since ${l.since}${status}`);
         }
         const dead = rows.filter((l) => l.worktreeState === "missing").length;
         if (dead) out(`${dead} dead lease(s) — \`board reap-leases --apply\` removes locks whose checkout is gone`);
