@@ -1,3 +1,10 @@
+---
+date: 2026-09-03
+issue: GH-2365
+topic: worktree.remove leaves the ledger open until the next reconcile — root cause and recommendation
+status: shipped
+---
+
 # GH-2365 — `worktree.remove` never fires `pane.exited`/`pane.closed`: root cause and recommendation
 
 ## Question
@@ -62,9 +69,21 @@ pane is "unknown"), `worktree.removed` needs no pane lookup at all.
 
 Our own ledger already records, per open `agent_ref`, its last-known
 checkout path (`_ralph_ledger_latest_checkout`, `plugin/ralph-herdr/scripts/ledger.sh:1047`,
-backing the `checkout` column documented at `ledger.sh:899`). That means a
-`worktree.removed` handler can resolve the dying agent(s) by matching
-`event.worktree.path` against each open ref's latest recorded checkout,
+backing the `checkout` column documented at `ledger.sh:899`). **`checkout` is
+not guaranteed on every open record, though** — `ledger.sh:1039-1043` notes
+older discovery records predate the field, and `_ralph_spawn_record`
+(`lib.sh:575`) omits it when the captured path is empty — so a
+`worktree.removed` handler cannot assume every open ref is path-addressable;
+the implementation needs a fallback (e.g. fall through to the existing
+pane-id path when `checkout` is absent, or hydrate it once from the
+worktree's own recorded cwd) rather than silently leaving a
+checkout-less ref stale until the next reconcile, which reproduces the exact
+gap this unit is closing. Left to GH-2434's implementation, not resolved
+here (codex review, PR #2436).
+
+That means a `worktree.removed` handler can resolve the dying agent(s) by
+matching `event.worktree.path` against each open ref's latest recorded
+checkout,
 instead of `handle_gone`'s current pane-id correlation
 (`ralph_ledger_open_for_pane`, `ledger.sh:855`) — no pane lookup, no race with
 herdr's own internal teardown ordering.
