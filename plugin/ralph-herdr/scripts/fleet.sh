@@ -227,8 +227,17 @@ ralph_fleet_arm() {
 # mutex like every other fleet.json rewrite. Prints one superseded run id per
 # line; rc 0 always (a missing runs dir is nothing to supersede). Unscoped
 # runs and other epics are never touched.
+#
+# ORDER AND ATOMICITY (review finding, PR #2464): the caller arms the NEW run
+# FIRST and supersedes SECOND, both inside one held scope mutex — so a
+# failed arm retires nothing (the team keeps its old refiller), and two
+# overlapping launches serialize: the second sees the first's run already
+# armed and retires it, never both retiring before either arms. When the
+# caller already holds the scope's lock (identity-checked, the same rule as
+# ralph_fleet_consume_budget — the mutex is not reentrant) no re-lock is
+# taken; a bare call locks per file.
 ralph_fleet_supersede_epic() {
-  local epic="${1-}" new_id="${2-}" ledger runs ff id
+  local epic="${1-}" new_id="${2-}" ledger runs ff id scope held
   case "$epic" in '' | *[!0-9]*) return 0 ;; esac
   ledger=$(ralph_ledger_path "${REPO:-$PWD}" 2>/dev/null) || return 0
   runs="$(dirname "$ledger")/runs"
@@ -239,9 +248,12 @@ ralph_fleet_supersede_epic() {
     [ -n "$id" ] || continue
     [ "$id" != "$new_id" ] || continue
     # Same mutex identity every other fleet.json rewrite serializes on.
-    ralph_ledger_lock "$(_ralph_fleet_scope_ledger "$ff")"
+    scope=$(_ralph_fleet_scope_ledger "$ff")
+    held=""
+    [ "$_RALPH_LEDGER_LOCK_HELD" = "$(dirname "$scope")/.ledger.lock" ] && held=1
+    [ -n "$held" ] || ralph_ledger_lock "$scope"
     ralph_fleet_disarm "$ff" "superseded by run ${new_id:-<unnamed>} (GH-$epic relaunched)" || true
-    ralph_ledger_unlock "$(_ralph_fleet_scope_ledger "$ff")"
+    [ -n "$held" ] || ralph_ledger_unlock "$scope"
     printf '%s\n' "$id"
   done
   return 0

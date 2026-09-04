@@ -258,6 +258,16 @@ is "supersede: the earlier run is disarmed with the new run named" "false supers
 is "supersede: a different epic's run stays armed" "true" "$(jqf "$FF6" '.armed')"
 is "supersede: an unscoped run stays armed" "true" "$(jqf "$FF3" '.armed')"
 is "supersede: nothing left to supersede prints nothing" "" "$(REPO="$REPO_DIR" ralph_fleet_supersede_epic 700 "$RID6")"
+# Under a HELD scope lock (work-fleet.sh's arm-then-supersede section) the
+# call must not re-lock (the mutex is not reentrant) — identity-checked like
+# consume. A re-lock here would spin to the 15s stale break, not hang.
+RID7=$(ralph_run_id)
+ralph_ledger_lock "$RALPH_HERDR_LEDGER"
+FF7=$(RALPH_HERDR_RUN_ID="$RID7" RALPH_HERDR_FLEET_EPIC=701 ralph_fleet_arm 2 1 904)
+held_out=$(REPO="$REPO_DIR" ralph_fleet_supersede_epic 701 "$RID7")
+ralph_ledger_unlock "$RALPH_HERDR_LEDGER"
+is "supersede: works under the caller's held lock (arm-then-supersede is one section)" "$RID6" "$held_out"
+is "supersede: the new run, armed first, is the one left standing" "true false" "$(jqf "$FF7" '.armed') $(jqf "$FF6" '.armed')"
 
 # ═══ 3. budget consumption — atomic under the scope's ledger mutex ═══════════
 RID2=$(ralph_run_id)

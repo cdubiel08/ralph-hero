@@ -562,15 +562,29 @@ if [ -n "$REFILL" ]; then
   else
     # An epic relaunch supersedes the epic's previous armed run (GH-2461,
     # review finding): two armed runs on one epic would race the same
-    # frontier with doubled budget. Named per run so the audit trail says
-    # which launch retired which.
+    # frontier with doubled budget. ARM FIRST, then supersede, as ONE section
+    # under the scope mutex (second review finding): a failed arm retires
+    # nothing, and two overlapping launches serialize rather than both
+    # retiring before either arms. Named per run so the audit trail says
+    # which launch retired which. The mutex guards only these two local
+    # file rewrites — nothing network-priced runs inside it.
+    arm_rc=0 superseded=""
     if [ -n "$EPIC" ]; then
-      while IFS= read -r old_run; do
-        [ -n "$old_run" ] && echo "  refill: superseded GH-$EPIC's earlier armed run $old_run (disarmed — this run is the team's refiller now)"
-      done < <(ralph_fleet_supersede_epic "$EPIC" "$RALPH_HERDR_RUN_ID")
+      scope_ledger=$(ralph_ledger_path "$REPO" 2>/dev/null) || scope_ledger=""
+      [ -z "$scope_ledger" ] || ralph_ledger_lock "$scope_ledger"
     fi
     # shellcheck disable=SC2086  # intentional word-splitting: one argv per issue
-    if fleet_file=$(ralph_fleet_arm "$FLEET" 1 $spawned_issues); then
+    fleet_file=$(ralph_fleet_arm "$FLEET" 1 $spawned_issues) || arm_rc=$?
+    if [ -n "$EPIC" ]; then
+      [ "$arm_rc" -ne 0 ] || superseded=$(ralph_fleet_supersede_epic "$EPIC" "$RALPH_HERDR_RUN_ID")
+      [ -z "${scope_ledger:-}" ] || ralph_ledger_unlock "$scope_ledger"
+    fi
+    # Piped, never a here-string (this file's own GH-2382 note): a caller
+    # under containment cannot materialize `<<<` in /tmp.
+    printf '%s\n' "$superseded" | while IFS= read -r old_run; do
+      [ -n "$old_run" ] && echo "  refill: superseded GH-$EPIC's earlier armed run $old_run (disarmed — this run is the team's refiller now)"
+    done
+    if [ "$arm_rc" -eq 0 ]; then
       echo "  refill: ARMED (opt-in only — the claim-TTL probe says NO-GO for unattended arming; stay at the keyboard) — $fleet_file"
       echo "          k=$FLEET, ttl ${RALPH_HERDR_REFILL_TTL_MIN:-120}m, budget left $(jq -r '.budget_left' "$fleet_file") of ${RALPH_HERDR_REFILL_BUDGET:-8} total spawns"
       if [ -n "$EPIC" ]; then
