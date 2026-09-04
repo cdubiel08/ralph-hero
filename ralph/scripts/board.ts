@@ -7925,6 +7925,165 @@ export function promote(ctx: Ctx, number: number, opts: { note?: string } = {}):
 }
 
 // ---------------------------------------------------------------------------
+// amend — a body edit as a metadata verb (D6, GH-2449)
+// ---------------------------------------------------------------------------
+//
+// Today no verb edits a body: MUTATING covers the field/state writes, and
+// `--body` exists only on `create`. An epic root's design record drifts out
+// of date the moment the plan pivots, and nothing on the board lets the lead
+// keep it true — this closes that gap as one narrow verb rather than folding
+// body edits into `move`/`comment`, which own different invariants (a state
+// edge, an append-only trail) an in-place body rewrite must not share.
+
+export const AMEND_MARKER = "<!-- ralph-amend:v1 -->";
+
+/** Locate a markdown ATX heading (line-trimmed, exact match) and replace the
+ *  text between it and the next heading at the same or shallower level (or
+ *  the end of the body) with `newSectionBody`. The heading line itself is
+ *  left untouched — only its content moves. Returns null when the heading is
+ *  not found, so the caller can refuse rather than silently append a second
+ *  copy of a section amend was meant to update. */
+export function replaceMarkdownSection(
+  body: string,
+  heading: string,
+  newSectionBody: string,
+): string | null {
+  const headingLevel = (line: string): number => /^#+/.exec(line)?.[0].length ?? 0;
+  const want = heading.trim();
+  const wantLevel = headingLevel(want);
+  if (wantLevel === 0)
+    throw new UsageError(
+      `--replace-section needs a markdown heading ("## Name"), got ${JSON.stringify(heading)}`,
+    );
+  const lines = body.split("\n");
+  const start = lines.findIndex((l) => l.trim() === want);
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const lvl = headingLevel(lines[i]);
+    if (lvl > 0 && lvl <= wantLevel) {
+      end = i;
+      break;
+    }
+  }
+  const replacement = newSectionBody.replace(/\n+$/, "").split("\n");
+  return [...lines.slice(0, start + 1), ...replacement, ...lines.slice(end)].join("\n");
+}
+
+/** Append text to the end of a body, one blank line of separation — the same
+ *  join a fresh comment gets. An empty existing body is not padded. */
+export function appendToBody(body: string, addition: string): string {
+  const trimmedBody = body.replace(/\s+$/, "");
+  const trimmedAddition = addition.trim();
+  return trimmedBody ? `${trimmedBody}\n\n${trimmedAddition}` : trimmedAddition;
+}
+
+function updateIssueBody(ctx: Ctx, nodeId: string, body: string): void {
+  ghGraphQL(
+    ctx,
+    `mutation($issueId: ID!, $body: String!) {
+      updateIssue(input: { id: $issueId, body: $body }) { issue { id } }
+    }`,
+    { issueId: nodeId, body },
+  );
+}
+
+export interface AmendOpts {
+  content: string;
+  append?: boolean;
+  section?: string;
+  broadcast?: boolean;
+}
+
+export interface AmendResult {
+  number: number;
+  mode: "replace" | "append" | "replace-section";
+  section?: string;
+  diffHash: string;
+  broadcast: { count: number; numbers: number[] } | null;
+}
+
+/** The body-edit verb. Refuses on a closed issue — a closed issue's body is
+ *  the historical record of what shipped, not something amend keeps current.
+ *  Every call posts a durable marker comment recording what changed (mode,
+ *  section when relevant, a hash over before+after) so `board get`'s
+ *  comment trail carries provenance a raw GitHub body diff does not.
+ *  `broadcast` reuses `epicDescendantPredicate` — the ONE definition
+ *  `frontier --epic` and doctor's `lead-respawns` already share — so "every
+ *  open descendant" means the same subtree everywhere on this board. */
+export function amend(ctx: Ctx, number: number, opts: AmendOpts): AmendResult {
+  if (opts.append && opts.section)
+    throw new UsageError("amend takes at most one of --append / --replace-section, not both");
+  const issue = fetchIssue(ctx, number);
+  if (issue.issueState !== "OPEN") {
+    throw new RefusalError(
+      `#${number} is closed — amend edits a live body; a closed issue's body is the ` +
+        `historical record of what shipped, not something to keep current`,
+    );
+  }
+  const before = fetchIssueBodies(ctx, [number]).get(number)?.body ?? "";
+  let after: string;
+  let mode: AmendResult["mode"];
+  if (opts.section !== undefined) {
+    const replaced = replaceMarkdownSection(before, opts.section, opts.content);
+    if (replaced === null)
+      throw new RefusalError(
+        `#${number}'s body has no ${JSON.stringify(opts.section)} section — refusing rather ` +
+          `than duplicate a header amend was meant to update`,
+      );
+    after = replaced;
+    mode = "replace-section";
+  } else if (opts.append) {
+    after = appendToBody(before, opts.content);
+    mode = "append";
+  } else {
+    after = opts.content;
+    mode = "replace";
+  }
+  updateIssueBody(ctx, issue.nodeId, after);
+  const diffHash = createHash("sha256").update(`${before} ${after}`).digest("hex").slice(0, 16);
+  const at = ctx.now().toISOString();
+  const payload = JSON.stringify({
+    at,
+    by: ctx.cfg.holder,
+    mode,
+    ...(opts.section !== undefined ? { section: opts.section } : {}),
+    diffHash,
+  });
+  addComment(
+    ctx,
+    issue.nodeId,
+    `**Body amended** (\`board\` by \`${ctx.cfg.holder}\`, ${mode}` +
+      (opts.section !== undefined ? ` ${JSON.stringify(opts.section)}` : "") +
+      `)\n\n${AMEND_MARKER}\n\`\`\`json\n${payload}\n\`\`\``,
+  );
+  let broadcast: AmendResult["broadcast"] = null;
+  if (opts.broadcast) {
+    const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+    const own = full.open;
+    const closedEdges = closedTreeEdges(ctx, own);
+    const isUnder = epicDescendantPredicate(own, closedEdges, number);
+    const numbers = own.filter((i) => isUnder(i.number)).map((i) => i.number);
+    if (numbers.length) {
+      const nodeIds = fetchNodeIds(ctx, numbers);
+      for (const n of numbers) {
+        const id = nodeIds.get(n);
+        if (!id) continue;
+        addComment(ctx, id, `root #${number} amended ${at}, re-read before continuing.`);
+      }
+    }
+    broadcast = { count: numbers.length, numbers };
+  }
+  return {
+    number,
+    mode,
+    ...(opts.section !== undefined ? { section: opts.section } : {}),
+    diffHash,
+    broadcast,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Dependency-candidate selector (GH-2135)
 // ---------------------------------------------------------------------------
 //
@@ -13053,6 +13212,21 @@ mutations
                               path cannot validate by construction, and a
                               stricter manual path would train leads to wait
                               out the clock instead
+  amend NNN --file F           edit an issue body (D6, GH-2449). Bare = whole-
+        [--append |             body replace; --append adds F's content to
+         --replace-section H]   the end; --replace-section "## H" replaces
+        [--broadcast]           one markdown section's body (refuses if the
+                              heading is not found — never a silent second
+                              header). Refuses on a closed issue. Every call
+                              posts a durable ralph-amend:v1 marker comment
+                              ({mode, section?, diffHash}). --broadcast
+                              comments once on every OPEN descendant (own-repo
+                              parent edges, closed pass-through topology
+                              included — epicDescendantPredicate, the same
+                              read frontier --epic and doctor's lead-respawns
+                              share): "root #NNN amended <at>, re-read before
+                              continuing." For a lead keeping an epic root's
+                              design record true through a pivot
   cancel NNN -m "why"         any open state → Canceled (closes as not-planned)
   reopen NNN                  Done/Canceled → Backlog (reopens the issue); also
                               resolves a pending tend proposal, since reopening
@@ -13254,6 +13428,7 @@ export const VERB_HELP: Record<string, string> = {
   move: "board move <n> <state> [--why <w>] [--decision <artifact>] [--to-lead <name> | --to-human]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact,\n  an epic root with ALL children closed (GH-2198), or --why.\n  Demotions (In Progress→Backlog, In Review→In Progress) require --why (GH-2078).\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  Human Needed only: --to-lead/--to-human address the escalation (GH-2179);\n  default is the lead when RALPH_HERDR_LEAD is set, else the human.\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
   answer: "board answer <n> -m \"<the decision>\" [--resume] [--any-state]\n  Answer a Human Needed item; it stays Human Needed until the driving\n  session resumes it (board claim <n>). --resume answers AND resumes in one\n  invocation — for the driver answering its own item.\n  example: board answer 1234 -m \"ship option B\"",
   promote: "board promote <n> [-m \"<note>\"] [--json]\n  Promote a lead-routed escalation into the inbox (GH-2179/GH-2218): durable\n  marker comment, no state change — the admission that puts the row in\n  Tier 1 of `board inbox`. Refuses outside Human Needed and on\n  human-addressed escalations; noop when already promoted.\n  example: board promote 1234 -m \"authorization, not knowledge — yours\"",
+  amend: "board amend <n> --file <path> [--append | --replace-section \"## Heading\"] [--broadcast] [--json]\n  Edit an issue body from a file (D6, GH-2449). Bare: whole-body replace. --append: add\n  the file's content to the end. --replace-section \"## Heading\": replace just that section's\n  body (refuses if the heading is not found). Refuses on a closed issue. Posts a durable\n  ralph-amend:v1 marker comment recording {mode, section?, diffHash}. --broadcast comments\n  once on every OPEN descendant: \"root #NNN amended <at>, re-read before continuing.\"\n  example: board amend 2442 --file design.md --broadcast",
   escalations: "board escalations [--json]\n  The arbitration queue (GH-2179): Human Needed items classified by audience.\n  pending = the lead's work; →human / promoted / auto-promoted (TTL\n  RALPH_LOCK_TTL_MIN elapsed, computed at read time) = the human tier.\n  example: board escalations --json",
   cancel: "board cancel <n> -m \"<reason>\"\n  Cancel (→Canceled, closes NOT_PLANNED). Reopen is the only exit.\n  example: board cancel 1234 -m \"superseded by #1300\"",
   reopen: "board reopen <n>\n  The one exit from Done/Canceled (→Backlog); accepts a pending reopen proposal.\n  example: board reopen 1234",
@@ -13294,14 +13469,15 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "resume", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
   "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace", "all", "closed", "prs", "fields",
+  "append", "broadcast",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
  *  of the flag rather than of the token that happens to follow it. */
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
-  "blocked-by", "body", "candidates", "decision", "epic", "estimate", "holder", "host",
+  "blocked-by", "body", "candidates", "decision", "epic", "estimate", "file", "holder", "host",
   "label", "lane", "limit", "message", "on", "out", "owner", "parent", "priority",
-  "project", "recheck", "repo", "since", "state", "title", "to-lead", "unit", "until", "why",
+  "project", "recheck", "repo", "replace-section", "since", "state", "title", "to-lead", "unit", "until", "why",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -13421,7 +13597,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 const MUTATING = new Set([
   "create", "claim", "release", "move", "cancel", "reopen", "answer", "priority",
   "estimate", "defer", "link", "dep", "comment", "adopt", "reconcile", "parent-check",
-  "resolve", "setup", "add", "bootstrap", "promote",
+  "resolve", "setup", "add", "bootstrap", "promote", "amend",
 ]);
 
 export const GH_BUDGET_FLOOR_DEFAULT = 500;
@@ -15000,6 +15176,37 @@ export function run(argv: string[], ctx: Ctx): number {
       if (flags.json) json(res);
       else if (!res.promoted) out(`noop: #${number} is already promoted (nothing to do)`);
       else out(`#${number}: escalation promoted into the inbox (was ${res.route.lead ?? "lead"}-routed)`);
+      return 0;
+    }
+
+    case "amend": {
+      const number = requireNumber(positional[0]);
+      if (typeof flags.file !== "string" || !flags.file)
+        throw new UsageError(`amend requires --file <path> with the new content`);
+      let content: string;
+      try {
+        content = readFileSync(flags.file, "utf8");
+      } catch (e) {
+        throw new UsageError(`--file ${flags.file}: ${(e as Error).message}`);
+      }
+      const section = typeof flags["replace-section"] === "string" ? flags["replace-section"] : undefined;
+      const res = amend(ctx, number, {
+        content,
+        append: flags.append === true,
+        section,
+        broadcast: flags.broadcast === true,
+      });
+      if (flags.json) json(res);
+      else {
+        out(
+          `#${number}: body amended (${res.mode}${res.section !== undefined ? ` ${JSON.stringify(res.section)}` : ""}), diff ${res.diffHash}`,
+        );
+        if (res.broadcast)
+          out(
+            `broadcast: commented on ${res.broadcast.count} open descendant(s)` +
+              (res.broadcast.count ? ` (${res.broadcast.numbers.map((n) => `#${n}`).join(", ")})` : ""),
+          );
+      }
       return 0;
     }
 

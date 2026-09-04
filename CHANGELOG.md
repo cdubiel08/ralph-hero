@@ -19,6 +19,22 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Added
 
+- **`board amend NNN` edits an issue body as a metadata verb (D6, GH-2449).**
+  Today no verb edits a body — `--body` exists only on `create` — so an epic
+  root's design record could drift out of date the moment its plan pivoted,
+  with nothing on the board to keep it current. `--file <path>` supplies the
+  new content: bare, it replaces the whole body; `--append` adds it to the
+  end; `--replace-section "## Heading"` replaces just that markdown
+  section's body (refuses when the heading is not found, rather than
+  silently duplicating a header). Refuses on a closed issue. Every call
+  posts a durable `ralph-amend:v1` marker comment recording
+  `{mode, section?, diffHash}`. `--broadcast` comments once on every OPEN
+  descendant — reusing `epicDescendantPredicate`, the one definition
+  `frontier --epic` and doctor's `lead-respawns` already share — with
+  `"root #NNN amended <at>, re-read before continuing."`, so a lead can
+  keep the epic root's living design record true through a pivot and every
+  in-flight descendant finds out.
+
 - **The work skill self-reports completion so per-unit duration is real
   (GH-2348).** Nothing closed an agent's ledger row until its pane was
   proved gone (watch-event's pane-death hook) or absent twice (reconcile's

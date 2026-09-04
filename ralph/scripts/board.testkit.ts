@@ -1140,6 +1140,13 @@ export class FakeGh {
       this.mutations.push("reopenIssue");
       return data({ reopenIssue: { issue: { id: variables.issueId } } });
     }
+    if (query.includes("updateIssue")) {
+      const num = Number(String(variables.issueId).replace("I_", ""));
+      const fi = this.issues.get(num);
+      if (fi) fi.body = String(variables.body);
+      this.mutations.push(`updateIssue(#${num})`);
+      return data({ updateIssue: { issue: { id: variables.issueId } } });
+    }
     if (query.includes("addSubIssue")) {
       const replace = query.includes("replaceParent: true");
       this.mutations.push(replace ? "addSubIssue(replace)" : "addSubIssue");
