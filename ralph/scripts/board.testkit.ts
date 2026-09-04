@@ -458,6 +458,7 @@ export class FakeGh {
       ...this.deliverPrLink(p),
       headRefOid: p.headSha ?? "deadbeef",
       reviewDecision: p.reviewDecision ?? null,
+      mergeable: p.mergeable ?? null,
       commits: {
         nodes: [
           {

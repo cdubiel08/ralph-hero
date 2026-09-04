@@ -5641,6 +5641,7 @@ describe("deliver-queue: classification (spec §4.2)", () => {
     threadCursor: null,
     lastActivityAt: "2026-07-31T11:00:00Z", // 60 min ago — well settled
     reviewDecision: null,
+    mergeable: null,
     ...over,
   });
   // Fixtures declare `prs` as full facts; `openPrs` is derived the way the
@@ -5856,6 +5857,26 @@ describe("deliver-queue: classification (spec §4.2)", () => {
       DELIVER_DEFAULTS, NOW, probe,
     );
     expect(relaxed.next).toMatchObject({ number: 2, reason: "retry" });
+  });
+
+  it("GH-2444: a CONFLICTING PR is never held — a base advance moves nothing in the cheap tuple, so the conflict releases the hold to the ordinary window", () => {
+    const approval = entry({ verdict: "PENDING", gate: "approval", at: "2026-07-31T10:30:00Z" }); // window expired
+    const facts = (mergeable: DeliverPrFacts["mergeable"]) =>
+      dpr(101, { reviewDecision: "REVIEW_REQUIRED", mergeable });
+    const conflicting = classify([cand(1, { prs: [facts("CONFLICTING")], marker: { "101": approval } })]);
+    expect(conflicting.next).toMatchObject({ number: 1, reason: "retry" }); // a session rebases
+    // MERGEABLE, UNKNOWN (still computing) and unreported all keep the hold:
+    // none is evidence of work to do.
+    for (const m of ["MERGEABLE", "UNKNOWN", null] as const) {
+      const held = classify([cand(1, { prs: [facts(m)], marker: { "101": approval } })]);
+      expect(held.blocked, String(m)).toMatchObject([{ number: 1, reason: "awaiting-approval" }]);
+    }
+    // The probe half releases the same way.
+    const probed = classify([cand(2, { prs: [dpr(102, { reviewDecision: "REVIEW_REQUIRED", mergeable: "CONFLICTING" })] })], () => ({
+      verdict: "PENDING",
+      gate: "approval",
+    }));
+    expect(probed.next).toMatchObject({ number: 2, reason: "actionable" });
   });
 
   it("bounded retry re-arms after RALPH_RETRY_MIN for EVERY verdict class — unchanged PENDING and unchanged PASS alike", () => {

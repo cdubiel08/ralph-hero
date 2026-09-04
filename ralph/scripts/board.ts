@@ -6147,6 +6147,12 @@ export interface DeliverPrFacts {
    *  free every pass; it never classifies one on its own (see
    *  awaitingApproval). */
   reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  /** GH-2444: GitHub's merge-conflict verdict, the one gate input the cheap
+   *  cursors above cannot see — a base advance that makes the PR CONFLICTING
+   *  moves no head, check, review or thread. Read here (a free scalar) so an
+   *  `awaiting-approval` hold releases to the ordinary window when the PR
+   *  needs a rebase before anyone can approve it. Null = GitHub did not say. */
+  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | null;
 }
 
 export interface DeliverCandidate {
@@ -6252,14 +6258,23 @@ export function parseConvergenceVerdict(out: string): { verdict: string; detail:
  *  — and GitHub's `reviewDecision` still reads REVIEW_REQUIRED. Either alone
  *  is not enough: the field alone is true of every PR in an approval-gated
  *  host from the moment it opens (the reviewer's P1 on #2468), and the gate
- *  token alone may be stale once an approval landed. */
+ *  token alone may be stale once an approval landed. A CONFLICTING PR is
+ *  never held (the second P1): the conflict is invisible to the cheap tuple. */
 export const APPROVAL_GATE = "approval";
 function awaitingApproval(
   gate: { verdict: string; gate: string | null },
-  pr: Pick<DeliverPrFacts, "reviewDecision">,
+  pr: Pick<DeliverPrFacts, "reviewDecision" | "mergeable">,
 ): boolean {
   return (
-    gate.verdict === "PENDING" && gate.gate === APPROVAL_GATE && pr.reviewDecision === "REVIEW_REQUIRED"
+    gate.verdict === "PENDING" &&
+    gate.gate === APPROVAL_GATE &&
+    pr.reviewDecision === "REVIEW_REQUIRED" &&
+    // A conflict is the one gate input the cheap cursors cannot see (a base
+    // advance moves nothing in the tuple), so it releases the hold: the row
+    // returns to the ordinary window and a session rebases. Anything else —
+    // MERGEABLE, UNKNOWN (GitHub still computing), null (not reported) — is
+    // not evidence of work to do, so it keeps the hold.
+    pr.mergeable !== "CONFLICTING"
   );
 }
 
@@ -6583,7 +6598,7 @@ const DELIVER_PR_LINK = `id number state`;
  *  Selected ONLY under a top-level `node(id:)` alias (phase B): a single node
  *  multiplies nothing, so this costs ~212 nodes per PR flat. */
 const DELIVER_PR_FACTS = `
-  number state headRefOid reviewDecision
+  number state headRefOid reviewDecision mergeable
   commits(last: 1) { nodes { commit { committedDate pushedDate
     statusCheckRollup { contexts(first: 100) { nodes {
       __typename
@@ -6632,6 +6647,7 @@ function prFactsFrom(node: any): DeliverPrFacts {
       anyThread,
     ]),
     reviewDecision: node.reviewDecision ?? null,
+    mergeable: node.mergeable ?? null,
   };
 }
 
