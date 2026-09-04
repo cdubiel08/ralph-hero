@@ -149,14 +149,39 @@ echo "--- approved: environment '$ENV_NAME' on run $RUN"
 # --- wait for the run to conclude, bounded ----------------------------------
 timeout_sec="${RALPH_APPROVE_DEPLOY_TIMEOUT_SEC:-900}"
 poll_sec="${RALPH_APPROVE_DEPLOY_POLL_SEC:-15}"
+# A config error here must refuse loudly, not hang (poll_sec 0 never advances
+# elapsed) or die mid-loop under `set -e` (`sleep` on a negative/non-numeric
+# value exits non-zero) — same posture as RALPH_CLAIM_MAX_ESTIMATE elsewhere
+# in this repo: a bad knob is a loud refusal, never a silent misbehavior.
+[[ "$timeout_sec" =~ ^[0-9]+$ && "$timeout_sec" -gt 0 ]] || {
+  echo "ERROR: RALPH_APPROVE_DEPLOY_TIMEOUT_SEC must be a positive integer (got '$timeout_sec')" >&2
+  exit 2
+}
+[[ "$poll_sec" =~ ^[0-9]+$ && "$poll_sec" -gt 0 ]] || {
+  echo "ERROR: RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer (got '$poll_sec')" >&2
+  exit 2
+}
 elapsed=0
 status="" conclusion="" head_sha="" workflow_name=""
 while (( elapsed < timeout_sec )); do
   run_json=$(gh api "repos/{owner}/{repo}/actions/runs/$RUN" 2>/dev/null) || run_json=""
-  status=$(jq -r '.status // ""' <<<"$run_json" 2>/dev/null || echo "")
-  conclusion=$(jq -r '.conclusion // ""' <<<"$run_json" 2>/dev/null || echo "")
-  head_sha=$(jq -r '.head_sha // ""' <<<"$run_json" 2>/dev/null || echo "")
-  workflow_name=$(jq -r '.name // ""' <<<"$run_json" 2>/dev/null || echo "")
+  # A read that failed (empty/unparseable run_json) must not CLOBBER the last
+  # known-good head_sha/workflow_name — those are what the timeout branch
+  # below hands the operator as the recovery command, and an emptied one is a
+  # recovery command apply-evidence.sh itself will refuse (--merge-sha/
+  # --workflow are required). Only status/conclusion reset on a failed read,
+  # since "unreadable" is itself the honest status to report.
+  if jq -e . >/dev/null 2>&1 <<<"$run_json"; then
+    status=$(jq -r '.status // ""' <<<"$run_json")
+    conclusion=$(jq -r '.conclusion // ""' <<<"$run_json")
+    new_head_sha=$(jq -r '.head_sha // ""' <<<"$run_json")
+    new_workflow_name=$(jq -r '.name // ""' <<<"$run_json")
+    [[ -n "$new_head_sha" ]] && head_sha="$new_head_sha"
+    [[ -n "$new_workflow_name" ]] && workflow_name="$new_workflow_name"
+  else
+    status=""
+    conclusion=""
+  fi
   [[ "$status" == "completed" ]] && break
   sleep "$poll_sec"
   elapsed=$((elapsed + poll_sec))

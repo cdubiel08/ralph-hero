@@ -62,6 +62,14 @@ case "$joined" in
     ;;
   *"actions/runs/"*)
     [[ -f "$GH_STUB_DIR/run.json" ]] || { echo '{}'; exit 0; }
+    # run_fail_after: the FIRST poll returns run.json (good metadata), every
+    # poll after that fails outright — simulates a transient API flap after
+    # the run's identity is already known, for the recovery-metadata test.
+    if [[ -f "$GH_STUB_DIR/run_fail_after" ]]; then
+      n=$(( $(cat "$GH_STUB_DIR/run_calls" 2>/dev/null || echo 0) + 1 ))
+      echo "$n" >"$GH_STUB_DIR/run_calls"
+      if [[ "$n" -gt 1 ]]; then echo "gh: API error" >&2; exit 1; fi
+    fi
     cat "$GH_STUB_DIR/run.json"
     exit 0
     ;;
@@ -118,6 +126,20 @@ run_ad() { # run_ad <dir> <policy-json> <args...>
   set +e
   LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" RALPH_MERGE_POLICY_FILE="$dir/.github/ralph-merge-policy.json" \
     RALPH_APPROVE_DEPLOY_POLL_SEC=1 RALPH_APPROVE_DEPLOY_TIMEOUT_SEC=2 \
+    bash "$SCRIPT" "$@" 2>&1)
+  LAST_RC=$?
+  set -e
+}
+
+# run_ad_poll <dir> <policy-json> <poll_sec> <timeout_sec> <args...> — like
+# run_ad but with the poll/timeout knobs under test instead of the fast
+# fixed defaults every other case uses.
+run_ad_poll() {
+  local dir="$1" policy="$2" poll="$3" to="$4"; shift 4
+  echo "$policy" >"$dir/.github/ralph-merge-policy.json"
+  set +e
+  LAST_OUT=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" RALPH_MERGE_POLICY_FILE="$dir/.github/ralph-merge-policy.json" \
+    RALPH_APPROVE_DEPLOY_POLL_SEC="$poll" RALPH_APPROVE_DEPLOY_TIMEOUT_SEC="$to" \
     bash "$SCRIPT" "$@" 2>&1)
   LAST_RC=$?
   set -e
@@ -229,6 +251,43 @@ echo "$RUN_BUILDING" >"$dir/run.json"
 run_ad "$dir" "$POLICY" 2451 4242 --env staging
 expect "a run still building times out cleanly" 75 "has not completed after"
 expect "the timeout tells the operator how to post evidence later" 75 "scripts/apply-evidence.sh 2451"
+
+echo "== autonomous grant: a flaky poll after approval does not erase recovery metadata =="
+
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_BUILDING" | jq --arg sha "$SHA" '.head_sha = $sha' >"$dir/run.json"
+: >"$dir/run_fail_after"
+run_ad "$dir" "$POLICY" 2451 4242 --env staging
+expect "a run seen once then unreadable still times out cleanly" 75 "has not completed after"
+expect "the recovery command keeps the workflow name from the earlier good read" 75 "--workflow \"deploy.yml\""
+expect "the recovery command keeps the head sha from the earlier good read" 75 "--merge-sha $SHA"
+
+echo "== invalid poll/timeout knobs refuse loudly instead of hanging or crashing =="
+
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_BUILDING" >"$dir/run.json"
+run_ad_poll "$dir" "$POLICY" 0 900 2451 4242 --env staging
+expect "poll_sec=0 is refused rather than spinning forever" 2 "RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer"
+
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_BUILDING" >"$dir/run.json"
+run_ad_poll "$dir" "$POLICY" -5 900 2451 4242 --env staging
+expect "a negative poll_sec is refused rather than crashing sleep under set -e" 2 "RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer"
+
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_BUILDING" >"$dir/run.json"
+run_ad_poll "$dir" "$POLICY" abc 900 2451 4242 --env staging
+expect "a non-numeric poll_sec is refused" 2 "RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer"
+
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_BUILDING" >"$dir/run.json"
+run_ad_poll "$dir" "$POLICY" 1 0 2451 4242 --env staging
+expect "timeout_sec=0 is refused" 2 "RALPH_APPROVE_DEPLOY_TIMEOUT_SEC must be a positive integer"
 
 echo "== autonomous grant: a concluded but FAILED run posts no evidence =="
 
