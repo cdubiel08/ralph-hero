@@ -17,7 +17,7 @@
     "scripts/ruleset-contexts.sh": "1951c0dc9060c87b5eba1bca90e730037fd339ecb2af0fc432327a915727eff4",
     "scripts/validate-attestation.sh": "2ddf2d81b952faed571a4614c4d399a57553483f10b181b630cb877f518ae191",
     "scripts/lib/gh-budget.sh": "f0cfb7c81ff2ee6325fed5ad45cb8bf1aab45a874eabe0a34773b8e16c0c0bef",
-    "scripts/lib/merge-evidence.sh": "dc04d1ee17fb440e6bb95f68d98471bdad1bc439da02f9273cf3c232c55469af",
+    "scripts/lib/merge-evidence.sh": "d6340b9d3021dd3ec5b27ad970ee3fd3738c044d8a779cbc46f677807a3c7ba7",
     ".github/workflows/validate-attestation.yml": "362b1421f23cf1e88a1ae0959c63f698e90b2c0de7a5b4c5530e3ab0cc236497",
     ".github/workflows/state-guard.yml": "4c23fd09515a03262e7f423e45733366e65ad4016094234a4b6c9a901af13fa7",
     ".github/workflows/doctor.yml": "e851de240963f070345f6476054302210ff328040d8d739e1b25bc0fd4c26163",
