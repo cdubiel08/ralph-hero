@@ -1026,14 +1026,32 @@ describe("C6 parity: real `board … --json` output validates against the schema
     }
   });
 
-  it("GH-2444: deliver-queue --json reports an approval-pending PR as `awaiting-approval`, no dry-run probe run", () => {
+  it("GH-2444: deliver-queue --json reports a gate-recorded approval wait as `awaiting-approval` with no probe", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
     const OLD = "2026-07-31T10:00:00Z"; // settled relative to testkit NOW
+    // The marker a deliver session wrote after merge-pr.sh reported
+    // `PENDING — approval`; every cursor matches the fixture's PR facts, so
+    // nothing cheap has moved, and `at` is past the retry window.
+    const marker = JSON.stringify({
+      prs: {
+        "101": {
+          head_sha: "sha-a",
+          verdict: "PENDING",
+          gate: "approval",
+          check_conclusions: "",
+          review_cursor: null,
+          thread_cursor: null,
+          at: OLD,
+        },
+      },
+    });
     gh.issues.set(1, {
       number: 1,
       state: "In Review",
       stateUpdatedAt: OLD,
+      comments: [`<!-- ralph-deliver:v1 -->\n\`\`\`json\n${marker}\n\`\`\``],
+      commentTimes: [OLD],
       prs: [
         { number: 101, merged: false, headSha: "sha-a", pushedAt: OLD, reviewDecision: "REVIEW_REQUIRED" },
       ],

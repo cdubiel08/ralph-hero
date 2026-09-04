@@ -6143,8 +6143,9 @@ export interface DeliverPrFacts {
   /** GH-2444: GitHub's own verdict on the base ruleset's approval rule — the
    *  same field merge-pr.sh gate 1b reads. A scalar, so it rides this same
    *  phase-B fetch at zero extra cost (GH-1803: only nested connections
-   *  charge); `REVIEW_REQUIRED` is read straight off it every pass, never
-   *  behind a merge-gate dry-run probe. */
+   *  charge). It is the CLEARING signal for an `awaiting-approval` row, read
+   *  free every pass; it never classifies one on its own (see
+   *  awaitingApproval). */
   reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
 }
 
@@ -6244,6 +6245,24 @@ export function parseConvergenceVerdict(out: string): { verdict: string; detail:
   }
 }
 
+/** GH-2444: is this PR waiting on nothing but the base ruleset's own approval
+ *  rule? Two facts must agree: the gate's LAST run (a marker entry or a fresh
+ *  probe) named `approval` as the pending gate — merge-pr.sh's gate 1b, which
+ *  runs after every other gate, so the token itself certifies the rest passed
+ *  — and GitHub's `reviewDecision` still reads REVIEW_REQUIRED. Either alone
+ *  is not enough: the field alone is true of every PR in an approval-gated
+ *  host from the moment it opens (the reviewer's P1 on #2468), and the gate
+ *  token alone may be stale once an approval landed. */
+export const APPROVAL_GATE = "approval";
+function awaitingApproval(
+  gate: { verdict: string; gate: string | null },
+  pr: Pick<DeliverPrFacts, "reviewDecision">,
+): boolean {
+  return (
+    gate.verdict === "PENDING" && gate.gate === APPROVAL_GATE && pr.reviewDecision === "REVIEW_REQUIRED"
+  );
+}
+
 /** Pure classification per spec §4.2 — deterministic given candidates, opts,
  *  clock, and probe. `probe === null` means the host repo ships no merge gate:
  *  cheap-delta candidates are actionable unprobed (native-flow degrade). */
@@ -6334,25 +6353,6 @@ export function classifyDeliver(
       continue;
     }
     for (const p of open) {
-      // GH-2444: GitHub's own approval rule outranks the marker/retry cycle
-      // entirely — checked off the cheap phase-B fetch, before any probe is
-      // spent and before a marker-less PR would become a probe candidate.
-      // Before this check, an approval-pending PR cycled retry-window →
-      // retry on `retryMs` forever (one full deliver session per PR per
-      // window, none of which could do anything but rediscover the wait);
-      // now it re-reads `reviewDecision` for free every pass and clears the
-      // moment a human approves or the rule changes — no probe, no marker
-      // write, no window.
-      if (p.reviewDecision === "REVIEW_REQUIRED") {
-        blocked.push({
-          number: c.number,
-          title: c.title,
-          pr: p.number,
-          reason: "awaiting-approval",
-          windowExpiresAt: null,
-        });
-        continue;
-      }
       const entry = c.marker?.[String(p.number)] ?? null;
       if (!entry) {
         // Marker-less trivially differs from any tuple — probe candidate.
@@ -6368,6 +6368,32 @@ export function classifyDeliver(
       const windowExpired = entryAt === null || now.getTime() - entryAt >= retryMs;
       if (cheapDelta) {
         probeCands.push({ c, pr: p, entry, deltaAt: ms(p.lastActivityAt) ?? 0 });
+      } else if (awaitingApproval(entry, p)) {
+        // GH-2444: the recorded gate run said the base ruleset's own approval
+        // rule is the ONLY thing left (merge-pr.sh runs gate 1b last, so an
+        // `approval` token means every earlier gate passed), nothing cheap has
+        // moved since, and GitHub still reads REVIEW_REQUIRED. Before this
+        // branch the row cycled retry-window → retry on `retryMs` forever —
+        // one full deliver session per PR per window, none of which could do
+        // anything but rediscover the wait. Held quiescent instead, outside
+        // the window: `reviewDecision` is re-read for free every pass (a
+        // scalar on the phase-B fetch), and a human's approval also lands a
+        // review, which moves `review_cursor` and re-arms the probe. The
+        // marker's `at` is the row's `since`. Never a shortcut on
+        // REVIEW_REQUIRED alone: in an approval-gated host every PR reads
+        // that from the moment it opens, and a marker-less or delta-carrying
+        // PR still needs the gates run (a review request, a CI fix, a
+        // rebase) before an approver has anything to approve.
+        blocked.push({
+          number: c.number,
+          title: c.title,
+          pr: p.number,
+          reason: "awaiting-approval",
+          verdict: entry.verdict,
+          gate: entry.gate ?? null,
+          deltaAt: entry.at,
+          windowExpiresAt: null,
+        });
       } else if (windowExpired) {
         // Bounded retry, ANY verdict (§4.2.3b): a stuck PENDING and a recorded
         // PASS whose PR never merged re-arm identically. No selector-side
@@ -6423,6 +6449,16 @@ export function classifyDeliver(
       // Probe crashed (no parseable verdict) — still actionable; the session
       // runs the gates itself and finds out.
       confirmed.push({ ...base, reason: "actionable", verdict: null, gate: null });
+      continue;
+    }
+    if (awaitingApproval(v, pc.pr)) {
+      // GH-2444, the probe half: the dry-run itself just reported approval as
+      // the current blocker. A session dispatched now could only rediscover
+      // the wait, so the row is held instead of confirmed. Honest cost: no
+      // session ever writes a marker for it, so a marker-less (or
+      // delta-carrying) approval wait spends one budgeted probe per pass
+      // until a human approves — bounded by dryrunMax, never a session.
+      blocked.push({ ...base, reason: "awaiting-approval", verdict: v.verdict, gate: v.gate, windowExpiresAt: null });
       continue;
     }
     const tupleEqual =
