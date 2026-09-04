@@ -168,6 +168,18 @@ def me_approved_reviews($bot; $head):
     | select((.state // "") == "APPROVED")
     | select((.commit_id // "") == $head)
   ];
+
+# GH-2443: an estimate of GitHub own native required-approving-review
+# count, for the PENDING message text only — never a gate decision.
+# reviewDecision already IS that decision, computed server-side against
+# the real rule (latest OPINIONATED review per author, dismissals
+# excluded). This is "latest review per author, in submission order",
+# which can undercount an approve-then-comment sequence; honest as a
+# rendered count, not as a re-derivation of the server verdict.
+def me_latest_review_per_author:
+  group_by(.user.login // "") | map(max_by(.submitted_at // ""));
+def me_approval_count:
+  [ me_latest_review_per_author[] | select((.state // "") == "APPROVED") ] | length;
 '
 
 # ---------------------------------------------------------------------------
@@ -306,6 +318,34 @@ me_review_mode_approved() {
   count=$(jq -r "$ME_JQ_LIB"' me_approved_reviews($bot; $head) | length' \
     --arg bot "$bot" --arg head "$head" <<<"$reviews") || return 3
   [[ "${count:-0}" -gt 0 ]]
+}
+
+# me_pull_request_rule <base_ref> — NETWORK. The base branch's EFFECTIVE
+# `pull_request` ruleset rule (GH-2443) — the merge of every ruleset
+# targeting the ref, same read ruleset-contexts.sh already makes for
+# `required_status_checks`. Prints the rule's `parameters` object on stdout,
+# or the literal string "null" when no such rule is active or the read
+# failed (an absent rule and an unreadable one render the same to the
+# caller: neither can name a count, so both fall back to a generic message).
+#   exit 0  a rule was found (or genuinely absent)
+#   exit 3  the branch-rules read itself failed (rate limit, no permission)
+me_pull_request_rule() {
+  local base="$1" rules
+  rules=$(gh api "repos/{owner}/{repo}/rules/branches/$base" 2>/dev/null) || { echo "null"; return 3; }
+  jq -c '([.[] | select(.type == "pull_request")] | first).parameters // "null"' <<<"$rules" 2>/dev/null \
+    || { echo "null"; return 3; }
+}
+
+# me_current_approval_count <pr> — NETWORK. Distinct-author APPROVED review
+# count, latest review per author (GH-2443) — see me_approval_count above
+# for what this is and is not evidence of. Prints the count on stdout.
+#   exit 0  counted (0 is a valid, meaningful count)
+#   exit 3  the reviews API could not be read
+me_current_approval_count() {
+  local pr="$1" raw reviews
+  raw=$(gh api "repos/{owner}/{repo}/pulls/$pr/reviews" --paginate 2>/dev/null) || return 3
+  reviews=$(jq -s 'add // []' <<<"$raw" 2>/dev/null) || return 3
+  jq -r "$ME_JQ_LIB"' me_approval_count' <<<"$reviews" || return 3
 }
 
 # me_run_evidence_script <script> <pr> <head_sha> — NETWORK, via the callee.

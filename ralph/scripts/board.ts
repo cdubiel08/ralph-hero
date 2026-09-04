@@ -12162,7 +12162,11 @@ export function readiness(ctx: Ctx): ReadinessReport {
   // trains operators to ignore the report. null = unreadable, never "no".
   type BranchRule = {
     type?: string;
-    parameters?: { strict_required_status_checks_policy?: boolean };
+    parameters?: {
+      strict_required_status_checks_policy?: boolean;
+      required_approving_review_count?: number;
+      require_code_owner_review?: boolean;
+    };
   };
   let branchRules: BranchRule[] | null = null;
   // Kept for the integration-policy check below (GH-2138): the merge history
@@ -12180,9 +12184,21 @@ export function readiness(ctx: Ctx): ReadinessReport {
       ]);
       if (rules.code === 0) {
         branchRules = JSON.parse(rules.stdout) as BranchRule[];
-        const requiresPr = branchRules.some((r) => r.type === "pull_request");
-        prStatus = requiresPr ? "ok" : "miss";
-        prDetail = requiresPr ? `"${def}" requires PRs (active ruleset)` : `no PR-required rule on "${def}"`;
+        const prRule = branchRules.find((r) => r.type === "pull_request");
+        prStatus = prRule ? "ok" : "miss";
+        // GH-2443: the count is reported, never demoted to "miss" over its
+        // value — a pull_request rule requiring 0 approvals still means
+        // "requires PRs", which is what this rung checks. The approval-count
+        // gap merge-pr.sh's gate 1b now handles is a MERGE-TIME question,
+        // answered from the PR being merged, not from this static rung.
+        if (prRule) {
+          const count = prRule.parameters?.required_approving_review_count ?? 0;
+          const codeOwners = prRule.parameters?.require_code_owner_review ?? false;
+          prDetail = `"${def}" requires PRs (active ruleset, ${count} approving review${count === 1 ? "" : "s"} required` +
+            `${codeOwners ? ", code owner review required" : ""})`;
+        } else {
+          prDetail = `no PR-required rule on "${def}"`;
+        }
       }
     } catch { /* keep "info" — an unverifiable check must not read as a gap */ }
   }

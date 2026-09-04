@@ -22,6 +22,7 @@
 #   GATE-FAIL ci            check failed/cancelled                   exit 0
 #   GATE-FAIL attestation   the attestation status itself is red     exit 0
 #   GATE-FAIL review        CHANGES_REQUESTED is live                exit 0
+#   GATE-WAIT approval      base ruleset REVIEW_REQUIRED, no ext-review gate exit 10
 #   GATE-FAIL merge         head CONFLICTING — rebase                exit 0
 #   GATE-FAIL apply         gate 6 (apply-keywords.sh, RUN live) rejects exit 0
 #   GATE-WAIT ci            non-attestation checks still running     exit 10
@@ -521,6 +522,14 @@ def is_attest: .name == $attest;
     "GATE-FAIL attestation: \($att_bad | map(.name) | join(", ")) is red — read the status, fix what it names, then re-run scripts/attest-pr.sh \($num)"
   elif ($pr.reviewDecision // "") == "CHANGES_REQUESTED" then
     "GATE-FAIL review: CHANGES_REQUESTED is live — adjudicate the threads, then re-attest"
+  # GH-2443: the base ruleset's own required-approving-review-count, distinct
+  # from gate 5's external-review-bot evidence below — guarded the same way
+  # merge-pr.sh gate 1b is, so gate 5's more specific messaging (which bot,
+  # which trigger) still wins whenever it is the one actually explaining the
+  # wait. Someone else's move either way — a reviewer must approve — so WAIT,
+  # not YOURS.
+  elif ($pr.reviewDecision // "") == "REVIEW_REQUIRED" and (($ext_required | not) or $exempt) then
+    "GATE-WAIT approval: reviewDecision is REVIEW_REQUIRED — waiting on the base ruleset's required approving review(s)"
   elif ($pr.mergeable // "") == "CONFLICTING" then
     "GATE-FAIL merge: head \($head[0:8]) conflicts with the base — rebase, then re-attest"
   elif ($running | length) > 0 then

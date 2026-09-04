@@ -2555,5 +2555,36 @@ else
 fi
 
 echo
+echo "=== GH-2443: GATE-WAIT approval (native REVIEW_REQUIRED) ==="
+# The base ruleset's own required-approving-review-count, distinct from gate
+# 5's external-review-bot evidence. Guarded the same way merge-pr.sh gate 1b
+# is (POLICY_OFF: external_review.required=false) so this fires cleanly.
+D="$TMP_ROOT/gh2443-native-approval"
+scenario "$D" "$READY_CHECKS" "$(pr_state OPEN REVIEW_REQUIRED "[$(attestation_comment "$HEAD_SHA")]")" "$NO_REVIEWS"
+POLICY="$POLICY_OFF"
+expect "native REVIEW_REQUIRED with no ext-review policy is GATE-WAIT approval" "$D" "GATE-WAIT approval" 10
+POLICY="$POLICY_REVIEW"
+
+# With the external-review policy ACTIVE and not waived, gate 5's own
+# messaging must still win — this is exactly the "approval dismissed"
+# scenario already covered above (P2/27), asserted here from the other
+# direction: the new branch must NOT have hijacked it.
+D="$TMP_ROOT/gh2443-ext-review-still-wins"
+scenario "$D" "$READY_CHECKS" "$(pr_state OPEN REVIEW_REQUIRED "[$(attestation_comment "$HEAD_SHA")]")" "$NO_REVIEWS"
+run "$D"
+if [[ "$LAST_OUT" != "GATE-WAIT approval"* ]] && [[ "$LAST_OUT" == *review* ]]; then
+  pass "native REVIEW_REQUIRED defers to gate 5 when external review is required"
+else
+  fail "REVIEW_REQUIRED with ext-review active (out=${LAST_OUT:0:150})"
+fi
+
+# Exempt authors are waived from gate 5 the same way merge-pr.sh waives them,
+# so the native check must still fire for one even under POLICY_REVIEW.
+D="$TMP_ROOT/gh2443-exempt-author"
+scenario "$D" "$READY_CHECKS" \
+  "$(pr_state OPEN REVIEW_REQUIRED "[$(attestation_comment "$HEAD_SHA")]" "dependabot[bot]")" "$NO_REVIEWS"
+expect "exempt author still gets the native approval wait" "$D" "GATE-WAIT approval" 10
+
+echo
 echo "pr-gate-watch: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
