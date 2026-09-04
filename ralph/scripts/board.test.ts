@@ -5640,6 +5640,7 @@ describe("deliver-queue: classification (spec §4.2)", () => {
     reviewCursor: null,
     threadCursor: null,
     lastActivityAt: "2026-07-31T11:00:00Z", // 60 min ago — well settled
+    reviewDecision: null,
     ...over,
   });
   // Fixtures declare `prs` as full facts; `openPrs` is derived the way the
@@ -5770,6 +5771,34 @@ describe("deliver-queue: classification (spec §4.2)", () => {
     expect(probed).toEqual([]);
     expect(res.next).toBeNull();
     expect(res.blocked[0]).toMatchObject({ reason: "retry-window" });
+  });
+
+  it("GH-2444: a PR with reviewDecision REVIEW_REQUIRED classifies quiescent as `awaiting-approval` — no probe, no marker, no window, across two passes", () => {
+    const probed: number[] = [];
+    const probe: Parameters<typeof classifyDeliver>[3] = (pr) => {
+      probed.push(pr);
+      return { verdict: "PASS", gate: null };
+    };
+    const cands = [cand(1, { prs: [dpr(101, { reviewDecision: "REVIEW_REQUIRED" })] })];
+    const pass1 = classifyDeliver(cands, DELIVER_DEFAULTS, NOW, probe);
+    expect(pass1.next).toBeNull();
+    expect(pass1.blocked).toEqual([
+      { number: 1, title: "Issue 1", pr: 101, reason: "awaiting-approval", windowExpiresAt: null },
+    ]);
+    // A second pass (no marker was ever written — the selector never wrote
+    // one) reads the same PR facts fresh and lands on the identical row,
+    // still without spending a single probe call.
+    const pass2 = classifyDeliver(cands, DELIVER_DEFAULTS, NOW, probe);
+    expect(pass2.blocked).toMatchObject([{ number: 1, reason: "awaiting-approval" }]);
+    expect(probed).toEqual([]); // zero gate runs across both passes
+  });
+
+  it("GH-2444: awaiting-approval self-clears the moment reviewDecision stops reading REVIEW_REQUIRED", () => {
+    const res = classify([cand(1, { prs: [dpr(101, { reviewDecision: "APPROVED" })] })], () => ({
+      verdict: "PASS",
+      gate: null,
+    }));
+    expect(res.next).toMatchObject({ number: 1, reason: "actionable" });
   });
 
   it("bounded retry re-arms after RALPH_RETRY_MIN for EVERY verdict class — unchanged PENDING and unchanged PASS alike", () => {
@@ -10452,6 +10481,7 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
           row(15, "marker-current"),
           row(16, "deferred"),
           row(17, "reviewer-rate-limited"),
+          row(18, "awaiting-approval"),
         ],
       },
     );
@@ -10461,9 +10491,17 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
     expect(res.deliverBlocked.find((r) => r.number === 11)!.detail).toContain("board move 11 in-progress");
     const withheldReasons = res.withheld.map((w) => w.reason).sort();
     expect(withheldReasons).toEqual(
-      ["deferred", "local-session-active", "marker-current", "retry-window", "reviewer-rate-limited", "settling"].sort(),
+      [
+        "awaiting-approval",
+        "deferred",
+        "local-session-active",
+        "marker-current",
+        "retry-window",
+        "reviewer-rate-limited",
+        "settling",
+      ].sort(),
     );
-    expect(res.withheld.reduce((s, w) => s + w.count, 0)).toBe(6);
+    expect(res.withheld.reduce((s, w) => s + w.count, 0)).toBe(7);
   });
 
   it("one row per issue: a proposal outranks approving the same Intake item; a decision outranks everything", () => {

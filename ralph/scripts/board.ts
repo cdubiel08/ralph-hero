@@ -6140,6 +6140,12 @@ export interface DeliverPrFacts {
   /** Newest of head push / PR comment / review / thread activity — the PR's
    *  contribution to the quiescence clock and the delta's own timestamp. */
   lastActivityAt: string | null;
+  /** GH-2444: GitHub's own verdict on the base ruleset's approval rule — the
+   *  same field merge-pr.sh gate 1b reads. A scalar, so it rides this same
+   *  phase-B fetch at zero extra cost (GH-1803: only nested connections
+   *  charge); `REVIEW_REQUIRED` is read straight off it every pass, never
+   *  behind a merge-gate dry-run probe. */
+  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
 }
 
 export interface DeliverCandidate {
@@ -6328,6 +6334,25 @@ export function classifyDeliver(
       continue;
     }
     for (const p of open) {
+      // GH-2444: GitHub's own approval rule outranks the marker/retry cycle
+      // entirely — checked off the cheap phase-B fetch, before any probe is
+      // spent and before a marker-less PR would become a probe candidate.
+      // Before this check, an approval-pending PR cycled retry-window →
+      // retry on `retryMs` forever (one full deliver session per PR per
+      // window, none of which could do anything but rediscover the wait);
+      // now it re-reads `reviewDecision` for free every pass and clears the
+      // moment a human approves or the rule changes — no probe, no marker
+      // write, no window.
+      if (p.reviewDecision === "REVIEW_REQUIRED") {
+        blocked.push({
+          number: c.number,
+          title: c.title,
+          pr: p.number,
+          reason: "awaiting-approval",
+          windowExpiresAt: null,
+        });
+        continue;
+      }
       const entry = c.marker?.[String(p.number)] ?? null;
       if (!entry) {
         // Marker-less trivially differs from any tuple — probe candidate.
@@ -6522,7 +6547,7 @@ const DELIVER_PR_LINK = `id number state`;
  *  Selected ONLY under a top-level `node(id:)` alias (phase B): a single node
  *  multiplies nothing, so this costs ~212 nodes per PR flat. */
 const DELIVER_PR_FACTS = `
-  number state headRefOid
+  number state headRefOid reviewDecision
   commits(last: 1) { nodes { commit { committedDate pushedDate
     statusCheckRollup { contexts(first: 100) { nodes {
       __typename
@@ -6570,6 +6595,7 @@ function prFactsFrom(node: any): DeliverPrFacts {
       reviewCursor,
       anyThread,
     ]),
+    reviewDecision: node.reviewDecision ?? null,
   };
 }
 
@@ -8327,11 +8353,15 @@ export interface InboxTier1 {
  *  (local-session-active, settling, retry-window, marker-current — their
  *  `windowExpiresAt` IS their disposition), `deferred` (probe-budget backoff;
  *  the next deliver pass re-probes with no human in the loop), and
- *  `reviewer-rate-limited`, which CANNOT enter: it has no disposing verb and
- *  no computable expiry (the quota reset instant is the reviewer's secret),
- *  so admitting it would put a row in the decision queue nothing can dispose.
- *  `no-pr`'s population is rollup-advanced epic parents and human-placed
- *  items (see classifyDeliver) — nothing but a human ever clears one. */
+ *  `reviewer-rate-limited` and `awaiting-approval`, neither of which CAN
+ *  enter: both have no disposing `board` verb and no computable expiry (the
+ *  quota reset instant is the reviewer's secret; a native-approval wait
+ *  clears on a GitHub review, not a board write) — GH-2444's clearer is
+ *  literally "a human approves the PR", which has no `board` spelling, so
+ *  admitting either would put a row in the decision queue nothing here can
+ *  dispose. `no-pr`'s population is rollup-advanced epic parents and
+ *  human-placed items (see classifyDeliver) — nothing but a human ever
+ *  clears one. */
 export const INBOX_DELIVER_VERBS: Partial<Record<DeliverReason, (n: number) => string>> = {
   "convergence-stalled": (n) => `board move ${n} in-progress --why "<rework direction>"`,
   "no-pr": (n) => `board move ${n} done (passes bare on an all-children-closed epic root; else --why "<review verdict>")`,
