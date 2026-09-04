@@ -12277,6 +12277,54 @@ export function readiness(ctx: Ctx): ReadinessReport {
         "call such work Done without deployed-and-verified evidence. Repos whose changes go live on merge need none of it",
   );
 
+  // Sizing doctrine for approval-gated hosts (GH-2448, D5 of the
+  // approval-gated-hosts design). Level 3 because it is the autonomous loop
+  // this bites: an attended session already feels every approval wait
+  // directly. When a human approves every PR and no bot reviewer shares that
+  // cost, per-PR review is FIXED and paid by a person — sizing units to fit
+  // one agent session stops being the right target (work-shape.md), and a
+  // fleet spawning several PRs in parallel just queues more of that fixed
+  // cost on the same reviewer instead of shrinking it. "info", never "miss":
+  // this is a recommendation, not a rung — nothing here is imposed.
+  {
+    const requiredApprovals = branchRules
+      ? (branchRules.find((r) => r.type === "pull_request")?.parameters?.required_approving_review_count ?? 0)
+      : null;
+    let reviewBotWired = false;
+    try {
+      const policyFile =
+        process.env.RALPH_MERGE_POLICY_FILE ?? join(ctx.repoRoot, ".github", "ralph-merge-policy.json");
+      if (existsSync(policyFile)) {
+        const policy = JSON.parse(readFileSync(policyFile, "utf8"));
+        reviewBotWired =
+          policy?.external_review?.required === true &&
+          typeof policy?.external_review?.bot === "string" &&
+          policy.external_review.bot.length > 0;
+      }
+    } catch {
+      /* unreadable/malformed policy = no bot signal here, never a gap —
+         the merge gate's own policy reader is what fails closed on this file */
+    }
+    const approvalGated = requiredApprovals !== null && requiredApprovals >= 1 && !reviewBotWired;
+    add(
+      3, "sizing-doctrine",
+      approvalGated ? "info" : "ok",
+      requiredApprovals === null
+        ? "could not verify (repo API unavailable)"
+        : approvalGated
+          ? `"${defaultBranch}" requires ${requiredApprovals} human approval${requiredApprovals === 1 ? "" : "s"} ` +
+            "and no bot reviewer is wired — every PR's review cost is fixed and paid by a person"
+          : requiredApprovals === 0
+            ? "no human-approval requirement on the default branch"
+            : "a wired bot reviewer (external_review.bot) shares the per-PR review cost",
+      approvalGated
+        ? "size units to the reviewer's sitting, not the session: set RALPH_CLAIM_MAX_ESTIMATE= (empty, disables " +
+          "the ceiling) and RALPH_HERDR_FLEET=1 (one stack driven serially beats several PRs queued on one " +
+          "reviewer) — see ralph/skills/work/references/work-shape.md"
+        : undefined,
+    );
+  }
+
   // Integration policy (GH-2138). Level 3 is the home because concurrency
   // policy only becomes a question once the autonomous loop runs — which is
   // what Level 3 IS; a repo driving interactively hears nothing new

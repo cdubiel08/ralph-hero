@@ -77,6 +77,30 @@ Estimate is self-reported, so a session that discovers mid-work it holds a
 mis-sized unit re-estimates it visibly — one field change, on the record —
 and escalates rather than grinding.
 
+## Approval-gated hosts — size to the reviewer sitting
+
+Estimate above measures agent context; on a host where a human approves
+every PR, a second, independent cost sits on top of it: **per-PR review is
+fixed and paid by a person**, not by the session. That cost does not shrink
+when the diff is small, and it does not scale with a fleet — three XS PRs
+queued on one reviewer cost that reviewer three sittings, not one. Where
+that is true, the unit that fits one agent session is no longer the right
+target; **the unit grows until it fits one reviewer sitting instead** — batch
+what a human would otherwise review three times into one pass. `board
+readiness` names the host where this applies (required approvals ≥ 1 and no
+bot reviewer wired to share the cost) and recommends the two knobs that
+follow from it: `RALPH_CLAIM_MAX_ESTIMATE=` (empty, lifting the size
+ceiling) and `RALPH_HERDR_FLEET=1` — advisory only, never imposed.
+
+The shape this doctrine reaches for already exists: the **one-agent-one-stack
+exception** (`board-work-shape-design.md:438-447`) — one session owning a
+whole dependent chain and landing it in one sequence, because stacked PRs
+retarget on every merge and the gates bind evidence to `head_sha`/`base_ref`
+(GH-1841). On an approval-gated host that shape is not a narrow exception
+for stacking mechanics — it is the holistic answer to a human reviewer
+sitting down once: one session, one sequence, one sitting, instead of the
+same person re-approving a chain of fragments.
+
 ## blocked-by vs parent
 
 **parent (`board link`) is rollup only.** It drives priority inheritance and
