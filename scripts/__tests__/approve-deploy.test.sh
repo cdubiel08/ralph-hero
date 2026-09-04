@@ -46,6 +46,11 @@ echo "gh $*" >>"$GH_STUB_DIR/gh.log"
 joined="$*"
 
 case "$joined" in
+  *"commits/"*"/pulls"*)
+    [[ -f "$GH_STUB_DIR/run_prs.json" ]] || { echo '[]'; exit 0; }
+    cat "$GH_STUB_DIR/run_prs.json"
+    exit 0
+    ;;
   *"actions/runs/"*"/pending_deployments"*"-X POST"*)
     if [[ -f "$GH_STUB_DIR/approve_fails" ]]; then
       echo "gh: HTTP 422: Not a required reviewer for this deployment (https://docs.github.com/rest)" >&2
@@ -80,6 +85,10 @@ case "$joined" in
 esac
 
 if [[ "${1:-} ${2:-}" == "api graphql" ]]; then
+  if [[ "$joined" == *"CROSS_REFERENCED_EVENT"* ]]; then
+    [[ -f "$GH_STUB_DIR/issue_refs.json" ]] || exit 1
+    cat "$GH_STUB_DIR/issue_refs.json"; exit 0
+  fi
   [[ -f "$GH_STUB_DIR/twins.json" ]] || exit 1
   cat "$GH_STUB_DIR/twins.json"; exit 0
 fi
@@ -334,6 +343,43 @@ dir=$(new_case)
 echo "$PENDING" >"$dir/pending.json"
 run_ad "$dir" '{ "environments": { "staging": "sometimes" } }' 2451 4242 --env staging
 expect "an unrecognized grant value refuses (fail closed)" 2 "malformed"
+
+echo "== GH-2469: RUN's deployment is verified against ISSUE before evidence posts =="
+
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_DONE" >"$dir/run.json"
+echo "$GOOD_RUNS_FOR_EVIDENCE" >"$dir/runs.json"
+echo "$NO_TWINS" >"$dir/twins.json"
+echo '[{"number":9001}]' >"$dir/run_prs.json"
+echo '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"source":{"number":9001}}]}}}}}' >"$dir/issue_refs.json"
+run_ad "$dir" "$POLICY" 2451 4242 --env staging
+expect "matching linkage still posts evidence" 0 "APPLY EVIDENCE POSTED"
+expect "the match is confirmed by name" 0 "run 4242's PR #9001 references #2451 — confirmed"
+
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_DONE" >"$dir/run.json"
+echo "$GOOD_RUNS_FOR_EVIDENCE" >"$dir/runs.json"
+echo "$NO_TWINS" >"$dir/twins.json"
+echo '[{"number":9001}]' >"$dir/run_prs.json"
+echo '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"source":{"number":8000}}]}}}}}' >"$dir/issue_refs.json"
+run_ad "$dir" "$POLICY" 2451 4242 --env staging
+expect "a run whose PR references a DIFFERENT issue is refused" 1 "does not reference #2451"
+expect "the refusal names what ISSUE is actually referenced by" 1 "referenced by PR(s) 8000"
+if [[ -f "$dir/posted.md" ]]; then fail "no evidence posted on a linkage mismatch" "posted.md exists"; else pass "no evidence posted on a linkage mismatch"; fi
+
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_DONE" >"$dir/run.json"
+echo "$GOOD_RUNS_FOR_EVIDENCE" >"$dir/runs.json"
+echo "$NO_TWINS" >"$dir/twins.json"
+# No run_prs.json: RUN's commit has no PR GitHub can associate it with (a
+# manual/dispatch deploy) — linkage cannot be established, so this degrades
+# to today's operator-trusted behaviour rather than blocking a legitimate use.
+run_ad "$dir" "$POLICY" 2451 4242 --env staging
+expect "unreadable linkage (no associated PR) still posts evidence" 0 "APPLY EVIDENCE POSTED"
+expect "the degrade to operator-trusted is narrated, not silent" 0 "proceeding operator-trusted"
 
 echo
 echo "approve-deploy: $PASS passed, $FAIL failed"
