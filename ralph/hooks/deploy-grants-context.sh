@@ -21,16 +21,33 @@
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+# This hook DELIBERATELY does not source scripts/lib/merge-evidence.sh, even
+# though that library owns the two rules below (greptile P1, PR #2479).
+#
+# SessionStart hooks are registered by the PLUGIN, so this runs in EVERY repo
+# a session opens, before the human types anything. Sourcing a shell library
+# out of the checkout would execute arbitrary repository-provided code on the
+# strength of `[ -r "$LIB" ]` alone -- a path any repository can contain, and
+# an unverified one. Reading a path is not executing it; the whole hook is a
+# jq read now, and nothing from the checkout is ever evaluated as code.
+#
+# The cost is that the reserved-environment rule is stated in two places.
+# scripts/__tests__/deploy-grants-context.test.sh pins them together by
+# reading me_reserved_environments out of the library AS TEXT, so drift fails
+# a test rather than silently changing what a session is told.
 LIB="$ROOT/scripts/lib/merge-evidence.sh"
 [ -r "$LIB" ] || exit 0
-# shellcheck source=/dev/null
-. "$LIB" 2>/dev/null || exit 0
-command -v me_policy_file >/dev/null 2>&1 || exit 0
-command -v me_policy_load >/dev/null 2>&1 || exit 0
-command -v me_environment_grant >/dev/null 2>&1 || exit 0
 
-POLICY_FILE=$(me_policy_file "$ROOT")
-policy=$(me_policy_load "$POLICY_FILE" 2>/dev/null) || exit 0
+# Same path rule as me_policy_file, same override variable.
+POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$ROOT/.github/ralph-merge-policy.json}"
+[ -r "$POLICY_FILE" ] || exit 0
+policy=$(jq -e . "$POLICY_FILE" 2>/dev/null) || exit 0
+
+# Same rule as me_environment_grant: the reserved set is always "human"
+# regardless of what the policy says, and an unlisted environment defaults to
+# "human" rather than to anything weaker.
+RESERVED_ENVIRONMENTS='["prod", "production"]'
 
 envs=()
 while IFS= read -r env; do
@@ -41,7 +58,9 @@ done < <(jq -r '.environments | keys[]?' <<<"$policy" 2>/dev/null)
 
 autonomous=() lead=() human=()
 for env in "${envs[@]}"; do
-  grant=$(me_environment_grant "$policy" "$env" 2>/dev/null) || continue
+  grant=$(jq -r --arg e "$env" --argjson reserved "$RESERVED_ENVIRONMENTS" \
+    'if ($reserved | index($e | ascii_downcase)) != null then "human"
+     else (.environments[$e] // "human") end' <<<"$policy" 2>/dev/null) || continue
   case "$grant" in
     autonomous) autonomous+=("$env") ;;
     lead)       lead+=("$env") ;;

@@ -130,6 +130,47 @@ fi
 mkdir -p "$FIXTURE/scripts/lib"
 cp "$REPO_ROOT/scripts/lib/merge-evidence.sh" "$FIXTURE/scripts/lib/merge-evidence.sh"
 
+# --- a hostile checkout's merge-evidence.sh is NEVER executed --------------
+# The regression test for greptile's P1 on PR #2479. This hook is registered
+# by the PLUGIN, so it runs on SessionStart in every repo a session opens --
+# sourcing the checkout's own shell library would execute repository-provided
+# code before the human types anything. The hook now only READS the policy
+# JSON with jq; the library's presence is a kit-installed signal, never code.
+cat >"$FIXTURE/scripts/lib/merge-evidence.sh" <<'HOSTILE'
+#!/usr/bin/env bash
+touch "$FIXTURE_PWNED"
+echo "PWNED" >&2
+HOSTILE
+echo '{"environments":{"dev":"autonomous"}}' >"$FIXTURE/.github/ralph-merge-policy.json"
+PWNED_MARKER="$FIXTURE/.pwned"
+rm -f "$PWNED_MARKER"
+set +e
+LAST_OUT=$(FIXTURE_PWNED="$PWNED_MARKER" PATH="$STUB_BIN:$PATH" bash "$HOOK" 2>&1)
+LAST_RC=$?
+set -e
+if [[ ! -e "$PWNED_MARKER" && "$LAST_OUT" != *PWNED* ]]; then
+  pass "hostile merge-evidence.sh in the checkout is never executed"
+else
+  fail "hostile merge-evidence.sh EXECUTED: marker=$([[ -e "$PWNED_MARKER" ]] && echo present || echo absent) out='$LAST_OUT'"
+fi
+cp "$REPO_ROOT/scripts/lib/merge-evidence.sh" "$FIXTURE/scripts/lib/merge-evidence.sh"
+
+# --- the duplicated reserved set has not drifted from the library ----------
+# The hook restates me_environment_grant's reserved-environment rule rather
+# than sourcing it (see above). That duplication is only safe while the two
+# agree, so pin them here by reading the library AS TEXT -- never sourcing it,
+# which is the very thing this hook stopped doing.
+lib_reserved=$(sed -n 's/^def me_reserved_environments: *\(.*\);$/\1/p' \
+  "$REPO_ROOT/scripts/lib/merge-evidence.sh" | head -1)
+hook_reserved=$(sed -n "s/^RESERVED_ENVIRONMENTS='\(.*\)'$/\1/p" "$HOOK" | head -1)
+lib_norm=$(jq -cS . <<<"$lib_reserved" 2>/dev/null || echo "UNREADABLE")
+hook_norm=$(jq -cS . <<<"$hook_reserved" 2>/dev/null || echo "UNREADABLE")
+if [[ "$lib_norm" != "UNREADABLE" && "$lib_norm" == "$hook_norm" ]]; then
+  pass "reserved environments match merge-evidence.sh ($hook_norm)"
+else
+  fail "reserved-set drift: hook=$hook_norm library=$lib_norm"
+fi
+
 # --- outside a git repo entirely: silent, exit 0 ----------------------------
 cat >"$STUB_BIN/git" <<'STUB'
 #!/usr/bin/env bash
