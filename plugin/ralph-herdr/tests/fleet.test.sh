@@ -818,6 +818,14 @@ rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc
 # unscoped frontier's top pick (GH-999, a stranger to this team) must NEVER
 # spawn; only the epic-scoped one (GH-701) may.
 RALPH_HERDR_TEAM_LEAD=o700-lead RALPH_HERDR_TEAM_LEAD_REF=o700-lead#0000abcd mk_row m 700
+# The lead was healed since the arming (review finding): its launch-time ref
+# is closed and a NEW generation is open under the same name. Workers must
+# follow the live generation, or exact-ref lineage reads them as orphans.
+cat >>"$RLEDGER" <<'EOF'
+{"ts":"t2","ev":"spawn","agent_ref":"o700-lead#0000abcd","pane_id":"p9","tokens":{"role":"o","issue":"700","slug":"lead","root":"o700-lead#0000abcd","depth":"0","state":"spawned","harness":"claude","spawn_epoch":"0000abcd"}}
+{"ts":"t3","ev":"exit","agent_ref":"o700-lead#0000abcd","reason":"crashed"}
+{"ts":"t4","ev":"spawn","agent_ref":"o700-lead#1111beef","pane_id":"p10","tokens":{"role":"o","issue":"700","slug":"lead","root":"o700-lead#1111beef","depth":"0","state":"spawned","harness":"claude","spawn_epoch":"1111beef"}}
+EOF
 herd_fixture '[]'
 printf '{"workspace":{"workspace_id":"wM"},"tab":{"tab_id":"wM:t1"},"root_pane":{"pane_id":"p41"},"worktree":{"path":"%s"}}\n' "$WT" \
   >"$FAKE_HERDR_FIXTURES/worktree-create.json"
@@ -837,12 +845,13 @@ is "refill M: the frontier read carried the --epic scope" "1" \
   "$(log_count "$FAKE_BOARD_LOG" '^frontier --json --epic 700$')"
 # The lead identity restored from fleet.json (review finding): the worker is
 # the lead's child in the ledger and carries the lead's address in its pane.
-is "refill M: the refilled worker's lineage parent is the lead's ref" "o700-lead#0000abcd" \
+is "refill M: the refilled worker's lineage parent is the lead's LIVE ref, not the launch-time one" "o700-lead#1111beef" \
   "$(levents "$RLEDGER" | jq -rs '[.[] | select(.ev=="spawn" and (.agent_ref | startswith("w701-")))] | last | .tokens.parent // empty')"
 is "refill M: depth 1 — a team worker, not a root" "1" \
   "$(levents "$RLEDGER" | jq -rs '[.[] | select(.ev=="spawn" and (.agent_ref | startswith("w701-")))] | last | .tokens.depth // empty')"
 is "refill M: RALPH_HERDR_LEAD is injected into the worker pane" "1" \
   "$(log_count "$FAKE_HERDR_LOG" 'RALPH_HERDR_LEAD=o700-lead ')"
+line_has "refill M: the generation switch is logged" "$OUT" "lineage follows the live generation"
 rm -f "$FAKE_BOARD_FIXTURES/frontier.epic.700.json"
 
 # ═══ 7. spawn_issue_fleet — REMOVED (GH-1774) ════════════════════════════════

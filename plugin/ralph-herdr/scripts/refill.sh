@@ -353,6 +353,20 @@ refill_one() (
   # fleet did. Absent (a plain run) means a depth-0 root as before.
   lead=$(jq -r '.lead // empty' <<<"$state")
   lead_ref=$(jq -r '.lead_ref // empty' <<<"$state")
+  # The stored ref names the lead that LAUNCHED the run; a lead healed since
+  # (heal.sh, resume-teams.sh) carries a new epoch under the same name, and a
+  # worker stamped with the dead generation's ref would read as an orphan to
+  # exact-ref lineage (review finding). Prefer the lead's CURRENT open ledger
+  # ref — the same name→ref bridge stand-down uses — and keep the stored one
+  # only when no live generation is open (the lead is down right now; its
+  # healer will bring one back, and the name half routes regardless).
+  if [ -n "$lead" ]; then
+    live_ref=$(RALPH_HERDR_LEDGER="$ledger" ralph_ledger_open_ref "$lead" 2>/dev/null) || live_ref=""
+    if [ -n "$live_ref" ] && [ "$live_ref" != "$lead_ref" ]; then
+      log "refill $run_id: lead $lead is live as $live_ref (run armed under ${lead_ref:-no ref}) — lineage follows the live generation"
+      lead_ref="$live_ref"
+    fi
+  fi
   [ -z "$lead" ] || export RALPH_HERDR_TEAM_LEAD="$lead"
   [ -z "$lead_ref" ] || export RALPH_HERDR_TEAM_LEAD_REF="$lead_ref"
   log "refill $run_id: spawning GH-$cand${epic:+ (under GH-$epic frontier scope)} (depth $depth, budget left $budget_left)"
