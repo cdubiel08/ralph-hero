@@ -49,11 +49,20 @@ policy=$(jq -e . "$POLICY_FILE" 2>/dev/null) || exit 0
 # "human" rather than to anything weaker.
 RESERVED_ENVIRONMENTS='["prod", "production"]'
 
+# An environment NAME is repository-controlled text that lands verbatim in
+# the session's context (greptile P1, PR #2479). Only a name shaped like a
+# GitHub deployment environment is carried through; anything else -- control
+# characters, whitespace, instruction-like prose -- is dropped, never
+# rendered, so a policy file cannot smuggle a sentence into the session
+# through a key. Dropped silently: this hook narrates, it never diagnoses.
+ENV_NAME_SHAPE='^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+
 envs=()
 while IFS= read -r env; do
   [ -n "$env" ] || continue
   envs+=("$env")
-done < <(jq -r '.environments | keys[]?' <<<"$policy" 2>/dev/null)
+done < <(jq -r --arg shape "$ENV_NAME_SHAPE" \
+  '.environments | keys[]? | select(test($shape))' <<<"$policy" 2>/dev/null)
 [ "${#envs[@]}" -gt 0 ] || exit 0
 
 autonomous=() lead=() human=()
