@@ -58,6 +58,7 @@ these without asking; journal them like any other action.
 | **Tend passes** | `herdr plugin action invoke tend-pass --plugin ralph-herdr` | `RALPH_TEND_BATCH` per pass; closures only ever PROPOSED, never executed |
 | **Lead respawn** | the team spawn path (GH-2178, when present) | a lead rehydrates from board state alone, so a respawn loses nothing |
 | **Intake filing** | `board create --intake` | tracked, not approved — no lane picks it up until a human promotes it |
+| **Per-environment deploy** | `scripts/approve-deploy.sh ISSUE RUN --env ENV` | `environments.<name>` in `.github/ralph-merge-policy.json` (GH-2451) — autonomous only for a grant that says so; `lead`/`human` refuse by construction, and `prod`/`production` read `human` no matter what the file says (reserved-set item 4, above) |
 
 Direct-to-Backlog filing (`board create --backlog`) stays what it always was:
 the record of an approval that already happened — a human's ask, or an
