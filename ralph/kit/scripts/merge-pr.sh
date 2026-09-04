@@ -12,12 +12,6 @@
 #   0. PR is OPEN (fetch state/mergeable/head/author/reviewDecision in one call)
 #   1. reviewDecision != CHANGES_REQUESTED   — HARD block, not forceable.
 #      Dismiss or resolve the review on GitHub to clear it (audit-logged).
-#   1b. reviewDecision == REVIEW_REQUIRED reads the base ruleset's own
-#      `pull_request` rule (required_approving_review_count,
-#      require_code_owner_review, GH-2443) and reports the count as PENDING
-#      instead of falling through to an opaque `gh pr merge` failure. Also
-#      HARD, not forceable — GitHub's ruleset enforces this regardless.
-#      Skipped when gate 5 (below) is what will actually explain the wait.
 #   2. mergeable == MERGEABLE (UNKNOWN retried once after 5s; CONFLICTING blocks)
 #   3. All CI checks green. A `fail`/`cancel` bucket BLOCKS (verdict); a
 #      `pending` bucket is PENDING (exit 75) — still building is not red.
@@ -45,6 +39,21 @@
 #      close a ship issue that has no apply twin. Inert unless the repo opted
 #      in via the policy file's `apply` block, and skipped entirely in host
 #      repos that do not ship the checker.
+#   1b. reviewDecision == REVIEW_REQUIRED reads the base ruleset's own
+#      `pull_request` rule (required_approving_review_count,
+#      require_code_owner_review, GH-2443) and reports the count as PENDING
+#      instead of falling through to an opaque `gh pr merge` failure. Also
+#      HARD, not forceable — GitHub's ruleset enforces this regardless.
+#      Numbered 1b for what it checks (reviewDecision, gate 1's own field)
+#      but runs LAST, after gate 6 and right before the PASS line: gate 5
+#      above, when its own evidence is what is actually missing, already
+#      exited with its own bot-specific message, so checking here instead of
+#      gating on gate 5's applicability is what keeps this gate from
+#      shadowing that message OR — the bug a review caught in an earlier
+#      version of this gate — from being skipped outright whenever gate 5 is
+#      merely configured ON, even after gate 5's OWN evidence already
+#      passed and reviewDecision is still REVIEW_REQUIRED for an unrelated
+#      native reason.
 #
 # Policy: .github/ralph-merge-policy.json (override path for tests via
 # RALPH_MERGE_POLICY_FILE). NO policy file → gates 4-5 off (repo hasn't
@@ -226,41 +235,6 @@ EXEMPT=$(me_is_exempt "$POLICY" "$author")
 # ---------------------------------------------------------------------------
 if [[ "$decision" == "CHANGES_REQUESTED" ]]; then
   block "review" "changes requested on PR #$PR_NUMBER — dismiss or resolve the review on GitHub (not forceable)"
-fi
-
-# ---------------------------------------------------------------------------
-# Gate 1b: REVIEW_REQUIRED — the base ruleset's own approval rule (GH-2443).
-# Before this gate, REVIEW_REQUIRED fell through every gate below — none of
-# them read reviewDecision — all the way to `gh pr merge`, which failed
-# opaquely after MERGE GATE PASS had already printed.
-#
-# Skipped when gate 5's external-review evidence is what will actually
-# explain the wait (same applicability test gate 5 uses below): gate 5 names
-# the bot and the trigger comment, which is strictly more actionable than a
-# native approval count, and it runs whether or not this gate fires. Not
-# forceable, for the same reason gate 1 is not — GitHub's own ruleset would
-# refuse the merge regardless of what this script decides.
-# ---------------------------------------------------------------------------
-if [[ "$decision" == "REVIEW_REQUIRED" && ( "$EXTERNAL_REQUIRED" != "true" || "$EXEMPT" == "true" ) ]]; then
-  set +e
-  pr_rule=$(me_pull_request_rule "$base_ref" 2>/dev/null)
-  set -e
-  if [[ -n "$pr_rule" && "$pr_rule" != "null" ]]; then
-    required=$(jq -r '.required_approving_review_count // 0' <<<"$pr_rule")
-    code_owners=$(jq -r '.require_code_owner_review // false' <<<"$pr_rule")
-    set +e
-    approved=$(me_current_approval_count "$PR_NUMBER" 2>/dev/null)
-    set -e
-    if [[ -n "$approved" ]]; then
-      approval_detail="$approved of $required approving review(s)"
-    else
-      approval_detail="$required approving review(s) required"
-    fi
-    [[ "$code_owners" == "true" ]] && approval_detail="$approval_detail, code owner review required"
-  else
-    approval_detail="reviewDecision is REVIEW_REQUIRED — base ruleset unreadable, cannot confirm the count"
-  fi
-  pending "approval" "$approval_detail"
 fi
 
 # ---------------------------------------------------------------------------
@@ -482,6 +456,53 @@ if [[ -x "$APPLY_KEYWORDS_SH" ]]; then
   if [[ "$apply_rc" -ne 0 ]]; then
     soft_gate "apply-keywords" "$(head -1 <<<"$apply_out")"
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# Gate 1b: REVIEW_REQUIRED — the base ruleset's own approval rule (GH-2443).
+# Before this gate, REVIEW_REQUIRED fell through every gate above — none of
+# them read reviewDecision beyond gate 1's CHANGES_REQUESTED check — all the
+# way to `gh pr merge`, which failed opaquely after MERGE GATE PASS had
+# already printed.
+#
+# Deliberately LAST, right before the PASS line: gate 5's external-review
+# evidence (if the policy requires it) already ran above and, when it was the
+# thing actually blocking, already exited via pending() with its own
+# bot-specific message — this line is never reached in that case. Checking
+# here instead of gating on gate 5's applicability (EXTERNAL_REQUIRED/EXEMPT)
+# is the fix for a real gap a review caught in the first version of this
+# gate: an applicability guard skips the check whenever gate 5 is ON, even
+# once gate 5's OWN evidence has already been satisfied — so a PR whose
+# external review passed but whose base ruleset separately still requires
+# more native approvals than that one review satisfies would sail through to
+# an opaque `gh pr merge` failure, the exact bug this gate exists to close.
+# Position, not a second predicate, is what makes this correct: by the time
+# execution reaches here, nothing left to check depends on reviewDecision.
+#
+# Not forceable, for the same reason gate 1 is not, and for the same reason
+# it runs before the force-override comment below: GitHub's own ruleset
+# would refuse the merge regardless of what this script or --force decides.
+# ---------------------------------------------------------------------------
+if [[ "$decision" == "REVIEW_REQUIRED" ]]; then
+  set +e
+  pr_rule=$(me_pull_request_rule "$base_ref" 2>/dev/null)
+  set -e
+  if [[ -n "$pr_rule" && "$pr_rule" != "null" ]]; then
+    required=$(jq -r '.required_approving_review_count // 0' <<<"$pr_rule")
+    code_owners=$(jq -r '.require_code_owner_review // false' <<<"$pr_rule")
+    set +e
+    approved=$(me_current_approval_count "$PR_NUMBER" 2>/dev/null)
+    set -e
+    if [[ -n "$approved" ]]; then
+      approval_detail="$approved of $required approving review(s)"
+    else
+      approval_detail="$required approving review(s) required"
+    fi
+    [[ "$code_owners" == "true" ]] && approval_detail="$approval_detail, code owner review required"
+  else
+    approval_detail="reviewDecision is REVIEW_REQUIRED — base ruleset unreadable, cannot confirm the count"
+  fi
+  pending "approval" "$approval_detail"
 fi
 
 # ---------------------------------------------------------------------------

@@ -1011,20 +1011,30 @@ run_case "an unreadable base ruleset still PENDs, never crashes" 75 "$POLICY_NO_
 expect_out "generic approval message when the ruleset is unreadable" "MERGE GATE PENDING — approval"
 expect_not_merged "REVIEW_REQUIRED with unreadable ruleset"
 
-# When the ralph external-review policy IS active and not waived, gate 5's
-# own bot-specific message must win — this gate defers rather than shadowing
-# it with a generic native-approval line.
-setup_review_required_ext_active() {
+# A PR whose gate-5 (external-review) evidence is genuinely missing exits
+# through gate 5's own bot-specific message and never reaches gate 1b at
+# all — that is a property of gate ORDER (gate 5 runs first and exits on
+# pending()), already covered by every other gate-5 test in this file, which
+# never observe an "approval:" token because they never get that far.
+#
+# What gate 1b exists to catch is the opposite and sharper case a review
+# caught in an earlier version of this gate: gate 5's OWN evidence already
+# satisfied, but the base ruleset separately still requires MORE native
+# approvals than that one review counts for — reviewDecision is still
+# REVIEW_REQUIRED, and nothing upstream of gate 1b will ever say so. An
+# applicability guard (skip whenever gate 5 is configured on) missed this
+# entirely; running last, unconditionally, catches it.
+setup_review_required_after_ext_satisfied() {
   write_pr_view "$1" "REVIEW_REQUIRED" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
   jq -nc '[{type:"pull_request",
-    parameters:{required_approving_review_count:1,require_code_owner_review:false}}]' \
+    parameters:{required_approving_review_count:2,require_code_owner_review:false}}]' \
     >"$1/branch_rules.json"
 }
-run_case "defers to gate 5 when external review is required" 0 "$POLICY" setup_review_required_ext_active
-expect_out "gate 5 still reaches PASS despite native REVIEW_REQUIRED" "MERGE GATE PASS"
-expect_absent "no generic approval token when gate 5 explains the wait" "approval:"
-expect_merged "REVIEW_REQUIRED with gate 5 active"
+run_case "still catches REVIEW_REQUIRED after gate 5's own evidence passes" \
+  75 "$POLICY" setup_review_required_after_ext_satisfied
+expect_out "names the approval gate despite gate 5 passing" "MERGE GATE PENDING — approval"
+expect_not_merged "REVIEW_REQUIRED surviving gate 5"
 
 # --force does not bypass gate 1b — GitHub's own ruleset would refuse the
 # merge regardless of what this script decides (same rule as gate 1).
