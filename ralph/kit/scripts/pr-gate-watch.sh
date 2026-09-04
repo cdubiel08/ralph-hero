@@ -22,6 +22,7 @@
 #   GATE-FAIL ci            check failed/cancelled                   exit 0
 #   GATE-FAIL attestation   the attestation status itself is red     exit 0
 #   GATE-FAIL review        CHANGES_REQUESTED is live                exit 0
+#   GATE-WAIT approval      base ruleset REVIEW_REQUIRED, ext review resolved exit 10
 #   GATE-FAIL merge         head CONFLICTING — rebase                exit 0
 #   GATE-FAIL apply         gate 6 (apply-keywords.sh, RUN live) rejects exit 0
 #   GATE-WAIT ci            non-attestation checks still running     exit 10
@@ -521,6 +522,20 @@ def is_attest: .name == $attest;
     "GATE-FAIL attestation: \($att_bad | map(.name) | join(", ")) is red — read the status, fix what it names, then re-run scripts/attest-pr.sh \($num)"
   elif ($pr.reviewDecision // "") == "CHANGES_REQUESTED" then
     "GATE-FAIL review: CHANGES_REQUESTED is live — adjudicate the threads, then re-attest"
+  # GH-2443: the base ruleset's own required-approving-review-count, distinct
+  # from gate 5's external-review-bot evidence below. Guarded on $review_ok
+  # (gate 5 satisfied or not applicable), NOT on $ext_required/$exempt alone
+  # — a review caught the earlier version of this guard: gating on mere
+  # applicability skips the check whenever gate 5 is configured ON, even
+  # once gate 5's OWN evidence already passed, so a PR whose external review
+  # is satisfied but whose base ruleset separately still requires more
+  # native approvals would report readiness it does not have. $review_ok is
+  # true exactly when gate 5 has nothing left to say, which is the only time
+  # this generic message is the right one — otherwise gate 5's own
+  # bot-specific branches below still win. Someone else's move either way —
+  # a reviewer must approve — so WAIT, not YOURS.
+  elif ($pr.reviewDecision // "") == "REVIEW_REQUIRED" and $review_ok then
+    "GATE-WAIT approval: reviewDecision is REVIEW_REQUIRED — waiting on the base ruleset's required approving review(s)"
   elif ($pr.mergeable // "") == "CONFLICTING" then
     "GATE-FAIL merge: head \($head[0:8]) conflicts with the base — rebase, then re-attest"
   elif ($running | length) > 0 then

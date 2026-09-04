@@ -3327,14 +3327,31 @@ describe("doctor advisory fields", () => {
 // ---------------------------------------------------------------------------
 
 /** Overlay REST answers (repo metadata + branch rules) on the FakeGh exec. */
-function withRest(gh: FakeGh, opts: { prRule: boolean }) {
+function withRest(
+  gh: FakeGh,
+  opts: { prRule: boolean; approvals?: number; codeOwners?: boolean },
+) {
   const base = gh.exec;
   gh.exec = (argv, stdin) => {
     const cmd = argv.join(" ");
     if (cmd === "gh api --hostname github.com repos/cdubiel08/ralph-hero")
       return { code: 0, stdout: JSON.stringify({ default_branch: "main" }), stderr: "" };
     if (cmd.endsWith("rules/branches/main"))
-      return { code: 0, stdout: JSON.stringify(opts.prRule ? [{ type: "pull_request" }] : []), stderr: "" };
+      return {
+        code: 0,
+        stdout: JSON.stringify(
+          opts.prRule
+            ? [{
+              type: "pull_request",
+              parameters: {
+                required_approving_review_count: opts.approvals ?? 0,
+                require_code_owner_review: opts.codeOwners ?? false,
+              },
+            }]
+            : [],
+        ),
+        stderr: "",
+      };
     return base(argv, stdin);
   };
 }
@@ -3388,6 +3405,25 @@ describe("readiness", () => {
     writeFileSync(join(root, "scripts", "merge-pr.sh"), "#!/bin/bash\n");
     writeFileSync(join(root, ".github", "workflows", "state-guard.yml"), "on: issues\n");
     expect(readiness(ctx).readyFor).toBe(3);
+  });
+
+  // GH-2443: the readiness detail names the count, never demoting the check
+  // to "miss" over its value — a pull_request rule requiring 0 approvals
+  // still means "requires PRs", which is all this rung checks.
+  it.each([
+    { approvals: 0, codeOwners: false, want: "0 approving reviews required" },
+    { approvals: 1, codeOwners: false, want: "1 approving review required" },
+    { approvals: 2, codeOwners: false, want: "2 approving reviews required" },
+    { approvals: 1, codeOwners: true, want: "1 approving review required, code owner review required" },
+    { approvals: 2, codeOwners: true, want: "2 approving reviews required, code owner review required" },
+  ])("reports the base ruleset's approval count ($approvals, codeOwners=$codeOwners)", ({ approvals, codeOwners, want }) => {
+    const gh = new FakeGh();
+    const root = mkdtempSync(join(tmpdir(), "readiness-approvals-"));
+    const ctx = makeCtx(gh, "me@test", root);
+    withRest(gh, { prRule: true, approvals, codeOwners });
+    const check = readiness(ctx).checks.find((c) => c.name === "pr-required");
+    expect(check?.status).toBe("ok");
+    expect(check?.detail).toContain(want);
   });
 
   it("an unverifiable PR rule reads as info, not as a gap", () => {

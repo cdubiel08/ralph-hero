@@ -85,6 +85,16 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "api repos/"*)
+    # Gate 1b reads the base ruleset (GH-2443) — served before the reviews
+    # fallback below, which gate 5 and gate 1b's own approval-count read
+    # both also hit.
+    if [[ "$2" == */rules/branches/* ]]; then
+      if [[ -f "$GH_STUB_DIR/branch_rules.json" ]]; then cat "$GH_STUB_DIR/branch_rules.json"; else echo '[]'; fi
+      if [[ -f "$GH_STUB_DIR/gh_api_rules_exit" ]]; then
+        exit "$(cat "$GH_STUB_DIR/gh_api_rules_exit")"
+      fi
+      exit 0
+    fi
     # Gate 5 reads the head-bound request comment and the review objects.
     if [[ "$2" == */issues/*/comments* ]]; then
       reviews_file="$GH_STUB_DIR/issue_comments.json"
@@ -944,6 +954,92 @@ if [[ -d "$TREPO/worktrees/some-task" ]]; then
 else
   pass "subdir cwd: in-repo worktree cleaned up"
 fi
+
+# ---------------------------------------------------------------------------
+# Gate 1b: REVIEW_REQUIRED reads the base ruleset's approval rule (GH-2443)
+#
+# Before this gate, reviewDecision REVIEW_REQUIRED fell through every gate —
+# none of them read it — all the way to `gh pr merge`, which failed opaquely
+# after MERGE GATE PASS had already printed. Uses POLICY_NO_EXT throughout so
+# gate 5 (external review) stays out of the way except in the one test that
+# deliberately exercises the handoff between the two.
+# ---------------------------------------------------------------------------
+echo
+echo "=== gate 1b: REVIEW_REQUIRED (GH-2443) ==="
+
+setup_review_required() {
+  write_pr_view "$1" "REVIEW_REQUIRED" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "[]"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+  jq -nc '[{type:"pull_request",
+    parameters:{required_approving_review_count:2,require_code_owner_review:false}}]' \
+    >"$1/branch_rules.json"
+}
+run_case "REVIEW_REQUIRED is PENDING, not an opaque merge failure" 75 "$POLICY_NO_EXT" setup_review_required
+expect_out "names the approval gate" "MERGE GATE PENDING — approval"
+expect_out "reports the count from the base ruleset" "0 of 2 approving review(s)"
+expect_not_merged "REVIEW_REQUIRED"
+
+setup_review_required_partial() {
+  write_pr_view "$1" "REVIEW_REQUIRED" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" \
+    "$(jq -nc --arg sha "$SHA" '[{user:{login:"a-reviewer"}, state:"APPROVED", commit_id:$sha,
+        submitted_at:"2026-08-13T04:00:00Z"}]')"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+  jq -nc '[{type:"pull_request",
+    parameters:{required_approving_review_count:2,require_code_owner_review:true}}]' \
+    >"$1/branch_rules.json"
+}
+run_case "counts an existing approval and names code owners" 75 "$POLICY_NO_EXT" setup_review_required_partial
+expect_out "partial count" "1 of 2 approving review(s)"
+expect_out "code owner requirement named" "code owner review required"
+
+setup_review_required_zero() {
+  write_pr_view "$1" "REVIEW_REQUIRED" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "[]"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+  jq -nc '[{type:"pull_request",
+    parameters:{required_approving_review_count:1,require_code_owner_review:true}}]' \
+    >"$1/branch_rules.json"
+}
+run_case "singular wording for one required review" 75 "$POLICY_NO_EXT" setup_review_required_zero
+expect_out "singular review(s) wording" "0 of 1 approving review(s)"
+
+setup_review_required_unreadable() {
+  write_pr_view "$1" "REVIEW_REQUIRED" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "[]"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+  echo "1" >"$1/gh_api_rules_exit"
+}
+run_case "an unreadable base ruleset still PENDs, never crashes" 75 "$POLICY_NO_EXT" setup_review_required_unreadable
+expect_out "generic approval message when the ruleset is unreadable" "MERGE GATE PENDING — approval"
+expect_not_merged "REVIEW_REQUIRED with unreadable ruleset"
+
+# A PR whose gate-5 (external-review) evidence is genuinely missing exits
+# through gate 5's own bot-specific message and never reaches gate 1b at
+# all — that is a property of gate ORDER (gate 5 runs first and exits on
+# pending()), already covered by every other gate-5 test in this file, which
+# never observe an "approval:" token because they never get that far.
+#
+# What gate 1b exists to catch is the opposite and sharper case a review
+# caught in an earlier version of this gate: gate 5's OWN evidence already
+# satisfied, but the base ruleset separately still requires MORE native
+# approvals than that one review counts for — reviewDecision is still
+# REVIEW_REQUIRED, and nothing upstream of gate 1b will ever say so. An
+# applicability guard (skip whenever gate 5 is configured on) missed this
+# entirely; running last, unconditionally, catches it.
+setup_review_required_after_ext_satisfied() {
+  write_pr_view "$1" "REVIEW_REQUIRED" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODEX_REVIEWS"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+  jq -nc '[{type:"pull_request",
+    parameters:{required_approving_review_count:2,require_code_owner_review:false}}]' \
+    >"$1/branch_rules.json"
+}
+run_case "still catches REVIEW_REQUIRED after gate 5's own evidence passes" \
+  75 "$POLICY" setup_review_required_after_ext_satisfied
+expect_out "names the approval gate despite gate 5 passing" "MERGE GATE PENDING — approval"
+expect_not_merged "REVIEW_REQUIRED surviving gate 5"
+
+# --force does not bypass gate 1b — GitHub's own ruleset would refuse the
+# merge regardless of what this script decides (same rule as gate 1).
+run_case "--force does not bypass gate 1b" 75 "$POLICY_NO_EXT" setup_review_required --force "emergency"
+expect_not_merged "REVIEW_REQUIRED + force"
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
