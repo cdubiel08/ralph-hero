@@ -290,6 +290,19 @@ run_ad_poll "$dir" "$POLICY" abc 900 2451 4242 --env staging
 expect "a non-numeric poll_sec is refused" 2 "RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer"
 if [[ ! -f "$dir/approve_calls.log" ]]; then pass "non-numeric poll_sec never approves the deployment first"; else fail "validation must precede approval" "approve_calls.log exists"; fi
 
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_BUILDING" >"$dir/run.json"
+run_ad_poll "$dir" "$POLICY" 99999999999999999999 900 2451 4242 --env staging
+expect "an oversized poll_sec (past 64-bit range) is refused, not silently wrapped" 2 "RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer"
+if [[ ! -f "$dir/approve_calls.log" ]]; then pass "oversized poll_sec never approves the deployment first"; else fail "validation must precede approval" "approve_calls.log exists"; fi
+
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_BUILDING" >"$dir/run.json"
+run_ad_poll "$dir" "$POLICY" 900 99999999999999999999 2451 4242 --env staging
+expect "an oversized timeout_sec (past 64-bit range) is refused, not silently wrapped" 2 "RALPH_APPROVE_DEPLOY_TIMEOUT_SEC must be a positive integer"
+
 echo "== autonomous grant: EVERY poll fails — no fabricated recovery command =="
 
 dir=$(new_case)

@@ -83,12 +83,17 @@ done
 # silent misbehavior).
 timeout_sec="${RALPH_APPROVE_DEPLOY_TIMEOUT_SEC:-900}"
 poll_sec="${RALPH_APPROVE_DEPLOY_POLL_SEC:-15}"
-[[ "$timeout_sec" =~ ^[0-9]+$ && "$timeout_sec" -gt 0 ]] || {
-  echo "ERROR: RALPH_APPROVE_DEPLOY_TIMEOUT_SEC must be a positive integer (got '$timeout_sec')" >&2
+# Bounded to 9 digits (< 1e9, ~31 years — comfortably past any sane value) so
+# the regex itself rejects an oversized string. Without the length cap, a
+# digits-only value past bash's 64-bit integer range wraps during the `-gt`
+# arithmetic comparison (undefined which way), so an absurd input could read
+# as a small positive number and pass validation after all (GH-2451 review).
+[[ "$timeout_sec" =~ ^[0-9]{1,9}$ && "$timeout_sec" -gt 0 ]] || {
+  echo "ERROR: RALPH_APPROVE_DEPLOY_TIMEOUT_SEC must be a positive integer, at most 9 digits (got '$timeout_sec')" >&2
   exit 2
 }
-[[ "$poll_sec" =~ ^[0-9]+$ && "$poll_sec" -gt 0 ]] || {
-  echo "ERROR: RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer (got '$poll_sec')" >&2
+[[ "$poll_sec" =~ ^[0-9]{1,9}$ && "$poll_sec" -gt 0 ]] || {
+  echo "ERROR: RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer, at most 9 digits (got '$poll_sec')" >&2
   exit 2
 }
 
