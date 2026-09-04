@@ -3498,6 +3498,33 @@ describe("readiness sizing-doctrine", () => {
     expect(c.status).toBe("ok");
     expect(c.recommend).toBeUndefined();
   });
+
+  // merge-evidence.sh's own reader (me_review_config) defaults an omitted
+  // `bot` to a supported login under `required: true` rather than leaving it
+  // unset — this check must read the same default, or a host that relies on
+  // it looks bot-less and gets the human-only recommendation by mistake.
+  it("required: true with no `bot` key still counts as a wired bot (the gate's own default)", () => {
+    const gh = new FakeGh();
+    const root = mkdtempSync(join(tmpdir(), "readiness-sizing-"));
+    mkdirSync(join(root, ".github"), { recursive: true });
+    writePolicy(root, { external_review: { required: true } });
+    const ctx = makeCtx(gh, "me@test", root);
+    withRest(gh, { prRule: true, approvals: 1 });
+    const c = readiness(ctx).checks.find((x) => x.name === "sizing-doctrine")!;
+    expect(c.status).toBe("ok");
+    expect(c.recommend).toBeUndefined();
+  });
+
+  it("an unreadable branch-rules API is unevaluated, not a clean bill of health", () => {
+    const gh = new FakeGh(); // no REST overlay → repo API "unavailable"
+    const root = mkdtempSync(join(tmpdir(), "readiness-sizing-"));
+    mkdirSync(join(root, ".github"), { recursive: true });
+    const ctx = makeCtx(gh, "me@test", root);
+    const c = readiness(ctx).checks.find((x) => x.name === "sizing-doctrine")!;
+    expect(c.status).toBe("info");
+    expect(c.detail).toBe("could not verify (repo API unavailable)");
+    expect(c.recommend).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

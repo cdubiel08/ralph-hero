@@ -12290,16 +12290,19 @@ export function readiness(ctx: Ctx): ReadinessReport {
     const requiredApprovals = branchRules
       ? (branchRules.find((r) => r.type === "pull_request")?.parameters?.required_approving_review_count ?? 0)
       : null;
+    // `external_review.required: true` is enough on its own — merge-evidence.sh's
+    // OWN reader (`me_review_config`) defaults an omitted `bot` to a supported
+    // login (Codex or Copilot, by `request_mode`) rather than leaving it unset,
+    // so an omitted `bot` under `required: true` is still a wired bot, not a
+    // gap. Re-deriving that default here would be a second copy that drifts;
+    // `required` alone answers "is a bot reviewer wired".
     let reviewBotWired = false;
     try {
       const policyFile =
         process.env.RALPH_MERGE_POLICY_FILE ?? join(ctx.repoRoot, ".github", "ralph-merge-policy.json");
       if (existsSync(policyFile)) {
         const policy = JSON.parse(readFileSync(policyFile, "utf8"));
-        reviewBotWired =
-          policy?.external_review?.required === true &&
-          typeof policy?.external_review?.bot === "string" &&
-          policy.external_review.bot.length > 0;
+        reviewBotWired = policy?.external_review?.required === true;
       }
     } catch {
       /* unreadable/malformed policy = no bot signal here, never a gap —
@@ -12308,7 +12311,10 @@ export function readiness(ctx: Ctx): ReadinessReport {
     const approvalGated = requiredApprovals !== null && requiredApprovals >= 1 && !reviewBotWired;
     add(
       3, "sizing-doctrine",
-      approvalGated ? "info" : "ok",
+      // An unreadable branch-rules API (requiredApprovals === null) is
+      // unevaluated, not a clean bill of health — "info", matching how
+      // "pr-required" reads the same failure, never "ok".
+      approvalGated || requiredApprovals === null ? "info" : "ok",
       requiredApprovals === null
         ? "could not verify (repo API unavailable)"
         : approvalGated
