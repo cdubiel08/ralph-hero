@@ -847,6 +847,23 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "since": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "waitHours": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -946,6 +963,23 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "since": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "waitHours": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
@@ -1039,6 +1073,23 @@
                   "detail": {
                     "type": [
                       "string",
+                      "null"
+                    ]
+                  },
+                  "since": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "waitHours": {
+                    "type": [
+                      "number",
                       "null"
                     ]
                   }
