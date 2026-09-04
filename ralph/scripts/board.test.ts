@@ -80,6 +80,10 @@ import {
   linkParent,
   loadConfig,
   LEGACY_STATES,
+  isConfiguredRepo,
+  parseIssueAddress,
+  parseReposList,
+  scopeMatchesAny,
   listItems,
   listItemsFull,
   listOwnOpenItems,
@@ -539,6 +543,142 @@ describe("scopeMatches", () => {
 
   it("deep paths and subgroup-style remotes are refused (exactly owner/repo)", () => {
     expect(scopeMatches("https://github.com/cdubiel08/group/ralph-hero.git", "cdubiel08", "ralph-hero")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GH-2455 (D8): program scope 12a — plural repos, `owner/repo#N` addressing,
+// and the scope gate widened to any configured repo.
+// ---------------------------------------------------------------------------
+
+describe("parseReposList", () => {
+  it("absent repos config is exactly [primary] — a single-repo host configures nothing new", () => {
+    expect(parseReposList(undefined, "cdubiel08/ralph-hero", ".ralph.json \"repos\"")).toEqual([
+      "cdubiel08/ralph-hero",
+    ]);
+  });
+
+  it("primary is always first, regardless of where the caller put it in the list", () => {
+    expect(
+      parseReposList(["acme/other", "cdubiel08/ralph-hero"], "cdubiel08/ralph-hero", ".ralph.json \"repos\""),
+    ).toEqual(["cdubiel08/ralph-hero", "acme/other"]);
+  });
+
+  it("case-insensitive duplicates collapse to the first spelling seen", () => {
+    expect(
+      parseReposList(["ACME/Other", "acme/other"], "cdubiel08/ralph-hero", ".ralph.json \"repos\""),
+    ).toEqual(["cdubiel08/ralph-hero", "ACME/Other"]);
+  });
+
+  it("a non-array, a non-string entry, and a malformed owner/repo entry all name the file", () => {
+    expect(() => parseReposList("acme/other", "o/r", ".ralph.json \"repos\"")).toThrow(UsageError);
+    expect(() => parseReposList("acme/other", "o/r", ".ralph.json \"repos\"")).toThrow(/must be an array/);
+    expect(() => parseReposList([42], "o/r", ".ralph.json \"repos\"")).toThrow(/must be an array/);
+    expect(() => parseReposList(["not-a-repo"], "o/r", ".ralph.json \"repos\"")).toThrow(
+      /entry "not-a-repo" is not "owner\/repo"/,
+    );
+  });
+});
+
+describe("parseIssueAddress", () => {
+  const cfg = { owner: "cdubiel08", repo: "ralph-hero", repos: ["cdubiel08/ralph-hero", "acme/other"] };
+
+  it("a bare number always resolves in the primary repo", () => {
+    expect(parseIssueAddress("42", cfg)).toEqual({ owner: "cdubiel08", repo: "ralph-hero", number: 42 });
+  });
+
+  it("owner/repo#N resolves a configured repo, case-insensitively", () => {
+    expect(parseIssueAddress("acme/other#7", cfg)).toEqual({ owner: "acme", repo: "other", number: 7 });
+    expect(parseIssueAddress("ACME/OTHER#7", cfg)).toEqual({ owner: "ACME", repo: "OTHER", number: 7 });
+  });
+
+  it("a qualified address naming an UNCONFIGURED repo refuses, naming what IS configured", () => {
+    expect(() => parseIssueAddress("other-org/other-repo#1", cfg)).toThrow(UsageError);
+    expect(() => parseIssueAddress("other-org/other-repo#1", cfg)).toThrow(
+      /other-org\/other-repo, which is not a configured repo \(configured: cdubiel08\/ralph-hero, acme\/other\)/,
+    );
+  });
+
+  it("absent, empty, zero, negative, and non-numeric input all refuse", () => {
+    for (const bad of [undefined, "", "0", "-3", "abc", "acme/other#0", "acme/other#-1"]) {
+      expect(() => parseIssueAddress(bad, cfg), JSON.stringify(bad)).toThrow(UsageError);
+    }
+  });
+
+  it("the `what` label rides into every refusal message", () => {
+    expect(() => parseIssueAddress(undefined, cfg, "--parent")).toThrow(/--parent required/);
+  });
+
+  it("isConfiguredRepo is case-insensitive and checks exactly the configured set", () => {
+    expect(isConfiguredRepo(cfg, "acme", "other")).toBe(true);
+    expect(isConfiguredRepo(cfg, "ACME", "OTHER")).toBe(true);
+    expect(isConfiguredRepo(cfg, "acme", "unconfigured")).toBe(false);
+  });
+});
+
+describe("scopeMatchesAny", () => {
+  const cfg = { repos: ["cdubiel08/ralph-hero", "acme/other"], host: "github.com" };
+
+  it("matches the primary repo's origin", () => {
+    expect(scopeMatchesAny("git@github.com:cdubiel08/ralph-hero.git", cfg)).toBe(true);
+  });
+
+  it("matches a SECONDARY configured repo's origin — the scope gate is not primary-only", () => {
+    expect(scopeMatchesAny("https://github.com/acme/other.git", cfg)).toBe(true);
+  });
+
+  it("refuses an origin matching neither configured repo", () => {
+    expect(scopeMatchesAny("git@github.com:someone-else/unrelated.git", cfg)).toBe(false);
+  });
+
+  it("a single-repo host (repos = [primary]) degenerates to scopeMatches — no behavior change", () => {
+    const single = { repos: ["cdubiel08/ralph-hero"], host: "github.com" };
+    expect(scopeMatchesAny("git@github.com:cdubiel08/ralph-hero.git", single)).toBe(true);
+    expect(scopeMatchesAny("git@github.com:acme/other.git", single)).toBe(false);
+  });
+});
+
+describe("loadConfig — plural repos (GH-2455)", () => {
+  it(".ralph.json's \"repos\" array is read, primary-first, deduped", () => {
+    const root = mkdtempSync(join(tmpdir(), "board-cfg-repos-"));
+    writeFileSync(
+      join(root, ".ralph.json"),
+      JSON.stringify({ owner: "cdubiel08", repo: "ralph-hero", projectNumber: 1, repos: ["acme/other", "cdubiel08/ralph-hero"] }),
+    );
+    expect(loadConfig(root).repos).toEqual(["cdubiel08/ralph-hero", "acme/other"]);
+  });
+
+  it("absent \"repos\" is exactly [primary] — a single-repo host configures nothing new", () => {
+    const root = mkdtempSync(join(tmpdir(), "board-cfg-repos-"));
+    writeFileSync(join(root, ".ralph.json"), JSON.stringify({ owner: "cdubiel08", repo: "ralph-hero", projectNumber: 1 }));
+    expect(loadConfig(root).repos).toEqual(["cdubiel08/ralph-hero"]);
+  });
+
+  it("a malformed \"repos\" entry refuses, naming the file", () => {
+    const root = mkdtempSync(join(tmpdir(), "board-cfg-repos-"));
+    writeFileSync(
+      join(root, ".ralph.json"),
+      JSON.stringify({ owner: "cdubiel08", repo: "ralph-hero", projectNumber: 1, repos: ["nope"] }),
+    );
+    expect(() => loadConfig(root)).toThrow(UsageError);
+    expect(() => loadConfig(root)).toThrow(/\.ralph\.json "repos" entry "nope" is not "owner\/repo"/);
+  });
+
+  it("RALPH_GH_REPOS (comma-separated) is the settings.json-path equivalent", () => {
+    const root = mkdtempSync(join(tmpdir(), "board-cfg-repos-"));
+    mkdirSync(join(root, ".claude"), { recursive: true });
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({
+        env: {
+          RALPH_GH_OWNER: "cdubiel08",
+          RALPH_GH_REPO: "ralph-hero",
+          RALPH_GH_PROJECT_NUMBER: "1",
+          RALPH_GH_REPOS: "acme/other, cdubiel08/ralph-hero",
+        },
+      }),
+    );
+    expect(loadConfig(root).repos).toEqual(["cdubiel08/ralph-hero", "acme/other"]);
   });
 });
 
@@ -1408,6 +1548,86 @@ describe("guards at the CLI boundary", () => {
     gh.issues.set(1, { number: 1, state: "Backlog" });
     expect(run(["comment", "1", "-m", "x"], ctx)).toBe(0);
     expect(gh.comments.some((c) => c.body === "x")).toBe(true);
+  });
+
+  // GH-2455 (D8): the scope gate widened to every configured repo, and a
+  // qualified `owner/repo#N` address actually reaches the wire as that repo.
+  describe("program scope 12a — plural repos", () => {
+    it("a worktree's origin matching a SECONDARY configured repo passes the scope gate", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      ctx.cfg.repos = ["cdubiel08/ralph-hero", "acme/other"];
+      gh.originUrl = "git@github.com:acme/other.git"; // NOT primary
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+      expect(run(["comment", "1", "-m", "x"], ctx)).toBe(0);
+      expect(gh.comments.some((c) => c.body === "x")).toBe(true);
+    });
+
+    it("a worktree's origin matching NEITHER configured repo still refuses, naming the full set", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      ctx.cfg.repos = ["cdubiel08/ralph-hero", "acme/other"];
+      gh.originUrl = "git@github.com:someone-else/unrelated.git";
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+      expect(() => run(["comment", "1", "-m", "x"], ctx)).toThrow(RefusalError);
+      expect(() => run(["comment", "1", "-m", "x"], ctx)).toThrow(
+        /does not match any configured repo \(github\.com\/cdubiel08\/ralph-hero, github\.com\/acme\/other\)/,
+      );
+    });
+
+    it("`board get owner/repo#N` queries the NAMED repo, not primary — the address reaches the wire", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      ctx.cfg.repos = ["cdubiel08/ralph-hero", "acme/other"];
+      gh.issues.set(9, { number: 9, title: "foreign issue", repo: "acme/other", state: "Backlog" });
+      expect(run(["get", "acme/other#9"], ctx)).toBe(0);
+      expect(gh.lastIssueQueryVars).toEqual({ owner: "acme", repo: "other", number: 9 });
+    });
+
+    it("`board get owner/repo#N` on an UNCONFIGURED repo refuses before any network call", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      ctx.cfg.repos = ["cdubiel08/ralph-hero"];
+      const before = gh.graphqlCalls;
+      expect(() => run(["get", "other-org/other-repo#1"], ctx)).toThrow(UsageError);
+      expect(() => run(["get", "other-org/other-repo#1"], ctx)).toThrow(/not a configured repo/);
+      expect(gh.graphqlCalls).toBe(before); // refused at parse time, never reached the wire
+    });
+
+    it("a bare number keeps resolving in the primary repo when repos is plural", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      ctx.cfg.repos = ["cdubiel08/ralph-hero", "acme/other"];
+      gh.issues.set(3, { number: 3, title: "primary issue", state: "Backlog" });
+      expect(run(["get", "3"], ctx)).toBe(0);
+      expect(gh.lastIssueQueryVars).toEqual({ owner: "cdubiel08", repo: "ralph-hero", number: 3 });
+    });
+
+    it("`board comment owner/repo#N` posts to the named configured repo's issue", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      ctx.cfg.repos = ["cdubiel08/ralph-hero", "acme/other"];
+      gh.issues.set(4, { number: 4, repo: "acme/other", state: "Backlog" });
+      expect(run(["comment", "acme/other#4", "-m", "cross-repo note"], ctx)).toBe(0);
+      expect(gh.comments.some((c) => c.body === "cross-repo note")).toBe(true);
+    });
+
+    it("`priority`/`estimate` on a qualified address writes the SAME configured item", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      ctx.cfg.repos = ["cdubiel08/ralph-hero", "acme/other"];
+      gh.issues.set(5, { number: 5, repo: "acme/other", state: "Backlog" });
+      expect(run(["priority", "acme/other#5", "P1"], ctx)).toBe(0);
+      expect(gh.issues.get(5)?.priority).toBe("P1");
+    });
+
+    it("a single-repo host (no \"repos\" configured) is byte-identical to before — bare numbers only", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh); // makeCtx's default cfg.repos is [primary]
+      gh.issues.set(1, { number: 1, state: "Backlog" });
+      expect(run(["get", "1"], ctx)).toBe(0);
+      expect(() => run(["get", "acme/other#1"], ctx)).toThrow(/not a configured repo \(configured: cdubiel08\/ralph-hero\)/);
+    });
   });
 });
 

@@ -72,9 +72,13 @@ function dispatchVerbs(src: string): Map<string, string> {
 
 /** The corrective-verb test: does this verb act on an issue that already
  *  exists? `create` is the one that does not, which is the entire reason
- *  GH-2126 could ship a gate on Estimate with no way to set it. */
+ *  GH-2126 could ship a gate on Estimate with no way to set it.
+ *
+ *  GH-2455 (D8): a verb whose subject issue may live in any configured repo
+ *  resolves it via `requireIssueAddress`, not `requireNumber` — both name
+ *  "the issue this command already acts on", so both satisfy the predicate. */
 function addressesExistingIssue(body: string): boolean {
-  return body.includes("requireNumber(positional[0])");
+  return body.includes("requireNumber(positional[0])") || body.includes("requireIssueAddress(ctx, positional[0])");
 }
 
 /** The rule's dispatch arm, as a function of the source, so the failing-first
