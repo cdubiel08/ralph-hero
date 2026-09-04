@@ -95,6 +95,15 @@ describe("replaceMarkdownSection", () => {
     expect(replaceMarkdownSection(["```", "## Only fenced", "```"].join("\n"), "## Only fenced", "x")).toBeNull();
   });
 
+  it("a longer fence is not closed by a shorter one inside it (CommonMark; Codex P2, #2465)", () => {
+    const body = ["## Outcome", "````md", "```", "## Fenced", "```", "````", "real text", "## After", "x"].join("\n");
+    expect(replaceMarkdownSection(body, "## Outcome", "NEW")).toBe(["## Outcome", "NEW", "## After", "x"].join("\n"));
+    expect(replaceMarkdownSection(body, "## Fenced", "NEW")).toBeNull();
+    // ~~~ does not close ``` and vice versa.
+    const mixed = ["## A", "```", "~~~", "## Fenced", "```", "## After", "x"].join("\n");
+    expect(replaceMarkdownSection(mixed, "## Fenced", "NEW")).toBeNull();
+  });
+
   it("matches on the trimmed line — trailing/leading whitespace in the heading arg is forgiving", () => {
     expect(replaceMarkdownSection(body, "  ## Outcome  ", "x")).not.toBeNull();
   });
@@ -124,6 +133,38 @@ describe("amend — body edit modes and the marker comment", () => {
     expect(() => amend(ctx, 1, { content: "new" })).toThrow(RefusalError);
     expect(gh.mutations).toEqual([]);
     expect(gh.comments).toEqual([]);
+  });
+
+  it("refuses an archived item — the same invariant every other board write holds", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog", archived: true, body: "old" });
+    expect(() => amend(makeCtx(gh), 1, { content: "new" })).toThrow(RefusalError);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("a marker post that fails after the body write is REPORTED, never thrown — a retried --append would double-append (Codex P1, #2465)", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, { number: 1, state: "Backlog", body: "old" });
+    const ctx = makeCtx(gh);
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) => {
+      if ([...argv, stdin ?? ""].join(" ").includes("addComment")) return { code: 1, stdout: "", stderr: "Post https://api.github.com/graphql: i/o timeout" };
+      return inner(argv, stdin);
+    };
+    const said: string[] = [];
+    const err = vi.spyOn(process.stderr, "write").mockImplementation((c) => {
+      said.push(String(c));
+      return true;
+    });
+    let res;
+    try {
+      res = amend(ctx, 1, { content: "extra", append: true });
+    } finally {
+      err.mockRestore();
+    }
+    expect(gh.issues.get(1)!.body).toBe("old\n\nextra");
+    expect(res.markerPosted).toBe(false);
+    expect(said.join("")).toContain("do NOT re-run amend");
   });
 
   it("bare --file replaces the whole body", () => {
@@ -230,6 +271,7 @@ describe("amend --broadcast — every OPEN descendant, never the root", () => {
     gh.issues.set(7, { number: 7, state: "Backlog", priority: "P0" }); // unrelated — not under 1525
     const ctx = makeCtx(gh);
     const res = amend(ctx, 1525, { content: "new root body", broadcast: true });
+    expect(res.markerPosted).toBe(true);
     expect(res.broadcast).toEqual({ count: 2, numbers: [1526, 1527], failed: [] });
     // 1 marker on the root + 2 broadcast comments
     expect(gh.comments).toHaveLength(3);
@@ -277,6 +319,29 @@ describe("amend --broadcast — every OPEN descendant, never the root", () => {
     expect(gh.issues.get(1525)!.body).toBe("new"); // the amend landed
     expect(res.broadcast).toEqual({ count: 1, numbers: [1526], failed: [1527] });
     expect(gh.comments).toHaveLength(2); // marker + the one that could be posted
+  });
+
+  it("a descendant WALK failure after the body write is reported as broadcast.error, never thrown (Greptile P1, #2465)", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1", body: "root body" });
+    gh.issues.set(1526, { number: 1526, state: "Backlog", priority: "P2", parent: 1525 });
+    const ctx = makeCtx(gh);
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) => {
+      if ([...argv, stdin ?? ""].some((a) => /states:\s*OPEN/.test(String(a)))) throw new Error("boom: the issues read fell over");
+      return inner(argv, stdin);
+    };
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let res;
+    try {
+      res = amend(ctx, 1525, { content: "new", broadcast: true });
+    } finally {
+      err.mockRestore();
+    }
+    expect(gh.issues.get(1525)!.body).toBe("new");
+    expect(res.markerPosted).toBe(true);
+    expect(res.broadcast).toEqual({ count: 0, numbers: [], failed: [], error: "boom: the issues read fell over" });
+    expect(gh.comments).toHaveLength(1); // marker only
   });
 
   it("no --broadcast flag never walks the board — broadcast is null, not an empty result", () => {

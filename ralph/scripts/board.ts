@@ -7959,13 +7959,16 @@ export function replaceMarkdownSection(
   // structure — issue bodies here routinely quote `## ...` in fenced
   // examples. Level 0 for every fenced line keeps it out of BOTH the target
   // search and the boundary scan (Codex P1 on #2465).
+  // CommonMark: a fence closes only on the SAME character at >= the opening
+  // length, so a ```` block may quote ``` lines without ending (Codex P2).
   const levels: number[] = [];
-  let fence: string | null = null;
+  let fence: { ch: string; len: number } | null = null;
   for (const line of lines) {
-    const open = /^\s*(```|~~~)/.exec(line)?.[1] ?? null;
+    const m = /^\s*(`{3,}|~{3,})/.exec(line);
+    const open = m ? { ch: m[1][0], len: m[1].length } : null;
     if (fence) {
       levels.push(0);
-      if (open === fence) fence = null;
+      if (open && open.ch === fence.ch && open.len >= fence.len) fence = null;
       continue;
     }
     if (open) {
@@ -8018,11 +8021,15 @@ export interface AmendResult {
   mode: "replace" | "append" | "replace-section";
   section?: string;
   diffHash: string;
-  /** `failed` lists descendants whose comment could not be posted. The body
-   *  write and marker have already landed by then, so a lookup/post failure
-   *  is reported here (and on stderr) rather than thrown — a thrown error
-   *  would invite a retry that duplicates the amend record. */
-  broadcast: { count: number; numbers: number[]; failed: number[] } | null;
+  /** false when the body write landed but the marker comment did not. */
+  markerPosted: boolean;
+  /** `failed` lists descendants whose comment could not be posted; `error`
+   *  names a walk/topology failure that prevented the descendant set from
+   *  being computed at all. The body write has already landed by then, so
+   *  every post-write failure is reported here (and on stderr) rather than
+   *  thrown — a thrown error would invite a retry, and a retried --append
+   *  re-reads the changed body and appends the same content twice. */
+  broadcast: { count: number; numbers: number[]; failed: number[]; error?: string } | null;
 }
 
 /** The body-edit verb. Refuses on a closed issue — a closed issue's body is
@@ -8043,6 +8050,10 @@ export function amend(ctx: Ctx, number: number, opts: AmendOpts): AmendResult {
         `historical record of what shipped, not something to keep current`,
     );
   }
+  // The same invariant requireItem holds for every other board write: an
+  // archived item is hidden from board reads and rejects field writes, so a
+  // body edit on one would be provenance nobody's selector ever surfaces.
+  if (issue.archived) throw new RefusalError(`#${number} is archived — unarchive it before amending`);
   const before = fetchIssueBodies(ctx, [number]).get(number)?.body ?? "";
   let after: string;
   let mode: AmendResult["mode"];
@@ -8072,24 +8083,44 @@ export function amend(ctx: Ctx, number: number, opts: AmendOpts): AmendResult {
     ...(opts.section !== undefined ? { section: opts.section } : {}),
     diffHash,
   });
-  addComment(
-    ctx,
-    issue.nodeId,
-    `**Body amended** (\`board\` by \`${ctx.cfg.holder}\`, ${mode}` +
-      (opts.section !== undefined ? ` ${JSON.stringify(opts.section)}` : "") +
-      `)\n\n${AMEND_MARKER}\n\`\`\`json\n${payload}\n\`\`\``,
-  );
+  // EVERYTHING past this line is best-effort: the body write is the one
+  // non-idempotent step and it has landed. A throw from here would make the
+  // caller retry, and a retried --append re-reads the changed body and
+  // appends the same content again (Codex P1 on #2465) — so the marker and
+  // the broadcast REPORT their failures, on stderr and in the result, and the
+  // command exits 0 with the body it actually wrote.
+  let markerPosted = true;
+  try {
+    addComment(
+      ctx,
+      issue.nodeId,
+      `**Body amended** (\`board\` by \`${ctx.cfg.holder}\`, ${mode}` +
+        (opts.section !== undefined ? ` ${JSON.stringify(opts.section)}` : "") +
+        `)\n\n${AMEND_MARKER}\n\`\`\`json\n${payload}\n\`\`\``,
+    );
+  } catch (e) {
+    markerPosted = false;
+    process.stderr.write(
+      `warn: #${number}'s body was amended but the ralph-amend:v1 marker did not post: ${(e as Error).message}\n` +
+        `      do NOT re-run amend; post the marker by hand: board comment ${number} -m '<!-- ralph-amend:v1 -->\n\`\`\`json\n${payload}\n\`\`\`'\n`,
+    );
+  }
   let broadcast: AmendResult["broadcast"] = null;
   if (opts.broadcast) {
-    const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
-    const own = full.open;
-    const closedEdges = closedTreeEdges(ctx, own);
-    const isUnder = epicDescendantPredicate(own, closedEdges, number);
-    const numbers = own.filter((i) => isUnder(i.number)).map((i) => i.number);
-    // Best-effort from here: the amend itself is already on the record. A
-    // descendant that stops resolving between the walk and the lookup, or a
-    // comment that fails to post, is REPORTED — never a throw that would make
-    // the caller retry (and double-post) an amend that already landed.
+    let numbers: number[];
+    try {
+      const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+      const own = full.open;
+      const closedEdges = closedTreeEdges(ctx, own);
+      const isUnder = epicDescendantPredicate(own, closedEdges, number);
+      numbers = own.filter((i) => isUnder(i.number)).map((i) => i.number);
+    } catch (e) {
+      const error = (e as Error).message;
+      process.stderr.write(`warn: broadcast skipped — could not walk #${number}'s descendants: ${error}\n`);
+      return { number, mode, ...(opts.section !== undefined ? { section: opts.section } : {}), diffHash, markerPosted, broadcast: { count: 0, numbers: [], failed: [], error } };
+    }
+    // A descendant that stops resolving between the walk and the lookup, or a
+    // comment that fails to post, is REPORTED in `failed`.
     const failed: number[] = [];
     let nodeIds = new Map<number, string>();
     if (numbers.length) {
@@ -8127,6 +8158,7 @@ export function amend(ctx: Ctx, number: number, opts: AmendOpts): AmendResult {
     mode,
     ...(opts.section !== undefined ? { section: opts.section } : {}),
     diffHash,
+    markerPosted,
     broadcast,
   };
 }
@@ -15247,9 +15279,11 @@ export function run(argv: string[], ctx: Ctx): number {
       if (flags.json) json(res);
       else {
         out(
-          `#${number}: body amended (${res.mode}${res.section !== undefined ? ` ${JSON.stringify(res.section)}` : ""}), diff ${res.diffHash}`,
+          `#${number}: body amended (${res.mode}${res.section !== undefined ? ` ${JSON.stringify(res.section)}` : ""}), diff ${res.diffHash}` +
+            (res.markerPosted ? "" : " — MARKER NOT POSTED (see stderr)"),
         );
-        if (res.broadcast) {
+        if (res.broadcast?.error) out(`broadcast SKIPPED — descendants could not be walked: ${res.broadcast.error}`);
+        else if (res.broadcast) {
           out(
             `broadcast: commented on ${res.broadcast.count} open descendant(s)` +
               (res.broadcast.count ? ` (${res.broadcast.numbers.map((n) => `#${n}`).join(", ")})` : ""),
