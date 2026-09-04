@@ -265,6 +265,111 @@ describe("board events --since", () => {
   });
 });
 
+describe("board events --unit (GH-2446)", () => {
+  it("renders one issue's own transition timeline, filtered from the whole tape", () => {
+    buildDb([
+      '{"ev":"transition","unit":1,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:00:00Z"}',
+      '{"ev":"spawn","agent_ref":"w1-x#1"}', // unrelated event kind — excluded
+      '{"ev":"transition","unit":2,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:05:00Z"}', // a DIFFERENT unit — excluded
+      '{"ev":"transition","unit":1,"from":"In Progress","to":"In Review","actor":"me@test","at":"2026-07-31T13:00:00Z"}',
+    ]);
+    const c = capture();
+    try {
+      expect(run(["events", "--unit", "1"], ctx())).toBe(0);
+    } finally {
+      c.restore();
+    }
+    expect(c.lines).toEqual([
+      '1\t{"ev":"transition","unit":1,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:00:00Z","seq":1}\n',
+      '4\t{"ev":"transition","unit":1,"from":"In Progress","to":"In Review","actor":"me@test","at":"2026-07-31T13:00:00Z","seq":4}\n',
+    ]);
+  });
+
+  it("--json carries {unit, facts}, in seq order", () => {
+    buildDb([
+      '{"ev":"transition","unit":7,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:00:00Z"}',
+    ]);
+    const c = capture();
+    try {
+      expect(run(["events", "--unit", "7", "--json"], ctx())).toBe(0);
+    } finally {
+      c.restore();
+    }
+    expect(JSON.parse(c.lines.join(""))).toEqual({
+      unit: 7,
+      facts: [
+        { ev: "transition", unit: 7, from: "Backlog", to: "In Progress", actor: "me@test", at: "2026-07-31T12:00:00Z", seq: 1 },
+      ],
+    });
+  });
+
+  it("a unit with no transitions on the tape reads as an empty timeline, not an error", () => {
+    buildDb(['{"ev":"transition","unit":1,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:00:00Z"}']);
+    const c = capture();
+    try {
+      expect(run(["events", "--unit", "999", "--json"], ctx())).toBe(0);
+    } finally {
+      c.restore();
+    }
+    expect(JSON.parse(c.lines.join(""))).toEqual({ unit: 999, facts: [] });
+  });
+
+  it("a garbled payload elsewhere on the tape is excluded, never breaking the unit's own read", () => {
+    buildDb([
+      '{"ev":"transition","unit":1,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:00:00Z"}',
+      "not json at all",
+    ]);
+    const c = capture();
+    try {
+      expect(run(["events", "--unit", "1", "--json"], ctx())).toBe(0);
+    } finally {
+      c.restore();
+    }
+    expect(JSON.parse(c.lines.join("")).facts).toHaveLength(1);
+  });
+
+  it("--since and --unit are mutually exclusive; neither given is refused too", () => {
+    buildDb(['{"seq":1}']);
+    for (const argv of [["events"], ["events", "--since", "0", "--unit", "1"]]) {
+      expect(() => run(argv, ctx())).toThrow(UsageError);
+    }
+  });
+
+  it("refuses a missing, non-numeric --unit", () => {
+    buildDb(['{"seq":1}']);
+    for (const argv of [["events", "--unit"], ["events", "--unit", "abc"], ["events", "--unit", "-1"]]) {
+      expect(() => run(argv, ctx())).toThrow(UsageError);
+    }
+  });
+
+  it("absent db is a normal state for --unit too: exit 0, empty --json result, named on stderr", () => {
+    const c = capture();
+    let code: number;
+    try {
+      code = run(["events", "--unit", "1", "--json"], ctx());
+    } finally {
+      c.restore();
+    }
+    expect(code).toBe(0);
+    expect(JSON.parse(c.lines.join(""))).toEqual({ unit: 1, facts: [] });
+    expect(c.errs.join("")).toContain("no ledger.sqlite for cdubiel08/ralph-hero — run ledger-convert.sh");
+  });
+
+  it("an UNREADABLE existing db is exit 69 for --unit too, never an empty result", () => {
+    writeFileSync(dbPath(), "this is not a sqlite database, definitely longer than a header\n");
+    const c = capture();
+    let code: number;
+    try {
+      code = run(["events", "--unit", "1", "--json"], ctx());
+    } finally {
+      c.restore();
+    }
+    expect(code).toBe(69);
+    expect(c.lines).toEqual([]);
+    expect(c.errs.join("")).toContain("could not read");
+  });
+});
+
 /**
  * GH-2372 — a large `events --json` payload survives a real OS pipe.
  *
@@ -303,6 +408,12 @@ describe("board events --json survives a pipe (GH-2372)", () => {
     // ~2500 facts of this shape is comfortably past the 16-64 KB a pipe
     // write can complete synchronously — the same order of magnitude as
     // the 665-fact / ~420 KB ledger that surfaced GH-2372.
+    //
+    // Explicit 20s timeout (vitest's default is 5s): this spawns a real tsx
+    // subprocess — a cold TypeScript compile plus a 2500-fact sqlite build —
+    // and a loaded CI runner (a dozen-plus concurrent workflow jobs) can
+    // blow well past 5s on that alone, independent of anything this test
+    // asserts.
     const n = 2500;
     const payloads = Array.from(
       { length: n },
@@ -336,5 +447,5 @@ describe("board events --json survives a pipe (GH-2372)", () => {
     expect(parsed.facts).toHaveLength(n);
     expect(parsed.facts[0]).toEqual({ kind: "spawn", agent: "w0", session: "deadbeef000000", seq: 1 });
     expect(parsed.facts[n - 1]).toEqual({ kind: "spawn", agent: `w${n - 1}`, session: `deadbeef00${n - 1}`, seq: n });
-  });
+  }, 20_000);
 });
