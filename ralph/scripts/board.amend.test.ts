@@ -71,6 +71,30 @@ describe("replaceMarkdownSection", () => {
     expect(() => replaceMarkdownSection(body, "Outcome", "x")).toThrow(UsageError);
   });
 
+  it("a heading quoted inside a ``` fence is example text — neither a target nor a boundary (Codex P1, #2465)", () => {
+    const fenced = [
+      "## Usage",
+      "run it like so:",
+      "```",
+      "## Outcome",
+      "board create --backlog --body '## Outcome'",
+      "```",
+      "still Usage",
+      "## Outcome",
+      "the real outcome",
+      "## After",
+      "tail",
+    ].join("\n");
+    expect(replaceMarkdownSection(fenced, "## Outcome", "NEW")).toBe(
+      ["## Usage", "run it like so:", "```", "## Outcome", "board create --backlog --body '## Outcome'", "```", "still Usage", "## Outcome", "NEW", "## After", "tail"].join("\n"),
+    );
+    // And a fenced heading inside the target section does not end it early.
+    const inner = ["## Outcome", "text", "```", "## Not a boundary", "```", "more text", "## After", "tail"].join("\n");
+    expect(replaceMarkdownSection(inner, "## Outcome", "NEW")).toBe(["## Outcome", "NEW", "## After", "tail"].join("\n"));
+    // A heading that exists ONLY inside a fence is not found.
+    expect(replaceMarkdownSection(["```", "## Only fenced", "```"].join("\n"), "## Only fenced", "x")).toBeNull();
+  });
+
   it("matches on the trimmed line — trailing/leading whitespace in the heading arg is forgiving", () => {
     expect(replaceMarkdownSection(body, "  ## Outcome  ", "x")).not.toBeNull();
   });
@@ -206,7 +230,7 @@ describe("amend --broadcast — every OPEN descendant, never the root", () => {
     gh.issues.set(7, { number: 7, state: "Backlog", priority: "P0" }); // unrelated — not under 1525
     const ctx = makeCtx(gh);
     const res = amend(ctx, 1525, { content: "new root body", broadcast: true });
-    expect(res.broadcast).toEqual({ count: 2, numbers: [1526, 1527] });
+    expect(res.broadcast).toEqual({ count: 2, numbers: [1526, 1527], failed: [] });
     // 1 marker on the root + 2 broadcast comments
     expect(gh.comments).toHaveLength(3);
     const broadcastBodies = gh.comments.slice(1).map((c) => c.body);
@@ -220,8 +244,39 @@ describe("amend --broadcast — every OPEN descendant, never the root", () => {
     gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1", body: "root body" });
     const ctx = makeCtx(gh);
     const res = amend(ctx, 1525, { content: "new", broadcast: true });
-    expect(res.broadcast).toEqual({ count: 0, numbers: [] });
+    expect(res.broadcast).toEqual({ count: 0, numbers: [], failed: [] });
     expect(gh.comments).toHaveLength(1); // the marker only
+  });
+
+  it("a descendant that fails to resolve or post is REPORTED in `failed`, never thrown — the amend already landed (Codex P1, #2465)", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1525, { number: 1525, state: "Backlog", priority: "P1", body: "root body" });
+    gh.issues.set(1526, { number: 1526, state: "Backlog", priority: "P2", parent: 1525 });
+    gh.issues.set(1527, { number: 1527, state: "Backlog", priority: "P2", parent: 1525 });
+    const ctx = makeCtx(gh);
+    // #1527 vanishes between the walk and the batched id lookup: the batch
+    // throws NOT_FOUND, the per-item fallback resolves #1526 alone.
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) => {
+      const q = [...argv, stdin ?? ""].join(" ");
+      if (q.includes("a0: issue(number") && q.includes("$n1")) {
+        return { code: 1, stdout: JSON.stringify({ errors: [{ type: "NOT_FOUND", message: "Could not resolve to an Issue with the number of 1527." }] }), stderr: "" };
+      }
+      if (q.includes("a0: issue(number") && /"n0":1527/.test(q)) {
+        return { code: 1, stdout: JSON.stringify({ errors: [{ type: "NOT_FOUND", message: "gone" }] }), stderr: "" };
+      }
+      return inner(argv, stdin);
+    };
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let res;
+    try {
+      res = amend(ctx, 1525, { content: "new", broadcast: true });
+    } finally {
+      err.mockRestore();
+    }
+    expect(gh.issues.get(1525)!.body).toBe("new"); // the amend landed
+    expect(res.broadcast).toEqual({ count: 1, numbers: [1526], failed: [1527] });
+    expect(gh.comments).toHaveLength(2); // marker + the one that could be posted
   });
 
   it("no --broadcast flag never walks the board — broadcast is null, not an empty result", () => {
@@ -307,7 +362,7 @@ describe("board amend NNN — CLI wiring", () => {
     expect(j).toMatchObject({
       number: 1525,
       mode: "replace",
-      broadcast: { count: 1, numbers: [1526] },
+      broadcast: { count: 1, numbers: [1526], failed: [] },
     });
     expect(j.diffHash).toMatch(/^[0-9a-f]{16}$/);
   });

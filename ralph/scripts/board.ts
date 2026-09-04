@@ -7948,20 +7948,38 @@ export function replaceMarkdownSection(
   heading: string,
   newSectionBody: string,
 ): string | null {
-  const headingLevel = (line: string): number => /^#+/.exec(line)?.[0].length ?? 0;
   const want = heading.trim();
-  const wantLevel = headingLevel(want);
+  const wantLevel = /^#+/.exec(want)?.[0].length ?? 0;
   if (wantLevel === 0)
     throw new UsageError(
       `--replace-section needs a markdown heading ("## Name"), got ${JSON.stringify(heading)}`,
     );
   const lines = body.split("\n");
-  const start = lines.findIndex((l) => l.trim() === want);
+  // A heading-shaped line inside a ``` / ~~~ fence is example text, not
+  // structure — issue bodies here routinely quote `## ...` in fenced
+  // examples. Level 0 for every fenced line keeps it out of BOTH the target
+  // search and the boundary scan (Codex P1 on #2465).
+  const levels: number[] = [];
+  let fence: string | null = null;
+  for (const line of lines) {
+    const open = /^\s*(```|~~~)/.exec(line)?.[1] ?? null;
+    if (fence) {
+      levels.push(0);
+      if (open === fence) fence = null;
+      continue;
+    }
+    if (open) {
+      fence = open;
+      levels.push(0);
+      continue;
+    }
+    levels.push(/^#+/.exec(line)?.[0].length ?? 0);
+  }
+  const start = lines.findIndex((l, i) => levels[i] > 0 && l.trim() === want);
   if (start === -1) return null;
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    const lvl = headingLevel(lines[i]);
-    if (lvl > 0 && lvl <= wantLevel) {
+    if (levels[i] > 0 && levels[i] <= wantLevel) {
       end = i;
       break;
     }
@@ -8000,7 +8018,11 @@ export interface AmendResult {
   mode: "replace" | "append" | "replace-section";
   section?: string;
   diffHash: string;
-  broadcast: { count: number; numbers: number[] } | null;
+  /** `failed` lists descendants whose comment could not be posted. The body
+   *  write and marker have already landed by then, so a lookup/post failure
+   *  is reported here (and on stderr) rather than thrown — a thrown error
+   *  would invite a retry that duplicates the amend record. */
+  broadcast: { count: number; numbers: number[]; failed: number[] } | null;
 }
 
 /** The body-edit verb. Refuses on a closed issue — a closed issue's body is
@@ -8064,15 +8086,41 @@ export function amend(ctx: Ctx, number: number, opts: AmendOpts): AmendResult {
     const closedEdges = closedTreeEdges(ctx, own);
     const isUnder = epicDescendantPredicate(own, closedEdges, number);
     const numbers = own.filter((i) => isUnder(i.number)).map((i) => i.number);
+    // Best-effort from here: the amend itself is already on the record. A
+    // descendant that stops resolving between the walk and the lookup, or a
+    // comment that fails to post, is REPORTED — never a throw that would make
+    // the caller retry (and double-post) an amend that already landed.
+    const failed: number[] = [];
+    let nodeIds = new Map<number, string>();
     if (numbers.length) {
-      const nodeIds = fetchNodeIds(ctx, numbers);
-      for (const n of numbers) {
-        const id = nodeIds.get(n);
-        if (!id) continue;
-        addComment(ctx, id, `root #${number} amended ${at}, re-read before continuing.`);
+      try {
+        nodeIds = fetchNodeIds(ctx, numbers);
+      } catch (e) {
+        process.stderr.write(`warn: broadcast lookup failed, resolving one at a time: ${(e as Error).message}\n`);
+        for (const n of numbers) {
+          try {
+            const id = fetchNodeIds(ctx, [n]).get(n);
+            if (id) nodeIds.set(n, id);
+          } catch {
+            /* reported below as failed */
+          }
+        }
       }
     }
-    broadcast = { count: numbers.length, numbers };
+    for (const n of numbers) {
+      const id = nodeIds.get(n);
+      if (!id) {
+        failed.push(n);
+        continue;
+      }
+      try {
+        addComment(ctx, id, `root #${number} amended ${at}, re-read before continuing.`);
+      } catch (e) {
+        process.stderr.write(`warn: broadcast to #${n} failed: ${(e as Error).message}\n`);
+        failed.push(n);
+      }
+    }
+    broadcast = { count: numbers.length - failed.length, numbers: numbers.filter((n) => !failed.includes(n)), failed };
   }
   return {
     number,
@@ -15201,11 +15249,17 @@ export function run(argv: string[], ctx: Ctx): number {
         out(
           `#${number}: body amended (${res.mode}${res.section !== undefined ? ` ${JSON.stringify(res.section)}` : ""}), diff ${res.diffHash}`,
         );
-        if (res.broadcast)
+        if (res.broadcast) {
           out(
             `broadcast: commented on ${res.broadcast.count} open descendant(s)` +
               (res.broadcast.count ? ` (${res.broadcast.numbers.map((n) => `#${n}`).join(", ")})` : ""),
           );
+          if (res.broadcast.failed.length)
+            out(
+              `broadcast FAILED for ${res.broadcast.failed.map((n) => `#${n}`).join(", ")} — ` +
+                `the amend itself landed; re-notify those by hand (board comment N -m …), do not re-run amend`,
+            );
+        }
       }
       return 0;
     }
