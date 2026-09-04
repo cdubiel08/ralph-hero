@@ -176,7 +176,8 @@ Commands:
   dispatch day          Prepare the day; enter Herdr from an interactive shell
   day                   Alias for "rh dispatch day"
   cockpit               Open the Ralph cockpit
-  team EPIC             Ensure one named epic team
+  team EPIC             Ensure one named epic team (lead only; the cockpit
+                        work-team action staffs and arms its fleet)
   fleet                 Show fleet status
   inbox                 Show operator attention items
   doctor                Diagnose Ralph and Herdr setup

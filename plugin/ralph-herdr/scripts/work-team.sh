@@ -6,7 +6,7 @@
 # spawns them.
 #
 #   work-team.sh EPIC
-#   work-team.sh EPIC --lead-only   # accepted for compatibility; same thing
+#   work-team.sh EPIC --lead-only   # RESPAWN: the lead alone, no staffing
 #   work-team.sh EPIC --stand-down  # park a LIVE lead deliberately (GH-2357)
 #
 # LEAD-OWNED, SPAWNER-UNCONTAINED (D3.2, revised by GH-2461; the original
@@ -27,6 +27,16 @@
 # escalations; it spawns nothing. Out-of-team work stays plain
 # `work-fleet.sh NNN`.
 #
+# --lead-only NOW MEANS IT (GH-2461). It used to be a compatibility no-op;
+# it is the RESPAWN form: heal.sh (a dead lead's pane.exited) and
+# resume-teams.sh (`rh day`) re-run the lead alone and never re-staff —
+# the launch's armed fleet.json outlives the lead on disk, so the watcher
+# is still refilling that team, and a respawn that re-read the frontier
+# would both re-arm a second run against the same epic and break the
+# resume invariant that resume evidence comes from the scoped ledger,
+# never from board ranking (rh-command-surface.feature). Staffing happens
+# exactly once, at launch, from the bare form.
+#
 # THE LEAD (design decision 4, thoughts/shared/plans/2026-08-26-teams-
 # dispatch-inbox-design.md): the team's orchestrator — a standing pane living
 # the epic's lifetime, read-only by role (roles.sh `orchestrator`: may spawn
@@ -39,8 +49,7 @@
 # RESPAWN IS IDEMPOTENT RE-RUN. A live o<EPIC>-* lead is skipped (the herd
 # read is the liveness oracle, fail-closed like every spawn pre-check); a dead
 # one is simply spawned again. The event healer (heal.sh, GH-2212) re-runs
-# this on the lead's pane.exited; `--lead-only` is retained so its call sites
-# keep working — it names what is now the only behavior.
+# this on the lead's pane.exited with `--lead-only` — the respawn form above.
 #
 # THE TEAM SELF-DISSOLVES (D3.3, GH-2215, an operator deviation: "very
 # guaranteed but also fast and efficient"). The brief's close-out makes the
@@ -111,14 +120,16 @@ ralph_plugin_freshness_notice
 
 usage() {
   cat <<'EOF'
-usage: work-team.sh EPIC [--lead-only]
+usage: work-team.sh EPIC
+       work-team.sh EPIC --lead-only
        work-team.sh EPIC --stand-down
 
   EPIC          the epic issue the team is scoped to. Its lead is the o-lane
                 pane o<EPIC>-<slug>; a live one is never doubled (idempotent),
                 a dead one is respawned by re-running this script.
-  --lead-only   accepted for compatibility (heal.sh, GH-2212): lead-only is
-                the only behavior now — team launch spawns the lead and stops.
+  --lead-only   RESPAWN the lead alone (heal.sh, GH-2212; resume-teams.sh):
+                no initial fleet, no frontier read, no new arming — the
+                launch's armed run keeps refilling the team (GH-2461).
   --stand-down  park a LIVE lead deliberately (GH-2357): records the durable
                 exit fact ({ev: exit, reason: "stood-down"}) for its ledger
                 ref, then closes its team workspace. heal.sh never respawns a
@@ -140,10 +151,10 @@ live ledger + workspace mutation and is unaffected by it).
 EOF
 }
 
-EPIC="" STAND_DOWN=""
+EPIC="" STAND_DOWN="" LEAD_ONLY=""
 for arg in "$@"; do
   case "$arg" in
-    --lead-only) ;; # compatibility no-op: lead-only is the only behavior
+    --lead-only) LEAD_ONLY=1 ;; # respawn form: the lead alone, no staffing (GH-2461)
     --stand-down) STAND_DOWN=1 ;;
     -h | --help)
       trap - EXIT # --help is a read, not a pane session: don't hold for Enter
@@ -539,6 +550,15 @@ echo "lead spawned for GH-$EPIC (pane $pane, agent $LEAD, workspace \"$team_labe
 # as workers exit, so the team stays staffed without the lead lifting a
 # finger. --no-watch: this pane is the lead's launch, not a fleet-watching
 # session — nobody here should block on worker completions.
+#
+# Skipped under --lead-only: a RESPAWN (heal.sh, resume-teams.sh) re-runs
+# the lead alone. Its team's armed fleet.json is still on disk and the
+# watcher is still refilling from it; staffing again here would arm a
+# second run against the same epic and read the frontier on a path whose
+# evidence must come from the ledger alone.
+if [ -n "$LEAD_ONLY" ]; then
+  finish "team GH-$EPIC: lead $LEAD respawned (--lead-only) — its armed fleet run keeps refilling the team; staffing is not repeated"
+fi
 echo "team GH-$EPIC: staffing the initial fleet (work-fleet.sh --epic $EPIC --refill)"
 fleet_rc=0
 RALPH_HERDR_SPAWNER_ROLE="$SPAWNER_ROLE" "$SCRIPT_DIR/work-fleet.sh" --epic "$EPIC" --refill --no-watch || fleet_rc=$?
