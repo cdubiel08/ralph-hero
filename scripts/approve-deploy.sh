@@ -73,6 +73,25 @@ done
 [[ -n "$RUN" && "$RUN" =~ ^[0-9]+$ ]] || usage
 [[ -n "$ENV_NAME" ]] || { echo "ERROR: --env is required — the deployment environment name" >&2; exit 2; }
 
+# Validated up front, before anything talks to GitHub: a config error caught
+# only once the poll loop starts would fire AFTER the deployment approval
+# below already went through, leaving an approved-but-unevidenced deployment
+# behind. A bad knob must refuse before the first irreversible action, not
+# after it (poll_sec 0 never advances elapsed; a negative/non-numeric value
+# kills `sleep` mid-loop under `set -e` — same posture as
+# RALPH_CLAIM_MAX_ESTIMATE elsewhere in this repo: a loud refusal, never a
+# silent misbehavior).
+timeout_sec="${RALPH_APPROVE_DEPLOY_TIMEOUT_SEC:-900}"
+poll_sec="${RALPH_APPROVE_DEPLOY_POLL_SEC:-15}"
+[[ "$timeout_sec" =~ ^[0-9]+$ && "$timeout_sec" -gt 0 ]] || {
+  echo "ERROR: RALPH_APPROVE_DEPLOY_TIMEOUT_SEC must be a positive integer (got '$timeout_sec')" >&2
+  exit 2
+}
+[[ "$poll_sec" =~ ^[0-9]+$ && "$poll_sec" -gt 0 ]] || {
+  echo "ERROR: RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer (got '$poll_sec')" >&2
+  exit 2
+}
+
 POLICY_FILE=$(me_policy_file)
 policy=""
 if ! policy=$(me_policy_load "$POLICY_FILE"); then
@@ -147,20 +166,6 @@ fi
 echo "--- approved: environment '$ENV_NAME' on run $RUN"
 
 # --- wait for the run to conclude, bounded ----------------------------------
-timeout_sec="${RALPH_APPROVE_DEPLOY_TIMEOUT_SEC:-900}"
-poll_sec="${RALPH_APPROVE_DEPLOY_POLL_SEC:-15}"
-# A config error here must refuse loudly, not hang (poll_sec 0 never advances
-# elapsed) or die mid-loop under `set -e` (`sleep` on a negative/non-numeric
-# value exits non-zero) — same posture as RALPH_CLAIM_MAX_ESTIMATE elsewhere
-# in this repo: a bad knob is a loud refusal, never a silent misbehavior.
-[[ "$timeout_sec" =~ ^[0-9]+$ && "$timeout_sec" -gt 0 ]] || {
-  echo "ERROR: RALPH_APPROVE_DEPLOY_TIMEOUT_SEC must be a positive integer (got '$timeout_sec')" >&2
-  exit 2
-}
-[[ "$poll_sec" =~ ^[0-9]+$ && "$poll_sec" -gt 0 ]] || {
-  echo "ERROR: RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer (got '$poll_sec')" >&2
-  exit 2
-}
 elapsed=0
 status="" conclusion="" head_sha="" workflow_name=""
 while (( elapsed < timeout_sec )); do
@@ -189,8 +194,21 @@ done
 
 if [[ "$status" != "completed" ]]; then
   echo "WARNING: run $RUN has not completed after ${timeout_sec}s (last status: '${status:-unreadable}')." >&2
-  echo "         Approved, but no evidence posted — once it finishes, run:" >&2
-  echo "         scripts/apply-evidence.sh $ISSUE --kind run --workflow \"$workflow_name\" --merge-sha $head_sha --notes \"...\"" >&2
+  echo "         Approved, but no evidence posted." >&2
+  if [[ -n "$head_sha" && -n "$workflow_name" ]]; then
+    echo "         Once it finishes, run:" >&2
+    echo "         scripts/apply-evidence.sh $ISSUE --kind run --workflow \"$workflow_name\" --merge-sha $head_sha --notes \"...\"" >&2
+  else
+    # Every poll failed to read the run at all (GH-2451 review): printing a
+    # recovery command with empty --workflow/--merge-sha would be a command
+    # apply-evidence.sh itself refuses — a fabricated-looking fix that is not
+    # one. Point at the run instead of a command that cannot work.
+    nwo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+    run_url="${nwo:+https://github.com/$nwo/actions/runs/$RUN}"
+    echo "         The run's workflow/commit could not be read even once — check" >&2
+    echo "         ${run_url:-run $RUN} directly, then run:" >&2
+    echo "         scripts/apply-evidence.sh $ISSUE --kind run --workflow WORKFLOW --merge-sha SHA --notes \"...\"" >&2
+  fi
   exit 75
 fi
 

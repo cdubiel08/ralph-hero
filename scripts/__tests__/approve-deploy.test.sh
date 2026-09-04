@@ -62,9 +62,13 @@ case "$joined" in
     ;;
   *"actions/runs/"*)
     [[ -f "$GH_STUB_DIR/run.json" ]] || { echo '{}'; exit 0; }
-    # run_fail_after: the FIRST poll returns run.json (good metadata), every
-    # poll after that fails outright — simulates a transient API flap after
-    # the run's identity is already known, for the recovery-metadata test.
+    # run_fail_always: every poll fails outright (the run is never once
+    # readable). run_fail_after: the FIRST poll returns run.json (good
+    # metadata), every poll after that fails — a transient flap AFTER the
+    # run's identity is already known.
+    if [[ -f "$GH_STUB_DIR/run_fail_always" ]]; then
+      echo "gh: API error" >&2; exit 1
+    fi
     if [[ -f "$GH_STUB_DIR/run_fail_after" ]]; then
       n=$(( $(cat "$GH_STUB_DIR/run_calls" 2>/dev/null || echo 0) + 1 ))
       echo "$n" >"$GH_STUB_DIR/run_calls"
@@ -263,25 +267,39 @@ expect "a run seen once then unreadable still times out cleanly" 75 "has not com
 expect "the recovery command keeps the workflow name from the earlier good read" 75 "--workflow \"deploy.yml\""
 expect "the recovery command keeps the head sha from the earlier good read" 75 "--merge-sha $SHA"
 
-echo "== invalid poll/timeout knobs refuse loudly instead of hanging or crashing =="
+echo "== invalid poll/timeout knobs refuse loudly, BEFORE ever approving =="
 
 dir=$(new_case)
 echo "$PENDING" >"$dir/pending.json"
 echo "$RUN_BUILDING" >"$dir/run.json"
 run_ad_poll "$dir" "$POLICY" 0 900 2451 4242 --env staging
 expect "poll_sec=0 is refused rather than spinning forever" 2 "RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer"
+if [[ ! -f "$dir/approve_calls.log" ]]; then pass "poll_sec=0 never approves the deployment first"; else fail "validation must precede approval" "approve_calls.log exists"; fi
 
 dir=$(new_case)
 echo "$PENDING" >"$dir/pending.json"
 echo "$RUN_BUILDING" >"$dir/run.json"
 run_ad_poll "$dir" "$POLICY" -5 900 2451 4242 --env staging
 expect "a negative poll_sec is refused rather than crashing sleep under set -e" 2 "RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer"
+if [[ ! -f "$dir/approve_calls.log" ]]; then pass "negative poll_sec never approves the deployment first"; else fail "validation must precede approval" "approve_calls.log exists"; fi
 
 dir=$(new_case)
 echo "$PENDING" >"$dir/pending.json"
 echo "$RUN_BUILDING" >"$dir/run.json"
 run_ad_poll "$dir" "$POLICY" abc 900 2451 4242 --env staging
 expect "a non-numeric poll_sec is refused" 2 "RALPH_APPROVE_DEPLOY_POLL_SEC must be a positive integer"
+if [[ ! -f "$dir/approve_calls.log" ]]; then pass "non-numeric poll_sec never approves the deployment first"; else fail "validation must precede approval" "approve_calls.log exists"; fi
+
+echo "== autonomous grant: EVERY poll fails — no fabricated recovery command =="
+
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_BUILDING" >"$dir/run.json"
+: >"$dir/run_fail_always"
+run_ad "$dir" "$POLICY" 2451 4242 --env staging
+expect "a run never once readable still times out cleanly" 75 "has not completed after"
+expect "no fabricated --workflow/--merge-sha recovery command is printed" 75 "could not be read even once"
+if grep -qF -- '--workflow ""' <<<"$LAST_OUT"; then fail "empty --workflow must never appear in output" "$LAST_OUT"; else pass "no empty --workflow in the recovery guidance"; fi
 
 dir=$(new_case)
 echo "$PENDING" >"$dir/pending.json"
