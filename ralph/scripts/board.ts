@@ -6203,6 +6203,11 @@ export interface DeliverPrLink {
 /** What one linked PR looks like to the selector — cheap-signal cursors only;
  *  gate truth stays in merge-pr.sh --dry-run (D8). */
 export interface DeliverPrFacts {
+  /** GH-2447: carried forward so `attachApprovalWait` can look this PR up by
+   *  NODE id — a closing reference can name a PR in another repo (the same
+   *  reason `DeliverPrLink` is id-keyed, GH-1811), so a bare number is not
+   *  safe to re-resolve under `ctx.cfg.owner`/`repo`. */
+  id: string;
   number: number;
   state: "OPEN" | "MERGED" | "CLOSED";
   headSha: string;
@@ -6270,6 +6275,11 @@ export interface DeliverRow {
   /** GH-1929: the live foreign session holding this unit's worktree lock.
    *  Present only on `local-session-active` rows. */
   lease?: LeaseHold | null;
+  /** GH-2447 (D4) — `awaiting-approval` rows only. The PR's own GraphQL node
+   *  id, carried from `DeliverPrFacts.id` — `attachApprovalWait`'s lookup key
+   *  (cross-repo-safe by construction, same reason `DeliverPrLink` is
+   *  id-keyed: a closing reference can name a PR in another repo). */
+  prId?: string | null;
   /** GH-2447 (D4) — `awaiting-approval` rows only. The wait's start, derived
    *  from the PR's OWN GitHub timeline (ready-for-review / review-requested,
    *  whichever is later) — never the marker's `at`, which is when the gate
@@ -6416,13 +6426,17 @@ export function parseApprovalTimeline(node: any): PrApprovalTimeline {
   };
 }
 
-/** Two nested connections (GH-1803: cost tracks connections, not fields) —
- *  cheap and flat regardless of how many timeline events or reviews a PR
- *  has, since both stay on one page. */
+/** Keyed by NODE id, not number (the P1 finding on #2477's first review): a
+ *  closing reference can name a PR in ANOTHER repo, where the same number is
+ *  a different PR or none — exactly why `DeliverPrLink`/`DeliverPrFacts` are
+ *  id-keyed already (GH-1811). Under `node(id:)` this is a single node, so
+ *  the two nested connections (GH-1803: cost tracks connections, not fields)
+ *  stay cheap and flat regardless of how many timeline events or reviews a
+ *  PR has — both fit on one page. */
 const APPROVAL_TIMELINE_QUERY = `
-  query($owner: String!, $repo: String!, $n: Int!) {
-    repository(owner: $owner, name: $repo) {
-      pullRequest(number: $n) {
+  query($id: ID!) {
+    node(id: $id) {
+      ... on PullRequest {
         mergedAt
         timelineItems(first: 100, itemTypes: [READY_FOR_REVIEW_EVENT, REVIEW_REQUESTED_EVENT]) {
           nodes {
@@ -6436,32 +6450,34 @@ const APPROVAL_TIMELINE_QUERY = `
     }
   }`;
 
-/** One query per PR (D4) — own-repo scope, same assumption `merge-pr.sh
- *  --dry-run` already makes for a deliver row's PR number. Null = GitHub
- *  answered with no such PR (deleted, or a cross-repo number this reader
- *  cannot resolve) — the caller leaves the row undecorated rather than
+/** One query per PR (D4), cross-repo-safe by construction (id-keyed, like
+ *  `fetchDeliverPrFacts`). Null = GitHub answered with no such node (deleted,
+ *  or not a PullRequest) — the caller leaves the row undecorated rather than
  *  inventing a wait. */
-export function fetchPrApprovalTimeline(ctx: Ctx, prNumber: number): PrApprovalTimeline | null {
-  const data: any = ghGraphQL(ctx, APPROVAL_TIMELINE_QUERY, {
-    owner: ctx.cfg.owner,
-    repo: ctx.cfg.repo,
-    n: prNumber,
-  });
-  const node = data?.repository?.pullRequest;
+export function fetchPrApprovalTimeline(ctx: Ctx, id: string): PrApprovalTimeline | null {
+  const data: any = ghGraphQL(ctx, APPROVAL_TIMELINE_QUERY, { id });
+  const node = data?.node;
   return node ? parseApprovalTimeline(node) : null;
 }
 
 /** Decorates `awaiting-approval` blocked rows with `since`/`waitHours` in
  *  place — bounded by how many rows actually hold that reason (typically
- *  zero to a handful), never by the size of the walk. Best-effort: a read
- *  that fails leaves the row exactly as `classifyDeliver` produced it,
- *  because this decoration is not what the queue's classification depends
- *  on. */
+ *  zero to a handful), never by the size of the walk. A row with no `prId`
+ *  (classified before this field existed, or a genuinely unreadable phase-B
+ *  fetch) is left undecorated rather than guessing at its identity from the
+ *  bare number. Best-effort: a read that fails leaves the row exactly as
+ *  `classifyDeliver` produced it, because this decoration is not what the
+ *  queue's classification depends on. */
 export function attachApprovalWait(ctx: Ctx, rows: DeliverRow[]): void {
   for (const row of rows) {
-    if (row.reason !== "awaiting-approval" || row.pr === null) continue;
+    if (row.reason !== "awaiting-approval") continue;
+    if (!row.prId) {
+      row.since = null;
+      row.waitHours = null;
+      continue;
+    }
     try {
-      const t = fetchPrApprovalTimeline(ctx, row.pr);
+      const t = fetchPrApprovalTimeline(ctx, row.prId);
       const w = t ? deriveApprovalWait(t, ctx.now()) : { since: null, waitHours: null };
       row.since = w.since;
       row.waitHours = w.waitHours;
@@ -6629,6 +6645,10 @@ export function classifyDeliver(
           gate: entry.gate ?? null,
           deltaAt: entry.at,
           windowExpiresAt: null,
+          // GH-2447 (the P1 finding on #2477): carried so attachApprovalWait
+          // can look this PR up by NODE id, cross-repo-safe, rather than
+          // re-resolving a bare number under ctx.cfg.owner/repo.
+          prId: p.id,
         });
       } else if (windowExpired) {
         // Bounded retry, ANY verdict (§4.2.3b): a stuck PENDING and a recorded
@@ -6694,7 +6714,14 @@ export function classifyDeliver(
       // session ever writes a marker for it, so a marker-less (or
       // delta-carrying) approval wait spends one budgeted probe per pass
       // until a human approves — bounded by dryrunMax, never a session.
-      blocked.push({ ...base, reason: "awaiting-approval", verdict: v.verdict, gate: v.gate, windowExpiresAt: null });
+      blocked.push({
+        ...base,
+        reason: "awaiting-approval",
+        verdict: v.verdict,
+        gate: v.gate,
+        windowExpiresAt: null,
+        prId: pc.pr.id, // GH-2447 — see the entry-branch comment above
+      });
       continue;
     }
     const tupleEqual =
@@ -6830,7 +6857,7 @@ const DELIVER_PR_FACTS = `
   reviewThreads(last: 50) { nodes { isResolved comments(last: 1) { nodes { createdAt } } } }
   comments(last: 1) { nodes { createdAt } }`;
 
-function prFactsFrom(node: any): DeliverPrFacts {
+function prFactsFrom(node: any, id: string): DeliverPrFacts {
   const commit = node.commits?.nodes?.[0]?.commit;
   const contexts: any[] = commit?.statusCheckRollup?.contexts?.nodes ?? [];
   const digest = contexts
@@ -6855,6 +6882,7 @@ function prFactsFrom(node: any): DeliverPrFacts {
     (node.reviewThreads?.nodes ?? []).map((t: any) => t?.comments?.nodes?.[0]?.createdAt),
   );
   return {
+    id,
     number: node.number,
     state: node.state,
     headSha: node.headRefOid ?? "",
@@ -6897,7 +6925,7 @@ function fetchDeliverPrFacts(ctx: Ctx, ids: string[]): Map<string, DeliverPrFact
     const data: any = ghGraphQL(ctx, `query(${decls}) {\n${aliases}\n}`, vars);
     chunk.forEach((id, k) => {
       const node = data[`p${k}`];
-      if (node?.number) out.set(id, prFactsFrom(node));
+      if (node?.number) out.set(id, prFactsFrom(node, id));
     });
   }
   return out;

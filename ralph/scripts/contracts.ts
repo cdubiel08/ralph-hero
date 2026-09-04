@@ -1113,9 +1113,11 @@ function zDeliverRow(mode: Mode) {
     // GH-1977 — present only on `convergence-stalled` rows.
     convergence: z.string().nullable().optional(),
     detail: z.string().nullable().optional(),
-    // GH-2447 (D4) — present only on `awaiting-approval` rows: the wait's
-    // start and elapsed hours, derived from the PR's own GitHub timeline.
-    // waitHours null = UNMEASURED, never zero.
+    // GH-2447 (D4) — present only on `awaiting-approval` rows: the PR's own
+    // node id (cross-repo-safe lookup key), the wait's start, and elapsed
+    // hours, derived from the PR's own GitHub timeline. waitHours null =
+    // UNMEASURED, never zero.
+    prId: z.string().nullable().optional(),
     since: zIsoUtc.nullable().optional(),
     waitHours: z.number().nullable().optional(),
   });

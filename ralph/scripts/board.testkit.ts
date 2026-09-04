@@ -594,23 +594,20 @@ export class FakeGh {
     }
 
     // GH-2447: approval-wait's own timeline query, one PR per call, keyed by
-    // NUMBER (own-repo scope, unlike the id-keyed phase B below). Matched
-    // before it since both mention "pullRequest"/"node" adjacent text.
+    // NODE id (cross-repo-safe, same `allPrs()` map the phase B branch below
+    // uses). Matched before it since both mention "node(id".
     if (query.includes("timelineItems(")) {
-      const n = Number((variables as any).n);
-      const p = this.allPrs().get(`PR_${n}`);
-      if (!p) return data({ repository: { pullRequest: null } });
+      const p = this.allPrs().get(String((variables as any).id));
+      if (!p) return data({ node: null });
       const t = p.approvalTimeline ?? {};
       const nodes: unknown[] = [];
       if (t.readyForReviewAt) nodes.push({ __typename: "ReadyForReviewEvent", createdAt: t.readyForReviewAt });
       if (t.reviewRequestedAt) nodes.push({ __typename: "ReviewRequestedEvent", createdAt: t.reviewRequestedAt });
       return data({
-        repository: {
-          pullRequest: {
-            mergedAt: t.mergedAt ?? null,
-            timelineItems: { nodes },
-            reviews: { nodes: t.approvedAt ? [{ state: "APPROVED", submittedAt: t.approvedAt }] : [] },
-          },
+        node: {
+          mergedAt: t.mergedAt ?? null,
+          timelineItems: { nodes },
+          reviews: { nodes: t.approvedAt ? [{ state: "APPROVED", submittedAt: t.approvedAt }] : [] },
         },
       });
     }

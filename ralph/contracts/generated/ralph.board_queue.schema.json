@@ -848,6 +848,12 @@
                         "null"
                       ]
                     },
+                    "prId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "since": {
                       "anyOf": [
                         {
@@ -964,6 +970,12 @@
                       "null"
                     ]
                   },
+                  "prId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "since": {
                     "anyOf": [
                       {
@@ -1071,6 +1083,12 @@
                     ]
                   },
                   "detail": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "prId": {
                     "type": [
                       "string",
                       "null"

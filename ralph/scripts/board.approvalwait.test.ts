@@ -15,12 +15,14 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  attachApprovalWait,
   DELIVER_MARKER,
   deriveApprovalWait,
   deliverQueue,
   doctor,
   fmtHours,
   parseApprovalTimeline,
+  type DeliverRow,
   type PrApprovalTimeline,
 } from "./board.js";
 import { FakeGh, makeCtx, NOW, type FakeIssue } from "./board.testkit.js";
@@ -207,6 +209,28 @@ describe("attachApprovalWait via deliverQueue — end to end through FakeGh", ()
     expect(res.blocked).toMatchObject([{ number: 2, reason: "no-pr" }]);
     expect(res.blocked[0].since).toBeUndefined();
     expect(res.blocked[0].waitHours).toBeUndefined();
+  });
+
+  it("the row carries the PR's NODE id, not just its number — the lookup key attachApprovalWait uses", () => {
+    const gh = new FakeGh();
+    seedAwaitingApproval(gh, { approvalTimeline: { reviewRequestedAt: "2026-07-31T09:00:00Z" } });
+    const ctx = makeCtx(gh);
+    const res = deliverQueue(ctx, undefined, null, null);
+    expect(res.blocked).toMatchObject([{ number: 1, pr: 101, prId: "PR_101" }]);
+  });
+
+  it("regression (P1, review on #2477): a row with no `prId` is never re-resolved by its bare NUMBER — a same-numbered PR in THIS repo must not be misread as the row's own PR", () => {
+    const gh = new FakeGh();
+    // A real, unrelated PR #101 in the own repo, WITH its own approval timeline
+    // data — if attachApprovalWait ever fell back to a number-scoped lookup,
+    // this is exactly the data it would wrongly attach.
+    gh.issues.set(9, { number: 9, prs: [{ number: 101, merged: false, prState: "OPEN", approvalTimeline: { reviewRequestedAt: "2026-07-30T00:00:00Z" } }] });
+    const ctx = makeCtx(gh);
+    const rows: DeliverRow[] = [{ number: 1, title: "x", pr: 101, reason: "awaiting-approval" }];
+    attachApprovalWait(ctx, rows);
+    // No prId on the row → left undecorated, never guessed from the number.
+    expect(rows[0].since).toBeNull();
+    expect(rows[0].waitHours).toBeNull();
   });
 });
 
