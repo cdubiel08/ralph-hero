@@ -8890,7 +8890,8 @@ export interface InboxTier1 {
    *  worker → lead → inbox. */
   leadPending: Array<{ number: number; lead: string | null; at: string | null }>;
   /** GH-2445: PRs held at `awaiting-approval` (GH-2444) — quiescent, gates
-   *  green, blocked on nothing but a human's GitHub review. No `board` verb
+   *  green, blocked on nothing but a human's GitHub review. `at` is GH-2447's
+   *  `since` (the PR's own review-requested anchor), null when unmeasured. No `board` verb
    *  disposes one (the clearing action is a GitHub review, not a board
    *  write — see the comment on INBOX_DELIVER_VERBS), so unlike
    *  `deliverBlocked` these never render as full rows; the renderer prints
@@ -9079,7 +9080,10 @@ export function classifyInbox(
       repo: byNumber.get(r.number)?.repo ?? null,
       title: r.title,
       pr: r.pr ?? null,
-      at: r.deltaAt ?? null,
+      // GH-2447's `since` — the PR's own timeline anchor — never the marker's
+      // `deltaAt`, which is when the gate last RAN, not when the human was
+      // asked. UNMEASURED stays null and renders as no wait, not a fresh one.
+      at: r.since ?? null,
     });
   }
 
@@ -14007,7 +14011,7 @@ export const VERB_HELP: Record<string, string> = {
   frontier: "board frontier [--json] [--epic NNN]\n  next's eligible queue re-projected with per-item explanations (fleet feed).\n  --epic NNN restricts both halves to NNN's subtree (strict descendants).\n  example: board frontier --json\n  example: board frontier --epic 1525",
   brief: "board brief [--json]\n  One orientation read: next head, queue counts, deliver/tend counts, local leases,\n  and $/unit for every live unit from the herdr ledger's usage facts (GH-2347 — list-price\n  equivalent, rate-limit weight, not a bill; `not evaluated` when there is no ledger).\n  example: board brief",
   inbox:
-    "board inbox [--json] [--digest [--mark]]\n  The human's single surface: Human Needed decisions, tend proposals, Intake approvals,\n  and human-clearable deliver-blocked rows, each with its literal disposition verb.\n  Lead-routed escalations inside their window are withheld as \"with leads\" (GH-2218) —\n  promotion or the TTL admits them; `board escalations` lists them.\n  --digest adds completions since the last mark + a pushWorthy verdict; --mark stamps the window.\n  example: board inbox --digest",
+    "board inbox [--json] [--digest [--mark]]\n  The human's single surface: Human Needed decisions, tend proposals, Intake approvals,\n  and human-clearable deliver-blocked rows, each with its literal disposition verb;\n  plus one line of PRs awaiting a human's GitHub approval (URL + wait, GH-2445).\n  Lead-routed escalations inside their window are withheld as \"with leads\" (GH-2218) —\n  promotion or the TTL admits them; `board escalations` lists them.\n  --digest adds completions since the last mark + a pushWorthy verdict; --mark stamps the window.\n  example: board inbox --digest",
   who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  A lease whose worktree was deleted prints DEAD, not STALE: nothing can refresh it, so it is\n  not aging toward anything. `board reap-leases` clears those.\n  example: board who",
   "reap-leases": "board reap-leases [--apply] [--closed] [--json]\n  Remove local lock files whose worktree no longer exists. Dry run unless --apply. Zero API.\n  The predicate is the missing CHECKOUT, never the lock's age: a lease is what deliver-queue\n  reads for local-session-active, so a clock may not be allowed to delete a live one. Any read\n  failure that is not ENOENT leaves the lock alone.\n  --closed adds a second key (GH-2368): the unit is CLOSED on GitHub. A closed unit has no\n  lease consumer, so a lock its checkout never releases (main checkout, kept worktree) is\n  reapable. Costs one issue read per same-repo lease — the default path stays zero-API.\n  Another repo's #N is a different issue, so only same-repo rows are asked; an unreadable\n  issue is listed as not evaluated and kept; the issue is re-read before each unlink.\n  example: board reap-leases --closed --apply",
   events:

@@ -623,6 +623,13 @@ func TestParseInboxRendersAwaitingApprovalAsCardsWithTheURL(t *testing.T) {
 	if cards[0].Question != "awaiting approval [2d]" {
 		t.Errorf("question = %q, want the elapsed wait", cards[0].Question)
 	}
+	// `g` opens the PR, not the issue — the approve button is on the PR.
+	if got := browserURL(cards[0]); got != "https://github.com/o/r/pull/70" {
+		t.Errorf("browserURL = %q", got)
+	}
+	if got := browserURL(Card{Repo: "o/r", Number: 7, Queue: "decision"}); got != "https://github.com/o/r/issues/7" {
+		t.Errorf("non-approval browserURL = %q", got)
+	}
 	if cards[1].Verb != "approve PR #80" || cards[1].Question != "awaiting approval" {
 		t.Errorf("null repo/at row = %+v", cards[1])
 	}

@@ -78,6 +78,10 @@ type Card struct {
 	// disposition command — the invariant that admitted the row to Tier 1.
 	Queue string
 	Verb  string
+	// PR is set only on awaiting-approval inbox cards (GH-2445): the pull
+	// request waiting on the human's review, which is what `g` must open —
+	// the issue page is one hop short of the approve button.
+	PR int
 	// StateUnread marks an epic-popover child whose own field-value page was
 	// truncated (GH-2381): its board state could not be read, which must not
 	// render like a child that is off the board (State == "").

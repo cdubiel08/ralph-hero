@@ -647,7 +647,7 @@ func parseInbox(out string) (cards []Card, withheld, leads string, err error) {
 		}
 		cards = append(cards, Card{
 			Number: a.Number, Repo: deref(a.Repo), Title: a.Title,
-			State: inboxState, Queue: "awaiting-approval",
+			State: inboxState, Queue: "awaiting-approval", PR: derefInt(a.PR),
 			Question: "awaiting approval" + waitLabel(deref(a.At), time.Now()), Verb: verb,
 		})
 	}
@@ -1838,9 +1838,18 @@ func prDiffCmd(cfg Config, r Runner, issue int) tea.Cmd {
 }
 
 // openBrowserCmd opens the issue on GitHub — works on every rung.
+// browserURL is what `g` opens for a card: the issue, except an
+// awaiting-approval inbox card (GH-2445), whose whole point is the PR.
+func browserURL(card Card) string {
+	if card.Queue == "awaiting-approval" && card.PR > 0 {
+		return fmt.Sprintf("https://github.com/%s/pull/%d", card.Repo, card.PR)
+	}
+	return fmt.Sprintf("https://github.com/%s/issues/%d", card.Repo, card.Number)
+}
+
 func openBrowserCmd(card Card) tea.Cmd {
 	return func() tea.Msg {
-		url := fmt.Sprintf("https://github.com/%s/issues/%d", card.Repo, card.Number)
+		url := browserURL(card)
 		opener := "open" // darwin
 		if runtime.GOOS != "darwin" {
 			opener = "xdg-open"

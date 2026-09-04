@@ -10692,14 +10692,21 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
       emptyTend,
       {
         blocked: [
-          row(20, { deltaAt: days(1) }),
-          row(21, { deltaAt: days(5) }),
-          row(22, { deltaAt: days(2) }),
+          // `since` (GH-2447, the PR's own review-requested anchor) is the
+          // wait; deltaAt is when the gate last ran and must not leak into it.
+          row(20, { since: days(1), deltaAt: days(9) }),
+          row(21, { since: days(5), deltaAt: days(0) }),
+          row(22, { since: days(2), deltaAt: days(9) }),
         ],
       },
     );
     expect(res.awaitingApproval.map((a) => a.number)).toEqual([21, 22, 20]);
     expect(res.awaitingApproval[0]).toMatchObject({ number: 21, repo: "o/r", title: "t21", pr: 121, at: days(5) });
+    // UNMEASURED (no timeline anchor) is null, never the gate-run time.
+    const unmeasured = classifyInbox([core(23, { state: "In Review" })], emptyTend, {
+      blocked: [row(23, { since: null, deltaAt: days(1) })],
+    });
+    expect(unmeasured.awaitingApproval[0]?.at).toBeNull();
     expect(res.withheld).toEqual([]);
     expect(res.count).toBe(3);
   });
