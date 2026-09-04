@@ -4331,6 +4331,7 @@ describe("state-smell thresholds", () => {
       unitCtxMax: 200_000,
       hookMin: 60,
       leadRespawns: 3,
+      approvalHours: 24,
     });
     expect(
       parseSmellThresholds({
@@ -4344,6 +4345,7 @@ describe("state-smell thresholds", () => {
         RALPH_UNIT_CTX_MAX: "150000",
         RALPH_SMELL_HOOK_MIN: "120",
         RALPH_SMELL_LEAD_RESPAWNS: "6",
+        RALPH_SMELL_APPROVAL_HOURS: "48",
       }),
     ).toEqual({
       claimExpiries: 4,
@@ -4356,6 +4358,7 @@ describe("state-smell thresholds", () => {
       unitCtxMax: 150000,
       hookMin: 120,
       leadRespawns: 6,
+      approvalHours: 48,
     });
   });
 
@@ -5720,6 +5723,7 @@ import {
 describe("deliver-queue: classification (spec §4.2)", () => {
   // NOW is 2026-07-31T12:00:00Z. Defaults: settle 5 min, retry 60 min, budget 3.
   const dpr = (n: number, over: Partial<DeliverPrFacts> = {}): DeliverPrFacts => ({
+    id: `PR_${n}`,
     number: n,
     state: "OPEN",
     headSha: "sha-a",
@@ -5885,6 +5889,7 @@ describe("deliver-queue: classification (spec §4.2)", () => {
         gate: "approval",
         deltaAt: "2026-07-31T10:30:00Z", // the marker's `at` IS the row's since
         windowExpiresAt: null,
+        prId: "PR_101", // GH-2447: carried for attachApprovalWait's cross-repo-safe lookup
       },
     ]);
     const pass2 = classifyDeliver(cands, DELIVER_DEFAULTS, NOW, probe);
