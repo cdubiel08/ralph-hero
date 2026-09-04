@@ -8898,7 +8898,7 @@ export interface InboxTier1 {
    *  elapsed wait (`at`) per entry. Still one-row-per-issue (the shared
    *  `seen` set) and still counted IN `count` — this is real waiting on
    *  the human, not a self-clearing withhold. */
-  awaitingApproval: Array<{ number: number; repo: string | null; pr: number | null; at: string | null }>;
+  awaitingApproval: Array<{ number: number; repo: string | null; title: string; pr: number | null; at: string | null }>;
   count: number;
 }
 
@@ -9036,17 +9036,15 @@ export function classifyInbox(
 
   const deliverBlocked: InboxRow[] = [];
   const awaitingApproval: InboxTier1["awaitingApproval"] = [];
+  const awaitingCands: DeliverRow[] = [];
   const withheldCounts = new Map<DeliverReason, number>();
   for (const r of deliver.blocked) {
     if (r.reason === "awaiting-approval") {
-      if (seen.has(r.number)) continue;
-      seen.add(r.number);
-      awaitingApproval.push({
-        number: r.number,
-        repo: byNumber.get(r.number)?.repo ?? null,
-        pr: r.pr ?? null,
-        at: r.deltaAt ?? null,
-      });
+      // Deferred to a second pass, NOT admitted here: an issue with two open
+      // PRs — one waiting on approval, one convergence-stalled — must show
+      // the verbed remedy, and `deliver.blocked` carries no ordering promise
+      // between them. A remedy the human can run outranks a wait.
+      awaitingCands.push(r);
       continue;
     }
     const verb = INBOX_DELIVER_VERBS[r.reason];
@@ -9070,6 +9068,18 @@ export function classifyInbox(
           ? `no open PR at this item — a rollup-advanced epic awaiting close-out (all children closed → board move ${r.number} done passes bare), or demote: board move ${r.number} in-progress --why "<why>"`
           : (r.detail ?? r.convergence ?? null),
       verb: verb(r.number),
+    });
+  }
+
+  for (const r of awaitingCands) {
+    if (seen.has(r.number)) continue;
+    seen.add(r.number);
+    awaitingApproval.push({
+      number: r.number,
+      repo: byNumber.get(r.number)?.repo ?? null,
+      title: r.title,
+      pr: r.pr ?? null,
+      at: r.deltaAt ?? null,
     });
   }
 

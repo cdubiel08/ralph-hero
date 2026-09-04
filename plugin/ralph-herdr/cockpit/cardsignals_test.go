@@ -606,6 +606,36 @@ func TestParseInboxKeepsTheCLISectionOrderAndTheRowFacts(t *testing.T) {
 	}
 }
 
+func TestParseInboxRendersAwaitingApprovalAsCardsWithTheURL(t *testing.T) {
+	at := time.Now().Add(-49 * time.Hour).UTC().Format(time.RFC3339)
+	cards, _, _, err := parseInbox(`{"tier1":{"decisions":[],"proposals":[],"approvals":[],"deliverBlocked":[],"withheld":[],"leadPending":[],
+	  "awaitingApproval":[{"number":7,"repo":"o/r","title":"w","pr":70,"at":"` + at + `"},{"number":8,"repo":null,"title":"x","pr":80,"at":null}],
+	  "count":2}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("cards = %d, want 2 — approval waits are rows, not a footer", len(cards))
+	}
+	if cards[0].Queue != "awaiting-approval" || cards[0].Verb != "approve https://github.com/o/r/pull/70" {
+		t.Errorf("card = %+v", cards[0])
+	}
+	if cards[0].Question != "awaiting approval [2d]" {
+		t.Errorf("question = %q, want the elapsed wait", cards[0].Question)
+	}
+	if cards[1].Verb != "approve PR #80" || cards[1].Question != "awaiting approval" {
+		t.Errorf("null repo/at row = %+v", cards[1])
+	}
+	if got := inboxCountLine(cards); !strings.Contains(got, "2 waiting") || !strings.Contains(got, "2 awaiting approval") {
+		t.Errorf("count line = %q", got)
+	}
+	// An older board CLI without the field: nothing drawn, nothing counted.
+	cards, _, _, err = parseInbox(`{"tier1":{"decisions":[],"proposals":[],"approvals":[],"deliverBlocked":[],"withheld":[],"count":0}}`)
+	if err != nil || len(cards) != 0 {
+		t.Errorf("absent field: cards = %d err = %v", len(cards), err)
+	}
+}
+
 func TestInboxIsOnlyReadWhileItIsOnScreen(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	if m.inboxDue(time.Now()) {

@@ -600,6 +600,18 @@ func parseInbox(out string) (cards []Card, withheld, leads string, err error) {
 				Number int     `json:"number"`
 				Lead   *string `json:"lead"`
 			} `json:"leadPending"`
+			// GH-2445: PRs waiting on nothing but a human's GitHub review.
+			// The CLI renders them as ONE line (URL + wait); here they are
+			// cards so the cursor can reach them, `g` can open them and the
+			// "inbox empty" head stays honest. Absent on an older board CLI —
+			// a nil slice, so nothing is drawn and nothing is mis-counted.
+			AwaitingApproval []struct {
+				Number int     `json:"number"`
+				Repo   *string `json:"repo"`
+				Title  string  `json:"title"`
+				PR     *int    `json:"pr"`
+				At     *string `json:"at"`
+			} `json:"awaitingApproval"`
 		} `json:"tier1"`
 	}
 	if uerr := json.Unmarshal([]byte(out), &payload); uerr != nil {
@@ -626,6 +638,19 @@ func parseInbox(out string) (cards []Card, withheld, leads string, err error) {
 			})
 		}
 	}
+	for _, a := range payload.Tier1.AwaitingApproval {
+		// No board verb exists (the clearer is a GitHub review), so the verb
+		// slot carries the one thing the human needs: where to approve.
+		verb := fmt.Sprintf("approve PR #%d", derefInt(a.PR))
+		if a.Repo != nil && *a.Repo != "" && a.PR != nil {
+			verb = fmt.Sprintf("approve https://github.com/%s/pull/%d", *a.Repo, *a.PR)
+		}
+		cards = append(cards, Card{
+			Number: a.Number, Repo: deref(a.Repo), Title: a.Title,
+			State: inboxState, Queue: "awaiting-approval",
+			Question: "awaiting approval" + waitLabel(deref(a.At), time.Now()), Verb: verb,
+		})
+	}
 	parts := make([]string, 0, len(payload.Tier1.Withheld))
 	for _, w := range payload.Tier1.Withheld {
 		parts = append(parts, fmt.Sprintf("%d %s", w.Count, w.Reason))
@@ -642,6 +667,34 @@ func parseInbox(out string) (cards []Card, withheld, leads string, err error) {
 		leadParts = append(leadParts, fmt.Sprintf("#%d (%s)", l.Number, who))
 	}
 	return cards, strings.Join(parts, ", "), strings.Join(leadParts, ", "), nil
+}
+
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// waitLabel is the CLI's own `ago` rendering of an ISO instant — " [Nd]",
+// " [Nh]", " [<1h]" — and "" for an absent or unparseable one, so a wait the
+// board could not date is never shown as fresh.
+func waitLabel(at string, now time.Time) string {
+	if at == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, at)
+	if err != nil || now.Before(t) {
+		return ""
+	}
+	d := now.Sub(t)
+	switch {
+	case d >= 24*time.Hour:
+		return fmt.Sprintf(" [%dd]", int(d.Hours())/24)
+	case d >= time.Hour:
+		return fmt.Sprintf(" [%dh]", int(d.Hours()))
+	}
+	return " [<1h]"
 }
 
 // parseAgents validates a protocol-19 session_snapshot envelope and returns

@@ -10699,9 +10699,23 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
       },
     );
     expect(res.awaitingApproval.map((a) => a.number)).toEqual([21, 22, 20]);
-    expect(res.awaitingApproval[0]).toMatchObject({ number: 21, repo: "o/r", pr: 121, at: days(5) });
+    expect(res.awaitingApproval[0]).toMatchObject({ number: 21, repo: "o/r", title: "t21", pr: 121, at: days(5) });
     expect(res.withheld).toEqual([]);
     expect(res.count).toBe(3);
+  });
+
+  it("GH-2445: a verbed deliver-blocked row on the same issue outranks its approval wait, whatever order deliver listed them", () => {
+    const blocked: DeliverRow[] = [
+      { number: 40, title: "t40", pr: 140, reason: "awaiting-approval", deltaAt: days(2) },
+      { number: 40, title: "t40", pr: 141, reason: "convergence-stalled", deltaAt: days(1), convergence: "stalled" },
+    ];
+    for (const order of [blocked, [...blocked].reverse()]) {
+      const res = classifyInbox([core(40, { state: "In Review" })], emptyTend, { blocked: order });
+      expect(res.deliverBlocked.map((r) => r.number)).toEqual([40]);
+      expect(res.deliverBlocked[0].verb).toContain("board move 40 in-progress");
+      expect(res.awaitingApproval).toEqual([]);
+      expect(res.count).toBe(1);
+    }
   });
 
   it("GH-2445: no awaiting-approval rows renders nothing — an empty list, not a zero-count line", () => {
