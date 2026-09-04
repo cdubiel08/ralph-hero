@@ -871,6 +871,36 @@ ralph_ledger_open_for_pane() {
     | .open | to_entries[] | select(.value and ($pn[.key] == $p)) | .key'
 }
 
+# ralph_ledger_open_for_checkout PATH — open agent_refs whose most recent
+# non-empty checkout record equals PATH exactly (GH-2434).
+#
+# worktree.removed carries no pane_id — herdr's own worktree.remove handler
+# races its pane-death detector (workspace/pane bookkeeping is torn down
+# BEFORE the pane's death is observed), so pane.exited/pane.closed never fire
+# on this path and ralph_ledger_open_for_pane has nothing to correlate
+# against. The ledger's own last-known checkout (the same field
+# _ralph_ledger_latest_checkout answers per-ref) is the correlation key
+# instead: worktree.removed's payload carries the removed worktree's absolute
+# path independent of any pane/workspace state.
+ralph_ledger_open_for_checkout() {
+  local path="${1-}" file
+  [ -n "$path" ] || return 1
+  file=$(ralph_ledger_path) || return 1
+  _ralph_ledger_present "$file" || return 0
+  _ralph_ledger_events "$file" | jq -rs --arg c "$path" '
+    reduce .[] as $e ({open: {}, checkout: {}};
+      if ($e.agent_ref // "") == "" then .
+      else
+        (if $e.ev == "spawn" or $e.ev == "discover" then .open[$e.agent_ref] = true
+         elif $e.ev == "exit" then .open[$e.agent_ref] = false
+         else . end)
+        | ((($e.checkout // "") | tostring) as $cc
+           | if $cc == "" then . else .checkout[$e.agent_ref] = $cc end)
+      end)
+    | .checkout as $cm
+    | .open | to_entries[] | select(.value and ($cm[.key] == $c)) | .key'
+}
+
 # _ralph_ledger_latest FIELD_EXPR REF — last non-empty value of a per-record
 # jq expression over REF's records, matched on the EXACT ref (name#epoch).
 # Deterministic names make respawn-after-crash recycle a NAME as the norm,
