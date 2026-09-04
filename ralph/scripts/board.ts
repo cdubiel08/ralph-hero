@@ -4214,9 +4214,12 @@ export function rosterView(ctx: Ctx, opts: { all: boolean; deriveMax: number }):
   let deriveSpent = 0;
   // Budget note: deriveMax counts DERIVATIONS (unique issues), not fetches —
   // one deep parent chain pays several fetchIssue calls under one tick.
-  // Keyed by "repo#issue", never a bare issue number (GH-2453): once a
-  // foreign repo's own #N can be derived too, two repos' own #N would
-  // otherwise collide on one cache slot and one budget entry.
+  // Keyed by "owner/repo#issue", never a bare issue number (GH-2453): once
+  // a foreign repo's own #N can be derived too, two repos' own #N would
+  // otherwise collide on one cache slot and one budget entry. The owner
+  // comes from the ctx the derivation actually queries as — the row's own
+  // `repo` is a basename (the address grammar's segment) and cannot tell two
+  // owners' same-named repos apart.
   const derived = new Map<string, { team: { epic: number; title: string } | null; title: string } | null>();
   const rowLease = new Map<RosterRow, LeaseRow>();
   const usedLeases = new Set<string>();
@@ -4283,7 +4286,7 @@ export function rosterView(ctx: Ctx, opts: { all: boolean; deriveMax: number }):
           if (row.repo !== ctx.cfg.repo)
             row.note = a.cwd === null ? "address not derived (no checkout cwd)" : "address not derived (that repo's own config is unreadable here)";
         } else {
-          const key = `${row.repo}#${named.issue}`;
+          const key = `${derivationCtx.cfg.owner}/${derivationCtx.cfg.repo}#${named.issue}`;
           if (derived.has(key) || deriveSpent < opts.deriveMax) {
             if (!derived.has(key)) {
               deriveSpent++;
