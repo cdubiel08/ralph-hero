@@ -561,7 +561,16 @@ if [ -n "$LEAD_ONLY" ]; then
 fi
 echo "team GH-$EPIC: staffing the initial fleet (work-fleet.sh --epic $EPIC --refill)"
 fleet_rc=0
-RALPH_HERDR_SPAWNER_ROLE="$SPAWNER_ROLE" "$SCRIPT_DIR/work-fleet.sh" --epic "$EPIC" --refill --no-watch || fleet_rc=$?
+# The lead's identity rides the call (review finding): RALPH_HERDR_TEAM_LEAD
+# is what spawn_work_session injects into every worker pane as
+# RALPH_HERDR_LEAD (escalation routing, fleet-send's lead detector) and
+# RALPH_HERDR_TEAM_LEAD_REF is the C8 parent/root the worker's spawn record
+# carries (D4.1) — the SAME two vars the lead's own env used to carry into
+# its work-fleet runs. ralph_fleet_arm persists both into fleet.json so the
+# daemon-side refill, which has no lead env of its own, spawns workers that
+# still belong to this team.
+RALPH_HERDR_SPAWNER_ROLE="$SPAWNER_ROLE" RALPH_HERDR_TEAM_LEAD="$LEAD" RALPH_HERDR_TEAM_LEAD_REF="$ref" \
+  "$SCRIPT_DIR/work-fleet.sh" --epic "$EPIC" --refill --no-watch || fleet_rc=$?
 if [ "$fleet_rc" -eq 0 ]; then
   finish "team GH-$EPIC: lead $LEAD standing; initial fleet staffed and armed for refill from GH-$EPIC's frontier (the lead spawns nothing itself — GH-2461)"
 else

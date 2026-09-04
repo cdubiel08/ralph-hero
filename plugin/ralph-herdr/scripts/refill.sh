@@ -346,6 +346,15 @@ refill_one() (
   # threaded honestly: this spawn is machine-initiated.
   depth=$(ralph_depth_guard "") || exit 0
   export RALPH_HERDR_INVOKED_BY=scheduler RALPH_HERDR_RUN_ID="$run_id"
+  # A team run's lead identity (GH-2461, review finding): this process has no
+  # lead env, so restore it from the arming record — spawn_work_session then
+  # stamps the worker's parent/root lineage from the ref and injects
+  # RALPH_HERDR_LEAD into its pane from the name, exactly as a lead-launched
+  # fleet did. Absent (a plain run) means a depth-0 root as before.
+  lead=$(jq -r '.lead // empty' <<<"$state")
+  lead_ref=$(jq -r '.lead_ref // empty' <<<"$state")
+  [ -z "$lead" ] || export RALPH_HERDR_TEAM_LEAD="$lead"
+  [ -z "$lead_ref" ] || export RALPH_HERDR_TEAM_LEAD_REF="$lead_ref"
   log "refill $run_id: spawning GH-$cand${epic:+ (under GH-$epic frontier scope)} (depth $depth, budget left $budget_left)"
   rc=0
   spawn_work_session "$cand" "$frontier" || rc=$?

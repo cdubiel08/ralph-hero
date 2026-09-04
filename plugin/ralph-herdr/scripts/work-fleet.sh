@@ -560,6 +560,15 @@ if [ -n "$REFILL" ]; then
   if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
     echo "  refill: DRY RUN — would arm run $RALPH_HERDR_RUN_ID (k=$FLEET, ttl ${RALPH_HERDR_REFILL_TTL_MIN:-120}m, budget ${RALPH_HERDR_REFILL_BUDGET:-8} total spawns)${EPIC:+, scoped to GH-$EPIC frontier only}"
   else
+    # An epic relaunch supersedes the epic's previous armed run (GH-2461,
+    # review finding): two armed runs on one epic would race the same
+    # frontier with doubled budget. Named per run so the audit trail says
+    # which launch retired which.
+    if [ -n "$EPIC" ]; then
+      while IFS= read -r old_run; do
+        [ -n "$old_run" ] && echo "  refill: superseded GH-$EPIC's earlier armed run $old_run (disarmed — this run is the team's refiller now)"
+      done < <(ralph_fleet_supersede_epic "$EPIC" "$RALPH_HERDR_RUN_ID")
+    fi
     # shellcheck disable=SC2086  # intentional word-splitting: one argv per issue
     if fleet_file=$(ralph_fleet_arm "$FLEET" 1 $spawned_issues); then
       echo "  refill: ARMED (opt-in only — the claim-TTL probe says NO-GO for unattended arming; stay at the keyboard) — $fleet_file"

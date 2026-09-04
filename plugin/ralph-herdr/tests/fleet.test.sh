@@ -227,11 +227,37 @@ is "arm: no RALPH_HERDR_FLEET_EPIC — epic is null (unscoped, unchanged)" "null
 
 RID4=$(ralph_run_id)
 RALPH_HERDR_RUN_ID="$RID4"
-FF4=$(RALPH_HERDR_FLEET_EPIC=700 ralph_fleet_arm 2 1 901)
+FF4=$(RALPH_HERDR_FLEET_EPIC=700 RALPH_HERDR_TEAM_LEAD=o700-lead RALPH_HERDR_TEAM_LEAD_REF=o700-lead#0000abcd ralph_fleet_arm 2 1 901)
 is "arm: RALPH_HERDR_FLEET_EPIC records the scope as a number" "700" "$(jqf "$FF4" '.epic')"
 
 rc=0; RALPH_HERDR_FLEET_EPIC=abc RALPH_HERDR_RUN_ID="$RID4" ralph_fleet_arm 2 1 >/dev/null 2>&1 || rc=$?
 is "arm: refuses a non-numeric RALPH_HERDR_FLEET_EPIC" "1" "$rc"
+
+# The lead identity rides beside the scope (review finding on GH-2461): the
+# daemon-side refill has no lead env, so a refilled worker would otherwise be
+# a depth-0 root with no RALPH_HERDR_LEAD in its pane.
+is "arm: a plain run records no lead" "null null" "$(jq -r '"\(.lead) \(.lead_ref)"' "$FF3")"
+is "arm: an epic run records the lead name and durable ref" "o700-lead o700-lead#0000abcd" \
+  "$(jq -r '"\(.lead) \(.lead_ref)"' "$FF4")"
+RID5=$(ralph_run_id)
+FF5=$(RALPH_HERDR_RUN_ID="$RID5" RALPH_HERDR_FLEET_EPIC=700 RALPH_HERDR_TEAM_LEAD='$(rm -rf /)' \
+  RALPH_HERDR_TEAM_LEAD_REF='not a ref' ralph_fleet_arm 2 1 902 2>/dev/null)
+is "arm: an unparseable lead name / ref is recorded as null, never verbatim" "null null" \
+  "$(jq -r '"\(.lead) \(.lead_ref)"' "$FF5")"
+
+# A relaunch supersedes the epic's earlier armed run (review finding): two
+# armed runs on one epic would race the same frontier with doubled budget.
+# Other epics and unscoped runs are never touched.
+RID6=$(ralph_run_id)
+FF6=$(RALPH_HERDR_RUN_ID="$RID6" RALPH_HERDR_FLEET_EPIC=701 ralph_fleet_arm 2 1 903)
+superseded=$(REPO="$REPO_DIR" ralph_fleet_supersede_epic 700 "$RID6" | sort | tr '\n' ' ')
+# Both earlier epic-700 armings (FF4 and the parse-gating FF5) are retired.
+is "supersede: names EVERY earlier armed run on the epic" "$(printf '%s\n%s\n' "$RID4" "$RID5" | sort | tr '\n' ' ')" "$superseded"
+is "supersede: the earlier run is disarmed with the new run named" "false superseded by run $RID6 (GH-700 relaunched)" \
+  "$(jq -r '"\(.armed) \(.disarm_reason)"' "$FF4")"
+is "supersede: a different epic's run stays armed" "true" "$(jqf "$FF6" '.armed')"
+is "supersede: an unscoped run stays armed" "true" "$(jqf "$FF3" '.armed')"
+is "supersede: nothing left to supersede prints nothing" "" "$(REPO="$REPO_DIR" ralph_fleet_supersede_epic 700 "$RID6")"
 
 # ═══ 3. budget consumption — atomic under the scope's ledger mutex ═══════════
 RID2=$(ralph_run_id)
@@ -781,7 +807,7 @@ rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc
 # read `work-fleet --epic` uses (`board frontier --json --epic EPIC`). The
 # unscoped frontier's top pick (GH-999, a stranger to this team) must NEVER
 # spawn; only the epic-scoped one (GH-701) may.
-mk_row m 700
+RALPH_HERDR_TEAM_LEAD=o700-lead RALPH_HERDR_TEAM_LEAD_REF=o700-lead#0000abcd mk_row m 700
 herd_fixture '[]'
 printf '{"workspace":{"workspace_id":"wM"},"tab":{"tab_id":"wM:t1"},"root_pane":{"pane_id":"p41"},"worktree":{"path":"%s"}}\n' "$WT" \
   >"$FAKE_HERDR_FIXTURES/worktree-create.json"
@@ -799,6 +825,14 @@ is "refill M: the unscoped candidate never spawns" "0" \
   "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w999-"))')"
 is "refill M: the frontier read carried the --epic scope" "1" \
   "$(log_count "$FAKE_BOARD_LOG" '^frontier --json --epic 700$')"
+# The lead identity restored from fleet.json (review finding): the worker is
+# the lead's child in the ledger and carries the lead's address in its pane.
+is "refill M: the refilled worker's lineage parent is the lead's ref" "o700-lead#0000abcd" \
+  "$(levents "$RLEDGER" | jq -rs '[.[] | select(.ev=="spawn" and (.agent_ref | startswith("w701-")))] | last | .tokens.parent // empty')"
+is "refill M: depth 1 — a team worker, not a root" "1" \
+  "$(levents "$RLEDGER" | jq -rs '[.[] | select(.ev=="spawn" and (.agent_ref | startswith("w701-")))] | last | .tokens.depth // empty')"
+is "refill M: RALPH_HERDR_LEAD is injected into the worker pane" "1" \
+  "$(log_count "$FAKE_HERDR_LOG" 'RALPH_HERDR_LEAD=o700-lead ')"
 rm -f "$FAKE_BOARD_FIXTURES/frontier.epic.700.json"
 
 # ═══ 7. spawn_issue_fleet — REMOVED (GH-1774) ════════════════════════════════
