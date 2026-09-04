@@ -408,6 +408,12 @@ describe("board events --json survives a pipe (GH-2372)", () => {
     // ~2500 facts of this shape is comfortably past the 16-64 KB a pipe
     // write can complete synchronously — the same order of magnitude as
     // the 665-fact / ~420 KB ledger that surfaced GH-2372.
+    //
+    // Explicit 20s timeout (vitest's default is 5s): this spawns a real tsx
+    // subprocess — a cold TypeScript compile plus a 2500-fact sqlite build —
+    // and a loaded CI runner (a dozen-plus concurrent workflow jobs) can
+    // blow well past 5s on that alone, independent of anything this test
+    // asserts.
     const n = 2500;
     const payloads = Array.from(
       { length: n },
@@ -441,5 +447,5 @@ describe("board events --json survives a pipe (GH-2372)", () => {
     expect(parsed.facts).toHaveLength(n);
     expect(parsed.facts[0]).toEqual({ kind: "spawn", agent: "w0", session: "deadbeef000000", seq: 1 });
     expect(parsed.facts[n - 1]).toEqual({ kind: "spawn", agent: `w${n - 1}`, session: `deadbeef00${n - 1}`, seq: n });
-  });
+  }, 20_000);
 });
