@@ -8889,6 +8889,16 @@ export interface InboxTier1 {
    *  (same GH-2108 rule as `withheld`). One arbitration hop total:
    *  worker → lead → inbox. */
   leadPending: Array<{ number: number; lead: string | null; at: string | null }>;
+  /** GH-2445: PRs held at `awaiting-approval` (GH-2444) — quiescent, gates
+   *  green, blocked on nothing but a human's GitHub review. No `board` verb
+   *  disposes one (the clearing action is a GitHub review, not a board
+   *  write — see the comment on INBOX_DELIVER_VERBS), so unlike
+   *  `deliverBlocked` these never render as full rows; the renderer prints
+   *  them as ONE summary line — PR URL (built from `repo` + `pr`) and
+   *  elapsed wait (`at`) per entry. Still one-row-per-issue (the shared
+   *  `seen` set) and still counted IN `count` — this is real waiting on
+   *  the human, not a self-clearing withhold. */
+  awaitingApproval: Array<{ number: number; repo: string | null; pr: number | null; at: string | null }>;
   count: number;
 }
 
@@ -8896,17 +8906,18 @@ export interface InboxTier1 {
  *  enters the inbox only if a human VERB disposes it. Excluded, by the
  *  invariant rather than by taste: the windowed self-clearing reasons
  *  (local-session-active, settling, retry-window, marker-current — their
- *  `windowExpiresAt` IS their disposition), `deferred` (probe-budget backoff;
- *  the next deliver pass re-probes with no human in the loop), and
- *  `reviewer-rate-limited` and `awaiting-approval`, neither of which CAN
- *  enter: both have no disposing `board` verb and no computable expiry (the
- *  quota reset instant is the reviewer's secret; a native-approval wait
- *  clears on a GitHub review, not a board write) — GH-2444's clearer is
- *  literally "a human approves the PR", which has no `board` spelling, so
- *  admitting either would put a row in the decision queue nothing here can
- *  dispose. `no-pr`'s population is rollup-advanced epic parents and
- *  human-placed items (see classifyDeliver) — nothing but a human ever
- *  clears one. */
+ *  `windowExpiresAt` IS their disposition) and `deferred` (probe-budget
+ *  backoff; the next deliver pass re-probes with no human in the loop).
+ *  `reviewer-rate-limited` stays withheld too — no computable expiry (the
+ *  quota reset instant is the reviewer's secret). `awaiting-approval` is
+ *  the one exception (GH-2445): it has no `board` verb either (GH-2444's
+ *  clearer is literally "a human approves the PR", which has no `board`
+ *  spelling), but unlike the reasons above the wait IS actionable by the
+ *  human right now — so `classifyInbox` routes it to its own
+ *  `awaitingApproval` list instead of `withheld`, rendered as one line
+ *  rather than a verbed row. `no-pr`'s population is rollup-advanced epic
+ *  parents and human-placed items (see classifyDeliver) — nothing but a
+ *  human ever clears one. */
 export const INBOX_DELIVER_VERBS: Partial<Record<DeliverReason, (n: number) => string>> = {
   "convergence-stalled": (n) => `board move ${n} in-progress --why "<rework direction>"`,
   "no-pr": (n) => `board move ${n} done (passes bare on an all-children-closed epic root; else --why "<review verdict>")`,
@@ -9024,8 +9035,20 @@ export function classifyInbox(
   }
 
   const deliverBlocked: InboxRow[] = [];
+  const awaitingApproval: InboxTier1["awaitingApproval"] = [];
   const withheldCounts = new Map<DeliverReason, number>();
   for (const r of deliver.blocked) {
+    if (r.reason === "awaiting-approval") {
+      if (seen.has(r.number)) continue;
+      seen.add(r.number);
+      awaitingApproval.push({
+        number: r.number,
+        repo: byNumber.get(r.number)?.repo ?? null,
+        pr: r.pr ?? null,
+        at: r.deltaAt ?? null,
+      });
+      continue;
+    }
     const verb = INBOX_DELIVER_VERBS[r.reason];
     if (!verb) {
       withheldCounts.set(r.reason, (withheldCounts.get(r.reason) ?? 0) + 1);
@@ -9054,6 +9077,12 @@ export function classifyInbox(
   proposals.sort(oldestFirst);
   approvals.sort(oldestFirst);
   deliverBlocked.sort(oldestFirst);
+  awaitingApproval.sort((a, b) => {
+    if (a.at === null && b.at === null) return a.number - b.number;
+    if (a.at === null) return 1;
+    if (b.at === null) return -1;
+    return a.at < b.at ? -1 : a.at > b.at ? 1 : a.number - b.number;
+  });
   const withheld = [...withheldCounts.entries()]
     .map(([reason, count]) => ({ reason, count }))
     .sort((a, b) => (a.reason < b.reason ? -1 : 1));
@@ -9065,9 +9094,12 @@ export function classifyInbox(
     deliverBlocked,
     withheld,
     leadPending,
+    awaitingApproval,
     // leadPending is deliberately OUTSIDE the count: the count is what waits
-    // on the inbox's reader, and those rows wait on the lead.
-    count: decisions.length + proposals.length + approvals.length + deliverBlocked.length,
+    // on the inbox's reader, and those rows wait on the lead. awaitingApproval
+    // is deliberately INSIDE it: it waits on the same reader, one line short.
+    count:
+      decisions.length + proposals.length + approvals.length + deliverBlocked.length + awaitingApproval.length,
   };
 }
 
@@ -14435,7 +14467,8 @@ export function run(argv: string[], ctx: Ctx): number {
         tier1.count === 0
           ? `inbox: empty — no decisions waiting`
           : `inbox: ${tier1.count} waiting — ${tier1.decisions.length} decisions, ${tier1.proposals.length} proposals, ` +
-              `${tier1.approvals.length} approvals, ${tier1.deliverBlocked.length} deliver-blocked`,
+              `${tier1.approvals.length} approvals, ${tier1.deliverBlocked.length} deliver-blocked, ` +
+              `${tier1.awaitingApproval.length} awaiting approval`,
       );
       const section = (name: string, rows: InboxRow[]) => {
         if (rows.length === 0) return;
@@ -14455,6 +14488,16 @@ export function run(argv: string[], ctx: Ctx): number {
       section("proposals", tier1.proposals);
       section("approvals", tier1.approvals);
       section("deliver-blocked", tier1.deliverBlocked);
+      // GH-2445: one line, not one row per PR — there is no board verb to
+      // hang a full row on (the clearer is a GitHub review), so the line
+      // just gives the human what they need to act: the URL and the wait.
+      if (tier1.awaitingApproval.length > 0)
+        out(
+          `awaiting approval: ` +
+            tier1.awaitingApproval
+              .map((a) => `${a.repo && a.pr ? `https://${ctx.cfg.host}/${a.repo}/pull/${a.pr}` : `#${a.number}`}${ago(a.at)}`)
+              .join(", "),
+        );
       if (tier1.withheld.length > 0)
         out(
           `withheld: ${tier1.withheld.map((w) => `${w.count} ${w.reason}`).join(", ")} — ` +

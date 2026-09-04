@@ -10659,10 +10659,11 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
     expect(res.deliverBlocked.find((r) => r.number === 10)!.detail).toBe("5 rounds");
     expect(res.deliverBlocked.find((r) => r.number === 11)!.pr).toBeNull();
     expect(res.deliverBlocked.find((r) => r.number === 11)!.detail).toContain("board move 11 in-progress");
+    // GH-2445: awaiting-approval is no longer withheld — it has its own line.
+    expect(res.awaitingApproval.map((a) => a.number)).toEqual([18]);
     const withheldReasons = res.withheld.map((w) => w.reason).sort();
     expect(withheldReasons).toEqual(
       [
-        "awaiting-approval",
         "deferred",
         "local-session-active",
         "marker-current",
@@ -10671,7 +10672,41 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
         "settling",
       ].sort(),
     );
-    expect(res.withheld.reduce((s, w) => s + w.count, 0)).toBe(7);
+    expect(res.withheld.reduce((s, w) => s + w.count, 0)).toBe(6);
+  });
+
+  it("GH-2445: awaiting-approval PRs surface as their own Tier 1 list, one row per issue, oldest first, and count toward `count`", () => {
+    const row = (n: number, over: Partial<DeliverRow> = {}): DeliverRow => ({
+      number: n,
+      title: `t${n}`,
+      pr: 100 + n,
+      reason: "awaiting-approval",
+      ...over,
+    });
+    const res = classifyInbox(
+      [
+        core(20, { state: "In Review", repo: "o/r" }),
+        core(21, { state: "In Review", repo: "o/r" }),
+        core(22, { state: "In Review", repo: "o/r" }),
+      ],
+      emptyTend,
+      {
+        blocked: [
+          row(20, { deltaAt: days(1) }),
+          row(21, { deltaAt: days(5) }),
+          row(22, { deltaAt: days(2) }),
+        ],
+      },
+    );
+    expect(res.awaitingApproval.map((a) => a.number)).toEqual([21, 22, 20]);
+    expect(res.awaitingApproval[0]).toMatchObject({ number: 21, repo: "o/r", pr: 121, at: days(5) });
+    expect(res.withheld).toEqual([]);
+    expect(res.count).toBe(3);
+  });
+
+  it("GH-2445: no awaiting-approval rows renders nothing — an empty list, not a zero-count line", () => {
+    const res = classifyInbox([core(30, { state: "In Review" })], emptyTend, emptyDeliver);
+    expect(res.awaitingApproval).toEqual([]);
   });
 
   it("one row per issue: a proposal outranks approving the same Intake item; a decision outranks everything", () => {
