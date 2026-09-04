@@ -854,6 +854,32 @@ is "refill M: RALPH_HERDR_LEAD is injected into the worker pane" "1" \
 line_has "refill M: the generation switch is logged" "$OUT" "lineage follows the live generation"
 rm -f "$FAKE_BOARD_FIXTURES/frontier.epic.700.json"
 
+# ── row N: refill in the lead's DEAD window — a root, never the closed ref ──
+# The lead died and its healer has not brought a generation back yet. A
+# worker stamped with the closed launch-time ref is exactly what orphan
+# recovery flags (review finding): record it as a depth-0 root instead; the
+# lead NAME still rides into the pane, so escalations route to whichever
+# generation comes back.
+RALPH_HERDR_TEAM_LEAD=o700-lead RALPH_HERDR_TEAM_LEAD_REF=o700-lead#0000abcd mk_row n 700
+cat >>"$RLEDGER" <<'EOF'
+{"ts":"t2","ev":"spawn","agent_ref":"o700-lead#0000abcd","pane_id":"p9","tokens":{"role":"o","issue":"700","slug":"lead","root":"o700-lead#0000abcd","depth":"0","state":"spawned","harness":"claude","spawn_epoch":"0000abcd"}}
+{"ts":"t3","ev":"exit","agent_ref":"o700-lead#0000abcd","reason":"crashed"}
+EOF
+herd_fixture '[]'
+printf '{"epic":700,"epicOnTopology":true,"frontier":[{"number":702,"title":"Second team unit","parentNumber":700}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.epic.700.json"
+: >"$FAKE_HERDR_LOG"
+run_event pane.exited '{"pane_id":"p1"}' "$ROW"
+is "refill N: hook exits 0" "0" "$RC"
+is "refill N: the worker spawns" "1" "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w702-"))')"
+is "refill N: no parent token — a root, not the dead generation's child" "" \
+  "$(levents "$RLEDGER" | jq -rs '[.[] | select(.ev=="spawn" and (.agent_ref | startswith("w702-")))] | last | .tokens.parent // empty')"
+is "refill N: depth 0" "0" \
+  "$(levents "$RLEDGER" | jq -rs '[.[] | select(.ev=="spawn" and (.agent_ref | startswith("w702-")))] | last | .tokens.depth // empty')"
+is "refill N: the lead NAME still rides into the pane" "1" "$(log_count "$FAKE_HERDR_LOG" 'RALPH_HERDR_LEAD=o700-lead ')"
+line_has "refill N: the dead window is logged" "$OUT" "has no live generation"
+rm -f "$FAKE_BOARD_FIXTURES/frontier.epic.700.json"
+
 # ═══ 7. spawn_issue_fleet — REMOVED (GH-1774) ════════════════════════════════
 # Shared-CHECKOUT fleets put K agents in one git worktree, racing on the index,
 # the branch, and each other's uncommitted files. The function is kept as a

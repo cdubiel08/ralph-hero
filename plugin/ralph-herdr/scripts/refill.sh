@@ -357,12 +357,19 @@ refill_one() (
   # (heal.sh, resume-teams.sh) carries a new epoch under the same name, and a
   # worker stamped with the dead generation's ref would read as an orphan to
   # exact-ref lineage (review finding). Prefer the lead's CURRENT open ledger
-  # ref — the same name→ref bridge stand-down uses — and keep the stored one
-  # only when no live generation is open (the lead is down right now; its
-  # healer will bring one back, and the name half routes regardless).
+  # ref — the same name→ref bridge stand-down uses. No live generation (the
+  # lead is down right now, between its death and its heal) means NO parent
+  # ref at all: the worker is recorded as a depth-0 root, which is the truth
+  # at spawn time, rather than under the closed generation — a closed parent
+  # is exactly what orphan recovery flags (review finding). The name half
+  # still rides into the pane, so escalations route to whichever generation
+  # the healer brings back.
   if [ -n "$lead" ]; then
     live_ref=$(RALPH_HERDR_LEDGER="$ledger" ralph_ledger_open_ref "$lead" 2>/dev/null) || live_ref=""
-    if [ -n "$live_ref" ] && [ "$live_ref" != "$lead_ref" ]; then
+    if [ -z "$live_ref" ]; then
+      [ -z "$lead_ref" ] || log "refill $run_id: lead $lead has no live generation (run armed under $lead_ref) — spawning as a root; the lead name still routes"
+      lead_ref=""
+    elif [ "$live_ref" != "$lead_ref" ]; then
       log "refill $run_id: lead $lead is live as $live_ref (run armed under ${lead_ref:-no ref}) — lineage follows the live generation"
       lead_ref="$live_ref"
     fi

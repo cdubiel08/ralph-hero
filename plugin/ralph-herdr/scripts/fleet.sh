@@ -235,7 +235,9 @@ ralph_fleet_arm() {
 # armed and retires it, never both retiring before either arms. When the
 # caller already holds the scope's lock (identity-checked, the same rule as
 # ralph_fleet_consume_budget — the mutex is not reentrant) no re-lock is
-# taken; a bare call locks per file.
+# taken; a bare call locks per file. A run whose rewrite FAILS is reported
+# on stderr as still armed and is NOT printed as superseded (review finding):
+# the printed list is the set actually retired, never the set attempted.
 ralph_fleet_supersede_epic() {
   local epic="${1-}" new_id="${2-}" ledger runs ff id scope held
   case "$epic" in '' | *[!0-9]*) return 0 ;; esac
@@ -252,9 +254,12 @@ ralph_fleet_supersede_epic() {
     held=""
     [ "$_RALPH_LEDGER_LOCK_HELD" = "$(dirname "$scope")/.ledger.lock" ] && held=1
     [ -n "$held" ] || ralph_ledger_lock "$scope"
-    ralph_fleet_disarm "$ff" "superseded by run ${new_id:-<unnamed>} (GH-$epic relaunched)" || true
+    if ralph_fleet_disarm "$ff" "superseded by run ${new_id:-<unnamed>} (GH-$epic relaunched)"; then
+      printf '%s\n' "$id"
+    else
+      echo "ralph_fleet_supersede_epic: could not disarm run $id ($ff) — it is STILL ARMED beside ${new_id:-the new run}; disarm it by hand (two armed runs race one epic's frontier)" >&2
+    fi
     [ -n "$held" ] || ralph_ledger_unlock "$scope"
-    printf '%s\n' "$id"
   done
   return 0
 }
