@@ -223,5 +223,66 @@ if [[ "$conclusion" != "success" ]]; then
 fi
 
 echo "--- run $RUN concluded success ($workflow_name @ ${head_sha:0:8}) — posting apply evidence"
+
+# --- verify RUN's deployment actually belongs to ISSUE (GH-2469) ------------
+#
+# ISSUE is operator-supplied argv; a copy-paste error (right RUN, wrong
+# ISSUE) would otherwise post evidence — and eventually close — an unrelated
+# apply unit. RUN's own head_sha resolves to the PR GitHub associates with
+# that commit; ISSUE's cross-reference timeline names every PR that mentions
+# it, closing keyword or bare "Refs #N" alike — apply units are deliberately
+# never CLOSED by a keyword (CLAUDE.md's "no closing keyword may bind an
+# apply unit"), so closingIssuesReferences alone would read empty for every
+# correctly-configured apply unit; CROSS_REFERENCED_EVENT catches the
+# reference either way, same as a closing one. Overlap between the two sets
+# is the confirmation. Either read failing, RUN having no associated PR, or
+# ISSUE having no recorded reference yet all degrade to today's
+# operator-trusted behaviour — a fixture that can't be read is not evidence
+# of a mismatch, and blocking on it would refuse a legitimate deploy that
+# just has nothing to cross-check against (e.g. a manual/dispatch run).
+nwo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+run_pr_list=""
+if [[ -n "$nwo" ]]; then
+  run_prs_json=$(gh api "repos/$nwo/commits/$head_sha/pulls" 2>/dev/null || echo "")
+  if jq -e 'type == "array"' >/dev/null 2>&1 <<<"$run_prs_json"; then
+    run_pr_list=$(jq -r '.[].number' <<<"$run_prs_json")
+  fi
+fi
+
+if [[ -z "$nwo" || -z "$run_pr_list" ]]; then
+  echo "--- linkage: could not resolve a PR for run $RUN's commit ${head_sha:0:8} — proceeding operator-trusted (GH-2469)"
+else
+  issue_refs_json=$(gh api graphql -f owner="${nwo%%/*}" -f repo="${nwo##*/}" -F n="$ISSUE" -f query='
+    query($owner:String!,$repo:String!,$n:Int!){
+      repository(owner:$owner,name:$repo){ issue(number:$n){
+        timelineItems(first:50, itemTypes:[CROSS_REFERENCED_EVENT]){
+          nodes{ ... on CrossReferencedEvent{ source{ ... on PullRequest{ number } } } }
+        }
+      } } }' 2>/dev/null || echo "")
+  if ! jq -e '.data.repository.issue.timelineItems.nodes | type == "array"' >/dev/null 2>&1 <<<"$issue_refs_json"; then
+    echo "--- linkage: could not read #$ISSUE's cross-reference timeline — proceeding operator-trusted (GH-2469)"
+  else
+    ref_pr_list=$(jq -r '[.data.repository.issue.timelineItems.nodes[].source.number // empty] | unique | .[]' <<<"$issue_refs_json")
+    if [[ -z "$ref_pr_list" ]]; then
+      echo "--- linkage: #$ISSUE is not referenced by any PR yet — proceeding operator-trusted (GH-2469)"
+    else
+      match=""
+      while read -r rp; do
+        [[ -n "$rp" ]] || continue
+        if grep -qxF "$rp" <<<"$run_pr_list"; then match="$rp"; break; fi
+      done <<<"$ref_pr_list"
+      if [[ -z "$match" ]]; then
+        echo "ERROR: run $RUN's commit (PR $(tr '\n' ',' <<<"$run_pr_list" | sed 's/,$//')) does not reference #$ISSUE." >&2
+        echo "       #$ISSUE is instead referenced by PR(s) $(tr '\n' ',' <<<"$ref_pr_list" | sed 's/,$//')." >&2
+        echo "       This looks like a copy-paste error (right RUN, wrong ISSUE, or vice versa) — refusing" >&2
+        echo "       to post evidence for a deploy that may not belong to this apply unit. Re-run with the" >&2
+        echo "       correct ISSUE/RUN pairing, or post evidence by hand if this is actually correct." >&2
+        exit 1
+      fi
+      echo "--- linkage: run $RUN's PR #$match references #$ISSUE — confirmed (GH-2469)"
+    fi
+  fi
+fi
+
 exec "$HERE/apply-evidence.sh" "$ISSUE" --kind run --workflow "$workflow_name" --merge-sha "$head_sha" \
   --notes "${NOTES:-deployed to $ENV_NAME via run $RUN (autonomous grant)}"
