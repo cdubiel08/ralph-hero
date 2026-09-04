@@ -7925,6 +7925,245 @@ export function promote(ctx: Ctx, number: number, opts: { note?: string } = {}):
 }
 
 // ---------------------------------------------------------------------------
+// amend — a body edit as a metadata verb (D6, GH-2449)
+// ---------------------------------------------------------------------------
+//
+// Today no verb edits a body: MUTATING covers the field/state writes, and
+// `--body` exists only on `create`. An epic root's design record drifts out
+// of date the moment the plan pivots, and nothing on the board lets the lead
+// keep it true — this closes that gap as one narrow verb rather than folding
+// body edits into `move`/`comment`, which own different invariants (a state
+// edge, an append-only trail) an in-place body rewrite must not share.
+
+export const AMEND_MARKER = "<!-- ralph-amend:v1 -->";
+
+/** Locate a markdown ATX heading (line-trimmed, exact match) and replace the
+ *  text between it and the next heading at the same or shallower level (or
+ *  the end of the body) with `newSectionBody`. The heading line itself is
+ *  left untouched — only its content moves. Returns null when the heading is
+ *  not found, so the caller can refuse rather than silently append a second
+ *  copy of a section amend was meant to update. */
+export function replaceMarkdownSection(
+  body: string,
+  heading: string,
+  newSectionBody: string,
+): string | null {
+  const want = heading.trim();
+  const wantLevel = /^#+/.exec(want)?.[0].length ?? 0;
+  if (wantLevel === 0)
+    throw new UsageError(
+      `--replace-section needs a markdown heading ("## Name"), got ${JSON.stringify(heading)}`,
+    );
+  const lines = body.split("\n");
+  // A heading-shaped line inside a ``` / ~~~ fence is example text, not
+  // structure — issue bodies here routinely quote `## ...` in fenced
+  // examples. Level 0 for every fenced line keeps it out of BOTH the target
+  // search and the boundary scan (Codex P1 on #2465).
+  // CommonMark: a fence closes only on the SAME character at >= the opening
+  // length, so a ```` block may quote ``` lines without ending (Codex P2).
+  const levels: number[] = [];
+  let fence: { ch: string; len: number } | null = null;
+  for (const line of lines) {
+    const m = /^\s*(`{3,}|~{3,})/.exec(line);
+    const open = m ? { ch: m[1][0], len: m[1].length } : null;
+    if (fence) {
+      levels.push(0);
+      if (open && open.ch === fence.ch && open.len >= fence.len) fence = null;
+      continue;
+    }
+    if (open) {
+      fence = open;
+      levels.push(0);
+      continue;
+    }
+    levels.push(/^#+/.exec(line)?.[0].length ?? 0);
+  }
+  const start = lines.findIndex((l, i) => levels[i] > 0 && l.trim() === want);
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (levels[i] > 0 && levels[i] <= wantLevel) {
+      end = i;
+      break;
+    }
+  }
+  const replacement = newSectionBody.replace(/\n+$/, "").split("\n");
+  return [...lines.slice(0, start + 1), ...replacement, ...lines.slice(end)].join("\n");
+}
+
+/** Append text to the end of a body, one blank line of separation — the same
+ *  join a fresh comment gets. An empty existing body is not padded. */
+export function appendToBody(body: string, addition: string): string {
+  const trimmedBody = body.replace(/\s+$/, "");
+  const trimmedAddition = addition.trim();
+  return trimmedBody ? `${trimmedBody}\n\n${trimmedAddition}` : trimmedAddition;
+}
+
+function updateIssueBody(ctx: Ctx, nodeId: string, body: string): void {
+  ghGraphQL(
+    ctx,
+    `mutation($issueId: ID!, $body: String!) {
+      updateIssue(input: { id: $issueId, body: $body }) { issue { id } }
+    }`,
+    { issueId: nodeId, body },
+  );
+}
+
+export interface AmendOpts {
+  content: string;
+  append?: boolean;
+  section?: string;
+  broadcast?: boolean;
+}
+
+export interface AmendResult {
+  number: number;
+  mode: "replace" | "append" | "replace-section";
+  section?: string;
+  diffHash: string;
+  /** false when the body write landed but the marker comment did not. */
+  markerPosted: boolean;
+  /** `failed` lists descendants whose comment could not be posted; `error`
+   *  names a walk/topology failure that prevented the descendant set from
+   *  being computed at all. The body write has already landed by then, so
+   *  every post-write failure is reported here (and on stderr) rather than
+   *  thrown — a thrown error would invite a retry, and a retried --append
+   *  re-reads the changed body and appends the same content twice. */
+  broadcast: { count: number; numbers: number[]; failed: number[]; error?: string } | null;
+}
+
+/** The body-edit verb. Refuses on a closed issue — a closed issue's body is
+ *  the historical record of what shipped, not something amend keeps current.
+ *  Every call posts a durable marker comment recording what changed (mode,
+ *  section when relevant, a hash over before+after) so `board get`'s
+ *  comment trail carries provenance a raw GitHub body diff does not.
+ *  `broadcast` reuses `epicDescendantPredicate` — the ONE definition
+ *  `frontier --epic` and doctor's `lead-respawns` already share — so "every
+ *  open descendant" means the same subtree everywhere on this board. */
+export function amend(ctx: Ctx, number: number, opts: AmendOpts): AmendResult {
+  if (opts.append && opts.section)
+    throw new UsageError("amend takes at most one of --append / --replace-section, not both");
+  const issue = fetchIssue(ctx, number);
+  if (issue.issueState !== "OPEN") {
+    throw new RefusalError(
+      `#${number} is closed — amend edits a live body; a closed issue's body is the ` +
+        `historical record of what shipped, not something to keep current`,
+    );
+  }
+  // The same invariant requireItem holds for every other board write: an
+  // archived item is hidden from board reads and rejects field writes, so a
+  // body edit on one would be provenance nobody's selector ever surfaces.
+  if (issue.archived) throw new RefusalError(`#${number} is archived — unarchive it before amending`);
+  const before = fetchIssueBodies(ctx, [number]).get(number)?.body ?? "";
+  let after: string;
+  let mode: AmendResult["mode"];
+  if (opts.section !== undefined) {
+    const replaced = replaceMarkdownSection(before, opts.section, opts.content);
+    if (replaced === null)
+      throw new RefusalError(
+        `#${number}'s body has no ${JSON.stringify(opts.section)} section — refusing rather ` +
+          `than duplicate a header amend was meant to update`,
+      );
+    after = replaced;
+    mode = "replace-section";
+  } else if (opts.append) {
+    after = appendToBody(before, opts.content);
+    mode = "append";
+  } else {
+    after = opts.content;
+    mode = "replace";
+  }
+  updateIssueBody(ctx, issue.nodeId, after);
+  const diffHash = createHash("sha256").update(`${before} ${after}`).digest("hex").slice(0, 16);
+  const at = ctx.now().toISOString();
+  const payload = JSON.stringify({
+    at,
+    by: ctx.cfg.holder,
+    mode,
+    ...(opts.section !== undefined ? { section: opts.section } : {}),
+    diffHash,
+  });
+  // EVERYTHING past this line is best-effort: the body write is the one
+  // non-idempotent step and it has landed. A throw from here would make the
+  // caller retry, and a retried --append re-reads the changed body and
+  // appends the same content again (Codex P1 on #2465) — so the marker and
+  // the broadcast REPORT their failures, on stderr and in the result, and the
+  // command exits 0 with the body it actually wrote.
+  let markerPosted = true;
+  try {
+    addComment(
+      ctx,
+      issue.nodeId,
+      `**Body amended** (\`board\` by \`${ctx.cfg.holder}\`, ${mode}` +
+        (opts.section !== undefined ? ` ${JSON.stringify(opts.section)}` : "") +
+        `)\n\n${AMEND_MARKER}\n\`\`\`json\n${payload}\n\`\`\``,
+    );
+  } catch (e) {
+    markerPosted = false;
+    process.stderr.write(
+      `warn: #${number}'s body was amended but the ralph-amend:v1 marker did not post: ${(e as Error).message}\n` +
+        `      do NOT re-run amend; post the marker by hand: board comment ${number} -m '<!-- ralph-amend:v1 -->\n\`\`\`json\n${payload}\n\`\`\`'\n`,
+    );
+  }
+  let broadcast: AmendResult["broadcast"] = null;
+  if (opts.broadcast) {
+    let numbers: number[];
+    try {
+      const full = listOwnOpenWalk(ctx, QUEUE_SELECT_NO_LABELS);
+      const own = full.open;
+      const closedEdges = closedTreeEdges(ctx, own);
+      const isUnder = epicDescendantPredicate(own, closedEdges, number);
+      numbers = own.filter((i) => isUnder(i.number)).map((i) => i.number);
+    } catch (e) {
+      const error = (e as Error).message;
+      process.stderr.write(`warn: broadcast skipped — could not walk #${number}'s descendants: ${error}\n`);
+      return { number, mode, ...(opts.section !== undefined ? { section: opts.section } : {}), diffHash, markerPosted, broadcast: { count: 0, numbers: [], failed: [], error } };
+    }
+    // A descendant that stops resolving between the walk and the lookup, or a
+    // comment that fails to post, is REPORTED in `failed`.
+    const failed: number[] = [];
+    let nodeIds = new Map<number, string>();
+    if (numbers.length) {
+      try {
+        nodeIds = fetchNodeIds(ctx, numbers);
+      } catch (e) {
+        process.stderr.write(`warn: broadcast lookup failed, resolving one at a time: ${(e as Error).message}\n`);
+        for (const n of numbers) {
+          try {
+            const id = fetchNodeIds(ctx, [n]).get(n);
+            if (id) nodeIds.set(n, id);
+          } catch {
+            /* reported below as failed */
+          }
+        }
+      }
+    }
+    for (const n of numbers) {
+      const id = nodeIds.get(n);
+      if (!id) {
+        failed.push(n);
+        continue;
+      }
+      try {
+        addComment(ctx, id, `root #${number} amended ${at}, re-read before continuing.`);
+      } catch (e) {
+        process.stderr.write(`warn: broadcast to #${n} failed: ${(e as Error).message}\n`);
+        failed.push(n);
+      }
+    }
+    broadcast = { count: numbers.length - failed.length, numbers: numbers.filter((n) => !failed.includes(n)), failed };
+  }
+  return {
+    number,
+    mode,
+    ...(opts.section !== undefined ? { section: opts.section } : {}),
+    diffHash,
+    markerPosted,
+    broadcast,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Dependency-candidate selector (GH-2135)
 // ---------------------------------------------------------------------------
 //
@@ -13069,6 +13308,21 @@ mutations
                               path cannot validate by construction, and a
                               stricter manual path would train leads to wait
                               out the clock instead
+  amend NNN --file F           edit an issue body (D6, GH-2449). Bare = whole-
+        [--append |             body replace; --append adds F's content to
+         --replace-section H]   the end; --replace-section "## H" replaces
+        [--broadcast]           one markdown section's body (refuses if the
+                              heading is not found — never a silent second
+                              header). Refuses on a closed issue. Every call
+                              posts a durable ralph-amend:v1 marker comment
+                              ({mode, section?, diffHash}). --broadcast
+                              comments once on every OPEN descendant (own-repo
+                              parent edges, closed pass-through topology
+                              included — epicDescendantPredicate, the same
+                              read frontier --epic and doctor's lead-respawns
+                              share): "root #NNN amended <at>, re-read before
+                              continuing." For a lead keeping an epic root's
+                              design record true through a pivot
   cancel NNN -m "why"         any open state → Canceled (closes as not-planned)
   reopen NNN                  Done/Canceled → Backlog (reopens the issue); also
                               resolves a pending tend proposal, since reopening
@@ -13270,6 +13524,7 @@ export const VERB_HELP: Record<string, string> = {
   move: "board move <n> <state> [--why <w>] [--decision <artifact>] [--to-lead <name> | --to-human]\n  Gated transition. Done needs evidence: merged linked PR, decision artifact,\n  an epic root with ALL children closed (GH-2198), or --why.\n  Demotions (In Progress→Backlog, In Review→In Progress) require --why (GH-2078).\n  Same-state moves are safe retries (noop / completes a half-applied close).\n  Human Needed only: --to-lead/--to-human address the escalation (GH-2179);\n  default is the lead when RALPH_HERDR_LEAD is set, else the human.\n  example: board move 1234 done --decision thoughts/shared/research/x.md",
   answer: "board answer <n> -m \"<the decision>\" [--resume] [--any-state]\n  Answer a Human Needed item; it stays Human Needed until the driving\n  session resumes it (board claim <n>). --resume answers AND resumes in one\n  invocation — for the driver answering its own item.\n  example: board answer 1234 -m \"ship option B\"",
   promote: "board promote <n> [-m \"<note>\"] [--json]\n  Promote a lead-routed escalation into the inbox (GH-2179/GH-2218): durable\n  marker comment, no state change — the admission that puts the row in\n  Tier 1 of `board inbox`. Refuses outside Human Needed and on\n  human-addressed escalations; noop when already promoted.\n  example: board promote 1234 -m \"authorization, not knowledge — yours\"",
+  amend: "board amend <n> --file <path> [--append | --replace-section \"## Heading\"] [--broadcast] [--json]\n  Edit an issue body from a file (D6, GH-2449). Bare: whole-body replace. --append: add\n  the file's content to the end. --replace-section \"## Heading\": replace just that section's\n  body (refuses if the heading is not found). Refuses on a closed issue. Posts a durable\n  ralph-amend:v1 marker comment recording {mode, section?, diffHash}. --broadcast comments\n  once on every OPEN descendant: \"root #NNN amended <at>, re-read before continuing.\"\n  example: board amend 2442 --file design.md --broadcast",
   escalations: "board escalations [--json]\n  The arbitration queue (GH-2179): Human Needed items classified by audience.\n  pending = the lead's work; →human / promoted / auto-promoted (TTL\n  RALPH_LOCK_TTL_MIN elapsed, computed at read time) = the human tier.\n  example: board escalations --json",
   cancel: "board cancel <n> -m \"<reason>\"\n  Cancel (→Canceled, closes NOT_PLANNED). Reopen is the only exit.\n  example: board cancel 1234 -m \"superseded by #1300\"",
   reopen: "board reopen <n>\n  The one exit from Done/Canceled (→Backlog); accepts a pending reopen proposal.\n  example: board reopen 1234",
@@ -13310,14 +13565,15 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json", "steal", "rm", "fix", "strict", "apply", "live", "comment-only",
   "any-state", "resume", "all-repos", "fresh", "clear", "allow-duplicate", "accept", "reject",
   "intake", "backlog", "dismiss", "to-human", "digest", "mark", "replace", "all", "closed", "prs", "fields",
+  "append", "broadcast",
 ]);
 
 /** Flags that take a value. Declared beside the booleans so arity is a property
  *  of the flag rather than of the token that happens to follow it. */
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
-  "blocked-by", "body", "candidates", "decision", "epic", "estimate", "holder", "host",
+  "blocked-by", "body", "candidates", "decision", "epic", "estimate", "file", "holder", "host",
   "label", "lane", "limit", "message", "on", "out", "owner", "parent", "priority",
-  "project", "recheck", "repo", "since", "state", "title", "to-lead", "unit", "until", "why",
+  "project", "recheck", "repo", "replace-section", "since", "state", "title", "to-lead", "unit", "until", "why",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -13437,7 +13693,7 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
 const MUTATING = new Set([
   "create", "claim", "release", "move", "cancel", "reopen", "answer", "priority",
   "estimate", "defer", "link", "dep", "comment", "adopt", "reconcile", "parent-check",
-  "resolve", "setup", "add", "bootstrap", "promote",
+  "resolve", "setup", "add", "bootstrap", "promote", "amend",
 ]);
 
 export const GH_BUDGET_FLOOR_DEFAULT = 500;
@@ -15016,6 +15272,45 @@ export function run(argv: string[], ctx: Ctx): number {
       if (flags.json) json(res);
       else if (!res.promoted) out(`noop: #${number} is already promoted (nothing to do)`);
       else out(`#${number}: escalation promoted into the inbox (was ${res.route.lead ?? "lead"}-routed)`);
+      return 0;
+    }
+
+    case "amend": {
+      const number = requireNumber(positional[0]);
+      if (typeof flags.file !== "string" || !flags.file)
+        throw new UsageError(`amend requires --file <path> with the new content`);
+      let content: string;
+      try {
+        content = readFileSync(flags.file, "utf8");
+      } catch (e) {
+        throw new UsageError(`--file ${flags.file}: ${(e as Error).message}`);
+      }
+      const section = typeof flags["replace-section"] === "string" ? flags["replace-section"] : undefined;
+      const res = amend(ctx, number, {
+        content,
+        append: flags.append === true,
+        section,
+        broadcast: flags.broadcast === true,
+      });
+      if (flags.json) json(res);
+      else {
+        out(
+          `#${number}: body amended (${res.mode}${res.section !== undefined ? ` ${JSON.stringify(res.section)}` : ""}), diff ${res.diffHash}` +
+            (res.markerPosted ? "" : " — MARKER NOT POSTED (see stderr)"),
+        );
+        if (res.broadcast?.error) out(`broadcast SKIPPED — descendants could not be walked: ${res.broadcast.error}`);
+        else if (res.broadcast) {
+          out(
+            `broadcast: commented on ${res.broadcast.count} open descendant(s)` +
+              (res.broadcast.count ? ` (${res.broadcast.numbers.map((n) => `#${n}`).join(", ")})` : ""),
+          );
+          if (res.broadcast.failed.length)
+            out(
+              `broadcast FAILED for ${res.broadcast.failed.map((n) => `#${n}`).join(", ")} — ` +
+                `the amend itself landed; re-notify those by hand (board comment N -m …), do not re-run amend`,
+            );
+        }
+      }
       return 0;
     }
 
