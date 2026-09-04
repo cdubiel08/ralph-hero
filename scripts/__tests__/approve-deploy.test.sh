@@ -352,7 +352,7 @@ echo "$RUN_DONE" >"$dir/run.json"
 echo "$GOOD_RUNS_FOR_EVIDENCE" >"$dir/runs.json"
 echo "$NO_TWINS" >"$dir/twins.json"
 echo '[{"number":9001}]' >"$dir/run_prs.json"
-echo '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"source":{"number":9001}}]}}}}}' >"$dir/issue_refs.json"
+echo '{"data":{"repository":{"issue":{"timelineItems":{"pageInfo":{"hasNextPage":false},"nodes":[{"source":{}},{"source":{"number":9001,"repository":{"nameWithOwner":"testowner/testrepo"}}}]}}}}}' >"$dir/issue_refs.json"
 run_ad "$dir" "$POLICY" 2451 4242 --env staging
 expect "matching linkage still posts evidence" 0 "APPLY EVIDENCE POSTED"
 expect "the match is confirmed by name" 0 "run 4242's PR #9001 references #2451 — confirmed"
@@ -363,7 +363,7 @@ echo "$RUN_DONE" >"$dir/run.json"
 echo "$GOOD_RUNS_FOR_EVIDENCE" >"$dir/runs.json"
 echo "$NO_TWINS" >"$dir/twins.json"
 echo '[{"number":9001}]' >"$dir/run_prs.json"
-echo '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"source":{"number":8000}}]}}}}}' >"$dir/issue_refs.json"
+echo '{"data":{"repository":{"issue":{"timelineItems":{"pageInfo":{"hasNextPage":false},"nodes":[{"source":{"number":8000,"repository":{"nameWithOwner":"testowner/testrepo"}}}]}}}}}' >"$dir/issue_refs.json"
 run_ad "$dir" "$POLICY" 2451 4242 --env staging
 expect "a run whose PR references a DIFFERENT issue is refused" 1 "does not reference #2451"
 expect "the refusal names what ISSUE is actually referenced by" 1 "referenced by PR(s) 8000"
@@ -380,6 +380,32 @@ echo "$NO_TWINS" >"$dir/twins.json"
 run_ad "$dir" "$POLICY" 2451 4242 --env staging
 expect "unreadable linkage (no associated PR) still posts evidence" 0 "APPLY EVIDENCE POSTED"
 expect "the degrade to operator-trusted is narrated, not silent" 0 "proceeding operator-trusted"
+
+# A PR in ANOTHER repository sharing the run's PR number must not vouch for
+# the deploy (PR #2478 review): own-repo references only.
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_DONE" >"$dir/run.json"
+echo "$GOOD_RUNS_FOR_EVIDENCE" >"$dir/runs.json"
+echo "$NO_TWINS" >"$dir/twins.json"
+echo '[{"number":9001}]' >"$dir/run_prs.json"
+echo '{"data":{"repository":{"issue":{"timelineItems":{"pageInfo":{"hasNextPage":false},"nodes":[{"source":{"number":9001,"repository":{"nameWithOwner":"someone-else/fork"}}},{"source":{"number":8000,"repository":{"nameWithOwner":"testowner/testrepo"}}}]}}}}}' >"$dir/issue_refs.json"
+run_ad "$dir" "$POLICY" 2451 4242 --env staging
+expect "a same-numbered PR from another repo does not satisfy the overlap" 1 "does not reference #2451"
+if grep -qF -- "PR #9001 references #2451 — confirmed" <<<"$LAST_OUT"; then fail "foreign PR must never confirm linkage" "$LAST_OUT"; else pass "foreign PR never confirms linkage"; fi
+
+# A truncated cross-reference page is not the relationship set: neither a
+# refusal nor a confirmation may be judged on it (PR #2478 review).
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_DONE" >"$dir/run.json"
+echo "$GOOD_RUNS_FOR_EVIDENCE" >"$dir/runs.json"
+echo "$NO_TWINS" >"$dir/twins.json"
+echo '[{"number":9001}]' >"$dir/run_prs.json"
+echo '{"data":{"repository":{"issue":{"timelineItems":{"pageInfo":{"hasNextPage":true},"nodes":[{"source":{"number":8000,"repository":{"nameWithOwner":"testowner/testrepo"}}}]}}}}}' >"$dir/issue_refs.json"
+run_ad "$dir" "$POLICY" 2451 4242 --env staging
+expect "a truncated timeline is not judged as a mismatch" 0 "APPLY EVIDENCE POSTED"
+expect "the truncation is named as the reason for degrading" 0 "page truncated"
 
 echo
 echo "approve-deploy: $PASS passed, $FAIL failed"
