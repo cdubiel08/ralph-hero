@@ -2,7 +2,7 @@
 # watch-event.sh — the ralph-herdr watcher's [[events]] hook target.
 #
 # The herdr server runs this once per subscribed event with the event name in
-# HERDR_PLUGIN_EVENT and the payload in HERDR_PLUGIN_EVENT_JSON. Three
+# HERDR_PLUGIN_EVENT and the payload in HERDR_PLUGIN_EVENT_JSON. Four
 # subscriptions (herdr-plugin.toml):
 #
 #   pane.agent_status_changed  payload {pane_id, workspace_id, agent,
@@ -18,6 +18,18 @@
 #                              additionally gets the event-driven healing
 #                              (heal.sh, GH-2212): team-space flag + respawn
 #                              via work-team.sh --lead-only.
+#   worktree.removed          payload {workspace_id, workspace?, worktree,
+#                              forced}, worktree.path the removed checkout
+#                              (GH-2434). herdr's own worktree.remove handler
+#                              races its pane-death detector — workspace/pane
+#                              bookkeeping is torn down BEFORE the pane's
+#                              death is observed, so pane.exited/pane.closed
+#                              never fire on this path (100% reproduction,
+#                              GH-2365). Correlated by the ledger's own
+#                              latest checkout instead of a pane_id; same
+#                              exit/orphan/heal/refill sequence as
+#                              pane.exited/pane.closed, reason
+#                              "worktree_removed".
 #
 # Both handlers stamp <ledger dir>/dispatch-heartbeat for the scope they
 # acted on (GH-2212, D7.2): with no scheduled rota, this hook and hero
@@ -461,12 +473,21 @@ handle_status() {
   fi
 }
 
-# ── pane.exited / pane.closed ────────────────────────────────────────────────
+# ── pane.exited / pane.closed / worktree.removed ─────────────────────────────
 handle_gone() {
-  local reason="$1" pane ws live live_json snapshot f refs ref ts ref_ts w_exited o_exited
-  pane=$(pfield '.pane_id // .data.pane_id // empty')
+  local reason="$1" pane="" ws="" checkout="" correlate_desc live live_json snapshot f refs ref ts ref_ts w_exited o_exited
   ws=$(pfield '.workspace_id // .data.workspace_id // empty')
-  [ -n "$pane" ] || exit 0
+  if [ "$reason" = worktree_removed ]; then
+    # No pane_id on this path (GH-2434) — see the file header. worktree.path
+    # is the only correlation key the payload carries.
+    checkout=$(pfield '.worktree.path // .data.worktree.path // empty')
+    [ -n "$checkout" ] || exit 0
+    correlate_desc="checkout $checkout"
+  else
+    pane=$(pfield '.pane_id // .data.pane_id // empty')
+    [ -n "$pane" ] || exit 0
+    correlate_desc="pane $pane"
+  fi
   # ONE snapshot for the whole sweep, scoped per ledger below. A pane death is
   # a single moment; asking the server again for every ledger would let the
   # herd shift underneath one event's own handling.
@@ -496,8 +517,15 @@ handle_gone() {
     # one pane death and the hooks run concurrently — whichever takes the
     # mutex second re-reads a ledger where the ref is already closed (and
     # the children already adopted/orphaned) and appends/notifies nothing.
+    # worktree.removed never races those two (they don't fire on this path,
+    # GH-2434) but shares the same tolerance for free: a second removal event
+    # on an already-closed ref finds no open refs and no-ops the same way.
     ralph_ledger_lock "$f"
-    refs=$(ralph_ledger_open_for_pane "$pane") || refs=""
+    if [ "$reason" = worktree_removed ]; then
+      refs=$(ralph_ledger_open_for_checkout "$checkout") || refs=""
+    else
+      refs=$(ralph_ledger_open_for_pane "$pane") || refs=""
+    fi
     w_exited="" o_exited=""
     for ref in $refs; do
       # GH-2348: an honest end for the swept-unknown/pane-* population too —
@@ -508,7 +536,7 @@ handle_gone() {
       ralph_ledger_append "$(jq -nc --arg ts "$ref_ts" --arg ref "$ref" --arg r "$reason" --arg p "$pane" \
         '{ts: $ts, ev: "exit", agent_ref: $ref, reason: $r, pane_id: $p}')" ||
         log "exit append failed for $ref"
-      log "exit $ref (reason $reason, pane $pane)"
+      log "exit $ref (reason $reason, $correlate_desc)"
       # The final usage fact (GH-2347): the pane is gone but the transcript
       # is on disk. Appended after the exit so a reader that stops at the
       # exit still finds the last heartbeat; a worker whose session was
@@ -547,5 +575,6 @@ case "$EVENT" in
   pane.agent_status_changed | pane_agent_status_changed) handle_status ;;
   pane.exited | pane_exited) handle_gone pane_exited ;;
   pane.closed | pane_closed) handle_gone pane_closed ;;
+  worktree.removed | worktree_removed) handle_gone worktree_removed ;;
   *) exit 0 ;;
 esac

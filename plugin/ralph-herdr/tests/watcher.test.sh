@@ -701,6 +701,65 @@ unset -f log
 
 unset RALPH_HERDR_WORK_TEAM HEAL_STUB_LOG
 
+# ═══ 5e. worktree.removed: checkout correlation, no pane_id (GH-2434) ════════
+# herdr's own worktree.remove races its pane-death detector — the workspace
+# and pane are torn down before the death is observed, so pane.exited/
+# pane.closed never fire on this path (100% reproduction, GH-2365). The
+# worktree.removed payload carries no pane_id at all; correlation is by the
+# open ref's own latest recorded checkout (ralph_ledger_open_for_checkout)
+# instead of ralph_ledger_open_for_pane — everything downstream (exit append,
+# orphan pass, adopt-to-grandparent) is the same sequence section 4 exercises
+# for pane.exited.
+WTROOT="$TMP/wtroot"
+WTLEDGER="$WTROOT/acme/demo/ledger.jsonl"
+mkdir -p "$WTROOT/acme/demo"
+rm -f "${WTLEDGER%.jsonl}.sqlite" "${WTLEDGER%.jsonl}.sqlite-wal" "${WTLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
+WTPATH="$TMP/checkouts/o50-orch"
+mkdir -p "$WTPATH"
+cat >"$WTLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"s0-root#0001","pane_id":"p0","checkout":"$REPO_DIR","tokens":{"role":"s","issue":"0","slug":"root","depth":"0","state":"spawned","root":"s0-root#0001"}}
+{"ts":"t1","ev":"spawn","agent_ref":"o50-orch#0002","pane_id":"p50","checkout":"$WTPATH","tokens":{"role":"o","issue":"50","slug":"orch","depth":"1","state":"spawned","parent":"s0-root#0001","root":"s0-root#0001"}}
+{"ts":"t2","ev":"spawn","agent_ref":"w51-child#0003","pane_id":"p51","tokens":{"role":"w","issue":"51","slug":"child","depth":"2","state":"spawned","parent":"o50-orch#0002","root":"s0-root#0001"}}
+EOF
+herd_fixture '[{"name":"s0-root","agent_status":"working","pane_id":"p0"},{"name":"w51-child","agent_status":"working","pane_id":"p51"}]'
+
+WT_PAYLOAD=$(jq -nc --arg ws "ws50" --arg path "$WTPATH" \
+  '{type:"worktree_removed", workspace_id:$ws, workspace:null, worktree:{path:$path,is_bare:false,is_detached:false,is_prunable:false,is_linked_worktree:true,label:"o50-orch"}, forced:false}')
+: >"$FAKE_HERDR_LOG"
+run_event worktree.removed "$WT_PAYLOAD" "$WTROOT"
+is "checkout-match: exits 0" "0" "$RC"
+is "checkout-match: exit recorded for the removed worktree's agent" "1" \
+  "$(lcount "$WTLEDGER" '.ev=="exit" and .agent_ref=="o50-orch#0002" and .reason=="worktree_removed"')"
+is "checkout-match: exit record carries no pane_id — none was ever known" "1" \
+  "$(lcount "$WTLEDGER" '.ev=="exit" and .agent_ref=="o50-orch#0002" and .pane_id==""')"
+is "checkout-match: child re-parented to the live grandparent" "1" \
+  "$(lcount "$WTLEDGER" '.ev=="adopt" and .agent_ref=="w51-child#0003" and .parent=="s0-root#0001" and .prev_parent=="o50-orch#0002"')"
+is "checkout-match: no orphan notification" "0" "$(log_fcount 'orphaned --body')"
+
+# No matching open ref: an unrelated worktree removal is a clean no-op.
+: >"$FAKE_HERDR_LOG"
+lines_before=$(_ralph_ledger_events "$WTLEDGER" | grep -c .)
+NOMATCH_PAYLOAD=$(jq -nc '{type:"worktree_removed", workspace_id:"wsXX", workspace:null, worktree:{path:"/nowhere/never-spawned",is_bare:false,is_detached:false,is_prunable:false,is_linked_worktree:true,label:"nope"}, forced:false}')
+run_event worktree.removed "$NOMATCH_PAYLOAD" "$WTROOT"
+is "checkout no-match: exits 0" "0" "$RC"
+is "checkout no-match: no new ledger events" "$lines_before" \
+  "$(_ralph_ledger_events "$WTLEDGER" | grep -c .)"
+is "checkout no-match: no notifications" "0" "$(log_count '^notification show')"
+
+# An already-closed ref: the obvious double-fire the issue calls out — a
+# worktree.remove invoked on a ref that already exited (clean finish, or a
+# prior worktree.removed) must no-op exactly like a duplicate pane.exited/
+# pane.closed does.
+: >"$FAKE_HERDR_LOG"
+lines_before=$(_ralph_ledger_events "$WTLEDGER" | grep -c .)
+run_event worktree.removed "$WT_PAYLOAD" "$WTROOT"
+is "checkout double-fire: exits 0" "0" "$RC"
+is "checkout double-fire: no second exit for the already-closed ref" "1" \
+  "$(lcount "$WTLEDGER" '.ev=="exit" and .agent_ref=="o50-orch#0002"')"
+is "checkout double-fire: no new ledger events at all" "$lines_before" \
+  "$(_ralph_ledger_events "$WTLEDGER" | grep -c .)"
+is "checkout double-fire: no notification" "0" "$(log_count '^notification show')"
+
 # ═══ 6. reconcile: discover / lost / token re-push ═══════════════════════════
 RROOT="$TMP/rroot"
 RLEDGER="$RROOT/acme/demo/ledger.jsonl"
