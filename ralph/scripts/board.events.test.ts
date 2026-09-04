@@ -265,6 +265,111 @@ describe("board events --since", () => {
   });
 });
 
+describe("board events --unit (GH-2446)", () => {
+  it("renders one issue's own transition timeline, filtered from the whole tape", () => {
+    buildDb([
+      '{"ev":"transition","unit":1,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:00:00Z"}',
+      '{"ev":"spawn","agent_ref":"w1-x#1"}', // unrelated event kind — excluded
+      '{"ev":"transition","unit":2,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:05:00Z"}', // a DIFFERENT unit — excluded
+      '{"ev":"transition","unit":1,"from":"In Progress","to":"In Review","actor":"me@test","at":"2026-07-31T13:00:00Z"}',
+    ]);
+    const c = capture();
+    try {
+      expect(run(["events", "--unit", "1"], ctx())).toBe(0);
+    } finally {
+      c.restore();
+    }
+    expect(c.lines).toEqual([
+      '1\t{"ev":"transition","unit":1,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:00:00Z","seq":1}\n',
+      '4\t{"ev":"transition","unit":1,"from":"In Progress","to":"In Review","actor":"me@test","at":"2026-07-31T13:00:00Z","seq":4}\n',
+    ]);
+  });
+
+  it("--json carries {unit, facts}, in seq order", () => {
+    buildDb([
+      '{"ev":"transition","unit":7,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:00:00Z"}',
+    ]);
+    const c = capture();
+    try {
+      expect(run(["events", "--unit", "7", "--json"], ctx())).toBe(0);
+    } finally {
+      c.restore();
+    }
+    expect(JSON.parse(c.lines.join(""))).toEqual({
+      unit: 7,
+      facts: [
+        { ev: "transition", unit: 7, from: "Backlog", to: "In Progress", actor: "me@test", at: "2026-07-31T12:00:00Z", seq: 1 },
+      ],
+    });
+  });
+
+  it("a unit with no transitions on the tape reads as an empty timeline, not an error", () => {
+    buildDb(['{"ev":"transition","unit":1,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:00:00Z"}']);
+    const c = capture();
+    try {
+      expect(run(["events", "--unit", "999", "--json"], ctx())).toBe(0);
+    } finally {
+      c.restore();
+    }
+    expect(JSON.parse(c.lines.join(""))).toEqual({ unit: 999, facts: [] });
+  });
+
+  it("a garbled payload elsewhere on the tape is excluded, never breaking the unit's own read", () => {
+    buildDb([
+      '{"ev":"transition","unit":1,"from":"Backlog","to":"In Progress","actor":"me@test","at":"2026-07-31T12:00:00Z"}',
+      "not json at all",
+    ]);
+    const c = capture();
+    try {
+      expect(run(["events", "--unit", "1", "--json"], ctx())).toBe(0);
+    } finally {
+      c.restore();
+    }
+    expect(JSON.parse(c.lines.join("")).facts).toHaveLength(1);
+  });
+
+  it("--since and --unit are mutually exclusive; neither given is refused too", () => {
+    buildDb(['{"seq":1}']);
+    for (const argv of [["events"], ["events", "--since", "0", "--unit", "1"]]) {
+      expect(() => run(argv, ctx())).toThrow(UsageError);
+    }
+  });
+
+  it("refuses a missing, non-numeric --unit", () => {
+    buildDb(['{"seq":1}']);
+    for (const argv of [["events", "--unit"], ["events", "--unit", "abc"], ["events", "--unit", "-1"]]) {
+      expect(() => run(argv, ctx())).toThrow(UsageError);
+    }
+  });
+
+  it("absent db is a normal state for --unit too: exit 0, empty --json result, named on stderr", () => {
+    const c = capture();
+    let code: number;
+    try {
+      code = run(["events", "--unit", "1", "--json"], ctx());
+    } finally {
+      c.restore();
+    }
+    expect(code).toBe(0);
+    expect(JSON.parse(c.lines.join(""))).toEqual({ unit: 1, facts: [] });
+    expect(c.errs.join("")).toContain("no ledger.sqlite for cdubiel08/ralph-hero — run ledger-convert.sh");
+  });
+
+  it("an UNREADABLE existing db is exit 69 for --unit too, never an empty result", () => {
+    writeFileSync(dbPath(), "this is not a sqlite database, definitely longer than a header\n");
+    const c = capture();
+    let code: number;
+    try {
+      code = run(["events", "--unit", "1", "--json"], ctx());
+    } finally {
+      c.restore();
+    }
+    expect(code).toBe(69);
+    expect(c.lines).toEqual([]);
+    expect(c.errs.join("")).toContain("could not read");
+  });
+});
+
 /**
  * GH-2372 — a large `events --json` payload survives a real OS pipe.
  *

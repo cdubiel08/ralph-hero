@@ -2757,6 +2757,26 @@ export function guardClaimEstimate(
   }
 }
 
+/** Append `{ev: "transition", unit, from, to, actor, at}` to the herdr
+ *  ledger (GH-2446) — the timeline `board events --unit` renders. Best-effort
+ *  by construction, the same contract as every other self-report surface
+ *  (`herdr pane report-metadata`, ledger-finish.sh): a board write already
+ *  landed by the time this runs, which is the source of truth, so a missing
+ *  ralph-herdr install, a stripped tree, or a broken tape may not fail the
+ *  caller — swallowed here, never even a stderr line, since a move/claim/
+ *  release/answer/promote already has its own success output and this is
+ *  chrome underneath it. `bash`, not the script directly: a stripped/non-
+ *  executable checkout (a tarball export, a CI artifact) still runs. */
+function appendLedgerTransition(ctx: Ctx, unit: number, from: State | null, to: string): void {
+  try {
+    const sh = join(dirname(fileURLToPath(import.meta.url)), "ledger-transition.sh");
+    if (!existsSync(sh)) return;
+    ctx.exec(["bash", sh, ctx.repoRoot, String(unit), from ?? "", to, ctx.cfg.holder, ctx.now().toISOString()]);
+  } catch {
+    /* best-effort — see doc comment */
+  }
+}
+
 export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {}): Issue {
   // Cache freshness resolved BEFORE any write; the body never retries.
   const cache = mutationCache(ctx, [[STATE_FIELD, to]], [CLAIM_FIELD, DEFER_FIELD]);
@@ -2793,6 +2813,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       if (!needsClose) return issue; // pure noop — read back, nothing to re-drive
       if (to === "Done") guardDoneEvidence(ctx, issue, opts.why);
       closeIssue(ctx, issue.nodeId, to === "Done" ? "COMPLETED" : "NOT_PLANNED");
+      appendLedgerTransition(ctx, issue.number, from, to);
       return fetchIssue(ctx, issue.number);
     }
     // Same-state In Progress is claim (re)acquisition, not a transition:
@@ -3138,6 +3159,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         /* advisory here; state-guard + doctor re-run it */
       }
     }
+    appendLedgerTransition(ctx, issue.number, from, to);
     return after;
   }
 }
@@ -7894,6 +7916,11 @@ export function promote(ctx: Ctx, number: number, opts: { note?: string } = {}):
       (opts.note ? `:\n\n${opts.note}` : "") +
       `\n\n${ESCALATION_PROMOTED_MARKER}\n\`\`\`json\n${payload}\n\`\`\``,
   );
+  // No state write here (promote is a marker, not an edge — see the doc
+  // comment above) — from/to are both the issue's own (unchanged) state, so
+  // the timeline still shows the promotion happened without inventing a
+  // transition that never occurred.
+  appendLedgerTransition(ctx, issue.number, issue.state, issue.state ?? "Human Needed");
   return { promoted: true, route: { ...route, disposition: "promoted" } };
 }
 
@@ -12749,9 +12776,11 @@ reads
                               second key: the unit is CLOSED on GitHub (one
                               read per same-repo lease; other repos' rows and
                               unreadable issues are left alone)
-  events --since SEQ [--json] facts appended to this repo's ledger.sqlite
-                              after cursor SEQ — one seq<TAB>payload line per
-                              fact, or --json {cursor, facts}. Zero API.
+  events (--since SEQ | --unit NNN) [--json]
+                              facts from this repo's ledger.sqlite — --since SEQ walks
+                              forward from a cursor, --unit NNN renders one issue's own
+                              transition timeline (GH-2446); one seq<TAB>fact line per
+                              fact, or --json {cursor, facts} / {unit, facts}. Zero API.
                               Absent db = not converted yet (exit 0, empty);
                               an UNREADABLE db is exit 69, never empty
   get NNN [--json]            issue: state, claim, parent/children, blockers, PRs
@@ -13216,7 +13245,7 @@ export const VERB_HELP: Record<string, string> = {
   who: "board who [--json]\n  Local per-(worktree, unit) leases — who is driving what on this machine. Zero API.\n  A lease whose worktree was deleted prints DEAD, not STALE: nothing can refresh it, so it is\n  not aging toward anything. `board reap-leases` clears those.\n  example: board who",
   "reap-leases": "board reap-leases [--apply] [--closed] [--json]\n  Remove local lock files whose worktree no longer exists. Dry run unless --apply. Zero API.\n  The predicate is the missing CHECKOUT, never the lock's age: a lease is what deliver-queue\n  reads for local-session-active, so a clock may not be allowed to delete a live one. Any read\n  failure that is not ENOENT leaves the lock alone.\n  --closed adds a second key (GH-2368): the unit is CLOSED on GitHub. A closed unit has no\n  lease consumer, so a lock its checkout never releases (main checkout, kept worktree) is\n  reapable. Costs one issue read per same-repo lease — the default path stays zero-API.\n  Another repo's #N is a different issue, so only same-repo rows are asked; an unreadable\n  issue is listed as not evaluated and kept; the issue is re-read before each unlink.\n  example: board reap-leases --closed --apply",
   events:
-    "board events --since SEQ [--json]\n  Read-only cursor over ~/.ralph/<owner>/<repo>/ledger.sqlite (GH-2310): every fact with\n  seq > SEQ, in order — one `seq<TAB>payload` line per fact, or --json {cursor, facts}.\n  Zero GraphQL, zero gh; RALPH_HERDR_LEDGER_ROOT overrides the root like ledger.sh.\n  Absent db = not converted yet: exit 0 and an empty result (run ledger-convert.sh).\n  An UNREADABLE db, a missing sqlite3, or a user_version above 1 is exit 69 — never empty.\n  example: board events --since 0 --json",
+    "board events (--since SEQ | --unit NNN) [--json]\n  Read-only over ~/.ralph/<owner>/<repo>/ledger.sqlite (GH-2310). Exactly one of:\n  --since SEQ  every fact with seq > SEQ, in order — one `seq<TAB>payload` line per fact,\n               or --json {cursor, facts}.\n  --unit NNN   GH-2446: the transition timeline for one issue — the `{ev: transition, unit,\n               from, to, actor, at}` facts board move/claim/release/answer/promote append,\n               filtered to unit NNN — one `seq<TAB>fact` line per fact, or --json {unit, facts}.\n  Zero GraphQL, zero gh; RALPH_HERDR_LEDGER_ROOT overrides the root like ledger.sh.\n  Absent db = not converted yet: exit 0 and an empty result (run ledger-convert.sh).\n  An UNREADABLE db, a missing sqlite3, or a user_version above 1 is exit 69 — never empty.\n  example: board events --since 0 --json\n  example: board events --unit 2446",
   list: "board list [--state <s>] [--json]\n  Items by state. Full-board scan — prefer next/brief for orientation.\n  example: board list --state human",
   get: "board get <n> [--json]\n  One issue with board fields, parity with what move/claim write.\n  example: board get 1234",
   create: "board create (--intake | --backlog | --state <s>) --title <t> [--body <b>] [--parent <n>] [--estimate XS..XL] [--priority P0..P3] [--apply]\n  Files an issue onto the board. Retry-safe (twin dedupe, GH-1973).\n  The landing state is REQUIRED — there is no default, because filing is not approving:\n    --intake   tracked, not yet approved; invisible to next/frontier (Priority/Estimate optional)\n    --backlog  approved and ready to work (Priority and Estimate REQUIRED)\n  example: board create --backlog --title \"fix the gate\" --priority P1 --estimate S",
@@ -13272,7 +13301,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
   "blocked-by", "body", "candidates", "decision", "epic", "estimate", "holder", "host",
   "label", "lane", "limit", "message", "on", "out", "owner", "parent", "priority",
-  "project", "recheck", "repo", "since", "state", "title", "to-lead", "until", "why",
+  "project", "recheck", "repo", "since", "state", "title", "to-lead", "unit", "until", "why",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -13973,17 +14002,42 @@ export function run(argv: string[], ctx: Ctx): number {
       // ralph_ledger_path): the root override, then the SAME owner/repo
       // scope the board already resolves.
       const sinceRaw = flags.since;
-      if (sinceRaw === undefined || sinceRaw === true || !/^\d+$/.test(String(sinceRaw)))
+      const unitRaw = flags.unit;
+      const hasSince = sinceRaw !== undefined;
+      // GH-2446: `--unit NNN` is the second cursor shape — a per-unit
+      // timeline over the `{ev: transition, ...}` facts move/claim/release/
+      // answer/promote append, rather than a walk-forward-from-SEQ cursor.
+      // Exactly one of the two: a bare `board events` answers neither
+      // question, and honoring both would silently prefer one.
+      const hasUnit = unitRaw !== undefined;
+      if (hasSince === hasUnit)
         throw new UsageError(
-          "board events --since SEQ [--json] — --since is required and must be a " +
-            "non-negative integer (`--since 0` reads everything)",
+          "board events (--since SEQ | --unit NNN) [--json] — exactly one is required: " +
+            "--since SEQ for a global cursor (`--since 0` reads everything), " +
+            "--unit NNN for one issue's own transition timeline",
         );
-      const since = Number(sinceRaw);
-      // Digits-only is not enough: past 2^53 Number() rounds (and eventually
-      // yields Infinity), which would compose invalid SQL and misreport a
-      // malformed CURSOR as an unreadable LEDGER (exit 69 instead of 64).
-      if (!Number.isSafeInteger(since))
-        throw new UsageError(`--since ${sinceRaw} is beyond the integer range a cursor can hold (max ${Number.MAX_SAFE_INTEGER})`);
+      let unit = -1;
+      if (hasUnit) {
+        if (unitRaw === true || !/^\d+$/.test(String(unitRaw)))
+          throw new UsageError("board events --unit NNN [--json] — --unit must be a bare issue number");
+        unit = Number(unitRaw);
+        if (!Number.isSafeInteger(unit))
+          throw new UsageError(`--unit ${unitRaw} is beyond the integer range an issue number can hold`);
+      }
+      const since = hasSince ? Number(sinceRaw) : 0;
+      if (hasSince) {
+        if (sinceRaw === true || !/^\d+$/.test(String(sinceRaw)))
+          throw new UsageError(
+            "board events --since SEQ [--json] — --since is required and must be a " +
+              "non-negative integer (`--since 0` reads everything)",
+          );
+        // Digits-only is not enough: past 2^53 Number() rounds (and
+        // eventually yields Infinity), which would compose invalid SQL and
+        // misreport a malformed CURSOR as an unreadable LEDGER (exit 69
+        // instead of 64).
+        if (!Number.isSafeInteger(since))
+          throw new UsageError(`--since ${sinceRaw} is beyond the integer range a cursor can hold (max ${Number.MAX_SAFE_INTEGER})`);
+      }
       // Path rule and the three gates (stat / binary / schema) live in
       // openHerdrLedger, shared with brief and doctor's unit-cost line.
       const o = openHerdrLedger(ctx);
@@ -13992,7 +14046,7 @@ export function run(argv: string[], ctx: Ctx): number {
         // with an empty result. But say so on stderr, or "not converted yet"
         // renders exactly like "nothing happened".
         process.stderr.write(`no ledger.sqlite for ${ctx.cfg.owner}/${ctx.cfg.repo} — run ledger-convert.sh\n`);
-        if (flags.json) json({ cursor: 0, facts: [] });
+        if (flags.json) json(hasUnit ? { unit, facts: [] } : { cursor: 0, facts: [] });
         return 0;
       }
       if (o.kind === "error") {
@@ -14001,8 +14055,12 @@ export function run(argv: string[], ctx: Ctx): number {
       }
       const { db, sq } = o;
       // `since` is digits-only by the guard above, so inlining it is safe.
-      // -json output survives any payload bytes; the CLI prints NOTHING (not
-      // "[]") for an empty result set.
+      // A `--unit` read walks the whole tape (unit is a payload field, not a
+      // typed column the transition fact populates — see the writer's doc
+      // comment) and filters below; the tape is repo-scoped and bounded, and
+      // this is a read-only advisory surface, not a hot path. -json output
+      // survives any payload bytes; the CLI prints NOTHING (not "[]") for an
+      // empty result set.
       const q = ctx.exec([sq, "-json", db, `SELECT seq, payload FROM facts WHERE seq > ${since} ORDER BY seq;`]);
       if (q.code !== 0) {
         process.stderr.write(`board events: could not read ${db} — ${q.stderr.trim() || `sqlite3 exit ${q.code}`}\n`);
@@ -14014,6 +14072,28 @@ export function run(argv: string[], ctx: Ctx): number {
       } catch {
         process.stderr.write(`board events: could not read ${db} — unparseable sqlite3 -json output\n`);
         return 69;
+      }
+      if (hasUnit) {
+        // Column seq LAST: it is the durable ledger position, so a payload
+        // carrying its own `seq` may not shadow it. A payload we cannot
+        // parse cannot carry `.ev`/`.unit` either — excluded, not raised: an
+        // unrelated garbled fact elsewhere in the tape may not break one
+        // unit's timeline read.
+        const facts = rows
+          .map((r) => {
+            try {
+              return { ...JSON.parse(r.payload), seq: r.seq };
+            } catch {
+              return null;
+            }
+          })
+          .filter((f): f is Record<string, unknown> => f !== null && f.ev === "transition" && f.unit === unit);
+        if (flags.json) {
+          json({ unit, facts });
+          return 0;
+        }
+        for (const f of facts) out(`${f.seq}\t${JSON.stringify(f)}`);
+        return 0;
       }
       if (flags.json) {
         // The cursor never regresses: with nothing new it echoes --since, so
