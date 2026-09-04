@@ -265,6 +265,13 @@ export class FakeGh {
   /** `git rev-parse --git-common-dir` for the role-target peer resolution
    *  (GH-2216); null makes the read fail like a non-repo. */
   gitCommonDir: string | null = "/repo/.git";
+  /** `git remote get-url origin` (GH-2455/D8): overridable so a scope-gate
+   *  test can model a worktree checked out against a SECONDARY configured
+   *  repo, not just primary. */
+  originUrl = "git@github.com:cdubiel08/ralph-hero.git";
+  /** GH-2455 (D8): the owner/repo/number the last single-issue query was sent
+   *  with. See the `issue(number` branch below. */
+  lastIssueQueryVars: { owner: string; repo: string; number: number } | null = null;
 
   exec: (argv: string[], stdin?: string) => ExecResult = (argv, stdin) => {
     const cmd = argv.join(" ");
@@ -275,8 +282,7 @@ export class FakeGh {
       return this.graphql(JSON.parse(stdin!));
     }
     if (cmd.startsWith("gh auth status")) return ok("");
-    if (cmd.startsWith("git") && cmd.includes("remote"))
-      return ok("git@github.com:cdubiel08/ralph-hero.git\n");
+    if (cmd.startsWith("git") && cmd.includes("remote")) return ok(`${this.originUrl}\n`);
     if (cmd.startsWith("git") && cmd.includes("worktree list")) return ok(this.worktreeList);
     if (cmd.startsWith("git") && cmd.includes("rev-parse --git-common-dir"))
       return this.gitCommonDir === null
@@ -1061,6 +1067,11 @@ export class FakeGh {
       return data({ repository: repo });
     }
     if (query.includes("issue(number")) {
+      // GH-2455 (D8): the owner/repo/number this single-issue query was SENT
+      // with — the fake keys `issues` by number only, so this is how a test
+      // proves a resolved IssueAddress actually reached the wire rather than
+      // silently querying primary.
+      this.lastIssueQueryVars = { owner: variables.owner, repo: variables.repo, number: variables.number };
       const fi = this.issues.get(variables.number);
       if (!fi) return data({ repository: { issue: null } });
       // The holder refreshed its claim between the page walk and this re-read.
@@ -1294,6 +1305,10 @@ export function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo", opts
   const cfg: Config = {
     owner: "cdubiel08",
     repo: "ralph-hero",
+    // GH-2455 (D8): every pre-existing test is written against a single-repo
+    // board, so `[owner/repo]` colours nothing — a test exercising plural
+    // repos overrides this on the returned Ctx's `cfg`.
+    repos: ["cdubiel08/ralph-hero"],
     projectNumber: 13,
     host: "github.com",
     lockTtlMin: 120,

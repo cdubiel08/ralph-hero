@@ -776,6 +776,13 @@ export function frontierUnderEpic(res: FrontierResult, under: (n: number) => boo
 export interface Config {
   owner: string;
   repo: string;
+  /** GH-2455 (D8): every configured repo, "owner/repo", primary (`owner/repo`
+   *  above) always first. A single-repo host that never sets `repos` in
+   *  .ralph.json gets `[owner/repo]` — no behavior change. Plural entries are
+   *  what `parseIssueAddress` and the scope gate widen against; nothing else
+   *  reads across them yet (the open walk stays own-repo until GH-2456/12b,
+   *  parent/blocker edges until GH-2457/12c). */
+  repos: string[];
   projectNumber: number;
   host: string; // remote host the scope gate requires (GHE via .ralph.json)
   lockTtlMin: number;
@@ -1016,6 +1023,74 @@ export function scopeMatches(
   );
 }
 
+/** GH-2455 (D8): the scope gate widened to every configured repo, not just
+ *  primary. A worktree checked out against a SECONDARY configured repo's
+ *  origin must pass the same gate a primary-repo worktree does — the gate's
+ *  job is "is this origin one this board owns", never "is this origin
+ *  primary". A single-repo host (`cfg.repos` = `[owner/repo]`) sees no change:
+ *  this degenerates to `scopeMatches` against the one entry it has. */
+export function scopeMatchesAny(remoteUrl: string, cfg: Pick<Config, "repos" | "host">): boolean {
+  return cfg.repos.some((r) => {
+    const slash = r.indexOf("/");
+    if (slash < 0) return false;
+    return scopeMatches(remoteUrl, r.slice(0, slash), r.slice(slash + 1), cfg.host);
+  });
+}
+
+/** GH-2455 (D8): a resolved `owner/repo#N` — or a bare number resolved in the
+ *  primary repo. This is the payload every issue-addressing verb works from
+ *  once its argument has been parsed; nothing downstream needs to re-derive
+ *  owner/repo from `ctx.cfg` once it holds one of these. */
+export interface IssueAddress {
+  owner: string;
+  repo: string;
+  number: number;
+}
+
+const ISSUE_ADDRESS_RE = /^([^/\s#]+)\/([^/\s#]+)#(\d+)$/;
+
+/** Is `owner/repo` one of the repos this board is configured for? Case-
+ *  insensitive, matching GitHub's own comparison and `scopeMatches`. */
+export function isConfiguredRepo(cfg: Pick<Config, "repos">, owner: string, repo: string): boolean {
+  const key = `${owner}/${repo}`.toLowerCase();
+  return cfg.repos.some((r) => r.toLowerCase() === key);
+}
+
+/** GH-2455 (D8): the address grammar every issue-addressing verb accepts —
+ *  `owner/repo#N` or a bare number. A bare number ALWAYS resolves in the
+ *  primary repo (`cfg.owner`/`cfg.repo`); a qualified address must name a
+ *  repo `cfg.repos` already configures, refusing (not guessing) otherwise —
+ *  the GH-1405 failure class this exists to close was exactly a bare number
+ *  silently resolving in the wrong repo. Pure: no network, no ctx. */
+export function parseIssueAddress(
+  raw: string | undefined,
+  cfg: Pick<Config, "owner" | "repo" | "repos">,
+  what = "issue number",
+): IssueAddress {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) throw new UsageError(`${what} required`);
+  const qualified = ISSUE_ADDRESS_RE.exec(trimmed);
+  if (qualified) {
+    const [, owner, repo, numStr] = qualified;
+    const number = Number(numStr);
+    if (!Number.isInteger(number) || number <= 0) {
+      throw new UsageError(`${what} "${trimmed}" has an invalid issue number`);
+    }
+    if (!isConfiguredRepo(cfg, owner, repo)) {
+      throw new UsageError(
+        `${what} "${trimmed}" names ${owner}/${repo}, which is not a configured repo ` +
+          `(configured: ${cfg.repos.join(", ")}) — add it to "repos" in .ralph.json first`,
+      );
+    }
+    return { owner, repo, number };
+  }
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new UsageError(`${what} must be a bare number or owner/repo#N (got ${JSON.stringify(raw)})`);
+  }
+  return { owner: cfg.owner, repo: cfg.repo, number: n };
+}
+
 function findRepoRoot(startDir: string): string {
   let dir = startDir;
   for (;;) {
@@ -1052,6 +1127,7 @@ export function loadConfig(repoRoot: string): Config {
   let repo = "";
   let projectNumber = 0;
   let host = "github.com";
+  let reposRaw: unknown;
 
   // Config parse failures name the file: a truncated .ralph.json must read as
   // "fix this file" (usage, exit 64), not as an anonymous SyntaxError (exit 1).
@@ -1078,12 +1154,20 @@ export function loadConfig(repoRoot: string): Config {
     repo = c.repo ?? "";
     projectNumber = Number(c.projectNumber ?? 0);
     host = c.host ?? host;
+    reposRaw = c.repos;
   } else if (existsSync(settingsJson)) {
     const env = parseConfigFile(settingsJson).env ?? {};
     owner = env.RALPH_GH_OWNER ?? "";
     repo = env.RALPH_GH_REPO ?? "";
     projectNumber = Number(env.RALPH_GH_PROJECT_NUMBER ?? 0);
     host = env.RALPH_GH_HOST ?? host;
+    // .claude/settings.json's env block is flat key/value, so plural repos
+    // ride a comma-separated string rather than the native array .ralph.json
+    // accepts — same two-surface precedence as every other setting here.
+    reposRaw =
+      typeof env.RALPH_GH_REPOS === "string" && env.RALPH_GH_REPOS.trim()
+        ? env.RALPH_GH_REPOS.split(",").map((s: string) => s.trim()).filter(Boolean)
+        : undefined;
   }
 
   if (!owner || !repo || !projectNumber) {
@@ -1093,6 +1177,15 @@ export function loadConfig(repoRoot: string): Config {
         "New here? `board bootstrap --owner <o> --repo <r> --project <n>` writes .ralph.json and provisions the board.",
     );
   }
+
+  // GH-2455 (D8): plural repos, primary always first regardless of where the
+  // caller put it in the list — "repos" is a SET this board is configured
+  // for, not an ordered claim about which entry the caller considers primary.
+  // A single-repo host that sets neither `repos` nor RALPH_GH_REPOS gets
+  // exactly `[owner/repo]`: no behavior change, per the design record (D8,
+  // "a single-repo host configures nothing new").
+  const reposWhat = existsSync(ralphJson) ? `${ralphJson} "repos"` : "RALPH_GH_REPOS";
+  const repos = parseReposList(reposRaw, `${owner}/${repo}`, reposWhat);
 
   // ClaimV2 wire delimiters: a holder carrying '+' or '|' would serialize as
   // a DIFFERENT holder set ("a+b" reads back as two members, neither of them
@@ -1109,6 +1202,7 @@ export function loadConfig(repoRoot: string): Config {
   return {
     owner,
     repo,
+    repos,
     projectNumber,
     host,
     lockTtlMin: parseTtlMin(process.env.RALPH_LOCK_TTL_MIN),
@@ -1119,6 +1213,32 @@ export function loadConfig(repoRoot: string): Config {
     foreign: parseForeignRepoPolicy(),
     prOrphans: parsePrOrphanPolicy(),
   };
+}
+
+/** GH-2455 (D8): validates and normalizes the `repos` config surface —
+ *  `.ralph.json`'s `repos` array or `RALPH_GH_REPOS`'s comma-split. `primary`
+ *  is always included and always first; duplicates (by case-insensitive
+ *  owner/repo) collapse to one entry, keeping the first spelling seen. A
+ *  malformed entry names the file/var so it reads as "fix this", not an
+ *  anonymous crash — the same bar `loadConfig`'s other parsers hold. */
+export function parseReposList(raw: unknown, primary: string, what: string): string[] {
+  if (raw === undefined) return [primary];
+  if (!Array.isArray(raw) || raw.some((r) => typeof r !== "string")) {
+    throw new UsageError(`${what} must be an array of "owner/repo" strings`);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const r of [primary, ...raw]) {
+    const s = r.trim();
+    if (!/^[^/\s]+\/[^/\s]+$/.test(s)) {
+      throw new UsageError(`${what} entry ${JSON.stringify(r)} is not "owner/repo"`);
+    }
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out;
 }
 
 /** Best-effort config for a checkout THIS process does not own (GH-2453) —
@@ -2174,7 +2294,16 @@ function fieldValueMap(fieldValues: any): Record<string, string> {
   return out;
 }
 
-export function fetchIssue(ctx: Ctx, number: number): Issue {
+export function fetchIssue(ctx: Ctx, target: number | IssueAddress): Issue {
+  // GH-2455 (D8): a bare number resolves in the primary repo — the same
+  // behavior every existing caller (36 sites, all passing a number) already
+  // gets, byte-identical. A resolved IssueAddress (from an `owner/repo#N`
+  // argument) queries that repo directly; the ProjectV2Item id and node id
+  // this returns are global, so every downstream write (transition, comment,
+  // claim) that consumes an already-fetched Issue works unmodified — the
+  // chokepoint is this one query, not every mutation.
+  const addr: IssueAddress =
+    typeof target === "number" ? { owner: ctx.cfg.owner, repo: ctx.cfg.repo, number: target } : target;
   return withCache(ctx, (cache) => {
     const data = ghGraphQL(
       ctx,
@@ -2197,10 +2326,10 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
           }
         }
       }`,
-      { owner: ctx.cfg.owner, repo: ctx.cfg.repo, number },
+      { owner: addr.owner, repo: addr.repo, number: addr.number },
     );
     const issue = data.repository?.issue;
-    if (!issue) throw new UsageError(`issue #${number} not found in ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+    if (!issue) throw new UsageError(`issue #${addr.number} not found in ${addr.owner}/${addr.repo}`);
 
     const item = (issue.projectItems?.nodes ?? []).find(
       (n: any) => n.project?.id === cache.projectId,
@@ -2226,10 +2355,13 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
       labelsTruncated: issue.labels?.pageInfo?.hasNextPage ?? false,
       parent: issue.parent ? { number: issue.parent.number, title: issue.parent.title } : null,
+      // Same-repo as THIS issue (addr), not necessarily primary — a foreign-
+      // but-configured issue's same-repo parent is still a real tree edge.
+      // A parent in a THIRD repo still nulls: cross-repo parent edges are
+      // GH-2457/12c's job, not this one's.
       parentNumber:
         issue.parent &&
-        issue.parent.repository?.nameWithOwner?.toLowerCase() ===
-          `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase()
+        issue.parent.repository?.nameWithOwner?.toLowerCase() === `${addr.owner}/${addr.repo}`.toLowerCase()
           ? issue.parent.number
           : null,
       children: (issue.subIssues?.nodes ?? []).map((c: any) => {
@@ -2295,6 +2427,27 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
  *
  *  One query, the same slot the refs read occupied, and only ever asked when
  *  the closing-reference half already came up empty on a Done move. */
+
+/** GH-2455 (D8): resolve one issue's node id in ANY configured repo — the
+ *  address-aware sibling of `fetchNodeIds`' bulk, aliased read (`board
+ *  comment`'s only need). `fetchNodeIds` itself stays primary-repo-only in
+ *  this unit: its batched, aliased shape is what `board dep`/`link` need
+ *  widened for cross-repo wiring, and that is GH-2457/12c's job, not this
+ *  one's. Same query shape as `fetchNodeIds` sends for a single issue, so
+ *  `board comment` pays no extra cost for the address it already resolved. */
+function fetchIssueNodeId(ctx: Ctx, addr: IssueAddress): string {
+  const data = ghGraphQL(
+    ctx,
+    `query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) { issue(number: $number) { id } }
+    }`,
+    { owner: addr.owner, repo: addr.repo, number: addr.number },
+  );
+  const id = data.repository?.issue?.id;
+  if (!id) throw new UsageError(`issue #${addr.number} not found in ${addr.owner}/${addr.repo}`);
+  return id;
+}
+
 function branchLinkedMergedPr(ctx: Ctx, number: number): { number: number; url: string } | null {
   const heads = [...BRANCH_KIND_CHARS.map((k) => `${k}/${number}`), `feature/GH-${number}`];
   let data: any;
@@ -4694,10 +4847,11 @@ export interface AnswerResult {
 
 export function answer(
   ctx: Ctx,
-  number: number,
+  target: number | IssueAddress,
   opts: { message: string; anyState?: boolean; resume?: boolean },
 ): AnswerResult {
-  const issue = fetchIssue(ctx, number);
+  const issue = fetchIssue(ctx, target);
+  const number = issue.number;
   // Fail closed BEFORE the comment: a truncated field-value page means the
   // state just read may be fiction, and the Human Needed gate below would be
   // judging it.
@@ -9407,8 +9561,13 @@ export function priorityOptionOrder(
 /** One setter for both advisory single-selects (Priority, Estimate) — two
  *  spellings of "set an advisory single-select" is the GH-1843 drift seed
  *  (GH-2126). */
-function setAdvisoryField(ctx: Ctx, number: number, fieldName: string, value: string | null): Issue {
-  const issue = fetchIssue(ctx, number);
+function setAdvisoryField(
+  ctx: Ctx,
+  target: number | IssueAddress,
+  fieldName: string,
+  value: string | null,
+): Issue {
+  const issue = fetchIssue(ctx, target);
   const itemId = requireItem(issue);
   // Live schema on BOTH branches. The set is what a value is judged against —
   // and a clear needs it just as much, for the field ID rather than the
@@ -9418,7 +9577,7 @@ function setAdvisoryField(ctx: Ctx, number: number, fieldName: string, value: st
   // validating nothing was the wrong reason to skip the read.
   const cache = mutationCache(ctx, [[fieldName]], [], [fieldName]);
   writeAdvisoryValue(ctx, cache, itemId, fieldName, value);
-  return fetchIssue(ctx, number);
+  return fetchIssue(ctx, target);
 }
 
 /** The one advisory-field write: assert against the live schema, then set or
@@ -9442,12 +9601,12 @@ function writeAdvisoryValue(
   }
 }
 
-export function setPriority(ctx: Ctx, number: number, value: string | null): Issue {
-  return setAdvisoryField(ctx, number, PRIORITY_FIELD, value);
+export function setPriority(ctx: Ctx, target: number | IssueAddress, value: string | null): Issue {
+  return setAdvisoryField(ctx, target, PRIORITY_FIELD, value);
 }
 
-export function setEstimate(ctx: Ctx, number: number, value: string | null): Issue {
-  return setAdvisoryField(ctx, number, ESTIMATE_FIELD, value);
+export function setEstimate(ctx: Ctx, target: number | IssueAddress, value: string | null): Issue {
+  return setAdvisoryField(ctx, target, ESTIMATE_FIELD, value);
 }
 
 /** The run a list-arity field write actually performed (GH-2130). Shape
@@ -9564,8 +9723,9 @@ export function bulkSetAdvisoryField(
  *  Metadata-only — never touches the state field or the claim. The comment is
  *  provenance, posted BEFORE the field write (the transition() ordering rule:
  *  an interrupted run leaves the reason, not a bare mark). */
-export function setDefer(ctx: Ctx, number: number, mark: DeferMark | null): Issue {
-  const issue = fetchIssue(ctx, number);
+export function setDefer(ctx: Ctx, target: number | IssueAddress, mark: DeferMark | null): Issue {
+  const issue = fetchIssue(ctx, target);
+  const number = issue.number;
   const itemId = requireItem(issue);
   const cache = mutationCache(ctx, [[DEFER_FIELD]]);
   if (mark === null) {
@@ -9606,7 +9766,7 @@ export function setDefer(ctx: Ctx, number: number, mark: DeferMark | null): Issu
     );
     setText(ctx, cache, itemId, DEFER_FIELD, formatDefer(mark));
   }
-  return fetchIssue(ctx, number);
+  return fetchIssue(ctx, target);
 }
 
 export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
@@ -11372,8 +11532,13 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         : "no origin remote — `git remote add origin <url>`; the scope gate compares it against the configured repo",
     );
   }
-  else if (scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) add("scope", "ok", remote.stdout.trim());
-  else add("scope", "fail", `origin ${remote.stdout.trim()} != configured ${ctx.cfg.host}/${ctx.cfg.owner}/${ctx.cfg.repo}`);
+  else if (scopeMatchesAny(remote.stdout, ctx.cfg)) add("scope", "ok", remote.stdout.trim());
+  else
+    add(
+      "scope",
+      "fail",
+      `origin ${remote.stdout.trim()} != any configured repo (${ctx.cfg.repos.map((r) => `${ctx.cfg.host}/${r}`).join(", ")})`,
+    );
 
   // cache vs live schema
   let cache: BoardCache | null = null;
@@ -14144,6 +14309,17 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
   return n;
 }
 
+/** GH-2455 (D8): the CLI-facing sibling of `requireNumber` for verbs whose
+ *  subject issue may live in any configured repo — `owner/repo#N` or a bare
+ *  number (primary). Kept separate from `requireNumber` rather than folding
+ *  the grammar into it: most `requireNumber` call sites (epic filters,
+ *  `--parent`, bulk lists) are deliberately still primary-only in this unit
+ *  (cross-repo parent/dep wiring is GH-2457/12c's job), so widening every
+ *  caller at once would be a scope claim this unit does not make. */
+function requireIssueAddress(ctx: Ctx, p: string | undefined, what = "issue number"): IssueAddress {
+  return parseIssueAddress(p, ctx.cfg, what);
+}
+
 const MUTATING = new Set([
   "create", "claim", "release", "move", "cancel", "reopen", "answer", "priority",
   "estimate", "defer", "link", "dep", "comment", "adopt", "reconcile", "parent-check",
@@ -14203,10 +14379,10 @@ export function run(argv: string[], ctx: Ctx): number {
   // gets the read path's carve-out.
   if (writes) {
     const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
-    if (remote.code !== 0 || !scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) {
+    if (remote.code !== 0 || !scopeMatchesAny(remote.stdout, ctx.cfg)) {
       throw new RefusalError(
-        `scope check failed: origin "${remote.stdout.trim()}" does not match configured ` +
-          `${ctx.cfg.host}/${ctx.cfg.owner}/${ctx.cfg.repo} — refusing to mutate another repo's board`,
+        `scope check failed: origin "${remote.stdout.trim()}" does not match any configured repo ` +
+          `(${ctx.cfg.repos.map((r) => `${ctx.cfg.host}/${r}`).join(", ")}) — refusing to mutate another repo's board`,
       );
     }
   }
@@ -14916,7 +15092,7 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "get": {
-      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const issue = fetchIssue(ctx, requireIssueAddress(ctx, positional[0]));
       if (flags.json) json(issue);
       else {
         out(issueLine(issue));
@@ -15576,11 +15752,11 @@ export function run(argv: string[], ctx: Ctx): number {
         }
         return result.failed.length > 0 ? 1 : 0;
       }
-      const number = requireNumber(positional[0]);
+      const addr = requireIssueAddress(ctx, positional[0]);
       const issue =
         cmd === "priority"
-          ? setPriority(ctx, number, flags.clear ? null : value!)
-          : setEstimate(ctx, number, flags.clear ? null : value!);
+          ? setPriority(ctx, addr, flags.clear ? null : value!)
+          : setEstimate(ctx, addr, flags.clear ? null : value!);
       const after = cmd === "priority" ? issue.priority : issue.estimate;
       out(`#${issue.number} ${cmd}=${after ?? "(none)"} ${issue.title}`);
       return 0;
@@ -15626,7 +15802,7 @@ export function run(argv: string[], ctx: Ctx): number {
         );
         return 0;
       }
-      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const issue = fetchIssue(ctx, requireIssueAddress(ctx, positional[0]));
       const after = transition(ctx, issue, "In Progress", {
         steal: !!flags.steal,
         // In Review → In Progress is a demotion and the machine requires the
@@ -15639,7 +15815,7 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "release": {
       if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`release requires -m "<where you stopped and what's next>"`);
-      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const issue = fetchIssue(ctx, requireIssueAddress(ctx, positional[0]));
       const after = transition(ctx, issue, "Backlog", { why: flags.m });
       if (issue.state === "Backlog") out(`noop: #${after.number} already "Backlog" (nothing to do)`);
       else out(issueLine(after));
@@ -15647,7 +15823,7 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "move": {
-      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const issue = fetchIssue(ctx, requireIssueAddress(ctx, positional[0]));
       const to = positional[1] ? parseStateArg(positional[1]) : null;
       if (!to) throw new UsageError(`move requires a target state (${STATES.join(" | ")})`);
       if (typeof flags.decision === "string" && flags.decision) {
@@ -15695,7 +15871,8 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "answer": {
-      const number = requireNumber(positional[0]);
+      const addr = requireIssueAddress(ctx, positional[0]);
+      const number = addr.number;
       const message =
         typeof flags.m === "string" && flags.m ? flags.m
         : typeof flags.message === "string" && flags.message ? flags.message
@@ -15703,7 +15880,7 @@ export function run(argv: string[], ctx: Ctx): number {
       if (!message) throw new UsageError(`answer requires -m "<the decision>" (--message also accepted)`);
       // --comment-only is accepted and inert: it names what is now the
       // default (GH-2204 moved the resume edge to the resuming agent).
-      const res = answer(ctx, number, {
+      const res = answer(ctx, addr, {
         message,
         anyState: !!flags["any-state"],
         resume: !!flags.resume,
@@ -15800,7 +15977,7 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "cancel": {
       if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`cancel requires -m "<reason>"`);
-      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const issue = fetchIssue(ctx, requireIssueAddress(ctx, positional[0]));
       const after = transition(ctx, issue, "Canceled", { why: flags.m });
       if (issue.state === "Canceled") {
         out(
@@ -15813,7 +15990,7 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "reopen": {
-      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const issue = fetchIssue(ctx, requireIssueAddress(ctx, positional[0]));
       const after = transition(ctx, issue, "Backlog", { isReopen: true });
       // Reopening IS the acceptance of a `reopen-as-unevidenced` proposal, and
       // it is the one disposition the classifier cannot infer afterwards: the
@@ -15837,14 +16014,15 @@ export function run(argv: string[], ctx: Ctx): number {
       // Validate the intent before spending a read: exactly one disposition,
       // and a rejection must say why (it is the disposition nothing else on the
       // board records, so the comment IS the record).
-      const number = requireNumber(positional[0]);
+      const addr = requireIssueAddress(ctx, positional[0]);
+      const number = addr.number;
       const reject = !!flags.reject;
       if (reject === !!flags.accept)
         throw new UsageError(`resolve requires exactly one of --accept / --reject`);
       const note = typeof flags.m === "string" && flags.m ? flags.m : undefined;
       if (reject && !note)
         throw new UsageError(`resolve --reject requires -m "<why not>" — a rejection with no reason reads as a bug`);
-      const p = resolveProposal(ctx, fetchIssue(ctx, number), reject ? "rejected" : "accepted", note);
+      const p = resolveProposal(ctx, fetchIssue(ctx, addr), reject ? "rejected" : "accepted", note);
       if (!p) {
         out(`#${number} has no pending tend proposal — nothing to resolve`);
         return 1;
@@ -15861,9 +16039,10 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "defer": {
-      const number = requireNumber(positional[0]);
+      const addr = requireIssueAddress(ctx, positional[0]);
+      const number = addr.number;
       if (flags.clear) {
-        const after = setDefer(ctx, number, null);
+        const after = setDefer(ctx, addr, null);
         out(after.defer ? `#${number}: defer clear did not stick — re-run` : `#${number}: defer cleared`);
         return 0;
       }
@@ -15880,7 +16059,7 @@ export function run(argv: string[], ctx: Ctx): number {
         if (!Number.isFinite(t)) throw new UsageError(`--recheck must be an ISO-8601 instant, got "${flags.recheck}"`);
         recheck = new Date(t);
       }
-      const after = setDefer(ctx, number, { recheck, condition });
+      const after = setDefer(ctx, addr, { recheck, condition });
       if (after.state === "Intake") {
         out(
           `#${number}: snoozed — ${condition} (until ${recheck!.toISOString()}) — ` +
@@ -15949,9 +16128,9 @@ export function run(argv: string[], ctx: Ctx): number {
 
     case "comment": {
       if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`comment requires -m "<body>"`);
-      const number = requireNumber(positional[0]);
-      addComment(ctx, fetchNodeIds(ctx, [number]).get(number)!, flags.m);
-      out(`commented on #${number}`);
+      const addr = requireIssueAddress(ctx, positional[0]);
+      addComment(ctx, fetchIssueNodeId(ctx, addr), flags.m);
+      out(`commented on #${addr.number}`);
       return 0;
     }
 
