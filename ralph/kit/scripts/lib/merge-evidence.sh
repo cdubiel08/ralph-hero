@@ -85,7 +85,8 @@ def me_policy:
                               else "chatgpt-codex-connector[bot]" end)),
     trigger:             (.external_review.trigger // "@codex review"),
     headMarker:          (.external_review.head_marker // ""),
-    exemptAuthors:       (.exempt_authors // [])
+    exemptAuthors:       (.exempt_authors // []),
+    environments:        (.environments // {})
   }
   | .mode = (if .requestMode == "review-request" then "findings"
              elif .headMarker != "" then "findings"
@@ -103,12 +104,37 @@ def me_policy_none:
     trigger:             "",
     headMarker:          "",
     exemptAuthors:       [],
+    environments:        {},
     mode:                "review"
   };
 
 # Is this author waived? Normalized on both sides.
 def me_exempt($author):
   ((.exemptAuthors // []) | map(me_norm) | index($author | me_norm)) != null;
+
+# GH-2451. Per-environment deploy grants, read beside the `apply` block:
+# `environments.<name>: autonomous | lead | human`.
+#
+#   autonomous  scripts/approve-deploy.sh may approve the pending deployment
+#               on that run itself
+#   lead        the driver escalates (`board move NNN human-needed`, which
+#               already routes to the lead when RALPH_HERDR_LEAD is set —
+#               GH-2179) rather than approving
+#   human       no agent path exists; approve-deploy.sh refuses outright
+#
+# "prod"/"production" (case-insensitive) are FORCED to "human" no matter what
+# the policy configures. This is dispatch reserved-set item 4 —
+# "irreversible outside the repo" — enforced here, in code, not left to policy
+# author discipline: a mistyped or copy-pasted "prod": "autonomous" must not
+# grant what the reserved set exists to withhold. An environment the policy
+# does not name also reads "human": grants are opt-IN, so an unconfigured
+# target stays exactly as gated as one nobody wrote a line for.
+def me_reserved_environments: ["prod", "production"];
+def me_environment_grant($env):
+  if (me_reserved_environments | index($env | ascii_downcase)) != null
+  then "human"
+  else (.environments[$env] // "human")
+  end;
 
 # Attestation validity against a head sha. Returns a REASON CODE, never a
 # boolean: "stale" is retry-able (re-attest) while "rejected" is a verdict
@@ -231,6 +257,15 @@ me_policy_load() {
               | IN("comment", "review-request")' "$file" >/dev/null 2>&1; then
     return 2
   fi
+  # Same class again (GH-2451): a typo'd grant value ("autonomus") must not
+  # silently fall through to a DIFFERENT rule than the one the policy author
+  # wrote — me_environment_grant's `// "human"` default would otherwise turn
+  # a malformed "autonomous" into a silently-safe "human", masking the typo
+  # instead of surfacing it.
+  if ! jq -e '(.environments // {}) | to_entries
+              | all(.value | IN("autonomous", "lead", "human"))' "$file" >/dev/null 2>&1; then
+    return 2
+  fi
   jq -c "$ME_JQ_LIB me_policy" "$file"
 }
 
@@ -240,6 +275,12 @@ me_policy_get() { jq -r --arg k "$2" '.[$k] | if type == "array" then tojson els
 # me_is_exempt <policy_json> <author> — "true" / "false"
 me_is_exempt() {
   jq -r "$ME_JQ_LIB"' me_exempt($a) | tostring' --arg a "$2" <<<"$1" 2>/dev/null || echo "false"
+}
+
+# me_environment_grant <policy_json> <env> — one of autonomous|lead|human
+# (GH-2451). See the jq def above for the reserved-set and default rules.
+me_environment_grant() {
+  jq -r "$ME_JQ_LIB"' me_environment_grant($e)' --arg e "$2" <<<"$1"
 }
 
 # The marker as a bash constant, same definition as the jq def above.
