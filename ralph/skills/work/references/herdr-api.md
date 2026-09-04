@@ -121,6 +121,15 @@ any hand-driven spawn must also honor:
   grammar is declared once in `contracts.ts`; a caller that assembles it
   itself is a second grammar. Resume beats re-cut: if `legacyBranch`
   (`feature/GH-N`) already exists, that branch is the unit's branch.
+- **`--epic E` on the prompt for a team member (GH-2450, D6 unit 8).** The
+  same `board name N --json` read also carries `.teamEpic` — the unit's epic
+  root, `epicTeamOf`'s own walk, `null` for a flat unit. When non-null, the
+  session is prompted `/ralph:work N --epic E` rather than the bare `/ralph:work
+  N`: the Intake step below reads the epic root's body before the unit's own,
+  and re-reads both at the pre-PR checkpoint. This rides the prompt text
+  itself because it must reach the session's own argument parsing, unlike the
+  pane-env addresses (`RALPH_HERDR_ADDRESS`/`WHO_LEAD`/`WHO_DISPATCH`) stamped
+  separately into the shell environment below.
 - **IDs from JSON.** `herdr worktree create --cwd <repo> --branch <that
   branch> --base origin/main --no-focus` (always `--base origin/main`;
   fetch first), then read `pane_id` out of the response — never predicted.
