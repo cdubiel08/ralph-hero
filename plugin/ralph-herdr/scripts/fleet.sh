@@ -29,7 +29,7 @@
 #   is checked at READ time (ralph_fleet_state) — no timers, no daemons; a
 #   fleet nobody pokes simply never refills again. fleet.json shape:
 #
-#     {run_id, armed, k, refill, budget_left, expires_at, repo,
+#     {run_id, armed, k, refill, budget_left, expires_at, repo, epic,
 #      spawned: [issue...], inflight: [{issue, ts}...], created_at}
 #
 #   `armed` is written as ($refill == 1): a refill=0 arm is the audit-trail
@@ -37,6 +37,29 @@
 #   alone. `inflight` tracks picks whose spawn has not finished yet (consume
 #   records them, ralph_fleet_spawn_done clears them) — the refill capacity
 #   check counts them, since a mid-spawn agent is invisible to `agent list`.
+#
+#   `epic` (GH-2461) is null for a plain fleet run and an issue number when
+#   the run was armed via `work-fleet.sh --epic EPIC --refill` — the team
+#   lead's staffing path, D3.2 revised: the lead cannot spawn from its
+#   contained pane, so the initial fleet is armed uncontained (work-team.sh)
+#   and refill_one (refill.sh) reads it back to scope every subsequent pick
+#   to EPIC's frontier via ralph_fleet_frontier_json EPIC, never the whole
+#   board's. Read from RALPH_HERDR_FLEET_EPIC at arm time (an env var, not a
+#   positional — every existing `ralph_fleet_arm K REFILL ISSUE...` call site
+#   stays byte-compatible with no third positional to thread through).
+#
+#   `lead` / `lead_ref` (GH-2461, review finding) ride beside `epic`: the
+#   team lead's grammar-B name and durable ref (RALPH_HERDR_TEAM_LEAD /
+#   RALPH_HERDR_TEAM_LEAD_REF in the arming process's env — work-team.sh
+#   hands them to work-fleet.sh). The refill consumer runs in the daemon
+#   with NO lead env, so without these on disk a refilled worker would be a
+#   depth-0 root with no RALPH_HERDR_LEAD in its pane — its escalations would
+#   bypass the lead and lineage recovery could not tie it to the team.
+#   refill_one restores both into the env before spawn_work_session, which
+#   already knows how to stamp lineage and inject the pane env from them.
+#   Null when absent (a plain fleet). The ref names the lead that LAUNCHED
+#   the run; a healed lead carries a new epoch, but the name half — what
+#   escalation routing keys on — is stable across respawns.
 #
 #   `repo` is recorded at arm time because the refill consumer is an event
 #   hook with NO workspace cwd — it must re-discover the checkout the human
@@ -127,8 +150,10 @@ _ralph_fleet_scope_ledger() {
 ralph_fleet_arm() {
   local k="${1-}" refill="${2-}" id="${RALPH_HERDR_RUN_ID:-}"
   local dir file tmp ttl budget left expires repo session n
+  local epic="${RALPH_HERDR_FLEET_EPIC:-}" lead="" lead_ref=""
   case "$k" in '' | *[!0-9]* | 0 | 0*) echo "ralph_fleet_arm: k must be a positive integer (got '$k')" >&2; return 1 ;; esac
   case "$refill" in 0 | 1) : ;; *) echo "ralph_fleet_arm: refill must be 0 or 1 (got '$refill')" >&2; return 1 ;; esac
+  case "$epic" in '' | *[!0-9]*) [ -z "$epic" ] || { echo "ralph_fleet_arm: RALPH_HERDR_FLEET_EPIC must be an issue number (got '$epic')" >&2; return 1; } ;; esac
   if [ -z "$id" ]; then
     echo "ralph_fleet_arm: RALPH_HERDR_RUN_ID is not set — mint one with ralph_run_id" >&2
     return 1
@@ -143,6 +168,21 @@ ralph_fleet_arm() {
   case "$budget" in '' | *[!0-9]* | 0 | 0*) echo "ralph_fleet_arm: RALPH_HERDR_REFILL_BUDGET must be a positive integer, no leading zeros (got '$budget')" >&2; return 1 ;; esac
   left=$((budget - $#))
   [ "$left" -ge 0 ] || left=0
+  # Lead identity is only meaningful on a team run, and only when it parses:
+  # the name lands on a `pane run export …` command line and the ref in a
+  # ledger record (spawn_work_session's own gates, restated at the source).
+  if [ -n "$epic" ]; then
+    lead="${RALPH_HERDR_TEAM_LEAD:-}"
+    if [ -n "$lead" ] && ! ralph_agent_parse "$lead" >/dev/null 2>&1; then
+      echo "ralph_fleet_arm: RALPH_HERDR_TEAM_LEAD='$lead' does not parse as an agent name — recording no lead" >&2
+      lead=""
+    fi
+    lead_ref="${RALPH_HERDR_TEAM_LEAD_REF:-}"
+    case "$lead_ref" in
+      *#?*) ralph_agent_parse "${lead_ref%%#*}" >/dev/null 2>&1 || lead_ref="" ;;
+      *) lead_ref="" ;;
+    esac
+  fi
   dir=$(ralph_run_dir "$id") || return 1
   file="$dir/fleet.json"
   tmp="$file.tmp.$$"
@@ -161,16 +201,67 @@ ralph_fleet_arm() {
   fi
   jq -nc \
     --arg id "$id" --arg expires "$expires" --arg repo "$repo" \
-    --arg session "$session" \
+    --arg session "$session" --arg epic "$epic" \
+    --arg lead "$lead" --arg lead_ref "$lead_ref" \
     --arg now "$(date -u +%FT%TZ)" \
     --argjson k "$k" --argjson refill "$refill" --argjson left "$left" \
     --args '
     {run_id: $id, armed: ($refill == 1), k: $k, refill: ($refill == 1),
      budget_left: $left, expires_at: $expires, repo: $repo, session: $session,
+     epic: (if $epic == "" then null else ($epic | tonumber) end),
+     lead: (if $lead == "" then null else $lead end),
+     lead_ref: (if $lead_ref == "" then null else $lead_ref end),
      spawned: ($ARGS.positional | map(tonumber)), created_at: $now}' \
     -- "$@" >"$tmp" || { rm -f "$tmp"; return 1; }
   mv "$tmp" "$file" || { rm -f "$tmp"; return 1; }
   printf '%s\n' "$file"
+}
+
+# ralph_fleet_supersede_epic EPIC NEW_RUN_ID — disarm every OTHER armed run
+# scoped to EPIC in this scope, naming NEW_RUN_ID as the reason (GH-2461,
+# review finding). A lead that died while its run stayed armed, relaunched
+# through the bare team form, would otherwise leave TWO armed runs on one
+# epic: independent TTLs and budgets racing the same frontier, doubling the
+# team's refill allowance. Relaunch is a deliberate act, so the NEW run wins
+# and the old one is written down as superseded — under the scope's ledger
+# mutex like every other fleet.json rewrite. Prints one superseded run id per
+# line; rc 0 always (a missing runs dir is nothing to supersede). Unscoped
+# runs and other epics are never touched.
+#
+# ORDER AND ATOMICITY (review finding, PR #2464): the caller arms the NEW run
+# FIRST and supersedes SECOND, both inside one held scope mutex — so a
+# failed arm retires nothing (the team keeps its old refiller), and two
+# overlapping launches serialize: the second sees the first's run already
+# armed and retires it, never both retiring before either arms. When the
+# caller already holds the scope's lock (identity-checked, the same rule as
+# ralph_fleet_consume_budget — the mutex is not reentrant) no re-lock is
+# taken; a bare call locks per file. A run whose rewrite FAILS is reported
+# on stderr as still armed and is NOT printed as superseded (review finding):
+# the printed list is the set actually retired, never the set attempted.
+ralph_fleet_supersede_epic() {
+  local epic="${1-}" new_id="${2-}" ledger runs ff id scope held
+  case "$epic" in '' | *[!0-9]*) return 0 ;; esac
+  ledger=$(ralph_ledger_path "${REPO:-$PWD}" 2>/dev/null) || return 0
+  runs="$(dirname "$ledger")/runs"
+  [ -d "$runs" ] || return 0
+  for ff in "$runs"/*/fleet.json; do
+    [ -f "$ff" ] || continue
+    id=$(jq -r --argjson e "$epic" 'select(.armed == true and (.epic // null) == $e) | .run_id // empty' "$ff" 2>/dev/null) || id=""
+    [ -n "$id" ] || continue
+    [ "$id" != "$new_id" ] || continue
+    # Same mutex identity every other fleet.json rewrite serializes on.
+    scope=$(_ralph_fleet_scope_ledger "$ff")
+    held=""
+    [ "$_RALPH_LEDGER_LOCK_HELD" = "$(dirname "$scope")/.ledger.lock" ] && held=1
+    [ -n "$held" ] || ralph_ledger_lock "$scope"
+    if ralph_fleet_disarm "$ff" "superseded by run ${new_id:-<unnamed>} (GH-$epic relaunched)"; then
+      printf '%s\n' "$id"
+    else
+      echo "ralph_fleet_supersede_epic: could not disarm run $id ($ff) — it is STILL ARMED beside ${new_id:-the new run}; disarm it by hand (two armed runs race one epic's frontier)" >&2
+    fi
+    [ -n "$held" ] || ralph_ledger_unlock "$scope"
+  done
+  return 0
 }
 
 # ralph_fleet_state [FLEET_FILE] — read + validate a fleet.json (default: the

@@ -611,7 +611,7 @@ exit 23
   it("team is explicit and ensures dispatch before exactly one epic", () => {
     const r = runSurface(["team", "2208"], fixtureEnv({ server: "running" }));
     expect(r.status).toBe(0);
-    expect(readLines(scriptLog)).toEqual(["dispatch-up", "work-team 2208"]);
+    expect(readLines(scriptLog)).toEqual(["dispatch-up", "work-team 2208 --lead-only"]);
   });
 
   it("binds the one resolved board executable into every installed-host Herdr script", () => {
@@ -850,8 +850,8 @@ exit 23
     const r = runSurface(["day", "--team", "2208", "--team", "2208", "--team", "2176"]);
     expect(r.status).toBe(0);
     expect(readLines(scriptLog).filter((line) => line.startsWith("work-team "))).toEqual([
-      "work-team 2208",
-      "work-team 2176",
+      "work-team 2208 --lead-only",
+      "work-team 2176 --lead-only",
     ]);
   });
 
@@ -897,8 +897,8 @@ exit 23
       "dispatch-up",
       "reconcile",
       "resume-teams",
-      "work-team 2208",
-      "work-team 2176",
+      "work-team 2208 --lead-only",
+      "work-team 2176 --lead-only",
       "cockpit-open --no-focus",
     ]);
     expect(readLines(boardLog)).toContain("inbox");
@@ -943,7 +943,7 @@ exit 23
       status: 0,
       phase: "team GH-2208",
       state: "skipped",
-      scripts: ["dispatch-up", "reconcile", "resume-teams", "work-team 2208", "cockpit-open --no-focus"],
+      scripts: ["dispatch-up", "reconcile", "resume-teams", "work-team 2208 --lead-only", "cockpit-open --no-focus"],
     },
   ])("day: $description", ({ args, env, status, phase, state, scripts }) => {
     // Break caught: partial-failure aggregation either aborts independent
@@ -971,7 +971,7 @@ exit 23
     expect(runSurface(["day", "--team", "2208"], env).status).toBe(0);
     expect(runSurface(["day", "--team", "2208"], env).status).toBe(0);
     expect(readLines(join(tmp, "herdr-rerun.log")).filter((line) => line === "server")).toHaveLength(1);
-    expect(readLines(logFor("rerun")).filter((line) => line === "work-team 2208")).toHaveLength(1);
+    expect(readLines(logFor("rerun")).filter((line) => line === "work-team 2208 --lead-only")).toHaveLength(1);
   });
 
   it("NO_COLOR wins over --color=always", () => {

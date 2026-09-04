@@ -37,6 +37,15 @@
 #   capacity  k, re-checked under the ledger mutex with in-flight picks counted
 #   set       the run's `spawned` list, so a refill never re-picks its own issue
 #
+#   scope     GH-2461: fleet.json's `epic` field (null for a plain fleet run,
+#             an issue number for a team lead's staffing run — work-fleet.sh
+#             --epic EPIC --refill, armed uncontained by work-team.sh) narrows
+#             every candidate read here to EPIC's frontier via
+#             ralph_fleet_frontier_json EPIC. This exists because the lead
+#             cannot spawn from its own contained pane (GH-2266 denies it
+#             write access to the checkout) — the watcher does the staffing
+#             now, scoped to the team it is refilling.
+#
 # Callers must have sourced fleet.sh and ledger.sh, and must define log().
 
 # NEVER on blocked — blocked is attention, not capacity. All herdr interaction
@@ -158,6 +167,12 @@ refill_one() (
     exit 0
   fi
   run_id=$(jq -r '.run_id' <<<"$state")
+  # GH-2461: a run armed via `work-fleet.sh --epic EPIC --refill` (the team
+  # lead's staffing path — moved uncontained, into work-team.sh, since the
+  # lead's own pane cannot fetch) records EPIC in fleet.json. Threaded into
+  # every frontier read below via ralph_fleet_frontier_json's own EPIC
+  # argument (empty here just means "unscoped", byte-identical to today).
+  epic=$(jq -r '.epic // empty' <<<"$state")
   repo=$(jq -r '.repo // empty' <<<"$state")
   if [ -z "$repo" ] || [ ! -d "$repo" ]; then
     log "refill $run_id: armed but repo '$repo' is gone — disarming"
@@ -211,7 +226,7 @@ refill_one() (
     | [.[] | .name
     | select(test("^w[0-9]+-|^gh-[0-9]+$")) | select(IN($dead[]) | not)
     | sub("^w"; "") | sub("^gh-"; "") | split("-")[0] | tonumber]' <<<"$agents")
-  frontier=$(ralph_fleet_frontier_json) || {
+  frontier=$(ralph_fleet_frontier_json "$epic") || {
     log "refill $run_id: frontier read failed — leaving armed"
     exit 0
   }
@@ -309,7 +324,7 @@ refill_one() (
     fi
     ralph_fleet_disarm "$ff" "frontier empty" || true
     ralph_ledger_unlock "$ledger"
-    notify fleet "fleet run $run_id complete" "frontier empty — refill disarmed"
+    notify fleet "fleet run $run_id complete" "${epic:+GH-$epic }frontier empty — refill disarmed"
     exit 0
   fi
   # A racer between our pre-lock vetting and this pick can advance the pick
@@ -331,7 +346,37 @@ refill_one() (
   # threaded honestly: this spawn is machine-initiated.
   depth=$(ralph_depth_guard "") || exit 0
   export RALPH_HERDR_INVOKED_BY=scheduler RALPH_HERDR_RUN_ID="$run_id"
-  log "refill $run_id: spawning GH-$cand (depth $depth, budget left $budget_left)"
+  # A team run's lead identity (GH-2461, review finding): this process has no
+  # lead env, so restore it from the arming record — spawn_work_session then
+  # stamps the worker's parent/root lineage from the ref and injects
+  # RALPH_HERDR_LEAD into its pane from the name, exactly as a lead-launched
+  # fleet did. Absent (a plain run) means a depth-0 root as before.
+  lead=$(jq -r '.lead // empty' <<<"$state")
+  lead_ref=$(jq -r '.lead_ref // empty' <<<"$state")
+  # The stored ref names the lead that LAUNCHED the run; a lead healed since
+  # (heal.sh, resume-teams.sh) carries a new epoch under the same name, and a
+  # worker stamped with the dead generation's ref would read as an orphan to
+  # exact-ref lineage (review finding). Prefer the lead's CURRENT open ledger
+  # ref — the same name→ref bridge stand-down uses. No live generation (the
+  # lead is down right now, between its death and its heal) means NO parent
+  # ref at all: the worker is recorded as a depth-0 root, which is the truth
+  # at spawn time, rather than under the closed generation — a closed parent
+  # is exactly what orphan recovery flags (review finding). The name half
+  # still rides into the pane, so escalations route to whichever generation
+  # the healer brings back.
+  if [ -n "$lead" ]; then
+    live_ref=$(RALPH_HERDR_LEDGER="$ledger" ralph_ledger_open_ref "$lead" 2>/dev/null) || live_ref=""
+    if [ -z "$live_ref" ]; then
+      [ -z "$lead_ref" ] || log "refill $run_id: lead $lead has no live generation (run armed under $lead_ref) — spawning as a root; the lead name still routes"
+      lead_ref=""
+    elif [ "$live_ref" != "$lead_ref" ]; then
+      log "refill $run_id: lead $lead is live as $live_ref (run armed under ${lead_ref:-no ref}) — lineage follows the live generation"
+      lead_ref="$live_ref"
+    fi
+  fi
+  [ -z "$lead" ] || export RALPH_HERDR_TEAM_LEAD="$lead"
+  [ -z "$lead_ref" ] || export RALPH_HERDR_TEAM_LEAD_REF="$lead_ref"
+  log "refill $run_id: spawning GH-$cand${epic:+ (under GH-$epic frontier scope)} (depth $depth, budget left $budget_left)"
   rc=0
   spawn_work_session "$cand" "$frontier" || rc=$?
   case "$rc" in

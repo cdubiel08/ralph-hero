@@ -1,20 +1,41 @@
 #!/usr/bin/env bash
 # work-team.sh — cockpit action: TEAM LAUNCH (GH-2214, unit F of #2208;
-# supersedes the GH-2178 lead+fleet form). Spawn the standing o-lane LEAD for
-# ONE epic and STOP — the lead staffs and owns its workers itself.
+# supersedes the GH-2178 lead+fleet form; staffing revised by GH-2461). Spawn
+# the standing o-lane LEAD for ONE epic, then staff its INITIAL fleet and arm
+# the watcher to keep it staffed — the lead owns its workers but no longer
+# spawns them.
 #
 #   work-team.sh EPIC
-#   work-team.sh EPIC --lead-only   # accepted for compatibility; same thing
+#   work-team.sh EPIC --lead-only   # RESPAWN: the lead alone, no staffing
 #   work-team.sh EPIC --stand-down  # park a LIVE lead deliberately (GH-2357)
 #
-# LEAD-ONLY BY DESIGN (D3.2, an operator deviation recorded in
-# thoughts/shared/plans/2026-08-28-herd-topology-design.md): "dispatch
-# shouldn't spawn the things lead should own; the lead intrinsically knows
-# the workers it created." This script therefore spawns NO workers and takes
-# no issue list — the lead runs `work-fleet.sh --epic EPIC` from its own
-# pane, under the same fleet guards (deps, cap, billing, spawn edge) run BY
-# the lead, which makes lead↔worker a hub lane by construction (GH-1890:
-# spawner↔spawned). Out-of-team work stays plain `work-fleet.sh NNN`.
+# LEAD-OWNED, SPAWNER-UNCONTAINED (D3.2, revised by GH-2461; the original
+# deviation is recorded in thoughts/shared/plans/2026-08-28-herd-topology-
+# design.md: "dispatch shouldn't spawn the things lead should own; the lead
+# intrinsically knows the workers it created"). That stands — the workers are
+# still the lead's team, addressed through it, reporting to it. What changed:
+# D3.2 as shipped (GH-2214) had the LEAD itself run `work-fleet.sh --epic
+# EPIC` from its own pane, and GH-2266's process containment (landed after,
+# manifest v27) denies that pane write access to the very checkout it sits
+# in — `git -C $REPO fetch` can never succeed there, so no lead could ever
+# staff its own team (GH-2461). Staffing moved to where it can actually run:
+# THIS script, uncontained, spawns the lead AND the epic-scoped initial
+# fleet, then ARMS refill (`work-fleet.sh --epic EPIC --refill`) so the
+# watcher (refill.sh, triggered by watch-event.sh) keeps the team staffed
+# from EPIC's frontier as workers exit — never the whole board's. The lead
+# ranks, dep-wires, addresses its workers and dispatch, and dispositions
+# escalations; it spawns nothing. Out-of-team work stays plain
+# `work-fleet.sh NNN`.
+#
+# --lead-only NOW MEANS IT (GH-2461). It used to be a compatibility no-op;
+# it is the RESPAWN form: heal.sh (a dead lead's pane.exited) and
+# resume-teams.sh (`rh day`) re-run the lead alone and never re-staff —
+# the launch's armed fleet.json outlives the lead on disk, so the watcher
+# is still refilling that team, and a respawn that re-read the frontier
+# would both re-arm a second run against the same epic and break the
+# resume invariant that resume evidence comes from the scoped ledger,
+# never from board ranking (rh-command-surface.feature). Staffing happens
+# exactly once, at launch, from the bare form.
 #
 # THE LEAD (design decision 4, thoughts/shared/plans/2026-08-26-teams-
 # dispatch-inbox-design.md): the team's orchestrator — a standing pane living
@@ -28,8 +49,7 @@
 # RESPAWN IS IDEMPOTENT RE-RUN. A live o<EPIC>-* lead is skipped (the herd
 # read is the liveness oracle, fail-closed like every spawn pre-check); a dead
 # one is simply spawned again. The event healer (heal.sh, GH-2212) re-runs
-# this on the lead's pane.exited; `--lead-only` is retained so its call sites
-# keep working — it names what is now the only behavior.
+# this on the lead's pane.exited with `--lead-only` — the respawn form above.
 #
 # THE TEAM SELF-DISSOLVES (D3.3, GH-2215, an operator deviation: "very
 # guaranteed but also fast and efficient"). The brief's close-out makes the
@@ -100,14 +120,16 @@ ralph_plugin_freshness_notice
 
 usage() {
   cat <<'EOF'
-usage: work-team.sh EPIC [--lead-only]
+usage: work-team.sh EPIC
+       work-team.sh EPIC --lead-only
        work-team.sh EPIC --stand-down
 
   EPIC          the epic issue the team is scoped to. Its lead is the o-lane
                 pane o<EPIC>-<slug>; a live one is never doubled (idempotent),
                 a dead one is respawned by re-running this script.
-  --lead-only   accepted for compatibility (heal.sh, GH-2212): lead-only is
-                the only behavior now — team launch spawns the lead and stops.
+  --lead-only   RESPAWN the lead alone (heal.sh, GH-2212; resume-teams.sh):
+                no initial fleet, no frontier read, no new arming — the
+                launch's armed run keeps refilling the team (GH-2461).
   --stand-down  park a LIVE lead deliberately (GH-2357): records the durable
                 exit fact ({ev: exit, reason: "stood-down"}) for its ledger
                 ref, then closes its team workspace. heal.sh never respawns a
@@ -116,21 +138,23 @@ usage: work-team.sh EPIC [--lead-only]
                 human re-arms the team the ordinary way: work-team.sh EPIC.
   -h, --help    this.
 
-The lead staffs its own workers (D3.2): from its pane it runs
-  work-fleet.sh --epic EPIC     # ranked ready children, fleet guards run BY it
-  work-fleet.sh NNN...          # the explicit override / out-of-team lane
-Naming worker issues HERE is refused — dispatch does not spawn what the lead
-owns.
+This script staffs the team's INITIAL fleet and arms the watcher to keep it
+staffed (GH-2461 — the lead's own pane cannot fetch, so it cannot spawn):
+  work-fleet.sh --epic EPIC --refill   # what this script runs, uncontained
+  work-fleet.sh NNN...                 # the explicit override / out-of-team
+                                        # lane (unaffected — plain workers)
+Naming worker issues HERE is refused — the lead owns its team's workers even
+though it no longer spawns them itself.
 
 Knobs: RALPH_HERDR_DRY_RUN=true (the spawn plan only — --stand-down is a
 live ledger + workspace mutation and is unaffected by it).
 EOF
 }
 
-EPIC="" STAND_DOWN=""
+EPIC="" STAND_DOWN="" LEAD_ONLY=""
 for arg in "$@"; do
   case "$arg" in
-    --lead-only) ;; # compatibility no-op: lead-only is the only behavior
+    --lead-only) LEAD_ONLY=1 ;; # respawn form: the lead alone, no staffing (GH-2461)
     --stand-down) STAND_DOWN=1 ;;
     -h | --help)
       trap - EXIT # --help is a read, not a pane session: don't hold for Enter
@@ -383,11 +407,11 @@ Rehydrate from board state alone (you were spawned — or respawned — with no 
 Chain of command (derived — \`board name\`; your address is stable across respawns):${lead_addr:+
 - You are $lead_addr (agent $LEAD).}${DISPATCH_ADDR:+
 - Dispatch is $DISPATCH_ADDR — reachable, never a rung: escalations you cannot dispose go to the INBOX directly (board promote NNN), not through dispatch.}
-- Your workers report to you: panes you spawn carry your address (RALPH_HERDR_LEAD), and their escalations route to you (board escalations shows them; board answer NNN -m answers what is knowable; board promote NNN hands the human what is not).
+- Your workers report to you: your team's panes carry your address (RALPH_HERDR_LEAD), and their escalations route to you (board escalations shows them; board answer NNN -m answers what is knowable; board promote NNN hands the human what is not).
 
 Your bounds (the roles.sh registry):
 - READ-ONLY: never write a working tree, never claim a unit, never run /ralph:work yourself, never merge.
-- YOU staff the team (D3.2 — nobody staffs it for you): bash $SCRIPT_DIR/work-fleet.sh --epic $EPIC spawns driver sessions for the epic's ready children from the ranked frontier, under the fleet's own guards (deps, cap, billing, spawn edge — your environment states your role); bash $SCRIPT_DIR/work-fleet.sh NNN... is the explicit override. Investigators via the sanctioned role helpers.
+- YOU DO NOT STAFF THE TEAM (GH-2461, revising D3.2): your pane sits in a process-contained checkout (GH-2266) and cannot fetch, so \`work-fleet.sh --epic $EPIC\` can never succeed from here — it will refuse naming the containment cause if you try. Staffing already happened uncontained at team launch (work-team.sh spawned your initial fleet and armed the watcher for refill), and the watcher keeps your team staffed from GH-$EPIC's frontier as workers exit — nothing idles waiting on you. If staffing looks stalled past its arming window (RALPH_HERDR_REFILL_TTL_MIN / budget), escalate rather than attempting to spawn yourself. Investigators are the one exception: the sanctioned role helpers for read-only fan-out remain yours to use.
 - Assignment is never pushed: workers claim from the board. Do not nudge working sessions for status — read the board instead.
 - Workers escalate on board items, never in private channels. Answer what is knowable on the item's own thread; leave to the human what needs the human.
 
@@ -517,4 +541,39 @@ spawn_confirm_turn "$LEAD" "$pane" "$brief" "GH-$EPIC's lead $LEAD" \
   "close the team space (herdr workspace close ${lead_ws:-<workspace-id>}) and re-run work-team.sh $EPIC" ||
   exit 1
 echo "lead spawned for GH-$EPIC (pane $pane, agent $LEAD, workspace \"$team_label\")"
-finish "team GH-$EPIC: lead $LEAD standing — it staffs its own workers (work-fleet.sh --epic $EPIC from its pane)"
+
+# GH-2461: staffing runs HERE, uncontained, not in the lead's pane — GH-2266's
+# process containment denies that pane write access to $src, so the lead
+# could never run this itself. --refill beside --epic both spawns the
+# initial fleet from GH-$EPIC's ranked frontier AND arms the watcher
+# (refill.sh, via watch-event.sh) to keep topping it up from that same scope
+# as workers exit, so the team stays staffed without the lead lifting a
+# finger. --no-watch: this pane is the lead's launch, not a fleet-watching
+# session — nobody here should block on worker completions.
+#
+# Skipped under --lead-only: a RESPAWN (heal.sh, resume-teams.sh) re-runs
+# the lead alone. Its team's armed fleet.json is still on disk and the
+# watcher is still refilling from it; staffing again here would arm a
+# second run against the same epic and read the frontier on a path whose
+# evidence must come from the ledger alone.
+if [ -n "$LEAD_ONLY" ]; then
+  finish "team GH-$EPIC: lead $LEAD respawned (--lead-only) — its armed fleet run keeps refilling the team; staffing is not repeated"
+fi
+echo "team GH-$EPIC: staffing the initial fleet (work-fleet.sh --epic $EPIC --refill)"
+fleet_rc=0
+# The lead's identity rides the call (review finding): RALPH_HERDR_TEAM_LEAD
+# is what spawn_work_session injects into every worker pane as
+# RALPH_HERDR_LEAD (escalation routing, fleet-send's lead detector) and
+# RALPH_HERDR_TEAM_LEAD_REF is the C8 parent/root the worker's spawn record
+# carries (D4.1) — the SAME two vars the lead's own env used to carry into
+# its work-fleet runs. ralph_fleet_arm persists both into fleet.json so the
+# daemon-side refill, which has no lead env of its own, spawns workers that
+# still belong to this team.
+RALPH_HERDR_SPAWNER_ROLE="$SPAWNER_ROLE" RALPH_HERDR_TEAM_LEAD="$LEAD" RALPH_HERDR_TEAM_LEAD_REF="$ref" \
+  "$SCRIPT_DIR/work-fleet.sh" --epic "$EPIC" --refill --no-watch || fleet_rc=$?
+if [ "$fleet_rc" -eq 0 ]; then
+  finish "team GH-$EPIC: lead $LEAD standing; initial fleet staffed and armed for refill from GH-$EPIC's frontier (the lead spawns nothing itself — GH-2461)"
+else
+  echo "team GH-$EPIC: initial fleet staffing failed (rc $fleet_rc, see above) — the lead is live regardless; staff by hand: work-fleet.sh --epic $EPIC --refill" >&2
+  finish "team GH-$EPIC: lead $LEAD standing; initial fleet staffing FAILED (rc $fleet_rc) — staff by hand: work-fleet.sh --epic $EPIC --refill"
+fi

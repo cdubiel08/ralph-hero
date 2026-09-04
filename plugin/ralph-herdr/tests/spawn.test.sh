@@ -154,6 +154,47 @@ is "dry-run: ledger untouched (content)" \
   '{"ts":"2026-08-11T00:00:00Z","ev":"spawn","agent_ref":"o10-orch#aaaa","tokens":{"role":"o","issue":"10","slug":"orch","depth":"0","state":"spawned"}}' \
   "$first_ledger_line"
 
+# ── GH-2461: a team lead cannot staff its own team ───────────────────────────
+# D3.2 has the lead run work-fleet.sh --epic EPIC from its OWN pane, and
+# GH-2266's process containment denies that pane write access to $REPO (the
+# checkout it sits in), so the `git fetch` a spawn needs can never succeed
+# there. work-team.sh sets RALPH_HERDR_SPAWNER_ROLE=orchestrator on the
+# lead's pane env — the same signal the spawn-edge guard already reads —
+# and spawn_work_session refuses on it, naming the containment cause rather
+# than letting a doomed fetch surface git's bare "Operation not permitted".
+orch_out=$(RALPH_HERDR_SPAWNER_ROLE=orchestrator spawn_work_session 123 "$QUEUE" 2>&1)
+orch_rc=$?
+is "lead staffing: a live (non-dry-run) attempt refuses" "1" "$orch_rc"
+case "$orch_out" in
+  *"process containment"*"GH-2266"*) ok "lead staffing: names the containment cause" ;;
+  *) not_ok "lead staffing: names the containment cause — got '$orch_out'" ;;
+esac
+case "$orch_out" in
+  *"Operation not permitted"*) not_ok "lead staffing: must not surface git's bare error — got '$orch_out'" ;;
+  *) ok "lead staffing: never surfaces git's bare error" ;;
+esac
+# No git fetch is even attempted: the ledger stays exactly as it was before
+# this call (still the 4 depth-guard fixture lines from the top of the file).
+is "lead staffing: refused before any mutation (ledger untouched)" "4" "$(wc -l <"$RALPH_HERDR_LEDGER" | tr -d ' ')"
+
+# A dry-run PLAN is unaffected — it touches no filesystem and costs nothing
+# to show, so an operator previewing what a lead's pick would be (from an
+# uncontained terminal, this env var set by hand rather than by a real
+# contained pane) still sees one. Only the live spawn, which would actually
+# hit the sandbox, is refused.
+orch_dry_out=$(RALPH_HERDR_SPAWNER_ROLE=orchestrator RALPH_HERDR_DRY_RUN=true spawn_work_session 123 "$QUEUE" 2>&1)
+orch_dry_rc=$?
+is "lead staffing: a DRY RUN plan is unaffected (rc 0)" "0" "$orch_dry_rc"
+case "$orch_dry_out" in
+  *"DRY RUN — would spawn GH-123"*) ok "lead staffing: dry-run still shows the plan" ;;
+  *) not_ok "lead staffing: dry-run still shows the plan — got '$orch_dry_out'" ;;
+esac
+
+# The default role (human — every other test in this file) is unaffected:
+# the guard is scoped to orchestrator alone.
+is "lead staffing: the default (human) role is untouched by this guard" "0" \
+  "$(RALPH_HERDR_DRY_RUN=true spawn_work_session 123 "$QUEUE" >/dev/null 2>&1; echo $?)"
+
 # ── label fallback: a board copy with no address keeps the legacy spelling ──
 # (GH-2210): the canonical label is the herd address; against an older board
 # whose `name` envelope has no .address, the nesting spelling survives and no

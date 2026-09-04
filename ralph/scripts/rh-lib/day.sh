@@ -69,7 +69,14 @@ rh_team() {
       ;;
   esac
   rh_dispatch_up || return $?
-  rh_run_herdr_script work-team.sh "$epic"
+  # --lead-only (GH-2461): rh is the ensure/resume surface, and its evidence
+  # comes from the scoped ledger, never board ranking. A bare work-team.sh
+  # EPIC also staffs the initial fleet (a frontier read) and arms refill —
+  # that is the cockpit's team-launch action, a human's deliberate act, not
+  # this ensure. A dead lead's armed run outlives it on disk, so the
+  # respawned lead is still being refilled; an expired arming is re-armed by
+  # the launch action, on purpose (refill is opt-in, NO-GO unattended).
+  rh_run_herdr_script work-team.sh "$epic" --lead-only
 }
 
 rh_day() {
@@ -150,7 +157,9 @@ rh_day() {
 
   for epic in ${teams[@]+"${teams[@]}"}; do
     phase_rc=0
-    phase_output=$(rh_run_herdr_script work-team.sh "$epic" 2>&1) || phase_rc=$?
+    # --lead-only for the same reason rh_team passes it (GH-2461): ensure,
+    # never staff — no frontier read on the resume surface.
+    phase_output=$(rh_run_herdr_script work-team.sh "$epic" --lead-only 2>&1) || phase_rc=$?
     [ -z "$phase_output" ] || printf '%s\n' "$phase_output"
     case "$phase_rc" in
       0)
