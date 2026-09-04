@@ -1359,6 +1359,15 @@ const pollBackoff = 1.5
 // walks is the cadence rounded UP to the next tick — worst case pollEvery +
 // cfg.Interval, not pollEvery. The ceiling bounds the cadence exactly; it
 // bounds observed staleness to within one tick of it.
+//
+// Deliberately does NOT gate on a known GitHub rate-limit reset (GH-2426,
+// following GH-2386's own banner-plumbing back-out): the only reset source
+// in reach mirrors `core` and has been measured lying (GH-2278), so a gate
+// on it trades bounded, cheap waste (a few failed reads, capped by
+// cfg.MaxInterval) for an unbounded stall on a bad signal — worse even with
+// a trustworthy source, since every snapToFloor caller would need its own
+// bypass answer. Full argument:
+// thoughts/shared/research/2026-09-03-GH-2426-cockpit-poll-reset-gate-decision.md
 func (m Model) pollDue(now time.Time) bool {
 	if m.lastPoll.IsZero() {
 		return true
