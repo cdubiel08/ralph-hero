@@ -1699,6 +1699,26 @@ spawn_work_session() {
     return 0
   fi
 
+  # GH-2461: a team lead's pane states orchestrator (RALPH_HERDR_SPAWNER_ROLE,
+  # set by work-team.sh), and process containment (GH-2266) denies that pane
+  # write access to $REPO — roles.sh's ralph_role_process_containment treats
+  # every role but driver as contained, and the source checkout is exactly
+  # what a lead sits in. The `git fetch` right below can therefore never
+  # succeed there, and letting it try just surfaces git's bare "Operation not
+  # permitted" as though the repo were broken. Refuse here, before paying for
+  # it, and name the real cause. Checked AFTER the dry-run branch, not before
+  # it: a dry-run plan touches no filesystem and costs nothing to show, so an
+  # operator previewing what a lead's pick would be (from an uncontained
+  # terminal, RALPH_HERDR_SPAWNER_ROLE set by hand) still sees one — only the
+  # LIVE spawn, which would actually hit the sandbox, is refused. Staffing is
+  # no longer the lead's job: work-team.sh arms the team's initial fleet for
+  # watcher-driven refill at launch (that arming runs uncontained and fetches
+  # fine); the lead ranks, dep-wires and escalates — it spawns nothing.
+  if [ "${RALPH_HERDR_SPAWNER_ROLE:-}" = "orchestrator" ] && ralph_role_process_containment orchestrator; then
+    echo "spawn_work_session: refusing GH-$n — this pane is a team lead (orchestrator), and process containment denies write access to $REPO (GH-2266), so the git fetch a spawn needs can never succeed here. Staffing is the watcher's job now (GH-2461): work-team.sh already armed this team's initial fleet for refill; do not run work-fleet.sh --epic yourself — the frontier will restaff as blockers clear and workers finish." >&2
+    return 1
+  fi
+
   # Never branch from local HEAD: herdr's `worktree create` bases NEW branches
   # on the parent checkout's HEAD unless told otherwise, so fetch and pin
   # --base origin/main (tick.sh parity). The fresh base only holds for

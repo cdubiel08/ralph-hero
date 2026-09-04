@@ -37,6 +37,15 @@
 #   capacity  k, re-checked under the ledger mutex with in-flight picks counted
 #   set       the run's `spawned` list, so a refill never re-picks its own issue
 #
+#   scope     GH-2461: fleet.json's `epic` field (null for a plain fleet run,
+#             an issue number for a team lead's staffing run — work-fleet.sh
+#             --epic EPIC --refill, armed uncontained by work-team.sh) narrows
+#             every candidate read here to EPIC's frontier via
+#             ralph_fleet_frontier_json EPIC. This exists because the lead
+#             cannot spawn from its own contained pane (GH-2266 denies it
+#             write access to the checkout) — the watcher does the staffing
+#             now, scoped to the team it is refilling.
+#
 # Callers must have sourced fleet.sh and ledger.sh, and must define log().
 
 # NEVER on blocked — blocked is attention, not capacity. All herdr interaction
@@ -158,6 +167,12 @@ refill_one() (
     exit 0
   fi
   run_id=$(jq -r '.run_id' <<<"$state")
+  # GH-2461: a run armed via `work-fleet.sh --epic EPIC --refill` (the team
+  # lead's staffing path — moved uncontained, into work-team.sh, since the
+  # lead's own pane cannot fetch) records EPIC in fleet.json. Threaded into
+  # every frontier read below via ralph_fleet_frontier_json's own EPIC
+  # argument (empty here just means "unscoped", byte-identical to today).
+  epic=$(jq -r '.epic // empty' <<<"$state")
   repo=$(jq -r '.repo // empty' <<<"$state")
   if [ -z "$repo" ] || [ ! -d "$repo" ]; then
     log "refill $run_id: armed but repo '$repo' is gone — disarming"
@@ -211,7 +226,7 @@ refill_one() (
     | [.[] | .name
     | select(test("^w[0-9]+-|^gh-[0-9]+$")) | select(IN($dead[]) | not)
     | sub("^w"; "") | sub("^gh-"; "") | split("-")[0] | tonumber]' <<<"$agents")
-  frontier=$(ralph_fleet_frontier_json) || {
+  frontier=$(ralph_fleet_frontier_json "$epic") || {
     log "refill $run_id: frontier read failed — leaving armed"
     exit 0
   }
@@ -309,7 +324,7 @@ refill_one() (
     fi
     ralph_fleet_disarm "$ff" "frontier empty" || true
     ralph_ledger_unlock "$ledger"
-    notify fleet "fleet run $run_id complete" "frontier empty — refill disarmed"
+    notify fleet "fleet run $run_id complete" "${epic:+GH-$epic }frontier empty — refill disarmed"
     exit 0
   fi
   # A racer between our pre-lock vetting and this pick can advance the pick
@@ -331,7 +346,7 @@ refill_one() (
   # threaded honestly: this spawn is machine-initiated.
   depth=$(ralph_depth_guard "") || exit 0
   export RALPH_HERDR_INVOKED_BY=scheduler RALPH_HERDR_RUN_ID="$run_id"
-  log "refill $run_id: spawning GH-$cand (depth $depth, budget left $budget_left)"
+  log "refill $run_id: spawning GH-$cand${epic:+ (under GH-$epic frontier scope)} (depth $depth, budget left $budget_left)"
   rc=0
   spawn_work_session "$cand" "$frontier" || rc=$?
   case "$rc" in

@@ -214,6 +214,25 @@ rc=0; RALPH_HERDR_REFILL_BUDGET=2 ralph_fleet_arm 2 1 11 12 13 >/dev/null 2>&1 |
 is "arm: budget_left clamps at 0 when initial spawns exceed it" \
   "0 0" "$rc $(jqf "$TMP/u1/runs/$RID/fleet.json" '.budget_left')"
 
+# ═══ 2b. arming scope — GH-2461's epic field ═════════════════════════════════
+# A team lead's staffing run (work-fleet.sh --epic EPIC --refill) sets
+# RALPH_HERDR_FLEET_EPIC before arming; refill_one reads `.epic` back to
+# scope every later pick to that epic's frontier. An env var, not a new
+# positional — every `ralph_fleet_arm K REFILL ISSUE...` call above (and in
+# the wild) stays byte-compatible.
+RID3=$(ralph_run_id)
+RALPH_HERDR_RUN_ID="$RID3"
+FF3=$(ralph_fleet_arm 2 1 900)
+is "arm: no RALPH_HERDR_FLEET_EPIC — epic is null (unscoped, unchanged)" "null" "$(jqf "$FF3" '.epic')"
+
+RID4=$(ralph_run_id)
+RALPH_HERDR_RUN_ID="$RID4"
+FF4=$(RALPH_HERDR_FLEET_EPIC=700 ralph_fleet_arm 2 1 901)
+is "arm: RALPH_HERDR_FLEET_EPIC records the scope as a number" "700" "$(jqf "$FF4" '.epic')"
+
+rc=0; RALPH_HERDR_FLEET_EPIC=abc RALPH_HERDR_RUN_ID="$RID4" ralph_fleet_arm 2 1 >/dev/null 2>&1 || rc=$?
+is "arm: refuses a non-numeric RALPH_HERDR_FLEET_EPIC" "1" "$rc"
+
 # ═══ 3. budget consumption — atomic under the scope's ledger mutex ═══════════
 RID2=$(ralph_run_id)
 RALPH_HERDR_LEDGER="$TMP/u2/ledger.jsonl"
@@ -441,9 +460,12 @@ is "frontier: then read next --json once" "1" "$(log_count "$FAKE_BOARD_LOG" '^n
 rm -f "$FAKE_BOARD_FIXTURES/next.json"
 
 # ═══ 6. refill decision table (watch-event integration) ══════════════════════
-# mk_row NAME — a fresh scope root with TWO open w-lane agents (w100-first on
-# p1, w110-second on p2 — two panes so a row can fire two refill triggers) and
-# a fresh armed run; sets ROW, RLEDGER, RRID, RFF.
+# mk_row NAME [EPIC] — a fresh scope root with TWO open w-lane agents
+# (w100-first on p1, w110-second on p2 — two panes so a row can fire two
+# refill triggers) and a fresh armed run; sets ROW, RLEDGER, RRID, RFF. EPIC
+# (GH-2461), when given, arms the run scoped to that epic — the team lead's
+# staffing path (RALPH_HERDR_FLEET_EPIC, threaded by work-fleet.sh --epic
+# --refill); omitted, arming is unscoped exactly as before.
 mk_row() {
   ROW="$TMP/row-$1"
   RLEDGER="$ROW/acme/demo/ledger.jsonl"
@@ -453,7 +475,7 @@ mk_row() {
 {"ts":"t1","ev":"spawn","agent_ref":"w110-second#bbbb","pane_id":"p2","tokens":{"role":"w","issue":"110","slug":"second","root":"w110-second#bbbb","depth":"0","state":"spawned","branch":"feature/GH-110","harness":"claude","spawn_epoch":"bbbb"}}
 EOF
   RRID=$(ralph_run_id)
-  RFF=$(RALPH_HERDR_LEDGER="$RLEDGER" RALPH_HERDR_RUN_ID="$RRID" ralph_fleet_arm 2 1 100)
+  RFF=$(RALPH_HERDR_LEDGER="$RLEDGER" RALPH_HERDR_RUN_ID="$RRID" RALPH_HERDR_FLEET_EPIC="${2:-}" ralph_fleet_arm 2 1 100)
 }
 # Default fixtures for the refill rows: the dead fleet's pane freed capacity,
 # the frontier offers GH-301, worktrees open on p31 in the fixture checkout.
@@ -752,6 +774,33 @@ line_has "refill L: the cap is logged, so the unvetted spawn is honest" \
   "$OUT" "unwired-ref refusal cap (1) reached — the next candidate spawns unvetted"
 rm -f "$FAKE_GH_FIXTURES"/gh-*.json "$FAKE_GH_FIXTURES"/gh-*.rc
 
+# ── row M: an epic-scoped arming refills ONLY from that epic's frontier ──────
+# GH-2461: `work-fleet.sh --epic EPIC --refill` threads RALPH_HERDR_FLEET_EPIC
+# into ralph_fleet_arm at arm time; refill_one reads `.epic` back off
+# fleet.json and passes it to ralph_fleet_frontier_json — the SAME scoped
+# read `work-fleet --epic` uses (`board frontier --json --epic EPIC`). The
+# unscoped frontier's top pick (GH-999, a stranger to this team) must NEVER
+# spawn; only the epic-scoped one (GH-701) may.
+mk_row m 700
+herd_fixture '[]'
+printf '{"workspace":{"workspace_id":"wM"},"tab":{"tab_id":"wM:t1"},"root_pane":{"pane_id":"p41"},"worktree":{"path":"%s"}}\n' "$WT" \
+  >"$FAKE_HERDR_FIXTURES/worktree-create.json"
+printf '{"frontier":[{"number":999,"title":"Not this team, a stranger"}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.json"
+printf '{"epic":700,"epicOnTopology":true,"frontier":[{"number":701,"title":"In the team scope","parentNumber":700}],"blocked":[]}\n' \
+  >"$FAKE_BOARD_FIXTURES/frontier.epic.700.json"
+: >"$FAKE_HERDR_LOG"
+: >"$FAKE_BOARD_LOG"
+run_event pane.exited '{"pane_id":"p1"}' "$ROW"
+is "refill M: hook exits 0" "0" "$RC"
+is "refill M: the epic-scoped candidate spawns" "1" \
+  "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w701-"))')"
+is "refill M: the unscoped candidate never spawns" "0" \
+  "$(lcount "$RLEDGER" '.ev=="spawn" and (.agent_ref | startswith("w999-"))')"
+is "refill M: the frontier read carried the --epic scope" "1" \
+  "$(log_count "$FAKE_BOARD_LOG" '^frontier --json --epic 700$')"
+rm -f "$FAKE_BOARD_FIXTURES/frontier.epic.700.json"
+
 # ═══ 7. spawn_issue_fleet — REMOVED (GH-1774) ════════════════════════════════
 # Shared-CHECKOUT fleets put K agents in one git worktree, racing on the index,
 # the branch, and each other's uncommitted files. The function is kept as a
@@ -1029,11 +1078,12 @@ line_has "no-watch: the env form prints the same line" "$OUT" "watch: OFF (--no-
 run_wf --no-watch
 is "no-watch: composes with a dry run (rc 0)" "0" "$RC"
 
-# ═══ 9b. work-fleet.sh --epic — the team lead's staffing path (GH-2214) ══════
-# D3.2 moved staffing from work-team.sh into the LEAD's own hands: --epic is
-# the ranked frontier filtered to the epic's DIRECT children, capped at
-# FLEET. A ranked path — nobody named the issues — so the unwired-reference
-# guard applies; refused beside an explicit list and beside --refill.
+# ═══ 9b. work-fleet.sh --epic — the team's staffing path (GH-2214, GH-2461) ══
+# --epic is the ranked frontier filtered to the epic's DIRECT children,
+# capped at FLEET. A ranked path — nobody named the issues — so the
+# unwired-reference guard applies; refused beside an explicit list.
+# Beside --refill it is now ACCEPTED (GH-2461): work-team.sh runs it
+# uncontained at team launch, since the lead's own pane cannot fetch.
 cat >"$FAKE_BOARD_FIXTURES/frontier.json" <<'EOF'
 {"frontier":[{"number":501,"title":"Unit A","parentNumber":700},
              {"number":502,"title":"Stranger","parentNumber":null},
@@ -1063,10 +1113,18 @@ run_wf --epic 700 501
 is "work-fleet --epic + list: dies" "1" "$RC"
 line_has "work-fleet --epic + list: the override lane is named" "$OUT" "explicit override"
 
+# --epic + --refill is now the STAFFING path itself (GH-2461, revising
+# D3.2): the lead cannot arm or spawn from its own contained pane, so
+# work-team.sh runs exactly this combination uncontained at team launch. The
+# arming records the epic scope (RALPH_HERDR_FLEET_EPIC -> fleet.json's
+# `epic` field), which refill_one later reads back to keep every pick inside
+# EPIC's frontier.
 run_wf --epic 700 --refill
-is "work-fleet --epic + refill: dies" "1" "$RC"
-line_has "work-fleet --epic + refill: the lead is the standing refiller" \
-  "$OUT" "standing refiller"
+is "work-fleet --epic + refill: no longer refused (GH-2461)" "0" "$RC"
+line_has "work-fleet --epic + refill: still spawns the initial fleet" "$OUT" "would spawn GH-501"
+line_has "work-fleet --epic + refill: the arming plan names the epic scope" \
+  "$OUT" "would arm run"
+line_has "work-fleet --epic + refill: and says WHICH scope" "$OUT" "scoped to GH-700 frontier only"
 
 run_wf --epic
 is "work-fleet --epic with no value: dies" "1" "$RC"

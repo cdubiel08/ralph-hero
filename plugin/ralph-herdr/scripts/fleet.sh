@@ -29,7 +29,7 @@
 #   is checked at READ time (ralph_fleet_state) — no timers, no daemons; a
 #   fleet nobody pokes simply never refills again. fleet.json shape:
 #
-#     {run_id, armed, k, refill, budget_left, expires_at, repo,
+#     {run_id, armed, k, refill, budget_left, expires_at, repo, epic,
 #      spawned: [issue...], inflight: [{issue, ts}...], created_at}
 #
 #   `armed` is written as ($refill == 1): a refill=0 arm is the audit-trail
@@ -37,6 +37,16 @@
 #   alone. `inflight` tracks picks whose spawn has not finished yet (consume
 #   records them, ralph_fleet_spawn_done clears them) — the refill capacity
 #   check counts them, since a mid-spawn agent is invisible to `agent list`.
+#
+#   `epic` (GH-2461) is null for a plain fleet run and an issue number when
+#   the run was armed via `work-fleet.sh --epic EPIC --refill` — the team
+#   lead's staffing path, D3.2 revised: the lead cannot spawn from its
+#   contained pane, so the initial fleet is armed uncontained (work-team.sh)
+#   and refill_one (refill.sh) reads it back to scope every subsequent pick
+#   to EPIC's frontier via ralph_fleet_frontier_json EPIC, never the whole
+#   board's. Read from RALPH_HERDR_FLEET_EPIC at arm time (an env var, not a
+#   positional — every existing `ralph_fleet_arm K REFILL ISSUE...` call site
+#   stays byte-compatible with no third positional to thread through).
 #
 #   `repo` is recorded at arm time because the refill consumer is an event
 #   hook with NO workspace cwd — it must re-discover the checkout the human
@@ -127,8 +137,10 @@ _ralph_fleet_scope_ledger() {
 ralph_fleet_arm() {
   local k="${1-}" refill="${2-}" id="${RALPH_HERDR_RUN_ID:-}"
   local dir file tmp ttl budget left expires repo session n
+  local epic="${RALPH_HERDR_FLEET_EPIC:-}"
   case "$k" in '' | *[!0-9]* | 0 | 0*) echo "ralph_fleet_arm: k must be a positive integer (got '$k')" >&2; return 1 ;; esac
   case "$refill" in 0 | 1) : ;; *) echo "ralph_fleet_arm: refill must be 0 or 1 (got '$refill')" >&2; return 1 ;; esac
+  case "$epic" in '' | *[!0-9]*) [ -z "$epic" ] || { echo "ralph_fleet_arm: RALPH_HERDR_FLEET_EPIC must be an issue number (got '$epic')" >&2; return 1; } ;; esac
   if [ -z "$id" ]; then
     echo "ralph_fleet_arm: RALPH_HERDR_RUN_ID is not set — mint one with ralph_run_id" >&2
     return 1
@@ -161,12 +173,13 @@ ralph_fleet_arm() {
   fi
   jq -nc \
     --arg id "$id" --arg expires "$expires" --arg repo "$repo" \
-    --arg session "$session" \
+    --arg session "$session" --arg epic "$epic" \
     --arg now "$(date -u +%FT%TZ)" \
     --argjson k "$k" --argjson refill "$refill" --argjson left "$left" \
     --args '
     {run_id: $id, armed: ($refill == 1), k: $k, refill: ($refill == 1),
      budget_left: $left, expires_at: $expires, repo: $repo, session: $session,
+     epic: (if $epic == "" then null else ($epic | tonumber) end),
      spawned: ($ARGS.positional | map(tonumber)), created_at: $now}' \
     -- "$@" >"$tmp" || { rm -f "$tmp"; return 1; }
   mv "$tmp" "$file" || { rm -f "$tmp"; return 1; }

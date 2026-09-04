@@ -27,8 +27,20 @@
 # (GH-2398) rather than re-deriving the walk here — one definition, so the
 # fleet and doctor cannot disagree about what is "under" an epic. It is a
 # RANKED path (nobody named the issues), so the unwired-reference guard
-# applies. Refused beside an explicit list (the list is already the override
-# lane) and beside --refill (the lead IS its team's standing refiller).
+# applies. Refused beside an explicit list — the list is already the
+# override lane.
+#
+# --epic beside --refill IS NOW ACCEPTED (GH-2461, revising D3.2): the lead's
+# OWN pane cannot run this staffing act at all — GH-2266's process
+# containment denies it write access to the source checkout it sits in, so
+# `spawn_work_session`'s git fetch can never succeed there. Staffing moved
+# uncontained instead: work-team.sh runs `work-fleet.sh --epic EPIC --refill`
+# itself at team launch (spawning the initial fleet AND arming the run), and
+# the watcher (refill.sh, triggered by watch-event.sh) tops the team back up
+# from EPIC's frontier ONLY as workers exit — never the whole board's. The
+# scope rides in fleet.json's `epic` field (ralph_fleet_arm, RALPH_HERDR_
+# FLEET_EPIC); refill_one reads it back and threads it through
+# ralph_fleet_frontier_json. The lead itself spawns nothing any more.
 #
 # Every spawn passes the roles registry's spawn-edge guard: the spawner's
 # stated role (RALPH_HERDR_SPAWNER_ROLE; default human — a cockpit click)
@@ -79,6 +91,8 @@
 #   RALPH_HERDR_FLEET       sessions to spawn (default 2; positive integer;
 #                           hard cap 4 — above that you are not attending)
 #   RALPH_HERDR_REFILL      "1" → arm refill (same as --refill)
+#   RALPH_HERDR_FLEET_EPIC  the epic to scope a --refill arming to (set by
+#                           --epic; not meant to be set directly)
 #   RALPH_HERDR_REFILL_TTL_MIN   arming TTL, minutes (default 120)
 #   RALPH_HERDR_REFILL_BUDGET    max total spawns this run (default 8)
 #   RALPH_HERDR_DEP_REF_CAP body references dep-refs.sh resolves per candidate
@@ -112,9 +126,13 @@ usage() {
   --epic EPIC the team lead'\''s staffing path (GH-2214): the ranked frontier
               restricted to EPIC'\''s whole subtree (GH-2417), capped at
               RALPH_HERDR_FLEET. A ranked path — the unwired-reference guard
-              applies. Refused beside an explicit list or --refill.
+              applies. Refused beside an explicit list. Combined with
+              --refill (GH-2461), arms the run scoped to EPIC — the watcher
+              then refills from EPIC'\''s frontier only, never the board'\''s.
   --refill    arm watcher refill for the run from the frontier. Frontier policy
               only — refused with an explicit list, which is a closed set.
+              With --epic, the arming records that scope (fleet.json'\''s
+              `epic` field) and every refill pick stays inside it.
   --no-watch  print the spawn summary and EXIT instead of watching — for an
               orchestrating session that backgrounds this command and reads
               the board anyway. Honest limit: nobody narrates completions or
@@ -186,11 +204,13 @@ ralph_spawn_edge_guard "${RALPH_HERDR_SPAWNER_ROLE:-human}" driver || die "spawn
 
 if [ -n "$EPIC" ]; then
   # Staffing is scoped to ONE epic's ranked slice. An explicit list beside it
-  # would be two policies in one run (the list is already the override lane),
-  # and refill tops up from the WHOLE frontier — a scope the lead just
-  # narrowed; the lead is its team's standing refiller (work-team.sh, D3.2).
+  # would be two policies in one run — the list is already the override lane.
   [ -z "$ISSUES" ] || die "--epic picks from the ranked frontier; naming issues is the explicit override — use one or the other"
-  [ -z "$REFILL" ] || die "--refill refills from the whole ranked frontier; the lead is its team's standing refiller — re-run work-fleet --epic $EPIC as blockers clear"
+  # --refill beside --epic IS the staffing path now (GH-2461): the lead
+  # cannot arm or spawn from its own contained pane, so work-team.sh runs
+  # this combination uncontained at team launch, and the arming scopes every
+  # later refill pick to EPIC's frontier (RALPH_HERDR_FLEET_EPIC, below).
+  [ -z "$REFILL" ] || export RALPH_HERDR_FLEET_EPIC="$EPIC"
 fi
 
 if [ -n "$ISSUES" ]; then
@@ -538,13 +558,17 @@ fi
 
 if [ -n "$REFILL" ]; then
   if [ "${RALPH_HERDR_DRY_RUN:-}" = "true" ]; then
-    echo "  refill: DRY RUN — would arm run $RALPH_HERDR_RUN_ID (k=$FLEET, ttl ${RALPH_HERDR_REFILL_TTL_MIN:-120}m, budget ${RALPH_HERDR_REFILL_BUDGET:-8} total spawns)"
+    echo "  refill: DRY RUN — would arm run $RALPH_HERDR_RUN_ID (k=$FLEET, ttl ${RALPH_HERDR_REFILL_TTL_MIN:-120}m, budget ${RALPH_HERDR_REFILL_BUDGET:-8} total spawns)${EPIC:+, scoped to GH-$EPIC frontier only}"
   else
     # shellcheck disable=SC2086  # intentional word-splitting: one argv per issue
     if fleet_file=$(ralph_fleet_arm "$FLEET" 1 $spawned_issues); then
       echo "  refill: ARMED (opt-in only — the claim-TTL probe says NO-GO for unattended arming; stay at the keyboard) — $fleet_file"
       echo "          k=$FLEET, ttl ${RALPH_HERDR_REFILL_TTL_MIN:-120}m, budget left $(jq -r '.budget_left' "$fleet_file") of ${RALPH_HERDR_REFILL_BUDGET:-8} total spawns"
-      echo "          the watcher refills from the frontier when a w-lane session exits or finishes"
+      if [ -n "$EPIC" ]; then
+        echo "          the watcher refills from GH-$EPIC's frontier only when a w-lane session exits or finishes"
+      else
+        echo "          the watcher refills from the frontier when a w-lane session exits or finishes"
+      fi
     else
       echo "  refill: arming FAILED — this run stays one-shot" >&2
     fi
