@@ -40,6 +40,12 @@ if mkdir -p "$SHIM_DIR" 2>/dev/null; then
   fi
 fi
 
-echo "RALPH_BOARD=$BOARD_PATH"
-echo "board CLI: run it as \"\$RALPH_BOARD\" <cmd>, or via the stable path $SHIM (a shim that re-resolves the newest installed ralph at call time — one allowlistable spelling across releases)."
+# Line order is the contract (GH-2490): the shim is the ONE spelling to type.
+# Hook stdout becomes session CONTEXT, never environment — measured across 47
+# worker sessions, 46 read a leading `RALPH_BOARD=` line as an exported
+# variable, ran `"$RALPH_BOARD" get NNN`, and spent 2–5 calls on
+# `permission denied` before finding the shim. The resolved path stays on
+# line 2 for humans and tests, labelled as what it is.
+echo "board CLI: $SHIM <cmd> — the stable path (a shim that re-resolves the newest installed ralph at call time; one allowlistable spelling across releases). Use exactly this spelling."
+echo "RALPH_BOARD=$BOARD_PATH (informational: the copy the shim resolves to right now; NOT exported into your shell — never type \"\$RALPH_BOARD\")"
 exit 0

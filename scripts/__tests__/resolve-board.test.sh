@@ -121,12 +121,25 @@ run_hook_ctx() {
   set -e
 }
 
-# 6. Emits the resolved path as RALPH_BOARD=, <=3 lines, exit 0.
+# 6. Leads with the shim as the ONE spelling (GH-2490), carries the resolved
+# path on line 2 labelled informational, <=3 lines, exit 0. The `$RALPH_BOARD`
+# spelling must never be offered as something to run: hook stdout is context,
+# not environment, and 46 of 47 workers read the old line 1 as an export.
 run_hook_ctx
 eq "hook exits 0" 0 "$RC"
-eq "first context line is RALPH_BOARD=<resolved path>" \
-  "RALPH_BOARD=$TMP/inst/new/scripts/board" \
-  "$(printf '%s\n' "$OUT" | head -1)"
+case "$(printf '%s\n' "$OUT" | head -1)" in
+  "board CLI: $TMP/bin/board <cmd>"*) pass "first context line leads with the shim path" ;;
+  *) fail "first context line does not lead with the shim: $(printf '%s\n' "$OUT" | head -1)" ;;
+esac
+case "$(printf '%s\n' "$OUT" | sed -n 2p)" in
+  "RALPH_BOARD=$TMP/inst/new/scripts/board "*"NOT exported"*) pass "second line carries the resolved path, labelled not-exported" ;;
+  *) fail "second line lost the resolved path or its label: $(printf '%s\n' "$OUT" | sed -n 2p)" ;;
+esac
+if printf '%s\n' "$OUT" | grep -q 'run it as'; then
+  fail "hook still tells the session to run \$RALPH_BOARD"
+else
+  pass "hook never offers \$RALPH_BOARD as a spelling to run"
+fi
 LINES=$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')
 if [ "$LINES" -le 3 ]; then
   pass "hook output is <=3 lines ($LINES)"
@@ -184,7 +197,7 @@ touch "$TMP/file-not-dir"
 run_hook_ctx_robin
 eq "unwritable shim dir: hook still exits 0" 0 "$RC"
 case "$OUT" in
-  RALPH_BOARD=*) pass "unwritable shim dir: context line still emitted" ;;
+  *"RALPH_BOARD=$TMP/inst/"*"/scripts/board ("*) pass "unwritable shim dir: resolved-path line still emitted" ;;
   *) fail "unwritable shim dir lost the context line: $OUT" ;;
 esac
 
