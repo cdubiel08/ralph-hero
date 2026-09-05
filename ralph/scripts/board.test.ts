@@ -10702,6 +10702,17 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
     );
     expect(res.awaitingApproval.map((a) => a.number)).toEqual([21, 22, 20]);
     expect(res.awaitingApproval[0]).toMatchObject({ number: 21, repo: "o/r", title: "t21", pr: 121, at: days(5) });
+    // Two PRs on ONE issue both waiting: both listed, oldest first, never
+    // deduped down to whichever deliver happened to list first.
+    const twoPrs = classifyInbox([core(24, { state: "In Review" })], emptyTend, {
+      blocked: [
+        row(24, { pr: 241, since: days(1) }),
+        row(24, { pr: 242, since: days(6) }),
+        row(24, { pr: 242, since: days(6) }), // a duplicate (issue, pr) is one entry
+      ],
+    });
+    expect(twoPrs.awaitingApproval.map((a) => a.pr)).toEqual([242, 241]);
+    expect(twoPrs.count).toBe(2);
     // UNMEASURED (no timeline anchor) is null, never the gate-run time.
     const unmeasured = classifyInbox([core(23, { state: "In Review" })], emptyTend, {
       blocked: [row(23, { since: null, deltaAt: days(1) })],

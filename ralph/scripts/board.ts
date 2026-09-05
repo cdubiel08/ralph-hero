@@ -8896,9 +8896,10 @@ export interface InboxTier1 {
    *  write — see the comment on INBOX_DELIVER_VERBS), so unlike
    *  `deliverBlocked` these never render as full rows; the renderer prints
    *  them as ONE summary line — PR URL (built from `repo` + `pr`) and
-   *  elapsed wait (`at`) per entry. Still one-row-per-issue (the shared
-   *  `seen` set) and still counted IN `count` — this is real waiting on
-   *  the human, not a self-clearing withhold. */
+   *  elapsed wait (`at`) per entry. One entry per PR (an issue with two
+   *  waiting PRs lists both; a verbed row on the issue outranks the line) and
+   *  counted IN `count` — this is real waiting on the human, not a
+   *  self-clearing withhold. */
   awaitingApproval: Array<{ number: number; repo: string | null; title: string; pr: number | null; at: string | null }>;
   count: number;
 }
@@ -9072,8 +9073,17 @@ export function classifyInbox(
     });
   }
 
+  // One-row-per-issue applies against the OTHER tiers only: an issue with
+  // two PRs both waiting on approval lists both — the line is "every
+  // awaiting-approval PR", and hiding the older one would hide the older
+  // wait. Dedup is by (issue, pr).
+  const admittedElsewhere = new Set(seen);
+  const seenPr = new Set<string>();
   for (const r of awaitingCands) {
-    if (seen.has(r.number)) continue;
+    if (admittedElsewhere.has(r.number)) continue;
+    const key = `${r.number}:${r.pr ?? "none"}`;
+    if (seenPr.has(key)) continue;
+    seenPr.add(key);
     seen.add(r.number);
     awaitingApproval.push({
       number: r.number,
