@@ -10879,10 +10879,11 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
     expect(res.deliverBlocked.find((r) => r.number === 10)!.detail).toBe("5 rounds");
     expect(res.deliverBlocked.find((r) => r.number === 11)!.pr).toBeNull();
     expect(res.deliverBlocked.find((r) => r.number === 11)!.detail).toContain("board move 11 in-progress");
+    // GH-2445: awaiting-approval is no longer withheld — it has its own line.
+    expect(res.awaitingApproval.map((a) => a.number)).toEqual([18]);
     const withheldReasons = res.withheld.map((w) => w.reason).sort();
     expect(withheldReasons).toEqual(
       [
-        "awaiting-approval",
         "deferred",
         "local-session-active",
         "marker-current",
@@ -10891,7 +10892,73 @@ describe("inbox (GH-2180) — Tier 1 classification", () => {
         "settling",
       ].sort(),
     );
-    expect(res.withheld.reduce((s, w) => s + w.count, 0)).toBe(7);
+    expect(res.withheld.reduce((s, w) => s + w.count, 0)).toBe(6);
+  });
+
+  it("GH-2445: awaiting-approval PRs surface as their own Tier 1 list, one row per issue, oldest first, and count toward `count`", () => {
+    const row = (n: number, over: Partial<DeliverRow> = {}): DeliverRow => ({
+      number: n,
+      title: `t${n}`,
+      pr: 100 + n,
+      reason: "awaiting-approval",
+      ...over,
+    });
+    const res = classifyInbox(
+      [
+        core(20, { state: "In Review", repo: "o/r" }),
+        core(21, { state: "In Review", repo: "o/r" }),
+        core(22, { state: "In Review", repo: "o/r" }),
+      ],
+      emptyTend,
+      {
+        blocked: [
+          // `since` (GH-2447, the PR's own review-requested anchor) is the
+          // wait; deltaAt is when the gate last ran and must not leak into it.
+          row(20, { since: days(1), deltaAt: days(9) }),
+          row(21, { since: days(5), deltaAt: days(0) }),
+          row(22, { since: days(2), deltaAt: days(9) }),
+        ],
+      },
+    );
+    expect(res.awaitingApproval.map((a) => a.number)).toEqual([21, 22, 20]);
+    expect(res.awaitingApproval[0]).toMatchObject({ number: 21, repo: "o/r", title: "t21", pr: 121, at: days(5) });
+    // Two PRs on ONE issue both waiting: both listed, oldest first, never
+    // deduped down to whichever deliver happened to list first.
+    const twoPrs = classifyInbox([core(24, { state: "In Review" })], emptyTend, {
+      blocked: [
+        row(24, { pr: 241, since: days(1) }),
+        row(24, { pr: 242, since: days(6) }),
+        row(24, { pr: 242, since: days(6) }), // a duplicate (issue, pr) is one entry
+      ],
+    });
+    expect(twoPrs.awaitingApproval.map((a) => a.pr)).toEqual([242, 241]);
+    expect(twoPrs.count).toBe(2);
+    // UNMEASURED (no timeline anchor) is null, never the gate-run time.
+    const unmeasured = classifyInbox([core(23, { state: "In Review" })], emptyTend, {
+      blocked: [row(23, { since: null, deltaAt: days(1) })],
+    });
+    expect(unmeasured.awaitingApproval[0]?.at).toBeNull();
+    expect(res.withheld).toEqual([]);
+    expect(res.count).toBe(3);
+  });
+
+  it("GH-2445: a verbed deliver-blocked row on the same issue outranks its approval wait, whatever order deliver listed them", () => {
+    const blocked: DeliverRow[] = [
+      { number: 40, title: "t40", pr: 140, reason: "awaiting-approval", deltaAt: days(2) },
+      { number: 40, title: "t40", pr: 141, reason: "convergence-stalled", deltaAt: days(1), convergence: "stalled" },
+    ];
+    for (const order of [blocked, [...blocked].reverse()]) {
+      const res = classifyInbox([core(40, { state: "In Review" })], emptyTend, { blocked: order });
+      expect(res.deliverBlocked.map((r) => r.number)).toEqual([40]);
+      expect(res.deliverBlocked[0].verb).toContain("board move 40 in-progress");
+      expect(res.awaitingApproval).toEqual([]);
+      expect(res.count).toBe(1);
+    }
+  });
+
+  it("GH-2445: no awaiting-approval rows renders nothing — an empty list, not a zero-count line", () => {
+    const res = classifyInbox([core(30, { state: "In Review" })], emptyTend, emptyDeliver);
+    expect(res.awaitingApproval).toEqual([]);
   });
 
   it("one row per issue: a proposal outranks approving the same Intake item; a decision outranks everything", () => {

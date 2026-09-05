@@ -606,6 +606,47 @@ func TestParseInboxKeepsTheCLISectionOrderAndTheRowFacts(t *testing.T) {
 	}
 }
 
+func TestParseInboxRendersAwaitingApprovalAsCardsWithTheURL(t *testing.T) {
+	at := time.Now().Add(-49 * time.Hour).UTC().Format(time.RFC3339)
+	cards, _, _, err := parseInbox(`{"tier1":{"decisions":[],"proposals":[],"approvals":[],"deliverBlocked":[],"withheld":[],"leadPending":[],
+	  "awaitingApproval":[{"number":7,"repo":"o/r","title":"w","pr":70,"at":"` + at + `"},{"number":8,"repo":null,"title":"x","pr":80,"at":null}],
+	  "count":2}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("cards = %d, want 2 — approval waits are rows, not a footer", len(cards))
+	}
+	if cards[0].Queue != "awaiting-approval" || cards[0].Verb != "approve https://github.com/o/r/pull/70" {
+		t.Errorf("card = %+v", cards[0])
+	}
+	if cards[0].Question != "awaiting approval [2d]" {
+		t.Errorf("question = %q, want the elapsed wait", cards[0].Question)
+	}
+	// `g` opens the PR, not the issue — the approve button is on the PR.
+	if got := browserURL(cards[0]); got != "https://github.com/o/r/pull/70" {
+		t.Errorf("browserURL = %q", got)
+	}
+	if got := browserURL(Card{Repo: "o/r", Number: 7, Queue: "decision"}); got != "https://github.com/o/r/issues/7" {
+		t.Errorf("non-approval browserURL = %q", got)
+	}
+	// A null repo never opens https://github.com//pull/80 — it refuses by name.
+	if msg, ok := openBrowserCmd(cards[1])().(statusMsg); !ok || msg.kind != statusRefuse || !strings.Contains(msg.text, "PR #80") {
+		t.Errorf("null-repo g = %+v, want a refusal naming the PR", msg)
+	}
+	if cards[1].Verb != "approve PR #80" || cards[1].Question != "awaiting approval" {
+		t.Errorf("null repo/at row = %+v", cards[1])
+	}
+	if got := inboxCountLine(cards); !strings.Contains(got, "2 waiting") || !strings.Contains(got, "2 awaiting approval") {
+		t.Errorf("count line = %q", got)
+	}
+	// An older board CLI without the field: nothing drawn, nothing counted.
+	cards, _, _, err = parseInbox(`{"tier1":{"decisions":[],"proposals":[],"approvals":[],"deliverBlocked":[],"withheld":[],"count":0}}`)
+	if err != nil || len(cards) != 0 {
+		t.Errorf("absent field: cards = %d err = %v", len(cards), err)
+	}
+}
+
 func TestInboxIsOnlyReadWhileItIsOnScreen(t *testing.T) {
 	m := testModel(&fakeRunner{})
 	if m.inboxDue(time.Now()) {

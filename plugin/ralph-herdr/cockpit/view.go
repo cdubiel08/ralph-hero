@@ -1784,8 +1784,8 @@ func inboxCountLine(cards []Card) string {
 	for _, c := range cards {
 		n[c.Queue]++
 	}
-	return fmt.Sprintf("%d waiting — %d decisions, %d proposals, %d approvals, %d deliver-blocked",
-		len(cards), n["decision"], n["proposal"], n["approval"], n["deliver-blocked"])
+	return fmt.Sprintf("%d waiting — %d decisions, %d proposals, %d approvals, %d deliver-blocked, %d awaiting approval",
+		len(cards), n["decision"], n["proposal"], n["approval"], n["deliver-blocked"], n["awaiting-approval"])
 }
 
 // inboxRowLines renders one row as a block: the head line (cursor gutter,
