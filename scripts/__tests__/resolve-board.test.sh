@@ -196,10 +196,21 @@ run_hook_ctx_robin() {
 touch "$TMP/file-not-dir"
 run_hook_ctx_robin
 eq "unwritable shim dir: hook still exits 0" 0 "$RC"
+# With no shim on disk, line 1 must name the RESOLVED path, never the shim
+# that failed to land (P1 on #2492: a worker would run a nonexistent file).
+case "$(printf '%s\n' "$OUT" | head -1)" in
+  "board CLI: $TMP/inst/newer/scripts/board <cmd>"*) pass "unwritable shim dir: line 1 leads with the resolved path" ;;
+  *) fail "unwritable shim dir: line 1 names an absent shim: $(printf '%s\n' "$OUT" | head -1)" ;;
+esac
 case "$OUT" in
-  *"RALPH_BOARD=$TMP/inst/"*"/scripts/board ("*) pass "unwritable shim dir: resolved-path line still emitted" ;;
+  *"RALPH_BOARD=$TMP/inst/newer/scripts/board ("*) pass "unwritable shim dir: resolved-path line still emitted" ;;
   *) fail "unwritable shim dir lost the context line: $OUT" ;;
 esac
+if printf '%s\n' "$OUT" | grep -q 'file-not-dir/bin/board'; then
+  fail "unwritable shim dir: output still points at the unwritten shim"
+else
+  pass "unwritable shim dir: the unwritten shim is never offered"
+fi
 
 echo
 echo "resolve-board: $PASS passed, $FAIL failed"
