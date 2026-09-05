@@ -1849,6 +1849,15 @@ func browserURL(card Card) string {
 
 func openBrowserCmd(card Card) tea.Cmd {
 	return func() tea.Msg {
+		if card.Repo == "" {
+			// A null `repo` (the row could not be joined back to the open
+			// walk) would build https://github.com//… — refuse, and name
+			// the target, rather than open a URL that lands nowhere.
+			if card.Queue == "awaiting-approval" && card.PR > 0 {
+				return refused("repo unknown for PR #%d (issue #%d) — open it by hand", card.PR, card.Number)
+			}
+			return refused("repo unknown for #%d — open it by hand", card.Number)
+		}
 		url := browserURL(card)
 		opener := "open" // darwin
 		if runtime.GOOS != "darwin" {

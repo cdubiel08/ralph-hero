@@ -630,6 +630,10 @@ func TestParseInboxRendersAwaitingApprovalAsCardsWithTheURL(t *testing.T) {
 	if got := browserURL(Card{Repo: "o/r", Number: 7, Queue: "decision"}); got != "https://github.com/o/r/issues/7" {
 		t.Errorf("non-approval browserURL = %q", got)
 	}
+	// A null repo never opens https://github.com//pull/80 — it refuses by name.
+	if msg, ok := openBrowserCmd(cards[1])().(statusMsg); !ok || msg.kind != statusRefuse || !strings.Contains(msg.text, "PR #80") {
+		t.Errorf("null-repo g = %+v, want a refusal naming the PR", msg)
+	}
 	if cards[1].Verb != "approve PR #80" || cards[1].Question != "awaiting approval" {
 		t.Errorf("null repo/at row = %+v", cards[1])
 	}
