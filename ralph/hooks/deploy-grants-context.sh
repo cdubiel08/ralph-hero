@@ -36,13 +36,35 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 # scripts/__tests__/deploy-grants-context.test.sh pins them together by
 # reading me_reserved_environments out of the library AS TEXT, so drift fails
 # a test rather than silently changing what a session is told.
+#
+# The line this hook prints names `scripts/approve-deploy.sh` as the gate, so
+# it is gated on that script being PRESENT in the host checkout -- the same
+# rule the funnel hooks follow ("only when the host repo ships the target").
+# A marketplace-installed host receives the merge-evidence.sh reader through
+# the kit but not (yet) approve-deploy.sh (codex P1, PR #2479); advertising a
+# command that would fail with "No such file" is worse than silence. Presence
+# is a read (`-r`), never an execution.
 LIB="$ROOT/scripts/lib/merge-evidence.sh"
+GATE="$ROOT/scripts/approve-deploy.sh"
 [ -r "$LIB" ] || exit 0
+[ -r "$GATE" ] || exit 0
 
 # Same path rule as me_policy_file, same override variable.
 POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$ROOT/.github/ralph-merge-policy.json}"
 [ -r "$POLICY_FILE" ] || exit 0
 policy=$(jq -e . "$POLICY_FILE" 2>/dev/null) || exit 0
+
+# Same semantic bar as me_policy_load (codex P2, PR #2479): a policy the
+# deploy gate refuses to LOAD -- an unknown request_mode, or a grant value
+# outside autonomous|lead|human ("autonomus") -- must not have this hook
+# announcing authority approve-deploy.sh will then refuse to exercise. Both
+# checks are restated here as jq, never sourced (see above); a non-object
+# `environments` fails the same way. Silent, matching every other refusal.
+jq -e '((.external_review.request_mode // "comment") | IN("comment", "review-request"))
+       and ((.environments // {}) | type == "object")
+       and ((.environments // {}) | to_entries
+            | all(.value | IN("autonomous", "lead", "human")))' \
+  <<<"$policy" >/dev/null 2>&1 || exit 0
 
 # Same rule as me_environment_grant: the reserved set is always "human"
 # regardless of what the policy says, and an unlisted environment defaults to

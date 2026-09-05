@@ -32,6 +32,9 @@ fail() { echo "  FAIL: $1"; ((FAIL++)) || true; }
 FIXTURE="$TMP_ROOT/fixture"
 mkdir -p "$FIXTURE/scripts/lib" "$FIXTURE/.github"
 cp "$REPO_ROOT/scripts/lib/merge-evidence.sh" "$FIXTURE/scripts/lib/merge-evidence.sh"
+# The gate the rendered line advertises. Its PRESENCE is what the hook reads
+# (never its contents), so a placeholder is the honest fixture.
+printf '#!/usr/bin/env bash\nexit 0\n' >"$FIXTURE/scripts/approve-deploy.sh"
 
 STUB_BIN="$TMP_ROOT/bin"
 mkdir -p "$STUB_BIN"
@@ -129,6 +132,43 @@ else
 fi
 mkdir -p "$FIXTURE/scripts/lib"
 cp "$REPO_ROOT/scripts/lib/merge-evidence.sh" "$FIXTURE/scripts/lib/merge-evidence.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$FIXTURE/scripts/approve-deploy.sh"
+
+# --- the reader is present but the advertised gate is not: silent, exit 0 -
+# A marketplace-installed host receives merge-evidence.sh through the kit
+# but not approve-deploy.sh (codex P1, PR #2479); the line must not name a
+# command the host cannot run.
+rm -f "$FIXTURE/scripts/approve-deploy.sh"
+run_hook '{"environments":{"dev":"autonomous"}}'
+if [[ "$LAST_RC" -eq 0 && -z "$LAST_OUT" ]]; then
+  pass "approve-deploy.sh absent from the host: silent, exit 0"
+else
+  fail "gate absent: expected silent exit 0, got rc=$LAST_RC out='$LAST_OUT'"
+fi
+printf '#!/usr/bin/env bash\nexit 0\n' >"$FIXTURE/scripts/approve-deploy.sh"
+
+# --- semantically malformed policies the deploy gate refuses to load -------
+# me_policy_load rejects these outright (codex P2, PR #2479), so
+# approve-deploy.sh would refuse before reading any grant; the hook must not
+# announce authority the gate cannot exercise.
+run_hook '{"environments":{"dev":"autonomous","qa":"autonomus"}}'
+if [[ "$LAST_RC" -eq 0 && -z "$LAST_OUT" ]]; then
+  pass "typo'd grant value: silent, exit 0 (mirrors me_policy_load)"
+else
+  fail "typo'd grant: expected silent exit 0, got rc=$LAST_RC out='$LAST_OUT'"
+fi
+run_hook '{"external_review":{"request_mode":"review_request"},"environments":{"dev":"autonomous"}}'
+if [[ "$LAST_RC" -eq 0 && -z "$LAST_OUT" ]]; then
+  pass "unknown request_mode: silent, exit 0 (mirrors me_policy_load)"
+else
+  fail "bad request_mode: expected silent exit 0, got rc=$LAST_RC out='$LAST_OUT'"
+fi
+run_hook '{"environments":["dev"]}'
+if [[ "$LAST_RC" -eq 0 && -z "$LAST_OUT" ]]; then
+  pass "environments not an object: silent, exit 0"
+else
+  fail "environments array: expected silent exit 0, got rc=$LAST_RC out='$LAST_OUT'"
+fi
 
 # --- a hostile checkout's merge-evidence.sh is NEVER executed --------------
 # The regression test for greptile's P1 on PR #2479. This hook is registered
