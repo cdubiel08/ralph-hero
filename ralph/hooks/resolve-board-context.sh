@@ -44,7 +44,7 @@ fi
 # A shim that failed to land must not be the spelling on line 1 (review on
 # #2492): an unwritable HOME would otherwise send every worker at a path that
 # does not exist. Fall back to the resolved copy as the one spelling.
-[ "$SHIM_OK" -eq 1 ] || [ -x "$SHIM" ] || SHIM=""
+[ "$SHIM_OK" -eq 1 ] || { [ -f "$SHIM" ] && [ -x "$SHIM" ]; } || SHIM=""
 
 # Line order is the contract (GH-2490): the shim is the ONE spelling to type.
 # Hook stdout becomes session CONTEXT, never environment — measured across 47
