@@ -48,6 +48,14 @@ Never substitute a `gh pr checks` poll loop: where a status is pending by
 design until a later step (ralph's attestation is), the loop cannot terminate,
 and its silence is indistinguishable from CI still running.
 
+For any wait that is not the gate (a CI run, a deploy, a remote job), the
+sanctioned primitive is `Monitor` — a deferred tool, so load its schema first
+with `ToolSearch select:Monitor`; calling it unloaded is a guaranteed
+validation error. `sleep` is harness-blocked and `ScheduleWakeup` only fires
+inside a `/loop`; neither is a wait. Measured across 47 worker sessions
+(2026-09-02..04): 12 blocked sleeps, 11 refused wakeups, 5 malformed Monitor
+calls, and one worker that answered 54 notifications with a no-op.
+
 ## 3. Async reviewer and CI state needs settle time
 
 External reviewers and CI land 1–3+ minutes after their trigger. A read seconds
