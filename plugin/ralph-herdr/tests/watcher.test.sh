@@ -1609,6 +1609,11 @@ run_event pane.agent_status_changed \
 is "done: nothing to tell them apart pushes indeterminate" "1" \
   "$(log_count '^pane report-metadata p0 --source ralph-herdr --token state=indeterminate$')"
 
+is "withhold: one typed diagnostic, with no lifecycle identity" "1" \
+  "$(lcount "$OLEDG" '.ev=="hook_withhold" and .via=="event" and .reason=="indeterminate" and .agent_name=="w1863-sweep" and .pane_id=="p0" and .agent_ref==null')"
+is "withhold: diagnostic leaves the existing agent open" "w1863-sweep#bbbb" \
+  "$(RALPH_HERDR_LEDGER="$OLEDG" ralph_ledger_open_agents)"
+
 # THE defect, stated as one assertion: the two readings must differ.
 herd_fixture '[{"name":"w1863-sweep","agent_status":"done","pane_id":"p0","tokens":{"state":"reporting"}}]' "$WT_CLEAN"
 : >"$FAKE_HERDR_LOG"
@@ -1625,6 +1630,47 @@ run_event pane.agent_status_changed \
   '{"pane_id":"p0","agent":"w1863-sweep","agent_status":"done"}' "$OROOT"
 is "done: an unconfirmed agent gets no verdict at all" "0" \
   "$(log_count '^pane report-metadata')"
+
+is "withhold: finished and unconfirmed events add no diagnostic" "1" \
+  "$(lcount "$OLEDG" '.ev=="hook_withhold"')"
+
+# GH-2480: a confirmed agent with no ledger identity can correctly withhold
+# while producing ZERO state rows. It must be counted without discovering an
+# agent, completing one, or borrowing another repo's diagnostic evidence.
+WHROOT="$TMP/withhold-root"
+WHLEDGER="$WHROOT/acme/demo/ledger.jsonl"
+WHFOREIGN="$WHROOT/other/repo/ledger.jsonl"
+mkdir -p "$(dirname "$WHFOREIGN")"
+printf '%s\n' '{"ts":"t0","ev":"spawn","agent_ref":"w999-other#aaaa"}' >"$WHFOREIGN"
+# A scoped clean checkout, so the lack of unfinished work does not claim done.
+WHREPO="$TMP/withhold-repo"; mkgit "$WHREPO"
+printf '{"owner":"acme","repo":"demo","projectNumber":1}\n' >"$WHREPO/.ralph.json"
+git -C "$WHREPO" add .ralph.json
+git -C "$WHREPO" -c user.email=t@t -c user.name=t commit -qm scope
+herd_fixture '[{"name":"w2480-unledgered","agent_status":"done","pane_id":"pWH","tokens":{"state":"spawned"}}]' "$WHREPO"
+run_event pane.agent_status_changed \
+  '{"pane_id":"pWH","agent":"claude","title":"demo/w2480-unledgered ?","agent_status":"done"}' "$WHROOT"
+is "withhold unledgered: hook succeeds" "0" "$RC"
+line_has "withhold unledgered: still refuses a completion verdict" "$OUT" "verdict withheld"
+is "withhold unledgered: counted in the confirmed repo" "1" \
+  "$(lcount "$WHLEDGER" '.ev=="hook_withhold" and .via=="event" and .reason=="indeterminate" and .agent_name=="w2480-unledgered" and .pane_id=="pWH" and .agent_ref==null')"
+is "withhold unledgered: no state or discovery is fabricated" "0" \
+  "$(lcount "$WHLEDGER" '.ev=="state" or .ev=="discover" or .ev=="finish"')"
+is "withhold unledgered: opens no agent" "" \
+  "$(RALPH_HERDR_LEDGER="$WHLEDGER" ralph_ledger_open_agents)"
+is "withhold unledgered: foreign repo gets no diagnostic" "0" \
+  "$(lcount "$WHFOREIGN" '.ev=="hook_withhold"')"
+# Duplicates count invocations: doctor's firing count includes both as well.
+run_event pane.agent_status_changed \
+  '{"pane_id":"pWH","agent":"w2480-unledgered","agent_status":"done"}' "$WHROOT"
+is "withhold duplicate: two invocations yield two diagnostics" "2" \
+  "$(lcount "$WHLEDGER" '.ev=="hook_withhold"')"
+# A stale payload cannot earn a diagnostic just because its pane says done.
+herd_fixture '[]'
+run_event pane.agent_status_changed \
+  '{"pane_id":"pWH","agent":"w2480-unledgered","agent_status":"done"}' "$WHROOT"
+is "withhold unconfirmed: no extra diagnostic" "2" \
+  "$(lcount "$WHLEDGER" '.ev=="hook_withhold"')"
 
 # The verdict rides in the LEDGER too, not just on the pane. Tokens are chrome:
 # a server restart drops them and reconcile re-pushes from the ledger's reduced

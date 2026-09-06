@@ -10516,20 +10516,24 @@ export function reduceLeadRespawns(payloads: string[], now: Date, windowMs: numb
   return [...byEpic.values()].sort((a, b) => b.spawns - a.spawns || a.epic - b.epic);
 }
 
-/** GH-2403: the two ledger-side facts doctor's "hook-inert" line needs —
+/** GH-2403: the ledger-side facts doctor's "hook-inert" line needs —
  *  how many agents this repo's tape currently holds open (spawn/discover,
  *  not yet exited), and how many `ev:"state"` writes carried `via:"event"`
  *  since a cutoff. `via:"event"` is written ONLY by watch-event.sh's
  *  handle_status (reconcile writes `via:"orphan"`, heal.sh writes its own
- *  `ev`s) — the population that read zero for a full day during GH-2396. */
+ *  `ev`s) — the population that read zero for a full day during GH-2396.
+ *  GH-2480: hook_withhold counts confirmed indeterminate verdicts separately;
+ *  these diagnostic facts have no agent_ref and never alter the open set. */
 export interface HookActivity {
   openAgents: number;
   eventWrites: number;
+  withholds: number;
 }
 
 export function reduceHookActivity(payloads: string[], sinceMs: number): HookActivity {
   const open = new Map<string, boolean>();
   let eventWrites = 0;
+  let withholds = 0;
   for (const p of payloads) {
     let e: Record<string, unknown>;
     try {
@@ -10546,11 +10550,14 @@ export function reduceHookActivity(payloads: string[], sinceMs: number): HookAct
     } else if (e.ev === "state" && e.via === "event") {
       const t = typeof e.ts === "string" ? Date.parse(e.ts) : NaN;
       if (Number.isFinite(t) && t >= sinceMs) eventWrites++;
+    } else if (e.ev === "hook_withhold" && e.via === "event" && e.reason === "indeterminate") {
+      const t = typeof e.ts === "string" ? Date.parse(e.ts) : NaN;
+      if (Number.isFinite(t) && t >= sinceMs) withholds++;
     }
   }
   let openAgents = 0;
   for (const v of open.values()) if (v) openAgents++;
-  return { openAgents, eventWrites };
+  return { openAgents, eventWrites, withholds };
 }
 
 export type HookFireRead = { kind: "unavailable"; reason: string } | { kind: "ok"; fired: number };
@@ -12519,7 +12526,10 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   // isolates the hook's own effect: `ev:"state"` with `via:"event"` is
   // written ONLY by handle_status (reconcile writes `via:"orphan"`; heal.sh
   // writes its own event names) — exactly the population that read zero for
-  // a day during the incident.
+  // a day during the incident. GH-2480 adds neutral hook_withhold facts:
+  // a confirmed indeterminate verdict may deliberately leave no state row.
+  // Subtract those invocations before accusing a zero-state-write hook; a
+  // partial count still leaves unexplained firings visible.
   //
   // `fired` comes from `herdr plugin log list`, machine-wide across every
   // repo the herdr server hosts — the hook has no workspace cwd at
@@ -12560,12 +12570,13 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
             add("hook-inert", "ok", `herdr plugin log not readable (${hf.reason}) — optional equipment`);
           } else if (hf.fired === 0) {
             add("hook-inert", "ok", `hook has not fired in the last ${ctx.cfg.smells.hookMin}min`);
-          } else if (activity.eventWrites === 0) {
+          } else if (activity.eventWrites === 0 && hf.fired > activity.withholds) {
             add(
               "hook-inert",
               "info",
               `watch-event fired ${hf.fired}× in the last ${ctx.cfg.smells.hookMin}min (machine-wide) with zero ` +
-                `ledger writes while this repo has ${activity.openAgents} open agent(s) — the hook may be silently ` +
+                `ledger state writes; ${activity.withholds} deliberate withhold(s), ${hf.fired - activity.withholds} unexplained firing(s) ` +
+                `while this repo has ${activity.openAgents} open agent(s) — the hook may be silently ` +
                 `swallowing status events (GH-2396 was exactly this); \`herdr plugin log list --plugin ralph-herdr\` ` +
                 "shows the raw invocations and their stderr",
             );
@@ -12573,7 +12584,8 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
             add(
               "hook-inert",
               "ok",
-              `fired ${hf.fired}×, wrote ${activity.eventWrites} ledger state event(s) in the last ${ctx.cfg.smells.hookMin}min`,
+              `fired ${hf.fired}×, wrote ${activity.eventWrites} ledger state event(s), ` +
+                `${activity.withholds} deliberate withhold(s) in the last ${ctx.cfg.smells.hookMin}min`,
             );
           }
         }
@@ -14051,9 +14063,9 @@ maintenance
                               RALPH_SMELL_HOOK_MIN (60 — "hook-inert":
                               watch-event fired N times (from \`herdr plugin
                               log\`, machine-wide) with zero via:"event"
-                              ledger writes while this repo's ledger holds
-                              open agents; skipped when it holds none;
-                              GH-2403),
+                              ledger state writes after subtracting deliberate
+                              withholds, while this repo holds open agents;
+                              skipped when it holds none; GH-2403, GH-2480),
                               RALPH_SMELL_LEAD_RESPAWNS (3 — "lead-respawns":
                               an epic whose lead the scheduler (heal.sh)
                               respawned that many times in the last hour,

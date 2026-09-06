@@ -8,7 +8,8 @@
  * because that heartbeat has TWO writers (the event hooks and hero
  * sittings), so a healthy hero sitting kept it fresh regardless. This check
  * isolates the hook's own effect: `ev:"state"` with `via:"event"` is written
- * ONLY by handle_status.
+ * ONLY by handle_status. GH-2480 also counts its deliberate withhold facts,
+ * without interpreting them as lifecycle writes.
  *
  * The distinctions defended: a repo with no open agents is never flagged
  * (zero writes is the expected reading, not a smell); herdr missing or
@@ -47,6 +48,9 @@ function buildDb(payloads: string[]): void {
 
 const spawn = (ref: string) => JSON.stringify({ ts: "2026-07-31T10:00:00Z", ev: "spawn", agent_ref: ref });
 const exitEv = (ref: string, ts = "2026-07-31T10:30:00Z") => JSON.stringify({ ts, ev: "exit", agent_ref: ref, reason: "pane-closed" });
+const withholdEv = (ts: string, extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ ts, ev: "hook_withhold", via: "event", reason: "indeterminate",
+    agent_name: "w1-a", pane_id: "w1:p1", ...extra });
 const stateEv = (ref: string, ts: string, via = "event") =>
   JSON.stringify({ ts, ev: "state", agent_ref: ref, agent_status: "working", pane_id: "w1:p1", via });
 
@@ -119,8 +123,23 @@ describe("reduceHookActivity", () => {
     expect(a.eventWrites).toBe(0);
   });
 
+  it("counts typed withholds without creating an agent or a state write", () => {
+    expect(reduceHookActivity([withholdEv(iso(-10))], ms(-60)))
+      .toEqual({ openAgents: 0, eventWrites: 0, withholds: 1 });
+  });
+
+  it("ignores old, invalid, other-writer, and unknown-reason withholds", () => {
+    const a = reduceHookActivity([
+      withholdEv(iso(-120)), withholdEv("bad timestamp"),
+      withholdEv(iso(-10), { via: "reconcile" }),
+      withholdEv(iso(-10), { reason: "unknown" }),
+      withholdEv(iso(-10), { reason: undefined }),
+    ], ms(-60));
+    expect(a.withholds).toBe(0);
+  });
+
   it("a garbled payload is skipped, not a crash", () => {
-    expect(reduceHookActivity(["not json"], ms(-60))).toEqual({ openAgents: 0, eventWrites: 0 });
+    expect(reduceHookActivity(["not json"], ms(-60))).toEqual({ openAgents: 0, eventWrites: 0, withholds: 0 });
   });
 });
 
@@ -202,6 +221,49 @@ describe("doctor: hook-inert (GH-2403) — advisory by construction", () => {
     expect(c.detail).toContain("watch-event fired 3×");
     expect(c.detail).toContain("zero");
     expect(c.detail).toContain("GH-2396");
+  });
+
+  it("credit-exhausted fleet: three deliberate withholds explain three firings", () => {
+    buildDb([
+      ...Array.from({ length: 7 }, (_, i) => spawn(`w${i}-agent#aaaa`)),
+      withholdEv(iso(-5)), withholdEv(iso(-10)), withholdEv(iso(-15)),
+    ]);
+    const c = check(doctor(ctxWithLog([-5, -10, -15].map((min) => ({
+      event: "pane.agent_status_changed", started_unix_ms: ms(min),
+    })))));
+    expect(c.level).toBe("ok");
+    expect(c.detail).toContain("wrote 0 ledger state event(s)");
+    expect(c.detail).toContain("3 deliberate withhold(s)");
+    expect(c.detail).not.toContain("swallowing");
+  });
+
+  it("a partial withhold count still exposes unexplained firings", () => {
+    buildDb([spawn("w1-a#aaaa"), withholdEv(iso(-5))]);
+    const c = check(doctor(ctxWithLog([-5, -10, -15].map((min) => ({
+      event: "pane.agent_status_changed", started_unix_ms: ms(min),
+    })))));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("1 deliberate withhold(s), 2 unexplained firing(s)");
+    expect(c.detail).toContain("GH-2396");
+  });
+
+  it("an old withhold does not excuse a current firing", () => {
+    buildDb([spawn("w1-a#aaaa"), withholdEv(iso(-120))]);
+    const c = check(doctor(ctxWithLog([
+      { event: "pane.agent_status_changed", started_unix_ms: ms(-5) },
+    ])));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("0 deliberate withhold(s), 1 unexplained firing(s)");
+  });
+
+  it("a bounded log with fewer firings than withholds never reports a negative gap", () => {
+    buildDb([spawn("w1-a#aaaa"), withholdEv(iso(-5)), withholdEv(iso(-10))]);
+    const c = check(doctor(ctxWithLog([
+      { event: "pane.agent_status_changed", started_unix_ms: ms(-5) },
+    ])));
+    expect(c.level).toBe("ok");
+    expect(c.detail).toContain("2 deliberate withhold(s)");
+    expect(c.detail).not.toContain("unexplained");
   });
 
   it("a firing (or write) outside the window is invisible to the check", () => {

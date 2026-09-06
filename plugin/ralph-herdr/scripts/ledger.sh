@@ -21,12 +21,12 @@
 #   the main checkout and every worktree of one repo resolve the SAME ledger.
 #
 #   Every line is one event object:
-#     {ts, ev, agent_ref, session, ...ev-specific}
+#     {ts, ev, session, ...ev-specific} (agent_ref on lifecycle facts)
 #   `session` is ralph_session_key — the server that WROTE the record, stamped
 #   by ralph_ledger_append. It is how reconcile proves a ledger is its own once
 #   the last pane that would have proven it is gone (GH-1933).
 #   ev vocabulary: spawn | state | adopt | exit | discover | containment |
-#   usage | finish | lost ("lost" is
+#   usage | finish | hook_withhold | lost ("lost" is
 #   reserved; a lost agent is recorded as ev=exit reason=swept-unknown —
 #   spelled "lost" before GH-2309, see the exit-reason enum below).
 #     spawn     appended by the spawn paths (lib.sh, work-team.sh, fleet.sh's
@@ -46,6 +46,10 @@
 #               via: spawn}) on the paths that prove no worker ever existed.
 #     state     watcher: {agent_status} (raw herdr status) or {state}
 #               (lifecycle token value, e.g. "orphaned").
+#     hook_withhold  watcher diagnostic (GH-2480): {via: "event",
+#               reason: "indeterminate", agent_name, pane_id}. No agent_ref:
+#               records a deliberate refusal even before reconcile discovers
+#               an identity; never opens/closes a row or claims completion.
 #     adopt     watcher orphan pass: {parent: new, prev_parent: old}.
 #     exit      watcher/reconcile/spawn: {reason: <exit reason>}.
 #     discover  watcher/reconcile: a live ralph agent with no open ledger

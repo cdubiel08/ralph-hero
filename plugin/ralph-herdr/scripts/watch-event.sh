@@ -197,7 +197,7 @@ live_names() {
 handle_status() {
   local agent status pane parsed legacy candidate entry file ref ts repo_root
   local lane issue slug gen title labels body snapshot confirmed
-  local prior checkout verdict addr csid
+  local prior checkout verdict addr csid withhold_file
   agent=$(pfield '.agent // .data.agent // empty')
   status=$(pfield '.agent_status // .data.agent_status // empty')
   pane=$(pfield '.pane_id // .data.pane_id // empty')
@@ -305,7 +305,7 @@ handle_status() {
   fi
 
   ts=$(date -u +%FT%TZ)
-  file="" ref=""
+  file="" ref="" withhold_file=""
   if [ -z "$legacy" ]; then
     if entry=$(ledger_for_agent "$agent" "$repo_root"); then
       IFS=$'\t' read -r file ref <<<"$entry"
@@ -327,6 +327,8 @@ handle_status() {
       else
         log "no ledger scope resolvable for $agent (pane $pane) — routing attention without a ledger record"
       fi
+      # Keep the confirmed scope for diagnostic facts, without minting an identity.
+      withhold_file="$file"
       # No ledger record to append against; attention routing below still runs.
       file=""
     fi
@@ -377,6 +379,20 @@ handle_status() {
     # Ledgered but unconfirmed: the snapshot could not vouch for the agent, so
     # the scope earns a reconcile rather than a write taken on faith.
     ralph_dirty_mark "$file" "unconfirmed status event for $agent"
+  fi
+
+  # GH-2480: a deliberate refusal is observable even when reconcile has not
+  # minted this agent's identity yet. This is a hook diagnostic, NOT a state
+  # or completion record: omit agent_ref so lifecycle reducers ignore it.
+  # One fact per invocation, scoped only after snapshot confirmation; never
+  # count an unconfirmed hint or a swallowed event as a deliberate withhold.
+  withhold_file="${file:-$withhold_file}"
+  if [ "$verdict" = indeterminate ] && [ -n "$confirmed" ] && [ -n "$withhold_file" ]; then
+    RALPH_HERDR_LEDGER="$withhold_file" ralph_ledger_append "$(jq -nc \
+      --arg ts "$ts" --arg agent "$agent" --arg pane "$pane" \
+      '{ts: $ts, ev: "hook_withhold", via: "event", reason: "indeterminate",
+        agent_name: $agent, pane_id: $pane}')" ||
+      log "withhold append failed for $agent"
   fi
 
   # State token: only herdr statuses with a clean C8 lifecycle mapping are
