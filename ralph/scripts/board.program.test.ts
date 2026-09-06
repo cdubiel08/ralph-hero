@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   encodeClaim,
   fetchIssue,
+  reconcile,
   resolveProposal,
   sessionBindingPath,
   TEND_PROPOSAL_MARKER,
@@ -30,15 +31,29 @@ function programBoard() {
   ctx.cfg.repos = ["cdubiel08/ralph-hero", "acme/other"];
   const reads: string[] = [];
   // Each FakeGh has its own number namespace. Repository reads MUST route
-  // by the actual wire variables; writes target the secondary fixture's IDs.
+  // by the actual wire variables; primary global IDs carry a distinct prefix
+  // so subsequent mutations route to the issue the read actually returned.
   // This makes a bare-number reread return a real, different primary issue.
   ctx.exec = (argv, stdin) => {
     if (stdin) {
       const { query, variables } = JSON.parse(stdin);
+      if (query.includes("mutation")) {
+        let primaryWrite = false;
+        for (const key of ["itemId", "issueId", "subjectId"]) {
+          if (variables[key]?.startsWith("PRIMARY_")) {
+            primaryWrite = true;
+            variables[key] = variables[key].slice("PRIMARY_".length);
+          }
+        }
+        if (primaryWrite) return primary.exec(argv, JSON.stringify({ query, variables }));
+      }
       if (query.includes("repository(owner") && query.includes("issue(number")) {
         const repo = `${variables.owner}/${variables.repo}`;
         reads.push(repo);
-        if (repo === "cdubiel08/ralph-hero") return primary.exec(argv, stdin);
+        if (repo === "cdubiel08/ralph-hero") {
+          const result = primary.exec(argv, stdin);
+          return { ...result, stdout: result.stdout.replace(/"((?:I|ITEM)_\d+)"/g, '"PRIMARY_$1"') };
+        }
         expect(repo).toBe("acme/other");
       }
     }
@@ -48,6 +63,59 @@ function programBoard() {
 }
 
 describe("program scope rereads (GH-2483)", () => {
+  it.each(["In Review", "Done"] as const)("rolls up the secondary parent after a child reaches %s", (to) => {
+    const { ctx, primary, secondary, reads } = programBoard();
+    secondary.issues.get(9)!.state = "In Progress";
+    secondary.issues.get(9)!.claim = encodeClaim("me@test", NOW);
+    secondary.issues.get(9)!.issueState = "CLOSED";
+    secondary.issues.get(9)!.parent = 10;
+    secondary.issues.get(9)!.parentRepo = "acme/other";
+    primary.issues.set(10, {
+      number: 10, state: "Backlog", children: [{ number: 20, issueState: "CLOSED" }],
+    });
+    secondary.issues.set(10, {
+      number: 10, repo: "acme/other", state: "Backlog",
+      children: [{ number: 9, issueState: "CLOSED" }],
+    });
+    transition(ctx, fetchIssue(ctx, address), to, { why: "delivered" });
+    expect(secondary.issues.get(10)?.state).toBe("In Review");
+    expect(secondary.comments.some((c) => c.body.includes("rollup lane"))).toBe(true);
+    expect(primary.issues.get(10)?.state).toBe("Backlog");
+    expect(primary.mutations).toEqual([]);
+    expect(primary.comments).toEqual([]);
+    expect(reads).toEqual(["acme/other", "acme/other", "acme/other"]);
+  });
+
+  it("does not roll up an unconfigured parent through a same-numbered primary issue", () => {
+    const { ctx, primary, secondary, reads } = programBoard();
+    secondary.issues.get(9)!.parent = 10;
+    secondary.issues.get(9)!.parentRepo = "outside/program";
+    primary.issues.set(10, {
+      number: 10, state: "Backlog", children: [{ number: 20, issueState: "CLOSED" }],
+    });
+    transition(ctx, fetchIssue(ctx, address), "Done", { why: "delivered" });
+    expect(primary.mutations).toEqual([]);
+    expect(reads).toEqual(["acme/other", "acme/other"]);
+  });
+
+  it("reconciliation carries the actual parent repository into the same rollup lane", () => {
+    const { ctx, primary, secondary } = programBoard();
+    primary.issues.get(9)!.parent = 10;
+    primary.issues.get(9)!.parentRepo = "acme/other";
+    primary.issues.get(9)!.issueState = "CLOSED";
+    primary.issues.set(10, {
+      number: 10, state: "Backlog", children: [{ number: 20, issueState: "CLOSED" }],
+    });
+    secondary.issues.set(10, {
+      number: 10, repo: "acme/other", state: "Backlog",
+      children: [{ number: 9, issueState: "CLOSED" }],
+    });
+    reconcile(ctx, 9);
+    expect(secondary.issues.get(10)?.state).toBe("In Review");
+    expect(primary.issues.get(10)?.state).toBe("Backlog");
+    expect(primary.comments.some((c) => c.body.includes("rollup lane"))).toBe(false);
+  });
+
   it("verifies a secondary claim even when primary has no same-numbered issue", () => {
     const { ctx, primary, secondary, reads } = programBoard();
     primary.issues.delete(9);

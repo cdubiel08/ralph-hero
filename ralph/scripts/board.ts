@@ -2235,7 +2235,7 @@ export interface Issue {
   priority: string | null;
   labels: string[];
   labelsTruncated: boolean; // >LABEL_PAGE labels — apply detection fails closed
-  parent: { number: number; title: string } | null;
+  parent: { number: number; title: string; address: IssueAddress | null } | null;
   /** Same field, same rule, same name as the queue shapes (QueueItem,
    *  ClosedEdge): own-repo parent number, else null. `get` carried the edge
    *  only as `parent`, so `parentNumber` was an ABSENT key — and an absent key
@@ -2334,6 +2334,14 @@ export function fetchIssue(ctx: Ctx, target: number | IssueAddress): Issue {
       (n: any) => n.project?.id === cache.projectId,
     );
     const fv = fieldValueMap(item?.fieldValues);
+    // A relationship's number is only meaningful in its own repository.
+    // Keep foreign/unreadable parents visible, but never roll them up by
+    // falling back to primary (GH-2483).
+    const parentRepo = issue.parent?.repository?.nameWithOwner;
+    const parentAddress = typeof parentRepo === "string" &&
+      ctx.cfg.repos.some((repo) => repo.toLowerCase() === parentRepo.toLowerCase())
+      ? parseIssueAddress(`${parentRepo}#${issue.parent.number}`, ctx.cfg)
+      : null;
 
     return {
       address: { ...addr, number: issue.number },
@@ -2354,7 +2362,9 @@ export function fetchIssue(ctx: Ctx, target: number | IssueAddress): Issue {
       priority: fv[PRIORITY_FIELD] ?? null,
       labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
       labelsTruncated: issue.labels?.pageInfo?.hasNextPage ?? false,
-      parent: issue.parent ? { number: issue.parent.number, title: issue.parent.title } : null,
+      parent: issue.parent
+        ? { number: issue.parent.number, title: issue.parent.title, address: parentAddress }
+        : null,
       // Same-repo as THIS issue (addr), not necessarily primary — a foreign-
       // but-configured issue's same-repo parent is still a real tree edge.
       // A parent in a THIRD repo still nulls: cross-repo parent edges are
@@ -3340,9 +3350,9 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     }
 
     // Parent gate: a child reaching In Review/Done may advance the parent.
-    if ((to === "In Review" || to === "Done") && after.parent) {
+    if ((to === "In Review" || to === "Done") && after.parent?.address) {
       try {
-        parentCheck(ctx, after.parent.number);
+        parentCheck(ctx, after.parent.address);
       } catch {
         /* advisory here; state-guard + doctor re-run it */
       }
@@ -3357,8 +3367,9 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
  *  In Review, deliberately multi-hop (a Backlog parent whose children all
  *  shipped must surface for review — the v1 carve-out that proved out).
  *  Fails CLOSED when the children list is truncated. */
-export function parentCheck(ctx: Ctx, parentNumber: number): string {
-  const parent = fetchIssue(ctx, parentNumber);
+export function parentCheck(ctx: Ctx, target: number | IssueAddress): string {
+  const parent = fetchIssue(ctx, target);
+  const parentNumber = parent.number;
   if (parent.children.length === 0) return `#${parentNumber}: no children`;
   if (parent.fieldValuesTruncated) {
     return `#${parentNumber}: field values truncated (>${FIELD_VALUE_PAGE}) — state unreadable, refusing to gate`;
@@ -5039,9 +5050,9 @@ export function reconcile(ctx: Ctx, number: number): string {
       `\`board reconcile\`: issue is ${issue.issueState === "CLOSED" ? `closed (${issue.stateReason ?? "completed"})` : "open"} ` +
         `but board said "${issue.state ?? "(none)"}" — corrected to "${target}".`,
     );
-    if (target === "Done" && issue.parent) {
+    if (target === "Done" && issue.parent?.address) {
       try {
-        parentCheck(ctx, issue.parent.number);
+        parentCheck(ctx, issue.parent.address);
       } catch {
         /* advisory */
       }
