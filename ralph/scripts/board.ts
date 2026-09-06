@@ -2216,6 +2216,8 @@ function mutationCache(
 // ---------------------------------------------------------------------------
 
 export interface Issue {
+  /** Resolved identity for rereads; a number alone would fall back to primary. */
+  address: IssueAddress;
   number: number;
   nodeId: string;
   itemId: string | null; // project item in OUR project
@@ -2233,7 +2235,7 @@ export interface Issue {
   priority: string | null;
   labels: string[];
   labelsTruncated: boolean; // >LABEL_PAGE labels — apply detection fails closed
-  parent: { number: number; title: string } | null;
+  parent: { number: number; title: string; address: IssueAddress | null } | null;
   /** Same field, same rule, same name as the queue shapes (QueueItem,
    *  ClosedEdge): own-repo parent number, else null. `get` carried the edge
    *  only as `parent`, so `parentNumber` was an ABSENT key — and an absent key
@@ -2296,12 +2298,9 @@ function fieldValueMap(fieldValues: any): Record<string, string> {
 
 export function fetchIssue(ctx: Ctx, target: number | IssueAddress): Issue {
   // GH-2455 (D8): a bare number resolves in the primary repo — the same
-  // behavior every existing caller (36 sites, all passing a number) already
-  // gets, byte-identical. A resolved IssueAddress (from an `owner/repo#N`
-  // argument) queries that repo directly; the ProjectV2Item id and node id
-  // this returns are global, so every downstream write (transition, comment,
-  // claim) that consumes an already-fetched Issue works unmodified — the
-  // chokepoint is this one query, not every mutation.
+  // behavior existing number-based callers get. A resolved IssueAddress
+  // queries that repo directly and stays on the returned Issue, so mutation
+  // rereads can preserve the identity their global-ID writes addressed.
   const addr: IssueAddress =
     typeof target === "number" ? { owner: ctx.cfg.owner, repo: ctx.cfg.repo, number: target } : target;
   return withCache(ctx, (cache) => {
@@ -2335,8 +2334,17 @@ export function fetchIssue(ctx: Ctx, target: number | IssueAddress): Issue {
       (n: any) => n.project?.id === cache.projectId,
     );
     const fv = fieldValueMap(item?.fieldValues);
+    // A relationship's number is only meaningful in its own repository.
+    // Keep foreign/unreadable parents visible, but never roll them up by
+    // falling back to primary (GH-2483).
+    const parentRepo = issue.parent?.repository?.nameWithOwner;
+    const parentAddress = typeof parentRepo === "string" &&
+      ctx.cfg.repos.some((repo) => repo.toLowerCase() === parentRepo.toLowerCase())
+      ? parseIssueAddress(`${parentRepo}#${issue.parent.number}`, ctx.cfg)
+      : null;
 
     return {
+      address: { ...addr, number: issue.number },
       number: issue.number,
       nodeId: issue.id,
       itemId: item?.id ?? null,
@@ -2354,7 +2362,9 @@ export function fetchIssue(ctx: Ctx, target: number | IssueAddress): Issue {
       priority: fv[PRIORITY_FIELD] ?? null,
       labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
       labelsTruncated: issue.labels?.pageInfo?.hasNextPage ?? false,
-      parent: issue.parent ? { number: issue.parent.number, title: issue.parent.title } : null,
+      parent: issue.parent
+        ? { number: issue.parent.number, title: issue.parent.title, address: parentAddress }
+        : null,
       // Same-repo as THIS issue (addr), not necessarily primary — a foreign-
       // but-configured issue's same-repo parent is still a real tree edge.
       // A parent in a THIRD repo still nulls: cross-repo parent edges are
@@ -2559,6 +2569,17 @@ export function fetchCommentTrails(ctx: Ctx, numbers: number[]): Map<number, str
   );
 }
 
+/** A mutation's single-issue trail requires a qualified address (GH-2483).
+ *  Reuse the batch reader's failure handling without dropping repository
+ *  identity or fetching state/PR history the proposal resolver never reads. */
+function fetchIssueCommentTrail(ctx: Ctx, address: IssueAddress): string[] | undefined {
+  return batchIssueRead(
+    ctx, [address.number], COMMENTS_CHUNK, COMMENTS_SELECTION,
+    (issue) => (issue.comments?.nodes ?? []).map((c: any) => c?.body ?? ""),
+    address,
+  ).get(address.number);
+}
+
 /** History for MANY issues, batched behind GraphQL aliases. A query per open
  *  item would multiply doctor's cost by the size of the board (and the
  *  reconciler cron runs every 15 min), so `HISTORY_CHUNK` issues share one
@@ -2592,6 +2613,7 @@ function batchIssueRead<T>(
   chunkSize: number,
   selection: string,
   parse: (issue: any, cache: BoardCache) => T,
+  repository: Pick<IssueAddress, "owner" | "repo"> = ctx.cfg,
 ): Map<number, T> {
   const out = new Map<number, T>();
   if (numbers.length === 0) return out;
@@ -2604,7 +2626,7 @@ function batchIssueRead<T>(
       const aliases = chunk
         .map((_, k) => `a${k}: issue(number: $n${k}) { ${selection} }`)
         .join("\n");
-      const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
+      const vars: Record<string, unknown> = { owner: repository.owner, repo: repository.repo };
       chunk.forEach((n, k) => (vars[`n${k}`] = n));
       let data: any;
       try {
@@ -2990,7 +3012,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       if (to === "Done") guardDoneEvidence(ctx, issue, opts.why);
       closeIssue(ctx, issue.nodeId, to === "Done" ? "COMPLETED" : "NOT_PLANNED");
       appendLedgerTransition(ctx, issue.number, from, to);
-      return fetchIssue(ctx, issue.number);
+      return fetchIssue(ctx, issue.address);
     }
     // Same-state In Progress is claim (re)acquisition, not a transition:
     // adopting claimless WIP or refreshing one's own claim. Fully guarded by
@@ -3201,7 +3223,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     // compare-and-swap: two racers can both pass the pre-check; the re-read
     // makes the loser find out and back off instead of believing it holds
     // the item. A residual window remains (documented in the design).
-    const after = fetchIssue(ctx, issue.number);
+    const after = fetchIssue(ctx, issue.address);
     // The write itself can push the item past the page (Claim + Status add up
     // to two values): a truncated echo cannot verify claim state, and must
     // say so rather than let the null-claim branches assert a race narrative
@@ -3241,7 +3263,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
           // landed after the read-back verify — clearing a newer claim and
           // regressing the state of work someone else is now doing. Only undo
           // what is still recognisably OURS.
-          const now = fetchIssue(ctx, issue.number);
+          const now = fetchIssue(ctx, issue.address);
           // Identity is the claim's `since`, NOT its holder. The holder is
           // `user@host` — every session on this machine writes the same one —
           // so a sibling that refreshed this issue between the verify and here
@@ -3328,9 +3350,9 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     }
 
     // Parent gate: a child reaching In Review/Done may advance the parent.
-    if ((to === "In Review" || to === "Done") && after.parent) {
+    if ((to === "In Review" || to === "Done") && after.parent?.address) {
       try {
-        parentCheck(ctx, after.parent.number);
+        parentCheck(ctx, after.parent.address);
       } catch {
         /* advisory here; state-guard + doctor re-run it */
       }
@@ -3345,8 +3367,9 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
  *  In Review, deliberately multi-hop (a Backlog parent whose children all
  *  shipped must surface for review — the v1 carve-out that proved out).
  *  Fails CLOSED when the children list is truncated. */
-export function parentCheck(ctx: Ctx, parentNumber: number): string {
-  const parent = fetchIssue(ctx, parentNumber);
+export function parentCheck(ctx: Ctx, target: number | IssueAddress): string {
+  const parent = fetchIssue(ctx, target);
+  const parentNumber = parent.number;
   if (parent.children.length === 0) return `#${parentNumber}: no children`;
   if (parent.fieldValuesTruncated) {
     return `#${parentNumber}: field values truncated (>${FIELD_VALUE_PAGE}) — state unreadable, refusing to gate`;
@@ -5027,9 +5050,9 @@ export function reconcile(ctx: Ctx, number: number): string {
       `\`board reconcile\`: issue is ${issue.issueState === "CLOSED" ? `closed (${issue.stateReason ?? "completed"})` : "open"} ` +
         `but board said "${issue.state ?? "(none)"}" — corrected to "${target}".`,
     );
-    if (target === "Done" && issue.parent) {
+    if (target === "Done" && issue.parent?.address) {
       try {
-        parentCheck(ctx, issue.parent.number);
+        parentCheck(ctx, issue.parent.address);
       } catch {
         /* advisory */
       }
@@ -8187,12 +8210,12 @@ export function resolveProposal(
   note?: string,
   actioned = false, // true when the acceptance IS the action (the reopen path)
 ): { at: string | null } | null {
-  const trail = fetchHistories(ctx, [issue.number]).get(issue.number);
+  const trail = fetchIssueCommentTrail(ctx, issue.address);
   if (!trail)
     throw new Error(
       `could not read #${issue.number}'s comment trail — cannot tell whether a proposal is pending`,
     );
-  const pending = pendingProposal(trail.comments);
+  const pending = pendingProposal(trail);
   if (!pending) return null;
   const payload = JSON.stringify({
     disposition,
