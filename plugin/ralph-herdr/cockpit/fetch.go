@@ -1837,7 +1837,6 @@ func prDiffCmd(cfg Config, r Runner, issue int) tea.Cmd {
 	}
 }
 
-// openBrowserCmd opens the issue on GitHub — works on every rung.
 // browserURL is what `g` opens for a card: the issue, except an
 // awaiting-approval inbox card (GH-2445), whose whole point is the PR.
 func browserURL(card Card) string {
@@ -1847,6 +1846,7 @@ func browserURL(card Card) string {
 	return fmt.Sprintf("https://github.com/%s/issues/%d", card.Repo, card.Number)
 }
 
+// openBrowserCmd opens the card's GitHub target — works on every rung.
 func openBrowserCmd(card Card) tea.Cmd {
 	return func() tea.Msg {
 		if card.Repo == "" {
