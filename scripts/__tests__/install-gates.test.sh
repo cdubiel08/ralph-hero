@@ -43,10 +43,27 @@ echo "install-gates.test.sh"
 HOST="$(new_host host1)"
 out="$(cd "$HOST" && bash "$INSTALLER")"
 n="$(jq -r '.files | length' "$HOST/.github/ralph-kit.json")"
-if [ -x "$HOST/scripts/merge-pr.sh" ] && [ -f "$HOST/.github/workflows/validate-attestation.yml" ] && [ "$n" = 21 ]; then
-  pass "fresh install lands 21 files + stamp; scripts executable"
+if [ -x "$HOST/scripts/merge-pr.sh" ] && [ -f "$HOST/.github/workflows/validate-attestation.yml" ] && [ "$n" = 22 ]; then
+  pass "fresh install lands 22 files + stamp; scripts executable"
 else
   fail "fresh install (files=$n)"
+fi
+# The deploy gate must ship with its sourced libraries and executable evidence
+# writer (GH-2487). Run usage from the host to catch missing vendored imports.
+if [ -x "$HOST/scripts/approve-deploy.sh" ] && [ -x "$HOST/scripts/apply-evidence.sh" ] \
+   && [ -f "$HOST/scripts/lib/gh-budget.sh" ] && [ -f "$HOST/scripts/lib/merge-evidence.sh" ] \
+   && jq -e '.files["scripts/approve-deploy.sh"]' "$HOST/.github/ralph-kit.json" >/dev/null \
+   && cmp -s "$HOST/scripts/approve-deploy.sh" "$REPO_ROOT/scripts/approve-deploy.sh"; then
+  pass "deploy gate and dependencies installed; gate matches canonical source and is stamped"
+else
+  fail "deploy gate or dependencies missing, non-executable, unstamped, or out of sync"
+fi
+usage_rc=0
+usage_out="$(cd "$HOST" && scripts/approve-deploy.sh --help 2>&1)" || usage_rc=$?
+if [ "$usage_rc" -eq 2 ] && grep -q 'scripts/approve-deploy.sh ISSUE RUN --env ENV' <<<"$usage_out"; then
+  pass "installed deploy gate runs usage (exit 2) from a fresh host"
+else
+  fail "installed deploy gate usage (exit=$usage_rc): $usage_out"
 fi
 # Advisory hooks (audit C3): installed under .claude/hooks/, never registered.
 if [ -x "$HOST/.claude/hooks/ralph-kit-orient.sh" ] && [ -x "$HOST/.claude/hooks/funnel-gate-watch.sh" ] \
@@ -88,9 +105,9 @@ fi
 
 # --- idempotent second run --------------------------------------------------
 out="$(cd "$HOST" && bash "$INSTALLER")"
-# 22 = 21 files + the CLAUDE.md fragment block (fragments count in the same
+# 23 = 22 files + the CLAUDE.md fragment block (fragments count in the same
 # summary; they are units of installed content, just merged not copied).
-if grep -q "0 installed, 0 updated, 22 already current, 0 skipped" <<<"$out"; then
+if grep -q "0 installed, 0 updated, 23 already current, 0 skipped" <<<"$out"; then
   pass "second run is a no-op (fragment included)"
 else
   fail "second run: $(grep 'installed,' <<<"$out")"
@@ -142,8 +159,8 @@ HOST4="$(new_host host4)"
 echo '{"owner":"o","repo":"r","projectNumber":7}' > "$HOST4/.ralph.json"
 (cd "$HOST4" && bash "$INSTALLER" >/dev/null)
 n4="$(jq -r '.files | length' "$HOST4/.github/ralph-kit.json")"
-if [ "$n4" = 23 ] && [ -f "$HOST4/.github/workflows/state-guard.yml" ]; then
-  pass "fresh install into a board-configured host lands all 23 files"
+if [ "$n4" = 24 ] && [ -f "$HOST4/.github/workflows/state-guard.yml" ]; then
+  pass "fresh install into a board-configured host lands all 24 files"
 else
   fail "board-configured fresh install (files=$n4)"
 fi
