@@ -393,6 +393,13 @@ echo '{"data":{"repository":{"issue":{"timelineItems":{"pageInfo":{"hasNextPage"
 run_ad "$dir" "$POLICY" 2451 4242 --env staging
 expect "a same-numbered PR from another repo does not satisfy the overlap" 1 "does not reference #2451"
 if grep -qF -- "PR #9001 references #2451 — confirmed" <<<"$LAST_OUT"; then fail "foreign PR must never confirm linkage" "$LAST_OUT"; else pass "foreign PR never confirms linkage"; fi
+if [[ -f "$dir/posted.md" ]]; then fail "foreign overlap must not post evidence on a mismatch"; else pass "foreign overlap posts no evidence on a mismatch"; fi
+
+# With only a foreign reference there is no own-repo linkage to judge.
+jq '.data.repository.issue.timelineItems.nodes |= [.[0]]' "$dir/issue_refs.json" >"$dir/foreign_refs.json"
+mv "$dir/foreign_refs.json" "$dir/issue_refs.json"
+run_ad "$dir" "$POLICY" 2451 4242 --env staging
+expect "foreign-only references explicitly retain operator trust" 0 "not referenced by any PR in testowner/testrepo yet — proceeding operator-trusted"
 
 # A truncated cross-reference page is not the relationship set: neither a
 # refusal nor a confirmation may be judged on it (PR #2478 review).
@@ -406,6 +413,24 @@ echo '{"data":{"repository":{"issue":{"timelineItems":{"pageInfo":{"hasNextPage"
 run_ad "$dir" "$POLICY" 2451 4242 --env staging
 expect "a truncated timeline is not judged as a mismatch" 0 "APPLY EVIDENCE POSTED"
 expect "the truncation is named as the reason for degrading" 0 "page truncated"
+
+# Even a visible matching PR must not confirm an incomplete relationship set.
+for nodes in '[{"source":{"number":9001,"repository":{"nameWithOwner":"testowner/testrepo"}}}]' '[]'; do
+  jq --argjson nodes "$nodes" '.data.repository.issue.timelineItems.nodes = $nodes' "$dir/issue_refs.json" >"$dir/next_refs.json"
+  mv "$dir/next_refs.json" "$dir/issue_refs.json"
+  run_ad "$dir" "$POLICY" 2451 4242 --env staging
+  expect "truncated matching/empty page withholds the verdict" 0 "page truncated, cannot establish linkage; proceeding operator-trusted"
+  if grep -qF -- '— confirmed' <<<"$LAST_OUT"; then fail "truncated page must not confirm linkage"; else pass "truncated page never confirms linkage"; fi
+done
+
+# Missing or malformed pagination cannot certify that the list is complete.
+for page_info in '{}' '{"hasNextPage":null}' '{"hasNextPage":"false"}'; do
+  jq --argjson pageInfo "$page_info" '.data.repository.issue.timelineItems |= (.pageInfo = $pageInfo | .nodes = [{source:{number:9001,repository:{nameWithOwner:"testowner/testrepo"}}}])' "$dir/issue_refs.json" >"$dir/next_refs.json"
+  mv "$dir/next_refs.json" "$dir/issue_refs.json"
+  run_ad "$dir" "$POLICY" 2451 4242 --env staging
+  expect "unreadable pagination explicitly withholds the verdict" 0 "cross-reference pagination — proceeding operator-trusted"
+  if grep -qF -- '— confirmed' <<<"$LAST_OUT"; then fail "unknown pagination must not confirm linkage"; else pass "unknown pagination never confirms linkage"; fi
+done
 
 echo
 echo "approve-deploy: $PASS passed, $FAIL failed"

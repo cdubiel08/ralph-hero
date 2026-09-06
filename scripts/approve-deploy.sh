@@ -266,7 +266,9 @@ else
       } } }' 2>/dev/null || echo "")
   if ! jq -e '.data.repository.issue.timelineItems.nodes | type == "array"' >/dev/null 2>&1 <<<"$issue_refs_json"; then
     echo "--- linkage: could not read #$ISSUE's cross-reference timeline — proceeding operator-trusted (GH-2469)"
-  elif [[ "$(jq -r '.data.repository.issue.timelineItems.pageInfo.hasNextPage // false' <<<"$issue_refs_json")" == "true" ]]; then
+  elif ! jq -e '.data.repository.issue.timelineItems.pageInfo.hasNextPage | type == "boolean"' >/dev/null 2>&1 <<<"$issue_refs_json"; then
+    echo "--- linkage: could not read #$ISSUE's cross-reference pagination — proceeding operator-trusted (GH-2481)"
+  elif [[ "$(jq -r '.data.repository.issue.timelineItems.pageInfo.hasNextPage' <<<"$issue_refs_json")" == "true" ]]; then
     # A truncated page is not the relationship set: the run's PR may sit past
     # it (a false refusal) or the visible page may be empty of PRs (a false
     # pass). Neither reading is evidence — say so and fall back, rather than
@@ -277,7 +279,7 @@ else
       [ .data.repository.issue.timelineItems.nodes[].source
         | select(.repository.nameWithOwner == $nwo) | .number // empty ] | unique | .[]' <<<"$issue_refs_json")
     if [[ -z "$ref_pr_list" ]]; then
-      echo "--- linkage: #$ISSUE is not referenced by any PR yet — proceeding operator-trusted (GH-2469)"
+      echo "--- linkage: #$ISSUE is not referenced by any PR in $nwo yet — proceeding operator-trusted (GH-2469)"
     else
       match=""
       while read -r rp; do
