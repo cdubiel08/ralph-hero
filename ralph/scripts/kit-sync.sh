@@ -28,6 +28,7 @@ KIT_FILES=(
   "scripts/advisory-findings.sh"
   "scripts/apply-evidence.sh"
   "scripts/apply-keywords.sh"
+  "scripts/approve-deploy.sh"
   "scripts/attest-pr.sh"
   "scripts/codex-review-evidence.sh"
   "scripts/copilot-review-evidence.sh"
