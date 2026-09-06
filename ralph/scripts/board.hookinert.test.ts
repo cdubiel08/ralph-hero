@@ -151,7 +151,24 @@ describe("readWatchEventFireCount", () => {
       { event: "pane.exited", started_unix_ms: ms(-5) }, // wrong event type
     ]);
     const r = readWatchEventFireCount(c, ms(-60));
-    expect(r).toEqual({ kind: "ok", fired: 1 });
+    expect(r).toEqual({ kind: "ok", fired: 1, sinceMs: ms(-60) });
+  });
+
+  it("bounds the window by the oldest returned status invocation without relying on log order", () => {
+    const c = ctxWithLog([
+      { event: "pane.agent_status_changed", started_unix_ms: ms(-5) },
+      { event: "pane.exited", started_unix_ms: ms(-40) },
+      { event: "pane.agent_status_changed", started_unix_ms: ms(-10) },
+      { event: "pane.agent_status_changed", started_unix_ms: ms(-2) },
+      { event: "pane.agent_status_changed", started_unix_ms: NaN },
+    ]);
+    expect(readWatchEventFireCount(c, ms(-60)))
+      .toEqual({ kind: "ok", fired: 3, sinceMs: ms(-10) });
+  });
+
+  it("an empty log retains a finite configured cutoff", () => {
+    expect(readWatchEventFireCount(ctxWithLog([]), ms(-60)))
+      .toEqual({ kind: "ok", fired: 0, sinceMs: ms(-60) });
   });
 
   it("herdr missing or refusing is 'unavailable', not zero", () => {
@@ -256,13 +273,43 @@ describe("doctor: hook-inert (GH-2403) — advisory by construction", () => {
     expect(c.detail).toContain("0 deliberate withhold(s), 1 unexplained firing(s)");
   });
 
-  it("a bounded log with fewer firings than withholds never reports a negative gap", () => {
+  it("a withhold omitted by the bounded log cannot cancel an observed unexplained firing", () => {
+    // Both events are inside the configured hour, but only the later firing
+    // survived the machine-wide log limit. Its predecessor's withhold is not
+    // evidence about this observed invocation.
+    buildDb([spawn("w1-a#aaaa"), withholdEv(iso(-10))]);
+    const c = check(doctor(ctxWithLog([
+      { event: "pane.agent_status_changed", started_unix_ms: ms(-5) },
+    ])));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("0 deliberate withhold(s), 1 unexplained firing(s)");
+  });
+
+  it("a state write outside the observed log window cannot hide a recent inert firing", () => {
+    buildDb([spawn("w1-a#aaaa"), stateEv("w1-a#aaaa", iso(-10))]);
+    const c = check(doctor(ctxWithLog([
+      { event: "pane.agent_status_changed", started_unix_ms: ms(-5) },
+    ])));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("1 unexplained firing(s)");
+  });
+
+  it("only the in-window withhold offsets a mixed pair of observed firings", () => {
+    buildDb([spawn("w1-a#aaaa"), withholdEv(iso(-15)), withholdEv(iso(-10))]);
+    const c = check(doctor(ctxWithLog([-5, -10].map((min) => ({
+      event: "pane.agent_status_changed", started_unix_ms: ms(min),
+    })))));
+    expect(c.level).toBe("info");
+    expect(c.detail).toContain("1 deliberate withhold(s), 1 unexplained firing(s)");
+  });
+
+  it("a bounded log counts only the withhold within its observed window", () => {
     buildDb([spawn("w1-a#aaaa"), withholdEv(iso(-5)), withholdEv(iso(-10))]);
     const c = check(doctor(ctxWithLog([
       { event: "pane.agent_status_changed", started_unix_ms: ms(-5) },
     ])));
     expect(c.level).toBe("ok");
-    expect(c.detail).toContain("2 deliberate withhold(s)");
+    expect(c.detail).toContain("1 deliberate withhold(s)");
     expect(c.detail).not.toContain("unexplained");
   });
 

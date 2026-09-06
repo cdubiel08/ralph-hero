@@ -164,6 +164,7 @@ type SurfaceEnv = {
   LC_ALL?: string;
   herdrStatus?: string;
   server?: "down" | "running";
+  serverReadyAfterPolls?: number;
   dispatchRc?: number;
   reconcileRc?: number;
   resumeRc?: number;
@@ -192,6 +193,7 @@ function runSurface(
   herdrLog = join(tmp, `herdr-${fixture}.log`);
   scriptLog = join(tmp, `scripts-${fixture}.log`);
   const serverState = join(tmp, `server-state-${fixture}`);
+  const serverPendingPolls = join(tmp, `server-pending-polls-${fixture}`);
   const teamState = join(tmp, `team-state-${fixture}`);
   const scripts = join(tmp, `herdr-scripts-${fixture}`);
   const repo = join(tmp, `repo-${fixture}`);
@@ -213,6 +215,7 @@ esac
   chmodSync(join(tmp, "fake-board"), 0o755);
   if (!existsSync(serverState)) {
     writeFileSync(serverState, env.herdrStatus !== undefined ? "custom" : (env.server ?? "running"));
+    writeFileSync(serverPendingPolls, String(env.serverReadyAfterPolls ?? 0));
   }
   writeFileSync(
     join(tmp, "fake-herdr"),
@@ -225,10 +228,16 @@ case "$*" in
     ;;
   'status server --json')
     if [ "$(cat "${serverState}")" = down ]; then sleep 0.05; fi
+    state=$(cat "${serverState}")
     printf '%s\\n' "$*" >>"${herdrLog}"
-    if [ "$(cat "${serverState}")" = custom ]; then
+    if [ "$state" = custom ]; then
       printf '%s\\n' '${env.herdrStatus ?? '{"status":"running"}'}'
-    elif [ "$(cat "${serverState}")" = running ]; then
+    elif [ "$state" = running ]; then
+      pending=$(cat "${serverPendingPolls}")
+      if [ "$pending" -gt 0 ]; then
+        printf '%s' "$((pending - 1))" >"${serverPendingPolls}"
+        exit 1
+      fi
       printf '%s\\n' '{"status":"running"}'
     else
       exit 1
@@ -568,15 +577,17 @@ exit 23
     expect(r.stderr).toContain("use 'rh board inbox --digest --mark'");
   });
 
-  it("dispatch up starts a missing server and invokes only dispatch-up once", () => {
-    const r = runSurface(["dispatch", "up"], fixtureEnv({ server: "down" }));
+  it.each([0, 1])("dispatch up starts a missing server and invokes only dispatch-up once (readiness delayed by %i polls)", (serverReadyAfterPolls) => {
+    const r = runSurface(["dispatch", "up"], fixtureEnv({ server: "down", serverReadyAfterPolls }));
     expect(r.status).toBe(0);
-    expect(readLines(herdrLog)).toEqual([
-      "status server --json",
-      "server",
-      "status server --json",
-      "status server --json",
-    ]);
+    // Background startup can take extra polls on slow runners (GH-2484).
+    const calls = readLines(herdrLog);
+    expect(calls.filter((line) => line === "server")).toHaveLength(1);
+    const start = calls.indexOf("server");
+    expect(calls.slice(0, start)).toContain("status server --json");
+    expect(calls.slice(start + 1).filter((line) => line === "status server --json").length)
+      .toBeGreaterThanOrEqual(serverReadyAfterPolls + 2);
+    expect(calls.every((line) => line === "server" || line === "status server --json")).toBe(true);
     expect(readLines(scriptLog)).toEqual(["dispatch-up"]);
   });
 
