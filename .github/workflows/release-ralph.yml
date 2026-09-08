@@ -350,6 +350,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           MERGE_SHA: ${{ github.sha }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
+          RALPH_CHANGED: ${{ steps.changed.outputs.ralph_changed }}
         run: |
           set -euo pipefail
           TITLE="Release Ralph failed — ralph/** merged but unreleased"
@@ -360,7 +361,18 @@ jobs:
           # release forever. Measure the remote rather than assuming.
           STATE="the run failed before computing a version; nothing was pushed"
           REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
-          if [ -n "${NEW_VERSION:-}" ]; then
+          if [ "${RALPH_CHANGED:-}" = "false" ]; then
+            # GH-2511: the herdr-only path failed. No ralph version was
+            # computed and none was meant to be — a `workflow_dispatch` here
+            # would be the wrong remedy, since dispatch forces
+            # ralph_changed=true and cuts an unrelated ralph release
+            # (Greptile P1 on #2513). Re-running the FAILED RUN re-classifies
+            # from scratch; so does the next plugin merge, whose run reads
+            # the same still-unmoved stamp.
+            TITLE="Release Ralph failed — ralph-herdr stamp not moved for a plugin-only merge"
+            STATE="ralph/** was unchanged, so no ralph version was computed; the herdr stamp bump did not land"
+            REMEDY="Re-run the failed run itself (Actions → Re-run jobs), or let the next plugin merge's run pick the stamp up. **Do not \`workflow_dispatch\`**: it forces a ralph release for a ralph that did not change."
+          elif [ -n "${NEW_VERSION:-}" ]; then
             TAG="ralph-v${NEW_VERSION}"
             # `--exit-code` distinguishes the two answers that must not be
             # conflated: 0 = the tag is there, 2 = it is definitively absent,
