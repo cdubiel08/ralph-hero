@@ -402,7 +402,10 @@ run_ad "$dir" "$POLICY" 2451 4242 --env staging
 expect "foreign-only references explicitly retain operator trust" 0 "not referenced by any PR in testowner/testrepo yet — proceeding operator-trusted"
 
 # A truncated cross-reference page is not the relationship set: neither a
-# refusal nor a confirmation may be judged on it (PR #2478 review).
+# refusal nor a confirmation may be judged on it (PR #2478 review) — but a
+# KNOWN truncated read is an unjudgeable gate input, so it must refuse
+# (exit 75) rather than degrade to operator-trusted and post evidence
+# (GH-2499).
 dir=$(new_case)
 echo "$PENDING" >"$dir/pending.json"
 echo "$RUN_DONE" >"$dir/run.json"
@@ -411,15 +414,16 @@ echo "$NO_TWINS" >"$dir/twins.json"
 echo '[{"number":9001}]' >"$dir/run_prs.json"
 echo '{"data":{"repository":{"issue":{"timelineItems":{"pageInfo":{"hasNextPage":true},"nodes":[{"source":{"number":8000,"repository":{"nameWithOwner":"testowner/testrepo"}}}]}}}}}' >"$dir/issue_refs.json"
 run_ad "$dir" "$POLICY" 2451 4242 --env staging
-expect "a truncated timeline is not judged as a mismatch" 0 "APPLY EVIDENCE POSTED"
-expect "the truncation is named as the reason for degrading" 0 "page truncated"
+expect "a truncated timeline refuses (exit 75), never posts" 75 "page truncated, cannot establish linkage"
+if [[ -f "$dir/posted.md" ]]; then fail "no evidence posted on a truncated timeline" "posted.md exists"; else pass "no evidence posted on a truncated timeline"; fi
 
 # Even a visible matching PR must not confirm an incomplete relationship set.
 for nodes in '[{"source":{"number":9001,"repository":{"nameWithOwner":"testowner/testrepo"}}}]' '[]'; do
   jq --argjson nodes "$nodes" '.data.repository.issue.timelineItems.nodes = $nodes' "$dir/issue_refs.json" >"$dir/next_refs.json"
   mv "$dir/next_refs.json" "$dir/issue_refs.json"
   run_ad "$dir" "$POLICY" 2451 4242 --env staging
-  expect "truncated matching/empty page withholds the verdict" 0 "page truncated, cannot establish linkage; proceeding operator-trusted"
+  expect "truncated matching/empty page refuses rather than judges" 75 "page truncated, cannot establish linkage"
+  if [[ -f "$dir/posted.md" ]]; then fail "truncated page must not post evidence"; else pass "truncated page never posts evidence"; fi
   if grep -qF -- '— confirmed' <<<"$LAST_OUT"; then fail "truncated page must not confirm linkage"; else pass "truncated page never confirms linkage"; fi
 done
 
