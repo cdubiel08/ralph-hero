@@ -314,23 +314,33 @@ jobs:
           fi
           echo "All .mcp.json pins resolve on the npm registry."
 
-  # GH-1976. The herdr half of the cockpit has no `plugin update`, so the
-  # version in plugin/ralph-herdr/herdr-plugin.toml is the ONLY thing that
-  # tells an installed cockpit to reinstall — and GH-1808 changed the spawn
-  # path without moving it. The existing check compares the two stamps to each
-  # other, which says nothing about whether either tracks the code.
+  # GH-1976, narrowed by GH-2491. The herdr half of the cockpit has no
+  # `plugin update`, so the version in plugin/ralph-herdr/herdr-plugin.toml is
+  # the ONLY thing that tells an installed cockpit to reinstall. GH-1976 made
+  # this job require a per-PR bump on any behavior-surface diff; with 8-12
+  # ralph-herdr PRs open at once that collided on nearly every merge (16 CI
+  # failures, 12 rebase conflicts measured 2026-09-02..04). GH-2491 moved the
+  # bump to release time (scripts/herdr-plugin-release-bump.sh, run from
+  # release-ralph.yml) and left this job checking only what doesn't depend on
+  # WHEN the stamp moves: the manifest is valid TOML (GH-2431), reported
+  # alongside an informational behavior-file count.
+  #
+  # Renamed from `herdr-version-bump` on the same PR that removed the bump
+  # requirement, so a branch ruleset still pinned to the old required-context
+  # name shows up as a difference `scripts/ruleset-contexts.sh` names, not a
+  # silently-satisfied stale rule.
   #
   # pull_request only: on a push to main the range is the merge itself, which
   # has already been judged here. fetch-depth 0 because the guard needs the
   # base commit, and it errors (never passes) when it cannot resolve one.
-  herdr-version-bump:
+  herdr-manifest-check:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Guard the ralph-herdr version stamp
+      - name: Guard the ralph-herdr manifest
         run: bash scripts/check-herdr-version-bump.sh "${{ github.event.pull_request.base.sha }}" HEAD
 
   lint-workflows:

@@ -164,7 +164,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add ralph/.claude-plugin/plugin.json
-          git commit -m "chore(ralph): release ralph-v${NEW_VERSION} [skip ci]"
+          COMMIT_MSG="chore(ralph): release ralph-v${NEW_VERSION} [skip ci]"
+          git commit -m "$COMMIT_MSG"
           # Rebase BEFORE tagging (GH-1952). This is not hypothetical: on
           # 2026-08-15 the winning run tagged 43aa4ce8, then rebased onto a
           # main that had advanced — moving the commit and leaving the tag on
@@ -172,6 +173,26 @@ jobs:
           # because of it. The concurrency group prevents two release jobs
           # interleaving, not unrelated pushes.
           git pull --rebase origin main
+          # GH-2491: the ralph-herdr stamp. plugin/ralph-herdr/** has no
+          # release trigger of its own — it rides whatever run ralph/** fires
+          # — and its stamp used to be a per-PR CI requirement that, with
+          # 8-12 herdr PRs open at once, collided on nearly every merge. It
+          # now moves here, at most once per release, only when the plugin's
+          # behavior surface changed since the last ralph-v* tag. Computed
+          # AFTER the rebase and immediately before the tag, deliberately: a
+          # herdr behavior merge landing between "Advance to current main"
+          # and the rebase would otherwise be tagged under a stale stamp and,
+          # sitting below the tag, be invisible to every later run's diff
+          # (Greptile P1 on #2507). The residual window is the push itself —
+          # a non-fast-forward there fails the job, as it does for ralph's
+          # own bump. A skip is not a failure: most ralph releases carry no
+          # herdr change, so the script's bumped=false is the common answer.
+          HERDR_OUT=$(bash scripts/herdr-plugin-release-bump.sh)
+          if grep -q '^bumped=true$' <<<"$HERDR_OUT"; then
+            HERDR_NEW=$(sed -n 's/^new=//p' <<<"$HERDR_OUT")
+            git add plugin/ralph-herdr/herdr-plugin.toml ralph/scripts/herdr-plugin-version
+            git commit -q --amend -m "$(printf '%s\n\nchore(ralph-herdr): bump plugin stamp to %s' "$COMMIT_MSG" "$HERDR_NEW")"
+          fi
           git tag "ralph-v${NEW_VERSION}"
           # GH-1589: push via the release deploy key — the sole bypass actor
           # on the protected-main ruleset. GITHUB_TOKEN pushes are blocked by
