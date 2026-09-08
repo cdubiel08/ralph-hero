@@ -368,6 +368,11 @@ run_ad "$dir" "$POLICY" 2451 4242 --env staging
 expect "a run whose PR references a DIFFERENT issue is refused" 1 "does not reference #2451"
 expect "the refusal names what ISSUE is actually referenced by" 1 "referenced by PR(s) 8000"
 if [[ -f "$dir/posted.md" ]]; then fail "no evidence posted on a linkage mismatch" "posted.md exists"; else pass "no evidence posted on a linkage mismatch"; fi
+# GH-2505: the mismatch must be caught BEFORE the deployment is approved —
+# the whole point of moving the check is that an approval, once sent, cannot
+# be undone, so a mismatch must refuse ahead of the POST, not just withhold
+# evidence after it.
+if [[ -f "$dir/approve_calls.log" ]]; then fail "GH-2505: a linkage mismatch must refuse before approving" "approve_calls.log exists"; else pass "GH-2505: a linkage mismatch never reaches the approval POST"; fi
 
 dir=$(new_case)
 echo "$PENDING" >"$dir/pending.json"
@@ -416,6 +421,9 @@ echo '{"data":{"repository":{"issue":{"timelineItems":{"pageInfo":{"hasNextPage"
 run_ad "$dir" "$POLICY" 2451 4242 --env staging
 expect "a truncated timeline refuses (exit 75), never posts" 75 "page truncated, cannot establish linkage"
 if [[ -f "$dir/posted.md" ]]; then fail "no evidence posted on a truncated timeline" "posted.md exists"; else pass "no evidence posted on a truncated timeline"; fi
+# GH-2505: same as the mismatch case above — a truncated (unjudgeable)
+# timeline must refuse before the deployment is approved, not after.
+if [[ -f "$dir/approve_calls.log" ]]; then fail "GH-2505: a truncated timeline must refuse before approving" "approve_calls.log exists"; else pass "GH-2505: a truncated timeline never reaches the approval POST"; fi
 
 # Even a visible matching PR must not confirm an incomplete relationship set.
 for nodes in '[{"source":{"number":9001,"repository":{"nameWithOwner":"testowner/testrepo"}}}]' '[]'; do
@@ -435,6 +443,31 @@ for page_info in '{}' '{"hasNextPage":null}' '{"hasNextPage":"false"}'; do
   expect "unreadable pagination explicitly withholds the verdict" 0 "cross-reference pagination — proceeding operator-trusted"
   if grep -qF -- '— confirmed' <<<"$LAST_OUT"; then fail "unknown pagination must not confirm linkage"; else pass "unknown pagination never confirms linkage"; fi
 done
+
+echo "== GH-2505: the linkage check runs BEFORE the approval POST, not after =="
+
+# A run paused at a pending-deployment gate already has its head_sha (set at
+# trigger time, not conclusion) — so the linkage check can and must run
+# ahead of approval. Assert the actual output ORDER, not just presence: the
+# "confirmed" line must precede "--- approved:", proving the reorder rather
+# than merely inferring it from approve_calls.log's absence in the refusal
+# cases above.
+dir=$(new_case)
+echo "$PENDING" >"$dir/pending.json"
+echo "$RUN_DONE" >"$dir/run.json"
+echo "$GOOD_RUNS_FOR_EVIDENCE" >"$dir/runs.json"
+echo "$NO_TWINS" >"$dir/twins.json"
+echo '[{"number":9001}]' >"$dir/run_prs.json"
+echo '{"data":{"repository":{"issue":{"timelineItems":{"pageInfo":{"hasNextPage":false},"nodes":[{"source":{"number":9001,"repository":{"nameWithOwner":"testowner/testrepo"}}}]}}}}}' >"$dir/issue_refs.json"
+run_ad "$dir" "$POLICY" 2451 4242 --env staging
+expect "linkage still confirms and evidence still posts" 0 "APPLY EVIDENCE POSTED"
+linkage_line=$(grep -n -- "— confirmed" <<<"$LAST_OUT" | head -1 | cut -d: -f1)
+approved_line=$(grep -n -- "--- approved:" <<<"$LAST_OUT" | head -1 | cut -d: -f1)
+if [[ -n "$linkage_line" && -n "$approved_line" && "$linkage_line" -lt "$approved_line" ]]; then
+  pass "GH-2505: linkage confirmation is printed before the approval line"
+else
+  fail "GH-2505: linkage must precede approval in output order" "linkage_line=$linkage_line approved_line=$approved_line out: $LAST_OUT"
+fi
 
 echo
 echo "approve-deploy: $PASS passed, $FAIL failed"

@@ -135,6 +135,25 @@ if [[ -z "$env_id" ]]; then
   exit 1
 fi
 
+# --- read RUN's identity up front (GH-2505) ---------------------------------
+# A run paused at a pending-deployment gate already has its head_sha: GitHub
+# sets it at trigger time (the commit that started the run), not at
+# conclusion, so it is readable here whether or not any job on the run has
+# started. Reading it now — before approval — is what lets the linkage check
+# below run before the approval POST instead of after: previously it read
+# head_sha only from the post-approval conclusion poll, which is exactly why
+# every branch of that check ran too late to prevent an unverifiable deploy,
+# only its evidence (GH-2505). An unreadable run here degrades the same way
+# an unreadable linkage input always has in this script — proceed
+# operator-trusted rather than block on a read that isn't the thing being
+# judged.
+head_sha="" workflow_name=""
+run_json=$(gh api "repos/{owner}/{repo}/actions/runs/$RUN" 2>/dev/null) || run_json=""
+if jq -e . >/dev/null 2>&1 <<<"$run_json"; then
+  head_sha=$(jq -r '.head_sha // ""' <<<"$run_json")
+  workflow_name=$(jq -r '.name // ""' <<<"$run_json")
+fi
+
 # --- lead: escalate, never approve -------------------------------------------
 if [[ "$GRANT" == "lead" ]]; then
   why="deploy approval needed: environment '$ENV_NAME' (grant=lead per $POLICY_FILE), run $RUN pending"
@@ -155,6 +174,102 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
+# --- verify RUN's deployment actually belongs to ISSUE, BEFORE approving ----
+# (GH-2469, moved ahead of the approval POST by GH-2505)
+#
+# ISSUE is operator-supplied argv; a copy-paste error (right RUN, wrong
+# ISSUE) would otherwise post evidence — and eventually close — an unrelated
+# apply unit. RUN's own head_sha resolves to the PR GitHub associates with
+# that commit; ISSUE's cross-reference timeline names every PR that mentions
+# it, closing keyword or bare "Refs #N" alike — apply units are deliberately
+# never CLOSED by a keyword (CLAUDE.md's "no closing keyword may bind an
+# apply unit"), so closingIssuesReferences alone would read empty for every
+# correctly-configured apply unit; CROSS_REFERENCED_EVENT catches the
+# reference either way, same as a closing one. Overlap between the two sets
+# is the confirmation. Either read failing, RUN having no associated PR, or
+# ISSUE having no recorded reference yet all degrade to today's
+# operator-trusted behaviour — a fixture that can't be read is not evidence
+# of a mismatch, and blocking on it would refuse a legitimate deploy that
+# just has nothing to cross-check against (e.g. a manual/dispatch run).
+#
+# This must run BEFORE the approval POST below: once GitHub approves a
+# pending deployment it cannot be un-approved, so a check that only ran
+# after the run concluded (the pre-GH-2505 shape) could withhold evidence
+# but never prevent the deploy itself. An empty head_sha here (the early
+# read above couldn't read RUN at all) degrades the same way an unreadable
+# PR/timeline read already does — proceed operator-trusted rather than
+# block approval on a read that isn't itself the thing being judged.
+if [[ -z "$head_sha" ]]; then
+  echo "--- linkage: could not read run $RUN's commit — proceeding operator-trusted (GH-2505)"
+else
+  nwo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+  run_pr_list=""
+  if [[ -n "$nwo" ]]; then
+    run_prs_json=$(gh api "repos/$nwo/commits/$head_sha/pulls" 2>/dev/null || echo "")
+    if jq -e 'type == "array"' >/dev/null 2>&1 <<<"$run_prs_json"; then
+      run_pr_list=$(jq -r '.[].number' <<<"$run_prs_json")
+    fi
+  fi
+
+  if [[ -z "$nwo" || -z "$run_pr_list" ]]; then
+    echo "--- linkage: could not resolve a PR for run $RUN's commit ${head_sha:0:8} — proceeding operator-trusted (GH-2469)"
+  else
+    # Own-repo references only: a PR in another repository (a fork, a cross-repo
+    # mention) can share the run's PR NUMBER, and a number-only overlap would let
+    # it vouch for a deploy it has nothing to do with (PR #2478 review). The
+    # source's repository is read and filtered against the run's own.
+    issue_refs_json=$(gh api graphql -f owner="${nwo%%/*}" -f repo="${nwo##*/}" -F n="$ISSUE" -f query='
+      query($owner:String!,$repo:String!,$n:Int!){
+        repository(owner:$owner,name:$repo){ issue(number:$n){
+          timelineItems(first:100, itemTypes:[CROSS_REFERENCED_EVENT]){
+            pageInfo{ hasNextPage }
+            nodes{ ... on CrossReferencedEvent{ source{ ... on PullRequest{ number repository{ nameWithOwner } } } } }
+          }
+        } } }' 2>/dev/null || echo "")
+    if ! jq -e '.data.repository.issue.timelineItems.nodes | type == "array"' >/dev/null 2>&1 <<<"$issue_refs_json"; then
+      echo "--- linkage: could not read #$ISSUE's cross-reference timeline — proceeding operator-trusted (GH-2469)"
+    elif ! jq -e '.data.repository.issue.timelineItems.pageInfo.hasNextPage | type == "boolean"' >/dev/null 2>&1 <<<"$issue_refs_json"; then
+      echo "--- linkage: could not read #$ISSUE's cross-reference pagination — proceeding operator-trusted (GH-2481)"
+    elif [[ "$(jq -r '.data.repository.issue.timelineItems.pageInfo.hasNextPage' <<<"$issue_refs_json")" == "true" ]]; then
+      # A truncated page is not the relationship set: the run's PR may sit past
+      # it (a false refusal) or the visible page may be empty of PRs (a false
+      # pass) — neither reading is evidence, so this may not be judged on half a
+      # list (PR #2478 review). But unlike the other branches here (the read
+      # itself failed, RUN has no associated PR, ISSUE has no reference yet),
+      # this one is a KNOWN truncated read, not an absent input — this repo's
+      # rule for an unjudgeable gate input is a typed temporary failure, not a
+      # pass-through (GH-1973, GH-2261's read_failed; GH-2499). Refuse rather
+      # than let this script approve a deployment a truncated timeline can't back.
+      echo "ERROR: #$ISSUE has more than 100 cross-references — page truncated, cannot establish linkage." >&2
+      echo "       Re-run once the timeline is under 100 events, or verify the ISSUE/RUN pairing by hand" >&2
+      echo "       and approve/post evidence directly." >&2
+      exit 75
+    else
+      ref_pr_list=$(jq -r --arg nwo "$nwo" '
+        [ .data.repository.issue.timelineItems.nodes[].source
+          | select(.repository.nameWithOwner == $nwo) | .number // empty ] | unique | .[]' <<<"$issue_refs_json")
+      if [[ -z "$ref_pr_list" ]]; then
+        echo "--- linkage: #$ISSUE is not referenced by any PR in $nwo yet — proceeding operator-trusted (GH-2469)"
+      else
+        match=""
+        while read -r rp; do
+          [[ -n "$rp" ]] || continue
+          if grep -qxF "$rp" <<<"$run_pr_list"; then match="$rp"; break; fi
+        done <<<"$ref_pr_list"
+        if [[ -z "$match" ]]; then
+          echo "ERROR: run $RUN's commit (PR $(tr '\n' ',' <<<"$run_pr_list" | sed 's/,$//')) does not reference #$ISSUE." >&2
+          echo "       #$ISSUE is instead referenced by PR(s) $(tr '\n' ',' <<<"$ref_pr_list" | sed 's/,$//')." >&2
+          echo "       This looks like a copy-paste error (right RUN, wrong ISSUE, or vice versa) — refusing" >&2
+          echo "       to approve a deploy that may not belong to this apply unit. Re-run with the" >&2
+          echo "       correct ISSUE/RUN pairing, or approve by hand if this is actually correct." >&2
+          exit 1
+        fi
+        echo "--- linkage: run $RUN's PR #$match references #$ISSUE — confirmed (GH-2469)"
+      fi
+    fi
+  fi
+fi
+
 # gb_gh, not a bare gh call: an exhausted-budget write that GitHub silently
 # no-ops must not be reported here as an approval that landed (GH-1817).
 # Anything gh itself refuses (not a required reviewer, self-approval, ...) is
@@ -172,7 +287,10 @@ echo "--- approved: environment '$ENV_NAME' on run $RUN"
 
 # --- wait for the run to conclude, bounded ----------------------------------
 elapsed=0
-status="" conclusion="" head_sha="" workflow_name=""
+status="" conclusion=""
+# head_sha/workflow_name are already seeded from the pre-approval read above
+# (GH-2505) — not reset here, so a flaky poll never loses what that read
+# already established.
 while (( elapsed < timeout_sec )); do
   run_json=$(gh api "repos/{owner}/{repo}/actions/runs/$RUN" 2>/dev/null) || run_json=""
   # A read that failed (empty/unparseable run_json) must not CLOBBER the last
@@ -223,89 +341,6 @@ if [[ "$conclusion" != "success" ]]; then
 fi
 
 echo "--- run $RUN concluded success ($workflow_name @ ${head_sha:0:8}) — posting apply evidence"
-
-# --- verify RUN's deployment actually belongs to ISSUE (GH-2469) ------------
-#
-# ISSUE is operator-supplied argv; a copy-paste error (right RUN, wrong
-# ISSUE) would otherwise post evidence — and eventually close — an unrelated
-# apply unit. RUN's own head_sha resolves to the PR GitHub associates with
-# that commit; ISSUE's cross-reference timeline names every PR that mentions
-# it, closing keyword or bare "Refs #N" alike — apply units are deliberately
-# never CLOSED by a keyword (CLAUDE.md's "no closing keyword may bind an
-# apply unit"), so closingIssuesReferences alone would read empty for every
-# correctly-configured apply unit; CROSS_REFERENCED_EVENT catches the
-# reference either way, same as a closing one. Overlap between the two sets
-# is the confirmation. Either read failing, RUN having no associated PR, or
-# ISSUE having no recorded reference yet all degrade to today's
-# operator-trusted behaviour — a fixture that can't be read is not evidence
-# of a mismatch, and blocking on it would refuse a legitimate deploy that
-# just has nothing to cross-check against (e.g. a manual/dispatch run).
-nwo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
-run_pr_list=""
-if [[ -n "$nwo" ]]; then
-  run_prs_json=$(gh api "repos/$nwo/commits/$head_sha/pulls" 2>/dev/null || echo "")
-  if jq -e 'type == "array"' >/dev/null 2>&1 <<<"$run_prs_json"; then
-    run_pr_list=$(jq -r '.[].number' <<<"$run_prs_json")
-  fi
-fi
-
-if [[ -z "$nwo" || -z "$run_pr_list" ]]; then
-  echo "--- linkage: could not resolve a PR for run $RUN's commit ${head_sha:0:8} — proceeding operator-trusted (GH-2469)"
-else
-  # Own-repo references only: a PR in another repository (a fork, a cross-repo
-  # mention) can share the run's PR NUMBER, and a number-only overlap would let
-  # it vouch for a deploy it has nothing to do with (PR #2478 review). The
-  # source's repository is read and filtered against the run's own.
-  issue_refs_json=$(gh api graphql -f owner="${nwo%%/*}" -f repo="${nwo##*/}" -F n="$ISSUE" -f query='
-    query($owner:String!,$repo:String!,$n:Int!){
-      repository(owner:$owner,name:$repo){ issue(number:$n){
-        timelineItems(first:100, itemTypes:[CROSS_REFERENCED_EVENT]){
-          pageInfo{ hasNextPage }
-          nodes{ ... on CrossReferencedEvent{ source{ ... on PullRequest{ number repository{ nameWithOwner } } } } }
-        }
-      } } }' 2>/dev/null || echo "")
-  if ! jq -e '.data.repository.issue.timelineItems.nodes | type == "array"' >/dev/null 2>&1 <<<"$issue_refs_json"; then
-    echo "--- linkage: could not read #$ISSUE's cross-reference timeline — proceeding operator-trusted (GH-2469)"
-  elif ! jq -e '.data.repository.issue.timelineItems.pageInfo.hasNextPage | type == "boolean"' >/dev/null 2>&1 <<<"$issue_refs_json"; then
-    echo "--- linkage: could not read #$ISSUE's cross-reference pagination — proceeding operator-trusted (GH-2481)"
-  elif [[ "$(jq -r '.data.repository.issue.timelineItems.pageInfo.hasNextPage' <<<"$issue_refs_json")" == "true" ]]; then
-    # A truncated page is not the relationship set: the run's PR may sit past
-    # it (a false refusal) or the visible page may be empty of PRs (a false
-    # pass) — neither reading is evidence, so this may not be judged on half a
-    # list (PR #2478 review). But unlike the other branches here (the read
-    # itself failed, RUN has no associated PR, ISSUE has no reference yet),
-    # this one is a KNOWN truncated read, not an absent input — this repo's
-    # rule for an unjudgeable gate input is a typed temporary failure, not a
-    # pass-through (GH-1973, GH-2261's read_failed; GH-2499). Refuse rather
-    # than let apply-evidence.sh post evidence a truncated timeline can't back.
-    echo "ERROR: #$ISSUE has more than 100 cross-references — page truncated, cannot establish linkage." >&2
-    echo "       Re-run once the timeline is under 100 events, or verify the ISSUE/RUN pairing by hand" >&2
-    echo "       and post evidence directly with scripts/apply-evidence.sh." >&2
-    exit 75
-  else
-    ref_pr_list=$(jq -r --arg nwo "$nwo" '
-      [ .data.repository.issue.timelineItems.nodes[].source
-        | select(.repository.nameWithOwner == $nwo) | .number // empty ] | unique | .[]' <<<"$issue_refs_json")
-    if [[ -z "$ref_pr_list" ]]; then
-      echo "--- linkage: #$ISSUE is not referenced by any PR in $nwo yet — proceeding operator-trusted (GH-2469)"
-    else
-      match=""
-      while read -r rp; do
-        [[ -n "$rp" ]] || continue
-        if grep -qxF "$rp" <<<"$run_pr_list"; then match="$rp"; break; fi
-      done <<<"$ref_pr_list"
-      if [[ -z "$match" ]]; then
-        echo "ERROR: run $RUN's commit (PR $(tr '\n' ',' <<<"$run_pr_list" | sed 's/,$//')) does not reference #$ISSUE." >&2
-        echo "       #$ISSUE is instead referenced by PR(s) $(tr '\n' ',' <<<"$ref_pr_list" | sed 's/,$//')." >&2
-        echo "       This looks like a copy-paste error (right RUN, wrong ISSUE, or vice versa) — refusing" >&2
-        echo "       to post evidence for a deploy that may not belong to this apply unit. Re-run with the" >&2
-        echo "       correct ISSUE/RUN pairing, or post evidence by hand if this is actually correct." >&2
-        exit 1
-      fi
-      echo "--- linkage: run $RUN's PR #$match references #$ISSUE — confirmed (GH-2469)"
-    fi
-  fi
-fi
 
 exec "$HERE/apply-evidence.sh" "$ISSUE" --kind run --workflow "$workflow_name" --merge-sha "$head_sha" \
   --notes "${NOTES:-deployed to $ENV_NAME via run $RUN (autonomous grant)}"
