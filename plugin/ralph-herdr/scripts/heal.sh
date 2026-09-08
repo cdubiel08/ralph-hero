@@ -148,6 +148,21 @@ ralph_heal_lead_death() (
   case "$rc" in
     0)
       log "lead $ref died (reason $reason) — respawn ran for GH-$epic: $(printf '%s' "$out" | tail -1)"
+      # GH-2475: every root worker refill_one recorded parentless during the
+      # dead window (no live generation to parent under, at spawn time) now
+      # has one — the just-respawned lead's OWN open ref, read back fresh
+      # rather than assumed, since the respawn above is what minted it.
+      # Best-effort: an unreadable new ref or a reparent failure costs this
+      # one lineage repair, never the heal itself.
+      new_ref=$(RALPH_HERDR_LEDGER="$ledger" ralph_ledger_open_ref "${ref%%#*}" 2>/dev/null) || new_ref=""
+      if [ -n "$new_ref" ] && command -v ralph_ledger_reparent_dead_window_roots >/dev/null 2>&1; then
+        reparented=$(RALPH_HERDR_LEDGER="$ledger" ralph_ledger_reparent_dead_window_roots \
+          "$epic" "${ref%%#*}" "$new_ref" 2>/dev/null) || reparented=""
+        printf '%s\n' "$reparented" | while IFS= read -r child; do
+          [ -n "$child" ] || continue
+          log "lead $ref died — GH-$epic worker $child was refilled during the dead window (recorded rootless) and now re-parents to the live lead $new_ref"
+        done
+      fi
       ;;
     4)
       # work-team.sh's clean refusal: the epic is closed or complete. This is

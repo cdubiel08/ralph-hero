@@ -576,13 +576,25 @@ if [ -n "$REFILL" ]; then
     # shellcheck disable=SC2086  # intentional word-splitting: one argv per issue
     fleet_file=$(ralph_fleet_arm "$FLEET" 1 $spawned_issues) || arm_rc=$?
     if [ -n "$EPIC" ]; then
-      [ "$arm_rc" -ne 0 ] || superseded=$(ralph_fleet_supersede_epic "$EPIC" "$RALPH_HERDR_RUN_ID")
+      [ "$arm_rc" -ne 0 ] || superseded=$(ralph_fleet_supersede_epic "$EPIC" "$RALPH_HERDR_RUN_ID" || true)
       [ -z "${scope_ledger:-}" ] || ralph_ledger_unlock "$scope_ledger"
     fi
     # Piped, never a here-string (this file's own GH-2382 note): a caller
-    # under containment cannot materialize `<<<` in /tmp.
+    # under containment cannot materialize `<<<` in /tmp. A FAILED: entry
+    # (GH-2475) is the disarm-rewrite failure ralph_fleet_supersede_epic's rc
+    # 1 names — surfaced as a WARNING here rather than a silent ARMED, since
+    # the old run is still racing this one's frontier under the held lock's
+    # own rc being swallowed used to hide exactly that.
     printf '%s\n' "$superseded" | while IFS= read -r old_run; do
-      [ -n "$old_run" ] && echo "  refill: superseded GH-$EPIC's earlier armed run $old_run (disarmed — this run is the team's refiller now)"
+      case "$old_run" in
+        FAILED:*)
+          echo "  refill: WARNING — earlier run ${old_run#FAILED:} still ARMED (its disarm rewrite failed) — it will keep racing GH-$EPIC's frontier alongside this run; disarm it by hand"
+          ;;
+        "") ;;
+        *)
+          echo "  refill: superseded GH-$EPIC's earlier armed run $old_run (disarmed — this run is the team's refiller now)"
+          ;;
+      esac
     done
     if [ "$arm_rc" -eq 0 ]; then
       echo "  refill: ARMED (opt-in only — the claim-TTL probe says NO-GO for unattended arming; stay at the keyboard) — $fleet_file"

@@ -238,8 +238,16 @@ ralph_fleet_arm() {
 # taken; a bare call locks per file. A run whose rewrite FAILS is reported
 # on stderr as still armed and is NOT printed as superseded (review finding):
 # the printed list is the set actually retired, never the set attempted.
+#
+# RC (GH-2475): 0 when every disarm attempted actually landed (including
+# nothing to supersede); 1 when at least one old run's rewrite failed and is
+# STILL ARMED. A failed run's id still prints — on its own line, prefixed
+# `FAILED:` so a caller can tell "retired" from "still racing the frontier"
+# without re-parsing stderr — the caller (work-fleet.sh) turns that into a
+# WARNING line in its summary rather than letting a silent rc 0 read as
+# ARMED-and-clean.
 ralph_fleet_supersede_epic() {
-  local epic="${1-}" new_id="${2-}" ledger runs ff id scope held
+  local epic="${1-}" new_id="${2-}" ledger runs ff id scope held rc=0
   case "$epic" in '' | *[!0-9]*) return 0 ;; esac
   ledger=$(ralph_ledger_path "${REPO:-$PWD}" 2>/dev/null) || return 0
   runs="$(dirname "$ledger")/runs"
@@ -258,10 +266,12 @@ ralph_fleet_supersede_epic() {
       printf '%s\n' "$id"
     else
       echo "ralph_fleet_supersede_epic: could not disarm run $id ($ff) — it is STILL ARMED beside ${new_id:-the new run}; disarm it by hand (two armed runs race one epic's frontier)" >&2
+      printf 'FAILED:%s\n' "$id"
+      rc=1
     fi
     [ -n "$held" ] || ralph_ledger_unlock "$scope"
   done
-  return 0
+  return "$rc"
 }
 
 # ralph_fleet_state [FLEET_FILE] — read + validate a fleet.json (default: the
