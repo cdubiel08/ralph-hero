@@ -30,12 +30,27 @@ name: Release Ralph
 #
 # Loop prevention: the bump commit message ends with "[skip ci]" so it
 # doesn't re-trigger this workflow.
+#
+# GH-2511: plugin/ralph-herdr/** carried no trigger path of its own — a
+# plugin-only merge (no ralph/** diff) fired nothing, so the GH-2491 herdr
+# stamp waited for the next unrelated ralph/** merge instead of moving at
+# the merge that actually changed it. `plugin/ralph-herdr/**` is a second,
+# coarser trigger path: a path filter can't call out to
+# scripts/lib/herdr-behavior-surface.sh, so this is a superset (it also
+# fires on a docs- or test-only plugin change, which turns out to carry no
+# behavior change either). The "Classify what changed" step decides
+# separately whether ralph/** itself changed since the last tag — if not,
+# "Commit bump and tag" skips the ralph version/tag/release entirely and
+# only moves the herdr stamp (via the existing behavior-surface check in
+# scripts/herdr-plugin-release-bump.sh) when there is one to move. A
+# superset trigger costs an extra job run at most, never a wrong release.
 
 on:
   push:
     branches: [main]
     paths:
       - 'ralph/**'
+      - 'plugin/ralph-herdr/**'
   workflow_dispatch:
     inputs:
       bump:
@@ -104,8 +119,71 @@ jobs:
           git fetch --force --tags origin main
           git checkout --force -B release-bump FETCH_HEAD
 
+      # GH-2511: the plugin-only trigger above is a superset (paths can't
+      # call out to scripts/lib/herdr-behavior-surface.sh), so a push that
+      # matched it may carry no ralph/** change at all — cutting a ralph
+      # release for that would bump a version nothing in ralph/ backs. The
+      # herdr stamp file itself (ralph/scripts/herdr-plugin-version) is
+      # excluded from this diff: it lives under ralph/** but is a byproduct
+      # of a PRIOR herdr-only bump (below), never real ralph work, and
+      # counting it would make that prior bump look like a reason to cut a
+      # real ralph release on the very next run.
+      #
+      # The same step names the herdr stamp's own diff base (`herdr_base`).
+      # A herdr-only bump (below) lands on main WITHOUT a tag, so "since the
+      # last ralph-v* tag" would keep seeing that generated manifest change
+      # as new behavior and bump the stamp again on every later run — a
+      # docs-only plugin push included (Greptile P1 on #2513). The base is
+      # therefore whichever is later of the last tag and the last commit
+      # that touched the stamp file; the stamp file is written only by this
+      # workflow, so that commit IS the last time the stamp moved.
+      - name: Classify what changed since the last release
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          STAMP="ralph/scripts/herdr-plugin-version"
+          LAST_TAG=$(git tag --list 'ralph-v*' | sed 's/^ralph-v//' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          HERDR_BASE=""
+          if [ -n "$LAST_TAG" ]; then
+            HERDR_BASE="ralph-v${LAST_TAG}"
+            STAMP_COMMIT=$(git log -1 --format=%H -- "$STAMP")
+            if [ -n "$STAMP_COMMIT" ] \
+              && git merge-base --is-ancestor "$HERDR_BASE" "$STAMP_COMMIT" \
+              && ! git merge-base --is-ancestor "$STAMP_COMMIT" "$HERDR_BASE"; then
+              HERDR_BASE="$STAMP_COMMIT"
+              echo "herdr diff base: ${STAMP_COMMIT} (stamp moved after ralph-v${LAST_TAG} without a tag)"
+            else
+              echo "herdr diff base: ralph-v${LAST_TAG}"
+            fi
+          fi
+          echo "herdr_base=$HERDR_BASE" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "ralph_changed=true" >> "$GITHUB_OUTPUT"
+            echo "workflow_dispatch: explicit request, always cuts a ralph release"
+            exit 0
+          fi
+          if [ -z "$LAST_TAG" ]; then
+            echo "ralph_changed=true" >> "$GITHUB_OUTPUT"
+            echo "No ralph-v* tag found yet — treating as changed"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "ralph-v${LAST_TAG}" HEAD \
+            -- ralph/ ":(exclude)$STAMP")
+          if [ -n "$CHANGED" ]; then
+            echo "ralph_changed=true" >> "$GITHUB_OUTPUT"
+            echo "ralph/** changed since ralph-v${LAST_TAG}:"
+            printf '  %s\n' $CHANGED
+          else
+            echo "ralph_changed=false" >> "$GITHUB_OUTPUT"
+            echo "ralph/** unchanged since ralph-v${LAST_TAG} — plugin-only push (GH-2511), no ralph release to cut"
+          fi
+
       - name: Compute next version
         id: version
+        if: steps.changed.outputs.ralph_changed == 'true'
         env:
           BUMP_TYPE: ${{ steps.bump.outputs.type }}
         run: |
@@ -145,6 +223,7 @@ jobs:
           echo "Current: $CURRENT  →  New: $NEW_VERSION"
 
       - name: Write bumped version to plugin.json
+        if: steps.changed.outputs.ralph_changed == 'true'
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
         run: |
@@ -158,11 +237,64 @@ jobs:
       - name: Commit bump and tag
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
+          RALPH_CHANGED: ${{ steps.changed.outputs.ralph_changed }}
+          HERDR_BASE: ${{ steps.changed.outputs.herdr_base }}
           RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # GH-1589: push via the release deploy key — the sole bypass actor
+          # on the protected-main ruleset. GITHUB_TOKEN pushes are blocked by
+          # the pull_request rule, and the github-actions app cannot be a
+          # bypass actor on user-owned repos. Both branches below push, so
+          # the key is set up once, unconditionally.
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$RELEASE_DEPLOY_KEY" > "$HOME/.ssh/release_key"
+          chmod 600 "$HOME/.ssh/release_key"
+          # GitHub's published Ed25519 host key, pinned rather than scanned:
+          # `ssh-keyscan` accepts whatever key answers, so it authenticates
+          # nothing and leaves a MITM window on the release push. Source of
+          # truth is the `ssh_keys` array of https://api.github.com/meta.
+          printf 'github.com ssh-ed25519 %s\n' \
+            'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+            >> "$HOME/.ssh/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes"
+
+          if [ "$RALPH_CHANGED" != "true" ]; then
+            # GH-2511: a plugin-only push — ralph/** did not change since the
+            # last ralph-v* tag, so there is no ralph release to cut. Still
+            # move the herdr stamp if the plugin's own behavior surface
+            # changed: a plugin-only merge must not wait for the next
+            # unrelated ralph/** change to be reflected on an installed
+            # cockpit. No tag, no GitHub Release — [skip ci] on the commit
+            # so this push doesn't re-trigger this workflow (it touches
+            # ralph/scripts/herdr-plugin-version, which is under ralph/**).
+            git pull --rebase origin main
+            # A ralph/** merge landing between "Classify" and this rebase is
+            # now in the tree while ralph_changed still says false. It is
+            # not stranded: that merge's own push fires its own run, queued
+            # behind this one (cancel-in-progress: false), which classifies
+            # it as changed and cuts the release. Name it in the log rather
+            # than release it from here under a classification that no
+            # longer holds (Greptile P1 on #2513).
+            if [ -n "$HERDR_BASE" ] && [ -n "$(git diff --name-only "$HERDR_BASE" HEAD \
+                 -- ralph/ ':(exclude)ralph/scripts/herdr-plugin-version')" ]; then
+              echo "::notice::ralph/** changed under this run during the rebase — its own queued run will cut that release; pushing only the herdr stamp here"
+            fi
+            HERDR_OUT=$(bash scripts/herdr-plugin-release-bump.sh "$HERDR_BASE")
+            if grep -q '^bumped=true$' <<<"$HERDR_OUT"; then
+              HERDR_NEW=$(sed -n 's/^new=//p' <<<"$HERDR_OUT")
+              git add plugin/ralph-herdr/herdr-plugin.toml ralph/scripts/herdr-plugin-version
+              git commit -q -m "chore(ralph-herdr): bump plugin stamp to ${HERDR_NEW} [skip ci]"
+              git push "git@github.com:${GITHUB_REPOSITORY}.git" HEAD:main
+            else
+              echo "No ralph-herdr behavior change since the last release either — nothing to do."
+            fi
+            exit 0
+          fi
+
           git add ralph/.claude-plugin/plugin.json
           COMMIT_MSG="chore(ralph): release ralph-v${NEW_VERSION} [skip ci]"
           git commit -m "$COMMIT_MSG"
@@ -187,31 +319,20 @@ jobs:
           # a non-fast-forward there fails the job, as it does for ralph's
           # own bump. A skip is not a failure: most ralph releases carry no
           # herdr change, so the script's bumped=false is the common answer.
-          HERDR_OUT=$(bash scripts/herdr-plugin-release-bump.sh)
+          # The base is the classify step's herdr_base, not the bare tag: a
+          # herdr-only bump since that tag (untagged, above) must not read as
+          # behavior to bump again.
+          HERDR_OUT=$(bash scripts/herdr-plugin-release-bump.sh "$HERDR_BASE")
           if grep -q '^bumped=true$' <<<"$HERDR_OUT"; then
             HERDR_NEW=$(sed -n 's/^new=//p' <<<"$HERDR_OUT")
             git add plugin/ralph-herdr/herdr-plugin.toml ralph/scripts/herdr-plugin-version
             git commit -q --amend -m "$(printf '%s\n\nchore(ralph-herdr): bump plugin stamp to %s' "$COMMIT_MSG" "$HERDR_NEW")"
           fi
           git tag "ralph-v${NEW_VERSION}"
-          # GH-1589: push via the release deploy key — the sole bypass actor
-          # on the protected-main ruleset. GITHUB_TOKEN pushes are blocked by
-          # the pull_request rule, and the github-actions app cannot be a
-          # bypass actor on user-owned repos.
-          mkdir -p "$HOME/.ssh"
-          printf '%s\n' "$RELEASE_DEPLOY_KEY" > "$HOME/.ssh/release_key"
-          chmod 600 "$HOME/.ssh/release_key"
-          # GitHub's published Ed25519 host key, pinned rather than scanned:
-          # `ssh-keyscan` accepts whatever key answers, so it authenticates
-          # nothing and leaves a MITM window on the release push. Source of
-          # truth is the `ssh_keys` array of https://api.github.com/meta.
-          printf 'github.com ssh-ed25519 %s\n' \
-            'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
-            >> "$HOME/.ssh/known_hosts"
-          GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes" \
-            git push "git@github.com:${GITHUB_REPOSITORY}.git" HEAD:main --tags
+          git push "git@github.com:${GITHUB_REPOSITORY}.git" HEAD:main --tags
 
       - name: Create GitHub Release
+        if: steps.changed.outputs.ralph_changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
@@ -229,6 +350,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           MERGE_SHA: ${{ github.sha }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
+          RALPH_CHANGED: ${{ steps.changed.outputs.ralph_changed }}
         run: |
           set -euo pipefail
           TITLE="Release Ralph failed — ralph/** merged but unreleased"
@@ -238,8 +360,25 @@ jobs:
           # computes the NEXT version and strands the pushed tag with no
           # release forever. Measure the remote rather than assuming.
           STATE="the run failed before computing a version; nothing was pushed"
-          REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
-          if [ -n "${NEW_VERSION:-}" ]; then
+          # No version computed means this run never decided whether ralph/**
+          # changed (classification may not have run at all — checkout, the
+          # bump reader, or the advance can fail first). Re-running the FAILED
+          # RUN re-classifies from scratch; `workflow_dispatch` does not — it
+          # forces ralph_changed=true and cuts a ralph release whether or not
+          # ralph changed, so it is named only as the deliberate choice it is.
+          REMEDY="Re-run the failed run itself (Actions → Re-run jobs) once the cause is fixed — it re-classifies what changed. Use \`workflow_dispatch\` only if you mean to cut a ralph release regardless: it forces one."
+          if [ "${RALPH_CHANGED:-}" = "false" ]; then
+            # GH-2511: the herdr-only path failed. No ralph version was
+            # computed and none was meant to be — a `workflow_dispatch` here
+            # would be the wrong remedy, since dispatch forces
+            # ralph_changed=true and cuts an unrelated ralph release
+            # (Greptile P1 on #2513). Re-running the FAILED RUN re-classifies
+            # from scratch; so does the next plugin merge, whose run reads
+            # the same still-unmoved stamp.
+            TITLE="Release Ralph failed — ralph-herdr stamp not moved for a plugin-only merge"
+            STATE="ralph/** was unchanged, so no ralph version was computed; the herdr stamp bump did not land"
+            REMEDY="Re-run the failed run itself (Actions → Re-run jobs), or let the next plugin merge's run pick the stamp up. **Do not \`workflow_dispatch\`**: it forces a ralph release for a ralph that did not change."
+          elif [ -n "${NEW_VERSION:-}" ]; then
             TAG="ralph-v${NEW_VERSION}"
             # `--exit-code` distinguishes the two answers that must not be
             # conflated: 0 = the tag is there, 2 = it is definitively absent,
