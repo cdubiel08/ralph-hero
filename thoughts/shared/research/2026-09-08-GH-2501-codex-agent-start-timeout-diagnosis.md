@@ -68,13 +68,18 @@ Before `herdr agent start --kind codex` targets a new worktree, write its
 trust entry into `~/.codex/config.toml` directly:
 
 ```python
+import json, os
+key = json.dumps(os.path.abspath(worktree_path))  # a JSON string literal is a valid TOML basic string, escapes included
 with open(os.path.expanduser("~/.codex/config.toml"), "a") as f:
-    f.write(f'\n[projects."{worktree_path}"]\ntrust_level = "trusted"\n')
+    f.write(f'\n[projects.{key}]\ntrust_level = "trusted"\n')
 ```
 
-(or equivalent TOML-safe append/merge — don't blind-append if the repo ever
-scripts this and the entry might already exist). This has to happen before
-the `agent start` call, once per new worktree directory. The operator's
+Quote the key through a serializer, never by hand — a path with a `"` or
+`\` interpolated raw yields a malformed file or the wrong project key, and
+Codex stays blocked at the prompt. If the repo ever scripts this, check for
+an existing `[projects."<path>"]` table before appending rather than
+blind-appending a duplicate. This has to happen before the `agent start`
+call, once per new worktree directory. The operator's
 `reference_codex_worker_spawn_recipe` session memory is updated with this as
 the missing step 0 of the by-hand recipe.
 
