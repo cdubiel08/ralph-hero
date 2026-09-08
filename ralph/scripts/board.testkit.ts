@@ -51,6 +51,7 @@ export interface FakeIssue {
     fieldValuesTruncated?: boolean;
   }>;
   childrenTruncated?: boolean;
+  prsTruncated?: boolean; // closedByPullRequestsReferences page reports hasNextPage
   blockersTruncated?: boolean;
   comments?: string[];
   labels?: string[];
@@ -363,6 +364,7 @@ export class FakeGh {
       },
       blockedBy: { nodes: [] },
       closedByPullRequestsReferences: {
+        pageInfo: { hasNextPage: fi.prsTruncated ?? false },
         nodes: (fi.prs ?? []).map((p) => ({
           number: p.number,
           url: `https://github.com/cdubiel08/ralph-hero/pull/${p.number}`,

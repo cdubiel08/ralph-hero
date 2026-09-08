@@ -2265,6 +2265,11 @@ export interface Issue {
   blockedBy: Array<{ number: number; issueState: string; repo: string }>;
   blockersTruncated: boolean;
   prs: Array<{ number: number; url: string; state: string; merged: boolean }>;
+  /** >PR_LINK_PAGE closing-linked PRs: `prs` is a partial page. A reader
+   *  that turns "no open PR in `prs`" into a write must treat this as
+   *  "unknown", not "none" (GH-2488) — the same fail-closed rule every other
+   *  paged list in this read carries. */
+  prsTruncated: boolean;
 }
 
 /** One page of field values per item. Every other paged list in this file
@@ -2272,6 +2277,10 @@ export interface Issue {
  *  falling past the page would blind the MACHINE legality check (a null state
  *  skips it) and the claim guard (a null claim reads as unclaimed). */
 const FIELD_VALUE_PAGE = 50;
+
+/** Closing-linked PRs read per issue. Bounded like every other list here;
+ *  the page reports its own truncation (`prsTruncated`). */
+const PR_LINK_PAGE = 10;
 
 const FIELD_VALUES_FRAGMENT = `fieldValues(first: ${FIELD_VALUE_PAGE}) {
   pageInfo { hasNextPage }
@@ -2320,7 +2329,7 @@ export function fetchIssue(ctx: Ctx, target: number | IssueAddress): Issue {
               }
             }
             blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }
-            closedByPullRequestsReferences(first: 10) { nodes { number url state merged } }
+            closedByPullRequestsReferences(first: ${PR_LINK_PAGE}) { pageInfo { hasNextPage } nodes { number url state merged } }
             projectItems(first: 20) { nodes { id isArchived project { id } ${FIELD_VALUES_FRAGMENT} } }
           }
         }
@@ -2403,6 +2412,7 @@ export function fetchIssue(ctx: Ctx, target: number | IssueAddress): Issue {
         state: p.state,
         merged: p.merged,
       })),
+      prsTruncated: issue.closedByPullRequestsReferences?.pageInfo?.hasNextPage ?? false,
     };
   });
 }
@@ -12324,45 +12334,65 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
               add("fix", "ok", `#${i.number}: claim refreshed since the sweep — left alone`);
               continue;
             }
-            clearField(ctx, cache, issue.itemId, CLAIM_FIELD);
             if (issue.state === "In Progress") {
-              // The one sanctioned state write outside transition/reconcile/
-              // parent-check: releasing a stale claim must return the item
-              // somewhere, and no lane models "the holder vanished"
-              // (reconcile follows issue open/closed reality, which has not
-              // changed). Pinned by test: "stale-claim demotion is a
-              // deliberate…".
-              //
               // GH-2488: Backlog is right only when the work is genuinely
               // un-started. An open, linked PR (the same `closedByPull-
               // RequestsReferences` read `get` already surfaces) is evidence
               // the WORKER vanished, not that the WORK did — the PR is a
               // deliverable already awaiting the gate. Sending it to Backlog
               // hides that PR from the cockpit and re-offers the unit to the
-              // frontier while it is still live. The machine has no Backlog →
-              // In Review edge to reuse, so this stays the same sanctioned
-              // direct write, just aimed at whichever target the evidence
-              // supports.
+              // frontier while it is still live.
+              //
+              // A truncated linkage page cannot answer "is there an open PR"
+              // either way, and both answers write state — so the release is
+              // WITHHELD, not guessed (fail closed, like every other paged
+              // read that drives a mutation here). The claim ages on; the
+              // next sweep re-reads.
+              if (issue.prsTruncated) {
+                add(
+                  "fix",
+                  "warn",
+                  `#${i.number}: stale claim left in place — more than ${PR_LINK_PAGE} closing-linked PRs, ` +
+                    `so whether one is still open is unreadable; release it by hand (\`board move ${i.number} in-review\` or \`board release ${i.number} -m\`)`,
+                );
+                continue;
+              }
               const openPr = issue.prs.find((p) => p.state === "OPEN");
-              const target: State = openPr ? "In Review" : "Backlog";
-              setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, target);
-              syncStatus(ctx, cache, issue.itemId, target);
+              clearField(ctx, cache, issue.itemId, CLAIM_FIELD);
+              if (openPr) {
+                // In Progress → In Review is a legal MACHINE edge, so it rides
+                // the transition lane and gets its echo (ledger, parent gate,
+                // read-back verify). guardHolder already admits a stale
+                // claim; the claim is passed as already-cleared because that
+                // is what the board now says — letting transition() re-derive
+                // it from the stale value would keep stale co-holders alive
+                // (removeHolder keeps everyone but the mover).
+                transition(ctx, { ...issue, claim: null, claimRaw: null }, "In Review");
+                addComment(
+                  ctx,
+                  issue.nodeId,
+                  `\`board doctor --fix\`: stale claim by \`${issue.claim.holders.join("+")}\` released; ${openPr.url} is open, so this moved to In Review rather than Backlog.`,
+                );
+                add("fix", "ok", `#${i.number}: claim cleared, moved to In Review (open PR ${openPr.url})`);
+                continue;
+              }
+              // The one sanctioned state write outside transition/reconcile/
+              // parent-check: with no PR in flight the unit returns to
+              // Backlog, and no lane models "the holder vanished" (reconcile
+              // follows issue open/closed reality, which has not changed;
+              // transition() demands a --why on this edge). Pinned by test:
+              // "stale-claim demotion is a deliberate…".
+              setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, "Backlog");
+              syncStatus(ctx, cache, issue.itemId, "Backlog");
               addComment(
                 ctx,
                 issue.nodeId,
-                openPr
-                  ? `\`board doctor --fix\`: stale claim by \`${issue.claim.holders.join("+")}\` released; ${openPr.url} is open, so this returned to In Review rather than Backlog.`
-                  : `\`board doctor --fix\`: stale claim by \`${issue.claim.holders.join("+")}\` released; returned to Backlog.`,
+                `\`board doctor --fix\`: stale claim by \`${issue.claim.holders.join("+")}\` released; returned to Backlog.`,
               );
-              add(
-                "fix",
-                "ok",
-                openPr
-                  ? `#${i.number}: claim cleared, held In Review (open PR ${openPr.url})`
-                  : `#${i.number}: claim cleared, returned to Backlog`,
-              );
+              add("fix", "ok", `#${i.number}: claim cleared, returned to Backlog`);
               continue;
             }
+            clearField(ctx, cache, issue.itemId, CLAIM_FIELD);
             add("fix", "ok", `#${i.number}: claim cleared`);
           } catch (e) {
             add("fix", "fail", `#${i.number}: ${(e as Error).message}`);
