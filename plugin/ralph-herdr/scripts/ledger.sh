@@ -1342,11 +1342,20 @@ _RALPH_USAGE_PRICES='{
 #
 # FILE is the session's own transcript; any further args are subagent
 # transcripts nested under it (see _ralph_usage_subagent_files) to fold in.
+# A subagent file that cannot be read (gone or locked between the glob and
+# here) is spend this read cannot see: it counts as one unpriced call, on
+# both the total and the subagent slice, rather than either aborting the
+# parent's otherwise-valid fact or folding silently into a number that reads
+# complete — the same rule the cockpit's reader applies.
 ralph_usage_from_transcript() {
-  local file="${1-}"
+  local file="${1-}" f unreadable=0
+  local -a subs=()
   [ -n "$file" ] && [ -r "$file" ] || return 1
   shift
-  jq -R -n -c --argjson prices "$_RALPH_USAGE_PRICES" --arg own "$file" '
+  for f in "$@"; do
+    if [ -r "$f" ]; then subs+=("$f"); else unreadable=$((unreadable + 1)); fi
+  done
+  jq -R -n -c --argjson prices "$_RALPH_USAGE_PRICES" --arg own "$file" --argjson unreadable "$unreadable" '
     def num: if type == "number" then . else 0 end;
     def price($m):
       ($prices | to_entries | map(.key as $k | select($m | startswith($k))) | sort_by(-(.key | length)) | first | .value) // null;
@@ -1390,7 +1399,8 @@ ralph_usage_from_transcript() {
     | map(if (.w5 + .w1) == 0 and .wtotal > 0 then .w1 = .wtotal else . end)
     | if length == 0 then halt_error(1) else . end
     | summarize(.) + {subagent: summarize(map(select(.origin == "subagent")))}
-  ' "$file" "$@" 2>/dev/null
+    | .unpriced_calls += $unreadable | .subagent.unpriced_calls += $unreadable
+  ' "$file" ${subs[@]+"${subs[@]}"} 2>/dev/null
 }
 
 # _ralph_ledger_latest_claude_session REF — the worker's Claude session id,

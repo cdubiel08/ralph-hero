@@ -1746,6 +1746,12 @@ is "usage: list_usd exceeds the parent-only figure by exactly the subagent spend
 is "usage: the subagent slice is attributable beside the parent's own" "1" "$(usubj '.subagent.calls')"
 is "usage: the subagent's own model is named in its slice" "claude-haiku-4-5" "$(usubj '.subagent.model')"
 is "usage: with no subagent files the subtotal reads zero, not absent" "0" "$(uj '.subagent.calls')"
+# A subagent file gone (or locked) between the glob and the read is spend this
+# read cannot see — one unpriced call on both slices, never a dropped parent fact.
+ugone=$(ralph_usage_from_transcript "$tdir/$USID.jsonl" "$subdir/agent-deadbeef.jsonl" "$subdir/agent-vanished.jsonl") || ugone=""
+is "usage: an unreadable subagent transcript does not drop the parent's fact" "4" "$(jq -r '.calls' <<<"$ugone")"
+is "usage: ...it counts as unpriced on the total" "2" "$(jq -r '.unpriced_calls' <<<"$ugone")"
+is "usage: ...and on the subagent slice" "1" "$(jq -r '.subagent.unpriced_calls' <<<"$ugone")"
 rm -rf "$subdir" # section 10 below reuses $USID's own transcript and must not see this fixture
 
 printf '{"type":"user"}\n' >"$tdir/empty.jsonl"
