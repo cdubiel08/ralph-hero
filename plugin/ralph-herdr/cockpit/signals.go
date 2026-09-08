@@ -796,6 +796,17 @@ func readTranscriptUsage(path string) SessionUsage {
 	for _, sp := range subagentTranscriptPaths(path) {
 		sub := reduceTranscript(sp)
 		if !sub.Read {
+			// Two different absences. A subagent transcript with no usage
+			// row yet is genuinely zero so far — an Agent() call that has
+			// not answered. One that cannot be OPENED is spend this read
+			// cannot see: count it unpriced, so priced() is false and the
+			// session never renders as complete while understating.
+			if f, err := os.Open(sp); err != nil {
+				out.Unpriced++
+				out.Subagent.Unpriced++
+			} else {
+				f.Close()
+			}
 			continue
 		}
 		out.USD += sub.USD

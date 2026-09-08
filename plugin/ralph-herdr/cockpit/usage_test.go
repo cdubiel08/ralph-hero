@@ -187,6 +187,31 @@ func TestReadTranscriptUsageFoldsInSubagentTranscripts(t *testing.T) {
 	if got := readTranscriptUsage(lone); got.Subagent.Calls != 0 || got.USD != reduceTranscript(lone).USD {
 		t.Errorf("no-subagents session: %+v", got)
 	}
+
+	// Two absences that must not read alike. A subagent transcript with no
+	// usage row yet (an Agent() call that has not answered) is zero so far
+	// and the session stays measured; one that cannot be opened is spend
+	// this read cannot see, and the session must not render as complete.
+	if err := os.WriteFile(filepath.Join(subdir, "agent-empty.jsonl"), []byte(`{"type":"user","message":{}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTranscriptUsage(own); !got.priced() || got.Subagent.Calls != 1 {
+		t.Errorf("a not-yet-answered subagent unmeasured the session: %+v", got)
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root reads every file; the unreadable case cannot be staged")
+	}
+	locked := filepath.Join(subdir, "agent-locked.jsonl")
+	if err := os.WriteFile(locked, []byte(usageRow("sub_2", "claude-haiku-4-5", "2026-09-02T10:00:03Z", 1, 0, 0, 0, 0, 1)+"\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	got := readTranscriptUsage(own)
+	if got.priced() || got.Unpriced != 1 || got.Subagent.Unpriced != 1 {
+		t.Errorf("an unreadable subagent transcript left the session reading as complete: %+v", got)
+	}
+	if got.Subagent.Calls != 1 || got.USD != combined.USD {
+		t.Errorf("the unreadable transcript changed the visible total instead of the priced flag: %+v", got)
+	}
 }
 
 func TestTranscriptPathDerivesTheSlugThenGlobs(t *testing.T) {
