@@ -271,9 +271,17 @@ else
   elif [[ "$(jq -r '.data.repository.issue.timelineItems.pageInfo.hasNextPage' <<<"$issue_refs_json")" == "true" ]]; then
     # A truncated page is not the relationship set: the run's PR may sit past
     # it (a false refusal) or the visible page may be empty of PRs (a false
-    # pass). Neither reading is evidence — say so and fall back, rather than
-    # judge on half a list (PR #2478 review).
-    echo "--- linkage: #$ISSUE has more than 100 cross-references — page truncated, cannot establish linkage; proceeding operator-trusted (GH-2469)"
+    # pass) — neither reading is evidence, so this may not be judged on half a
+    # list (PR #2478 review). But unlike the other branches here (the read
+    # itself failed, RUN has no associated PR, ISSUE has no reference yet),
+    # this one is a KNOWN truncated read, not an absent input — this repo's
+    # rule for an unjudgeable gate input is a typed temporary failure, not a
+    # pass-through (GH-1973, GH-2261's read_failed; GH-2499). Refuse rather
+    # than let apply-evidence.sh post evidence a truncated timeline can't back.
+    echo "ERROR: #$ISSUE has more than 100 cross-references — page truncated, cannot establish linkage." >&2
+    echo "       Re-run once the timeline is under 100 events, or verify the ISSUE/RUN pairing by hand" >&2
+    echo "       and post evidence directly with scripts/apply-evidence.sh." >&2
+    exit 75
   else
     ref_pr_list=$(jq -r --arg nwo "$nwo" '
       [ .data.repository.issue.timelineItems.nodes[].source
