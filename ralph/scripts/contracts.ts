@@ -1028,7 +1028,7 @@ function buildFleetReply(mode: Mode) {
 // NOTE on DeliverReason evolution (GH-2471): a new reason string is an
 // additive-only change, not a version bump — zDeliverRow's `reason` field
 // is z.enum(DELIVER_REASONS) in strict mode (the producer, board.ts, must
-// never emit an undeclared reason) and z.string() in loose mode (an
+// never emit an undeclared reason) and z.string().min(1) in loose mode (an
 // already-installed consumer at contract_version 1 accepts a reason it
 // doesn't recognize yet, same as it already tolerates unknown keys under
 // .passthrough()). Chosen over bumping contract_version per addition:
@@ -1125,7 +1125,7 @@ function zDeliverRow(mode: Mode) {
     // grown four times already and none of those additions changed any
     // other field, so gating them behind a version bump would force every
     // installed loose consumer to re-pin on a change it doesn't care about.
-    reason: mode === "strict" ? z.enum(DELIVER_REASONS) : z.string(),
+    reason: mode === "strict" ? z.enum(DELIVER_REASONS) : z.string().min(1),
     verdict: z.string().nullable().optional(),
     gate: z.string().nullable().optional(),
     deltaAt: zIsoUtc.nullable().optional(),

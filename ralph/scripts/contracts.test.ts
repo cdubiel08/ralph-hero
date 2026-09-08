@@ -923,6 +923,10 @@ describe("C6 BoardQueue refinements", () => {
     // requires a contract_version bump, matching the passthrough rule this
     // contract already states for unknown keys.
     expect(validateContract("ralph.board_queue", row, { loose: true }).success).toBe(true);
+    // Loosening the enum must not lose the nonempty constraint — an empty
+    // string is a missing classification, not an unrecognized future value.
+    const empty = { ...row, result: { ...row.result, blocked: [{ ...row.result.blocked[0], reason: "" }] } };
+    expect(validateContract("ralph.board_queue", empty, { loose: true }).success).toBe(false);
   });
 });
 
