@@ -360,7 +360,13 @@ jobs:
           # computes the NEXT version and strands the pushed tag with no
           # release forever. Measure the remote rather than assuming.
           STATE="the run failed before computing a version; nothing was pushed"
-          REMEDY="Re-run the workflow (\`workflow_dispatch\`) once the cause is fixed."
+          # No version computed means this run never decided whether ralph/**
+          # changed (classification may not have run at all — checkout, the
+          # bump reader, or the advance can fail first). Re-running the FAILED
+          # RUN re-classifies from scratch; `workflow_dispatch` does not — it
+          # forces ralph_changed=true and cuts a ralph release whether or not
+          # ralph changed, so it is named only as the deliberate choice it is.
+          REMEDY="Re-run the failed run itself (Actions → Re-run jobs) once the cause is fixed — it re-classifies what changed. Use \`workflow_dispatch\` only if you mean to cut a ralph release regardless: it forces one."
           if [ "${RALPH_CHANGED:-}" = "false" ]; then
             # GH-2511: the herdr-only path failed. No ralph version was
             # computed and none was meant to be — a `workflow_dispatch` here
