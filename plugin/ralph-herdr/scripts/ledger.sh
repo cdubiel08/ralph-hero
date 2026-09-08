@@ -1346,16 +1346,16 @@ _RALPH_USAGE_PRICES='{
 # here) is spend this read cannot see: it counts as one unpriced call, on
 # both the total and the subagent slice, rather than either aborting the
 # parent's otherwise-valid fact or folding silently into a number that reads
-# complete — the same rule the cockpit's reader applies.
+# complete — the same rule the cockpit's reader applies. jq never opens a
+# file itself: bash streams each one and marks the boundaries with sentinel
+# rows (`__ralph_origin`, `__ralph_unreadable`), so there is no window
+# between a readability check and the open in which a vanishing file can
+# turn into a nonzero exit that discards the parent's fact.
 ralph_usage_from_transcript() {
-  local file="${1-}" f unreadable=0
-  local -a subs=()
+  local file="${1-}"
   [ -n "$file" ] && [ -r "$file" ] || return 1
   shift
-  for f in "$@"; do
-    if [ -r "$f" ]; then subs+=("$f"); else unreadable=$((unreadable + 1)); fi
-  done
-  jq -R -n -c --argjson prices "$_RALPH_USAGE_PRICES" --arg own "$file" --argjson unreadable "$unreadable" '
+  _ralph_usage_stream "$file" "$@" | jq -R -n -c --argjson prices "$_RALPH_USAGE_PRICES" '
     def num: if type == "number" then . else 0 end;
     def price($m):
       ($prices | to_entries | map(.key as $k | select($m | startswith($k))) | sort_by(-(.key | length)) | first | .value) // null;
@@ -1380,10 +1380,16 @@ ralph_usage_from_transcript() {
           first_ts: ($rows | map(.ts) | if length == 0 then "" else min end),
           last_ts: ($rows | map(.ts) | if length == 0 then "" else max end)
         };
-    [inputs | (fromjson? // empty)
-     | select(.type == "assistant" and (.message.usage | type) == "object" and (.message.id // "") != "")
-     | {id: .message.id, ts: (.timestamp // ""), model: (.message.model // "unknown"),
-        u: .message.usage, origin: (if input_filename == $own then "own" else "subagent" end)}]
+    reduce (inputs | (fromjson? // empty) | select(type == "object")) as $l
+      ({origin: "own", unreadable: 0, rows: []};
+       if ($l.__ralph_origin | type) == "string" then .origin = $l.__ralph_origin
+       elif $l.__ralph_unreadable == 1 then .unreadable += 1
+       elif $l.type == "assistant" and ($l.message.usage | type) == "object" and ($l.message.id // "") != "" then
+         .rows += [{id: $l.message.id, ts: ($l.timestamp // ""), model: ($l.message.model // "unknown"),
+                    u: $l.message.usage, origin: .origin}]
+       else . end)
+    | .unreadable as $unreadable
+    | .rows
     | group_by(.id)
     | map({
         id: .[0].id, ts: ([.[].ts] | min), model: .[0].model, origin: .[0].origin,
@@ -1400,7 +1406,23 @@ ralph_usage_from_transcript() {
     | if length == 0 then halt_error(1) else . end
     | summarize(.) + {subagent: summarize(map(select(.origin == "subagent")))}
     | .unpriced_calls += $unreadable | .subagent.unpriced_calls += $unreadable
-  ' "$file" ${subs[@]+"${subs[@]}"} 2>/dev/null
+  ' 2>/dev/null
+}
+
+# _ralph_usage_stream FILE [SUBAGENT_FILE...] — the row stream the reducer
+# above consumes: FILE's lines, then each subagent file's, each preceded by
+# an origin sentinel. A file that cannot be read (gone, locked) becomes an
+# unreadable sentinel in place of its rows; the leading newline before every
+# sentinel guarantees a torn last line cannot swallow it.
+_ralph_usage_stream() {
+  local f
+  cat -- "$1" 2>/dev/null || true
+  shift
+  for f in "$@"; do
+    printf '\n{"__ralph_origin":"subagent"}\n'
+    cat -- "$f" 2>/dev/null || printf '\n{"__ralph_unreadable":1}\n'
+  done
+  printf '\n'
 }
 
 # _ralph_ledger_latest_claude_session REF — the worker's Claude session id,
