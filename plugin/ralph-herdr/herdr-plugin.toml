@@ -11,7 +11,7 @@
 
 id = "ralph-herdr"
 name = "Ralph Herdr"
-version = "0.51.14"
+version = "0.51.15"
 min_herdr_version = "0.8.2"
 description = "Cockpit for the ralph board on herdr — spawn lane sessions into panes, watch queues, get notified when a session blocks or finishes; see CHANGELOG.md for the version history."
 platforms = ["macos", "linux"]
