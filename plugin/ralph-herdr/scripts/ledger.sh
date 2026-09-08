@@ -1230,46 +1230,57 @@ ralph_ledger_orphan_pass() {
 # FIRST parent, not a child losing one, and that distinction is what the
 # empty string honestly says.
 #
-# CANDIDATES are read off the fleet.json RUN, not a live pane env or a GH
-# issue-tree walk: every `runs/*/fleet.json` scoped to EPIC and armed under
-# LEAD's name carries its own `.spawned` issue list — refill_one's own
-# record of who it actually picked. A worker's CURRENT open record is then
-# reparented only when it is STILL a root (no parent token) — idempotent by
-# construction (re-running heal on an already-healed epic touches nothing)
-# and conservative in the one direction that matters: a worker spawned
-# WHILE the lead was live already carries the right parent and is skipped,
-# never relabeled under a later epoch it was never actually launched by.
+# CANDIDATES are correlated by EXACT REF, not by issue number: every
+# `runs/*/fleet.json` scoped to EPIC and armed under LEAD's name gives a
+# run_id, and refill_one's own `refill_spawn` ledger fact ({run_id,
+# agent_ref, issue}, appended only for a spawn that actually landed) names
+# the precise ref each of those runs picked. A worker's CURRENT open record
+# is then reparented only when its ref is one of those AND it is STILL a
+# root (no parent token). Two over-selections this shape refuses (review
+# finding on this unit): a union of `.spawned` ISSUE numbers across every
+# retained run would also catch a later, unrelated root on the same issue —
+# a human's `work-next.sh N` after an older run's worker exited — and hand
+# it to a lead that never launched it; and a live pane env or a GH
+# issue-tree walk would catch every root under the epic whatever spawned
+# it. Idempotent by construction (re-running heal on an already-healed epic
+# touches nothing) and conservative in the direction that matters: a worker
+# spawned WHILE the lead was live already carries the right parent and is
+# skipped, never relabeled under a later epoch it was never launched by.
 #
 # Prints one reparented ref per line (rc always 0 — best-effort, the same
 # contract as orphan_pass: one bad record must not block the rest).
 ralph_ledger_reparent_dead_window_roots() {
-  local epic="${1-}" lead="${2-}" new_ref="${3-}" ledger runs ff spawned_issues ts
-  local ref pane parent issue
+  local epic="${1-}" lead="${2-}" new_ref="${3-}" ledger runs ff run_ids refill_refs ts
+  local ref pane parent
   case "$epic" in '' | *[!0-9]*) return 0 ;; esac
   [ -n "$lead" ] && [ -n "$new_ref" ] || return 0
   ledger=$(ralph_ledger_path) || return 0
   runs="$(dirname "$ledger")/runs"
   [ -d "$runs" ] || return 0
-  spawned_issues=""
+  run_ids=""
   for ff in "$runs"/*/fleet.json; do
     [ -f "$ff" ] || continue
     [ "$(jq -r --argjson e "$epic" 'select((.epic // null) == $e) | .lead // empty' "$ff" 2>/dev/null)" = "$lead" ] ||
       continue
-    # tr, not bare command substitution: unquoted word-splitting would also
-    # collapse this, but the assignment is quoted (spaces inside .spawned
-    # numbers are impossible, newlines from jq's one-per-line output are
-    # not) — the later `case " $spawned_issues " in *" $issue "*)` match
-    # needs SPACE separators throughout, never an embedded newline.
-    spawned_issues="$spawned_issues $(jq -r '.spawned[]? // empty' "$ff" 2>/dev/null | tr '\n' ' ')"
+    run_ids="$run_ids $(jq -r '.run_id // empty' "$ff" 2>/dev/null)"
   done
-  [ -n "${spawned_issues// /}" ] || return 0
+  [ -n "${run_ids// /}" ] || return 0
+  # The refs those runs actually spawned — space-joined (tr, since the
+  # assignment is quoted and jq emits one per line; the `case` match below
+  # needs SPACE separators, never an embedded newline).
+  refill_refs=$(_ralph_ledger_events "$ledger" | jq -r --arg ids " $run_ids " '
+    select(.ev == "refill_spawn" and ((.run_id // "") != ""))
+    | (" " + .run_id + " ") as $key
+    | select($ids | contains($key))
+    | .agent_ref // empty' 2>/dev/null | tr '\n' ' ') || refill_refs=""
+  [ -n "${refill_refs// /}" ] || return 0
   ts=$(date -u +%FT%TZ)
-  while IFS=$'\037' read -r ref pane _sp _h parent _st issue _co _tok _sess; do
+  while IFS=$'\037' read -r ref pane _sp _h parent _st _issue _co _tok _sess; do
     [ -n "$ref" ] || continue
     case "$ref" in w*) : ;; *) continue ;; esac
     [ -z "$parent" ] || continue
     [ "$ref" != "$new_ref" ] || continue
-    case " $spawned_issues " in *" $issue "*) : ;; *) continue ;; esac
+    case " $refill_refs " in *" $ref "*) : ;; *) continue ;; esac
     ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg c "$ref" --arg p "$new_ref" \
       '{ts: $ts, ev: "adopt", agent_ref: $c, parent: $p, prev_parent: ""}')" || continue
     if [ -n "$pane" ] && command -v ralph_tokens_push >/dev/null 2>&1; then
