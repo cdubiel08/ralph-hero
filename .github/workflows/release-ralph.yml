@@ -30,12 +30,27 @@ name: Release Ralph
 #
 # Loop prevention: the bump commit message ends with "[skip ci]" so it
 # doesn't re-trigger this workflow.
+#
+# GH-2511: plugin/ralph-herdr/** carried no trigger path of its own — a
+# plugin-only merge (no ralph/** diff) fired nothing, so the GH-2491 herdr
+# stamp waited for the next unrelated ralph/** merge instead of moving at
+# the merge that actually changed it. `plugin/ralph-herdr/**` is a second,
+# coarser trigger path: a path filter can't call out to
+# scripts/lib/herdr-behavior-surface.sh, so this is a superset (it also
+# fires on a docs- or test-only plugin change, which turns out to carry no
+# behavior change either). The "Classify what changed" step decides
+# separately whether ralph/** itself changed since the last tag — if not,
+# "Commit bump and tag" skips the ralph version/tag/release entirely and
+# only moves the herdr stamp (via the existing behavior-surface check in
+# scripts/herdr-plugin-release-bump.sh) when there is one to move. A
+# superset trigger costs an extra job run at most, never a wrong release.
 
 on:
   push:
     branches: [main]
     paths:
       - 'ralph/**'
+      - 'plugin/ralph-herdr/**'
   workflow_dispatch:
     inputs:
       bump:
@@ -104,8 +119,47 @@ jobs:
           git fetch --force --tags origin main
           git checkout --force -B release-bump FETCH_HEAD
 
+      # GH-2511: the plugin-only trigger above is a superset (paths can't
+      # call out to scripts/lib/herdr-behavior-surface.sh), so a push that
+      # matched it may carry no ralph/** change at all — cutting a ralph
+      # release for that would bump a version nothing in ralph/ backs. The
+      # herdr stamp file itself (ralph/scripts/herdr-plugin-version) is
+      # excluded from this diff: it lives under ralph/** but is a byproduct
+      # of a PRIOR herdr-only bump (below), never real ralph work, and
+      # counting it would make that prior bump look like a reason to cut a
+      # real ralph release on the very next run.
+      - name: Classify what changed since the last release
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "ralph_changed=true" >> "$GITHUB_OUTPUT"
+            echo "workflow_dispatch: explicit request, always cuts a ralph release"
+            exit 0
+          fi
+          LAST_TAG=$(git tag --list 'ralph-v*' | sed 's/^ralph-v//' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          if [ -z "$LAST_TAG" ]; then
+            echo "ralph_changed=true" >> "$GITHUB_OUTPUT"
+            echo "No ralph-v* tag found yet — treating as changed"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "ralph-v${LAST_TAG}" HEAD \
+            -- ralph/ ':(exclude)ralph/scripts/herdr-plugin-version')
+          if [ -n "$CHANGED" ]; then
+            echo "ralph_changed=true" >> "$GITHUB_OUTPUT"
+            echo "ralph/** changed since ralph-v${LAST_TAG}:"
+            printf '  %s\n' $CHANGED
+          else
+            echo "ralph_changed=false" >> "$GITHUB_OUTPUT"
+            echo "ralph/** unchanged since ralph-v${LAST_TAG} — plugin-only push (GH-2511), no ralph release to cut"
+          fi
+
       - name: Compute next version
         id: version
+        if: steps.changed.outputs.ralph_changed == 'true'
         env:
           BUMP_TYPE: ${{ steps.bump.outputs.type }}
         run: |
@@ -145,6 +199,7 @@ jobs:
           echo "Current: $CURRENT  →  New: $NEW_VERSION"
 
       - name: Write bumped version to plugin.json
+        if: steps.changed.outputs.ralph_changed == 'true'
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
         run: |
@@ -158,11 +213,52 @@ jobs:
       - name: Commit bump and tag
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
+          RALPH_CHANGED: ${{ steps.changed.outputs.ralph_changed }}
           RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # GH-1589: push via the release deploy key — the sole bypass actor
+          # on the protected-main ruleset. GITHUB_TOKEN pushes are blocked by
+          # the pull_request rule, and the github-actions app cannot be a
+          # bypass actor on user-owned repos. Both branches below push, so
+          # the key is set up once, unconditionally.
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$RELEASE_DEPLOY_KEY" > "$HOME/.ssh/release_key"
+          chmod 600 "$HOME/.ssh/release_key"
+          # GitHub's published Ed25519 host key, pinned rather than scanned:
+          # `ssh-keyscan` accepts whatever key answers, so it authenticates
+          # nothing and leaves a MITM window on the release push. Source of
+          # truth is the `ssh_keys` array of https://api.github.com/meta.
+          printf 'github.com ssh-ed25519 %s\n' \
+            'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+            >> "$HOME/.ssh/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes"
+
+          if [ "$RALPH_CHANGED" != "true" ]; then
+            # GH-2511: a plugin-only push — ralph/** did not change since the
+            # last ralph-v* tag, so there is no ralph release to cut. Still
+            # move the herdr stamp if the plugin's own behavior surface
+            # changed: a plugin-only merge must not wait for the next
+            # unrelated ralph/** change to be reflected on an installed
+            # cockpit. No tag, no GitHub Release — [skip ci] on the commit
+            # so this push doesn't re-trigger this workflow (it touches
+            # ralph/scripts/herdr-plugin-version, which is under ralph/**).
+            git pull --rebase origin main
+            HERDR_OUT=$(bash scripts/herdr-plugin-release-bump.sh)
+            if grep -q '^bumped=true$' <<<"$HERDR_OUT"; then
+              HERDR_NEW=$(sed -n 's/^new=//p' <<<"$HERDR_OUT")
+              git add plugin/ralph-herdr/herdr-plugin.toml ralph/scripts/herdr-plugin-version
+              git commit -q -m "chore(ralph-herdr): bump plugin stamp to ${HERDR_NEW} [skip ci]"
+              git push "git@github.com:${GITHUB_REPOSITORY}.git" HEAD:main
+            else
+              echo "No ralph-herdr behavior change since the last release either — nothing to do."
+            fi
+            exit 0
+          fi
+
           git add ralph/.claude-plugin/plugin.json
           COMMIT_MSG="chore(ralph): release ralph-v${NEW_VERSION} [skip ci]"
           git commit -m "$COMMIT_MSG"
@@ -194,24 +290,10 @@ jobs:
             git commit -q --amend -m "$(printf '%s\n\nchore(ralph-herdr): bump plugin stamp to %s' "$COMMIT_MSG" "$HERDR_NEW")"
           fi
           git tag "ralph-v${NEW_VERSION}"
-          # GH-1589: push via the release deploy key — the sole bypass actor
-          # on the protected-main ruleset. GITHUB_TOKEN pushes are blocked by
-          # the pull_request rule, and the github-actions app cannot be a
-          # bypass actor on user-owned repos.
-          mkdir -p "$HOME/.ssh"
-          printf '%s\n' "$RELEASE_DEPLOY_KEY" > "$HOME/.ssh/release_key"
-          chmod 600 "$HOME/.ssh/release_key"
-          # GitHub's published Ed25519 host key, pinned rather than scanned:
-          # `ssh-keyscan` accepts whatever key answers, so it authenticates
-          # nothing and leaves a MITM window on the release push. Source of
-          # truth is the `ssh_keys` array of https://api.github.com/meta.
-          printf 'github.com ssh-ed25519 %s\n' \
-            'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
-            >> "$HOME/.ssh/known_hosts"
-          GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes" \
-            git push "git@github.com:${GITHUB_REPOSITORY}.git" HEAD:main --tags
+          git push "git@github.com:${GITHUB_REPOSITORY}.git" HEAD:main --tags
 
       - name: Create GitHub Release
+        if: steps.changed.outputs.ralph_changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
