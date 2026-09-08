@@ -16,14 +16,15 @@
 #   release" needs no separate bookkeeping.
 #   HEAD_REF defaults to HEAD.
 #
-# Run this from the repo root, AFTER the checkout has been advanced onto
-# main's tip (the same "Advance to current main" step release-ralph.yml
-# already runs before computing ralph's own version, GH-1952): the behavior
-# diff is read from git objects by ref, but the new stamp is WRITTEN INTO THE
+# Run this from the repo root, AFTER release-ralph.yml's `git pull --rebase`
+# and immediately BEFORE its `git tag` — never earlier. The diff is by ref, so
+# it must see everything the tag is about to cover: a herdr behavior merge
+# landing between "Advance to current main" and the rebase would otherwise be
+# tagged under a stale stamp and, sitting below the tag, be invisible to every
+# later run's diff (Greptile P1 on #2507). The new stamp is WRITTEN INTO THE
 # CURRENT WORKING TREE at $MANIFEST/$STAMP (paths relative to cwd, like every
-# git command this script runs — never the script's own install location) so
-# the job's existing commit step can just `git add` whatever changed
-# alongside ralph's own bump.
+# git command here — never the script's own install location) so the job can
+# `git add` both files and amend them into the release commit.
 #
 # Prints exactly one `key=value` line per line to stdout, GITHUB_OUTPUT-ready:
 #   bumped=false                — no ralph-herdr behavior file changed since
