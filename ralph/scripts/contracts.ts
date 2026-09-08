@@ -1025,6 +1025,18 @@ function buildFleetReply(mode: Mode) {
 // consumer that ships a queue snapshot across a boundary (the Phase-2
 // watcher). Nothing produces the envelope yet; the schema exists so that
 // consumer has a contract to meet on day one.
+// NOTE on DeliverReason evolution (GH-2471): a new reason string is an
+// additive-only change, not a version bump — zDeliverRow's `reason` field
+// is z.enum(DELIVER_REASONS) in strict mode (the producer, board.ts, must
+// never emit an undeclared reason) and z.string() in loose mode (an
+// already-installed consumer at contract_version 1 accepts a reason it
+// doesn't recognize yet, same as it already tolerates unknown keys under
+// .passthrough()). Chosen over bumping contract_version per addition:
+// DELIVER_REASONS has grown four times (convergence-stalled,
+// reviewer-rate-limited, local-session-active, awaiting-approval) with no
+// other C6 shape change alongside any of them, so gating them on a version
+// bump would force every loose consumer to re-pin on churn it doesn't
+// otherwise care about.
 
 function zClaimJson(mode: Mode) {
   // board.ts Claim (= ClaimV2) JSON-serialized: Date → ISO string, holders
@@ -1105,7 +1117,15 @@ function zDeliverRow(mode: Mode) {
     number: zIssue,
     title: z.string(),
     pr: z.number().int().nullable(),
-    reason: z.enum(DELIVER_REASONS),
+    // GH-2471: reason additions are additive-only, same rule as an unknown
+    // key under passthrough — the producer stays closed (a typo or a
+    // removed reason is a real bug), but a loose consumer installed before
+    // a new reason shipped must not reject the row over it. Bumping
+    // contract_version per addition was rejected: DELIVER_REASONS has
+    // grown four times already and none of those additions changed any
+    // other field, so gating them behind a version bump would force every
+    // installed loose consumer to re-pin on a change it doesn't care about.
+    reason: mode === "strict" ? z.enum(DELIVER_REASONS) : z.string(),
     verdict: z.string().nullable().optional(),
     gate: z.string().nullable().optional(),
     deltaAt: zIsoUtc.nullable().optional(),
