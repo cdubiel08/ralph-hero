@@ -2175,6 +2175,70 @@ describe("doctor (legacy states, archived items)", () => {
     expect(gh.issues.get(1)!.claim).toBeNull();
   });
 
+  it("GH-2488: a stale claim with an open, linked PR releases to In Review via the transition lane", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    const ledgerCalls: string[][] = [];
+    const inner = ctx.exec;
+    ctx.exec = (argv, stdin) => {
+      if (argv[0] === "bash" && argv[1]?.endsWith("ledger-transition.sh")) {
+        ledgerCalls.push(argv);
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      return inner(argv, stdin);
+    };
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("dead@host", new Date(NOW.getTime() - 999 * 60_000)),
+      prs: [{ number: 2474, merged: false }],
+    });
+
+    const report = doctor(ctx, { fix: true });
+    expect(gh.issues.get(1)!.state).toBe("In Review");
+    expect(gh.issues.get(1)!.claim).toBeNull();
+    expect(gh.comments.some((c) => c.body.includes("pull/2474") && c.body.includes("In Review"))).toBe(true);
+    expect(report.checks.some((c) => c.detail.includes("moved to In Review") && c.detail.includes("2474"))).toBe(true);
+    // The legal edge rides transition(): one state write, and the ledger echo
+    // transition() owns fires for it (the direct Backlog write has none).
+    expect(gh.mutations.filter((m) => m.startsWith("setState("))).toEqual(["setState(#1, In Review)"]);
+    expect(ledgerCalls.map((c) => c.slice(4, 6))).toEqual([["In Progress", "In Review"]]);
+  });
+
+  it("GH-2488: a truncated PR-linkage page withholds the release instead of guessing", () => {
+    // >PR_LINK_PAGE closing refs: an open PR may sit past the page. Both
+    // answers write state, so neither is taken — the claim stays, doctor warns.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("dead@host", new Date(NOW.getTime() - 999 * 60_000)),
+      prs: [{ number: 2474, merged: true }],
+      prsTruncated: true,
+    });
+
+    const report = doctor(ctx, { fix: true });
+    expect(gh.issues.get(1)!.state).toBe("In Progress");
+    expect(gh.issues.get(1)!.claim).not.toBeNull();
+    expect(gh.mutations.filter((m) => m.startsWith("setState(") || m.startsWith("clearField("))).toEqual([]);
+    const line = report.checks.find((c) => c.name === "fix" && c.detail.includes("left in place"));
+    expect(line?.level).toBe("warn");
+    expect(line?.detail).toMatch(/unreadable/);
+  });
+
+  it("GH-2488: a stale claim with only a merged/closed PR link still demotes to Backlog", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("dead@host", new Date(NOW.getTime() - 999 * 60_000)),
+      prs: [{ number: 2474, merged: true }],
+    });
+
+    doctor(ctx, { fix: true });
+    expect(gh.issues.get(1)!.state).toBe("Backlog");
+    expect(gh.issues.get(1)!.claim).toBeNull();
+  });
+
   it("archived items are invisible to list/next — they cannot be written", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
