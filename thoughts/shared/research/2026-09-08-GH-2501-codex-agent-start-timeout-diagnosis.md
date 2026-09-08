@@ -69,7 +69,7 @@ trust entry into `~/.codex/config.toml` directly:
 
 ```python
 import json, os
-key = json.dumps(os.path.abspath(worktree_path))  # a JSON string literal is a valid TOML basic string, escapes included
+key = json.dumps(os.path.abspath(worktree_path), ensure_ascii=False)  # JSON quoting is TOML-safe when non-ASCII stays UTF-8 (surrogate escapes are not valid TOML)
 with open(os.path.expanduser("~/.codex/config.toml"), "a") as f:
     f.write(f'\n[projects.{key}]\ntrust_level = "trusted"\n')
 ```
