@@ -1773,6 +1773,46 @@ is "usage: max_context is the largest single prompt"              "6000" "$(uj '
 is "usage: list_usd prices sonnet-5 at the 1h-write rate, 4dp"    "0.0176" "$(uj '.list_usd')"
 is "usage: an unknown model is counted, never silently priced"    "1" "$(uj '.unpriced_calls')"
 is "usage: the dominant model is named"                           "claude-sonnet-5" "$(uj '.model')"
+
+# GH-2438: the harness writes an Agent() call's transcript one directory
+# deeper than the parent's own file, named by agent hash — a plain sibling
+# glob cannot find it, so every subagent call priced as zero until now.
+subdir="$tdir/$USID/subagents"
+mkdir -p "$subdir"
+cat >"$subdir/agent-deadbeef.jsonl" <<EOF
+{"type":"assistant","timestamp":"2026-09-01T10:00:02Z","message":{"id":"sub_1","model":"claude-haiku-4-5","usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":50}}}
+EOF
+is "usage: subagent transcripts are discovered beside the parent's session dir" \
+  "$subdir/agent-deadbeef.jsonl" "$(_ralph_usage_subagent_files "$tdir/$USID.jsonl")"
+fails "usage: a session with no subagents dir yields nothing to fold" _ralph_usage_subagent_files "$tdir/no-such-session.jsonl"
+usub=$(ralph_usage_from_transcript "$tdir/$USID.jsonl" "$subdir/agent-deadbeef.jsonl") || usub=""
+usubj() { jq -r "$1" <<<"$usub" 2>/dev/null; }
+is "usage: folding a subagent transcript in raises calls beyond the parent's own" "4" "$(usubj '.calls')"
+is "usage: the subagent's tokens land in the combined total, not silently zero" "$((601 + 50))" "$(usubj '.output')"
+is "usage: list_usd exceeds the parent-only figure by exactly the subagent spend" \
+  "yes" "$(awk -v combined="$(usubj '.list_usd')" -v own="$(uj '.list_usd')" -v subusd="$(usubj '.subagent.list_usd')" \
+    'BEGIN { d = combined - own - subusd; if (d < 0) d = -d; print (d < 0.00005) ? "yes" : "no" }')"
+is "usage: the subagent slice is attributable beside the parent's own" "1" "$(usubj '.subagent.calls')"
+is "usage: the subagent's own model is named in its slice" "claude-haiku-4-5" "$(usubj '.subagent.model')"
+is "usage: with no subagent files the subtotal reads zero, not absent" "0" "$(uj '.subagent.calls')"
+# A subagent file gone (or locked) between the glob and the read is spend this
+# read cannot see — one unpriced call on both slices, never a dropped parent fact.
+ugone=$(ralph_usage_from_transcript "$tdir/$USID.jsonl" "$subdir/agent-deadbeef.jsonl" "$subdir/agent-vanished.jsonl") || ugone=""
+is "usage: an unreadable subagent transcript does not drop the parent's fact" "4" "$(jq -r '.calls' <<<"$ugone")"
+is "usage: ...it counts as unpriced on the total" "2" "$(jq -r '.unpriced_calls' <<<"$ugone")"
+is "usage: ...and on the subagent slice" "1" "$(jq -r '.subagent.unpriced_calls' <<<"$ugone")"
+# The parent's own file gets the same sentinel when it vanishes after the
+# caller's check, attributed to the OWN slice — never a subagent-only fact
+# that reads complete.
+is "usage: a vanished parent streams its own unreadable sentinel" "1" \
+  "$(_ralph_usage_stream "$tdir/vanished-parent.jsonl" "$subdir/agent-deadbeef.jsonl" | grep -c '"__ralph_unreadable":1')"
+is "usage: ...counted on the total, not the subagent slice" "1 0" \
+  "$(_ralph_usage_stream "$tdir/vanished-parent.jsonl" "$subdir/agent-deadbeef.jsonl" | jq -R -n -c \
+      'reduce (inputs | (fromjson? // empty) | select(type=="object")) as $l ({o:"own",u:{own:0,subagent:0}};
+         if ($l.__ralph_origin|type)=="string" then .o=$l.__ralph_origin elif $l.__ralph_unreadable==1 then .u[.o]+=1 else . end)
+       | "\(.u.own) \(.u.subagent)"' | tr -d '"')"
+rm -rf "$subdir" # section 10 below reuses $USID's own transcript and must not see this fixture
+
 printf '{"type":"user"}\n' >"$tdir/empty.jsonl"
 fails "usage: a transcript with no model calls is rc 1, not a zero fact" ralph_usage_from_transcript "$tdir/empty.jsonl"
 is "usage: transcript found by the derived cwd slug" "$tdir/$USID.jsonl" "$(_ralph_usage_transcript "$USID" "$REPO_DIR")"

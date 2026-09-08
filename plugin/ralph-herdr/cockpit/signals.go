@@ -699,6 +699,13 @@ type CallUsage struct {
 // an unmeasured session is not a free one. The per-call slice is kept so the
 // header's clock windows ("today", "/h") can be cut at render time against
 // the CURRENT clock rather than the clock at read time.
+//
+// Calls/USD/Tokens/Unpriced fold in every subagent transcript nested under
+// this session (GH-2438) — the harness writes an Agent() call's transcript
+// one directory deeper than the parent's own file, named by agent hash
+// rather than session id, so it is invisible to a plain sibling glob. The
+// fold keeps it attributable: Subagent carries the same reduction over just
+// that slice, beside the combined total rather than silently summed into it.
 type SessionUsage struct {
 	Read        bool
 	USD         float64
@@ -709,6 +716,16 @@ type SessionUsage struct {
 	LastModel string
 	Unpriced  int
 	Calls     []CallUsage
+	Subagent  SubagentUsage
+}
+
+// SubagentUsage is the Agent()-call slice of a session's usage, reduced
+// alone so a reader can back it out of the combined SessionUsage totals.
+type SubagentUsage struct {
+	Calls    int
+	USD      float64
+	Tokens   int
+	Unpriced int
 }
 
 // priced reports a reduction that is complete: read, and every call had a
@@ -764,15 +781,73 @@ func deref(p *int) int {
 	return *p
 }
 
-// readTranscriptUsage reduces one transcript. Torn or foreign lines are
-// skipped, never fatal — the last line of a live transcript is routinely
-// mid-write — and lines are read without a length ceiling, because a tool
-// result can be megabytes and a scanner that dies on it would serve a PREFIX
-// of the session as the whole.
+// readTranscriptUsage reduces one transcript and folds in every subagent
+// transcript nested beside it (GH-2438): <dir>/<sid>/subagents/*.jsonl, one
+// level deeper than the parent's own <sid>.jsonl and named by agent hash
+// rather than session id, so a plain sibling glob never finds it and every
+// Agent() call priced as zero. The combined reduction is what SessionUsage
+// reports; Subagent holds the same slice reduced alone, so a reader can
+// still back the split out rather than seeing it silently summed away.
 func readTranscriptUsage(path string) SessionUsage {
+	out, err := reduceTranscript(path)
+	if err != nil || !out.Read {
+		return SessionUsage{}
+	}
+	for _, sp := range subagentTranscriptPaths(path) {
+		sub, err := reduceTranscript(sp)
+		if err != nil {
+			// Spend this read cannot see: the file could not be opened.
+			// Count it unpriced from the SAME open that failed — no second
+			// probe — so priced() is false and the session never renders
+			// as complete while understating.
+			out.Unpriced++
+			out.Subagent.Unpriced++
+			continue
+		}
+		if !sub.Read {
+			// A subagent transcript with no usage row yet is genuinely
+			// zero so far — an Agent() call that has not answered.
+			continue
+		}
+		out.USD += sub.USD
+		out.Tokens += sub.Tokens
+		out.Unpriced += sub.Unpriced
+		out.Calls = append(out.Calls, sub.Calls...)
+		out.Subagent.Calls += len(sub.Calls)
+		out.Subagent.USD += sub.USD
+		out.Subagent.Tokens += sub.Tokens
+		out.Subagent.Unpriced += sub.Unpriced
+	}
+	return out
+}
+
+// subagentTranscriptPaths globs a session transcript's own subagents
+// directory, sorted for deterministic ordering. No directory (the common
+// case — most sessions spawn no Agent() calls) is nil, not an error.
+func subagentTranscriptPaths(path string) []string {
+	sid := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	if sid == "" || sid == filepath.Base(path) {
+		return nil
+	}
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), sid, "subagents", "*.jsonl"))
+	if err != nil {
+		return nil
+	}
+	sort.Strings(matches)
+	return matches
+}
+
+// reduceTranscript reduces one transcript file, own or subagent alike. A
+// non-nil error is the one absence a caller must not read as "nothing
+// there": the file could not be opened. Torn or foreign lines are skipped,
+// never fatal — the last line of a live transcript is routinely mid-write —
+// and lines are read without a length ceiling, because a tool result can be
+// megabytes and a scanner that dies on it would serve a PREFIX of the
+// session as the whole.
+func reduceTranscript(path string) (SessionUsage, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return SessionUsage{}
+		return SessionUsage{}, err
 	}
 	defer f.Close()
 	byID := map[string]*rawCall{}
@@ -813,7 +888,7 @@ func readTranscriptUsage(path string) SessionUsage {
 		}
 	}
 	if len(order) == 0 {
-		return SessionUsage{}
+		return SessionUsage{}, nil
 	}
 	out := SessionUsage{Read: true, Calls: make([]CallUsage, 0, len(order))}
 	for _, id := range order {
@@ -842,7 +917,7 @@ func readTranscriptUsage(path string) SessionUsage {
 		out.LastModel = rc.model
 		out.Calls = append(out.Calls, c)
 	}
-	return out
+	return out, nil
 }
 
 // transcriptRoot is $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects —
