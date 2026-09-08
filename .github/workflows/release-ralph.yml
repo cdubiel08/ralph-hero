@@ -128,26 +128,50 @@ jobs:
       # of a PRIOR herdr-only bump (below), never real ralph work, and
       # counting it would make that prior bump look like a reason to cut a
       # real ralph release on the very next run.
+      #
+      # The same step names the herdr stamp's own diff base (`herdr_base`).
+      # A herdr-only bump (below) lands on main WITHOUT a tag, so "since the
+      # last ralph-v* tag" would keep seeing that generated manifest change
+      # as new behavior and bump the stamp again on every later run — a
+      # docs-only plugin push included (Greptile P1 on #2513). The base is
+      # therefore whichever is later of the last tag and the last commit
+      # that touched the stamp file; the stamp file is written only by this
+      # workflow, so that commit IS the last time the stamp moved.
       - name: Classify what changed since the last release
         id: changed
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          STAMP="ralph/scripts/herdr-plugin-version"
+          LAST_TAG=$(git tag --list 'ralph-v*' | sed 's/^ralph-v//' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          HERDR_BASE=""
+          if [ -n "$LAST_TAG" ]; then
+            HERDR_BASE="ralph-v${LAST_TAG}"
+            STAMP_COMMIT=$(git log -1 --format=%H -- "$STAMP")
+            if [ -n "$STAMP_COMMIT" ] \
+              && git merge-base --is-ancestor "$HERDR_BASE" "$STAMP_COMMIT" \
+              && ! git merge-base --is-ancestor "$STAMP_COMMIT" "$HERDR_BASE"; then
+              HERDR_BASE="$STAMP_COMMIT"
+              echo "herdr diff base: ${STAMP_COMMIT} (stamp moved after ralph-v${LAST_TAG} without a tag)"
+            else
+              echo "herdr diff base: ralph-v${LAST_TAG}"
+            fi
+          fi
+          echo "herdr_base=$HERDR_BASE" >> "$GITHUB_OUTPUT"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "ralph_changed=true" >> "$GITHUB_OUTPUT"
             echo "workflow_dispatch: explicit request, always cuts a ralph release"
             exit 0
           fi
-          LAST_TAG=$(git tag --list 'ralph-v*' | sed 's/^ralph-v//' \
-            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
           if [ -z "$LAST_TAG" ]; then
             echo "ralph_changed=true" >> "$GITHUB_OUTPUT"
             echo "No ralph-v* tag found yet — treating as changed"
             exit 0
           fi
           CHANGED=$(git diff --name-only "ralph-v${LAST_TAG}" HEAD \
-            -- ralph/ ':(exclude)ralph/scripts/herdr-plugin-version')
+            -- ralph/ ":(exclude)$STAMP")
           if [ -n "$CHANGED" ]; then
             echo "ralph_changed=true" >> "$GITHUB_OUTPUT"
             echo "ralph/** changed since ralph-v${LAST_TAG}:"
@@ -214,6 +238,7 @@ jobs:
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
           RALPH_CHANGED: ${{ steps.changed.outputs.ralph_changed }}
+          HERDR_BASE: ${{ steps.changed.outputs.herdr_base }}
           RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
         run: |
           set -euo pipefail
@@ -247,7 +272,18 @@ jobs:
             # so this push doesn't re-trigger this workflow (it touches
             # ralph/scripts/herdr-plugin-version, which is under ralph/**).
             git pull --rebase origin main
-            HERDR_OUT=$(bash scripts/herdr-plugin-release-bump.sh)
+            # A ralph/** merge landing between "Classify" and this rebase is
+            # now in the tree while ralph_changed still says false. It is
+            # not stranded: that merge's own push fires its own run, queued
+            # behind this one (cancel-in-progress: false), which classifies
+            # it as changed and cuts the release. Name it in the log rather
+            # than release it from here under a classification that no
+            # longer holds (Greptile P1 on #2513).
+            if [ -n "$HERDR_BASE" ] && [ -n "$(git diff --name-only "$HERDR_BASE" HEAD \
+                 -- ralph/ ':(exclude)ralph/scripts/herdr-plugin-version')" ]; then
+              echo "::notice::ralph/** changed under this run during the rebase — its own queued run will cut that release; pushing only the herdr stamp here"
+            fi
+            HERDR_OUT=$(bash scripts/herdr-plugin-release-bump.sh "$HERDR_BASE")
             if grep -q '^bumped=true$' <<<"$HERDR_OUT"; then
               HERDR_NEW=$(sed -n 's/^new=//p' <<<"$HERDR_OUT")
               git add plugin/ralph-herdr/herdr-plugin.toml ralph/scripts/herdr-plugin-version
@@ -283,7 +319,10 @@ jobs:
           # a non-fast-forward there fails the job, as it does for ralph's
           # own bump. A skip is not a failure: most ralph releases carry no
           # herdr change, so the script's bumped=false is the common answer.
-          HERDR_OUT=$(bash scripts/herdr-plugin-release-bump.sh)
+          # The base is the classify step's herdr_base, not the bare tag: a
+          # herdr-only bump since that tag (untagged, above) must not read as
+          # behavior to bump again.
+          HERDR_OUT=$(bash scripts/herdr-plugin-release-bump.sh "$HERDR_BASE")
           if grep -q '^bumped=true$' <<<"$HERDR_OUT"; then
             HERDR_NEW=$(sed -n 's/^new=//p' <<<"$HERDR_OUT")
             git add plugin/ralph-herdr/herdr-plugin.toml ralph/scripts/herdr-plugin-version
