@@ -2175,6 +2175,36 @@ describe("doctor (legacy states, archived items)", () => {
     expect(gh.issues.get(1)!.claim).toBeNull();
   });
 
+  it("GH-2488: a stale claim with an open, linked PR releases to In Review, not Backlog", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("dead@host", new Date(NOW.getTime() - 999 * 60_000)),
+      prs: [{ number: 2474, merged: false }],
+    });
+
+    const report = doctor(ctx, { fix: true });
+    expect(gh.issues.get(1)!.state).toBe("In Review");
+    expect(gh.issues.get(1)!.claim).toBeNull();
+    expect(gh.comments.some((c) => c.body.includes("pull/2474") && c.body.includes("In Review"))).toBe(true);
+    expect(report.checks.some((c) => c.detail.includes("held In Review") && c.detail.includes("2474"))).toBe(true);
+  });
+
+  it("GH-2488: a stale claim with only a merged/closed PR link still demotes to Backlog", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("dead@host", new Date(NOW.getTime() - 999 * 60_000)),
+      prs: [{ number: 2474, merged: true }],
+    });
+
+    doctor(ctx, { fix: true });
+    expect(gh.issues.get(1)!.state).toBe("Backlog");
+    expect(gh.issues.get(1)!.claim).toBeNull();
+  });
+
   it("archived items are invisible to list/next — they cannot be written", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);

@@ -12327,17 +12327,41 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
             clearField(ctx, cache, issue.itemId, CLAIM_FIELD);
             if (issue.state === "In Progress") {
               // The one sanctioned state write outside transition/reconcile/
-              // parent-check: releasing a stale claim must return the item to
-              // Backlog, and no lane models "the holder vanished" (reconcile
-              // follows issue open/closed reality, which has not changed).
-              // Pinned by test: "stale-claim demotion is a deliberate…".
-              setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, "Backlog");
-              syncStatus(ctx, cache, issue.itemId, "Backlog");
+              // parent-check: releasing a stale claim must return the item
+              // somewhere, and no lane models "the holder vanished"
+              // (reconcile follows issue open/closed reality, which has not
+              // changed). Pinned by test: "stale-claim demotion is a
+              // deliberate…".
+              //
+              // GH-2488: Backlog is right only when the work is genuinely
+              // un-started. An open, linked PR (the same `closedByPull-
+              // RequestsReferences` read `get` already surfaces) is evidence
+              // the WORKER vanished, not that the WORK did — the PR is a
+              // deliverable already awaiting the gate. Sending it to Backlog
+              // hides that PR from the cockpit and re-offers the unit to the
+              // frontier while it is still live. The machine has no Backlog →
+              // In Review edge to reuse, so this stays the same sanctioned
+              // direct write, just aimed at whichever target the evidence
+              // supports.
+              const openPr = issue.prs.find((p) => p.state === "OPEN");
+              const target: State = openPr ? "In Review" : "Backlog";
+              setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, target);
+              syncStatus(ctx, cache, issue.itemId, target);
               addComment(
                 ctx,
                 issue.nodeId,
-                `\`board doctor --fix\`: stale claim by \`${issue.claim.holders.join("+")}\` released; returned to Backlog.`,
+                openPr
+                  ? `\`board doctor --fix\`: stale claim by \`${issue.claim.holders.join("+")}\` released; ${openPr.url} is open, so this returned to In Review rather than Backlog.`
+                  : `\`board doctor --fix\`: stale claim by \`${issue.claim.holders.join("+")}\` released; returned to Backlog.`,
               );
+              add(
+                "fix",
+                "ok",
+                openPr
+                  ? `#${i.number}: claim cleared, held In Review (open PR ${openPr.url})`
+                  : `#${i.number}: claim cleared, returned to Backlog`,
+              );
+              continue;
             }
             add("fix", "ok", `#${i.number}: claim cleared`);
           } catch (e) {
