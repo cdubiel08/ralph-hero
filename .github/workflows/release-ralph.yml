@@ -104,6 +104,20 @@ jobs:
           git fetch --force --tags origin main
           git checkout --force -B release-bump FETCH_HEAD
 
+      # GH-2491: the ralph-herdr plugin (plugin/ralph-herdr/**) has no version
+      # trigger of its own here — it rides whatever release-ralph.yml fires
+      # for ralph/** — but its stamp used to be a per-PR CI requirement, and
+      # with 8-12 ralph-herdr PRs open at once that collided on nearly every
+      # merge. The stamp now moves here instead: at most once per release,
+      # only when the plugin's behavior surface actually changed since the
+      # last ralph-v* tag. A skip is not a failure — most ralph releases carry
+      # no herdr change at all — so this step never fails the job.
+      - name: Compute ralph-herdr release-time stamp bump
+        id: herdr
+        run: |
+          set -euo pipefail
+          bash scripts/herdr-plugin-release-bump.sh >> "$GITHUB_OUTPUT"
+
       - name: Compute next version
         id: version
         env:
@@ -158,13 +172,20 @@ jobs:
       - name: Commit bump and tag
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
+          HERDR_BUMPED: ${{ steps.herdr.outputs.bumped }}
+          HERDR_NEW_VERSION: ${{ steps.herdr.outputs.new }}
           RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add ralph/.claude-plugin/plugin.json
-          git commit -m "chore(ralph): release ralph-v${NEW_VERSION} [skip ci]"
+          COMMIT_MSG="chore(ralph): release ralph-v${NEW_VERSION} [skip ci]"
+          if [ "$HERDR_BUMPED" = "true" ]; then
+            git add plugin/ralph-herdr/herdr-plugin.toml ralph/scripts/herdr-plugin-version
+            COMMIT_MSG=$(printf '%s\n\nchore(ralph-herdr): bump plugin stamp to %s' "$COMMIT_MSG" "$HERDR_NEW_VERSION")
+          fi
+          git commit -m "$COMMIT_MSG"
           # Rebase BEFORE tagging (GH-1952). This is not hypothetical: on
           # 2026-08-15 the winning run tagged 43aa4ce8, then rebased onto a
           # main that had advanced — moving the commit and leaving the tag on
