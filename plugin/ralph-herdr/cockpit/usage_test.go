@@ -142,6 +142,15 @@ func TestReadTranscriptUsageDedupesByMessageID(t *testing.T) {
 	}
 }
 
+func mustReduce(t *testing.T, path string) SessionUsage {
+	t.Helper()
+	u, err := reduceTranscript(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
 // GH-2438: the harness writes an Agent() call's own transcript one directory
 // deeper than the parent's own file, named by agent hash rather than session
 // id — <dir>/<sid>/subagents/agent-<hash>.jsonl — invisible to a plain
@@ -159,7 +168,7 @@ func TestReadTranscriptUsageFoldsInSubagentTranscripts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ownOnly := reduceTranscript(own)
+	ownOnly := mustReduce(t, own)
 	combined := readTranscriptUsage(own)
 	if !combined.Read || len(combined.Calls) != 2 {
 		t.Fatalf("calls = %d read=%v, want the parent's own call plus the subagent's", len(combined.Calls), combined.Read)
@@ -184,7 +193,7 @@ func TestReadTranscriptUsageFoldsInSubagentTranscripts(t *testing.T) {
 
 	// No subagents dir at all is the common case, not an error.
 	lone := writeTranscript(t, dir, "s2", usageRow("m", "claude-sonnet-5", "2026-09-02T10:00:00Z", 1, 0, 0, 0, 0, 1))
-	if got := readTranscriptUsage(lone); got.Subagent.Calls != 0 || got.USD != reduceTranscript(lone).USD {
+	if got := readTranscriptUsage(lone); got.Subagent.Calls != 0 || got.USD != mustReduce(t, lone).USD {
 		t.Errorf("no-subagents session: %+v", got)
 	}
 

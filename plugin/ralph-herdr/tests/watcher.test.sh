@@ -1752,6 +1752,16 @@ ugone=$(ralph_usage_from_transcript "$tdir/$USID.jsonl" "$subdir/agent-deadbeef.
 is "usage: an unreadable subagent transcript does not drop the parent's fact" "4" "$(jq -r '.calls' <<<"$ugone")"
 is "usage: ...it counts as unpriced on the total" "2" "$(jq -r '.unpriced_calls' <<<"$ugone")"
 is "usage: ...and on the subagent slice" "1" "$(jq -r '.subagent.unpriced_calls' <<<"$ugone")"
+# The parent's own file gets the same sentinel when it vanishes after the
+# caller's check, attributed to the OWN slice — never a subagent-only fact
+# that reads complete.
+is "usage: a vanished parent streams its own unreadable sentinel" "1" \
+  "$(_ralph_usage_stream "$tdir/vanished-parent.jsonl" "$subdir/agent-deadbeef.jsonl" | grep -c '"__ralph_unreadable":1')"
+is "usage: ...counted on the total, not the subagent slice" "1 0" \
+  "$(_ralph_usage_stream "$tdir/vanished-parent.jsonl" "$subdir/agent-deadbeef.jsonl" | jq -R -n -c \
+      'reduce (inputs | (fromjson? // empty) | select(type=="object")) as $l ({o:"own",u:{own:0,subagent:0}};
+         if ($l.__ralph_origin|type)=="string" then .o=$l.__ralph_origin elif $l.__ralph_unreadable==1 then .u[.o]+=1 else . end)
+       | "\(.u.own) \(.u.subagent)"' | tr -d '"')"
 rm -rf "$subdir" # section 10 below reuses $USID's own transcript and must not see this fixture
 
 printf '{"type":"user"}\n' >"$tdir/empty.jsonl"

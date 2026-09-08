@@ -1381,9 +1381,9 @@ ralph_usage_from_transcript() {
           last_ts: ($rows | map(.ts) | if length == 0 then "" else max end)
         };
     reduce (inputs | (fromjson? // empty) | select(type == "object")) as $l
-      ({origin: "own", unreadable: 0, rows: []};
+      ({origin: "own", unreadable: {own: 0, subagent: 0}, rows: []};
        if ($l.__ralph_origin | type) == "string" then .origin = $l.__ralph_origin
-       elif $l.__ralph_unreadable == 1 then .unreadable += 1
+       elif $l.__ralph_unreadable == 1 then .unreadable[.origin] += 1
        elif $l.type == "assistant" and ($l.message.usage | type) == "object" and ($l.message.id // "") != "" then
          .rows += [{id: $l.message.id, ts: ($l.timestamp // ""), model: ($l.message.model // "unknown"),
                     u: $l.message.usage, origin: .origin}]
@@ -1405,18 +1405,21 @@ ralph_usage_from_transcript() {
     | map(if (.w5 + .w1) == 0 and .wtotal > 0 then .w1 = .wtotal else . end)
     | if length == 0 then halt_error(1) else . end
     | summarize(.) + {subagent: summarize(map(select(.origin == "subagent")))}
-    | .unpriced_calls += $unreadable | .subagent.unpriced_calls += $unreadable
+    | .unpriced_calls += ($unreadable.own + $unreadable.subagent)
+    | .subagent.unpriced_calls += $unreadable.subagent
   ' 2>/dev/null
 }
 
 # _ralph_usage_stream FILE [SUBAGENT_FILE...] — the row stream the reducer
 # above consumes: FILE's lines, then each subagent file's, each preceded by
 # an origin sentinel. A file that cannot be read (gone, locked) becomes an
-# unreadable sentinel in place of its rows; the leading newline before every
-# sentinel guarantees a torn last line cannot swallow it.
+# unreadable sentinel in place of its rows — the parent's own file included,
+# so a parent that vanishes after the caller's check is an unpriced call on
+# the total rather than a subagent-only fact that reads complete; the leading
+# newline before every sentinel guarantees a torn last line cannot swallow it.
 _ralph_usage_stream() {
   local f
-  cat -- "$1" 2>/dev/null || true
+  cat -- "$1" 2>/dev/null || printf '\n{"__ralph_unreadable":1}\n'
   shift
   for f in "$@"; do
     printf '\n{"__ralph_origin":"subagent"}\n'

@@ -789,24 +789,24 @@ func deref(p *int) int {
 // reports; Subagent holds the same slice reduced alone, so a reader can
 // still back the split out rather than seeing it silently summed away.
 func readTranscriptUsage(path string) SessionUsage {
-	out := reduceTranscript(path)
-	if !out.Read {
-		return out
+	out, err := reduceTranscript(path)
+	if err != nil || !out.Read {
+		return SessionUsage{}
 	}
 	for _, sp := range subagentTranscriptPaths(path) {
-		sub := reduceTranscript(sp)
+		sub, err := reduceTranscript(sp)
+		if err != nil {
+			// Spend this read cannot see: the file could not be opened.
+			// Count it unpriced from the SAME open that failed — no second
+			// probe — so priced() is false and the session never renders
+			// as complete while understating.
+			out.Unpriced++
+			out.Subagent.Unpriced++
+			continue
+		}
 		if !sub.Read {
-			// Two different absences. A subagent transcript with no usage
-			// row yet is genuinely zero so far — an Agent() call that has
-			// not answered. One that cannot be OPENED is spend this read
-			// cannot see: count it unpriced, so priced() is false and the
-			// session never renders as complete while understating.
-			if f, err := os.Open(sp); err != nil {
-				out.Unpriced++
-				out.Subagent.Unpriced++
-			} else {
-				f.Close()
-			}
+			// A subagent transcript with no usage row yet is genuinely
+			// zero so far — an Agent() call that has not answered.
 			continue
 		}
 		out.USD += sub.USD
@@ -837,15 +837,17 @@ func subagentTranscriptPaths(path string) []string {
 	return matches
 }
 
-// reduceTranscript reduces one transcript file, own or subagent alike. Torn
-// or foreign lines are skipped, never fatal — the last line of a live
-// transcript is routinely mid-write — and lines are read without a length
-// ceiling, because a tool result can be megabytes and a scanner that dies on
-// it would serve a PREFIX of the session as the whole.
-func reduceTranscript(path string) SessionUsage {
+// reduceTranscript reduces one transcript file, own or subagent alike. A
+// non-nil error is the one absence a caller must not read as "nothing
+// there": the file could not be opened. Torn or foreign lines are skipped,
+// never fatal — the last line of a live transcript is routinely mid-write —
+// and lines are read without a length ceiling, because a tool result can be
+// megabytes and a scanner that dies on it would serve a PREFIX of the
+// session as the whole.
+func reduceTranscript(path string) (SessionUsage, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return SessionUsage{}
+		return SessionUsage{}, err
 	}
 	defer f.Close()
 	byID := map[string]*rawCall{}
@@ -886,7 +888,7 @@ func reduceTranscript(path string) SessionUsage {
 		}
 	}
 	if len(order) == 0 {
-		return SessionUsage{}
+		return SessionUsage{}, nil
 	}
 	out := SessionUsage{Read: true, Calls: make([]CallUsage, 0, len(order))}
 	for _, id := range order {
@@ -915,7 +917,7 @@ func reduceTranscript(path string) SessionUsage {
 		out.LastModel = rc.model
 		out.Calls = append(out.Calls, c)
 	}
-	return out
+	return out, nil
 }
 
 // transcriptRoot is $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects —
