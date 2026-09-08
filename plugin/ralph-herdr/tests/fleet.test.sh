@@ -269,6 +269,24 @@ ralph_ledger_unlock "$RALPH_HERDR_LEDGER"
 is "supersede: works under the caller's held lock (arm-then-supersede is one section)" "$RID6" "$held_out"
 is "supersede: the new run, armed first, is the one left standing" "true false" "$(jqf "$FF7" '.armed') $(jqf "$FF6" '.armed')"
 
+# GH-2475: a run whose disarm rewrite FAILS is a distinct outcome from
+# "nothing to supersede" — rc 1, and the id prints FAILED:<id> rather than
+# bare (review finding: the old rc-0-always shape let a still-armed run read
+# as ARMED with no WARNING). Fail the rewrite by making the run's own
+# directory unwritable (ralph_fleet_disarm's tmp file can't be created there);
+# the scope's ledger dir (one level up, where the lock file lives) stays
+# writable throughout.
+RID8=$(ralph_run_id)
+FF8=$(RALPH_HERDR_RUN_ID="$RID8" RALPH_HERDR_FLEET_EPIC=702 ralph_fleet_arm 2 1 905)
+RID9=$(ralph_run_id)
+chmod 555 "$(dirname "$FF8")"
+rc=0
+sup_out=$(REPO="$REPO_DIR" ralph_fleet_supersede_epic 702 "$RID9" 2>/dev/null) || rc=$?
+chmod 755 "$(dirname "$FF8")"
+is "supersede: a failed disarm rewrite returns rc 1" "1" "$rc"
+is "supersede: a failed disarm names the run FAILED: on stdout, never bare" "FAILED:$RID8" "$sup_out"
+is "supersede: the run whose rewrite failed stays armed" "true" "$(jqf "$FF8" '.armed')"
+
 # ═══ 3. budget consumption — atomic under the scope's ledger mutex ═══════════
 RID2=$(ralph_run_id)
 RALPH_HERDR_LEDGER="$TMP/u2/ledger.jsonl"

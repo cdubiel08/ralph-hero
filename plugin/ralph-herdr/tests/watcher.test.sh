@@ -622,6 +622,55 @@ is "heal no-checkout: notification raised" "1" "$(log_fcount 'died — not respa
 is "heal no-checkout: team space still flagged" "1" \
   "$(lcount "$HLEDGER" '.ev=="orphan_space" and .agent_ref=="o43-bare#0001" and .workspace_id=="ws43"')"
 
+# ═══ 5c-2. GH-2475: heal reparents dead-window refill roots to the live lead ═
+# refill_one records a worker refilled between a lead's death and its heal as
+# a depth-0 ROOT (no live generation to parent under — the honest truth at
+# spawn time, refill.sh's own header). A successful respawn (stubbed here,
+# per work-team.sh's own test file — what THIS hook owes is the correct
+# delegation, same as every other 5c scenario) leaves a fresh open ref for
+# the lead's name; this fixture pre-seeds that fresh epoch directly rather
+# than having the stub write it, since heal.sh's reparent step only reads
+# "the CURRENT open ref for this name" after the respawn call returns —
+# indifferent to when that record landed. One root worker this epic/lead's
+# fleet run actually spawned (w49-fix — its refill_spawn fact names the ref)
+# adopts; a worker already correctly parented (w50-safe, also picked by the
+# run) is left alone; and a root on an issue an OLDER run of the same
+# epic/lead once picked (w51-hand — issue 51 sits in run47's `spawned`, but
+# no refill_spawn names THIS ref: a human's later work-next.sh spawn) is
+# left alone too (review finding: issue-number unions adopt strangers).
+rm -f "${HLEDGER%.jsonl}.sqlite" "${HLEDGER%.jsonl}.sqlite-wal" "${HLEDGER%.jsonl}.sqlite-shm" # fixture rewrite: drop the tape or it shadows the new jsonl (phase D)
+cat >"$HLEDGER" <<EOF
+{"ts":"t0","ev":"spawn","agent_ref":"o48-heal#0001","pane_id":"p48","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"48","slug":"heal","depth":"0","state":"spawned","root":"o48-heal#0001"}}
+{"ts":"t1","ev":"spawn","agent_ref":"w49-fix#0009","pane_id":"p149","tokens":{"role":"w","issue":"49","slug":"fix","depth":"0","state":"spawned","root":"w49-fix#0009"}}
+{"ts":"t1b","ev":"refill_spawn","run_id":"run48","agent_ref":"w49-fix#0009","issue":49,"budget_left":5}
+{"ts":"t2","ev":"spawn","agent_ref":"w50-safe#0010","pane_id":"p150","tokens":{"role":"w","issue":"50","slug":"safe","depth":"1","state":"spawned","parent":"o48-heal#0001","root":"o48-heal#0001"}}
+{"ts":"t2b","ev":"refill_spawn","run_id":"run48","agent_ref":"w50-safe#0010","issue":50,"budget_left":4}
+{"ts":"t2c","ev":"spawn","agent_ref":"w51-hand#0011","pane_id":"p151","tokens":{"role":"w","issue":"51","slug":"hand","depth":"0","state":"spawned","root":"w51-hand#0011"}}
+{"ts":"t3","ev":"spawn","agent_ref":"o48-heal#0099","pane_id":"p248","checkout":"$REPO_DIR","tokens":{"role":"orchestrator","issue":"48","slug":"heal","depth":"0","state":"spawned","root":"o48-heal#0099"}}
+EOF
+mkdir -p "$HROOT/acme/demo/runs/run47" "$HROOT/acme/demo/runs/run48"
+cat >"$HROOT/acme/demo/runs/run47/fleet.json" <<'EOF'
+{"run_id":"run47","armed":false,"epic":48,"lead":"o48-heal","lead_ref":"o48-heal#0000","spawned":[51]}
+EOF
+cat >"$HROOT/acme/demo/runs/run48/fleet.json" <<'EOF'
+{"run_id":"run48","armed":true,"epic":48,"lead":"o48-heal","lead_ref":"o48-heal#0001","spawned":[49,50]}
+EOF
+herd_fixture '[{"name":"w49-fix","agent_status":"working","pane_id":"p149"},{"name":"w50-safe","agent_status":"working","pane_id":"p150"},{"name":"w51-hand","agent_status":"working","pane_id":"p151"},{"name":"o48-heal","agent_status":"working","pane_id":"p248"}]'
+: >"$FAKE_HERDR_LOG"
+: >"$HEAL_STUB_LOG"
+run_event pane.exited '{"pane_id":"p48","workspace_id":"ws48"}' "$HROOT"
+is "heal reparent: hook exits 0" "0" "$RC"
+is "heal reparent: the respawn was delegated" "1" "$(wc -l <"$HEAL_STUB_LOG" | tr -d ' ')"
+is "heal reparent: the dead-window root adopts the live lead" "1" \
+  "$(lcount "$HLEDGER" '.ev=="adopt" and .agent_ref=="w49-fix#0009" and .parent=="o48-heal#0099" and .prev_parent==""')"
+is "heal reparent: the pane token follows" "1" \
+  "$(log_count '^pane report-metadata p149 --source ralph-herdr --token parent=o48-heal#0099$')"
+is "heal reparent: an already-parented sibling in the same run is untouched" "0" \
+  "$(lcount "$HLEDGER" '.ev=="adopt" and .agent_ref=="w50-safe#0010"')"
+is "heal reparent: a root on an issue an OLDER run once picked, with no refill_spawn for this ref, is untouched" "0" \
+  "$(lcount "$HLEDGER" '.ev=="adopt" and .agent_ref=="w51-hand#0011"')"
+is "heal reparent: exactly one adopt landed" "1" "$(lcount "$HLEDGER" '.ev=="adopt"')"
+
 # ═══ 5d. GH-2357: heal.sh refuses a respawn once a ref is stood down ════════
 # Unreachable through run_event's own open-for-pane filter — a stood-down ref
 # is closed (in the ledger) before any death event for its pane can even

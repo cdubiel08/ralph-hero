@@ -1210,6 +1210,87 @@ ralph_ledger_orphan_pass() {
   return 0
 }
 
+# ralph_ledger_reparent_dead_window_roots EPIC LEAD NEW_REF — GH-2475: a
+# worker refilled while EPIC's lead was between death and heal (refill.sh's
+# refill_one finds no live generation to parent under) is recorded as a
+# depth-0 ROOT — the honest truth at spawn time, never a closed generation
+# (that shape is what ralph_ledger_orphan_pass's own re-parenting exists to
+# FLAG, not manufacture). Nothing later re-attaches that root — until the
+# lead heals, whose caller (heal.sh) knows NEW_REF and calls this.
+#
+# DESIGN (the two shapes GH-2475 asked to choose between): reparenting is a
+# LEDGER EVENT, not a read-time join — the SAME `adopt` event
+# ralph_ledger_orphan_pass already writes (agent_ref/parent/prev_parent), so
+# every existing C8 reader (roster's derived rows, ralph_ledger_children, the
+# depth guard) already follows the latest parent edge with ZERO reader
+# change: `adopt` winning over the spawn-time `.tokens.parent` in the "last
+# value wins" fold (_ralph_ledger_latest_parent, ralph_ledger_open_rows) is
+# exactly the precedent this reuses, not a new event type nor a new column.
+# `prev_parent` is empty (never `dead`'s ref) — this is a root gaining ITS
+# FIRST parent, not a child losing one, and that distinction is what the
+# empty string honestly says.
+#
+# CANDIDATES are correlated by EXACT REF, not by issue number: every
+# `runs/*/fleet.json` scoped to EPIC and armed under LEAD's name gives a
+# run_id, and refill_one's own `refill_spawn` ledger fact ({run_id,
+# agent_ref, issue}, appended only for a spawn that actually landed) names
+# the precise ref each of those runs picked. A worker's CURRENT open record
+# is then reparented only when its ref is one of those AND it is STILL a
+# root (no parent token). Two over-selections this shape refuses (review
+# finding on this unit): a union of `.spawned` ISSUE numbers across every
+# retained run would also catch a later, unrelated root on the same issue —
+# a human's `work-next.sh N` after an older run's worker exited — and hand
+# it to a lead that never launched it; and a live pane env or a GH
+# issue-tree walk would catch every root under the epic whatever spawned
+# it. Idempotent by construction (re-running heal on an already-healed epic
+# touches nothing) and conservative in the direction that matters: a worker
+# spawned WHILE the lead was live already carries the right parent and is
+# skipped, never relabeled under a later epoch it was never launched by.
+#
+# Prints one reparented ref per line (rc always 0 — best-effort, the same
+# contract as orphan_pass: one bad record must not block the rest).
+ralph_ledger_reparent_dead_window_roots() {
+  local epic="${1-}" lead="${2-}" new_ref="${3-}" ledger runs ff run_ids refill_refs ts
+  local ref pane parent
+  case "$epic" in '' | *[!0-9]*) return 0 ;; esac
+  [ -n "$lead" ] && [ -n "$new_ref" ] || return 0
+  ledger=$(ralph_ledger_path) || return 0
+  runs="$(dirname "$ledger")/runs"
+  [ -d "$runs" ] || return 0
+  run_ids=""
+  for ff in "$runs"/*/fleet.json; do
+    [ -f "$ff" ] || continue
+    [ "$(jq -r --argjson e "$epic" 'select((.epic // null) == $e) | .lead // empty' "$ff" 2>/dev/null)" = "$lead" ] ||
+      continue
+    run_ids="$run_ids $(jq -r '.run_id // empty' "$ff" 2>/dev/null)"
+  done
+  [ -n "${run_ids// /}" ] || return 0
+  # The refs those runs actually spawned — space-joined (tr, since the
+  # assignment is quoted and jq emits one per line; the `case` match below
+  # needs SPACE separators, never an embedded newline).
+  refill_refs=$(_ralph_ledger_events "$ledger" | jq -r --arg ids " $run_ids " '
+    select(.ev == "refill_spawn" and ((.run_id // "") != ""))
+    | (" " + .run_id + " ") as $key
+    | select($ids | contains($key))
+    | .agent_ref // empty' 2>/dev/null | tr '\n' ' ') || refill_refs=""
+  [ -n "${refill_refs// /}" ] || return 0
+  ts=$(date -u +%FT%TZ)
+  while IFS=$'\037' read -r ref pane _sp _h parent _st _issue _co _tok _sess; do
+    [ -n "$ref" ] || continue
+    case "$ref" in w*) : ;; *) continue ;; esac
+    [ -z "$parent" ] || continue
+    [ "$ref" != "$new_ref" ] || continue
+    case " $refill_refs " in *" $ref "*) : ;; *) continue ;; esac
+    ralph_ledger_append "$(jq -nc --arg ts "$ts" --arg c "$ref" --arg p "$new_ref" \
+      '{ts: $ts, ev: "adopt", agent_ref: $c, parent: $p, prev_parent: ""}')" || continue
+    if [ -n "$pane" ] && command -v ralph_tokens_push >/dev/null 2>&1; then
+      ralph_tokens_push "$pane" "parent=$new_ref"
+    fi
+    printf '%s\n' "$ref"
+  done < <(ralph_ledger_open_rows)
+  return 0
+}
+
 # ── usage facts (GH-2347) ────────────────────────────────────────────────────
 # What a worker CONSUMED, on the tape beside what it did. The ledger recorded
 # spawn/exit/discover and nothing about cost; per-unit cost had to be rebuilt
