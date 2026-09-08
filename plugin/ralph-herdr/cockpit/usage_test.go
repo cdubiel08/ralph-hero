@@ -142,6 +142,53 @@ func TestReadTranscriptUsageDedupesByMessageID(t *testing.T) {
 	}
 }
 
+// GH-2438: the harness writes an Agent() call's own transcript one directory
+// deeper than the parent's own file, named by agent hash rather than session
+// id — <dir>/<sid>/subagents/agent-<hash>.jsonl — invisible to a plain
+// sibling glob, so every subagent call priced as zero.
+func TestReadTranscriptUsageFoldsInSubagentTranscripts(t *testing.T) {
+	dir := t.TempDir()
+	own := writeTranscript(t, dir, "s1",
+		usageRow("msg_a", "claude-sonnet-5", "2026-09-02T10:00:00Z", 1000, 0, 0, 0, 0, 10))
+	subdir := filepath.Join(dir, "s1", "subagents")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subdir, "agent-deadbeef.jsonl"),
+		[]byte(usageRow("sub_1", "claude-haiku-4-5", "2026-09-02T10:00:02Z", 2000, 0, 0, 0, 0, 50)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ownOnly := reduceTranscript(own)
+	combined := readTranscriptUsage(own)
+	if !combined.Read || len(combined.Calls) != 2 {
+		t.Fatalf("calls = %d read=%v, want the parent's own call plus the subagent's", len(combined.Calls), combined.Read)
+	}
+	if combined.Subagent.Calls != 1 {
+		t.Errorf("subagent calls = %d, want 1", combined.Subagent.Calls)
+	}
+	if combined.USD <= ownOnly.USD {
+		t.Errorf("combined USD %.6f did not exceed the parent-only figure %.6f — the subagent priced as zero", combined.USD, ownOnly.USD)
+	}
+	if d := (combined.USD - ownOnly.USD) - combined.Subagent.USD; d > 1e-9 || d < -1e-9 {
+		t.Errorf("combined - own = %.6f, want exactly the subagent subtotal %.6f", combined.USD-ownOnly.USD, combined.Subagent.USD)
+	}
+	if combined.Tokens != ownOnly.Tokens+combined.Subagent.Tokens {
+		t.Errorf("tokens = %d, want own %d + subagent %d", combined.Tokens, ownOnly.Tokens, combined.Subagent.Tokens)
+	}
+	// The parent's own last call still judges the context alert — a
+	// fan-out call's context is not the driver's own window state.
+	if combined.LastModel != "claude-sonnet-5" {
+		t.Errorf("LastModel = %q, want the parent's own last call, not the subagent's", combined.LastModel)
+	}
+
+	// No subagents dir at all is the common case, not an error.
+	lone := writeTranscript(t, dir, "s2", usageRow("m", "claude-sonnet-5", "2026-09-02T10:00:00Z", 1, 0, 0, 0, 0, 1))
+	if got := readTranscriptUsage(lone); got.Subagent.Calls != 0 || got.USD != reduceTranscript(lone).USD {
+		t.Errorf("no-subagents session: %+v", got)
+	}
+}
+
 func TestTranscriptPathDerivesTheSlugThenGlobs(t *testing.T) {
 	root := t.TempDir()
 	checkout := "/Users/x/.herdr/worktrees/r/feat-1"

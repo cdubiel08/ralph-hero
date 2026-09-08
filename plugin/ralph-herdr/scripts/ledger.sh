@@ -1276,6 +1276,28 @@ _ralph_usage_transcript() {
   return 1
 }
 
+# _ralph_usage_subagent_files TRANSCRIPT_FILE — every subagent transcript
+# nested under a session's own transcript (GH-2438). The harness writes an
+# Agent() call's transcript one directory deeper than the parent's own file,
+# and names it by agent hash, not by session id:
+# <slug>/<sid>/subagents/agent-<hash>.jsonl — sibling to <slug>/<sid>.jsonl,
+# so it is found from the ALREADY-RESOLVED parent path with no re-derivation
+# of the slug. Prints one path per line; empty (rc 1) when the session spawned
+# no subagents, which is the common case and not an error.
+_ralph_usage_subagent_files() {
+  local file="${1-}" dir sid f found=1
+  [ -n "$file" ] || return 1
+  dir=$(dirname -- "$file")
+  sid=$(basename -- "$file" .jsonl)
+  for f in "$dir/$sid/subagents/"*.jsonl; do
+    if [ -f "$f" ]; then
+      printf '%s\n' "$f"
+      found=0
+    fi
+  done
+  return "$found"
+}
+
 # The list-price table, USD per million tokens, in the order
 #   [input, cache_write_5m, cache_write_1h, cache_read, output]
 # matched by model-id PREFIX (dated snapshots like claude-haiku-4-5-20251001
@@ -1304,7 +1326,8 @@ _RALPH_USAGE_PRICES='{
 # model has nothing to price). Torn or foreign lines are skipped, never
 # fatal: the last line of a live transcript is routinely mid-write.
 #
-#   calls            distinct message ids
+#   calls            distinct message ids, OWN transcript plus every
+#                    subagent transcript folded in (GH-2438)
 #   models           {model: calls}; model = the one with the most calls
 #   input, cache_write_5m, cache_write_1h, cache_read, output, thinking
 #   max_context      the largest single-call prompt (input + cache read +
@@ -1313,20 +1336,48 @@ _RALPH_USAGE_PRICES='{
 #   list_usd         list-price equivalent, 4 dp; unpriced_calls counts the
 #                    calls whose model has no price row
 #   first_ts/last_ts the span of the calls
+#   subagent         the SAME shape, reduced over only the subagent files —
+#                    folded into every field above rather than silently
+#                    summed, so a later reader can still separate them
+#
+# FILE is the session's own transcript; any further args are subagent
+# transcripts nested under it (see _ralph_usage_subagent_files) to fold in.
 ralph_usage_from_transcript() {
   local file="${1-}"
   [ -n "$file" ] && [ -r "$file" ] || return 1
-  jq -R -n -c --argjson prices "$_RALPH_USAGE_PRICES" '
+  shift
+  jq -R -n -c --argjson prices "$_RALPH_USAGE_PRICES" --arg own "$file" '
     def num: if type == "number" then . else 0 end;
     def price($m):
       ($prices | to_entries | map(.key as $k | select($m | startswith($k))) | sort_by(-(.key | length)) | first | .value) // null;
+    def summarize($rows):
+      ($rows | map(.model) | group_by(.) | map({key: .[0], value: length}) | from_entries) as $models
+      | {
+          calls: ($rows | length),
+          model: ($models | to_entries | if length == 0 then null else (max_by(.value) | .key) end),
+          models: $models,
+          input: ($rows | map(.input) | add // 0),
+          cache_write_5m: ($rows | map(.w5) | add // 0),
+          cache_write_1h: ($rows | map(.w1) | add // 0),
+          cache_read: ($rows | map(.read) | add // 0),
+          output: ($rows | map(.output) | add // 0),
+          thinking: ($rows | map(.thinking) | add // 0),
+          max_context: ($rows | map(.input + .read + .w5 + .w1) | if length == 0 then 0 else max end),
+          list_usd: (($rows | map(price(.model) as $p
+                       | if $p == null then 0
+                         else (.input * $p[0] + .w5 * $p[1] + .w1 * $p[2] + .read * $p[3] + .output * $p[4]) / 1000000
+                         end) | add // 0) * 10000 | round / 10000),
+          unpriced_calls: ($rows | map(select(price(.model) == null)) | length),
+          first_ts: ($rows | map(.ts) | if length == 0 then "" else min end),
+          last_ts: ($rows | map(.ts) | if length == 0 then "" else max end)
+        };
     [inputs | (fromjson? // empty)
      | select(.type == "assistant" and (.message.usage | type) == "object" and (.message.id // "") != "")
      | {id: .message.id, ts: (.timestamp // ""), model: (.message.model // "unknown"),
-        u: .message.usage}]
+        u: .message.usage, origin: (if input_filename == $own then "own" else "subagent" end)}]
     | group_by(.id)
     | map({
-        id: .[0].id, ts: ([.[].ts] | min), model: .[0].model,
+        id: .[0].id, ts: ([.[].ts] | min), model: .[0].model, origin: .[0].origin,
         input: ([.[].u.input_tokens | num] | max),
         w5: ([.[].u.cache_creation.ephemeral_5m_input_tokens | num] | max),
         w1: ([.[].u.cache_creation.ephemeral_1h_input_tokens | num] | max),
@@ -1338,26 +1389,8 @@ ralph_usage_from_transcript() {
     # rate (what Claude Code uses) rather than reading it as free.
     | map(if (.w5 + .w1) == 0 and .wtotal > 0 then .w1 = .wtotal else . end)
     | if length == 0 then halt_error(1) else . end
-    | (map(.model) | group_by(.) | map({key: .[0], value: length}) | from_entries) as $models
-    | {
-        calls: length,
-        model: ($models | to_entries | max_by(.value) | .key),
-        models: $models,
-        input: (map(.input) | add),
-        cache_write_5m: (map(.w5) | add),
-        cache_write_1h: (map(.w1) | add),
-        cache_read: (map(.read) | add),
-        output: (map(.output) | add),
-        thinking: (map(.thinking) | add),
-        max_context: (map(.input + .read + .w5 + .w1) | max),
-        list_usd: ((map(price(.model) as $p
-                     | if $p == null then 0
-                       else (.input * $p[0] + .w5 * $p[1] + .w1 * $p[2] + .read * $p[3] + .output * $p[4]) / 1000000
-                       end) | add) * 10000 | round / 10000),
-        unpriced_calls: (map(select(price(.model) == null)) | length),
-        first_ts: (map(.ts) | min),
-        last_ts: (map(.ts) | max)
-      }' "$file" 2>/dev/null
+    | summarize(.) + {subagent: summarize(map(select(.origin == "subagent")))}
+  ' "$file" "$@" 2>/dev/null
 }
 
 # _ralph_ledger_latest_claude_session REF — the worker's Claude session id,
@@ -1376,6 +1409,7 @@ _ralph_ledger_latest_claude_session() {
 # this inside the section: it appends only.
 ralph_ledger_usage_append() {
   local ref="${1-}" via="${2:-event}" sid checkout file usage ts
+  local -a subfiles=()
   [ -n "$ref" ] || return 1
   sid=$(_ralph_ledger_latest_claude_session "$ref" 2>/dev/null) || sid=""
   if [ -z "$sid" ]; then
@@ -1387,7 +1421,12 @@ ralph_ledger_usage_append() {
     echo "ledger usage: no transcript for $ref (session $sid) under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects — nothing to measure" >&2
     return 1
   }
-  usage=$(ralph_usage_from_transcript "$file") || {
+  while IFS= read -r f; do
+    [ -n "$f" ] && subfiles+=("$f")
+  done < <(_ralph_usage_subagent_files "$file" 2>/dev/null)
+  # bash 3.2 + `set -u`: an empty array is an unbound expansion (reconcile.sh
+  # and watch-event.sh both run with it), hence the guard over "${subfiles[@]}".
+  usage=$(ralph_usage_from_transcript "$file" ${subfiles[@]+"${subfiles[@]}"}) || {
     echo "ledger usage: $file holds no model calls for $ref — nothing to price" >&2
     return 1
   }
