@@ -906,6 +906,28 @@ describe("C6 BoardQueue refinements", () => {
   it("GH-2444: `awaiting-approval` is a declared DeliverReason", () => {
     expect(DELIVER_REASONS).toContain("awaiting-approval");
   });
+
+  it("GH-2471: an undeclared DeliverReason — the producer refuses, a loose v1 consumer rides along", () => {
+    const row = {
+      contract: "ralph.board_queue",
+      contract_version: 1,
+      selector: "deliver-queue",
+      result: { next: null, queue: [], blocked: [{ number: 1, title: "x", pr: 101, reason: "not-yet-invented" }] },
+    };
+    const strict = validateContract("ralph.board_queue", row);
+    expect(strict.success).toBe(false);
+    expect(issuesOf(strict)).toMatch(/reason/);
+    // The same rule DELIVER_REASONS additions have followed four times
+    // already (convergence-stalled, reviewer-rate-limited,
+    // local-session-active, awaiting-approval): a new reason string never
+    // requires a contract_version bump, matching the passthrough rule this
+    // contract already states for unknown keys.
+    expect(validateContract("ralph.board_queue", row, { loose: true }).success).toBe(true);
+    // Loosening the enum must not lose the nonempty constraint — an empty
+    // string is a missing classification, not an unrecognized future value.
+    const empty = { ...row, result: { ...row.result, blocked: [{ ...row.result.blocked[0], reason: "" }] } };
+    expect(validateContract("ralph.board_queue", empty, { loose: true }).success).toBe(false);
+  });
 });
 
 describe("C8 TokenVocabulary", () => {
