@@ -61,6 +61,8 @@ import {
   prOrphans,
   PR_ORPHAN_DEFAULT_IGNORE,
   PR_ORPHAN_IGNORE_ENV,
+  weakRefIssues,
+  parseNoCiVerdict,
   ANSWER_MARKER,
   ESCALATION_EVIDENCE,
   ESCALATION_PROMOTED_MARKER,
@@ -6486,6 +6488,103 @@ describe("deliver-queue: classification (spec §4.2)", () => {
   });
 });
 
+describe("deliver-queue: no-ci (GH-2521) — an absent required context, not a slow one", () => {
+  const dpr = (n: number, over: Partial<DeliverPrFacts> = {}): DeliverPrFacts => ({
+    id: `PR_${n}`,
+    number: n,
+    state: "OPEN",
+    headSha: "sha-a",
+    checkConclusions: "ci=success",
+    reviewCursor: null,
+    threadCursor: null,
+    lastActivityAt: "2026-07-31T11:00:00Z", // 60 min ago — well settled
+    reviewDecision: null,
+    mergeable: null,
+    ...over,
+  });
+  const cand = (
+    n: number,
+    over: Omit<Partial<DeliverCandidate>, "prs"> & { prs?: DeliverPrFacts[] } = {},
+  ): DeliverCandidate => {
+    const prs = over.prs ?? [dpr(100 + n)];
+    return {
+      number: n,
+      title: `Issue ${n}`,
+      stateUpdatedAt: "2026-07-31T10:00:00Z",
+      lastCommentAt: null,
+      marker: null,
+      ...over,
+      prs: prs.map((p) => ({ id: `PR_${p.number}`, number: p.number, state: p.state })),
+      openPrs: over.openPrs ?? prs.filter((p) => p.state === "OPEN"),
+    };
+  };
+  const classify = (cands: DeliverCandidate[], noCi: Parameters<typeof classifyDeliver>[6]) =>
+    classifyDeliver(cands, DELIVER_DEFAULTS, NOW, () => ({ verdict: "PASS", gate: null }), null, null, noCi);
+
+  it("a missing required context is its own blocked row — never folded into the probe/marker flow", () => {
+    const res = classify([cand(1)], (pr) => (pr === 101 ? ["build (20)"] : null));
+    expect(res.next).toBeNull();
+    expect(res.blocked).toMatchObject([{ number: 1, pr: 101, reason: "no-ci", windowExpiresAt: null }]);
+    expect(res.blocked[0].detail).toContain("build (20)");
+    expect(res.blocked[0].detail).toContain("empty commit");
+  });
+
+  it("takes priority over the merge-gate probe — a stuck PR costs no dry run", () => {
+    const probed: number[] = [];
+    const res = classifyDeliver(
+      [cand(1)],
+      DELIVER_DEFAULTS,
+      NOW,
+      (pr) => {
+        probed.push(pr);
+        return { verdict: "PASS", gate: null };
+      },
+      null,
+      null,
+      () => ["build (20)"],
+    );
+    expect(probed).toHaveLength(0);
+    expect(res.blocked[0].reason).toBe("no-ci");
+  });
+
+  it("null (not evaluated: no ruleset, unreadable, or CI hasn't started) falls through to ordinary classification", () => {
+    const res = classify([cand(1)], () => null);
+    expect(res.next).toMatchObject({ number: 1, pr: 101, reason: "actionable" });
+  });
+
+  it("an empty missing list is evaluated-and-clean — falls through, same as null", () => {
+    const res = classify([cand(1)], () => []);
+    expect(res.next).toMatchObject({ number: 1, reason: "actionable" });
+  });
+
+  it("no probe at all (host repo ships no ruleset-contexts.sh) never blocks on no-ci", () => {
+    const res = classify([cand(1)], null);
+    expect(res.next).toMatchObject({ number: 1, reason: "actionable" });
+  });
+
+  it("only fires PAST the settle window — a freshly-active PR settles first, never probed for no-ci", () => {
+    const probed: number[] = [];
+    const res = classify(
+      [cand(1, { prs: [dpr(101, { lastActivityAt: "2026-07-31T11:56:00Z" })] })],
+      (pr) => {
+        probed.push(pr);
+        return ["build (20)"];
+      },
+    );
+    expect(res.blocked[0].reason).toBe("settling");
+    expect(probed).toHaveLength(0);
+  });
+
+  it("one open PR of two: only the stuck one is held, the other classifies normally", () => {
+    const res = classify(
+      [cand(1, { prs: [dpr(101), dpr(102, { checkConclusions: "ci=pending" })] })],
+      (pr) => (pr === 101 ? ["build (20)"] : null),
+    );
+    expect(res.blocked.map((b) => [b.pr, b.reason])).toContainEqual([101, "no-ci"]);
+    expect(res.next?.pr).toBe(102);
+  });
+});
+
 describe("localSessionLease — reading the GH-1956 worktree lock as a lease (GH-1929)", () => {
   const TTL = 120;
   const NOW_MS = Date.parse("2026-07-31T12:00:00Z");
@@ -6921,6 +7020,64 @@ describe("deliver-queue: fetch + CLI wiring", () => {
     ]);
     // #1809 is present but PR-less — the coincidences linked nothing.
     expect(res.blocked.map((r) => [r.number, r.reason])).toContainEqual([1809, "no-pr"]);
+  });
+
+  // GH-2521: a THIRD linkage source — a body `Refs #N` mention, for a PR
+  // with no closing keyword and no branch-convention name.
+  describe("weak `Refs #N` linkage", () => {
+    it("a PR with no closing reference and no branch-convention name still rides `prs` via a body Refs mention", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(2463, {
+        number: 2463,
+        state: "In Review",
+        stateUpdatedAt: OLD,
+        weakRefPrs: [{ number: 2469 }], // body defaults to "Refs #2463"
+      });
+      const res = deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
+      expect(res.queue.map((r) => [r.number, r.pr])).toEqual([[2463, 2469]]);
+    });
+
+    it("a closing reference or branch-convention link always outranks a weak mention of the same PR", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, {
+        number: 1,
+        state: "In Review",
+        stateUpdatedAt: OLD,
+        prs: [{ number: 101, merged: false, headSha: "sha-a", pushedAt: OLD }],
+        weakRefPrs: [{ number: 101 }], // same PR, weakly too — must not duplicate
+      });
+      const res = deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
+      expect(res.queue).toHaveLength(1);
+      expect(res.queue[0]).toMatchObject({ number: 1, pr: 101 });
+    });
+
+    it("a body that merely CONTAINS the digits without the Refs/Ref keyword is rejected locally, like the substring refs() filter", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(55, {
+        number: 55,
+        state: "In Review",
+        stateUpdatedAt: OLD,
+        weakRefPrs: [{ number: 200, body: "unrelated PR, see #5500 for details" }],
+      });
+      const res = deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
+      expect(res.blocked.map((r) => [r.number, r.reason])).toContainEqual([55, "no-pr"]);
+    });
+
+    it("a body mentioning a DIFFERENT issue's number is not linkage for this one", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(55, {
+        number: 55,
+        state: "In Review",
+        stateUpdatedAt: OLD,
+        weakRefPrs: [{ number: 200, body: "Refs #999" }],
+      });
+      const res = deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
+      expect(res.blocked.map((r) => [r.number, r.reason])).toContainEqual([55, "no-pr"]);
+    });
   });
 
   // --- GH-1811: the facts do not belong in the linkage document ------------
@@ -8663,6 +8820,60 @@ describe("foreign-repo posture (GH-1815)", () => {
 // Unlinked open PRs (GH-2048)
 // ---------------------------------------------------------------------------
 
+describe("weakRefIssues (GH-2521)", () => {
+  it("extracts a bare `Refs #N`", () => {
+    expect(weakRefIssues("Refs #2463")).toEqual([2463]);
+  });
+  it("extracts the singular `Ref #N`", () => {
+    expect(weakRefIssues("Ref #2463")).toEqual([2463]);
+  });
+  it("is case-insensitive", () => {
+    expect(weakRefIssues("REFS #2463")).toEqual([2463]);
+  });
+  it("dedupes repeated mentions", () => {
+    expect(weakRefIssues("Refs #55\n\nAlso Refs #55")).toEqual([55]);
+  });
+  it("extracts multiple distinct references", () => {
+    expect(weakRefIssues("Refs #10, Refs #20")).toEqual([10, 20]);
+  });
+  it("does not match a closing keyword — Closes/Fixes are a different edge entirely", () => {
+    expect(weakRefIssues("Closes #55")).toEqual([]);
+    expect(weakRefIssues("Fixes #55")).toEqual([]);
+  });
+  it("does not match a bare `#N` with no Refs/Ref keyword", () => {
+    expect(weakRefIssues("see PR #2463 for context")).toEqual([]);
+  });
+  it("does not match `Refs` as a prefix of a longer word", () => {
+    expect(weakRefIssues("Prefsomething #55")).toEqual([]);
+  });
+  it("null/undefined/empty body is zero references, never a throw", () => {
+    expect(weakRefIssues(null)).toEqual([]);
+    expect(weakRefIssues(undefined)).toEqual([]);
+    expect(weakRefIssues("")).toEqual([]);
+  });
+});
+
+describe("parseNoCiVerdict (GH-2521)", () => {
+  it("parses a missing-contexts verdict", () => {
+    expect(parseNoCiVerdict('{"ok":true,"count":1,"missing":["build (20)"],"summary":"build (20)","detail":""}')).toEqual([
+      "build (20)",
+    ]);
+  });
+  it("ok:true with an empty missing list is evaluated-and-clean, not null", () => {
+    expect(parseNoCiVerdict('{"ok":true,"count":0,"missing":[],"summary":"","detail":""}')).toEqual([]);
+  });
+  it("ok:false (no ruleset, unreadable, or CI hasn't started) is not evaluated — null, never an empty list", () => {
+    expect(parseNoCiVerdict('{"ok":false,"count":0,"missing":[],"summary":"","detail":"why not"}')).toBeNull();
+  });
+  it("garbage output is not evaluated", () => {
+    expect(parseNoCiVerdict("not json")).toBeNull();
+    expect(parseNoCiVerdict("")).toBeNull();
+  });
+  it("reads the LAST line — a script that logs before its final JSON line still parses", () => {
+    expect(parseNoCiVerdict('some log line\n{"ok":true,"count":0,"missing":[]}')).toEqual([]);
+  });
+});
+
 describe("pr-orphans", () => {
   const withPolicy = (gh: FakeGh, ignoreAuthors: string[], configured = true) => {
     const ctx = makeCtx(gh);
@@ -8749,7 +8960,83 @@ describe("pr-orphans", () => {
     prOrphans(makeCtx(gh));
     const q = gh.queries.find((s) => s.includes("pullRequests(states: OPEN"))!;
     expect(q).toContain("closingIssuesReferences(first: 1)");
-    expect(q).not.toContain("body");
+    // GH-2521: `body` DOES ride this query now — a flat scalar, not a
+    // connection, so it costs nothing per GH-1803's own accounting — read
+    // for every PR up front so the weak-ref rescue below never needs a
+    // second per-PR fetch.
+    expect(q).toContain("body");
+  });
+
+  // GH-2521: a Refs-only agent PR is not ownerless — it has a weak owner.
+  describe("weak `Refs #N` rescue", () => {
+    it("a body `Refs #N` mention of an OPEN own-repo issue rescues the PR from orphan status", () => {
+      const gh = new FakeGh();
+      gh.openPrs = [{ number: 100, body: "Refs #55" }];
+      gh.issueOpenState = { 55: "OPEN" };
+      const res = prOrphans(makeCtx(gh));
+      expect(res.orphans).toEqual([]);
+      expect(res.weaklyLinked).toBe(1);
+    });
+
+    it("`Ref #N` (singular) counts the same as `Refs #N`", () => {
+      const gh = new FakeGh();
+      gh.openPrs = [{ number: 101, body: "Ref #55" }];
+      gh.issueOpenState = { 55: "OPEN" };
+      expect(prOrphans(makeCtx(gh)).weaklyLinked).toBe(1);
+    });
+
+    it("a weak ref to a CLOSED issue does not rescue — the PR is still an orphan", () => {
+      const gh = new FakeGh();
+      gh.openPrs = [{ number: 102, body: "Refs #55" }];
+      gh.issueOpenState = { 55: "CLOSED" };
+      const res = prOrphans(makeCtx(gh));
+      expect(res.orphans.map((o) => o.number)).toEqual([102]);
+      expect(res.weaklyLinked).toBe(0);
+    });
+
+    it("a weak ref to a number that resolves to nothing (deleted issue) does not rescue", () => {
+      const gh = new FakeGh();
+      gh.openPrs = [{ number: 103, body: "Refs #999" }];
+      // 999 absent from issueOpenState — resolves to null, same as GitHub's
+      // own "not found" answer.
+      const res = prOrphans(makeCtx(gh));
+      expect(res.orphans.map((o) => o.number)).toEqual([103]);
+    });
+
+    it("a coincidental digit run is not a weak ref — 'PR #2463' with no Refs/Ref keyword stays an orphan", () => {
+      const gh = new FakeGh();
+      gh.openPrs = [{ number: 104, body: "closes issue 2463 eventually, see PR #2463" }];
+      gh.issueOpenState = { 2463: "OPEN" };
+      expect(prOrphans(makeCtx(gh)).orphans.map((o) => o.number)).toEqual([104]);
+    });
+
+    it("a resolution-read failure fails toward MORE orphans reported, never fewer", () => {
+      const gh = new FakeGh();
+      gh.openPrs = [{ number: 105, body: "Refs #55" }];
+      gh.issueOpenState = { 55: "OPEN" };
+      gh.failWeakRefResolution = true;
+      const res = prOrphans(makeCtx(gh));
+      expect(res.orphans.map((o) => o.number)).toEqual([105]);
+      expect(res.weaklyLinked).toBe(0);
+    });
+
+    it("an author-ignored bot PR is never rescued into visibility — it stays `ignored`, not `weaklyLinked`", () => {
+      const gh = new FakeGh();
+      gh.openPrs = [{ number: 106, author: "dependabot[bot]", body: "Refs #55" }];
+      gh.issueOpenState = { 55: "OPEN" };
+      const res = prOrphans(withPolicy(gh, ["dependabot[bot]"]));
+      expect(res.orphans).toEqual([]);
+      expect(res.weaklyLinked).toBe(0);
+      expect(res.ignored).toBe(1);
+    });
+
+    it("a PR already linked by a closing reference never reaches the weak-ref scan at all", () => {
+      const gh = new FakeGh();
+      gh.openPrs = [{ number: 107, closing: 1, body: "Refs #55" }];
+      const res = prOrphans(makeCtx(gh));
+      expect(res.orphans).toEqual([]);
+      expect(res.weaklyLinked).toBe(0);
+    });
   });
 
   describe("policy", () => {

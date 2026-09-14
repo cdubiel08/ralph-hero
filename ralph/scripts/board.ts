@@ -2468,6 +2468,31 @@ function fetchIssueNodeId(ctx: Ctx, addr: IssueAddress): string {
   return id;
 }
 
+/** GH-2521: issue numbers a text (PR body) references via the "Refs #N" /
+ *  "Ref #N" convention — this project's own spelling for a non-closing link
+ *  (the apply-units section: "Refs #N, not Fixes #N"; merging is not
+ *  applying). A WEAK link: never a closing reference — GitHub's own
+ *  `closingIssuesReferences` already answers that question, correctly, and
+ *  this must never compete with it — just enough to say the PR has an owner
+ *  when it carries no closing keyword.
+ *
+ *  Body text, not a GitHub-derived field: there is no derived edge for
+ *  "non-closingly references issue N" the way `closingIssuesReferences`
+ *  answers the closing one — GitHub's own cross-reference bookkeeping is
+ *  walkable only from the referenced issue's timeline, not from the
+ *  referencing PR, and both `prOrphans` (PR → issue) and the deliver linkage
+ *  below need that exact direction. Unlike gate 6's audit this gates nothing
+ *  (advisory linkage only, visibility never enforcement), so GH-1940's
+ *  app-writable-body caution — about what a MERGE decision may trust — does
+ *  not bind here. */
+export function weakRefIssues(body: string | null | undefined): number[] {
+  const nums = new Set<number>();
+  const re = /\brefs?\s*:?\s*#(\d+)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body ?? ""))) nums.add(Number(m[1]));
+  return [...nums];
+}
+
 function branchLinkedMergedPr(ctx: Ctx, number: number): { number: number; url: string } | null {
   const heads = [...BRANCH_KIND_CHARS.map((k) => `${k}/${number}`), `feature/GH-${number}`];
   let data: any;
@@ -6534,6 +6559,29 @@ export function parseConvergenceVerdict(out: string): { verdict: string; detail:
   }
 }
 
+/** GH-2521. Answers "which ruleset-required status contexts have never run
+ *  at this head" for one PR — `scripts/ruleset-contexts.sh`, parsed, same
+ *  detect-if-present shell-out shape as the merge-gate and convergence probes
+ *  above. Null = not evaluated (script absent, crashed, or answered
+ *  `ok:false` — no ruleset, an unreadable one, or "CI has not started yet",
+ *  which that script deliberately reports as ok:false rather than a fresh
+ *  push's checks reading as a false "missing"). Not-evaluated never holds a
+ *  row back — same rule as ConvergenceProbe — so an unreadable answer falls
+ *  through to the ordinary marker/retry classification instead of inventing
+ *  a block nobody can clear. */
+export type NoCiProbe = (pr: number) => string[] | null;
+
+export function parseNoCiVerdict(out: string): string[] | null {
+  try {
+    const j = JSON.parse(out.trim().split("\n").filter(Boolean).pop() ?? "");
+    if (!j || typeof j !== "object" || j.ok !== true) return null;
+    if (!Array.isArray(j.missing)) return null;
+    return j.missing.filter((m: unknown): m is string => typeof m === "string");
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Approval-wait metric (GH-2447, unit 5 of the approval-gated-hosts design,
 // D4). DERIVED from GitHub's own PR timeline, one query per PR, never
@@ -6712,6 +6760,7 @@ export function classifyDeliver(
   probe: DeliverProbe | null,
   convergence: ConvergenceProbe | null = null,
   lease: LeaseProbe | null = null,
+  noCi: NoCiProbe | null = null,
 ): DeliverQueueResult {
   const ms = (iso: string | null | undefined): number | null => {
     if (!iso) return null;
@@ -6792,6 +6841,28 @@ export function classifyDeliver(
       continue;
     }
     for (const p of open) {
+      // GH-2521, checked first and unconditionally: a required context that
+      // never ran at this head is a mechanical stall (#2492 — a base retarget
+      // dropped it), not a signal the ordinary marker/probe/retry machinery
+      // can reason about. That machinery only ever sees the contexts that DID
+      // report (`checkConclusions`), so an absent one is invisible to it by
+      // construction — folding this in would read "no delta" and let the row
+      // sit in `retry-window` forever. Distinct row, no marker, no budget:
+      // the same small quiescent population the probe below already reads.
+      const missing = noCi?.(p.number) ?? null;
+      if (missing && missing.length > 0) {
+        blocked.push({
+          number: c.number,
+          title: c.title,
+          pr: p.number,
+          reason: "no-ci",
+          windowExpiresAt: null,
+          detail:
+            `required context(s) never ran at this head: ${missing.join(", ")} — ` +
+            `remedy: push an empty commit on the head branch`,
+        });
+        continue;
+      }
       const entry = c.marker?.[String(p.number)] ?? null;
       if (!entry) {
         // Marker-less trivially differs from any tuple — probe candidate.
@@ -7131,7 +7202,7 @@ export function fetchDeliverCandidates(
     const out: DeliverCandidate[] = [];
     for (let start = 0; start < items.length; start += DELIVER_CHUNK) {
       const chunk = items.slice(start, start + DELIVER_CHUNK);
-      const decls = chunk.map((_, k) => `$n${k}: Int!, $h${k}: String!`).join(", ");
+      const decls = chunk.map((_, k) => `$n${k}: Int!, $h${k}: String!, $w${k}: String!`).join(", ");
       const aliases = chunk
         .map(
           (_, k) => `
@@ -7154,6 +7225,19 @@ export function fetchDeliverCandidates(
         }`,
         )
         .join("\n");
+      // GH-2521: a THIRD linkage source, at top level (`search` is a root
+      // Query field, not a Repository one — the other two aliases nest under
+      // `repository{}`, this cannot). One `search` per candidate, same
+      // DELIVER_CHUNK batching as the rest of this document: a PR that
+      // mentions the issue via `Refs #N`/`Ref #N` but carries no closing
+      // keyword and no branch-convention name. `in:body` is GitHub's own
+      // full-text index, not a substring match, but the local `weakRefIssues`
+      // re-check below still runs — the same defensive habit `parseBranchName`
+      // applies to the substring `refs()` query above, for the same reason:
+      // GitHub's filter answers "plausibly relevant", never "verified".
+      const wAliases = chunk
+        .map((_, k) => `w${k}: search(type: ISSUE, first: 10, query: $w${k}) { nodes { ... on PullRequest { id number state body } } }`)
+        .join("\n");
       const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
       chunk.forEach((it, k) => {
         vars[`n${k}`] = it.number;
@@ -7164,6 +7248,7 @@ export function fetchDeliverCandidates(
         // refs that merely contain the digits; parseBranchName rejects those
         // below. Costed live: +1 pt per DELIVER_CHUNK document (1 → 2).
         vars[`h${k}`] = String(it.number);
+        vars[`w${k}`] = `repo:${ctx.cfg.owner}/${ctx.cfg.repo} is:pr is:open ${it.number} in:body`;
       });
       const data: any = ghGraphQL(
         ctx,
@@ -7171,6 +7256,7 @@ export function fetchDeliverCandidates(
           repository(owner: $owner, name: $repo) {
             ${aliases}
           }
+          ${wAliases}
         }`,
         vars,
       );
@@ -7193,6 +7279,14 @@ export function fetchDeliverCandidates(
               byNumber.set(n.number, { id: n.id, number: n.number, state: n.state });
             }
           }
+        }
+        // GH-2521: the weak-ref fallback — only for a PR neither the closing
+        // reference nor the branch convention already found. A verified
+        // closing/convention link always outranks a text mention.
+        for (const n of data[`w${k}`]?.nodes ?? []) {
+          if (!n?.number || byNumber.has(n.number)) continue;
+          if (!weakRefIssues(n.body).includes(it.number)) continue;
+          byNumber.set(n.number, { id: n.id, number: n.number, state: n.state });
         }
         const comments: Array<{ body: string; createdAt: string | null }> = (
           issue.comments?.nodes ?? []
@@ -7263,6 +7357,7 @@ export function deliverQueue(
   opts: DeliverOpts = parseDeliverOpts(),
   probeOverride?: DeliverProbe | null,
   convergenceOverride?: ConvergenceProbe | null,
+  noCiOverride?: NoCiProbe | null,
 ): DeliverQueueResult {
   // The lane filters on board state and hands {number, title} to the
   // candidate fetch — neither labels nor dependency edges are ever read, so
@@ -7302,9 +7397,22 @@ export function deliverQueue(
         }
       : null;
   }
+  let noCi: NoCiProbe | null;
+  if (noCiOverride !== undefined) {
+    noCi = noCiOverride;
+  } else {
+    // Detect-if-present, same shape as the two probes above.
+    const noCiSh = process.env.RALPH_RULESET_CONTEXTS_SH ?? join(ctx.repoRoot, "scripts", "ruleset-contexts.sh");
+    noCi = existsSync(noCiSh)
+      ? (pr: number) => {
+          const r = ctx.exec(["bash", noCiSh, String(pr)]);
+          return parseNoCiVerdict(r.stdout);
+        }
+      : null;
+  }
   // GH-1929. Unbudgeted, unlike the convergence probe: one `readdir` for the
   // whole pass and no API call at all, so there is nothing here to ration.
-  const result = classifyDeliver(cands, opts, ctx.now(), probe, conv, localSessionLease(ctx));
+  const result = classifyDeliver(cands, opts, ctx.now(), probe, conv, localSessionLease(ctx), noCi);
   // GH-2447 (D4): decorate awaiting-approval rows with elapsed, derived from
   // each PR's own timeline. Bounded by the (typically zero to a handful)
   // rows that reason actually classifies — never by the walk.
@@ -11394,6 +11502,13 @@ export interface PrOrphanReport {
   unreadable: number[]; // PRs whose linkage could not be read at all
   ignoreAuthors: string[];
   configured: boolean;
+  /** GH-2521: PRs that would otherwise be orphans, rescued by a body
+   *  "Refs #N"/"Ref #N" mention of an OPEN own-repo issue — a weak link
+   *  (never a closing one; the host repo's own pr-closes-lint still nags
+   *  about that separately). Reported, not silently dropped from the count:
+   *  `orphans` is strictly narrower than "unlinked" for this reason, and
+   *  hiding the subtraction would make that narrowing unverifiable. */
+  weaklyLinked: number;
 }
 
 /** Open PRs in the configured repo with no `closingIssuesReferences` (GH-2048).
@@ -11411,13 +11526,28 @@ export interface PrOrphanReport {
  *  A PR whose linkage object is absent from the response is counted as
  *  UNREADABLE rather than sorted into either bucket: "we could not tell" and
  *  "there is no linkage" are different claims, and collapsing them is the
- *  defect class this line exists to remove. */
+ *  defect class this line exists to remove.
+ *
+ *  GH-2521: a PR with no closing reference is not necessarily ownerless — it
+ *  may carry a weak `Refs #N` mention instead (the incident this fixes: an
+ *  agent PR said `Refs #2463`, not `Closes`, and read as ownerless). THAT
+ *  half — unlike the closing determination above — genuinely has no derived
+ *  GitHub field to read: `closingIssuesReferences` answers "does this PR
+ *  close something", and there is no sibling "does this PR merely mention
+ *  something" on the PullRequest type. So `body` is read here, but only for
+ *  PRs that already cleared the closing check and would otherwise be
+ *  reported as ownerless — a narrow, advisory, already-orphan-bounded scan,
+ *  not the wide gate-relevant read GH-1940 warns against. */
 export function prOrphans(ctx: Ctx): PrOrphanReport {
   // Normalized here as well as at the parse, so the comparison is spelling-
   // blind on both sides no matter how the Config was built.
   const ignore = new Set(ctx.cfg.prOrphans.ignoreAuthors.map(normalizeBotLogin));
   const orphans: PrOrphanRow[] = [];
   const unreadable: number[] = [];
+  // Candidates cleared for orphan status EXCEPT for a weak ref that still
+  // needs its target issue's open/closed state resolved — held back from
+  // `orphans` until the batch resolution below runs.
+  const pending: Array<{ row: PrOrphanRow; weakRefs: number[] }> = [];
   let scanned = 0;
   let ignored = 0;
   const now = ctx.now().getTime();
@@ -11435,6 +11565,7 @@ export function prOrphans(ctx: Ctx): PrOrphanReport {
               isDraft
               createdAt
               author { login }
+              body
               closingIssuesReferences(first: 1) { totalCount }
             }
           }
@@ -11460,17 +11591,57 @@ export function prOrphans(ctx: Ctx): PrOrphanReport {
         continue;
       }
       const created = Date.parse(p.createdAt ?? "");
-      orphans.push({
+      const row: PrOrphanRow = {
         number: p.number,
         title: p.title ?? "",
         author,
         isDraft: p.isDraft === true,
         createdAt: p.createdAt ?? "",
         ageDays: Number.isFinite(created) ? Math.floor((now - created) / 86_400_000) : 0,
-      });
+      };
+      pending.push({ row, weakRefs: weakRefIssues(p.body) });
     }
     if (!page.pageInfo.hasNextPage) break;
     after = page.pageInfo.endCursor;
+  }
+
+  // Resolve every distinct weak-ref target in one batched call — bounded by
+  // the (typically small) orphan-candidate population, never by the walk
+  // above. A read failure here fails toward MORE orphans reported, never
+  // fewer: an unresolved weak ref may not silently rescue a PR from the
+  // count this line exists to make visible.
+  const targets = [...new Set(pending.flatMap((c) => c.weakRefs))];
+  const openTargets = new Set<number>();
+  if (targets.length > 0) {
+    try {
+      for (let start = 0; start < targets.length; start += 50) {
+        const chunk = targets.slice(start, start + 50);
+        const decls = chunk.map((_, k) => `$i${k}: Int!`).join(", ");
+        const aliases = chunk.map((_, k) => `i${k}: issue(number: $i${k}) { number state }`).join("\n");
+        const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
+        chunk.forEach((n, k) => (vars[`i${k}`] = n));
+        const res: any = ghGraphQL(
+          ctx,
+          `query($owner: String!, $repo: String!, ${decls}) { repository(owner: $owner, name: $repo) { ${aliases} } }`,
+          vars,
+        );
+        const repo = res.repository ?? {};
+        chunk.forEach((n, k) => {
+          if (repo[`i${k}`]?.state === "OPEN") openTargets.add(n);
+        });
+      }
+    } catch {
+      // Fail toward visibility (see doc comment): openTargets stays empty,
+      // so every pending candidate falls through to `orphans` below.
+    }
+  }
+  let weaklyLinked = 0;
+  for (const c of pending) {
+    if (c.weakRefs.some((n) => openTargets.has(n))) {
+      weaklyLinked++;
+      continue;
+    }
+    orphans.push(c.row);
   }
   orphans.sort((a, b) => b.ageDays - a.ageDays || a.number - b.number);
   return {
@@ -11480,6 +11651,7 @@ export function prOrphans(ctx: Ctx): PrOrphanReport {
     unreadable,
     ignoreAuthors: ctx.cfg.prOrphans.ignoreAuthors,
     configured: ctx.cfg.prOrphans.configured,
+    weaklyLinked,
   };
 }
 
@@ -11724,10 +11896,43 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
           (po.orphans.length > 5 ? ` +${po.orphans.length - 5} more` : "") +
           `. \`board pr-orphans\` lists them. Remedy is a judgment: add a closing reference, file the issue, or close the PR`) +
         (po.ignored ? `; ${po.ignored} skipped by ${PR_ORPHAN_IGNORE_ENV}` : "") +
-        (po.unreadable.length ? `; linkage UNREADABLE for ${po.unreadable.map((n) => `#${n}`).join(" ")} — not counted either way` : ""),
+        (po.unreadable.length ? `; linkage UNREADABLE for ${po.unreadable.map((n) => `#${n}`).join(" ")} — not counted either way` : "") +
+        (po.weaklyLinked ? `; ${po.weaklyLinked} weakly linked via a body "Refs #N" mention — not counted as ownerless` : ""),
     );
   } catch (e) {
     add("pr-orphans", "info", `not evaluated: ${(e as Error).message}`);
+  }
+
+  // GH-2521: required-context-absent PRs. INFO by construction, same rules
+  // as pr-orphans above — deliver-queue already surfaces these live as
+  // `no-ci` blocked rows; this line exists so an operator sees the count
+  // without invoking the lane. Deliberately skips the two probe subprocesses
+  // (merge-pr.sh --dry-run, review-convergence.sh): this only needs
+  // classifyDeliver's cheap quiescence + no-ci check, never a merge-gate
+  // dry run, so the read stays as light as pr-orphans's own.
+  try {
+    const inReview = listOwnOpenItems(ctx, QUEUE_SELECT_MINIMAL).filter((i) => i.state === "In Review");
+    const cands = fetchDeliverCandidates(ctx, inReview);
+    const noCiSh = process.env.RALPH_RULESET_CONTEXTS_SH ?? join(ctx.repoRoot, "scripts", "ruleset-contexts.sh");
+    if (!existsSync(noCiSh)) {
+      add("no-ci", "info", "not evaluated: no scripts/ruleset-contexts.sh in this repo");
+    } else {
+      const noCi: NoCiProbe = (pr) => parseNoCiVerdict(ctx.exec(["bash", noCiSh, String(pr)]).stdout);
+      const res = classifyDeliver(cands, parseDeliverOpts(), ctx.now(), null, null, null, noCi);
+      const rows = res.blocked.filter((b) => b.reason === "no-ci");
+      const shown = rows.slice(0, 5).map((r) => `#${r.number} pr#${r.pr}`).join(" ");
+      add(
+        "no-ci",
+        rows.length === 0 ? "ok" : "info",
+        rows.length === 0
+          ? `none of ${inReview.length} In Review item(s) have a required context absent at their head`
+          : `${rows.length} In Review PR(s) have a ruleset-required context that never ran at this head ` +
+            `(a mechanical stall, not a slow check — remedy: an empty commit on the head branch): ${shown}` +
+            (rows.length > 5 ? ` +${rows.length - 5} more` : ""),
+      );
+    }
+  } catch (e) {
+    add("no-ci", "info", `not evaluated: ${(e as Error).message}`);
   }
 
   // item sweep: legacy states, claim anomalies, stale claims, closed drift
@@ -14316,7 +14521,7 @@ export const VERB_HELP: Record<string, string> = {
   add: "board add <issue-url>\n  Add an issue by URL — the sanctioned cross-repo path, gated on RALPH_ALLOW_FOREIGN_REPO_ITEMS.\n  example: board add https://github.com/o/r/issues/9",
   reconcile: "board reconcile <n>\n  Reality sync: GitHub open/closed wins over the board.\n  example: board reconcile 1234",
   "parent-check": "board parent-check <n>\n  Roll a parent forward when every child is closed.\n  example: board parent-check 1200",
-  "deliver-queue": "board deliver-queue [--json]\n  Quiescent In Review items with actionable PR signal (the deliver lane's selector).\n  An awaiting-approval row shows elapsed, derived from the PR's own GitHub timeline (GH-2447).\n  example: board deliver-queue --json",
+  "deliver-queue": "board deliver-queue [--json]\n  Quiescent In Review items with actionable PR signal (the deliver lane's selector).\n  An awaiting-approval row shows elapsed, derived from the PR's own GitHub timeline (GH-2447).\n  A `no-ci` row (GH-2521) is a mechanical stall — a ruleset-required context never ran at this\n  head — never folded into the ordinary probe/marker/retry flow; remedy is a push, not a wait.\n  example: board deliver-queue --json",
   "tend-queue": "board tend-queue [--json]\n  Backlog-hygiene and Done-audit rows (the tend lane's selector).\n  example: board tend-queue",
   "dep-candidates":
     "board dep-candidates <n> [--json]\n  Unclaimed Backlog items that might depend on #n (or vice versa), by term overlap — recall-biased, never writes an edge.\n  example: board dep-candidates 2135",
@@ -15604,6 +15809,13 @@ export function run(argv: string[], ctx: Ctx): number {
               `\n    → board move ${b.number} human-needed --why "<decision>" (do not request another review)`,
           );
         }
+        // GH-2521: named, not folded into the generic ←reason line — the
+        // remedy is a push, never a wait, and #2492 documented exactly how
+        // long a session can sit misreading this as "checks still running".
+        for (const b of res.blocked) {
+          if (b.reason !== "no-ci") continue;
+          out(`  #${b.number} pr#${b.pr}: ${b.detail ?? "required context(s) never ran at this head"}`);
+        }
         // GH-1929: a held unit names its holder and its own expiry. A bare
         // `←local-session-active` would read as a fault needing intervention,
         // when the correct response is almost always to wait — so the line says
@@ -15704,6 +15916,8 @@ export function run(argv: string[], ctx: Ctx): number {
           out(`  ${res.ignored} skipped by ${PR_ORPHAN_IGNORE_ENV} (${res.ignoreAuthors.join(",") || "none"})`);
         if (res.unreadable.length)
           out(`  linkage UNREADABLE: ${res.unreadable.map((n) => `#${n}`).join(" ")} — neither linked nor orphaned`);
+        if (res.weaklyLinked)
+          out(`  ${res.weaklyLinked} weakly linked via a body "Refs #N"/"Ref #N" mention of an open issue — not counted as ownerless`);
       }
       return 0;
     }
