@@ -99,6 +99,9 @@ export interface FakeIssue {
    *  the digits without matching the regex (the false-positive the local
    *  re-check exists to reject). */
   weakRefPrs?: Array<{ number: number; body?: string; state?: "OPEN" | "MERGED" | "CLOSED" }>;
+  /** GH-2521: GitHub's own `issueCount` for the weak-ref search — defaults
+   *  to the served node count; set it HIGHER to model a truncated page. */
+  weakRefIssueCount?: number;
   /** Branch-convention refs by name. Both linkage readers see these: the
    *  deliver b-alias applies GitHub's SUBSTRING ref filter, and the Done
    *  gate's merged-PR search applies its PREFIX `head:` match (GH-1996). Each
@@ -777,6 +780,7 @@ export class FakeGh {
         // GH-2521: `search` is a root field, sitting OUTSIDE `repository{}`
         // in the real document — served here as a top-level key alongside it.
         top[`w${m[1]}`] = {
+          issueCount: fi.weakRefIssueCount ?? (fi.weakRefPrs ?? []).length,
           nodes: (fi.weakRefPrs ?? []).map((p) => ({
             id: `PR_${p.number}`,
             number: p.number,

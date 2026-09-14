@@ -63,6 +63,7 @@ import {
   PR_ORPHAN_IGNORE_ENV,
   weakRefIssues,
   parseNoCiVerdict,
+  NO_CI_ALL_ABSENT,
   ANSWER_MARKER,
   ESCALATION_EVIDENCE,
   ESCALATION_PROMOTED_MARKER,
@@ -7066,6 +7067,32 @@ describe("deliver-queue: fetch + CLI wiring", () => {
       expect(res.blocked.map((r) => [r.number, r.reason])).toContainEqual([55, "no-pr"]);
     });
 
+    it("a truncated search page is REFUSED, never acted on — the unseen PR could be the only open one", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(55, {
+        number: 55,
+        state: "In Review",
+        stateUpdatedAt: OLD,
+        prs: [{ number: 100, merged: true }], // the only KNOWN link has merged
+        weakRefPrs: [{ number: 200, body: "unrelated, mentions 55" }],
+        weakRefIssueCount: 101, // GitHub says more hits than the page holds
+      });
+      expect(() => deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }))).toThrow(
+        /weak-ref search for #55 is truncated/,
+      );
+    });
+
+    it("asks for the page at first: 100 with issueCount — the truncation check has something to compare", () => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(55, { number: 55, state: "In Review", stateUpdatedAt: OLD });
+      deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
+      const q = gh.queries.find((s) => s.includes("w0: search("))!;
+      expect(q).toContain("first: 100");
+      expect(q).toContain("issueCount");
+    });
+
     it("a body mentioning a DIFFERENT issue's number is not linkage for this one", () => {
       const gh = new FakeGh();
       const ctx = makeCtx(gh);
@@ -8862,8 +8889,14 @@ describe("parseNoCiVerdict (GH-2521)", () => {
   it("ok:true with an empty missing list is evaluated-and-clean, not null", () => {
     expect(parseNoCiVerdict('{"ok":true,"count":0,"missing":[],"summary":"","detail":""}')).toEqual([]);
   });
-  it("ok:false (no ruleset, unreadable, or CI hasn't started) is not evaluated — null, never an empty list", () => {
+  it("ok:false (no ruleset, unreadable) is not evaluated — null, never an empty list", () => {
     expect(parseNoCiVerdict('{"ok":false,"count":0,"missing":[],"summary":"","detail":"why not"}')).toBeNull();
+    expect(parseNoCiVerdict('{"ok":false,"count":0,"missing":[],"summary":"","detail":"cannot read branch rules"}')).toBeNull();
+  });
+  it("ok:false because NO check has reported at all is every required context absent — the whole-rollup #2492 shape", () => {
+    expect(
+      parseNoCiVerdict('{"ok":false,"count":0,"missing":[],"summary":"","detail":"no status checks have reported at this head yet"}'),
+    ).toEqual([NO_CI_ALL_ABSENT]);
   });
   it("garbage output is not evaluated", () => {
     expect(parseNoCiVerdict("not json")).toBeNull();

@@ -6571,10 +6571,25 @@ export function parseConvergenceVerdict(out: string): { verdict: string; detail:
  *  a block nobody can clear. */
 export type NoCiProbe = (pr: number) => string[] | null;
 
+/** The one `ok:false` answer that IS evidence (the P1 on #2523's first
+ *  review): the script has already read the base ruleset and found required
+ *  contexts by the time it reports that NO check has reported at all — that
+ *  is every required context absent, the whole-rollup form of #2492 (a base
+ *  retarget or a missed trigger leaves the head with nothing). The script
+ *  keeps it `ok:false` because on ITS surface (GATE-READY, seconds after a
+ *  push) a fresh head reads the same; here the row is already past the
+ *  settle window, which is what makes the same fact a stall. Rendered as this
+ *  one sentinel rather than an empty list, which would read as clean. */
+export const NO_CI_ALL_ABSENT = "(every required context — no check has reported at this head)";
+const NO_CI_NONE_REPORTED = /no status checks have reported at this head/i;
+
 export function parseNoCiVerdict(out: string): string[] | null {
   try {
     const j = JSON.parse(out.trim().split("\n").filter(Boolean).pop() ?? "");
-    if (!j || typeof j !== "object" || j.ok !== true) return null;
+    if (!j || typeof j !== "object") return null;
+    if (j.ok !== true) {
+      return typeof j.detail === "string" && NO_CI_NONE_REPORTED.test(j.detail) ? [NO_CI_ALL_ABSENT] : null;
+    }
     if (!Array.isArray(j.missing)) return null;
     return j.missing.filter((m: unknown): m is string => typeof m === "string");
   } catch {
@@ -7236,7 +7251,7 @@ export function fetchDeliverCandidates(
       // applies to the substring `refs()` query above, for the same reason:
       // GitHub's filter answers "plausibly relevant", never "verified".
       const wAliases = chunk
-        .map((_, k) => `w${k}: search(type: ISSUE, first: 10, query: $w${k}) { nodes { ... on PullRequest { id number state body } } }`)
+        .map((_, k) => `w${k}: search(type: ISSUE, first: 100, query: $w${k}) { issueCount nodes { ... on PullRequest { id number state body } } }`)
         .join("\n");
       const vars: Record<string, unknown> = { owner: ctx.cfg.owner, repo: ctx.cfg.repo };
       chunk.forEach((it, k) => {
@@ -7283,7 +7298,24 @@ export function fetchDeliverCandidates(
         // GH-2521: the weak-ref fallback — only for a PR neither the closing
         // reference nor the branch convention already found. A verified
         // closing/convention link always outranks a text mention.
-        for (const n of data[`w${k}`]?.nodes ?? []) {
+        //
+        // FAILS CLOSED on a truncated search (the P1 on #2523's first review):
+        // `issueCount` is GitHub's own total for the query, so a page that
+        // holds fewer nodes than that is a relationship we did not finish
+        // reading. Acting on it would let a `Refs #N` PR past the page
+        // vanish, and an issue whose only OTHER link has merged would then
+        // classify `no-open-pr` — offered for close-out over a PR still open.
+        // Same shape as phase B's partial-read refusal below: a broken read
+        // says so, never a fabricated state.
+        const w = data[`w${k}`];
+        const wNodes: any[] = w?.nodes ?? [];
+        if (typeof w?.issueCount === "number" && w.issueCount > wNodes.length) {
+          throw new Error(
+            `deliver: weak-ref search for #${it.number} is truncated (${w.issueCount} hits, ${wNodes.length} read) — ` +
+              `refusing to classify on a partial linkage read`,
+          );
+        }
+        for (const n of wNodes) {
           if (!n?.number || byNumber.has(n.number)) continue;
           if (!weakRefIssues(n.body).includes(it.number)) continue;
           byNumber.set(n.number, { id: n.id, number: n.number, state: n.state });

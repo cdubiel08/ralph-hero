@@ -246,9 +246,19 @@ self-clearing on `RALPH_LOCK_TTL_MIN`. An unreadable sessions dir yields
 **null, never an empty probe**.
 
 **`board pr-orphans` is the one selector not keyed on the board (GH-2048).**
-Reads GitHub's own `closingIssuesReferences`, never the PR body
-(app-writable, GH-1940); doctor carries the count as an advisory `i` line
-under `board-volume`'s rules. Bot authors are skipped by default
+The *closing* question is answered from GitHub's own
+`closingIssuesReferences`, never a body regex (app-writable, GH-1940). **A
+PR that closes nothing is not yet ownerless (GH-2521)**: a body `Refs #N` /
+`Ref #N` mention of an OPEN own-repo issue is a *weak* link — GitHub derives
+no such edge from the PR's side, so this one half IS read from the body, but
+only for PRs that already cleared the closing check, and it gates nothing
+(the host's pr-closes-lint still nags). Reported as a `weaklyLinked` count,
+never silently subtracted; a failed resolution fails toward MORE orphans.
+The same weak edge is `fetchDeliverCandidates`'s third linkage source
+(after closing refs and the branch convention), read via a batched
+`search(... in:body)` alias, locally re-verified, and refused on a truncated
+page. Doctor carries the orphan count as an advisory `i` line under
+`board-volume`'s rules. Bot authors are skipped by default
 (`RALPH_PR_ORPHAN_IGNORE_AUTHORS`, default `dependabot,renovate,github-actions`,
 a trailing `[bot]` stripped on both sides); set it EMPTY to surface
 everyone.
