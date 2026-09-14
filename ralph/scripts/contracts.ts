@@ -824,6 +824,7 @@ export const DELIVER_REASONS = [
   "reviewer-rate-limited", // audit B7: the merge gate's own text says the external reviewer is rate-limited — a session dispatched now would only rediscover the wait. Self-clearing: the next pass re-reads the gate
   "local-session-active", // GH-1929: a live session on THIS machine holds the GH-1956 worktree lock for this unit — it may be sitting on unpushed local commits, which no remote signal can see. Held OUT of the queue until the lock ages out on RALPH_LOCK_TTL_MIN
   "awaiting-approval", // GH-2444: the gate's last run (marker or probe) named `approval` — merge-pr.sh's gate 1b, which runs LAST, so every other gate passed — and the PR's own `reviewDecision` still reads REVIEW_REQUIRED. Held OUT of the retry window with no session: `reviewDecision` is re-read free every pass off the PR-facts fetch, and the approval's own review re-arms the probe. Only a human approving (or the rule changing) clears it
+  "no-ci", // GH-2521: past the settle window, a ruleset-required status context has NEVER RUN at this head (ruleset-contexts.sh's "required but not produced") — a mechanically stuck PR (e.g. after a base retarget), not a slow one. Never folded into the ordinary probe/marker/retry flow: nothing there can distinguish "still running" from "never queued", which is the exact trap #2492 documented. Remedy is a push (an empty commit on the head branch), not a wait
 ] as const;
 /** THE tend-lane category list (same single-declaration rule): board.ts
  *  derives its TendCategory type from this tuple. */

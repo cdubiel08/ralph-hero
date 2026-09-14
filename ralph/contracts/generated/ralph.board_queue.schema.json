@@ -799,7 +799,8 @@
                         "convergence-stalled",
                         "reviewer-rate-limited",
                         "local-session-active",
-                        "awaiting-approval"
+                        "awaiting-approval",
+                        "no-ci"
                       ]
                     },
                     "verdict": {
@@ -921,7 +922,8 @@
                       "convergence-stalled",
                       "reviewer-rate-limited",
                       "local-session-active",
-                      "awaiting-approval"
+                      "awaiting-approval",
+                      "no-ci"
                     ]
                   },
                   "verdict": {
@@ -1039,7 +1041,8 @@
                       "convergence-stalled",
                       "reviewer-rate-limited",
                       "local-session-active",
-                      "awaiting-approval"
+                      "awaiting-approval",
+                      "no-ci"
                     ]
                   },
                   "verdict": {

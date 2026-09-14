@@ -92,6 +92,16 @@ export interface FakeIssue {
     };
   }>;
   branchPrs?: FakeIssue["prs"]; // sugar: PRs on the LEGACY feature/GH-NNN branch
+  /** GH-2521: open PRs the deliver linkage's weak-ref search sees for THIS
+   *  issue — a PR carrying "Refs #N"/"Ref #N" in its body but no closing
+   *  keyword and no branch-convention name. `body` defaults to the exact
+   *  convention text; override it to exercise a body that merely CONTAINS
+   *  the digits without matching the regex (the false-positive the local
+   *  re-check exists to reject). */
+  weakRefPrs?: Array<{ number: number; body?: string; state?: "OPEN" | "MERGED" | "CLOSED" }>;
+  /** GH-2521: GitHub's own `issueCount` for the weak-ref search — defaults
+   *  to the served node count; set it HIGHER to model a truncated page. */
+  weakRefIssueCount?: number;
   /** Branch-convention refs by name. Both linkage readers see these: the
    *  deliver b-alias applies GitHub's SUBSTRING ref filter, and the Done
    *  gate's merged-PR search applies its PREFIX `head:` match (GH-1996). Each
@@ -192,7 +202,17 @@ export class FakeGh {
     createdAt?: string;
     closing?: number;
     unreadableLinkage?: boolean;
+    /** GH-2521: PR body text, scanned for a weak "Refs #N"/"Ref #N" mention
+     *  once `closing` reads 0 — resolved against `issueOpenState` below. */
+    body?: string;
   }> = [];
+  /** GH-2521: open/closed state for the issue numbers prOrphans' weak-ref
+   *  resolution reads back. A number absent here answers null (not found) —
+   *  the same "deleted/dangling reference" case production code must not
+   *  let rescue a PR from orphan status. */
+  issueOpenState: Record<number, "OPEN" | "CLOSED"> = {};
+  /** GH-2521: the weak-ref resolution's batched read fails outright. */
+  failWeakRefResolution = false;
   omitFields: string[] = []; // simulate a fresh board missing these fields
   createdFields: Array<{
     name: string; dataType: string; options?: string[];
@@ -464,6 +484,9 @@ export class FakeGh {
         ...(fi.prs ?? []),
         ...(fi.branchPrs ?? []),
         ...(fi.branchRefs ?? []).flatMap((r) => r.prs ?? []),
+        // GH-2521: weak-ref-linked PRs need phase-B facts too, same as every
+        // other linkage source above.
+        ...(fi.weakRefPrs ?? []).map((p) => ({ number: p.number, merged: p.state === "MERGED", prState: p.state })),
       ]) {
         if (!out.has(`PR_${p.number}`)) out.set(`PR_${p.number}`, p);
       }
@@ -645,7 +668,11 @@ export class FakeGh {
     // applies GitHub's own PREFIX semantics — so a branch that merely starts
     // with the digits (`feat/19960-…`) reaches board.ts exactly as it would in
     // production, and its rejection is the linkage predicate under test.
-    if (query.includes("search(type: ISSUE")) {
+    // GH-2521's own `w0: search(type: ISSUE...)` alias rides inside the SAME
+    // document as `d0: issue(number...)` (both are needed to serve one
+    // fetchDeliverCandidates call), so it must fall through to the d0/b0
+    // branch below rather than being caught here.
+    if (query.includes("search(type: ISSUE") && !query.includes("d0: issue(number")) {
       if (this.failBranchLinkage) throw new Error("gh api graphql failed: rate limit exceeded");
       const q = String((variables as any).q ?? "");
       this.lastSearchQuery = q;
@@ -739,6 +766,7 @@ export class FakeGh {
     // every other issue branch — its selection set contains their needles.
     if (query.includes("d0: issue(number")) {
       const repo: Record<string, unknown> = {};
+      const top: Record<string, unknown> = {};
       for (const [key, num] of Object.entries(variables)) {
         const m = /^n(\d+)$/.exec(key);
         if (!m) continue;
@@ -746,8 +774,20 @@ export class FakeGh {
         if (!fi) {
           repo[`d${m[1]}`] = null;
           repo[`b${m[1]}`] = { nodes: [] };
+          top[`w${m[1]}`] = { nodes: [] };
           continue;
         }
+        // GH-2521: `search` is a root field, sitting OUTSIDE `repository{}`
+        // in the real document — served here as a top-level key alongside it.
+        top[`w${m[1]}`] = {
+          issueCount: fi.weakRefIssueCount ?? (fi.weakRefPrs ?? []).length,
+          nodes: (fi.weakRefPrs ?? []).map((p) => ({
+            id: `PR_${p.number}`,
+            number: p.number,
+            state: p.state ?? "OPEN",
+            body: p.body ?? `Refs #${fi.number}`,
+          })),
+        };
         repo[`d${m[1]}`] = {
           number: fi.number,
           title: fi.title ?? `Issue ${fi.number}`,
@@ -784,7 +824,7 @@ export class FakeGh {
           })),
         };
       }
-      return data({ repository: repo });
+      return data({ repository: repo, ...top });
     }
 
     // fetchNodeIds: aliased id-only lookups — no selection beyond { id }.
@@ -983,6 +1023,7 @@ export class FakeGh {
               createdAt: p.createdAt ?? "2026-08-01T00:00:00Z",
               // A deleted account renders as a null author, not an absent field.
               author: p.author === null ? null : { login: p.author ?? "someone" },
+              body: p.body ?? "",
               // `unreadableLinkage` models the object coming back without the
               // count — neither linked nor orphaned, which is its own bucket.
               closingIssuesReferences: p.unreadableLinkage ? {} : { totalCount: p.closing ?? 0 },
@@ -990,6 +1031,21 @@ export class FakeGh {
           },
         },
       });
+    }
+    // GH-2521: prOrphans' weak-ref resolution — batched i0/i1/... aliases,
+    // each `issue(number:) { number state }`. A number outside
+    // `issueOpenState` answers null, the same "deleted/dangling" shape
+    // production code must not let rescue a PR.
+    if (query.includes("i0: issue(number")) {
+      if (this.failWeakRefResolution) throw new Error("gh api graphql failed: rate limit exceeded");
+      const repo: Record<string, unknown> = {};
+      for (const [key, num] of Object.entries(variables)) {
+        const m = /^i(\d+)$/.exec(key);
+        if (!m) continue;
+        const state = this.issueOpenState[num as number];
+        repo[`i${m[1]}`] = state ? { number: num, state } : null;
+      }
+      return data({ repository: repo });
     }
     if (query.includes("repositories(first")) {
       return data({
