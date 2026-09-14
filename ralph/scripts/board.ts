@@ -6425,6 +6425,15 @@ export interface DeliverPrFacts {
   headSha: string;
   /** Sorted `name=conclusion` digest of check runs + status contexts. */
   checkConclusions: string;
+  /** GH-2521: check runs still QUEUED/IN_PROGRESS (conclusion null) plus
+   *  PENDING/EXPECTED status contexts at this head. The `no-ci` guard reads
+   *  it: a required context ABSENT while anything is still running is an
+   *  aggregator gated by `needs:` waiting on its dependencies (it has no
+   *  check run at all until they finish — observed on landcrawler-ai #2515,
+   *  'CI Required' absent for the full 13 min its E2E dependency ran), not a
+   *  stall. Only a fully quiescent rollup with a required context still
+   *  missing is the #2492 signature. */
+  checksInFlight: number;
   /** Latest review submittedAt. */
   reviewCursor: string | null;
   /** Latest comment createdAt across UNRESOLVED review threads. */
@@ -6864,7 +6873,18 @@ export function classifyDeliver(
       // construction — folding this in would read "no delta" and let the row
       // sit in `retry-window` forever. Distinct row, no marker, no budget:
       // the same small quiescent population the probe below already reads.
-      const missing = noCi?.(p.number) ?? null;
+      //
+      // Two facts must agree (the P1 on #2523's review): the required
+      // context is absent, AND nothing else at this head is still running.
+      // An absent context beside an in-flight check is an aggregator job
+      // gated by `needs:` — it has no check run until its dependencies
+      // finish, so "others reported, one absent, something running" is a
+      // healthy suite mid-flight, and an empty commit here would restart it.
+      // Only "everything reported, one required context never appeared" is
+      // the #2492 signature. The in-flight read costs nothing: it is derived
+      // from the same rollup `checkConclusions` already digests. The probe is
+      // not even asked while something runs — its answer could not be used.
+      const missing = p.checksInFlight === 0 ? (noCi?.(p.number) ?? null) : null;
       if (missing && missing.length > 0) {
         blocked.push({
           number: c.number,
@@ -6873,7 +6893,7 @@ export function classifyDeliver(
           reason: "no-ci",
           windowExpiresAt: null,
           detail:
-            `required context(s) never ran at this head: ${missing.join(", ")} — ` +
+            `required context(s) never ran at this head: ${missing.join(", ")} (nothing else in flight) — ` +
             `remedy: push an empty commit on the head branch`,
         });
         continue;
@@ -7141,6 +7161,11 @@ function prFactsFrom(node: any, id: string): DeliverPrFacts {
     )
     .sort()
     .join(",");
+  const checksInFlight = contexts.filter((x) =>
+    x.__typename === "CheckRun"
+      ? x.conclusion == null
+      : x.state == null || x.state === "PENDING" || x.state === "EXPECTED",
+  ).length;
   const maxIso = (vals: Array<string | null | undefined>): string | null => {
     const ts = vals.filter((v): v is string => typeof v === "string");
     return ts.length ? ts.sort()[ts.length - 1] : null;
@@ -7160,6 +7185,7 @@ function prFactsFrom(node: any, id: string): DeliverPrFacts {
     state: node.state,
     headSha: node.headRefOid ?? "",
     checkConclusions: digest,
+    checksInFlight,
     reviewCursor,
     threadCursor,
     lastActivityAt: maxIso([

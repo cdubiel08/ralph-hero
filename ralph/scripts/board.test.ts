@@ -6015,6 +6015,7 @@ describe("deliver-queue: classification (spec §4.2)", () => {
     state: "OPEN",
     headSha: "sha-a",
     checkConclusions: "ci=success",
+    checksInFlight: 0,
     reviewCursor: null,
     threadCursor: null,
     lastActivityAt: "2026-07-31T11:00:00Z", // 60 min ago — well settled
@@ -6496,6 +6497,7 @@ describe("deliver-queue: no-ci (GH-2521) — an absent required context, not a s
     state: "OPEN",
     headSha: "sha-a",
     checkConclusions: "ci=success",
+    checksInFlight: 0,
     reviewCursor: null,
     threadCursor: null,
     lastActivityAt: "2026-07-31T11:00:00Z", // 60 min ago — well settled
@@ -6574,6 +6576,33 @@ describe("deliver-queue: no-ci (GH-2521) — an absent required context, not a s
     );
     expect(res.blocked[0].reason).toBe("settling");
     expect(probed).toHaveLength(0);
+  });
+
+  it("a required context absent while another check is still IN_PROGRESS is an aggregator waiting on needs:, NOT no-ci", () => {
+    // landcrawler-ai #2515 @ 5df73998: 'CI Required' (a needs:-gated
+    // aggregator) was absent from the rollup for the full 13 min its E2E
+    // dependency ran, while the other three required contexts had already
+    // reported. An empty commit there restarts a healthy suite.
+    const probed: number[] = [];
+    const res = classify(
+      [cand(1, { prs: [dpr(101, { checkConclusions: "e2e-auth=pending,lint=success,unit=success", checksInFlight: 1 })] })],
+      (pr) => {
+        probed.push(pr);
+        return ["CI Required"];
+      },
+    );
+    expect(res.blocked.map((b) => b.reason)).not.toContain("no-ci");
+    expect(res.next).toMatchObject({ number: 1, pr: 101, reason: "actionable" });
+    expect(probed).toHaveLength(0); // the probe is not even asked while something runs
+  });
+
+  it("the same rollup fully completed with the required context still absent IS no-ci", () => {
+    const res = classify(
+      [cand(1, { prs: [dpr(101, { checkConclusions: "e2e-auth=success,lint=success,unit=success", checksInFlight: 0 })] })],
+      () => ["CI Required"],
+    );
+    expect(res.blocked).toMatchObject([{ number: 1, pr: 101, reason: "no-ci" }]);
+    expect(res.blocked[0].detail).toContain("CI Required");
   });
 
   it("one open PR of two: only the stuck one is held, the other classifies normally", () => {
@@ -7105,6 +7134,23 @@ describe("deliver-queue: fetch + CLI wiring", () => {
       const res = deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }));
       expect(res.blocked.map((r) => [r.number, r.reason])).toContainEqual([55, "no-pr"]);
     });
+  });
+
+  // GH-2521: `checksInFlight` is derived from the same rollup the digest reads.
+  it("no-ci wiring: a null-conclusion check run at the head counts as in flight and holds no-ci off; a completed one lets it fire", () => {
+    const mk = (conclusion: string | null) => {
+      const gh = new FakeGh();
+      const ctx = makeCtx(gh);
+      gh.issues.set(1, {
+        number: 1,
+        state: "In Review",
+        stateUpdatedAt: OLD,
+        prs: [{ number: 101, merged: false, headSha: "sha-a", pushedAt: OLD, checks: [{ name: "e2e", conclusion }] }],
+      });
+      return deliverQueue(ctx, DELIVER_DEFAULTS, () => ({ verdict: "PASS", gate: null }), null, () => ["CI Required"]);
+    };
+    expect(mk(null).blocked.map((b) => b.reason)).not.toContain("no-ci");
+    expect(mk("SUCCESS").blocked.map((b) => [b.pr, b.reason])).toContainEqual([101, "no-ci"]);
   });
 
   // --- GH-1811: the facts do not belong in the linkage document ------------
