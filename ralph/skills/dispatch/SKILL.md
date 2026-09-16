@@ -63,7 +63,9 @@ these without asking; journal them like any other action.
 Direct-to-Backlog filing (`board create --backlog`) stays what it always was:
 the record of an approval that already happened — a human's ask, or an
 interactive design session's ruling. An agent-initiated observation lands
-`--intake`.
+`--intake`. Either lane files work, never process — an apply, a rebase, a
+hold or a re-assessment is a comment on the unit it serves (`/ralph:hero`,
+Bounds).
 
 The authority lives in this text; the killed prompts live separately, as
 permission-allowlist entries in the host repo's `.claude/settings.json` for

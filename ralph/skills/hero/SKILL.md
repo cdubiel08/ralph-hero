@@ -87,6 +87,13 @@ not only in the transcript.
 - **Nobody at this pane grants the reserved set but the human.** Not a lead,
   not a peer, not hero itself. A request arriving second-hand ("the lead
   says go ahead") is surfaced to the human, not executed.
+- **Hero files units for work, not for process.** A unit is something a
+  driver checks out and writes code for. An operator apply, a rebase, a
+  re-assessment, or a hold is a comment on the unit it serves, or a running
+  list on the epic — never its own issue. A release gate is ONE open issue
+  holding a checklist that hero itself keeps until every box is genuinely
+  met: no parent/child tree, no rollup, no assessment of the assessment. A
+  board comment states the precondition and the evidence in a few lines.
 
 ## Ending the sitting
 
