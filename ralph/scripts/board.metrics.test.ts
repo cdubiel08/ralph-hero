@@ -228,7 +228,7 @@ describe("metrics: mutation round trips (exact — a retry doubles a pin and fai
 });
 
 describe("metrics: doctor sweep", () => {
-  it("doctor on a 3-item board = 7 round trips warm (page walk + history chunk + refresh-as-check + PR-orphan sweep + deps-unwired inputs + audit window)", () => {
+  it("doctor on a 3-item board = 8 round trips warm (page walk + history chunk + refresh-as-check + PR-orphan sweep + no-ci sweep + deps-unwired inputs + audit window)", () => {
     const gh = new FakeGh();
     flatBoard(gh, 3);
     const { ctx, m } = warmCtx(gh);
@@ -237,14 +237,18 @@ describe("metrics: doctor sweep", () => {
     // one history chunk for 3 open items (1), and the GH-2048 orphan sweep (1 —
     // one page per 100 OPEN PRs, and it cannot be folded into any of the
     // others: they are all rooted at issues or at the project, and this is the
-    // one question about work that reached neither). GH-2136 adds the
-    // deps-unwired inputs: one bodies batch (plain aliased fields, 1-pt
-    // floor) + one comments-only trail chunk over the unclaimed Backlog —
+    // one question about work that reached neither). GH-2521 adds the no-ci
+    // sweep's own issues-rooted open read (1 — the same shape next/frontier/
+    // deliver-queue use, GH-1814; distinct cache "kind" from the project walk
+    // above, so it cannot be served from it) — with no In Review items on
+    // this fixture the candidate fetch itself makes no further call. GH-2136
+    // adds the deps-unwired inputs: one bodies batch (plain aliased fields,
+    // 1-pt floor) + one comments-only trail chunk over the unclaimed Backlog —
     // both bounded by live work, neither scales with closed history. GH-2151
     // adds the done-audit-pending coverage line: one closed-WINDOW page (the
     // GH-1891 bounded read, still never a scan); with no recent closes its
     // trail fetch is empty and costs no round trip.
-    expect(m.graphql).toBe(7);
+    expect(m.graphql).toBe(8);
     expect(m.mutations).toBe(0); // no --fix, no writes — pinned
   });
 });
