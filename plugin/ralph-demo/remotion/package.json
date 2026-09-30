@@ -14,13 +14,13 @@
     "test:render": "bash scripts/render.test.sh"
   },
   "dependencies": {
-    "@remotion/cli": "^4.0.509",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "remotion": "^4.0.509"
+    "@remotion/cli": "^4.0.529",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "^4.0.529"
   },
   "devDependencies": {
-    "@types/react": "19.2.18",
+    "@types/react": "19.3.0",
     "typescript": "6.0.3"
   },
   "private": true,
